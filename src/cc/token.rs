@@ -386,8 +386,10 @@ pub(crate) enum Tok {
     },
     /// A character constant; its type is `int`.
     Char(i64),
-    /// Decoded bytes of one string literal, without the terminating NUL.
-    Str(Vec<u8>),
+    /// Decoded bytes of one string literal, without the terminating NUL; and which of the bytes
+    /// above 127 were written as octal or hexadecimal escapes (one code unit each, when a wide
+    /// literal next to this one makes the whole wide) rather than as UTF-8 of a source character.
+    Str(Vec<u8>, Vec<u32>),
     /// An `L`, `u` or `U` character constant.
     WideChar(WideKind, u32),
     /// An `L`, `u` or `U` string literal as code points (escapes give raw values).
@@ -426,7 +428,7 @@ impl Tok {
             Tok::Kw(kw) => format!("keyword '{}'", format!("{kw:?}").to_lowercase()),
             Tok::Int { .. } | Tok::Float { .. } => "number".to_string(),
             Tok::Char(_) | Tok::WideChar(..) => "character constant".to_string(),
-            Tok::Str(_) | Tok::WideStr(..) => "string literal".to_string(),
+            Tok::Str(..) | Tok::WideStr(..) => "string literal".to_string(),
             Tok::Punct(p) => format!("'{}'", p.spelling()),
             Tok::PragmaPack(_) => "'#pragma pack'".to_string(),
             Tok::PragmaWeak(_) => "'#pragma weak'".to_string(),
@@ -438,7 +440,12 @@ impl Tok {
 
 // ───────────────────────────── phase 7: PpToken -> Token ─────────────────────────────
 
-pub(crate) fn classify(pp: &PpToken, dialect: Dialect) -> Res<Token> {
+/// `warnings` receives what is accepted with a remark (an escape sequence nobody defines).
+pub(crate) fn classify(
+    pp: &PpToken,
+    dialect: Dialect,
+    warnings: &mut Vec<(Loc, String)>,
+) -> Res<Token> {
     let loc = pp.loc;
     let char_is_signed = dialect.char_is_signed;
     let microsoft = |text: &[u8]| {
@@ -507,7 +514,7 @@ pub(crate) fn classify(pp: &PpToken, dialect: Dialect) -> Res<Token> {
         PpKind::CharLit if wide_kind(&pp.text).is_some() => {
             let kind = wide_kind(&pp.text).unwrap_or(WideKind::Wchar);
             let body = literal_body(&pp.text, b'\'', loc)?;
-            match decode_wide(body, loc)?.as_slice() {
+            match decode_wide(body, loc, warnings)?.as_slice() {
                 [] => return err(loc, "empty character constant"),
                 [c] => Tok::WideChar(kind, *c),
                 _ => return err(loc, "multi-character character constants are not supported"),
@@ -516,11 +523,11 @@ pub(crate) fn classify(pp: &PpToken, dialect: Dialect) -> Res<Token> {
         PpKind::StrLit if wide_kind(&pp.text).is_some() => {
             let kind = wide_kind(&pp.text).unwrap_or(WideKind::Wchar);
             let body = literal_body(&pp.text, b'"', loc)?;
-            Tok::WideStr(kind, decode_wide(body, loc)?)
+            Tok::WideStr(kind, decode_wide(body, loc, warnings)?)
         }
         PpKind::CharLit => {
             let body = literal_body(&pp.text, b'\'', loc)?;
-            let bytes = decode_escapes(body, loc)?;
+            let bytes = decode_escapes(body, loc, warnings)?;
             match bytes.as_slice() {
                 [] => return err(loc, "empty character constant"),
                 [b] => Tok::Char(if char_is_signed {
@@ -540,7 +547,8 @@ pub(crate) fn classify(pp: &PpToken, dialect: Dialect) -> Res<Token> {
         }
         PpKind::StrLit => {
             let body = literal_body(&pp.text, b'"', loc)?;
-            Tok::Str(decode_escapes(body, loc)?)
+            let bytes = decode_escapes(body, loc, warnings)?;
+            Tok::Str(bytes, high_bytes_from_escapes(body))
         }
     };
     Ok(Token { tok, loc })
@@ -566,7 +574,7 @@ fn literal_body(text: &[u8], quote: u8, loc: Loc) -> Res<&[u8]> {
 
 /// Decodes the body of a wide literal: source characters are UTF-8 code points, numeric
 /// escapes are taken as written.
-fn decode_wide(body: &[u8], loc: Loc) -> Res<Vec<u32>> {
+fn decode_wide(body: &[u8], loc: Loc, warnings: &mut Vec<(Loc, String)>) -> Res<Vec<u32>> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < body.len() {
@@ -636,7 +644,7 @@ fn decode_wide(body: &[u8], loc: Loc) -> Res<Vec<u32>> {
                 out.push(v);
             }
             _ => {
-                let simple = decode_escapes(&[b'\\', e], loc)?;
+                let simple = decode_escapes(&[b'\\', e], loc, warnings)?;
                 out.extend(simple.iter().map(|&b| u32::from(b)));
             }
         }
@@ -660,7 +668,61 @@ fn hex_digit(b: u8) -> Option<u32> {
     (b as char).to_digit(16)
 }
 
-fn decode_escapes(body: &[u8], loc: Loc) -> Res<Vec<u8>> {
+/// Where, in what `decode_escapes` makes of `body`, the bytes above 127 that come from `\ooo` and
+/// `\xhh` are. Almost always nowhere.
+fn high_bytes_from_escapes(body: &[u8]) -> Vec<u32> {
+    let mut at = Vec::new();
+    let (mut i, mut written) = (0usize, 0u32);
+    while i < body.len() {
+        if body[i] != b'\\' {
+            i += 1;
+            written += 1;
+            continue;
+        }
+        let Some(&e) = body.get(i + 1) else { break };
+        i += 2;
+        match e {
+            b'0'..=b'7' => {
+                let mut v = u32::from(e - b'0');
+                let mut n = 1;
+                while n < 3 && i < body.len() && (b'0'..=b'7').contains(&body[i]) {
+                    v = v * 8 + u32::from(body[i] - b'0');
+                    i += 1;
+                    n += 1;
+                }
+                if v > 127 {
+                    at.push(written);
+                }
+                written += 1;
+            }
+            b'x' => {
+                let mut v: u32 = 0;
+                while let Some(d) = body.get(i).and_then(|&b| hex_digit(b)) {
+                    v = v.saturating_mul(16).saturating_add(d);
+                    i += 1;
+                }
+                if v > 127 {
+                    at.push(written);
+                }
+                written += 1;
+            }
+            b'u' | b'U' => {
+                let want = if e == b'u' { 4 } else { 8 };
+                let digits = body.get(i..i + want).unwrap_or_default();
+                let point = std::str::from_utf8(digits)
+                    .ok()
+                    .and_then(|text| u32::from_str_radix(text, 16).ok())
+                    .and_then(char::from_u32);
+                i += want;
+                written += point.map_or(0, |c| c.len_utf8() as u32);
+            }
+            _ => written += 1,
+        }
+    }
+    at
+}
+
+fn decode_escapes(body: &[u8], loc: Loc, warnings: &mut Vec<(Loc, String)>) -> Res<Vec<u8>> {
     let mut out = Vec::with_capacity(body.len());
     let mut i = 0;
     while i < body.len() {
@@ -729,7 +791,11 @@ fn decode_escapes(body: &[u8], loc: Loc) -> Res<Vec<u8>> {
                 let mut buf = [0u8; 4];
                 out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
             }
-            _ => return err(loc, format!("unknown escape sequence '\\{}'", e as char)),
+            // Undefined by the standard; GCC, Clang and Microsoft C all take the character itself.
+            _ => {
+                warnings.push((loc, format!("unknown escape sequence '\\{}'", e as char)));
+                out.push(e);
+            }
         }
     }
     Ok(out)

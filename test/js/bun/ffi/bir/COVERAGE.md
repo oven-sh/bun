@@ -15,9 +15,9 @@ compiler refuses it on purpose; the diagnostic is asserted by a case in `fixture
 | 3. Extensions                          |   39 |      26 |      13 |             0 |
 | 4. Calling conventions                 |   30 |      19 |      11 |             0 |
 | 5. Constraint violations (diagnostics) |   42 |       1 |      41 |             0 |
-| 6. Borrowed test suites                |    2 |       0 |       2 |             0 |
+| 6. Borrowed test suites                |    2 |       2 |       0 |             0 |
 | 7. Not supported                       |   21 |       0 |       0 |            21 |
-| **Total**                              |  219 |     112 |      86 |            21 |
+| **Total**                              |  219 |     114 |      84 |            21 |
 
 Sections 3 and 4 are still at the level of groups: each group becomes one row per spelling (every attribute, every
 `__builtin_*`, every pragma, every shape × path) when its fixtures are written.
@@ -208,7 +208,7 @@ Paths: argument, return value, variadic argument, through a function pointer, to
 
 ## 5. Constraint violations (diagnostics)
 
-`fixtures/diagnostics/cases.json` has 208 cases, which predate this index and are grouped by feature (53 syntax
+`fixtures/diagnostics/cases.json` has 209 cases, which predate this index and are grouped by feature (53 syntax
 and type errors, 25 vector, 27 inline assembly, 11 conditional directives, 11 atomics, 9 VLA, 8 `const`, ...).
 The rows below are the "Constraints" paragraphs of C11; a row is covered when every constraint in it has a case
 whose `about` names the clause.
@@ -260,10 +260,10 @@ whose `about` names the clause.
 
 ## 6. Borrowed test suites
 
-| Suite                                                      | What                                           | Status  | Where                                                                                                                                                     |
-| ---------------------------------------------------------- | ---------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| chibicc `test/*.c` (MIT)                                   | 41 self-checking files, about 1,400 assertions | not yet | fixtures/borrowed-chibicc (being brought in: 23 of 40 files already pass as they are; the rest need GNU C that GCC itself rejects, or expose bugs to fix) |
-| c-testsuite `single-exec` (the 150 programs from scc, ISC) | 150 small programs that return 0               | not yet |                                                                                                                                                           |
+| Suite                        | What                                                                                                                                                         | Status  | Where                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- | --------------------------------------------------------------------------------------------------- |
+| chibicc `test/*.c` (MIT)     | 35 of its 41 test files as single programs and `function.c` as a two-unit project: 1,302 assertions. What was left out or removed, and why, is in the NOTICE | covered | borrowed/chibicc/\* (LP64 only; two need the x87 `long double`), borrowed/projects/chibicc-function |
+| scc `tests/cc/execute` (ISC) | 270 of its 277 programs, unchanged, each passing by returning 0; one more as a two-unit project                                                              | covered | borrowed/scc/\*, borrowed/projects/scc-0193-incomplete                                              |
 
 ## 7. Not supported
 
@@ -274,7 +274,7 @@ What the compiler refuses on purpose, with the diagnostic; each is asserted by a
 | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | Arithmetic on `_Float128`, `__float128`, `_Float16`, and on `long double` where it is IEEE binary128 (they can be declared, stored, passed on) | `computing with values of type '_Float128' is not supported yet`                                                                                                     | basics/wide-types-can-be-declared-but-not-computed-1                                    |
 | `long double _Complex` arithmetic                                                                                                              | `computing with values of type 'long double _Complex' is not supported yet`                                                                                          | case 106                                                                                |
-| Implicit `int`                                                                                                                                 | `a type specifier is required (implicit int is not supported)`                                                                                                       | cases under "syntax and type errors are diagnosed"                                      |
+| Implicit `int`, also for a parameter of an old-style definition that has no declaration                                                        | `a type specifier is required (implicit int is not supported)`                                                                                                       | cases under "syntax and type errors are diagnosed"                                      |
 | Implicit function declarations                                                                                                                 | `call to undeclared function 'f'; implicit function declarations are not allowed`                                                                                    | cases under "syntax and type errors are diagnosed"                                      |
 | Nested functions (GNU C)                                                                                                                       | `nested functions (a GNU C extension) are not supported: calling one through a pointer needs code on an executable stack`                                            | case 135                                                                                |
 | `__attribute__((naked))`                                                                                                                       | `__attribute__((naked)) is not supported: it changes how the code must be compiled`                                                                                  | case 130                                                                                |

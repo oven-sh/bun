@@ -59,7 +59,7 @@ static void example_3(void) {
 // EXAMPLE 5
 #define t5(x,y,z) x ## y ## z
 // EXAMPLE 7
-#define debug7(...) fprintf(stderr, __VA_ARGS__)
+#define debug7(...) fprintf(standard_error, __VA_ARGS__) /* the standard has stderr, which is a macro in some libraries */
 #define showlist(...) puts(#__VA_ARGS__)
 #define report(test, ...) ((test)?puts(#test): printf(__VA_ARGS__))
 

@@ -1,0 +1,20 @@
+These files come from scc, the Simple C Compiler:
+  git://git.simple-cc.org/scc  at commit 575a2d87cac49174b7f53aa6ac5f9186c2165697 (2026-08-24)
+  tests/cc/execute/*.c, the headers next to them, and include/
+scc is under the ISC licence; its text is in LICENSE next to this file. Its tests/cc/execute/README says that some
+of the tests were taken from https://github.com/andrewchambers/qc, by Andrew Chambers, who is among the copyright
+holders the LICENSE lists.
+
+The files are unchanged. A program passes when it returns 0 from main, as upstream has it; the two that print
+(0102-decl, 0131-hello) have what they print in their .expected, and every other .expected is empty.
+
+0193-incomplete.c is linked upstream with tests/cc/execute/test.c, which defines the object it declares; both are
+in ../projects/scc-0193-incomplete (as main.c and test.c).
+
+Left out:
+- 0026-implicitret.c, 0156-duff2.c and 0128-kr_names.c rely on implicit `int` (a function without a return type,
+  parameters of an old-style definition without a declaration), which this compiler refuses, as GCC and Clang do.
+- 0064-sysinclude.c needs its directory on the search path for <...> headers, which a fixture run as `bun file.c`
+  has no way to ask for.
+- 0147-intern_cpp.c tests scc's own predefined macros.
+- 0180-incomplete.c declares a parameter as an array of an incomplete structure type, which GCC and Clang refuse.

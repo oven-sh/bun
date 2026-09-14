@@ -222,6 +222,19 @@ impl Sema {
                         ),
                     );
                 }
+                // A brace list initializes the whole sub-object: what an earlier designator gave
+                // any part of it is overridden, mentioned again or not (C11 6.7.9p19).
+                if let Some(size) = self.tcx.size_of(ty) {
+                    out.retain(|item| {
+                        let at = match item {
+                            InitItem::Scalar { offset, .. }
+                            | InitItem::Bytes { offset, .. }
+                            | InitItem::Copy { offset, .. }
+                            | InitItem::Bits { offset, .. } => *offset,
+                        };
+                        at < offset || at >= offset + size
+                    });
+                }
                 let mut pos = 0;
                 let count = self.init_list(ty, offset, &mut entries, &mut pos, true, 0, out)?;
                 Ok(count)
@@ -254,8 +267,14 @@ impl Sema {
                 let mut data = bytes.to_vec();
                 let count = match len {
                     Some(len) => {
+                        // A constraint violation that GCC, Clang and Microsoft C all let pass with
+                        // a warning, keeping the characters that fit.
                         if n > *len {
-                            return err(loc, "initializer string is too long for the array");
+                            self.warnings.borrow_mut().push((
+                                loc,
+                                "initializer string is too long for the array".to_string(),
+                            ));
+                            data.truncate((*len * esize) as usize);
                         }
                         *len
                     }

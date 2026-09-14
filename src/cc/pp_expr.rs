@@ -505,17 +505,19 @@ impl ExprParser<'_> {
                 }
                 Ok(Value::signed(0))
             }
-            PpKind::Number | PpKind::CharLit => match classify(tok, self.dialect)?.tok {
-                Tok::Int { value, suffix, .. } => {
-                    let unsigned = suffix.unsigned || (value > i64::MAX as u64);
-                    Ok(Value {
-                        bits: value as i64,
-                        unsigned,
-                    })
+            PpKind::Number | PpKind::CharLit => {
+                match classify(tok, self.dialect, &mut Vec::new())?.tok {
+                    Tok::Int { value, suffix, .. } => {
+                        let unsigned = suffix.unsigned || (value > i64::MAX as u64);
+                        Ok(Value {
+                            bits: value as i64,
+                            unsigned,
+                        })
+                    }
+                    Tok::Char(v) => Ok(Value::signed(v)),
+                    _ => err(loc, "floating constant in preprocessor expression"),
                 }
-                Tok::Char(v) => Ok(Value::signed(v)),
-                _ => err(loc, "floating constant in preprocessor expression"),
-            },
+            }
             _ => err(
                 loc,
                 format!(

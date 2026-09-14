@@ -63,6 +63,17 @@ int main(void) { puts("ran"); return 0; }
       ],
     ],
     [
+      "what is not valid C but every compiler lets pass: a string longer than its array, an escape nobody defines",
+      `int puts(const char *);
+char three[3] = "abcdef";
+int main(void) { if (three[2] == 'c' && "\\q"[0] == 'q') puts("ran"); return 0; }
+`,
+      [
+        "warn: initializer string is too long for the array\n   at test.c:2:17\n",
+        "warn: unknown escape sequence '\\q'\n   at test.c:3:41\n",
+      ],
+    ],
+    [
       "a __declspec nobody has heard of",
       `__declspec(something_new(1, 2)) int f(void);
 int puts(const char *);

@@ -246,7 +246,11 @@ impl<S: TokenSource> Parser<S> {
     /// The next token. `#pragma pack` takes effect here, where it sits in the token stream.
     fn fetch(&mut self) -> Res<Token> {
         loop {
-            let token = classify(&self.src.next_token()?, self.dialect)?;
+            let token = classify(
+                &self.src.next_token()?,
+                self.dialect,
+                &mut self.sema.warnings.borrow_mut(),
+            )?;
             let op = match &token.tok {
                 Tok::Kw(Kw::MsIgnored) => continue,
                 Tok::Kw(Kw::VectorCall) => {
@@ -511,7 +515,7 @@ impl<S: TokenSource> Parser<S> {
         let mut message = None;
         if self.eat(Punct::Comma)? {
             match self.bump()?.tok {
-                Tok::Str(bytes) => message = Some(crate::token::display_bytes(&bytes)),
+                Tok::Str(bytes, _) => message = Some(crate::token::display_bytes(&bytes)),
                 _ => return err(loc, "expected a string literal in _Static_assert"),
             }
         }
@@ -574,6 +578,12 @@ impl<S: TokenSource> Parser<S> {
                     }
                     return self.parse_function_definition(&name, fty, decl, &spec);
                 }
+                if old_style {
+                    return err(
+                        decl.loc,
+                        "a list of parameter names without types is only allowed in a function definition",
+                    );
+                }
                 self.declare_function(name, Rc::clone(fty), &decl, &spec, false)?;
             } else {
                 self.parse_global_variable(name, decl, &spec)?;
@@ -606,6 +616,7 @@ impl<S: TokenSource> Parser<S> {
             }
             _ => None,
         };
+        let mut declared_names: Vec<Rc<str>> = Vec::new();
         // Tags declared here belong to the function, not to the file.
         self.sema.push_scope();
         while !self.at(Punct::LBrace) {
@@ -637,6 +648,7 @@ impl<S: TokenSource> Parser<S> {
                 param.ty = Sema::default_promoted_type(&declared);
                 param.local_ty = declared.qualified(quals);
                 param.loc = one.loc;
+                declared_names.push(name);
                 if !self.eat(Punct::Comma)? {
                     break;
                 }
@@ -644,6 +656,18 @@ impl<S: TokenSource> Parser<S> {
             self.expect(Punct::Semi)?;
         }
         self.sema.pop_scope();
+        if let Some(missing) = params
+            .iter()
+            .find(|p| !p.name.as_ref().is_some_and(|n| declared_names.contains(n)))
+        {
+            return err(
+                missing.loc,
+                format!(
+                    "parameter '{}' has no declaration (implicit int is not supported)",
+                    missing.name.as_deref().unwrap_or_default()
+                ),
+            );
+        }
         if let Some(prototype) = prototype {
             for (param, declared) in params.iter_mut().zip(&prototype.params) {
                 if param.local_ty.unatomic() == declared {
@@ -1123,7 +1147,7 @@ impl<S: TokenSource> Parser<S> {
                 let loc = self.bump()?.loc;
                 self.bump()?;
                 let mut label = Vec::new();
-                while let Tok::Str(part) = &self.cur.tok {
+                while let Tok::Str(part, _) = &self.cur.tok {
                     label.extend_from_slice(part);
                     self.bump()?;
                 }
@@ -1214,7 +1238,7 @@ impl<S: TokenSource> Parser<S> {
                 "alias" | "weakref" if has_args => {
                     let aloc = self.bump()?.loc;
                     let mut target = Vec::new();
-                    while let Tok::Str(part) = &self.cur.tok {
+                    while let Tok::Str(part, _) = &self.cur.tok {
                         target.extend_from_slice(part);
                         self.bump()?;
                     }
@@ -3244,7 +3268,7 @@ impl<S: TokenSource> Parser<S> {
         }
         self.expect(Punct::LParen)?;
         let mut template = Vec::new();
-        while let Tok::Str(part) = &self.cur.tok {
+        while let Tok::Str(part, _) = &self.cur.tok {
             template.extend_from_slice(part);
             self.bump()?;
         }
@@ -3274,7 +3298,7 @@ impl<S: TokenSource> Parser<S> {
             }
             loop {
                 if section == 2 {
-                    let Tok::Str(name) = &self.cur.tok else {
+                    let Tok::Str(name, _) = &self.cur.tok else {
                         return err(self.loc(), "expected a clobber string");
                     };
                     clobbers_memory |= &name[..] == b"memory";
@@ -3288,7 +3312,7 @@ impl<S: TokenSource> Parser<S> {
                     }
                     operand_names[section].push(operand_name);
                     let mut constraint = Vec::new();
-                    while let Tok::Str(part) = &self.cur.tok {
+                    while let Tok::Str(part, _) = &self.cur.tok {
                         constraint.extend_from_slice(part);
                         self.bump()?;
                     }
@@ -4360,7 +4384,7 @@ impl<S: TokenSource> Parser<S> {
                 let ty = self.sema.wide_elem_type(kind);
                 self.sema.int_lit(i64::from(value), ty, loc)
             }
-            Tok::Str(_) | Tok::WideStr(..) => {
+            Tok::Str(..) | Tok::WideStr(..) => {
                 // Adjacent string literals concatenate (translation phase 6); one wide part
                 // makes the whole literal wide.
                 let mut narrow: Vec<u8> = Vec::new();
@@ -4368,11 +4392,21 @@ impl<S: TokenSource> Parser<S> {
                 let mut wide = None;
                 loop {
                     match &self.cur.tok {
-                        Tok::Str(part) => {
+                        Tok::Str(part, escaped) => {
                             narrow.extend_from_slice(part);
-                            points.extend(
-                                crate::token::display_bytes(part).chars().map(|c| c as u32),
-                            );
+                            // Source characters become their code points; a byte written as an
+                            // escape is one element.
+                            let mut from = 0;
+                            for &at in escaped.iter().chain(std::iter::once(&(part.len() as u32))) {
+                                let run = &part[from..at as usize];
+                                points.extend(
+                                    crate::token::display_bytes(run).chars().map(|c| c as u32),
+                                );
+                                if let Some(&byte) = part.get(at as usize) {
+                                    points.push(u32::from(byte));
+                                }
+                                from = at as usize + 1;
+                            }
                         }
                         Tok::WideStr(kind, part) => {
                             if wide.is_some_and(|k| k != *kind) {
@@ -4589,11 +4623,9 @@ impl<S: TokenSource> Parser<S> {
                 self.expect(Punct::Comma)?;
                 let b = self.parse_type_name()?;
                 self.expect(Punct::RParen)?;
-                Ok(Some(self.sema.int_lit(
-                    i64::from(a == b),
-                    Type::Int,
-                    loc,
-                )?))
+                // (GCC: top-level qualifiers are ignored.)
+                let same = Sema::compatible(a.unqualified(), b.unqualified());
+                Ok(Some(self.sema.int_lit(i64::from(same), Type::Int, loc)?))
             }
             "unreachable" | "trap" => {
                 let args = self.parse_builtin_args()?;
@@ -4683,7 +4715,7 @@ impl<S: TokenSource> Parser<S> {
             }
             "cpu_supports" | "cpu_is" => {
                 self.expect(Punct::LParen)?;
-                let Tok::Str(feature) = self.cur.tok.clone() else {
+                let Tok::Str(feature, _) = self.cur.tok.clone() else {
                     return err(loc, format!("{name} takes a string literal"));
                 };
                 self.bump()?;
@@ -4729,7 +4761,7 @@ impl<S: TokenSource> Parser<S> {
             "bun_unsupported" => {
                 self.expect(Punct::LParen)?;
                 let mut message = Vec::new();
-                while let Tok::Str(part) = &self.cur.tok {
+                while let Tok::Str(part, _) = &self.cur.tok {
                     message.extend_from_slice(part);
                     self.bump()?;
                 }

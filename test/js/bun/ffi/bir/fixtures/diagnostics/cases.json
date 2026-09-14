@@ -204,13 +204,6 @@
  },
  {
   "about": "syntax and type errors are diagnosed",
-  "source": "char s[2] = \"abc\";",
-  "line": 1,
-  "column": 13,
-  "message": "initializer string is too long for the array"
- },
- {
-  "about": "syntax and type errors are diagnosed",
   "source": "struct P { int x; }; struct P p = { .q = 1 };",
   "line": 1,
   "column": 38,
@@ -1496,5 +1489,19 @@
   "line": 1,
   "column": 25,
   "message": "duplicate default in _Generic"
+ },
+ {
+  "about": "6.9.1p6: every parameter of an old-style definition is declared",
+  "source": "int f(a, b) int a; { return a + b; }\nint main(void) { return f(1, 2); }",
+  "line": 1,
+  "column": 10,
+  "message": "parameter 'b' has no declaration (implicit int is not supported)"
+ },
+ {
+  "about": "6.7.6.3p3: an identifier list in a declarator that is not a definition is empty",
+  "source": "int f(a, b);\nint main(void) { return 0; }",
+  "line": 1,
+  "column": 5,
+  "message": "a list of parameter names without types is only allowed in a function definition"
  }
 ]

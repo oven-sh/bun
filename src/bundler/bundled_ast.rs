@@ -157,7 +157,9 @@ bitflags::bitflags! {
         const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
-        // _padding: u6 fills the rest
+        /// A C file that defines `main`: a program, when it is the entry point.
+        const C_PROGRAM = 1 << 10;
+        // _padding: u5 fills the rest
     }
 }
 

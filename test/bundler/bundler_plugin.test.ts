@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import path, { dirname, join, resolve } from "node:path";
 import { supported as compilesC } from "../js/bun/ffi/bir/run-fixtures";
 import { itBundled } from "./expectBundled";
@@ -99,45 +100,68 @@ describe("bundler", () => {
   });
 
   // A C file reports "c" as its default loader and a plugin may rely on it implicitly, give the file another, or
-  // answer with C for a file that is not one.
-  if (compilesC) {
-    itBundled("plugin/LoadCLoader", {
-      target: "bun",
-      outdir: "/out",
-      files: {
-        "/index.ts": /* ts */ `
+  // answer with C for a file that is not one. What the bundle carries of C a plugin supplied is what it carries of
+  // any C: the compiled form, which needs neither the source's headers nor a compiler where the bundle runs.
+  (compilesC ? itBundled : itBundled.skip)("plugin/LoadCLoader", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/index.ts": /* ts */ `
           import { add } from "./add.c";
+          import { twice } from "./twice.c";
           import { answer } from "./generated.magic";
+          import { sub } from "virtual:sub";
           import notes from "./notes.c";
           import path from "./copied.c";
-          console.log(add(2, 3), answer(), notes, path.startsWith("./copied-") && path.endsWith(".c"));
+          console.log(add(2, 3), twice(4), answer(), sub(9, 4), notes, path.startsWith("./copied-") && path.endsWith(".c"));
         `,
-        "/add.c": "int add(int a, int b) { return a - b; }",
-        "/generated.magic": "",
-        "/notes.c": "not C at all",
-        "/copied.c": "nor is this",
-      },
-      plugins(builder) {
-        builder.onLoad({ filter: /add\.c$/ }, async args => {
-          if (args.loader !== "c") throw new Error("expected args.loader to be c, got " + args.loader);
-          return { contents: (await Bun.file(args.path).text()).replace("a - b", "a + b") };
-        });
-        builder.onLoad({ filter: /\.magic$/ }, () => ({ contents: "int answer(void) { return 42; }", loader: "c" }));
-        builder.onLoad({ filter: /notes\.c$/ }, async args => ({
-          contents: await Bun.file(args.path).text(),
-          loader: "text",
-        }));
-        builder.onLoad({ filter: /copied\.c$/ }, async args => ({
-          contents: await Bun.file(args.path).text(),
-          loader: "file",
-        }));
-      },
-      run: {
-        file: "/out/index.js",
-        stdout: "5 42 not C at all true",
-      },
-    });
-  }
+      "/add.c": '#include "extra.h"\nint add(int a, int b) { return a - b + EXTRA; }',
+      "/twice.c": '#include "extra.h"\nint twice(int a) { return a * 2 + EXTRA; }',
+      "/extra.h": "#define EXTRA 0\n",
+      "/generated.magic": "",
+      "/notes.c": "not C at all",
+      "/copied.c": "nor is this",
+    },
+    plugins(builder) {
+      // One that has nothing to say about the file leaves it to the next.
+      builder.onLoad({ filter: /add\.c$/ }, () => undefined);
+      builder.onLoad({ filter: /add\.c$/ }, async args => {
+        if (args.loader !== "c") throw new Error("expected args.loader to be c, got " + args.loader);
+        return { contents: (await Bun.file(args.path).text()).replace("a - b", "a + b") };
+      });
+      builder.onLoad({ filter: /twice\.c$/ }, async args => ({
+        contents: await Bun.file(args.path).text(),
+        loader: "c",
+      }));
+      builder.onLoad({ filter: /\.magic$/ }, () => ({ contents: "int answer(void) { return 42; }", loader: "c" }));
+      builder.onResolve({ filter: /^virtual:sub$/ }, () => ({ path: "sub", namespace: "virtual" }));
+      builder.onLoad({ filter: /^sub$/, namespace: "virtual" }, () => ({
+        contents: "int sub(int a, int b) { return a - b; }",
+        loader: "c",
+      }));
+      builder.onLoad({ filter: /notes\.c$/ }, async args => ({
+        contents: await Bun.file(args.path).text(),
+        loader: "text",
+      }));
+      builder.onLoad({ filter: /copied\.c$/ }, async args => ({
+        contents: await Bun.file(args.path).text(),
+        loader: "file",
+      }));
+    },
+    onAfterBundle(api) {
+      const assets = readdirSync(api.outdir).filter(name => name !== "index.js");
+      const compiled = assets.filter(name => readFileSync(join(api.outdir, name)).subarray(0, 4).toString() === "BIR0");
+      // add.c, twice.c, generated.magic and virtual:sub; copied.c is the file loader's: the plugin's bytes.
+      expect(compiled.length).toBe(4);
+      expect(assets.length).toBe(5);
+      const [copied] = assets.filter(name => name.startsWith("copied-"));
+      expect(readFileSync(join(api.outdir, copied), "utf8")).toBe("nor is this");
+    },
+    run: {
+      file: "/out/index.js",
+      stdout: "5 8 42 5 not C at all true",
+    },
+  });
 
   // Load Plugin Errors
   itBundled("plugin/LoadThrow", {

@@ -616,8 +616,8 @@ const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh
 ///
 /// PERF: deliberately not a hashed map (the old `phf::Map` SipHash-ed the full
 /// key, probed a displacement table, and finished with a memcmp on every
-/// lookup). With only 23 keys bucketing into 5 distinct lengths
-/// (3/4/5/6/9, all `.`-prefixed), a length-gated `match` is cheaper: one
+/// lookup). With only 24 keys bucketing into 6 distinct lengths
+/// (2/3/4/5/6/9, all `.`-prefixed), a length-gated `match` is cheaper: one
 /// `usize` compare rejects every wrong-length probe, and within each bucket
 /// rustc lowers the fixed-width byte-slice arms to single u32/u64 compares (no
 /// memcmp loop). This sits on the resolver hot path (`loaderFromPath` per
@@ -1176,6 +1176,19 @@ pub fn c_target(
     Ok(bun_cc::Target { arch, os })
 }
 
+/// The largest C source file the compiler takes (positions in one are 32 bits). What it says of a
+/// larger one is said of the file's size where a file is about to be read for it, so that such a
+/// file is not read to find out.
+pub const C_MAX_SOURCE_BYTES: u64 = 1 << 30;
+
+/// The message the compiler has for a source file of more than [`C_MAX_SOURCE_BYTES`].
+pub fn c_source_too_large(path: &[u8]) -> String {
+    format!(
+        "'{}' cannot be read: larger than {C_MAX_SOURCE_BYTES} bytes",
+        bstr::BStr::new(path)
+    )
+}
+
 /// What a bundle calls on a C module that was an entry point, `require(asset).__bun_run_c_main__()`:
 /// the runtime puts it on a module it loads from its compiled form, and it runs the module's
 /// `main`, if it has one, as `bun program.c` does.
@@ -1192,12 +1205,23 @@ impl core::fmt::Display for CTargetUnsupported {
                 "Compiling C is not supported on this platform yet (it is on {})",
                 bun_cc::Target::SUPPORTED
             ),
-            Some(target) => write!(
-                f,
-                "Compiling C for {} is not supported yet (it is for {})",
-                target.platform(),
-                bun_cc::Target::SUPPORTED
-            ),
+            // `bun-linux-arm64-musl`: the os, arch and libc, as `--target` spells them.
+            Some(target) => {
+                use bun_core::env::Architecture;
+                let arch = match target.arch {
+                    Architecture::X64 => "x64",
+                    Architecture::Arm64 => "arm64",
+                    Architecture::Wasm => "wasm",
+                };
+                write!(
+                    f,
+                    "Compiling C for bun-{}-{}{} is not supported yet (it is for {})",
+                    target.os.npm_name(),
+                    arch,
+                    target.libc,
+                    bun_cc::Target::SUPPORTED
+                )
+            }
         }
     }
 }

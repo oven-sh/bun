@@ -1260,50 +1260,34 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     }
 
     // A C file that is an entry point is a program when it has a `main`: the output it is the
-    // entry point of runs it, with the process's arguments, and exits with what it returns.
+    // entry point of runs it, with the process's arguments, and exits with what it returns, when
+    // that output is what the process was started with, as `bun program.c` does.
     //
-    // require("<asset>", { type: "c" }).__bun_run_c_main__()
+    // import.meta.main && require("<asset>", { type: "c" }).__bun_run_c_main__()
     //
     // The module's own statements load it the same way (`ParseTask`'s `Loader::C`), so this is the
-    // module they loaded. Only here is it run: bundled into another entry point, it is its exports.
-    if c.parse_graph().input_files.items_loader()[source_index as usize] == options::Loader::C
-        && !c
-            .parse_graph()
-            .input_files
-            .items_unique_key_for_additional_file()[source_index as usize]
-            .is_empty()
-    {
+    // module they loaded. Only here is it run: bundled into another entry point, or reached by a
+    // split `import()`, it is its exports.
+    if c.entry_point_runs_c_main(source_index) {
         let asset: &[u8] = &c
             .parse_graph()
             .input_files
             .items_unique_key_for_additional_file()[source_index as usize];
-        let mut properties = G::PropertyList::init_capacity(1);
-        VecExt::append(
-            &mut properties,
-            G::Property {
-                key: Some(Expr::init(E::String::init(b"type"), bun_ast::Loc::EMPTY)),
-                value: Some(Expr::init(E::String::init(b"c"), bun_ast::Loc::EMPTY)),
-                ..Default::default()
-            },
-        );
-        let attributes = Expr::init(
-            E::Object {
-                properties,
-                is_single_line: true,
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        );
-        let module = Expr::init(
+        let run_main = Expr::init(
             E::Call {
-                target: Expr {
-                    data: bun_ast::ExprData::ERequireCallTarget,
-                    loc: bun_ast::Loc::EMPTY,
-                },
-                args: bun_ast::ExprNodeList::from_slice(&[
-                    Expr::init(E::String::init(asset), bun_ast::Loc::EMPTY),
-                    attributes,
-                ]),
+                target: Expr::init(
+                    E::Dot {
+                        target: crate::parse_task::parse_worker::require_embedded_asset(
+                            arena,
+                            asset,
+                            Some(b"c"),
+                        ),
+                        name: options::C_RUN_MAIN_PROPERTY.into(),
+                        name_loc: bun_ast::Loc::EMPTY,
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                ),
                 ..Default::default()
             },
             bun_ast::Loc::EMPTY,
@@ -1311,17 +1295,15 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         stmts.push(Stmt::alloc(
             S::SExpr {
                 value: Expr::init(
-                    E::Call {
-                        target: Expr::init(
-                            E::Dot {
-                                target: module,
-                                name: options::C_RUN_MAIN_PROPERTY.into(),
-                                name_loc: bun_ast::Loc::EMPTY,
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        ),
-                        ..Default::default()
+                    E::Binary {
+                        op: js_ast::OpCode::BinLogicalAnd,
+                        left: Expr {
+                            data: js_ast::ExprData::EImportMetaMain(E::ImportMetaMain {
+                                inverted: false,
+                            }),
+                            loc: bun_ast::Loc::EMPTY,
+                        },
+                        right: run_main,
                     },
                     bun_ast::Loc::EMPTY,
                 ),
@@ -1357,6 +1339,9 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,
         minify_syntax: c.options.minify_syntax,
+        // How `import.meta.main` is spelled in the output format.
+        module_type: c.options.output_format,
+        target: c.options.target,
         mangled_props: Some(&c.mangled_props),
         module_info,
         // .const_values = c.graph.const_values,

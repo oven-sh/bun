@@ -2778,11 +2778,8 @@ pub mod bv2_impl {
                             [source_index.get() as usize];
                     additional_files
                         .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    if loader.is_pure_data() {
-                        self.graph.input_files.items_side_effects_mut()
-                            [source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
-                    }
+                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
+                        bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -2893,11 +2890,8 @@ pub mod bv2_impl {
                             [source_index.get() as usize];
                     additional_files
                         .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    if loader.is_pure_data() {
-                        self.graph.input_files.items_side_effects_mut()
-                            [source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
-                    }
+                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
+                        bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -3796,11 +3790,8 @@ pub mod bv2_impl {
                             [source_index.get() as usize];
                     additional_files
                         .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    if loader.is_pure_data() {
-                        self.graph.input_files.items_side_effects_mut()
-                            [source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
-                    }
+                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
+                        bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -3897,11 +3888,8 @@ pub mod bv2_impl {
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                    if loader.is_pure_data() {
-                        self.graph.input_files.items_side_effects_mut()
-                            [source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
-                    }
+                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
+                        bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -4705,11 +4693,9 @@ pub mod bv2_impl {
                                 [source_index.get() as usize];
                         let _ = additional_files
                             .push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                        if code.loader.is_pure_data() {
-                            this.graph.input_files.items_side_effects_mut()
-                                [source_index.get() as usize] =
-                                bun_ast::SideEffects::NoSideEffectsPureData;
-                        }
+                        this.graph.input_files.items_side_effects_mut()
+                            [source_index.get() as usize] =
+                            bun_ast::SideEffects::NoSideEffectsPureData;
                         this.graph.estimated_file_loader_count += 1;
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
@@ -5094,11 +5080,9 @@ pub mod bv2_impl {
                                     additional_files.push(crate::AdditionalFile::SourceIndex(
                                         task.source_index.get(),
                                     ));
-                                    if loader.is_pure_data() {
-                                        this.graph.input_files.items_side_effects_mut()
-                                            [source_index.get() as usize] =
-                                            bun_ast::SideEffects::NoSideEffectsPureData;
-                                    }
+                                    this.graph.input_files.items_side_effects_mut()
+                                        [source_index.get() as usize] =
+                                        bun_ast::SideEffects::NoSideEffectsPureData;
                                     this.graph.estimated_file_loader_count += 1;
                                 }
 
@@ -7019,11 +7003,9 @@ pub mod bv2_impl {
                         additional_files.push(crate::AdditionalFile::SourceIndex(
                             new_task.source_index.get(),
                         ));
-                        if loader.is_pure_data() {
-                            self.graph.input_files.items_side_effects_mut()
-                                [new_task.source_index.get() as usize] =
-                                bun_ast::SideEffects::NoSideEffectsPureData;
-                        }
+                        self.graph.input_files.items_side_effects_mut()
+                            [new_task.source_index.get() as usize] =
+                            bun_ast::SideEffects::NoSideEffectsPureData;
                         self.graph.estimated_file_loader_count += 1;
                     }
 
@@ -7309,10 +7291,9 @@ pub mod bv2_impl {
                         };
                     }
                 }
-                // Taken, so that the list is freed here: nothing drops a parse result's fields.
-                for path in core::mem::take(&mut parse_result.also_depends_on) {
-                    if this.should_add_watcher(&path) {
-                        let _ = this.bun_watcher_mut().unwrap().add_file_by_path_slow(&path);
+                for path in &parse_result.also_depends_on {
+                    if this.should_add_watcher(path) {
+                        let _ = this.bun_watcher_mut().unwrap().add_file_by_path_slow(path);
                     }
                 }
             }
@@ -7392,8 +7373,9 @@ pub mod bv2_impl {
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
                         result.content_hash_for_additional_file;
                     if !result.unique_key_for_additional_file.is_empty()
-                        && result.loader == Loader::Text
+                        && !result.loader.should_copy_for_bundling()
                     {
+                        // An asset the loader made from its input (compiled text, compiled C).
                         // `process_resolve_queue` only counts `should_copy_for_bundling()`
                         // loaders, and a zero count skips `process_files_to_copy`.
                         this.graph.estimated_file_loader_count += 1;

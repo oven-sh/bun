@@ -407,7 +407,12 @@ pub(crate) fn generate_code_for_lazy_export(
         }
     }
     let prints_runtime_require = this.options.output_format != crate::options::OutputFormat::Cjs;
-    let calls_runtime_require = prints_runtime_require && runtime_require_calls(&expr) > 0;
+    // How many such calls the whole export holds, where it is printed in one piece.
+    let require_calls = if prints_runtime_require {
+        runtime_require_calls(&expr)
+    } else {
+        0
+    };
 
     // Statements a loader added after the lazy export are printed as they are (`.c`: the one that
     // loads the module, whatever is imported from it).
@@ -423,14 +428,12 @@ pub(crate) fn generate_code_for_lazy_export(
                     _ => false,
                 })
                 .count() as u32;
-            if require_calls > 0 {
-                this.graph.generate_runtime_symbol_import_and_use(
-                    source_index,
-                    Index::part(part_index as u32),
-                    b"__require",
-                    require_calls,
-                )?;
-            }
+            this.graph.generate_runtime_symbol_import_and_use(
+                source_index,
+                Index::part(part_index as u32),
+                b"__require",
+                require_calls,
+            )?;
         }
     }
 
@@ -456,14 +459,12 @@ pub(crate) fn generate_code_for_lazy_export(
                 Index::init(source_index),
             )?;
 
-            if calls_runtime_require {
-                this.graph.generate_runtime_symbol_import_and_use(
-                    source_index,
-                    Index::part(1u32),
-                    b"__require",
-                    1,
-                )?;
-            }
+            this.graph.generate_runtime_symbol_import_and_use(
+                source_index,
+                Index::part(1u32),
+                b"__require",
+                require_calls,
+            )?;
         }
         _ => {
             // Otherwise, generate ES6 export statements. These are added as additional
@@ -509,6 +510,14 @@ pub(crate) fn generate_code_for_lazy_export(
                     // happened yet). So we need to wait until after tree shaking happens.
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
+                    // Also what `export * from` this file hands on.
+                    this.graph.ast.items_named_exports_mut()[source_index as usize].put(
+                        name,
+                        bun_ast::NamedExport {
+                            ref_: generated.0,
+                            alias_loc: key.loc,
+                        },
+                    )?;
                     let new_stmts: &mut [Stmt] =
                         alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                             S::Local {
@@ -530,15 +539,12 @@ pub(crate) fn generate_code_for_lazy_export(
                         this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                     parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
 
-                    let require_calls = runtime_require_calls(&value);
-                    if prints_runtime_require && require_calls > 0 {
-                        this.graph.generate_runtime_symbol_import_and_use(
-                            source_index,
-                            Index::part(generated.1),
-                            b"__require",
-                            require_calls,
-                        )?;
-                    }
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(generated.1),
+                        b"__require",
+                        u32::from(prints_runtime_require && is_on_runtime_require(&value)),
+                    )?;
                 }
             }
 
@@ -574,14 +580,12 @@ pub(crate) fn generate_code_for_lazy_export(
                 let parts = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                 parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
 
-                if calls_runtime_require {
-                    this.graph.generate_runtime_symbol_import_and_use(
-                        source_index,
-                        Index::part(generated.1),
-                        b"__require",
-                        runtime_require_calls(&expr),
-                    )?;
-                }
+                this.graph.generate_runtime_symbol_import_and_use(
+                    source_index,
+                    Index::part(generated.1),
+                    b"__require",
+                    require_calls,
+                )?;
             }
         }
     }

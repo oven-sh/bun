@@ -401,6 +401,17 @@ impl<'a> LinkerContext<'a> {
         Some(other)
     }
 
+    /// Whether the output `source_index` is the entry point of is a C program, which runs `main`
+    /// when it is what the process was started with: a C file the user named as an entry point
+    /// that defines one. The entry point of a chunk made for a split `import()` or `require()` of
+    /// a C file is the file's exports, as it is unbundled.
+    pub(crate) fn entry_point_runs_c_main(&self, source_index: u32) -> bool {
+        use crate::linker_graph::FileColumns as _;
+        self.graph.ast.items_flags()[source_index as usize].contains(AstFlags::C_PROGRAM)
+            && self.graph.files.items_entry_point_kind()[source_index as usize]
+                == EntryPoint::Kind::UserSpecified
+    }
+
     /// `"sideEffects": false` (or the resolver's equivalent), unless
     /// `--ignore-dce-annotations` says not to trust it.
     pub(crate) fn file_has_no_side_effects(&self, source_index: u32) -> bool {

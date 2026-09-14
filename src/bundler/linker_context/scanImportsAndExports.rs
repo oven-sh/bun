@@ -484,16 +484,20 @@ pub(crate) fn scan_imports_and_exports(
         {
             let mut export_star_ctx: Option<ExportStarContext> = None;
             let _trace = perf::trace("Bundler.ResolveExportStarStatements");
+            // Expression-style loaders defer code generation until linking. Code
+            // generation is done here because at this point we know that the
+            // "ExportsKind" field has its final value and will not be changed; and for
+            // every file before any export star is looked at, because an export star
+            // of such a file hands on the exports this generates.
             for source_index_ in &reachable {
-                let source_index = source_index_.get();
-                let id = source_index as usize;
-
-                // Expression-style loaders defer code generation until linking. Code
-                // generation is done here because at this point we know that the
-                // "ExportsKind" field has its final value and will not be changed.
+                let id = source_index_.get() as usize;
                 if col_ref!(ast_flags_list)[id].contains(AstFlags::HAS_LAZY_EXPORT) {
                     this.generate_code_for_lazy_export(id as u32)?;
                 }
+            }
+            for source_index_ in &reachable {
+                let source_index = source_index_.get();
+                let id = source_index as usize;
 
                 // Propagate exports for export star statements
                 if col_ref!(export_star_import_records)[id].len() > 0 {

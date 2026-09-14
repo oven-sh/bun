@@ -3988,6 +3988,7 @@ impl<'a> Resolver<'a> {
             false,
             None,
             None,
+            Fs::BomHandling::Convert,
         )?;
         // NOTE: reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.

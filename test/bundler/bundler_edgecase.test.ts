@@ -4324,5 +4324,61 @@ for (const backend of ["api", "cli"] as const) {
         },
       },
     });
+    // With code splitting the chunk keeps the const bindings and exports the ones another chunk
+    // imports with `export { }`. The TDZ read in the chunk still throws.
+    itBundled("edgecase/TopLevelVarOffSplittingKeepsTDZ", {
+      files: {
+        ...tdzAcrossCycleFiles,
+        "/entry.ts": /* ts */ `
+          import "./search";
+          import { fileSystemNode } from "./filesystem";
+          export const tag = fileSystemNode.name;
+          console.log("deps[1] =", fileSystemNode.deps[1]);
+          await import("./lazy");
+        `,
+        "/lazy.ts": /* ts */ `
+          import { tag } from "./entry";
+          console.log(tag);
+        `,
+      },
+      outdir: "/out",
+      splitting: true,
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        // entry.js re-exports from the shared chunk that holds the cycle and `tag`
+        const shared = "/out/" + readdirSync(api.outdir).find(f => /^entry-.*\.js$/.test(f))!;
+        api.expectFile(shared).toContain("const searchNode = ");
+        api.expectFile(shared).toMatch(/const tag\d* = fileSystemNode\.name/);
+        api.expectFile(shared).toMatch(/export \{\s*tag\d*\s*\}/);
+      },
+      run: {
+        file: "/out/entry.js",
+        error: "ReferenceError: Cannot access 'searchNode' before initialization.",
+        validate({ stderr }) {
+          expect(stderr).toContain("ReferenceError: Cannot access 'searchNode' before initialization.");
+        },
+      },
+    });
+    // A module the linker wraps in an __esm closure (here: reached through import() without code
+    // splitting) hoists its declarations out of the closure as var. The option does not reach it.
+    itBundled("edgecase/TopLevelVarOffWrappedModuleStillVar", {
+      files: {
+        ...tdzAcrossCycleFiles,
+        "/entry.ts": /* ts */ `
+          await import("./search");
+          const { fileSystemNode } = await import("./filesystem");
+          console.log("deps[1] =", fileSystemNode.deps[1]);
+        `,
+      },
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("const searchNode");
+      },
+      run: { stdout: "deps[1] = undefined" },
+    });
   });
 }

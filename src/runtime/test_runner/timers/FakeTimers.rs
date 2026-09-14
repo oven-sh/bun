@@ -21,12 +21,17 @@ unsafe extern "C" {
 #[derive(Default)]
 pub struct FakeTimers {
     active: bool,
+    /// Jest's `timerLimit`: the most timers one `runAllTimers()` call fires
+    /// before it throws. `useFakeTimers()` sets it on every activation.
+    timer_limit: u32,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
     /// - peek/takeFirst (provided by TimerHeap)
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
     /// - count (cannot be implemented efficiently with TimerHeap)
     pub(crate) timers: TimerHeap,
 }
+
+const DEFAULT_TIMER_LIMIT: u32 = 100_000;
 
 // `date_now_offset` is stored as `AtomicU64` (f64 bits) so the static is `Sync`
 // without `static mut`.
@@ -174,8 +179,9 @@ impl FakeTimers {
         self.active
     }
 
-    fn activate(&mut self, js_now: f64, global: &JSGlobalObject) {
+    fn activate(&mut self, js_now: f64, timer_limit: u32, global: &JSGlobalObject) {
         self.active = true;
+        self.timer_limit = timer_limit;
         CURRENT_TIME.set(global, &Timespec::EPOCH, Some(js_now));
     }
 
@@ -306,9 +312,27 @@ impl FakeTimers {
         Self::execute_until(global, until)
     }
 
+    /// A timer that re-arms itself on every fire never empties the heap:
+    /// `setInterval`, a recursive `setTimeout`, `Bun.cron`, or an interval that
+    /// a built-in module arms for itself (node:http's connections sweep). No
+    /// test timeout can interrupt this drain. Like Jest, fire at most
+    /// `timer_limit` timers, then throw if any remain.
     fn execute_all_timers(global: &JSGlobalObject) -> JsResult<()> {
-        while Self::execute_next(global)? {}
-        Ok(())
+        // SAFETY: per-thread `timer::All`, live for the VM lifetime; the
+        // borrow ends at this statement, before any timer fires.
+        let limit = unsafe { (*timer_all()).fake_timers.timer_limit };
+        for _ in 0..limit {
+            if !Self::execute_next(global)? {
+                return Ok(());
+            }
+        }
+        // SAFETY: as above; no timer is firing.
+        if unsafe { (*timer_all()).fake_timers.timers.peek() }.is_none() {
+            return Ok(());
+        }
+        Err(global.throw(format_args!(
+            "Aborting after running {limit} timers, assuming an infinite loop!"
+        )))
     }
 }
 
@@ -354,6 +378,7 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
 fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: FFI call into C++ JSMock
     let mut js_now = JSMock__getCurrentUnixTimeMs();
+    let mut timer_limit = DEFAULT_TIMER_LIMIT;
 
     // Check if options object was provided
     let args = frame.arguments_as_array::<1>();
@@ -365,27 +390,46 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             return Err(global.throw_invalid_arguments(format_args!(
                 "useFakeTimers() expects an options object"
             )));
-        } else if let Some(now) = options_value.get(global, "now")? {
-            if now.is_number() {
-                js_now = now.as_number();
-            } else if now.is_date() {
-                js_now = now.get_unix_timestamp();
-            } else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'now' must be a number or Date"
-                )));
+        } else {
+            if let Some(now) = options_value.get(global, "now")? {
+                if now.is_number() {
+                    js_now = now.as_number();
+                } else if now.is_date() {
+                    js_now = now.get_unix_timestamp();
+                } else {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'now' must be a number or Date"
+                    )));
+                }
+                // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
+                if !js_now.is_finite() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'now' must be a finite number or a valid Date"
+                    )));
+                }
             }
-            // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
-            if !js_now.is_finite() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'now' must be a finite number or a valid Date"
-                )));
+            if let Some(limit) = options_value.get(global, "timerLimit")? {
+                let n = if limit.is_number() {
+                    limit.as_number()
+                } else {
+                    f64::NAN
+                };
+                if !n.is_finite() || n < 1.0 || n > u32::MAX as f64 || n.trunc() != n {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'timerLimit' must be a positive integer"
+                    )));
+                }
+                timer_limit = n as u32;
             }
         }
     }
 
     // SAFETY: per-thread `timer::All`; `activate` does not re-enter `All`.
-    unsafe { (*timer_all()).fake_timers.activate(js_now, global) };
+    unsafe {
+        (*timer_all())
+            .fake_timers
+            .activate(js_now, timer_limit, global)
+    };
 
     // Set setTimeout.clock = true to signal that fake timers are enabled.
     // This is used by testing-library/react to detect if jest.advanceTimersByTime should be called.

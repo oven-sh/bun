@@ -14,6 +14,8 @@ use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 
 use crate::bun_fs::FileSystem;
+use crate::bun_json;
+use crate::initialize_store;
 
 use super::directories;
 use crate::lifecycle_script_runner::{
@@ -392,6 +394,8 @@ impl PackageManager {
         path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
 
+        put_npm_package_config_env(&mut script_env, cwd)?;
+
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
         // owning `NullDelimitedEnvMap` by value so its `K=V\0` buffers outlive
@@ -466,6 +470,42 @@ impl PackageManager {
 
         set
     }
+}
+
+/// The package's own `config` strings as `npm_package_config_<key>`, the subset `bun run` exports.
+fn put_npm_package_config_env(
+    script_env: &mut bun_dotenv::Map,
+    package_dir: &[u8],
+) -> Result<(), crate::Error> {
+    let package_json_path = join_abs_string_z::<platform::Auto>(package_dir, &[b"package.json"]);
+    let Ok(json_buf) = Syscall::File::read_from(Syscall::Fd::cwd(), package_json_path.as_bytes())
+    else {
+        return Ok(());
+    };
+    let json_src =
+        bun_ast::Source::init_path_string(package_json_path.as_bytes(), json_buf.as_slice());
+    let mut log = bun_ast::Log::init();
+
+    initialize_store();
+
+    let Ok(parsed) = bun_json::ParsedJson::parse_package_json(&json_src, &mut log) else {
+        return Ok(());
+    };
+    let Some(config) = parsed.root.get(b"config") else {
+        return Ok(());
+    };
+
+    config.try_for_each_property(|key, _key_loc, value| {
+        let Some(value) = value.as_utf8_string_literal() else {
+            return Ok(());
+        };
+        if key.is_empty() || value.is_empty() {
+            return Ok(());
+        }
+        script_env.put(&strings::concat(&[b"npm_package_config_", key]), value)
+    })?;
+
+    Ok(())
 }
 
 fn add_package_to_set(

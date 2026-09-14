@@ -1400,6 +1400,96 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
+    test("npm_config_local_prefix and npm_package_config_* are set for root and dependency scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      // Each script dumps the variables under test into env.json in its own cwd.
+      const captureEnv = `
+      require("fs").writeFileSync(
+        "env.json",
+        JSON.stringify({
+          localPrefix: process.env.npm_config_local_prefix,
+          config: Object.fromEntries(
+            Object.entries(process.env).filter(([name]) => name.startsWith("npm_package_config_")),
+          ),
+        }),
+      );
+      `;
+
+      await mkdir(join(packageDir, "dep"));
+      await Promise.all([
+        writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "root-project",
+            version: "1.0.0",
+            config: {
+              port: "8080",
+              shared: "from-root",
+              // Like `bun run`, only non-empty top-level string values are exported.
+              retries: 3,
+              nested: { key: "value" },
+              blank: "",
+            },
+            scripts: { postinstall: `${bunExe()} capture-env.js` },
+            dependencies: { "my-dep": "file:./dep" },
+            trustedDependencies: ["my-dep"],
+          }),
+        ),
+        writeFile(join(packageDir, "capture-env.js"), captureEnv),
+        writeFile(
+          join(packageDir, "dep", "package.json"),
+          JSON.stringify({
+            name: "my-dep",
+            version: "2.0.0",
+            config: { depkey: "dep-value", shared: "from-dep" },
+            scripts: { postinstall: `${bunExe()} capture-env.js` },
+          }),
+        ),
+        writeFile(join(packageDir, "dep", "capture-env.js"), captureEnv),
+      ]);
+
+      // `bun run`/`npm run` leave their own values in the environment of the commands they
+      // run (including this test under `bun run`); the install must replace them with its own.
+      const installEnv: Record<string, string> = Object.fromEntries(
+        Object.entries(testEnv).filter(([name]) => !name.startsWith("npm_package_config_")),
+      );
+      installEnv.npm_config_local_prefix = "/some/other/project";
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: installEnv,
+      });
+
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("+ my-dep@dep");
+      expect(exitCode).toBe(0);
+
+      expect(await file(join(packageDir, "env.json")).json()).toEqual({
+        localPrefix: packageDir,
+        config: {
+          npm_package_config_port: "8080",
+          npm_package_config_shared: "from-root",
+        },
+      });
+
+      // A dependency sees its own `config`, not the root's.
+      expect(await file(join(packageDir, "node_modules", "my-dep", "env.json")).json()).toEqual({
+        localPrefix: packageDir,
+        config: {
+          npm_package_config_depkey: "dep-value",
+          npm_package_config_shared: "from-dep",
+        },
+      });
+    });
+
     test("INIT_CWD is set to the correct directory", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;

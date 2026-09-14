@@ -1,0 +1,56 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`yarn berry migration workspaces and workspace: ranges 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 0,
+  "workspaces": {
+    "": {
+      "name": "berry-workspaces",
+      "dependencies": {
+        "pkg-a": "workspace:*",
+      },
+      "devDependencies": {
+        "two-range-deps": "^1.0.0",
+      },
+    },
+    "packages/pkg-a": {
+      "name": "pkg-a",
+      "version": "1.2.3",
+      "bin": {
+        "pkg-a": "./bin.js",
+      },
+      "dependencies": {
+        "no-deps": "^1.0.0",
+        "pkg-b": "workspace:^",
+      },
+    },
+    "packages/pkg-b": {
+      "name": "pkg-b",
+      "version": "2.0.0",
+      "dependencies": {
+        "a-dep": "^1.0.1",
+      },
+      "devDependencies": {
+        "pkg-a": "workspace:*",
+      },
+      "peerDependencies": {
+        "no-deps": "*",
+      },
+    },
+  },
+  "packages": {
+    "@types/is-number": ["@types/is-number@1.0.0", "http://localhost:1234/@types/is-number/-/is-number-1.0.0.tgz", {}, "sha512-v7Teha9FjTcou+/dtF3KLYGcrEl3j5gbY7kIEF1LrwP4fjiiWUOh5qJbPc4tK2nB5pJ0O9cexMAZZ1ushh3GGQ=="],
+
+    "a-dep": ["a-dep@1.0.2", "http://localhost:1234/a-dep/-/a-dep-1.0.2.tgz", {}, "sha512-786lp/Wqdz6jY9NOPFnU2OZAl/7wW/CWCHNn4I+0Or9NtA0F9I1TXtisuy8hMFw/6u6CYXwlzdwySiOdpJ94oQ=="],
+
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+
+    "pkg-a": ["pkg-a@workspace:packages/pkg-a"],
+
+    "pkg-b": ["pkg-b@workspace:packages/pkg-b"],
+
+    "two-range-deps": ["two-range-deps@1.0.0", "http://localhost:1234/two-range-deps/-/two-range-deps-1.0.0.tgz", { "dependencies": { "@types/is-number": ">=1.0.0", "no-deps": "^1.0.0" } }, "sha512-N+6kPy/GxuMncNz/EKuIrwdoYbh1qmvHDnw1UbM3sQE184kBn+6qAQgtf1wgT9dJnt6X+tWcTzSmfDvtJikVBA=="],
+  }
+}"
+`;

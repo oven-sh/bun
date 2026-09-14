@@ -614,6 +614,28 @@ Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pn
 
 After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.
 
+## Yarn migration
+
+Bun migrates a `yarn.lock` the same way when no `bun.lock` exists: both Yarn v1 lockfiles and Yarn 2+ ("Berry", the YAML format with a `__metadata` header) are converted to `bun.lock` during `bun install` or `bun pm migrate`, keeping every locked version. The original `yarn.lock` is left in place.
+
+For Yarn Berry lockfiles the migration handles:
+
+- npm packages, including `npm:` aliases, dist-tags, and per-package tarball URLs (`__archiveUrl`); integrity hashes are taken from the registry, because Berry's `checksum` is a hash of Yarn's own cache archive
+- workspaces (from the root `package.json` `workspaces` globs) and `workspace:` ranges
+- `patch:` dependencies: patches in your project (for example `.yarn/patches`) are added to `patchedDependencies` in `package.json` (for npm, git and tarball packages; Bun does not patch `file:` folders or workspaces, so those patches are reported and skipped), and `patch:` ranges in `package.json` are rewritten to the plain range they patch; Yarn's builtin compatibility patches are dropped, and a package with several `&`-joined patch files is left unpatched with a warning, since `patchedDependencies` takes one patch per package
+- `file:` folders and tarballs, tarball URLs, and git / `github:` dependencies (pinned to the locked commit)
+- `portal:` and `link:` dependencies, which are installed like `file:` dependencies; Bun does not support these protocols in `package.json`, so the ranges are rewritten to `file:` and a warning reports that the folder is now copied instead of linked
+- optional dependencies and peer dependencies (`dependenciesMeta` / `peerDependenciesMeta`), and `conditions` (`os` / `cpu`)
+- `resolutions` in the root `package.json`, including descriptors Yarn rewrote because of them
+- `catalog:` ranges, read from `catalog` / `catalogs` in `.yarnrc.yml` and copied into the `workspaces` object of `package.json`
+- `npmRegistryServer` and `npmScopes` in `.yarnrc.yml`: when they name a registry other than the one Bun is configured with, tarballs are fetched from it and a warning reminds you to configure it (and its credentials) in `bunfig.toml` or `.npmrc`
+
+Limitations:
+
+- entries using other protocols (for example `exec:`) are skipped with a warning and resolved by Bun from `package.json` instead
+- `libc` conditions are ignored, and Yarn settings such as `nodeLinker`, `packageExtensions`, and `supportedArchitectures` are not migrated
+- if the lockfile cannot be migrated, Bun prints why and resolves from `package.json` instead
+
 ---
 
 <Install />

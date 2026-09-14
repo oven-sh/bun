@@ -1,4 +1,4 @@
-// Bun.unsafe.ModuleGraph and the garbage collector: what keeps a graph (its loader, module
+// Bun.ModuleGraph and the garbage collector: what keeps a graph (its loader, module
 // records, CommonJS modules and, with `isolateIO`, its context) alive, and that nothing else does.
 import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
@@ -7,7 +7,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
-const ModuleGraph = Bun.unsafe.ModuleGraph;
+const ModuleGraph = Bun.ModuleGraph;
 type Graph = InstanceType<typeof ModuleGraph>;
 
 const dir = String(
@@ -442,7 +442,7 @@ test("ModuleGraph GC: survives collecting continuously", async () => {
       const dir = ${JSON.stringify(dir)};
       for (let i = 0; i < 3; i++) {
         const control = { stop: false, ticks: 0, httpPort: 0, tcpPort: 0, heard: [] };
-        const graph = new Bun.unsafe.ModuleGraph({ isolateIO: i % 2 === 0, globals: { TAG: "cc" + i, control } });
+        const graph = new Bun.ModuleGraph({ isolateIO: i % 2 === 0, globals: { TAG: "cc" + i, control } });
         const cjs = (await graph.import(join(dir, "uses-cjs.mjs"))).default;
         cjs.inc(); cjs.cache();
         const esm = await graph.import(join(dir, "esm.mjs"));

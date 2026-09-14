@@ -1,4 +1,4 @@
-// Bun.unsafe.ModuleGraph inside single-file executables (`bun build --compile`), with and without
+// Bun.ModuleGraph inside single-file executables (`bun build --compile`), with and without
 // `--bytecode`, `--minify` and code splitting. The compiled program instantiates modules that are embedded
 // in the executable several times through ModuleGraph, exercises dynamic import() of embedded chunks in
 // every ordering, hot shared code across instances, TLA / JSON / CommonJS / throwing modules, churn, and
@@ -59,7 +59,7 @@ const sources: Record<string, string> = {
   `,
   "worker.ts": `
     declare var self: Worker;
-    const MG = (Bun as any).unsafe.ModuleGraph;
+    const MG = (Bun as any).ModuleGraph;
     const url = new URL("./instance.js", import.meta.url).href;
     const log: string[] = [];
     const out: unknown[] = [];
@@ -73,7 +73,7 @@ const sources: Record<string, string> = {
     postMessage({ out, log });
   `,
   "entry.ts": `
-    const MG = (Bun as any).unsafe?.ModuleGraph;
+    const MG = (Bun as any).ModuleGraph;
     const url = new URL("./instance.js", import.meta.url).href;
     const scenario = process.argv[2];
     const log: string[] = [];

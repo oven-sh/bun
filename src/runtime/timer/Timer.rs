@@ -291,17 +291,26 @@ impl All {
         (f64::from(id) == number).then_some(id)
     }
 
-    fn remove_timer_by_id(&mut self, id: i32) -> Option<*mut TimeoutObject> {
-        let value: *mut EventLoopTimer = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
-            self.maps.set_timeout.swap_remove_at(idx).1
+    /// The timer `id` names for the running script, removed from the map
+    /// (see `VirtualMachine::current_context_may_name`).
+    fn remove_timer_by_id(&mut self, vm: &VirtualMachine, id: i32) -> Option<*mut TimeoutObject> {
+        let (map, idx) = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
+            (&mut self.maps.set_timeout, idx)
         } else {
             let idx = self.maps.set_interval.get_index(&id)?;
-            self.maps.set_interval.swap_remove_at(idx).1
+            (&mut self.maps.set_interval, idx)
         };
+        let value: *mut EventLoopTimer = map.values()[idx];
         // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
         debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
         // SAFETY: entry value points to TimeoutObject.event_loop_timer
-        Some(unsafe { TimeoutObject::from_timer_ptr(value) })
+        let timeout = unsafe { TimeoutObject::from_timer_ptr(value) };
+        // SAFETY: in the map ⇒ live.
+        if !vm.current_context_may_name(unsafe { (*timeout).internals.context }) {
+            return None;
+        }
+        map.swap_remove_at(idx);
+        Some(timeout)
     }
 
     pub(crate) fn clear_timer(
@@ -322,7 +331,7 @@ impl All {
                     return Ok(());
                 };
                 // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-                let Some(t) = all.remove_timer_by_id(id) else {
+                let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), id) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
@@ -380,7 +389,7 @@ impl All {
                     }
                     accumulator
                 };
-                let Some(t) = all.remove_timer_by_id(parsed) else {
+                let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), parsed) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer

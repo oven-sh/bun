@@ -4,7 +4,7 @@
 //! listener, an in-flight `fetch`, a watcher) embeds an [`AbortHandle`] armed
 //! in the context that was current when script opened it, and is stopped when
 //! that context stops: VM teardown, the `bun test --isolate` file swap, or the
-//! disposal of the `Bun.unsafe.ModuleGraph` the context was made for.
+//! disposal of the `Bun.ModuleGraph` the context was made for.
 //! `WebCore::ScriptExecutionContext` does the same for `ActiveDOMObject`s, and
 //! owns the Rust context of a graph.
 
@@ -26,7 +26,7 @@ pub enum StopReason {
     VmTeardown,
     /// `bun test --isolate` retired this file's realm; the VM keeps running.
     TestIsolation,
-    /// The `Bun.unsafe.ModuleGraph` the context was made for was disposed; the VM and
+    /// The `Bun.ModuleGraph` the context was made for was disposed; the VM and
     /// the realm keep running.
     Disposed,
 }
@@ -76,7 +76,7 @@ pub struct ScriptExecutionContext {
 /// While one is alive, native code is telling script that something of its own
 /// closed (a socket's `close` handler, a child process's `onExit`): the callback
 /// is called even if it was handed over inside the context of a
-/// `Bun.unsafe.ModuleGraph` that has since been disposed. Any other callback
+/// `Bun.ModuleGraph` that has since been disposed. Any other callback
 /// of such a graph is dropped where it would be called.
 pub struct TeardownNotification<'a> {
     global: &'a crate::JSGlobalObject,
@@ -531,7 +531,7 @@ impl ContextIdAllocator {
     }
 }
 
-// `WebCore::ScriptExecutionContext` owns the context of a `Bun.unsafe.ModuleGraph`.
+// `WebCore::ScriptExecutionContext` owns the context of a `Bun.ModuleGraph`.
 
 /// # Safety
 /// `vm` is this thread's live VM.

@@ -75,7 +75,7 @@ public:
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
-    // The Bun.unsafe.ModuleGraph the module belongs to (what loaded it, or the module that
+    // The Bun.ModuleGraph the module belongs to (what loaded it, or the module that
     // required it, did): its require cache, its loader for require(esm), and the scope its
     // wrapper closes over are the graph's. Null: the global object's.
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
@@ -160,11 +160,11 @@ public:
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
 
-// A `require.cache` object over `requireMap`: the global one, or a Bun.unsafe.ModuleGraph's
+// A `require.cache` object over `requireMap`: the global one, or a Bun.ModuleGraph's
 // together with one of the graph's modules (whose loader's ES modules it also lists).
 JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireMap, JSCommonJSModule* owner = nullptr);
 
-// `graph`: the Bun.unsafe.ModuleGraph whose loader is importing the file (the module goes in
+// `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,

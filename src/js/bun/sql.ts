@@ -1086,7 +1086,7 @@ function resetDefaultSQL(sql) {
 
 function ensureDefaultSQL() {
   if (!lazyDefaultSQL) {
-    // Shared by everything in the realm: not owned by whichever Bun.unsafe.ModuleGraph uses it first.
+    // Shared by everything in the realm: not owned by whichever Bun.ModuleGraph uses it first.
     resetDefaultSQL(AsyncContextFrame.run(undefined, SQL, undefined, undefined));
   }
 }

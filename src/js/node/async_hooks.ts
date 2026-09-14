@@ -47,7 +47,7 @@ class Frame {
   // frame object: holders of that exact frame and copies made from it later lose
   // the binding, earlier copies keep it. Usually undefined.
   masked: AsyncLocalStorage[] | undefined;
-  // The innermost Bun.unsafe.ModuleGraph (ModuleGraph.cpp) this frame is inside of; native code reads it.
+  // The innermost Bun.ModuleGraph (ModuleGraph.cpp) this frame is inside of; native code reads it.
   readonly graph: object | undefined;
   constructor(
     storage: AsyncLocalStorage,
@@ -67,7 +67,7 @@ class Frame {
 // Only run during debug
 function assertValidFrame(frame: unknown): boolean {
   for (var f = frame, n = 0; f !== undefined; f = (f as Frame).prev, n++) {
-    // A Bun.unsafe.ModuleGraph's context is a frame whose storage is the graph: made in
+    // A Bun.ModuleGraph's context is a frame whose storage is the graph: made in
     // ModuleGraph.cpp (null prototype), or a copy of one made here.
     $assert(
       f instanceof Frame || Object.getPrototypeOf(f) === null,

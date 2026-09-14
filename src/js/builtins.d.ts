@@ -226,7 +226,7 @@ declare function $errno(): TODO;
 declare function $extname(): TODO;
 declare function $fatal(): TODO;
 declare function $format(): TODO;
-// `requirer`: a CommonJS module; the registry is its Bun.unsafe.ModuleGraph's loader's. Omitted: the global object's.
+// `requirer`: a CommonJS module; the registry is its Bun.ModuleGraph's loader's. Omitted: the global object's.
 declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): any | undefined;
 declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
 declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];

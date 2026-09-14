@@ -98,6 +98,7 @@ static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunOb
 
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
+static JSValue constructModuleGraphObject(VM& vm, JSObject* bunObject);
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject);
 static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
@@ -926,6 +927,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     Image                                          BunObject_lazyPropCb_wrap_Image                                     DontDelete|PropertyCallback
     MD4                                            BunObject_lazyPropCb_wrap_MD4                                       DontDelete|PropertyCallback
     MD5                                            BunObject_lazyPropCb_wrap_MD5                                       DontDelete|PropertyCallback
+    ModuleGraph                                    constructModuleGraphObject                                          DontDelete|ReadOnly|PropertyCallback
     SHA1                                           BunObject_lazyPropCb_wrap_SHA1                                      DontDelete|PropertyCallback
     SHA224                                         BunObject_lazyPropCb_wrap_SHA224                                    DontDelete|PropertyCallback
     SHA256                                         BunObject_lazyPropCb_wrap_SHA256                                    DontDelete|PropertyCallback
@@ -1122,6 +1124,11 @@ static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     return WebCore::JSCookieMap::getConstructor(vm, zigGlobalObject);
+}
+
+static JSValue constructModuleGraphObject(VM& vm, JSObject* bunObject)
+{
+    return uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject())->JSModuleGraphConstructor();
 }
 
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)

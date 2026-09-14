@@ -4056,7 +4056,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
     is_commonjs_require: bool,
     force_loader: u8,
     // The `JSModuleLoader` that is fetching when it is not the global object's (a
-    // `Bun.unsafe.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
+    // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;

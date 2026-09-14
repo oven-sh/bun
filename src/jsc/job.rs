@@ -187,7 +187,7 @@ pub trait JobContext: Sized + 'static {
 
     /// Whether the job serves the whole realm rather than the context that
     /// happened to schedule it (work other contexts' requests join): it is
-    /// dropped only with the realm, not with a `Bun.unsafe.ModuleGraph`.
+    /// dropped only with the realm, not with a `Bun.ModuleGraph`.
     const SHARED_BY_REALM: bool = false;
 
     /// Pool thread, VM not yet in its final wait when the pool reached the job
@@ -266,7 +266,7 @@ impl JobList {
             }
         }
     }
-    /// A `Bun.unsafe.ModuleGraph`'s context stopped (JS thread): ask its live jobs to finish soon.
+    /// A `Bun.ModuleGraph`'s context stopped (JS thread): ask its live jobs to finish soon.
     pub fn cancel_of_context(&self, context: crate::ContextId) {
         let mut job = self.head;
         while !job.is_null() {

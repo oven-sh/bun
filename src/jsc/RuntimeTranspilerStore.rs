@@ -415,7 +415,7 @@ pub struct TranspilerJob {
     pub(crate) loader: Loader,
     pub(crate) promise: StrongOptional,
     /// The `JSModuleLoader` that is fetching, when it is not the global object's (a
-    /// `Bun.unsafe.ModuleGraph`'s): handed back with the result. Empty otherwise.
+    /// `Bun.ModuleGraph`'s): handed back with the result. Empty otherwise.
     pub(crate) module_loader: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the

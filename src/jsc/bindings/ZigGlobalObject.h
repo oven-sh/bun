@@ -182,7 +182,7 @@ public:
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
-    // The context that owns what the running script opens: that of the Bun.unsafe.ModuleGraph whose
+    // The context that owns what the running script opens: that of the Bun.ModuleGraph whose
     // context it runs in, else this global's own.
     WebCore::ScriptExecutionContext* currentScriptExecutionContext();
 
@@ -305,8 +305,8 @@ public:
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
-    // Bun.unsafe.ModuleGraph (ModuleGraph.cpp)
-    // Made with the first Bun.unsafe.ModuleGraph (ModuleGraph.cpp).
+    // Bun.ModuleGraph (ModuleGraph.cpp)
+    // Made with the first Bun.ModuleGraph (ModuleGraph.cpp).
     bool hasModuleGraphs() const { return !!m_moduleGraphs; }
     JSC::Structure* JSIsolatedModuleGraphStructure() const { return m_JSIsolatedModuleGraphStructure.getInitializedOnMainThread(this); }
 
@@ -833,7 +833,7 @@ private:
 public:
     // Promises rejected while they had no handler, awaiting handleRejectedPromises()
     // after the microtask drain, each with whose rejection it is as decided when it
-    // happened: a Bun.unsafe.ModuleGraph, or null for the global object's own code.
+    // happened: a Bun.ModuleGraph, or null for the global object's own code.
     // Guarded by cellLock() like WriteBarrierList (visited on the GC thread).
     class RejectedPromiseQueue {
     public:

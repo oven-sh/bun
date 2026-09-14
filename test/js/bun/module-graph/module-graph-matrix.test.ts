@@ -1,4 +1,4 @@
-// Bun.unsafe.ModuleGraph — permutation suite.
+// Bun.ModuleGraph — permutation suite.
 //
 // Systematic coverage rather than scenario tests: every (site × target × ordering) combination of
 // dynamic import() across several instances of the same graph, shared-code correctness across
@@ -12,9 +12,9 @@ import { rmSync, writeFileSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
 
-type ModuleGraphOptions = NonNullable<ConstructorParameters<typeof Bun.unsafe.ModuleGraph>[0]>;
-type Graph = InstanceType<typeof Bun.unsafe.ModuleGraph>;
-const ModuleGraphClass = Bun.unsafe.ModuleGraph;
+type ModuleGraphOptions = NonNullable<ConstructorParameters<typeof Bun.ModuleGraph>[0]>;
+type Graph = InstanceType<typeof Bun.ModuleGraph>;
+const ModuleGraphClass = Bun.ModuleGraph;
 
 /** A temporary directory with `files` (harness tempDir), as a plain path. */
 function fixture(files: Record<string, string>): string {

@@ -82,7 +82,7 @@ public:
     LazyProperty<JSObject, JSString> fileProperty;
     LazyProperty<JSObject, JSString> pathProperty;
 
-    // The Bun.unsafe.ModuleGraph the module belongs to: import.meta.main is whether it is the
+    // The Bun.ModuleGraph the module belongs to: import.meta.main is whether it is the
     // graph's first import, and import.meta.require requires into the graph. Null otherwise.
     Bun::JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, Bun::JSModuleGraph*);

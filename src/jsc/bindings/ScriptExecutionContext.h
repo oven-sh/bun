@@ -57,7 +57,7 @@ public:
     ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
     // A graph's context in `parent`'s realm.
     explicit ScriptExecutionContext(ScriptExecutionContext& parent);
-    // A further context in `parent`'s global, for a Bun.unsafe.ModuleGraph: what the graph's
+    // A further context in `parent`'s global, for a Bun.ModuleGraph: what the graph's
     // script opens (ActiveDOMObjects here; native handles, timers and sockets in its Rust half)
     // belongs to it and goes when it stops.
     static Ref<ScriptExecutionContext> createForModuleGraph(ScriptExecutionContext& parent);

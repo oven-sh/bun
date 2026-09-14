@@ -25,7 +25,7 @@ namespace Bun {
 
 class JSIsolatedModuleGraph;
 
-// Bun.unsafe.ModuleGraph: a further instance of a program in this global object. It has a
+// Bun.ModuleGraph: a further instance of a program in this global object. It has a
 // JSC module loader of its own whose module scope (the "overlay", a lexical environment
 // over the global one) holds the host's `globals`, and a CommonJS require cache of its own.
 // Code is shared with every other graph whose `globals` have the same names; state is not.

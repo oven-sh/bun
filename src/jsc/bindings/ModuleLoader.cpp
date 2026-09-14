@@ -472,7 +472,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(JSC::JSValue::decode(encodedPromiseValue));
-    // The loader that fetched: a Bun.unsafe.ModuleGraph's, or (empty) the global object's.
+    // The loader that fetched: a Bun.ModuleGraph's, or (empty) the global object's.
     JSValue moduleLoader = JSC::JSValue::decode(encodedModuleLoader);
     Bun::JSModuleGraph* graph = moduleLoader ? Bun::moduleGraphOfLoader(globalObject, uncheckedDowncast<JSC::JSModuleLoader>(moduleLoader)) : nullptr;
 

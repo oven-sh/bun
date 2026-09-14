@@ -571,7 +571,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         T::pending_input_set_cached(this_value, global, JSValue::ZERO);
         T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
-        // A write whose context stopped meanwhile (a disposed `Bun.unsafe.ModuleGraph`'s)
+        // A write whose context stopped meanwhile (a disposed `Bun.ModuleGraph`'s)
         // reports neither its result nor its error.
         let write_context_live = vm.is_context_live(this.write_context().get());
         if !write_context_live && this.pending_close().get() {

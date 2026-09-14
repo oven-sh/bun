@@ -369,7 +369,7 @@ pub struct VirtualMachine {
     /// stopped only by teardown.
     pub vm_context: crate::ScriptExecutionContext,
     pub(crate) context_ids: crate::script_execution_context::ContextIdAllocator,
-    /// The contexts made for `Bun.unsafe.ModuleGraph`s, by id, stopped or not. Empty:
+    /// The contexts made for `Bun.ModuleGraph`s, by id, stopped or not. Empty:
     /// every context question has the root context for an answer.
     pub(crate) graph_contexts:
         bun_collections::ArrayHashMap<crate::ContextId, NonNull<crate::ScriptExecutionContext>>,
@@ -412,14 +412,14 @@ unsafe extern "C" {
         promise: JSValue,
     ) -> c_int;
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
-    /// ModuleGraph.cpp: the context of the innermost `Bun.unsafe.ModuleGraph` the
+    /// ModuleGraph.cpp: the context of the innermost `Bun.ModuleGraph` the
     /// current async context is inside of, or null.
     // Round-tripped opaquely through C++ (from `Bun__ScriptExecutionContext__create`).
     #[allow(improper_ctypes)]
     safe fn Bun__currentGraphContext(
         global: &JSGlobalObject,
     ) -> *const crate::ScriptExecutionContext;
-    /// ModuleGraph.cpp: deliver an uncaught exception thrown by a `Bun.unsafe.ModuleGraph`'s
+    /// ModuleGraph.cpp: deliver an uncaught exception thrown by a `Bun.ModuleGraph`'s
     /// module code (the Exception's throw site decides), or an unhandled rejection whose
     /// owner promiseRejectionTracker decided, to that graph's `onError`. true: delivered
     /// (no test failure, exit code or `--unhandled-rejections` policy); false: not a
@@ -1066,14 +1066,14 @@ impl VirtualMachine {
     }
 
     /// The context of the realm's own script: what belongs to the realm rather
-    /// than to whichever `Bun.unsafe.ModuleGraph` first needed it.
+    /// than to whichever `Bun.ModuleGraph` first needed it.
     #[inline]
     pub fn root_context(&self) -> &crate::ScriptExecutionContext {
         &self.root_context
     }
 
     /// [`current_context`](Self::current_context) when it is a
-    /// `Bun.unsafe.ModuleGraph`'s (stopped or not).
+    /// `Bun.ModuleGraph`'s (stopped or not).
     #[inline]
     pub fn current_graph_context(&self) -> Option<&crate::ScriptExecutionContext> {
         if self.graph_contexts.count() == 0 {
@@ -1083,7 +1083,7 @@ impl VirtualMachine {
         unsafe { Bun__currentGraphContext(self.global()).as_ref() }
     }
 
-    /// The `Bun.unsafe.ModuleGraph` context `id` names, until it is freed.
+    /// The `Bun.ModuleGraph` context `id` names, until it is freed.
     pub fn graph_context(&self, id: crate::ContextId) -> Option<&crate::ScriptExecutionContext> {
         if self.graph_contexts.count() == 0
             || id == self.root_context.id()
@@ -1105,6 +1105,16 @@ impl VirtualMachine {
             || self
                 .graph_context(id)
                 .is_some_and(|context| !context.is_stopped())
+    }
+
+    /// Whether the running script may name by number (a timer id) something `owner`'s script
+    /// made: the host may name anything; a graph's script its own and the host's (whose
+    /// `globalThis` it shares anyway), never another graph's.
+    pub fn current_context_may_name(&self, owner: crate::ContextId) -> bool {
+        match self.current_graph_context() {
+            None => true,
+            Some(current) => owner == current.id() || owner == self.root_context.id(),
+        }
     }
 
     /// The event loop's iteration counter.
@@ -1170,7 +1180,7 @@ impl VirtualMachine {
     }
 
     /// One stop-phase sweep over the armed handles of this VM's contexts.
-    /// Every `Bun.unsafe.ModuleGraph` context of the realm goes with it.
+    /// Every `Bun.ModuleGraph` context of the realm goes with it.
     pub fn stop_context_handles(&mut self, reason: crate::StopReason) -> SweepResult {
         let mut result = self.root_context.stop_handles(reason);
         if reason == crate::StopReason::VmTeardown {
@@ -1186,7 +1196,7 @@ impl VirtualMachine {
         result
     }
 
-    /// `WebCore::ScriptExecutionContext` for a `Bun.unsafe.ModuleGraph`: the
+    /// `WebCore::ScriptExecutionContext` for a `Bun.ModuleGraph`: the
     /// context that owns what the graph's script opens.
     pub fn create_graph_context(
         &mut self,
@@ -1981,7 +1991,7 @@ impl VirtualMachine {
             return true;
         }
 
-        // An exception thrown by a Bun.unsafe.ModuleGraph's module code is that graph's to
+        // An exception thrown by a Bun.ModuleGraph's module code is that graph's to
         // handle, ahead of the test runner and the thread-wide path. (A rejection
         // re-entering here under --unhandled-rejections=strict/throw was already judged.)
         if !is_rejection && Bun__ModuleGraph__handleUncaughtException(global_object, err) {
@@ -4123,7 +4133,7 @@ impl VirtualMachine {
         self.unhandled_rejection_owned(global_object, reason, promise, JSValue::NULL);
     }
 
-    /// `owner`: for a rejection from the tracker queue, the `Bun.unsafe.ModuleGraph` whose
+    /// `owner`: for a rejection from the tracker queue, the `Bun.ModuleGraph` whose
     /// code rejected the promise (its `onError` takes it), or null.
     pub fn unhandled_rejection_owned(
         &mut self,

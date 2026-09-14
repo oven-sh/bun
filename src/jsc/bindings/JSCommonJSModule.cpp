@@ -120,7 +120,7 @@ static JSCommonJSModule* requirerOf(JSValue require)
     return bound ? dynamicDowncast<JSCommonJSModule>(bound->boundThis()) : nullptr;
 }
 
-// `require.main` of a require() that belongs to a Bun.unsafe.ModuleGraph is the graph's first
+// `require.main` of a require() that belongs to a Bun.ModuleGraph is the graph's first
 // import, from the graph's cache: an own accessor on the function, shadowing the prototype's.
 JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphRequireMainGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
@@ -392,7 +392,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObje
     JSModuleGraph* graph = requirer ? requirer->moduleGraph() : nullptr;
     if (!graph)
         return JSValue::encode(thisObject->lazyRequireCacheObject());
-    // A require() that belongs to a Bun.unsafe.ModuleGraph: a view of that graph's cache.
+    // A require() that belongs to a Bun.ModuleGraph: a view of that graph's cache.
     if (JSValue existing = graph->requireCache())
         return JSValue::encode(existing);
     auto& vm = globalObject->vm();
@@ -912,7 +912,7 @@ public:
             0,
             jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
         // module.@requireMap, for CommonJS.ts: the require cache the module reads and writes.
-        // The global one here; a Bun.unsafe.ModuleGraph's module has its graph's as an own property.
+        // The global one here; a Bun.ModuleGraph's module has its graph's as an own property.
         this->putDirect(vm, clientData(vm)->builtinNames().requireMapPrivateName(), uncheckedDowncast<Zig::GlobalObject>(globalObject)->requireMap(),
             JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
     }

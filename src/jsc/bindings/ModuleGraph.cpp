@@ -647,12 +647,13 @@ void JSIsolatedModuleGraph::destroy(JSCell* cell)
     graph->JSIsolatedModuleGraph::~JSIsolatedModuleGraph();
 }
 
-// ─── Bun.unsafe.ModuleGraph ──────────────────────────────────────────────────────────
+// ─── Bun.ModuleGraph ──────────────────────────────────────────────────────────
 
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_import);
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_dispose);
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_run);
 static JSC_DECLARE_CUSTOM_GETTER(jsModuleGraphGetter_mainModule);
+static JSC_DECLARE_CUSTOM_GETTER(jsModuleGraphConstructorGetter_current);
 
 static JSModuleGraph* thisModuleGraph(JSGlobalObject* globalObject, ThrowScope& scope, JSValue thisValue, ASCIILiteral method)
 {
@@ -709,6 +710,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphGetter_mainModule, (JSGlobalObject * globa
     JSModuleGraph* graph = thisModuleGraph(globalObject, scope, JSValue::decode(thisValue), "mainModule"_s);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(graph->mainPath());
+}
+
+// ModuleGraph.current: the graph whose context the calling code is running in (what it opens now
+// would be that graph's), or undefined in the host's. For host functions shared by several graphs.
+JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphConstructorGetter_current, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+{
+    JSIsolatedModuleGraph* graph = currentIsolatedModuleGraph(defaultGlobalObject(globalObject));
+    return JSValue::encode(graph ? JSValue(graph) : jsUndefined());
 }
 
 class JSModuleGraphPrototype final : public JSNonFinalObject {
@@ -793,12 +802,13 @@ private:
     {
         Base::finishCreation(vm, 1, "ModuleGraph"_s, PropertyAdditionMode::WithoutStructureTransition);
         putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+        putDirectCustomAccessor(vm, Identifier::fromString(vm, "current"_s), CustomGetterSetter::create(vm, jsModuleGraphConstructorGetter_current, nullptr), PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     }
 };
 
 const ClassInfo JSModuleGraphConstructor::s_info = { "ModuleGraph"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleGraphConstructor) };
 
-// new Bun.unsafe.ModuleGraph({ globals?, onError?, isolateIO? })
+// new Bun.ModuleGraph({ globals?, onError?, isolateIO? })
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -857,11 +867,6 @@ void initJSModuleGraphClassStructure(LazyClassStructure::Initializer& init)
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
-}
-
-extern "C" EncodedJSValue Bun__ModuleGraph__constructor(JSGlobalObject* globalObject)
-{
-    return JSValue::encode(defaultGlobalObject(globalObject)->JSModuleGraphConstructor());
 }
 
 } // namespace Bun

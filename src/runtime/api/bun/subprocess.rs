@@ -141,7 +141,7 @@ pub struct Subprocess<'a> {
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
     /// Follows the `signal` option until `clear_abort_signal`; armed only in a
-    /// `Bun.unsafe.ModuleGraph` context, which kills it when disposed (children
+    /// `Bun.ModuleGraph` context, which kills it when disposed (children
     /// of the realm's own script are the process auto-killer's).
     pub(crate) abort_handle: bun_jsc::AbortHandle,
 

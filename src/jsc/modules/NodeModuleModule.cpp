@@ -269,7 +269,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         val = Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1).transferToWTFString();
     }
 
-    // Called from a Bun.unsafe.ModuleGraph's code: that graph's require().
+    // Called from a Bun.ModuleGraph's code: that graph's require().
     RELEASE_AND_RETURN(
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::moduleGraphOfRunningCode(globalObject))));
 }

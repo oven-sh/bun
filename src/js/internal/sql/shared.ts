@@ -949,7 +949,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /// inside it rather than in whatever context the native callback happens to fire in
   /// (none for a socket event, the close() caller's when the socket closes synchronously).
   public readonly callbackAsyncContext: unknown;
-  /// The Bun.unsafe.ModuleGraph context frame the SQL instance was created inside of, if any:
+  /// The Bun.ModuleGraph context frame the SQL instance was created inside of, if any:
   /// every connection of the pool is opened in it, so it belongs to that graph.
   public readonly ownerGraphFrame: unknown;
 

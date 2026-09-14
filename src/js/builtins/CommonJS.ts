@@ -17,7 +17,7 @@ $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
   const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
-  // The global require cache, or the one of the Bun.unsafe.ModuleGraph this module belongs to.
+  // The global require cache, or the one of the Bun.ModuleGraph this module belongs to.
   // (`this` need not be a module: Module.prototype.require.call({ filename }, id).)
   const requireMap: RequireMap = this.$requireMap || $requireMap;
   if (id.startsWith("node:")) {
@@ -161,7 +161,7 @@ export function requireResolve(this: JSCommonJSModule, id: string, options: { pa
 $visibility = "Private";
 export function internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap) {
   // A native addon is loaded once per process: its one module object is the global cache's,
-  // which a Bun.unsafe.ModuleGraph's cache then also points at.
+  // which a Bun.ModuleGraph's cache then also points at.
   const loaded = $requireMap.$get(id);
   if (loaded) {
     $assert(requireMap !== $requireMap, "Module " + JSON.stringify(id) + " should not be in the map");
@@ -193,7 +193,7 @@ export function loadEsmIntoCjs(resolvedSpecifier: string, requirer?: JSCommonJSM
 }
 
 // `requirer`: the module whose require() this is. The ES module is loaded by the loader of the
-// Bun.unsafe.ModuleGraph that module belongs to, or the global object's.
+// Bun.ModuleGraph that module belongs to, or the global object's.
 $visibility = "Private";
 export function requireESM(this, resolved: string, requirer?: JSCommonJSModule) {
   // `$esmLoadSync` answers from the registry for a record that is already
@@ -242,7 +242,7 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
 }
 
 $visibility = "Private";
-// `requireMap`: the global require cache, or a Bun.unsafe.ModuleGraph's together with one of
+// `requireMap`: the global require cache, or a Bun.ModuleGraph's together with one of
 // the graph's modules (`owner`, which names the loader whose ES modules it also lists).
 export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSModule) {
   var moduleMap = new Map();

@@ -78,7 +78,7 @@ public:
     bool wasModuleMock = false;
 };
 
-// `graph`: the Bun.unsafe.ModuleGraph whose loader is fetching, or null. A CommonJS file
+// `graph`: the Bun.ModuleGraph whose loader is fetching, or null. A CommonJS file
 // becomes a module of that graph's require cache.
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,

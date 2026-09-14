@@ -294,6 +294,9 @@ pub struct Interpreter {
     pub(crate) has_pending_activity: AtomicU32,
     pub(crate) started: AtomicBool,
     pub(crate) keep_alive: JsCell<bun_io::KeepAlive>,
+    /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
+    /// child the script spawns belongs to it, and once it stops the script runs no further.
+    pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
 
     pub(crate) async_commands_executing: Cell<u32>,
 
@@ -571,6 +574,7 @@ impl Interpreter {
             has_pending_activity: AtomicU32::new(0),
             started: AtomicBool::new(false),
             keep_alive: JsCell::new(bun_io::KeepAlive::default()),
+            context: Cell::new(None),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
@@ -928,7 +932,14 @@ impl Interpreter {
     /// For sequencing states' `child_done`: an interrupted pipeline member stops
     /// where it is instead of running its next command.
     pub(crate) fn interrupted(&self, id: NodeId) -> bool {
-        self.node(id).base().is_some_and(|b| b.interrupted)
+        self.context_stopped() || self.node(id).base().is_some_and(|b| b.interrupted)
+    }
+
+    /// The `Bun.ModuleGraph` whose script started this was disposed (or its realm is going).
+    pub(crate) fn context_stopped(&self) -> bool {
+        self.context
+            .get()
+            .is_some_and(|id| !bun_jsc::virtual_machine::VirtualMachine::get().is_context_live(id))
     }
 
     /// Some ancestor is a member of a multi-command pipeline.
@@ -1287,6 +1298,8 @@ impl Interpreter {
                     // instead; a terminating VM settles nothing.
                     let event_loop = global_this.bun_vm().event_loop_mut();
                     match buffers {
+                        // The promise of a disposed graph's script never settles.
+                        _ if self.context_stopped() => {}
                         Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
                             resolve,
                             global_this,
@@ -1354,6 +1367,12 @@ impl Interpreter {
             ));
         }
         Self::incr_pending_activity_flag(&self.has_pending_activity);
+        self.context.set(
+            global_this
+                .bun_vm()
+                .current_graph_context()
+                .map(bun_jsc::ScriptExecutionContext::id),
+        );
 
         let shell = self.root_shell.as_ptr();
         let ast = &raw const self.args.get().script_ast;

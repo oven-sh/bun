@@ -1,4 +1,4 @@
-// Bun.unsafe.ModuleGraph — further instantiations of an ES module graph in THIS
+// Bun.ModuleGraph — further instantiations of an ES module graph in THIS
 // global, sharing every ES module's executable/CodeBlock (and so JIT code) with the first
 // load while giving each graph its own module environments and its own values
 // for the names the host passes as `globals`.
@@ -10,15 +10,15 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { createRequire } from "node:module";
 import { join, resolve } from "path";
 
-type ModuleGraphOptions = Bun.unsafe.ModuleGraphOptions;
-type ModuleGraphInstance = Bun.unsafe.ModuleGraph & {
+type ModuleGraphOptions = Bun.ModuleGraphOptions;
+type ModuleGraphInstance = Bun.ModuleGraph & {
   process: NodeJS.Process;
   import(specifier: string): Promise<any>;
 };
-const ModuleGraphClass = Bun.unsafe.ModuleGraph as { new (opts?: ModuleGraphOptions): ModuleGraphInstance };
+const ModuleGraphClass = Bun.ModuleGraph as { new (opts?: ModuleGraphOptions): ModuleGraphInstance };
 
-test("Bun.unsafe.ModuleGraph is exposed", () => {
-  expect(typeof Bun.unsafe.ModuleGraph).toBe("function");
+test("Bun.ModuleGraph is exposed", () => {
+  expect(typeof Bun.ModuleGraph).toBe("function");
 });
 
 // What a host passes in `globals` to give each graph its own process state: a `process`
@@ -166,7 +166,7 @@ async function collected(
 }
 const jsc = require("bun:jsc") as typeof import("bun:jsc");
 
-describe("Bun.unsafe.ModuleGraph", () => {
+describe("Bun.ModuleGraph", () => {
   test("is a class: requires new, has a prototype, dispose is idempotent and import after dispose rejects", async () => {
     expect(() => (ModuleGraphClass as any)()).toThrow("cannot be invoked without 'new'");
     const g = new ModuleGraphClass();
@@ -572,7 +572,7 @@ describe("Bun.unsafe.ModuleGraph", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — module linking semantics per instance", () => {
+describe("Bun.ModuleGraph — module linking semantics per instance", () => {
   test("re-export chains (export *, export * as ns, export {x as y} from) resolve within the instance and stay live", async () => {
     const dir = fixture({
       "origin.mjs": `export let n = 0; export function inc() { n++ } export default function d() { return "d" + n }`,
@@ -775,7 +775,7 @@ describe("Bun.unsafe.ModuleGraph — module linking semantics per instance", () 
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — shared CodeBlocks under JIT tier-up", () => {
+describe("Bun.ModuleGraph — shared CodeBlocks under JIT tier-up", () => {
   test("a module function hot enough to be DFG/FTL-compiled while running in instance A still reads and writes instance B's module variables when B calls it", async () => {
     const dir = fixture({
       "hot.mjs": `let counter = 0; const tag = process.env.T; export const K = { k: process.env.T };
@@ -853,7 +853,7 @@ describe("Bun.unsafe.ModuleGraph — shared CodeBlocks under JIT tier-up", () =>
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — API validation and error attribution edges", () => {
+describe("Bun.ModuleGraph — API validation and error attribution edges", () => {
   test("constructor and import() argument validation", async () => {
     const g = ModuleGraph();
     const dir = fixture({ "unused.mjs": "" });
@@ -921,19 +921,19 @@ describe("Bun.unsafe.ModuleGraph — API validation and error attribution edges"
     expect(errs).toEqual(["uncaughtException:late-z"]); // thrown by graph code after dispose → still that graph's onError
     // An onError that rethrows the graph's error: the host's uncaught exception once, not attributed to the graph again.
     {
-      const script = `const seen = []; process.on("uncaughtException", e => { seen.push("host:" + e.message); console.log(JSON.stringify(seen)); }); const g = new Bun.unsafe.ModuleGraph({ onError: (e) => { seen.push("graph:" + e.message); throw e } }); (await g.import(${JSON.stringify(join(dir, "boom.mjs"))})).boom();`;
+      const script = `const seen = []; process.on("uncaughtException", e => { seen.push("host:" + e.message); console.log(JSON.stringify(seen)); }); const g = new Bun.ModuleGraph({ onError: (e) => { seen.push("graph:" + e.message); throw e } }); (await g.import(${JSON.stringify(join(dir, "boom.mjs"))})).boom();`;
       const r = await runBun(["-e", script]);
       expect([r.stdout, r.exitCode]).toEqual([`["graph:boom","host:boom"]`, 0]);
     }
     // An onError that throws: that is the host's own uncaught exception (observed in a child process; here the test runner owns uncaught errors).
-    const script = `process.on("uncaughtException", e => console.log("host:" + e.message)); const bad = await new Bun.unsafe.ModuleGraph({ onError: () => { throw new Error("onError itself throws") } }).import(${JSON.stringify(join(dir, "boom.mjs"))}); bad.boom();`;
+    const script = `process.on("uncaughtException", e => console.log("host:" + e.message)); const bad = await new Bun.ModuleGraph({ onError: () => { throw new Error("onError itself throws") } }).import(${JSON.stringify(join(dir, "boom.mjs"))}); bad.boom();`;
     const r = await runBun(["-e", script]);
     expect([r.stdout, r.exitCode]).toEqual(["host:onError itself throws", 0]);
   });
 
   test("a graph can create a nested ModuleGraph; the inner graph is independent of the outer one", async () => {
     const dir = fixture({
-      "outer.mjs": `export async function makeInner(p) { const G = Bun.unsafe.ModuleGraph; const g = new G({ globals: { process: Object.create(process, { env: { value: { T: "inner" }, enumerable: true } }) } }); const m = await g.import(p); return [process.env.T, m.t()] }`,
+      "outer.mjs": `export async function makeInner(p) { const G = Bun.ModuleGraph; const g = new G({ globals: { process: Object.create(process, { env: { value: { T: "inner" }, enumerable: true } }) } }); const m = await g.import(p); return [process.env.T, m.t()] }`,
       "inner.mjs": `export function t() { return process.env.T }`,
     });
     const outer = await ModuleGraph({ env: { T: "outer" } }).import(join(dir, "outer.mjs"));
@@ -952,7 +952,7 @@ describe("Bun.unsafe.ModuleGraph — API validation and error attribution edges"
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — instance evaluation algorithm", () => {
+describe("Bun.ModuleGraph — instance evaluation algorithm", () => {
   test("a module is never evaluated twice in one instance when an in-flight TLA dependency parks one import() and another import() reaches a shared dependency meanwhile", async () => {
     const dir = fixture({
       "t.mjs": `globalThis.__evals.push("t:start"); await new Promise(r => setTimeout(r, 30)); globalThis.__evals.push("t:end"); export const t = 1`,
@@ -1047,7 +1047,7 @@ describe("Bun.unsafe.ModuleGraph — instance evaluation algorithm", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — host stays correct while graphs exist", () => {
+describe("Bun.ModuleGraph — host stays correct while graphs exist", () => {
   test("host require.cache invalidation and module._compile still see NEW source after a graph has loaded the same CommonJS file", async () => {
     const dir = fixture({ "v.cjs": `module.exports = 1`, "loader.cjs": `module.exports = (p) => require(p)` });
     const g = ModuleGraph();
@@ -1084,7 +1084,7 @@ describe("Bun.unsafe.ModuleGraph — host stays correct while graphs exist", () 
 // Error attribution matrix: where an error thrown by graph code surfaces, for each way of
 // throwing × each place it can be thrown from. "graph" = the graph's onError (or its own
 // process handlers); "import" = the import()/call rejects/throws to the caller; never the host.
-describe("Bun.unsafe.ModuleGraph — error attribution matrix", () => {
+describe("Bun.ModuleGraph — error attribution matrix", () => {
   const src = `export const T = process.env.T;
     export function syncThrow() { throw new Error("sync:" + T) }
     export function timerThrow() { setTimeout(() => { throw new Error("timer:" + T) }, 0) }
@@ -1182,8 +1182,8 @@ describe("Bun.unsafe.ModuleGraph — error attribution matrix", () => {
         process.on("uncaughtException", e => { seen.push("host:uncaughtException:" + e.message); done(); });
         process.on("unhandledRejection", e => { seen.push("host:unhandledRejection:" + e.message); done(); });
         // one rethrows from a microtask; the other logs the stack (drops the error's frames) and rejects with it
-        const rethrow = new Bun.unsafe.ModuleGraph({ onError: (e) => { seen.push("rethrow:" + e.message); queueMicrotask(() => { throw e; }); } });
-        const rereject = new Bun.unsafe.ModuleGraph({ onError: (e) => { seen.push("rereject:" + e.message); void e.stack; Promise.reject(e); } });
+        const rethrow = new Bun.ModuleGraph({ onError: (e) => { seen.push("rethrow:" + e.message); queueMicrotask(() => { throw e; }); } });
+        const rereject = new Bun.ModuleGraph({ onError: (e) => { seen.push("rereject:" + e.message); void e.stack; Promise.reject(e); } });
         (await rethrow.import("./boom.mjs")).boom();
         const m2 = await rereject.import("./boom.mjs?2"); m2.boom();
         // an object graph code once threw and caught does not make a later host rejection with it the graph's
@@ -1300,7 +1300,7 @@ describe("Bun.unsafe.ModuleGraph — error attribution matrix", () => {
     expect(seen.sort()).toEqual(["A<-reject:A", "A<-timer:A", "B<-reject:B", "B<-timer:B"]);
   });
   test("an error taken by onError does not fail the process: natural exit code 0, also with --unhandled-rejections=strict", async () => {
-    const script = `const g = new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "x" }, enumerable: true } }) }, onError: (e, kind) => console.log(kind + ":" + e.message) });
+    const script = `const g = new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "x" }, enumerable: true } }) }, onError: (e, kind) => console.log(kind + ":" + e.message) });
       const m = await g.import(${JSON.stringify(join(dir, "e.mjs"))}); m.timerThrow(); m.rejection();`;
     expect([await runBun(["-e", script]), await runBun(["--unhandled-rejections=strict", "-e", script])]).toEqual([
       { stdout: "unhandledRejection:reject:x\nuncaughtException:timer:x", stderr: "", exitCode: 0 },
@@ -1309,7 +1309,7 @@ describe("Bun.unsafe.ModuleGraph — error attribution matrix", () => {
   });
   test("without onError and without local handlers, a graph's uncaught error reaches the host's uncaughtException (documented)", async () => {
     // Run in a child so the host-level uncaught error is observable without failing this test runner.
-    const script = `const g = new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "nohandler" }, enumerable: true } }) } });
+    const script = `const g = new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "nohandler" }, enumerable: true } }) } });
       process.on("uncaughtException", e => console.log("host:" + e.message));
       const m = await g.import(${JSON.stringify(join(dir, "e.mjs"))}); m.timerThrow();`;
     const out = await runBun(["-e", script]);
@@ -1317,7 +1317,7 @@ describe("Bun.unsafe.ModuleGraph — error attribution matrix", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — CommonJS surface per graph", () => {
+describe("Bun.ModuleGraph — CommonJS surface per graph", () => {
   const dir = fixture({
     "state.cjs": `let n = 0; module.exports = { inc: () => ++n, env: () => process.env.T, file: __filename, dir: __dirname, mod: module };`,
     "main.cjs": `const s = require("./state.cjs"); module.exports = { s, main: require.main === module, cacheKeys: () => Object.keys(require.cache), resolve: p => require.resolve(p), children: () => module.children.map(c => c.id), paths: module.paths, del: () => { delete require.cache[require.resolve("./state.cjs")]; return require("./state.cjs") } }`,
@@ -1468,7 +1468,7 @@ describe("Bun.unsafe.ModuleGraph — CommonJS surface per graph", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — binding forms, one per test (instance vs instance vs host)", () => {
+describe("Bun.ModuleGraph — binding forms, one per test (instance vs instance vs host)", () => {
   const dir = fixture({
     "leaf.mjs": `export let live = 0; export function bump() { live++ } export default function def() { return "def" } export class K {} export const obj = { n: 0 };`,
     "hop1.mjs": `export { live, bump, default, K, obj } from "./leaf.mjs"; export { live as renamed } from "./leaf.mjs";`,
@@ -1536,7 +1536,7 @@ describe("Bun.unsafe.ModuleGraph — binding forms, one per test (instance vs in
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — shared code under tier-up, one access path per test", () => {
+describe("Bun.ModuleGraph — shared code under tier-up, one access path per test", () => {
   const dir = fixture({
     "paths.mjs": `let v = process.env.T; let counter = 0; const holder = { get g() { return v }, set s(x) { v = x } };
     export class C { field = v; #priv = v; static sfield = process.env.T; get acc() { return v } priv() { return this.#priv } static st() { return v } }
@@ -1600,7 +1600,7 @@ describe("Bun.unsafe.ModuleGraph — shared code under tier-up, one access path 
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — concurrency", () => {
+describe("Bun.ModuleGraph — concurrency", () => {
   const dir = fixture({
     "tla.mjs": `globalThis.__c = (globalThis.__c ?? 0) + 1; await new Promise(r => setTimeout(r, 5)); export const n = globalThis.__c; export const who = process.env.T`,
     "dep-on-tla.mjs": `import { who } from "./tla.mjs"; export const w = who`,
@@ -1642,9 +1642,9 @@ describe("Bun.unsafe.ModuleGraph — concurrency", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — nested graphs, stack traces, misc host integration", () => {
+describe("Bun.ModuleGraph — nested graphs, stack traces, misc host integration", () => {
   const dir = fixture({
-    "outer.mjs": `export async function nest(p, env) { const g = new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: env, enumerable: true } }) } }); const m = await g.import(p); return { outer: process.env.T, inner: m.t(), innerSeesOuterGlobal: m.g() } }
+    "outer.mjs": `export async function nest(p, env) { const g = new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: env, enumerable: true } }) } }); const m = await g.import(p); return { outer: process.env.T, inner: m.t(), innerSeesOuterGlobal: m.g() } }
       globalThis.__outerMark = 1;`,
     "inner.mjs": `export const t = () => process.env.T; export const g = () => typeof globalThis.__outerMark`,
     "stack.mjs": `export function boom() {\n  throw new Error("here")\n}\nexport function trace() { try { boom() } catch (e) { return e.stack } }\nexport function prepared() { const prev = Error.prepareStackTrace; Error.prepareStackTrace = (e, frames) => frames.map(f => f.getFileName()); try { return new Error("x").stack } finally { Error.prepareStackTrace = prev } }`,
@@ -1657,7 +1657,7 @@ describe("Bun.unsafe.ModuleGraph — nested graphs, stack traces, misc host inte
       "w-mod.mjs": `export const who = T; export function later() { setTimeout(() => { throw new Error("in-worker:" + T) }, 0) }`,
       "worker.mjs": `import { parentPort } from "node:worker_threads";
         const seen = [];
-        const mk = t => new Bun.unsafe.ModuleGraph({ globals: { T: t }, onError: (e, kind) => { seen.push(kind + ":" + e.message); if (seen.length === 2) parentPort.postMessage({ whos, seen: seen.sort() }); } });
+        const mk = t => new Bun.ModuleGraph({ globals: { T: t }, onError: (e, kind) => { seen.push(kind + ":" + e.message); if (seen.length === 2) parentPort.postMessage({ whos, seen: seen.sort() }); } });
         const a = await mk("A").import("./w-mod.mjs"), b = await mk("B").import("./w-mod.mjs");
         const whos = [a.who, b.who, a !== b];
         a.later(); b.later();`,
@@ -1693,7 +1693,7 @@ describe("Bun.unsafe.ModuleGraph — nested graphs, stack traces, misc host inte
     expect(m.prepared()[0]).toBe(join(dir, "stack.mjs"));
   });
   test("console output from graph code goes to the process's stdout/stderr", async () => {
-    const script = `const m = await new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "c" }, enumerable: true } }) } }).import(${JSON.stringify(join(dir, "console.mjs"))}); m.log();`;
+    const script = `const m = await new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "c" }, enumerable: true } }) } }).import(${JSON.stringify(join(dir, "console.mjs"))}); m.log();`;
     const r = await runBun(["-e", script]);
     expect([r.stdout, r.stderr]).toEqual(["from-graph:c", "err-from-graph"]);
   });
@@ -1713,7 +1713,7 @@ describe("Bun.unsafe.ModuleGraph — nested graphs, stack traces, misc host inte
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — constructor / method contract", () => {
+describe("Bun.ModuleGraph — constructor / method contract", () => {
   const dir = fixture({
     "ok.mjs": `export const env = process.env.K ?? null; export const cwd = process.cwd(); export const g = typeof globalThis.__injected`,
   });
@@ -1826,7 +1826,7 @@ describe("Bun.unsafe.ModuleGraph — constructor / method contract", () => {
 // require() in a graph — import.meta.require, a bare require in an ES module, createRequire(),
 // require inside CommonJS code — loads into the graph: its instance of an ES module, its own
 // CommonJS module objects, its own require.cache.
-describe("Bun.unsafe.ModuleGraph — require(): ES modules and CommonJS modules per graph", () => {
+describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per graph", () => {
   const dir = fixture({
     "c.cjs": `__cjsEvals.push("c@" + (typeof T === "undefined" ? "host" : T)); let n = 0; module.exports = { inc() { return ++n }, who: () => (typeof T === "undefined" ? "host" : T), dyn: () => import("./e.mjs"), req: () => require("./e.mjs") }`,
     "named.cjs": `exports.value = 42; exports.fn = () => "named"`,
@@ -1927,7 +1927,7 @@ describe("Bun.unsafe.ModuleGraph — require(): ES modules and CommonJS modules 
 });
 
 // require()/import of each module kind from each side, per graph: the loader matrix.
-describe("Bun.unsafe.ModuleGraph — loader matrix (importer kind × importee kind)", () => {
+describe("Bun.ModuleGraph — loader matrix (importer kind × importee kind)", () => {
   const dir = fixture({
     "esm.mjs": `export const kind = "esm"; export const who = process.env.T; export let n = 0; export const inc = () => ++n;`,
     "cjs.cjs": `let n = 0; module.exports = { kind: "cjs", who: process.env.T, inc: () => ++n };`,
@@ -2018,7 +2018,7 @@ describe("Bun.unsafe.ModuleGraph — loader matrix (importer kind × importee ki
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — error objects from graph code: messages, stacks, types", () => {
+describe("Bun.ModuleGraph — error objects from graph code: messages, stacks, types", () => {
   const dir = fixture({
     "syntax.mjs": `export const x = ;`,
     "syntax-dep.mjs": `import "./syntax.mjs"`,
@@ -2123,7 +2123,7 @@ describe("Bun.unsafe.ModuleGraph — error objects from graph code: messages, st
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — template sharing and file changes", () => {
+describe("Bun.ModuleGraph — template sharing and file changes", () => {
   test("a file edited between two graphs: the later graph loads the file as it is now", async () => {
     const dir = fixture({ "v.mjs": `export const v = 1`, "w.mjs": `export const v = 1` });
     expect((await ModuleGraph().import(join(dir, "v.mjs"))).v).toBe(1);
@@ -2156,7 +2156,7 @@ describe("Bun.unsafe.ModuleGraph — template sharing and file changes", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — scale", () => {
+describe("Bun.ModuleGraph — scale", () => {
   test("a 300-module graph instantiates into 5 graphs; each graph's cost is a small fraction of the template", async () => {
     const files: Record<string, string> = {};
     const N = 300;
@@ -2228,7 +2228,7 @@ describe("Bun.unsafe.ModuleGraph — scale", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — require(esm) by module state, per graph", () => {
+describe("Bun.ModuleGraph — require(esm) by module state, per graph", () => {
   const dir = fixture({
     "sync.mjs": `globalThis.__evals = (globalThis.__evals ?? 0) + 1; export const s = process.env.T`,
     "tla.mjs": `await new Promise(r => setTimeout(r, 20)); export const t = process.env.T`,
@@ -2282,7 +2282,7 @@ describe("Bun.unsafe.ModuleGraph — require(esm) by module state, per graph", (
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — instance evaluation: async edge cases", () => {
+describe("Bun.ModuleGraph — instance evaluation: async edge cases", () => {
   const dir = fixture({
     "rej-string.mjs": `await null; throw "plain-string"`,
     "rej-undefined.mjs": `await null; throw undefined`,
@@ -2390,7 +2390,7 @@ describe("Bun.unsafe.ModuleGraph — instance evaluation: async edge cases", () 
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — values crossing the host/graph boundary", () => {
+describe("Bun.ModuleGraph — values crossing the host/graph boundary", () => {
   const dir = fixture({
     "x.mjs": `
     export class Animal { speak() { return "graph-animal" } }
@@ -2460,7 +2460,7 @@ describe("Bun.unsafe.ModuleGraph — values crossing the host/graph boundary", (
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — top-level for-await in an instance (module body as async driver)", () => {
+describe("Bun.ModuleGraph — top-level for-await in an instance (module body as async driver)", () => {
   const dir = fixture({
     "gen.mjs": `async function* g() { yield 1; yield 2; yield 3 } let s = 0; for await (const v of g()) s += v; export const sum = s`,
     "sync-iterable.mjs": `let s = 0; for await (const v of [1, Promise.resolve(2), 3]) s += v; export const sum = s`,
@@ -2510,7 +2510,7 @@ describe("Bun.unsafe.ModuleGraph — top-level for-await in an instance (module 
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — generators, iterators, WeakRef/FinalizationRegistry, Atomics from graph code", () => {
+describe("Bun.ModuleGraph — generators, iterators, WeakRef/FinalizationRegistry, Atomics from graph code", () => {
   const dir = fixture({
     "g.mjs": `
     export function* counter() { let i = 0; while (true) yield [process.env.T, i++] }
@@ -2571,7 +2571,7 @@ describe("Bun.unsafe.ModuleGraph — generators, iterators, WeakRef/Finalization
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — specifiers and paths", () => {
+describe("Bun.ModuleGraph — specifiers and paths", () => {
   test("unicode, spaces, and very long path segments in module paths", async () => {
     const longName = "l".repeat(100) + ".mjs"; // long, but within Windows MAX_PATH together with the temp dir
     const dir = fixture({
@@ -2639,7 +2639,7 @@ describe("Bun.unsafe.ModuleGraph — specifiers and paths", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — CJS/ESM interop flags per graph", () => {
+describe("Bun.ModuleGraph — CJS/ESM interop flags per graph", () => {
   const dir = fixture({
     "esm-default.mjs": `export default function d() { return "d:" + process.env.T } export const named = "n"`,
     "cjs-esmodule-flag.cjs": `Object.defineProperty(exports, "__esModule", { value: true }); exports.default = "flagged-default:" + process.env.T; exports.named = "flagged-named"`,
@@ -2676,7 +2676,7 @@ describe("Bun.unsafe.ModuleGraph — CJS/ESM interop flags per graph", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — module namespace objects per instance", () => {
+describe("Bun.ModuleGraph — module namespace objects per instance", () => {
   const dir = fixture({
     "ns.mjs": `export let late; export const a = 1; export function f() {} export default "d"; export { a as z }; setTimeout(() => {}, 0); late = "set"`,
     "star.mjs": `export * from "./ns.mjs"; export const own = 2`,
@@ -2720,7 +2720,7 @@ describe("Bun.unsafe.ModuleGraph — module namespace objects per instance", () 
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — TLA body as generator: resume points", () => {
+describe("Bun.ModuleGraph — TLA body as generator: resume points", () => {
   const dir = fixture({
     "finally.mjs": `export const log = []; try { log.push("try"); await Promise.reject(new Error("x")) } catch (e) { log.push("catch:" + e.message); await null; log.push("after-await-in-catch") } finally { await null; log.push("finally") } log.push("end:" + process.env.T)`,
     "meta-after-await.mjs": `const before = import.meta.url; await new Promise(r => setTimeout(r, 2)); export const same = before === import.meta.url; export const env = process.env.T; export const dyn = (await import("./dep.mjs")).v`,
@@ -2771,7 +2771,7 @@ describe("Bun.unsafe.ModuleGraph — TLA body as generator: resume points", () =
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — TypeScript source maps and stack locations", () => {
+describe("Bun.ModuleGraph — TypeScript source maps and stack locations", () => {
   const dir = fixture({
     "typed.ts": `interface X { a: number }\ntype Y = X | null;\n\nexport function boom(x: Y): never {\n  throw new Error("ts-boom line 5")\n}\nexport const where = () => { try { boom(null) } catch (e: any) { return e.stack } }`,
   });
@@ -2784,14 +2784,14 @@ describe("Bun.unsafe.ModuleGraph — TypeScript source maps and stack locations"
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — re-entrancy: graphs created/disposed from inside other graphs' evaluation and callbacks", () => {
+describe("Bun.ModuleGraph — re-entrancy: graphs created/disposed from inside other graphs' evaluation and callbacks", () => {
   const dir = fixture({
-    "spawner.mjs": `const inner = new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "inner-of-" + process.env.T }, enumerable: true } }) } }); export const innerWho = (await inner.import(Bun.fileURLToPath(new URL("./who.mjs", import.meta.url)))).who; export const outerWho = process.env.T; inner.dispose();`,
+    "spawner.mjs": `const inner = new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "inner-of-" + process.env.T }, enumerable: true } }) } }); export const innerWho = (await inner.import(Bun.fileURLToPath(new URL("./who.mjs", import.meta.url)))).who; export const outerWho = process.env.T; inner.dispose();`,
     "who.mjs": `export const who = process.env.T`,
     "disposer.mjs": `export function run(other) { other.dispose(); return process.env.T }`,
     "gated.mjs": `await gate; export const who = process.env.T`,
     "thrower.mjs": `export function later() { setTimeout(() => { throw new Error("e1") }, 0) }`,
-    "sync-nested-import.mjs": `import { createRequire } from "node:module"; const require = createRequire(import.meta.url); const G = Bun.unsafe.ModuleGraph; const g = new G({ globals: { process: Object.create(process, { env: { value: { T: "cjs-inner" }, enumerable: true } }) } });
+    "sync-nested-import.mjs": `import { createRequire } from "node:module"; const require = createRequire(import.meta.url); const G = Bun.ModuleGraph; const g = new G({ globals: { process: Object.create(process, { env: { value: { T: "cjs-inner" }, enumerable: true } }) } });
       export const viaRequireInInner = await g.import(Bun.fileURLToPath(new URL("./who.mjs", import.meta.url))).then(m => m.who); export const mine = require("./who-cjs.cjs").who;`,
     "who-cjs.cjs": `module.exports = { who: process.env.T }`,
   });
@@ -2843,7 +2843,7 @@ describe("Bun.unsafe.ModuleGraph — re-entrancy: graphs created/disposed from i
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — host natives injected via globals, called as bare identifiers", () => {
+describe("Bun.ModuleGraph — host natives injected via globals, called as bare identifiers", () => {
   // A bare-identifier call whose callee lives in the overlay passes the overlay environment in the `this`
   // slot (JSC's convention for scope-resolved callees); JS callees normalise it, natives must not care.
   test("structuredClone / fetch / queueMicrotask / a strict JS function / an arrow / a class injected as globals work when called bare and with new", async () => {
@@ -2857,7 +2857,7 @@ describe("Bun.unsafe.ModuleGraph — host natives injected via globals, called a
         r.builtins = [typeof setTimeout, typeof process, typeof Bun, typeof Function].join(",");   // everything else is the global's
         return r }`,
       "host.mjs": `const server = Bun.serve({ port: 0, fetch: () => new Response("fetched") });
-        const g = new Bun.unsafe.ModuleGraph({ globals: { injectedClone: structuredClone, injectedMicrotask: queueMicrotask, injectedFetch: fetch, injectedStrict: function () { "use strict"; return this === undefined ? "undefined-this" : typeof this }, injectedArrow: x => x * 2, InjectedDate: Date } });
+        const g = new Bun.ModuleGraph({ globals: { injectedClone: structuredClone, injectedMicrotask: queueMicrotask, injectedFetch: fetch, injectedStrict: function () { "use strict"; return this === undefined ? "undefined-this" : typeof this }, injectedArrow: x => x * 2, InjectedDate: Date } });
         const m = await g.import(Bun.fileURLToPath(new URL("./n.mjs", import.meta.url))); console.log(JSON.stringify(await m.run(server.port))); server.stop(true); process.exit(0);`,
     });
     const r = await runBun([join(dir, "host.mjs")], { cwd: dir });
@@ -2875,7 +2875,7 @@ describe("Bun.unsafe.ModuleGraph — host natives injected via globals, called a
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — process-global registries touched from a graph (documented shared)", () => {
+describe("Bun.ModuleGraph — process-global registries touched from a graph (documented shared)", () => {
   test("Bun.plugin registered from graph code is process-wide (documented) and keeps working after the graph exits", async () => {
     const dir = fixture({
       "reg.mjs": `Bun.plugin({ name: "virt-" + process.env.T, setup(b) { b.module("virt:" + process.env.T, () => ({ exports: { from: process.env.T }, loader: "object" })) } }); export const quit = () => process.exit(0)`,
@@ -2907,9 +2907,9 @@ describe("Bun.unsafe.ModuleGraph — process-global registries touched from a gr
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — a plain script is unaffected by the API existing", () => {
+describe("Bun.ModuleGraph — a plain script is unaffected by the API existing", () => {
   test("the constructor is always exposed, and a plain script's module semantics are unaffected by its existence", async () => {
-    const script = `const has = typeof Bun.unsafe?.ModuleGraph; let made = "n/a"; try { if (has === "function") { new Bun.unsafe.ModuleGraph({}); made = "constructed" } } catch (e) { made = "threw:" + e.constructor.name }
+    const script = `const has = typeof Bun.ModuleGraph; let made = "n/a"; try { if (has === "function") { new Bun.ModuleGraph({}); made = "constructed" } } catch (e) { made = "threw:" + e.constructor.name }
       const m = await import(${JSON.stringify(join(fixture({ "plain.mjs": `export const v = [typeof process.env.HOME, typeof setTimeout, import.meta.main]` }), "plain.mjs"))}); console.log(JSON.stringify({ has, made, v: m.v }))`;
     const on = await runBun(["-e", script]);
     expect(JSON.parse(on.stdout)).toEqual({
@@ -2920,7 +2920,7 @@ describe("Bun.unsafe.ModuleGraph — a plain script is unaffected by the API exi
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — memory per instance vs module count", () => {
+describe("Bun.ModuleGraph — memory per instance vs module count", () => {
   test("per-instance heap cost grows with module count but stays far below the template cost", async () => {
     // Measured in a fresh process so other tests' garbage does not move the baseline.
     const results: Record<string, number[]> = {};
@@ -2931,7 +2931,7 @@ describe("Bun.unsafe.ModuleGraph — memory per instance vs module count", () =>
           `${i ? `import { v as p } from "./m${i - 1}.mjs";` : "const p = 0;"} export const v = p + 1; export function f${i}(a) { return a + v } export class C${i} { m() { return v } } export const who = process.env.T;`;
       files["root.mjs"] = `export { v, who } from "./m${modules - 1}.mjs"`;
       files["measure.mjs"] = `import { heapStats } from "bun:jsc";
-        const mk = t => new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: t }, enumerable: true } }) } });
+        const mk = t => new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: t }, enumerable: true } }) } });
         const settle = () => { for (let i = 0; i < 3; i++) Bun.gc(true); return heapStats().heapSize; };
         const h0 = settle();
         const keep = [await mk("0").import("./root.mjs")];
@@ -2955,11 +2955,11 @@ describe("Bun.unsafe.ModuleGraph — memory per instance vs module count", () =>
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — modules the HOST linked before any graph existed", () => {
+describe("Bun.ModuleGraph — modules the HOST linked before any graph existed", () => {
   test("a module first imported by the host (in a fresh process, before any ModuleGraph) still gets its own instance and the graph's process/timers when a graph imports it", async () => {
     const dir = fixture({
       "shared.mjs": `export const who = process.env.T ?? "host"; export const g = typeof globalThis.__hostOnly`,
-      "main.mjs": `globalThis.__hostOnly = 1; const host = await import("./shared.mjs"); const G = Bun.unsafe.ModuleGraph;
+      "main.mjs": `globalThis.__hostOnly = 1; const host = await import("./shared.mjs"); const G = Bun.ModuleGraph;
         const a = await new G({ globals: { process: Object.create(process, { env: { value: { T: "A" }, enumerable: true } }) } }).import(Bun.fileURLToPath(new URL("./shared.mjs", import.meta.url))), b = await new G({ globals: { process: Object.create(process, { env: { value: { T: "B" }, enumerable: true } }) } }).import(Bun.fileURLToPath(new URL("./shared.mjs", import.meta.url)));
         console.log(JSON.stringify([host.who, a.who, b.who, host.g, a.g])); process.exit(0)`,
     });
@@ -2975,7 +2975,7 @@ describe("Bun.unsafe.ModuleGraph — modules the HOST linked before any graph ex
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — evaluator stress: large SCCs, TLA positions, star-export conflicts, per instance", () => {
+describe("Bun.ModuleGraph — evaluator stress: large SCCs, TLA positions, star-export conflicts, per instance", () => {
   function ring(n: number, tlaAt: number[]) {
     const files: Record<string, string> = {};
     for (let i = 0; i < n; i++) {
@@ -3053,7 +3053,7 @@ describe("Bun.unsafe.ModuleGraph — evaluator stress: large SCCs, TLA positions
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — import.meta / main-module identity per graph", () => {
+describe("Bun.ModuleGraph — import.meta / main-module identity per graph", () => {
   const dir = fixture({
     "entry.mjs": `import { depMeta } from "./dep.mjs"; import { createRequire } from "node:module";
       export const meta = { main: import.meta.main, path: import.meta.path, dir: import.meta.dir, file: import.meta.file, url: import.meta.url, bunMain: Bun.main, argv1: process.argv[1], requireMain: createRequire(import.meta.url).main?.filename ?? null };
@@ -3112,7 +3112,7 @@ describe("Bun.unsafe.ModuleGraph — import.meta / main-module identity per grap
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — non-JS module kinds and bun: builtins inside a graph", () => {
+describe("Bun.ModuleGraph — non-JS module kinds and bun: builtins inside a graph", () => {
   const dir = fixture({
     "t.txt": "text-content",
     "d.toml": `k = "v"`,
@@ -3137,11 +3137,11 @@ describe("Bun.unsafe.ModuleGraph — non-JS module kinds and bun: builtins insid
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — debugger / inspector", () => {
+describe("Bun.ModuleGraph — debugger / inspector", () => {
   test("a graph module with `debugger` statements runs under --inspect without incident", async () => {
     const dir = fixture({
       "d.mjs": `debugger; export const v = process.env.T; export function f() { debugger; return v }`,
-      "run.mjs": `const m = await new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "dbg" }, enumerable: true } }) } }).import(Bun.fileURLToPath(new URL("./d.mjs", import.meta.url))); console.log("ok:" + m.f()); process.exit(0);`,
+      "run.mjs": `const m = await new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "dbg" }, enumerable: true } }) } }).import(Bun.fileURLToPath(new URL("./d.mjs", import.meta.url))); console.log("ok:" + m.f()); process.exit(0);`,
     });
     const r = await runBun(["--inspect=127.0.0.1:0", join(dir, "run.mjs")]);
     expect(r.stdout.split("\n").filter(l => l.startsWith("ok:"))).toEqual(["ok:dbg"]);
@@ -3150,7 +3150,7 @@ describe("Bun.unsafe.ModuleGraph — debugger / inspector", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — differential fuzz: random module graphs evaluate like the host", () => {
+describe("Bun.ModuleGraph — differential fuzz: random module graphs evaluate like the host", () => {
   function rng(seed: number) {
     return () => {
       seed = (seed * 1103515245 + 12345) >>> 0;
@@ -3214,7 +3214,7 @@ describe("Bun.unsafe.ModuleGraph — differential fuzz: random module graphs eva
   }
 });
 
-describe("Bun.unsafe.ModuleGraph — races and hosting contexts", () => {
+describe("Bun.ModuleGraph — races and hosting contexts", () => {
   test("host import() and graph.import() of the same never-loaded module started in the same tick both succeed with their own instance", async () => {
     for (let i = 0; i < 5; i++) {
       const dir = fixture({
@@ -3236,13 +3236,13 @@ describe("Bun.unsafe.ModuleGraph — races and hosting contexts", () => {
   });
 });
 
-describe("Bun.unsafe.ModuleGraph — imports racing edits, workers, deep re-export chains", () => {
+describe("Bun.ModuleGraph — imports racing edits, workers, deep re-export chains", () => {
   test("slow-path ModuleVar resolution (unfilled slot inside a cycle) is per instance in every JIT tier, including eagerly-tiered baseline/LOL", async () => {
     const dir = fixture({
       // a <-> b cycle: b's body runs first (while a's slot for b may still be unfilled in some tiers) and reads `a` lazily via a function.
       "a.mjs": `import { readA, tag } from "./b.mjs"; export const a = "a:" + process.env.T; export const viaB = () => readA(); export { tag }`,
       "b.mjs": `import { a } from "./a.mjs"; export const tag = "b:" + process.env.T; export function readA() { let r; for (let i = 0; i < 50; i++) r = a; return r }`,
-      "main.mjs": `const G = Bun.unsafe.ModuleGraph; const path = Bun.fileURLToPath(new URL("./a.mjs", import.meta.url));
+      "main.mjs": `const G = Bun.ModuleGraph; const path = Bun.fileURLToPath(new URL("./a.mjs", import.meta.url));
         const x = await new G({ globals: { process: Object.create(process, { env: { value: { T: "X" }, enumerable: true } }) } }).import(path), y = await new G({ globals: { process: Object.create(process, { env: { value: { T: "Y" }, enumerable: true } }) } }).import(path);
         const out = []; for (let i = 0; i < 400; i++) out.push(x.viaB(), y.viaB());
         console.log(JSON.stringify([x.tag, y.tag, out[0], out[1], out[798], out[799]]));`,
@@ -3286,7 +3286,7 @@ describe("Bun.unsafe.ModuleGraph — imports racing edits, workers, deep re-expo
       "evil-defer.mjs": `import defer * as d from "./d.mjs"; export const touch = () => d.sum`,
     });
     // run in a subprocess: species tampering is global-wide
-    const script = `const G = Bun.unsafe.ModuleGraph; const m = await new G().import(${JSON.stringify(join(dir, "evil.mjs"))}); const d = await new G().import(${JSON.stringify(join(dir, "evil-defer.mjs"))}); console.log(JSON.stringify([m.viaImport, d.touch(), typeof m.fakeCalls()]))`;
+    const script = `const G = Bun.ModuleGraph; const m = await new G().import(${JSON.stringify(join(dir, "evil.mjs"))}); const d = await new G().import(${JSON.stringify(join(dir, "evil-defer.mjs"))}); console.log(JSON.stringify([m.viaImport, d.touch(), typeof m.fakeCalls()]))`;
     const r = await runBun(["-e", script]);
     expect(r.stdout.split("\n").pop()).toBe(JSON.stringify([3, 3, "number"]));
     expect(r.exitCode).toBe(0);

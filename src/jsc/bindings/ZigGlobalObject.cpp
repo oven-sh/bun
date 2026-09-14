@@ -763,7 +763,7 @@ static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
 }
 
 // The loader whose registry require.cache / require() of `requirer` (a CommonJS module, or
-// undefined) reads: its Bun.unsafe.ModuleGraph's — null once that is disposed — or the global object's.
+// undefined) reads: its Bun.ModuleGraph's — null once that is disposed — or the global object's.
 static JSC::JSModuleLoader* moduleLoaderOfRequirer(JSC::JSGlobalObject* globalObject, JSValue requirer)
 {
     auto* module = dynamicDowncast<Bun::JSCommonJSModule>(requirer);
@@ -1168,7 +1168,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
-        // Whose rejection this is (a Bun.unsafe.ModuleGraph's or the global object's) is
+        // Whose rejection this is (a Bun.ModuleGraph's or the global object's) is
         // decided now, while the rejecting code is on the stack, and travels with it.
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, Bun::moduleGraphRejecting(globalObj, promise));
         break;
@@ -3667,7 +3667,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
     }
 
-    // import() from code of a disposed Bun.unsafe.ModuleGraph rejects rather than
+    // import() from code of a disposed Bun.ModuleGraph rejects rather than
     // loading into the graph's (dropped) registry.
     if (Bun::throwIfModuleGraphDisposed(globalObject, scope, loader))
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
@@ -4326,7 +4326,7 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
-    // Nothing evaluates in a disposed Bun.unsafe.ModuleGraph (a late top-level-await
+    // Nothing evaluates in a disposed Bun.ModuleGraph (a late top-level-await
     // completion, a deferred namespace touched later): its modules throw instead.
     if (moduleLoader != lexicalGlobalObject->moduleLoader()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
@@ -4350,7 +4350,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // As in GlobalObject::moduleLoaderEvaluate: nothing evaluates in a disposed Bun.unsafe.ModuleGraph.
+    // As in GlobalObject::moduleLoaderEvaluate: nothing evaluates in a disposed Bun.ModuleGraph.
     if (Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader))
         return {};
     noteModuleEvaluation(globalObject, moduleLoader);

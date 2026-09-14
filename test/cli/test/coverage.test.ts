@@ -697,3 +697,46 @@ test("calls second", () => {
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/42730
+// A class without an explicit constructor gets a constructor that JSC builds
+// from a builtin string. Its range must not count as an uncovered function in
+// the user's file, and must not zero the hits of the lines it overlaps.
+test("implicit class constructors are not counted as uncovered functions", async () => {
+  using dir = tempDir("cov-implicit-ctor", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "probe.ts": `export class Probe {
+  value?: unknown;
+}
+export class Ext extends Probe {}
+export function f() {
+  return 1;
+}
+`,
+    "probe.test.ts": `import { expect, test } from "bun:test";
+import { Ext, Probe, f } from "./probe.ts";
+
+test("constructs", () => {
+  expect(new Probe()).toBeInstanceOf(Probe);
+  expect(new Ext()).toBeInstanceOf(Probe);
+  expect(f()).toBe(1);
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("1 pass");
+  expect(stderr).toMatch(/ probe\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:probe.ts"))!;
+  expect(record).toMatch(/FNF:1\nFNH:1\n/);
+  expect(record.match(/^DA:\d+,0$/gm)).toBeNull();
+  expect(exitCode).toBe(0);
+});

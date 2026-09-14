@@ -391,7 +391,10 @@ pub struct TestIsolationState {
 // `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
 // mutating VM/process state through it is interior mutation invisible to Rust.
 unsafe extern "C" {
-    safe fn Bun__ModuleGraph__handleUncaughtException(global: &JSGlobalObject, err: JSValue) -> bool;
+    safe fn Bun__ModuleGraph__handleUncaughtException(
+        global: &JSGlobalObject,
+        err: JSValue,
+    ) -> bool;
     safe fn Bun__handleUncaughtException(
         global: &JSGlobalObject,
         err: JSValue,

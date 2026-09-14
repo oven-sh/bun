@@ -730,7 +730,8 @@ fn environment() -> *const *const c_char {
 /// in an executable of its own: a line at a time to a terminal, a block at a time otherwise. What is
 /// buffered when the program ends is written by the exit hook.
 fn give_stdout_a_buffer() {
-    #[cfg(unix)]
+    // Where C programs run (`bun_cc::Target::host`); Windows' C runtime buffers its own `stdout`.
+    #[cfg(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"))]
     {
         unsafe extern "C" {
             #[cfg_attr(target_os = "macos", link_name = "__stdoutp")]

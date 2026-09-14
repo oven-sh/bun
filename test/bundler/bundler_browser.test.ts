@@ -101,6 +101,59 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  itBundled("browser/NodeStreamWithoutGlobalProcess", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Readable } from "node:stream";
+        const r = Readable.from(["a", "b"]);
+        const chunks = [];
+        globalThis.DONE = new Promise((resolve, reject) => {
+          r.on("data", d => chunks.push(d));
+          r.on("end", () => resolve("got:" + chunks.join(",")));
+          r.on("error", reject);
+        });
+      `,
+    },
+    target: "browser",
+    runtimeFiles: {
+      "/exec.js": /* js */ `
+        // Simulate a browser: no global process object.
+        delete globalThis.process;
+        await import("./out.js");
+        console.log(await globalThis.DONE);
+      `,
+    },
+    run: {
+      file: "/exec.js",
+      stdout: "got:a,b",
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+      api.expectFile("out.js").not.toInclude("globalThis.process");
+    },
+  });
+  itBundled("browser/NodeProcessNextTickForwardsArgs", {
+    files: {
+      "/entry.js": /* js */ `
+        import { nextTick } from "node:process";
+        globalThis.DONE = new Promise(resolve => {
+          nextTick((a, b, c) => resolve(a + b + c), "x", "y", "z");
+        });
+      `,
+    },
+    target: "browser",
+    runtimeFiles: {
+      "/exec.js": /* js */ `
+        delete globalThis.process;
+        await import("./out.js");
+        console.log(await globalThis.DONE);
+      `,
+    },
+    run: {
+      file: "/exec.js",
+      stdout: "xyz",
+    },
+  });
   itBundled("browser/NodeTTY", {
     files: {
       "/entry.js": /* js */ `

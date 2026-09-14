@@ -128,6 +128,7 @@ public:
 };
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
+JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
 
 // ── Which graph ──────────────────────────────────────────────────────────────────────
 // The graph `loader` is the loader of; null for the global object's own.

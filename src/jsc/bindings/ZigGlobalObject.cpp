@@ -2716,6 +2716,10 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
+    m_moduleGraphFrameStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createModuleGraphFrameStructure(init.vm, init.owner));
+        });
     m_JSIsolatedModuleGraphStructure.initLater(
         [](const Initializer<Structure>& init) {
             auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.owner);

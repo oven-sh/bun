@@ -356,21 +356,41 @@ extern "C" void* Bun__currentGraphContext(JSGlobalObject* globalObject)
     return defaultGlobalObject(globalObject)->currentScriptExecutionContext()->bunContext();
 }
 
+// The frame's properties, in the order async_hooks.ts's Frame declares them, at fixed offsets.
+enum ModuleGraphFrameOffset : PropertyOffset { FrameStorage,
+    FrameValue,
+    FramePrev,
+    FrameMasked,
+    FrameGraph,
+    NumberOfFrameProperties };
+
+Structure* createModuleGraphFrameStructure(VM& vm, JSGlobalObject* globalObject)
+{
+    auto& names = WebCore::builtinNames(vm);
+    Structure* structure = JSFinalObject::createStructure(vm, globalObject, jsNull(), NumberOfFrameProperties);
+    const Identifier properties[] = { names.storagePublicName(), vm.propertyNames->value, names.prevPublicName(), names.maskedPublicName(), names.graphPublicName() };
+    for (PropertyOffset expected = 0; expected < NumberOfFrameProperties; expected++) {
+        PropertyOffset offset;
+        structure = Structure::addPropertyTransition(vm, structure, properties[expected], 0, offset);
+        RELEASE_ASSERT(offset == expected);
+    }
+    return structure;
+}
+
 // `graph` null: a frame that leaves the graph's context the frames below are in, keeping their
 // AsyncLocalStorage stores.
 static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSIsolatedModuleGraph* graph, JSValue previous)
 {
     VM& vm = globalObject->vm();
-    auto& names = WebCore::builtinNames(vm);
-    JSObject* frame = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    JSObject* frame = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
     // No AsyncLocalStorage is ever this frame's storage: the graph, or the frame itself.
-    frame->putDirect(vm, names.storagePublicName(), graph ? static_cast<JSObject*>(graph) : frame);
-    frame->putDirect(vm, vm.propertyNames->value, jsUndefined());
-    frame->putDirect(vm, names.prevPublicName(), previous);
+    frame->putDirectOffset(vm, FrameStorage, graph ? static_cast<JSObject*>(graph) : frame);
+    frame->putDirectOffset(vm, FrameValue, jsUndefined());
+    frame->putDirectOffset(vm, FramePrev, previous);
     // What disable()d AsyncLocalStorages the frame below masks, frames above it mask too.
-    JSValue masked = previous.isObject() ? asObject(previous)->getDirect(vm, names.maskedPublicName()) : JSValue();
-    frame->putDirect(vm, names.maskedPublicName(), masked ? masked : jsUndefined());
-    frame->putDirect(vm, names.graphPublicName(), graph ? JSValue(graph) : jsUndefined());
+    JSValue masked = previous.isObject() ? asObject(previous)->getDirect(vm, WebCore::builtinNames(vm).maskedPublicName()) : JSValue();
+    frame->putDirectOffset(vm, FrameMasked, masked ? masked : jsUndefined());
+    frame->putDirectOffset(vm, FrameGraph, graph ? JSValue(graph) : jsUndefined());
     return frame;
 }
 

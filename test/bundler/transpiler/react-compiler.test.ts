@@ -1631,6 +1631,133 @@ describe("bundler", () => {
     },
   });
 
+  // With `let x` kept, it can sit inside the memo block of another scope: here
+  // between `const r = {}` and the last mutation of `r`. Only a read of `x`
+  // from a later scope hoisted the `let` out of that block. A store alone left
+  // it inside, and the store then printed outside the block:
+  // `ReferenceError: x is not defined`.
+  //
+  // With a reactive value (`x = p.n`) the store is a dependency of the memo
+  // block that reads it, under a promoted name. Codegen inlined the store into
+  // that block all the same: `if ($[2] !== t0)` with no `t0` declared.
+  itBundled("react-compiler/DeadStoreAfterTheScopeOfItsDeclaration", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as forms from "./forms";
+        const calls = [];
+        const props = { bad: "{bad", n: 7, call: v => calls.push(v) };
+        const lines = [];
+        for (const [name, form] of Object.entries(forms)) {
+          try {
+            calls.length = 0;
+            const out = JSON.stringify(form(props).p);
+            lines.push(name + "=" + out + (calls.length ? " calls=" + JSON.stringify(calls) : ""));
+          } catch (e) {
+            lines.push(name + " threw " + e);
+          }
+        }
+        console.log(lines.join("\\n"));
+      `,
+      "/forms.jsx": /* jsx */ `
+        const Stub = () => null;
+
+        export function Prop(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          return <Stub r={r} v={(x = 5)} />;
+        }
+        // The one read of \`x\` folds to 5.
+        export function FoldedRead(p) {
+          const r = {};
+          let x = 0;
+          r.a = 1;
+          return <Stub r={r} v={[(x = 5), x]} />;
+        }
+        export function Argument(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          p.call((x = 5));
+          return <Stub r={r} />;
+        }
+        export function Handler(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          try {
+            JSON.parse(p.bad);
+          } catch {
+            x = 1;
+          }
+          return <Stub r={r} />;
+        }
+        // \`q\` holds \`r\`, so the declaration sits in two nested scopes.
+        export function Nested(p) {
+          const r = {};
+          const q = {};
+          let x;
+          q.b = r;
+          r.a = 1;
+          return <Stub r={r} q={q} v={(x = 5)} />;
+        }
+        export function PropFromProps(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          return <Stub r={r} v={(x = p.n)} />;
+        }
+        export function ArrayFromProps(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          return <Stub r={r} v={[(x = p.n)]} />;
+        }
+        export function NestedFromProps(p) {
+          const r = {};
+          const q = {};
+          let x;
+          q.b = r;
+          r.a = 1;
+          return <Stub r={r} q={q} v={(x = p.n)} />;
+        }
+        // The declaration is above the scope of \`r\`. Only the promoted store
+        // was wrong here.
+        export function DeclaredAbove(p) {
+          let x = 0;
+          const r = {};
+          r.a = 1;
+          return <Stub r={r} v={[(x = p.n), x++]} />;
+        }
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: {
+      stdout: `
+        Argument={"r":{"a":1}} calls=[5]
+        ArrayFromProps={"r":{"a":1},"v":[7]}
+        DeclaredAbove={"r":{"a":1},"v":[7,7]}
+        FoldedRead={"r":{"a":1},"v":[5,5]}
+        Handler={"r":{"a":1}}
+        Nested={"r":{"a":1},"q":{"b":{"a":1}},"v":5}
+        NestedFromProps={"r":{"a":1},"q":{"b":{"a":1}},"v":7}
+        Prop={"r":{"a":1},"v":5}
+        PropFromProps={"r":{"a":1},"v":7}
+      `,
+    },
+    onAfterBundle(api) {
+      // Every form compiled. Each `let x` declared inside the scope of `r`
+      // sits before its memo block, and each promoted store is a statement.
+      const out = api.readFile("/out.js");
+      expect(out.match(/let (q, )?r, x;/g)).toHaveLength(8);
+      expect(out).not.toMatch(/let x;\s*r\.a = 1;/);
+      expect(out.match(/const t\d = x = p\.n;/g)).toHaveLength(4);
+    },
+  });
+
   // Outside the compiler, the bundler binds a local that holds a `require()` /
   // `import()` export to the export itself: `const { a } = require("./m")`
   // declares nothing, and `ns.a` off `const ns = require("./m")` is an import
@@ -1877,6 +2004,193 @@ describe("bundler", () => {
           expect(out).not.toContain("OPT_OUT_NOT_READ_SENTINEL");
           // And a read, in a compiled function, of a local declared outside it.
           expect(out).not.toContain("MODULE_NS_NOT_READ_SENTINEL");
+        },
+      });
+    }
+  }
+
+  // The bundler prints an import under the name of the export it links to:
+  // `defaultTheme` below prints as `theme`. A compiled function gets new
+  // symbols for its parameters, its locals and its temporaries (`t0`, `$`).
+  // The renamer has to number them like the symbols of any other function, or
+  // a local with the name of that export shadows it:
+  // `let theme = custom ?? theme`.
+  for (const target of ["bun", "browser"] as const) {
+    for (const minifyIdentifiers of [false, true]) {
+      itBundled(`react-compiler/LocalNamedLikeAnExportItReads-${target}-identifiers=${minifyIdentifiers}`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import * as forms from "./forms";
+            const lines: string[] = [];
+            const check = (flag?: boolean) => {
+              if (flag) throw "thrown";
+            };
+            for (const [name, form] of Object.entries(forms)) {
+              try {
+                lines.push(name + "=" + form({ custom: "mine", flag: true, list: [{ x: 1 }, { x: 2 }], check }));
+                lines.push(name + "=" + form({ list: [{ x: 3 }], check }));
+              } catch (e) {
+                lines.push(name + " threw " + e);
+              }
+            }
+            console.log(lines.join("\\n"));
+          `,
+          "/forms.tsx": /* tsx */ `
+            import { useEffect, useState, memo, forwardRef } from "react";
+            import * as values from "./values";
+            import {
+              Wrapped as BaseWrapped,
+              theme as defaultTheme,
+              custom as defaultCustom,
+              item as defaultItem,
+              s as format,
+              e as suffix,
+              t0 as first,
+              t1 as second,
+              $ as dollar,
+            } from "./values";
+
+            export function Local({ custom }) {
+              useEffect(() => {});
+              const theme = custom ?? defaultTheme;
+              return theme;
+            }
+            export function useLocal({ custom }) {
+              useEffect(() => {});
+              let theme = defaultTheme;
+              if (custom) theme = custom + "/" + defaultTheme;
+              return theme;
+            }
+            export const MemoLocal = memo(({ custom }) => {
+              useEffect(() => {});
+              const theme = custom ?? defaultTheme;
+              return theme;
+            });
+            export function Parameter({ custom }) {
+              useEffect(() => {});
+              return (custom ?? "none") + " " + defaultCustom;
+            }
+            export function NamespaceMember({ flag }) {
+              useEffect(() => {});
+              const theme = flag ? values.theme : "none";
+              return theme;
+            }
+            // The compiler hoists a callback that captures nothing to module
+            // level. Its parameter is a new symbol too.
+            export function OutlinedParameter({ list }) {
+              useEffect(() => {});
+              return list.map(item => item.x + defaultItem.y).join(",") + ";" + list.map(s => format(s.x)).join(",");
+            }
+            export function NestedParameter({ list, custom }) {
+              useEffect(() => {});
+              return list.map(item => item.x + defaultItem.y + (custom ?? "")).join(",");
+            }
+            export function CatchBinding({ flag, check }) {
+              useEffect(() => {});
+              try {
+                check(flag);
+              } catch (e) {
+                return e + suffix;
+              }
+              return "none" + suffix;
+            }
+            // The props object is \`t0\`, the memo cache is \`$\`, and the value
+            // of a memo block is \`t1\`.
+            export function Temporaries({ custom }) {
+              const [count] = useState(1);
+              const all = [String(custom), count, first, second, dollar];
+              return all.join(" ");
+            }
+            // A function expression declares its own name in its own scope.
+            // The compiled function keeps that name, so it is still numbered.
+            export const OwnNameForwardRef = forwardRef(function Wrapped({ custom }, ref) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "forwardRef" }) + ">";
+            });
+            export const OwnNameMemo = memo(function Wrapped({ custom }) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "memo" }) + ">";
+            });
+            export const OwnNamePlain = function Wrapped({ custom }) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "plain" }) + ">";
+            };
+          `,
+          "/values.ts": /* ts */ `
+            export const theme = "dark";
+            export const custom = "CUSTOM";
+            export const item = { y: 10 };
+            export function s(value: number) {
+              return "<" + value + ">";
+            }
+            export const e = "!";
+            export const t0 = "T0";
+            export const t1 = "T1";
+            export const $ = "DOLLAR";
+            export function Wrapped({ custom, by }: { custom?: string; by: string }) {
+              return by + ":" + custom;
+            }
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+          "/node_modules/react/index.js": /* js */ `
+            export function useEffect() {}
+            export function useState(value) {
+              return [value, () => {}];
+            }
+            export function memo(component) {
+              return component;
+            }
+            export function forwardRef(component) {
+              return component;
+            }
+          `,
+          "/node_modules/react/compiler-runtime.js": /* js */ `
+            export function c(size) {
+              return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+            }
+          `,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target,
+        minifyIdentifiers,
+        run: {
+          stdout: `
+            CatchBinding=thrown!
+            CatchBinding=none!
+            Local=mine
+            Local=dark
+            MemoLocal=mine
+            MemoLocal=dark
+            NamespaceMember=dark
+            NamespaceMember=none
+            NestedParameter=11mine,12mine
+            NestedParameter=13
+            OutlinedParameter=11,12;<1>,<2>
+            OutlinedParameter=13;<3>
+            OwnNameForwardRef=<forwardRef:mine>
+            OwnNameForwardRef=<forwardRef:undefined>
+            OwnNameMemo=<memo:mine>
+            OwnNameMemo=<memo:undefined>
+            OwnNamePlain=<plain:mine>
+            OwnNamePlain=<plain:undefined>
+            Parameter=mine CUSTOM
+            Parameter=none CUSTOM
+            Temporaries=mine 1 T0 T1 DOLLAR
+            Temporaries=undefined 1 T0 T1 DOLLAR
+            useLocal=mine/dark
+            useLocal=dark
+          `,
+        },
+        onAfterBundle(api) {
+          if (minifyIdentifiers) return;
+          const out = api.readFile("/out.js");
+          // Every function above compiled: the compiler outlines the empty
+          // effect callback (client) or drops the effect (ssr).
+          expect(out).not.toMatch(/\(\(\) => \{\s*\}\)/);
+          // A local that shares its name with nothing the function reads
+          // keeps it.
+          expect(out).toMatch(/function Local\(t0\) \{\s*let \{ custom \} = t0;/);
         },
       });
     }

@@ -755,7 +755,66 @@ impl FnGen<'_, '_> {
             }
             _ => return internal(loc, "unsupported complex operation"),
         };
-        Ok(self.make_pair(ty, re, im))
+        // C11 G.5.1: where both parts come out as NaNs there may be an infinity or a zero that
+        // the operands stand for, which a function of the compiler's works out. (A real operand
+        // needs none of it: the parts were multiplied or divided by it one by one.)
+        let recovery = match (op, a_im, c_im) {
+            (BinOp::Mul, Some(b), Some(d)) => Some((0, b, d)),
+            (BinOp::Div, b, Some(d)) => Some((
+                1,
+                match b {
+                    Some(b) => b,
+                    None => self.zero(part),
+                },
+                d,
+            )),
+            _ => None,
+        };
+        let (Some((which, b, d)), Some(functions)) = (recovery, self.m.prog.complex_recovery)
+        else {
+            return Ok(self.make_pair(ty, re, im));
+        };
+        let function = functions[which + if part == Ty::F32 { 0 } else { 2 }];
+        let Some(index) = self.m.func_index[function as usize] else {
+            return internal(loc, "the functions for complex infinities are not there");
+        };
+        let size = self.tcx.size_of(ty).unwrap_or(16);
+        let slot = self.temporary_slot_id(size, size / 2);
+        let result = self.b.def(Inst::SlotAddr(slot), Ty::I64);
+        self.store_pair(result, ty, re, im);
+        let re_is_nan = self.b.bin(CBin::Ne, re, re);
+        let im_is_nan = self.b.bin(CBin::Ne, im, im);
+        let both = self.b.bin(CBin::And, re_is_nan, im_is_nan);
+        let held = [a, b, c, d].map(|v| self.hold(v, true));
+        let (slow, done) = (self.b.new_block(), self.b.new_block());
+        self.b.terminate(Inst::Br(both, slow, done));
+        self.b.switch_to(slow);
+        let operands = held.map(|h| self.release(h));
+        let part_ty = if part == Ty::F32 {
+            Type::Float
+        } else {
+            Type::Double
+        };
+        let types = [part_ty.clone(), part_ty.clone(), part_ty.clone(), part_ty];
+        let recovered = self.emit_call(
+            Callee::Func(index),
+            ty,
+            &types,
+            4,
+            super::Arity::Fixed,
+            super::SignatureOf::Callee,
+            &operands,
+            loc,
+        )?;
+        let Some(recovered) = recovered else {
+            return internal(loc, "a complex result was expected");
+        };
+        let Halves { low, high } = self.load_pair(recovered, ty);
+        let result_here = self.b.def(Inst::SlotAddr(slot), Ty::I64);
+        self.store_pair(result_here, ty, low, high);
+        self.b.terminate(Inst::Jump(done));
+        self.b.switch_to(done);
+        Ok(self.b.def(Inst::SlotAddr(slot), Ty::I64))
     }
 
     /// `(a + bi) / (c + di)` on doubles. `scaled`: by Smith's method, which divides by the

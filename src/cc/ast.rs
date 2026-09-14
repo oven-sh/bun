@@ -214,8 +214,14 @@ pub(crate) enum VecBuiltin {
     /// A conversion named by a BIR `VConvertKind`.
     ConvertKind(u8),
     Abs,
+    /// Clang's `__builtin_elementwise_min`: of floating lanes `fmin`, the operand that is a number
+    /// where the other is not one.
     Min,
     Max,
+    /// x86's MINPS and its kin, for the headers: `b < a ? b : a`, which is `a` where either is not a
+    /// number.
+    SecondIfLess,
+    SecondIfGreater,
     /// Of floating lanes, by IEEE 754-2019 (`bir::VLaneOp::FMin`): a NaN where either lane is one,
     /// -0 below +0.
     Minimum,
@@ -780,6 +786,10 @@ pub(crate) struct Program {
     pub(crate) warnings: Vec<(Loc, String)>,
     /// Other external names of functions: `__attribute__((alias("target")))`.
     pub(crate) function_aliases: Vec<(Rc<str>, FuncId)>,
+    /// The compiler's functions for C11 G.5.1, in a unit that multiplies or divides complex
+    /// numbers: multiply and divide `float`s, multiply and divide `double`s (each takes the four
+    /// parts and gives the result that the formula's two NaNs stand for).
+    pub(crate) complex_recovery: Option<[FuncId; 4]>,
     pub(crate) asm_blocks: Vec<AsmBlock>,
 }
 

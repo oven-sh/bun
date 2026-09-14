@@ -712,6 +712,10 @@ pub(crate) fn lower_call(
             &mut named_params
         };
         match &pass {
+            // (A named one keeps the width its C type has, for where it goes on a packed stack.)
+            ArgPass::Scalar(Ty::I32) if !anonymous && arg.is_integer() && matches!(size, 1 | 2) => {
+                params.push(Param::Narrow(size as u8));
+            }
             ArgPass::Scalar(t) => params.push(Param::Value(*t)),
             ArgPass::Pieces(pieces) => params.extend(pieces.iter().map(|p| Param::Value(p.ty))),
             ArgPass::Stack {

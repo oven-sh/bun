@@ -129,6 +129,21 @@ impl Sema {
         self.comma(store_start, call, loc)
     }
 
+    /// The value of `e` where it is a constant of type `float` or `double`, or an integer constant
+    /// (which such a builtin takes as a `double`), and whether it is a `float`: what GCC and Clang
+    /// work these builtins out from where they stand in a constant expression.
+    fn constant_operand(&self, e: &Expr) -> Option<(f64, bool)> {
+        let single = matches!(e.ty.unqualified(), Type::Float);
+        if !(e.ty.is_float() || e.ty.is_integer()) {
+            return None;
+        }
+        match constexpr::eval(e, &self.tcx) {
+            Ok(Const::Float(v)) if e.ty.is_float() => Some((v, single)),
+            Ok(Const::Int(v)) if e.ty.is_integer() => Some((v as f64, false)),
+            _ => None,
+        }
+    }
+
     fn needs_function(&self, name: &str, loc: Loc) -> Res<()> {
         if self.func.is_none() {
             return err(loc, format!("{name} is only supported inside functions"));
@@ -317,7 +332,6 @@ impl Sema {
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
-        self.needs_function(name, loc)?;
         if args.len() != 2 {
             return err(loc, format!("{name} takes two arguments"));
         }
@@ -329,6 +343,23 @@ impl Sema {
         };
         let n = args.swap_remove(1);
         let x = args.swap_remove(0);
+        // Of two constants it is one, as it is for Clang.
+        if let (Ok(value), Ok(count)) = (self.const_int(&x), self.const_int(&n)) {
+            let mask = if bits == 64 {
+                u64::MAX
+            } else {
+                (1u64 << bits) - 1
+            };
+            let (value, count) = (value as u64 & mask, (count as u64 % u64::from(bits)) as u32);
+            let towards_the_left = if left { count } else { (bits - count) % bits };
+            let rotated = if towards_the_left == 0 {
+                value
+            } else {
+                ((value << towards_the_left) | (value >> (bits - towards_the_left))) & mask
+            };
+            return self.int_lit(rotated as i64, ty, loc);
+        }
+        self.needs_function(name, loc)?;
         if bits >= 32 {
             let x = self.assign_convert(x, &ty, loc, "passing an argument")?;
             let n = self.rvalue(n)?;
@@ -567,11 +598,34 @@ impl Sema {
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
-        self.needs_function(name, loc)?;
         if args.len() != 1 {
             return err(loc, format!("{name} takes one argument"));
         }
         let x = self.rvalue(args.swap_remove(0))?;
+        if let Some((v, single)) = self.constant_operand(&x) {
+            let normal = if single {
+                (v as f32).is_normal()
+            } else {
+                v.is_normal()
+            };
+            let answer = match which {
+                "isnan" => i64::from(v.is_nan()),
+                "isinf" => i64::from(v.is_infinite()),
+                "isfinite" => i64::from(v.is_finite()),
+                "isnormal" => i64::from(normal),
+                "signbit" => i64::from(v.is_sign_negative()),
+                _ if v.is_infinite() => {
+                    if v < 0.0 {
+                        -1
+                    } else {
+                        1
+                    }
+                }
+                _ => 0,
+            };
+            return self.int_lit(answer, Type::Int, loc);
+        }
+        self.needs_function(name, loc)?;
         if x.ty.is_long_double() {
             return self.classify_long_double(which, x, loc);
         }
@@ -645,11 +699,31 @@ impl Sema {
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
-        self.needs_function(name, loc)?;
         if args.len() != 6 {
             return err(loc, format!("{name} takes six arguments"));
         }
         let x = self.rvalue(args.swap_remove(5))?;
+        if let Some((v, single)) = self.constant_operand(&x) {
+            let subnormal = if single {
+                (v as f32).is_subnormal()
+            } else {
+                v.is_subnormal()
+            };
+            let which = if v.is_nan() {
+                0
+            } else if v.is_infinite() {
+                1
+            } else if v == 0.0 {
+                4
+            } else if subnormal {
+                3
+            } else {
+                2
+            };
+            let chosen = args.swap_remove(which);
+            return self.assign_convert(chosen, &Type::Int, loc, "passing an argument");
+        }
+        self.needs_function(name, loc)?;
         if x.ty.is_long_double() {
             let (tx, store) = self.temp(x, loc)?;
             let mut classes = Vec::with_capacity(5);
@@ -864,11 +938,22 @@ impl Sema {
             None
         };
         let x = self.assign_convert(args.swap_remove(0), &float_ty, loc, "passing an argument")?;
+        let from = match from {
+            Some(y) => Some(self.assign_convert(y, &float_ty, loc, "passing an argument")?),
+            None => None,
+        };
+        let folded = match (self.constant_operand(&x), &from) {
+            (Some((v, _)), None) => Some(v.abs()),
+            (Some((v, _)), Some(y)) => self.constant_operand(y).map(|(sign, _)| v.copysign(sign)),
+            (None, _) => None,
+        };
+        if let Some(result) = folded {
+            return self.float_lit(result, float_ty, loc);
+        }
         let bits = self.bits_of_float(x, &bits_ty, loc)?;
         let keep = self.int_lit((sign - 1) as i64, bits_ty.clone(), loc)?;
         let mut result = self.binary(BinOp::And, bits, keep, loc)?;
         if let Some(y) = from {
-            let y = self.assign_convert(y, &float_ty, loc, "passing an argument")?;
             let ybits = self.bits_of_float(y, &bits_ty, loc)?;
             let mask = self.int_lit(sign as i64, bits_ty, loc)?;
             let sign_of_y = self.binary(BinOp::And, ybits, mask, loc)?;
@@ -890,7 +975,6 @@ impl Sema {
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
-        self.needs_function(name, loc)?;
         if args.len() != 2 {
             return err(loc, format!("{name} takes two arguments"));
         }
@@ -899,6 +983,22 @@ impl Sema {
         if !x.ty.is_arith() || !y.ty.is_arith() {
             return err(loc, format!("{name} needs arithmetic operands"));
         }
+        if let (Some((a, _)), Some((b, _))) = (self.constant_operand(&x), self.constant_operand(&y))
+        {
+            let answer = match which {
+                "isgreater" => a > b,
+                "isgreaterequal" => a >= b,
+                "isless" => a < b,
+                "islessequal" => a <= b,
+                // (Not `a != b`, which is so of a NaN.)
+                "islessgreater" => a
+                    .partial_cmp(&b)
+                    .is_some_and(|order| order != std::cmp::Ordering::Equal),
+                _ => a.is_nan() || b.is_nan(),
+            };
+            return self.int_lit(i64::from(answer), Type::Int, loc);
+        }
+        self.needs_function(name, loc)?;
         let (tx, store_x) = self.temp(x, loc)?;
         let (ty, store_y) = self.temp(y, loc)?;
         let op = |sema: &mut Sema, op: BinOp| -> Res<Expr> {
@@ -1184,6 +1284,7 @@ impl Sema {
     /// vector state wider than 128 bits (avx and everything built on it) are never reported,
     /// since code that uses them cannot be compiled here; unknown names are not supported.
     pub(crate) fn cpu_supports(&mut self, feature: &[u8], loc: Loc) -> Res<Expr> {
+        self.needs_function("__builtin_cpu_supports", loc)?;
         // (leaf, register: 0 eax 1 ebx 2 ecx 3 edx, bit)
         let bit: Option<(u32, usize, u32)> = match feature {
             b"cmov" => Some((1, 3, 15)),

@@ -347,10 +347,9 @@ fn bit_field_type(field: BitField) -> Type {
     }
 }
 
-/// AAPCS64 register save area stride: 16 bytes per vector register, 8 per general one.
-fn stride_of(float: bool) -> i32 {
-    if float { 16 } else { 8 }
-}
+/// An argument passed by the address of a copy (arm64, Win64) that is this large or larger has the
+/// copy made for the time of the call, see `emit_call`.
+const LARGE_COPY: u64 = 256;
 
 fn ty_slot(ty: Ty) -> usize {
     match ty {
@@ -1630,6 +1629,8 @@ impl<'a> FnGen<'a, '_> {
             && ret.is_int128()
             && matches!(&abi.ret, RetPass::Pieces(p) if halves(p));
         let mut values: Vec<V> = Vec::with_capacity(handles.len() + 1);
+        // The stack pointer as it was before room was made for copies of large arguments.
+        let mut room_for_the_call: Option<V> = None;
         let result_object = match abi.ret {
             RetPass::Pieces(_) if want_wide_result => None,
             RetPass::Pieces(_) | RetPass::HiddenPointer | RetPass::Indirect | RetPass::X87 => {
@@ -1675,8 +1676,26 @@ impl<'a> FnGen<'a, '_> {
                     }
                 }
                 ArgPass::Reference => {
-                    // The callee may modify what it is given, so it gets a copy.
-                    let copy = self.temp_object(arg_ty);
+                    // The callee may modify what it is given, so it gets a copy. A large one is
+                    // made on the stack for the time of the call and no longer: as a slot it
+                    // would be part of every activation of this function, the ones that never
+                    // make the call included (16 KB a level of a recursion that passes 16 KB
+                    // once in a thousand levels).
+                    let size = self.tcx.size_of(arg_ty).unwrap_or(0);
+                    let copy = if size >= LARGE_COPY {
+                        if room_for_the_call.is_none() {
+                            room_for_the_call = Some(self.b.def(Inst::StackSave, Ty::I64));
+                        }
+                        let bytes = self.b.const_i64(size as i64);
+                        let align = self
+                            .tcx
+                            .align_of(arg_ty)
+                            .unwrap_or(1)
+                            .clamp(16, bir::MAX_ALIGN);
+                        self.b.def(Inst::StackAlloc(bytes, align), Ty::I64)
+                    } else {
+                        self.temp_object(arg_ty)
+                    };
                     if arg_ty.is_vector() {
                         self.b.effect(Inst::Store(MemKind::V128, handle, copy, 0));
                     } else {
@@ -1725,7 +1744,7 @@ impl<'a> FnGen<'a, '_> {
             (Callee::Extern(index), None) => (Inst::CallExtern(index, values), true),
             (Callee::Indirect(_), None) => return internal(loc, "indirect call without a pointer"),
         };
-        match (&abi.ret, result_object) {
+        let result = match (&abi.ret, result_object) {
             (RetPass::Scalar(ty), _) => {
                 let v = self.b.def(inst, *ty);
                 // Native ABIs leave the bits above a narrow return value unspecified.
@@ -1773,7 +1792,11 @@ impl<'a> FnGen<'a, '_> {
                     None
                 })
             }
+        };
+        if let Some(before) = room_for_the_call {
+            self.b.effect(Inst::StackRestore(before));
         }
+        result
     }
 
     /// Normalises a narrow value received from native code (a `_Bool` is only guaranteed in bit 0..7).
@@ -2174,6 +2197,9 @@ impl<'a> FnGen<'a, '_> {
                             _ => op_ty.clone(),
                         };
                         let widened = self.convert(old, &lhs.ty, &operand_ty, loc)?;
+                        // (A product or a quotient may go through another block on its way: where
+                        // the result goes is kept across it.)
+                        let (kept, place) = self.hold_place(place, true);
                         let result = self.gen_complex_mixed(
                             *bop,
                             op_ty,
@@ -2181,13 +2207,15 @@ impl<'a> FnGen<'a, '_> {
                             (vr, rhs.ty.is_complex()),
                             loc,
                         )?;
-                        match op_ty.complex_part() {
+                        let place = self.release_place(kept, place);
+                        let new = match op_ty.complex_part() {
                             Some(part) if !left_is_complex => {
                                 let real = self.load_pair(result, op_ty).low;
                                 self.convert(real, &part, &lhs.ty, loc)?
                             }
                             _ => self.convert(result, op_ty, &lhs.ty, loc)?,
-                        }
+                        };
+                        return Ok(Some(self.store_place(place, &lhs.ty, new, loc)?));
                     }
                     CompoundOp::Arith(bop) if op_ty.is_pair() => {
                         let widened = self.convert(old, &lhs.ty, op_ty, loc)?;
@@ -3052,10 +3080,6 @@ impl<'a> FnGen<'a, '_> {
                 self.b.load(MemKind::I64, cursor, 0)
             });
         }
-        if target.arch == Arch::Aarch64 {
-            return self.gen_va_arg_aggregate_aapcs64(ap, ty, loc);
-        }
-
         // x86-64 System V (psABI 3.5.7).
         let pieces = classify(self)?;
         let from_overflow = |g: &mut Self, ap: V| -> V {
@@ -3163,116 +3187,6 @@ impl<'a> FnGen<'a, '_> {
         Ok(address)
     }
 
-    /// AAPCS64 `va_arg` of a composite (appendix B of the procedure call standard).
-    fn gen_va_arg_aggregate_aapcs64(&mut self, ap: V, ty: &Type, loc: Loc) -> Res<V> {
-        let size = self.tcx.size_of(ty).unwrap_or(0);
-        let align = self.tcx.align_of(ty).unwrap_or(1);
-        let abi = self
-            .m
-            .call_abi(&Type::Void, std::slice::from_ref(ty), 1, loc)?;
-        let pieces = match abi.args.first() {
-            // Passed by reference: the argument is a pointer in a general register or on the stack.
-            Some(ArgPass::Reference) => {
-                let slot = self.gen_va_arg_address(ap, false);
-                return Ok(self.b.load(MemKind::I64, slot, 0));
-            }
-            Some(ArgPass::Pieces(pieces)) => pieces.clone(),
-            _ => return internal(loc, "unexpected AAPCS64 classification"),
-        };
-        let pieces: Vec<Piece> = pieces.into_iter().filter(|p| p.bytes > 0).collect();
-        if pieces.iter().any(|p| p.ty == Ty::V128) {
-            return err(
-                loc,
-                "va_arg of a struct that contains a vector is not supported yet",
-            );
-        }
-        let hfa = pieces.first().is_some_and(|p| p.ty.is_float());
-        let (offs_field, top_field, stride) = if hfa { (28, 16, 16i32) } else { (24, 8, 8) };
-        let nregs = pieces.len() as i32;
-        let list = self.alloc_temp(Ty::I64);
-        let result = self.alloc_temp(Ty::I64);
-        self.b.effect(Inst::LocalSet(list, ap));
-        let (try_registers, in_registers, in_memory, done) = (
-            self.b.new_block(),
-            self.b.new_block(),
-            self.b.new_block(),
-            self.b.new_block(),
-        );
-        let offs = self.b.load(MemKind::I32, ap, offs_field);
-        let zero = self.b.const_i32(0);
-        let exhausted = self.b.bin(CBin::Ge, offs, zero);
-        self.b
-            .terminate(Inst::Br(exhausted, in_memory, try_registers));
-
-        self.b.switch_to(try_registers);
-        let ap = self.b.local_get(list);
-        let mut offs = self.b.load(MemKind::I32, ap, offs_field);
-        if !hfa && align >= 16 {
-            let round = self.b.const_i32(15);
-            let mask = self.b.const_i32(-16);
-            let bumped = self.b.bin(CBin::Add, offs, round);
-            offs = self.b.bin(CBin::And, bumped, mask);
-        }
-        let step = self.b.const_i32(nregs * stride);
-        let advanced = self.b.bin(CBin::Add, offs, step);
-        self.b
-            .effect(Inst::Store(MemKind::I32, advanced, ap, offs_field));
-        let start = self.alloc_temp(Ty::I32);
-        self.b.effect(Inst::LocalSet(start, offs));
-        let zero = self.b.const_i32(0);
-        let overflowed = self.b.bin(CBin::Gt, advanced, zero);
-        self.b
-            .terminate(Inst::Br(overflowed, in_memory, in_registers));
-
-        self.b.switch_to(in_registers);
-        let ap = self.b.local_get(list);
-        let top = self.b.load(MemKind::I64, ap, top_field);
-        let offs = self.b.local_get(start);
-        let wide = self.b.un(UnOp::SExt32, offs);
-        let base = self.b.bin(CBin::Add, top, wide);
-        let address = if hfa {
-            // Each member sits in its own 16-byte register image; gather them.
-            let object = self.temp_object(ty);
-            for (i, piece) in pieces.iter().enumerate() {
-                let kind = if piece.ty == Ty::F32 {
-                    MemKind::F32
-                } else {
-                    MemKind::F64
-                };
-                let v = self.b.load(kind, base, i as i64 * 16);
-                self.b
-                    .effect(Inst::Store(kind, v, object, piece.offset as i64));
-            }
-            object
-        } else {
-            base
-        };
-        self.b.effect(Inst::LocalSet(result, address));
-        self.b.terminate(Inst::Jump(done));
-
-        self.b.switch_to(in_memory);
-        let ap = self.b.local_get(list);
-        let mut address = self.b.load(MemKind::I64, ap, 0);
-        if align > 8 {
-            let round = self.b.const_i64(align as i64 - 1);
-            let mask = self.b.const_i64(-(align as i64));
-            let bumped = self.b.bin(CBin::Add, address, round);
-            address = self.b.bin(CBin::And, bumped, mask);
-        }
-        let step = self.b.const_i64(size.next_multiple_of(8) as i64);
-        let next = self.b.bin(CBin::Add, address, step);
-        self.b.effect(Inst::Store(MemKind::I64, next, ap, 0));
-        self.b.effect(Inst::LocalSet(result, address));
-        self.b.terminate(Inst::Jump(done));
-
-        self.b.switch_to(done);
-        let address = self.b.local_get(result);
-        self.free_temp(list, Ty::I64);
-        self.free_temp(result, Ty::I64);
-        self.free_temp(start, Ty::I32);
-        Ok(address)
-    }
-
     /// Where the next argument of the list at `ap` is, a 16-byte vector, advancing the list.
     fn gen_va_arg_vector_address(&mut self, ap: V, loc: Loc) -> Res<V> {
         use crate::types::{Arch, Os};
@@ -3318,7 +3232,7 @@ impl<'a> FnGen<'a, '_> {
         self.b.effect(Inst::LocalSet(list, ap));
         let (in_registers, in_memory, done) =
             (self.b.new_block(), self.b.new_block(), self.b.new_block());
-        if target.arch == Arch::X86_64 {
+        {
             // System V: { u32 gp_offset; u32 fp_offset; void *overflow_arg_area; void *reg_save_area; }
             let (field, limit, stride) = if float { (4, 176, 16) } else { (0, 48, 8) };
             let offset = self.b.load(MemKind::I32, ap, field);
@@ -3345,48 +3259,6 @@ impl<'a> FnGen<'a, '_> {
             let eight = self.b.const_i64(8);
             let advanced = self.b.bin(CBin::Add, address, eight);
             self.b.effect(Inst::Store(MemKind::I64, advanced, ap, 8));
-            self.b.effect(Inst::LocalSet(result, address));
-            self.b.terminate(Inst::Jump(done));
-        } else {
-            // AAPCS64: { void *stack; void *gr_top; void *vr_top; int gr_offs; int vr_offs; }
-            let (offs_field, top_field, stride) = if float { (28, 16, 16) } else { (24, 8, 8) };
-            let try_registers = self.b.new_block();
-            let offs = self.b.load(MemKind::I32, ap, offs_field);
-            let zero = self.b.const_i32(0);
-            let exhausted = self.b.bin(CBin::Ge, offs, zero);
-            self.b
-                .terminate(Inst::Br(exhausted, in_memory, try_registers));
-
-            self.b.switch_to(try_registers);
-            let ap = self.b.local_get(list);
-            let offs = self.b.load(MemKind::I32, ap, offs_field);
-            let stride = self.b.const_i32(stride);
-            let advanced = self.b.bin(CBin::Add, offs, stride);
-            self.b
-                .effect(Inst::Store(MemKind::I32, advanced, ap, offs_field));
-            let zero = self.b.const_i32(0);
-            let overflowed = self.b.bin(CBin::Gt, advanced, zero);
-            self.b
-                .terminate(Inst::Br(overflowed, in_memory, in_registers));
-
-            self.b.switch_to(in_registers);
-            let ap = self.b.local_get(list);
-            // The store above already advanced the offset; the argument is at top + old offset.
-            let advanced = self.b.load(MemKind::I32, ap, offs_field);
-            let stride = self.b.const_i32(stride_of(float));
-            let offs = self.b.bin(CBin::Sub, advanced, stride);
-            let top = self.b.load(MemKind::I64, ap, top_field);
-            let wide_offs = self.b.un(UnOp::SExt32, offs);
-            let address = self.b.bin(CBin::Add, top, wide_offs);
-            self.b.effect(Inst::LocalSet(result, address));
-            self.b.terminate(Inst::Jump(done));
-
-            self.b.switch_to(in_memory);
-            let ap = self.b.local_get(list);
-            let address = self.b.load(MemKind::I64, ap, 0);
-            let eight = self.b.const_i64(8);
-            let advanced = self.b.bin(CBin::Add, address, eight);
-            self.b.effect(Inst::Store(MemKind::I64, advanced, ap, 0));
             self.b.effect(Inst::LocalSet(result, address));
             self.b.terminate(Inst::Jump(done));
         }
@@ -4195,6 +4067,8 @@ fn reachable_functions(prog: &Program) -> Vec<bool> {
             }
         }
     }
+    // (Called where a complex product or quotient comes out as two NaNs, which no expression says.)
+    work.extend(prog.complex_recovery.into_iter().flatten());
     // A function with a second external name is visible under it.
     for &(_, id) in &prog.function_aliases {
         if prog.funcs[id as usize].body.is_some() {

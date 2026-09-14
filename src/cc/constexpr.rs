@@ -745,10 +745,17 @@ pub(crate) fn eval_complex(e: &Expr, tcx: &TypeCtx) -> Option<Complex> {
                         (None, None) => 0.0,
                     },
                 },
-                (BinOp::Mul, Some(b), Some(d)) => Complex {
-                    re: round(a * c) - round(b * d),
-                    im: round(a * d) + round(b * c),
-                },
+                (BinOp::Mul, Some(b), Some(d)) => {
+                    let (re, im) = (
+                        round(round(a * c) - round(b * d)),
+                        round(round(a * d) + round(b * c)),
+                    );
+                    if re.is_nan() && im.is_nan() {
+                        product_with_infinities(a, b, c, d, &round)
+                    } else {
+                        Complex { re, im }
+                    }
+                }
                 (BinOp::Mul, Some(b), None) => Complex {
                     re: a * c,
                     im: b * c,
@@ -763,7 +770,7 @@ pub(crate) fn eval_complex(e: &Expr, tcx: &TypeCtx) -> Option<Complex> {
                 },
                 (BinOp::Div, b, Some(d)) => {
                     let b = b.unwrap_or(0.0);
-                    if single {
+                    let quotient = if single {
                         // In double nothing a float can hold overflows or vanishes.
                         let scale = c * c + d * d;
                         Complex {
@@ -785,6 +792,11 @@ pub(crate) fn eval_complex(e: &Expr, tcx: &TypeCtx) -> Option<Complex> {
                             re: (a * ratio + b) / denominator,
                             im: (b * ratio - a) / denominator,
                         }
+                    };
+                    if round(quotient.re).is_nan() && round(quotient.im).is_nan() {
+                        quotient_with_infinities(a, b, c, d)
+                    } else {
+                        quotient
                     }
                 }
                 _ => return None,
@@ -800,6 +812,65 @@ pub(crate) fn eval_complex(e: &Expr, tcx: &TypeCtx) -> Option<Complex> {
 
 /// Whether `c` is other than zero, which for the address of a weak symbol that nothing defines
 /// so far is not known before the program runs.
+/// C11 G.5.1 for `(a + bi) * (c + di)` where the formula gave two NaNs: what `__muldc3` and
+/// `include/bun_cc_complex.h` do. `round` brings a value to the precision of the parts.
+fn product_with_infinities(
+    mut a: f64,
+    mut b: f64,
+    mut c: f64,
+    mut d: f64,
+    round: &impl Fn(f64) -> f64,
+) -> Complex {
+    let (ac, bd, ad, bc) = (round(a * c), round(b * d), round(a * d), round(b * c));
+    let (mut re, mut im) = (round(ac - bd), round(ad + bc));
+    let boxed = |v: f64| (if v.is_infinite() { 1.0f64 } else { 0.0 }).copysign(v);
+    let zero_for_nan = |v: f64| if v.is_nan() { 0.0f64.copysign(v) } else { v };
+    let mut again = false;
+    if a.is_infinite() || b.is_infinite() {
+        (a, b) = (boxed(a), boxed(b));
+        (c, d) = (zero_for_nan(c), zero_for_nan(d));
+        again = true;
+    }
+    if c.is_infinite() || d.is_infinite() {
+        (c, d) = (boxed(c), boxed(d));
+        (a, b) = (zero_for_nan(a), zero_for_nan(b));
+        again = true;
+    }
+    if !again && [ac, bd, ad, bc].iter().any(|v| v.is_infinite()) {
+        (a, b, c, d) = (
+            zero_for_nan(a),
+            zero_for_nan(b),
+            zero_for_nan(c),
+            zero_for_nan(d),
+        );
+        again = true;
+    }
+    if again {
+        re = f64::INFINITY * (a * c - b * d);
+        im = f64::INFINITY * (a * d + b * c);
+    }
+    Complex { re, im }
+}
+
+/// Likewise for `(a + bi) / (c + di)`.
+fn quotient_with_infinities(mut a: f64, mut b: f64, mut c: f64, mut d: f64) -> Complex {
+    let boxed = |v: f64| (if v.is_infinite() { 1.0f64 } else { 0.0 }).copysign(v);
+    let (mut re, mut im) = (f64::NAN, f64::NAN);
+    if c == 0.0 && d == 0.0 && (!a.is_nan() || !b.is_nan()) {
+        re = f64::INFINITY.copysign(c) * a;
+        im = f64::INFINITY.copysign(c) * b;
+    } else if (a.is_infinite() || b.is_infinite()) && c.is_finite() && d.is_finite() {
+        (a, b) = (boxed(a), boxed(b));
+        re = f64::INFINITY * (a * c + b * d);
+        im = f64::INFINITY * (b * c - a * d);
+    } else if (c.is_infinite() || d.is_infinite()) && a.is_finite() && b.is_finite() {
+        (c, d) = (boxed(c), boxed(d));
+        re = 0.0 * (a * c + b * d);
+        im = 0.0 * (b * c - a * d);
+    }
+    Complex { re, im }
+}
+
 fn truthy(c: Const, tcx: &TypeCtx, loc: Loc) -> Res<bool> {
     Ok(match c {
         Const::Int(v) => v != 0,

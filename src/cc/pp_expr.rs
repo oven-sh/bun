@@ -239,6 +239,8 @@ const SUPPORTED_BUILTINS: &[&str] = &[
     "__builtin_bir_average_u16",
     "__builtin_bir_average_u8",
     "__builtin_bir_swizzle",
+    "__builtin_bir_second_if_less",
+    "__builtin_bir_second_if_greater",
     "__builtin_bun_unsupported",
     "__builtin_complex",
     "__builtin_cpu_is",
@@ -413,7 +415,7 @@ impl Preprocessor {
 
     /// Evaluates `defined X`, `defined(X)` or a `__has_*(...)` operator whose name was just
     /// read; its operands are taken unexpanded. `None` if `name` is not such an operator.
-    fn pp_operator(&mut self, name: &[u8], loc: Loc) -> Res<Option<bool>> {
+    pub(crate) fn pp_operator(&mut self, name: &[u8], loc: Loc) -> Res<Option<bool>> {
         if name == b"defined" {
             let mut t = self.next_raw()?;
             let parenthesized = t.is_punct(Punct::LParen);

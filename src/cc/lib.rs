@@ -86,6 +86,19 @@ fn compile_and_link(
     log: &mut Log,
     files_read: &mut Vec<String>,
 ) -> Option<Output> {
+    // (`Target` can say six things and three of them are targets.)
+    if !target.is_supported() {
+        let path = units.first().map_or("", |unit| unit.path);
+        diagnostics::add(
+            log,
+            diagnostics::message_in_file(
+                Kind::Err,
+                path,
+                "C is not compiled for this target".to_string(),
+            ),
+        );
+        return None;
+    }
     let mut compiled = Vec::with_capacity(units.len());
     let mut undefined_tls = Vec::with_capacity(units.len());
     let names: Vec<String> = units.iter().map(|unit| unit.path.to_string()).collect();

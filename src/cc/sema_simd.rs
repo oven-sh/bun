@@ -129,6 +129,64 @@ impl Sema {
         self.mk(ExprKind::VecSplat(Box::new(zero)), ty.clone(), loc)
     }
 
+    /// A scalar operand of a lane-wise operation becomes a vector only where that loses nothing
+    /// (GCC and Clang, which agree on all of this): a constant has to be a value of the element
+    /// type, which for integers means it fits the width; of anything else the type has to fit: no
+    /// wider integer into narrower lanes, no floating value into integer lanes, no integer into
+    /// floating lanes that have fewer digits than it, no `double` into `float` lanes.
+    fn keeps_its_value(&self, e: &Expr, ty: &Type, loc: Loc) -> Res<()> {
+        let Some(elem) = ty.vector_elem() else {
+            return Ok(());
+        };
+        if !e.ty.is_arith() || e.ty.is_complex() {
+            return Ok(());
+        }
+        let (Some(from), Some(to)) = (self.tcx.size_of(&e.ty), self.tcx.size_of(elem)) else {
+            return Ok(());
+        };
+        let digits = |ty: &Type| {
+            if matches!(ty.unqualified(), Type::Float) {
+                24
+            } else {
+                53
+            }
+        };
+        let fits = match crate::constexpr::eval(e, &self.tcx) {
+            Ok(crate::constexpr::Const::Int(v)) if e.ty.is_integer() && elem.is_integer() => {
+                let bits = to * 8;
+                bits >= 64 || (-(1i64 << (bits - 1))..(1i64 << bits)).contains(&v)
+            }
+            Ok(crate::constexpr::Const::Int(v)) if e.ty.is_integer() => {
+                if digits(elem) == 24 {
+                    (v as f32) as i128 == i128::from(v)
+                } else {
+                    (v as f64) as i128 == i128::from(v)
+                }
+            }
+            Ok(crate::constexpr::Const::Float(v)) if elem.is_float() => {
+                digits(elem) == 53 || f64::from(v as f32) == v || v.is_nan()
+            }
+            _ if e.ty.is_integer() && elem.is_integer() => from <= to,
+            _ if e.ty.is_integer() => {
+                let bits = from * 8 - u64::from(self.tcx.is_signed(&e.ty));
+                matches!(e.ty.unqualified(), Type::Bool) || bits <= digits(elem)
+            }
+            _ if elem.is_integer() => false,
+            _ => from <= to,
+        };
+        if fits {
+            return Ok(());
+        }
+        err(
+            loc,
+            format!(
+                "conversion of a scalar '{}' to the vector type '{}' loses some of it",
+                self.tcx.display(&e.ty),
+                self.tcx.display(ty)
+            ),
+        )
+    }
+
     /// Scalar `e` converted to the element type of `ty` and copied into every lane.
     fn splat(&self, e: Expr, ty: &Type, loc: Loc) -> Res<Expr> {
         let Some(elem) = ty.vector_elem() else {
@@ -206,11 +264,13 @@ impl Sema {
         let a = if a.ty.is_vector() {
             a
         } else {
+            self.keeps_its_value(&a, &ty, loc)?;
             self.splat(a, &ty, loc)?
         };
         let b = if b.ty.is_vector() {
             b
         } else {
+            self.keeps_its_value(&b, &ty, loc)?;
             self.splat(b, &ty, loc)?
         };
         if a.ty != b.ty && !self.same_shape(&a.ty, &b.ty) {
@@ -567,11 +627,14 @@ impl Sema {
         loc: Loc,
     ) -> Res<Expr> {
         let ieee = matches!(op, VecBuiltin::Minimum | VecBuiltin::Maximum);
-        let arity = if ieee || matches!(op, VecBuiltin::Min | VecBuiltin::Max) {
-            2
-        } else {
-            1
-        };
+        let two = matches!(
+            op,
+            VecBuiltin::Min
+                | VecBuiltin::Max
+                | VecBuiltin::SecondIfLess
+                | VecBuiltin::SecondIfGreater
+        );
+        let arity = if ieee || two { 2 } else { 1 };
         if args.len() != arity {
             return err(loc, format!("{name} takes {arity} argument(s)"));
         }

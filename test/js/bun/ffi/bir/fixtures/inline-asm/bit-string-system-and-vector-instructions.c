@@ -288,11 +288,18 @@ int main(void) {
     _Alignas(16) uint64_t memory[6] = {1, 2, 3, 4, 5, 6};
     __asm__("movdqa %1, %%xmm5\n movdqa %%xmm5, %0" : "=m"(*(vector *)&memory[4]) : "m"(*(vector *)&memory[0]) : "xmm5"); CHECK(memory[4] == 1 && memory[5] == 2);
     __asm__("movups %1, %%xmm5\n movups %%xmm5, %0" : "=m"(*(vector *)&memory[3]) : "m"(*(vector *)&memory[1]) : "xmm5"); CHECK(memory[3] == 2 && memory[4] == 3);
-    __asm__("movaps %1, %%xmm6\n movaps %%xmm6, %%xmm7\n movaps %%xmm7, %0" : "=m"(*(vector *)&memory[0]) : "m"(*(vector *)&memory[2]) : "xmm6", "xmm7"); CHECK(memory[0] == 3 && memory[1] == 2);
-    /* The registers past the first eight. */
+    __asm__("movaps %1, %%xmm3\n movaps %%xmm3, %%xmm4\n movaps %%xmm4, %0" : "=m"(*(vector *)&memory[0]) : "m"(*(vector *)&memory[2]) : "xmm3", "xmm4"); CHECK(memory[0] == 3 && memory[1] == 2);
+    /* The registers past the first eight. (Windows keeps xmm6 to xmm15 across calls, and a statement that changes one
+       is refused there: diagnostics/cases.json. The same is done with the ones it lets a statement have.) */
+#ifdef _WIN32
+    __asm__("movdqu %1, %%xmm4\n movdqu %2, %%xmm5\n pxor %%xmm5, %%xmm4\n movdqu %%xmm4, %0" : "=m"(r) : "m"(a), "m"(b) : "xmm4", "xmm5");
+    CHECK(r[0] == (a[0] ^ b[0]) && r[1] == (a[1] ^ b[1]));
+    __asm__("movdqu (%0), %%xmm5\n movdqu %%xmm5, 16(%0)" : : "r"(memory) : "xmm5", "memory"); CHECK(memory[2] == 3 && memory[3] == 2);
+#else
     __asm__("movdqu %1, %%xmm8\n movdqu %2, %%xmm9\n pxor %%xmm9, %%xmm8\n movdqu %%xmm8, %0" : "=m"(r) : "m"(a), "m"(b) : "xmm8", "xmm9");
     CHECK(r[0] == (a[0] ^ b[0]) && r[1] == (a[1] ^ b[1]));
     __asm__("movdqu (%0), %%xmm15\n movdqu %%xmm15, 16(%0)" : : "r"(memory) : "xmm15", "memory"); CHECK(memory[2] == 3 && memory[3] == 2);
+#endif
     uint32_t leaf1[4];
     cpuid(1, 0, leaf1);
     {

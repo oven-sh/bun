@@ -484,6 +484,22 @@ impl Preprocessor {
                 }
                 return Ok(t);
             }
+            // `__has_attribute(x)` and its kin in ordinary text are 1 or 0 there too, as they are
+            // for GCC and Clang (`int supported = __has_builtin(__builtin_expect);`).
+            if is_pp_operator(name) && !t.no_expand {
+                let name = name.to_vec();
+                let next = self.next_raw()?;
+                let called = next.is_punct(Punct::LParen);
+                self.unread(next);
+                if !called {
+                    return Ok(t);
+                }
+                let answer = self.pp_operator(&name, t.tok.loc)?.unwrap_or(false);
+                let mut number = t.tok.clone();
+                number.kind = PpKind::Number;
+                number.text = if answer { b"1".to_vec() } else { b"0".to_vec() };
+                return Ok(PTok::plain(number));
+            }
             let Ok(name) = std::str::from_utf8(name) else {
                 return Ok(t);
             };
@@ -1113,6 +1129,10 @@ fn format_time(now: u64) -> String {
 }
 
 impl TokenSource for Preprocessor {
+    fn read_complex_recovery(&mut self) {
+        self.push_complex_recovery();
+    }
+
     fn next_token(&mut self) -> Res<PpToken> {
         let tok = self.next_expanded()?.tok;
         bun_core::scoped_log!(

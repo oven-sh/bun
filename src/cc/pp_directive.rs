@@ -46,6 +46,8 @@ pub(crate) fn ms_intrinsics() -> &'static [u8] {
 }
 
 const BUILTIN_DIR: &str = "<builtin>";
+/// The compiler's own functions for C11 G.5.1 (see the file), which no program includes by name.
+const COMPLEX_RECOVERY: &str = "bun_cc_complex.h";
 
 /// One of the compiler's own headers. They are kept compressed and inflated when first asked for.
 fn builtin_header(name: &str, target: crate::types::Target) -> Option<&'static [u8]> {
@@ -65,6 +67,7 @@ fn builtin_header(name: &str, target: crate::types::Target) -> Option<&'static [
         "stdnoreturn.h" => bun_zstd::embed_compressed!(src "cc/include/stdnoreturn.h"),
         "stdatomic.h" => bun_zstd::embed_compressed!(src "cc/include/stdatomic.h"),
         "tgmath.h" => bun_zstd::embed_compressed!(src "cc/include/tgmath.h"),
+        COMPLEX_RECOVERY => bun_zstd::embed_compressed!(src "cc/include/bun_cc_complex.h"),
         // Intrinsic headers that exist only for one architecture.
         "xmmintrin.h" if x86 => bun_zstd::embed_compressed!(src "cc/include/xmmintrin.h"),
         "emmintrin.h" if x86 => bun_zstd::embed_compressed!(src "cc/include/emmintrin.h"),
@@ -142,6 +145,14 @@ fn join(dir: &str, name: &str) -> String {
 }
 
 impl Preprocessor {
+    /// Reads the compiler's functions for C11 G.5.1 next: at the end of a file that needs them.
+    pub(crate) fn push_complex_recovery(&mut self) {
+        let path = join(BUILTIN_DIR, COMPLEX_RECOVERY);
+        if let Some(source) = self.load(&path, true) {
+            self.push_source(&path, source, None, None);
+        }
+    }
+
     fn read_frame_token(&mut self) -> Res<Option<PpToken>> {
         let Some(frame) = self.frames.last_mut() else {
             return Ok(None);
@@ -901,6 +912,19 @@ impl Preprocessor {
                 "the headers of a target that is not this machine are looked for in the directories of C_INCLUDE_PATH only",
             );
         }
+        // A machine without a C library's headers (or with them where nobody looks).
+        let nowhere_to_look = !self
+            .search
+            .iter()
+            .any(|dir| matches!(dir, SearchDir::Dir(_)));
+        if form == HeaderForm::Angled && nowhere_to_look {
+            return crate::token::err_with_note(
+                loc,
+                message,
+                loc,
+                "no directory of C library headers was found on this system; C_INCLUDE_PATH can name one",
+            );
+        }
         err(loc, message)
     }
 
@@ -1014,9 +1038,11 @@ impl Preprocessor {
             }
             None => {
                 let line = self.read_line()?;
-                let direct = matches!(line.as_slice(), [t] if t.kind == PpKind::StrLit);
+                // (What follows the name on the line is not looked at, in this form as in the
+                // other: GCC and Clang warn and go on.)
+                let direct = line.first().is_some_and(|t| t.kind == PpKind::StrLit);
                 if direct {
-                    Self::header_name_from_tokens(&line, loc)?
+                    Self::header_name_from_tokens(&line[..1], loc)?
                 } else {
                     let tokens: Vec<PTok> = line.into_iter().map(PTok::plain).collect();
                     let expanded = self.expanded_alone(tokens).map(|expanded| {

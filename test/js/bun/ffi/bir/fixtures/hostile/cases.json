@@ -1200,5 +1200,16 @@
     "error": {
       "contains": "structures are nested too deeply"
     }
+  },
+  {
+    "name": "something after the name of an included file",
+    "files": {
+      "x.h": ["int seven = 7;\n"]
+    },
+    "source": [
+      "#include \"x.h\" and more\n#include <stdio.h> and more\nint main(void) { printf(\"%d\\n\", seven); return 0; }\n"
+    ],
+    "output": "7\n",
+    "status": 0
   }
 ]

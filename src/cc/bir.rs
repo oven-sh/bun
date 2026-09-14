@@ -442,6 +442,9 @@ pub(crate) const ASM_HAS_EFFECTS: u8 = 1;
 pub(crate) const ASM_READS_MEMORY: u8 = 2;
 /// It writes memory (an "=m" or "+m" operand, a "memory" clobber):
 pub(crate) const ASM_WRITES_MEMORY: u8 = 4;
+/// In place of a `Value` parameter's type: an `I32` whose C type is 1 or 2 bytes wide.
+pub(crate) const NARROW_PARAMETER_I8: u8 = 6;
+pub(crate) const NARROW_PARAMETER_I16: u8 = 7;
 /// Or'ed into a `Fence`'s order: for the compiler only (`atomic_signal_fence`), no instruction.
 pub(crate) const COMPILER_FENCE: u8 = 0x80;
 
@@ -678,6 +681,11 @@ pub(crate) enum Exhausts {
 pub(crate) enum Param {
     /// A scalar in the next register of its class.
     Value(Ty),
+    /// An `I32` whose C type is this many bytes wide, 1 or 2 (`char`, `_Bool`, `short`). The value is
+    /// an `I32` like any other: the low bits are the argument and whoever reads it extends them.
+    /// What this adds is where it goes on the stack of a target that packs its arguments (Apple's
+    /// AArch64): that many bytes at a multiple of that many.
+    Narrow(u8),
     /// `size` bytes copied into the stack argument area; the value is their address.
     ByValStack {
         size: u64,
@@ -693,6 +701,7 @@ impl Param {
     pub(crate) fn value_ty(self) -> Ty {
         match self {
             Param::Value(t) => t,
+            Param::Narrow(_) => Ty::I32,
             Param::ByValStack { .. } | Param::IndirectResult => Ty::I64,
         }
     }
@@ -1187,6 +1196,14 @@ impl Module {
                         w.u8(exhausts as u8);
                     }
                     Param::IndirectResult => w.u8(2),
+                    Param::Narrow(bytes) => {
+                        w.u8(0);
+                        w.u8(if bytes == 1 {
+                            NARROW_PARAMETER_I8
+                        } else {
+                            NARROW_PARAMETER_I16
+                        });
+                    }
                 }
             }
         }
@@ -2086,6 +2103,9 @@ fn check_sig(module: &Module, index: usize, sig: &Sig) -> Result<(), String> {
     for (i, &p) in sig.params.iter().enumerate() {
         match p {
             Param::Value(Ty::Void) => return Err(format!("sig {index}: void parameter")),
+            Param::Narrow(bytes) if !matches!(bytes, 1 | 2) => {
+                return Err(format!("sig {index}: a narrow parameter of {bytes} bytes"));
+            }
             Param::Value(Ty::V128) if windows => {
                 return Err(format!(
                     "sig {index}: a vector cannot be passed by value on this target"
@@ -2124,10 +2144,9 @@ fn is_scalar(sig: &Sig) -> bool {
     !sig.variadic
         && sig.rets.len() <= 1
         && sig.rets.first() != Some(&Ty::V128)
-        && sig
-            .params
-            .iter()
-            .all(|p| matches!(p, Param::Value(ty) if *ty != Ty::V128))
+        && sig.params.iter().all(|p| {
+            matches!(p, Param::Narrow(_)) || matches!(p, Param::Value(ty) if *ty != Ty::V128)
+        })
 }
 
 /// Checks the module-level tables, then every function: what the loader's decoder checks, so that
@@ -2301,6 +2320,8 @@ fn sig_string(sig: &Sig) -> String {
         }
         match p {
             Param::Value(t) => s.push_str(t.name()),
+            Param::Narrow(1) => s.push_str("i32 of a byte"),
+            Param::Narrow(_) => s.push_str("i32 of two bytes"),
             Param::ByValStack {
                 size,
                 align,

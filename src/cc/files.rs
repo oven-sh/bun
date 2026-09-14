@@ -3,7 +3,7 @@
 use bun_core::{env_var, strings};
 use bun_sys::{Dir, Fd, File};
 
-use crate::types::{Arch, Os, Target};
+use crate::types::{Os, Target};
 
 /// A source file that was read: its bytes, and which file it is (device and inode, or what
 /// Windows has for them), so that two names of one file are known to be one.
@@ -151,10 +151,7 @@ pub(crate) fn system_include_dirs(target: Target) -> Vec<String> {
     }
     match target.os {
         Os::Linux => {
-            let multiarch = match target.arch {
-                Arch::X86_64 => "/usr/include/x86_64-linux-gnu",
-                Arch::Aarch64 => "/usr/include/aarch64-linux-gnu",
-            };
+            let multiarch = "/usr/include/x86_64-linux-gnu";
             for dir in ["/usr/local/include", multiarch, "/usr/include"] {
                 if is_directory(dir.as_bytes()) {
                     dirs.push(dir.to_owned());
@@ -195,6 +192,13 @@ pub(crate) fn system_include_dirs(target: Target) -> Vec<String> {
 /// exactly; without it the newest of each under `ProgramFiles` and `ProgramFiles(x86)` is taken,
 /// in the order cl.exe searches them.
 fn microsoft_include_dirs() -> Vec<String> {
+    // (Looked for once: nothing installs a toolchain while a program is being compiled, and every
+    // C file of it asks.)
+    static FOUND: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    FOUND.get_or_init(find_microsoft_include_dirs).clone()
+}
+
+fn find_microsoft_include_dirs() -> Vec<String> {
     let text =
         |value: Option<&'static [u8]>| value.and_then(|value| core::str::from_utf8(value).ok());
     if let Some(list) = text(env_var::INCLUDE::platform_get()) {

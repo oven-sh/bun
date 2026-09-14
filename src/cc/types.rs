@@ -58,14 +58,17 @@ impl Target {
 
     pub(crate) fn dialect(self) -> crate::token::Dialect {
         crate::token::Dialect {
-            char_is_signed: self.char_is_signed(),
             microsoft: self.os == Os::Windows,
         }
     }
 
-    pub(crate) fn char_is_signed(self) -> bool {
-        // AAPCS64 makes plain char unsigned; Apple and Windows arm64 keep it signed.
-        !(self.arch == Arch::Aarch64 && self.os == Os::Linux)
+    /// The three there are compilers, libraries and tests for; what else `arch` and `os` could
+    /// say is refused where compiling begins.
+    pub(crate) fn is_supported(self) -> bool {
+        matches!(
+            (self.arch, self.os),
+            (Arch::X86_64, Os::Linux | Os::Windows) | (Arch::Aarch64, Os::MacOs)
+        )
     }
 
     /// Size of `long double` when it is a distinct, wider-than-double type; `None` where it
@@ -85,8 +88,7 @@ impl Target {
     pub(crate) fn long_double_type(self) -> Type {
         match self.long_double_size() {
             None => Type::LongDouble64,
-            Some(_) if self.long_double_is_x87() => Type::Wide(WideKind::LongDouble),
-            Some(_) => Type::Wide(WideKind::QuadLongDouble),
+            Some(_) => Type::Wide(WideKind::LongDouble),
         }
     }
 
@@ -179,7 +181,6 @@ pub(crate) enum WideKind {
     LongDouble,
     /// `long double` where it is IEEE binary128 (AArch64 Linux). Declarations only, like the
     /// rest.
-    QuadLongDouble,
     ComplexLongDouble,
     /// `__float128` / `_Float128`: IEEE binary128.
     Float128,
@@ -191,7 +192,7 @@ pub(crate) enum WideKind {
 impl WideKind {
     pub(crate) fn name(self) -> &'static str {
         match self {
-            WideKind::LongDouble | WideKind::QuadLongDouble => "long double",
+            WideKind::LongDouble => "long double",
             WideKind::ComplexLongDouble => "long double _Complex",
             WideKind::Float128 => "_Float128",
             WideKind::ComplexFloat128 => "_Float128 _Complex",
@@ -664,7 +665,7 @@ impl TypeCtx {
             Type::Wide(kind) => {
                 let long_double = self.target.long_double_size().unwrap_or(8);
                 match kind {
-                    WideKind::LongDouble | WideKind::QuadLongDouble => long_double,
+                    WideKind::LongDouble => long_double,
                     WideKind::ComplexLongDouble => long_double * 2,
                     WideKind::Float128 => 16,
                     WideKind::ComplexFloat128 => 32,
@@ -825,8 +826,14 @@ impl TypeCtx {
     pub(crate) fn is_signed(&self, ty: &Type) -> bool {
         match ty {
             Type::Atomic(inner) | Type::Qualified(_, inner) => self.is_signed(inner),
-            Type::Char => self.target.char_is_signed(),
-            Type::SChar | Type::Short | Type::Int | Type::Long | Type::LLong | Type::Int128 => true,
+            // (Plain `char` is signed on every target there is.)
+            Type::Char
+            | Type::SChar
+            | Type::Short
+            | Type::Int
+            | Type::Long
+            | Type::LLong
+            | Type::Int128 => true,
             _ => false,
         }
     }

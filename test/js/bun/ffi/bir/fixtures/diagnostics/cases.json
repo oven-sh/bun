@@ -435,13 +435,6 @@
     "message": "duplicate case value 3"
   },
   {
-    "about": "gnu and c11 expression forms",
-    "source": "int f(int c) { switch (c) { case 5 ... 1: return 1; } return 0; }",
-    "line": 1,
-    "column": 29,
-    "message": "empty case range"
-  },
-  {
     "about": "variadic definitions",
     "source": "#include <stdarg.h>\nint f(int n) { va_list ap; va_start(ap, n); return 0; }",
     "line": 2,
@@ -4297,6 +4290,120 @@
     "source": "float f(float a) { __asm__(\"addss %0, %0\" : \"+x\"(a) : : \"xmm6\"); return a; }\nint main(void) { return (int)f(1); }",
     "line": 1,
     "column": 20,
+    "message": "inline assembly: 'xmm6' is kept across calls on Windows, and the statement would have to save it: xmm0 to xmm5 are there to be used",
+    "requires": "windows x64"
+  },
+  {
+    "about": "6.7.2: imaginary types are in nobody's compiler",
+    "source": "int main(void) { _Imaginary double i; return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "imaginary types are not supported"
+  },
+  {
+    "about": "6.7.6.3p10: void as a parameter's type is only ever alone and unqualified",
+    "source": "int f(const void);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "parameter has type void"
+  },
+  {
+    "about": "6.9.1p6: a parameter of an old-style definition is declared once",
+    "source": "int f(a) int a; int a; { return 0; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 21,
+    "message": "redefinition of parameter 'a'"
+  },
+  {
+    "about": "typeof: not of a bit-field",
+    "source": "int main(void) { struct { int a : 3; } s; __typeof__(s.a) y = 1; return y; }",
+    "line": 1,
+    "column": 55,
+    "message": "'typeof' applied to a bit-field"
+  },
+  {
+    "about": "vectors: a scalar operand becomes a vector only where that loses nothing",
+    "source": "typedef int v4 __attribute__((vector_size(16)));\nv4 f(v4 a) { return a + 1.0; }",
+    "line": 2,
+    "column": 23,
+    "message": "conversion of a scalar 'double' to the vector type 'int __attribute__((vector_size(16)))' loses some of it"
+  },
+  {
+    "about": "vectors: a scalar operand becomes a vector only where that loses nothing",
+    "source": "typedef int v4 __attribute__((vector_size(16)));\nv4 f(v4 a, long long x) { return a + x; }",
+    "line": 2,
+    "column": 36,
+    "message": "conversion of a scalar 'long long' to the vector type 'int __attribute__((vector_size(16)))' loses some of it"
+  },
+  {
+    "about": "vectors: a scalar operand becomes a vector only where that loses nothing",
+    "source": "typedef short v8 __attribute__((vector_size(16)));\nv8 f(v8 a) { return a + 70000; }",
+    "line": 2,
+    "column": 23,
+    "message": "conversion of a scalar 'int' to the vector type 'short __attribute__((vector_size(16)))' loses some of it"
+  },
+  {
+    "about": "vectors: a scalar operand becomes a vector only where that loses nothing",
+    "source": "typedef short v8 __attribute__((vector_size(16)));\nv8 f(v8 a, int x) { return a + x; }",
+    "line": 2,
+    "column": 30,
+    "message": "conversion of a scalar 'int' to the vector type 'short __attribute__((vector_size(16)))' loses some of it"
+  },
+  {
+    "about": "vectors: a scalar operand becomes a vector only where that loses nothing",
+    "source": "typedef float f4 __attribute__((vector_size(16)));\nf4 f(f4 a) { return a + 0.1; }",
+    "line": 2,
+    "column": 23,
+    "message": "conversion of a scalar 'double' to the vector type 'float __attribute__((vector_size(16)))' loses some of it"
+  },
+  {
+    "about": "vectors: a scalar operand becomes a vector only where that loses nothing",
+    "source": "typedef float f4 __attribute__((vector_size(16)));\nf4 f(f4 a) { return a + 16777217; }",
+    "line": 2,
+    "column": 23,
+    "message": "conversion of a scalar 'int' to the vector type 'float __attribute__((vector_size(16)))' loses some of it"
+  },
+  {
+    "about": "vectors: a scalar operand becomes a vector only where that loses nothing",
+    "source": "typedef float f4 __attribute__((vector_size(16)));\nf4 f(f4 a, int x) { return a + x; }",
+    "line": 2,
+    "column": 30,
+    "message": "conversion of a scalar 'int' to the vector type 'float __attribute__((vector_size(16)))' loses some of it"
+  },
+  {
+    "about": "vectors: a scalar operand becomes a vector only where that loses nothing",
+    "source": "typedef float f4 __attribute__((vector_size(16)));\nf4 f(f4 a, double d) { return a + d; }",
+    "line": 2,
+    "column": 33,
+    "message": "conversion of a scalar 'double' to the vector type 'float __attribute__((vector_size(16)))' loses some of it"
+  },
+  {
+    "about": "vectors: a scalar operand becomes a vector only where that loses nothing",
+    "source": "typedef double d2 __attribute__((vector_size(16)));\nd2 f(d2 a, long long x) { return a + x; }",
+    "line": 2,
+    "column": 36,
+    "message": "conversion of a scalar 'long long' to the vector type 'double __attribute__((vector_size(16)))' loses some of it"
+  },
+  {
+    "about": "vectors: a scalar operand becomes a vector only where that loses nothing",
+    "source": "typedef int v4 __attribute__((vector_size(16)));\nv4 f(v4 a) { return a == 1.0; }",
+    "line": 2,
+    "column": 23,
+    "message": "conversion of a scalar 'double' to the vector type 'int __attribute__((vector_size(16)))' loses some of it"
+  },
+  {
+    "about": "builtins: what asks the processor is asked in a function",
+    "source": "int x = __builtin_cpu_supports(\"sse2\");\nint main(void) { return x; }",
+    "line": 1,
+    "column": 9,
+    "message": "__builtin_cpu_supports is only supported inside functions",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: Windows keeps xmm6 to xmm15 across calls",
+    "source": "void f(void) { __asm__ volatile(\"nop\" ::: \"xmm6\"); }\nint main(void) { f(); return 0; }",
+    "line": 1,
+    "column": 16,
     "message": "inline assembly: 'xmm6' is kept across calls on Windows, and the statement would have to save it: xmm0 to xmm5 are there to be used",
     "requires": "windows x64"
   }

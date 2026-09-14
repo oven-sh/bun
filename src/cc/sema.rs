@@ -176,6 +176,8 @@ pub(crate) struct Sema {
     /// The tentative definitions whose type was not complete where they stand (C11 6.9.2p2: with
     /// external linkage it has to be by the end of the unit, which is where it is looked at).
     pub(crate) tentative_incomplete: Vec<(GlobalId, Loc)>,
+    /// A complex number was multiplied or divided: the unit needs the functions for C11 G.5.1.
+    pub(crate) complex_recovery_needed: std::cell::Cell<bool>,
     /// For `elaborate_init`: where the items so far write.
     pub(crate) init_index: std::cell::RefCell<crate::init::InitIndex>,
     /// Other external names of functions this unit defines: (name, function).
@@ -222,7 +224,8 @@ impl Sema {
         let target = self.tcx.target;
         let va_list = match (target.arch, target.os) {
             (_, Os::Windows) | (Arch::Aarch64, Os::MacOs) => Type::Char.ptr_to(),
-            (Arch::X86_64, _) => {
+            // x86-64 System V.
+            _ => {
                 let id = self.new_struct(Some(Rc::from("__va_list_tag")), false);
                 let fields = vec![
                     field("gp_offset", Type::UInt),
@@ -232,18 +235,6 @@ impl Sema {
                 ];
                 let _ = self.complete_struct(id, fields, LayoutRules::default(), none);
                 Type::Array(Rc::new(Type::Struct(id)), Some(1))
-            }
-            (Arch::Aarch64, _) => {
-                let id = self.new_struct(Some(Rc::from("__va_list")), false);
-                let fields = vec![
-                    field("__stack", void_ptr.clone()),
-                    field("__gr_top", void_ptr.clone()),
-                    field("__vr_top", void_ptr),
-                    field("__gr_offs", Type::Int),
-                    field("__vr_offs", Type::Int),
-                ];
-                let _ = self.complete_struct(id, fields, LayoutRules::default(), none);
-                Type::Struct(id)
             }
         };
         self.bind(Rc::from("__builtin_va_list"), Symbol::Typedef(va_list));
@@ -282,6 +273,7 @@ impl Sema {
             flexible_end: std::cell::Cell::new(0),
             deepest_expr: std::cell::Cell::new(0),
             tentative_incomplete: Vec::new(),
+            complex_recovery_needed: std::cell::Cell::new(false),
             init_index: std::cell::RefCell::default(),
             function_aliases: Vec::new(),
             asm_blocks: Vec::new(),
@@ -1224,6 +1216,21 @@ impl Sema {
             e.kind,
             ExprKind::LogAnd(..) | ExprKind::LogOr(..) | ExprKind::Cond(..)
         );
+        // The product and the quotient of complex numbers have a path of their own for when the
+        // formula gives two NaNs (C11 G.5.1).
+        let recovers = match &e.kind {
+            ExprKind::Binary(BinOp::Mul | BinOp::Div, ..) => e.ty.is_complex(),
+            ExprKind::CompoundAssign {
+                op: CompoundOp::Arith(BinOp::Mul | BinOp::Div),
+                op_ty,
+                ..
+            } => op_ty.is_complex(),
+            _ => false,
+        };
+        if recovers {
+            cf = true;
+            self.complex_recovery_needed.set(true);
+        }
         let (mut depth, mut nesting) = (0u32, 1u16);
         let spine = e.spine_child();
         e.for_each_child(|c| {
@@ -1532,11 +1539,8 @@ impl Sema {
         };
         let literal = self.strings.get(id as usize)?;
         let byte = *literal.bytes.get(usize::try_from(at).ok()?)?;
-        Some(if self.tcx.target.char_is_signed() {
-            i64::from(byte as i8)
-        } else {
-            i64::from(byte)
-        })
+        // (Plain `char` is signed on every target there is.)
+        Some(i64::from(byte as i8))
     }
 
     fn scalar_rvalue(&self, e: Expr, what: &str) -> Res<Expr> {

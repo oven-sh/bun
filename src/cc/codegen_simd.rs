@@ -350,12 +350,25 @@ impl FnGen<'_, '_> {
         Ok(values)
     }
 
+    /// The lesser (`VLaneOp::Min`) or the greater of each pair of lanes, and of floating lanes the
+    /// one that is a number where the other is not, as `fmin` and `fmax` have it: the lane
+    /// operation alone gives the first where either is not a number.
+    fn number_of_the_two(&mut self, op: VLaneOp, lane: Lane, signed: bool, a: V, b: V) -> V {
+        let chosen = self.b.vlane(op, lane, signed, vec![a, b]);
+        if !lane.is_float() {
+            return chosen;
+        }
+        let first_is_not_a_number = self.b.vlane(VLaneOp::Ne, lane, false, vec![a, a]);
+        self.b
+            .vbits(VBitsOp::Select, vec![first_is_not_a_number, b, chosen])
+    }
+
     fn reduce_step(&mut self, op: ReduceOp, lane: Lane, signed: bool, a: V, b: V) -> V {
         let lane_op = match op {
             ReduceOp::Add => VLaneOp::Add,
             ReduceOp::Mul => VLaneOp::Mul,
-            ReduceOp::Min => VLaneOp::Min,
-            ReduceOp::Max => VLaneOp::Max,
+            ReduceOp::Min => return self.number_of_the_two(VLaneOp::Min, lane, signed, a, b),
+            ReduceOp::Max => return self.number_of_the_two(VLaneOp::Max, lane, signed, a, b),
             ReduceOp::Minimum => VLaneOp::FMin,
             ReduceOp::Maximum => VLaneOp::FMax,
             ReduceOp::And => return self.b.vbits(VBitsOp::And, vec![a, b]),
@@ -516,8 +529,14 @@ impl FnGen<'_, '_> {
             VecBuiltin::ConvertKind(kind) => self.b.def(Inst::VConvert(kind, v(0)?), Ty::V128),
             VecBuiltin::Abs => self.b.vlane(VLaneOp::Abs, lane, false, vec![v(0)?]),
             VecBuiltin::Sqrt => self.b.vlane(VLaneOp::Sqrt, lane, false, vec![v(0)?]),
-            VecBuiltin::Min => self.b.vlane(VLaneOp::Min, lane, signed, vec![v(0)?, v(1)?]),
-            VecBuiltin::Max => self.b.vlane(VLaneOp::Max, lane, signed, vec![v(0)?, v(1)?]),
+            VecBuiltin::SecondIfLess => {
+                self.b.vlane(VLaneOp::Min, lane, signed, vec![v(0)?, v(1)?])
+            }
+            VecBuiltin::SecondIfGreater => {
+                self.b.vlane(VLaneOp::Max, lane, signed, vec![v(0)?, v(1)?])
+            }
+            VecBuiltin::Min => self.number_of_the_two(VLaneOp::Min, lane, signed, v(0)?, v(1)?),
+            VecBuiltin::Max => self.number_of_the_two(VLaneOp::Max, lane, signed, v(0)?, v(1)?),
             VecBuiltin::Minimum => self.b.vlane(VLaneOp::FMin, lane, false, vec![v(0)?, v(1)?]),
             VecBuiltin::Maximum => self.b.vlane(VLaneOp::FMax, lane, false, vec![v(0)?, v(1)?]),
             VecBuiltin::Reduce(reduce) => {

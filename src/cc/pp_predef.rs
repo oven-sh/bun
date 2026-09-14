@@ -17,12 +17,8 @@ pub(crate) fn predefined_macros(target: Target) -> String {
     // and `va_list` is `void *`. Code written for GCC then takes its GCC paths (builtins,
     // attributes, `always_inline`).
     let gnu_version: Option<(u32, u32, u32)> = (target.os == Os::MacOs).then_some((9, 0, 0));
-    let char_signed = target.char_is_signed();
-    // long double is x87 extended on x86-64 SysV, IEEE quad on aarch64 Linux, double elsewhere.
-    let long_double_bytes = match (target.arch, target.os) {
-        (_, Os::Windows) | (Arch::Aarch64, Os::MacOs) => 8,
-        _ => 16,
-    };
+    // long double is x87 extended on x86-64 System V and double elsewhere.
+    let long_double_bytes = target.long_double_size().unwrap_or(8);
 
     // (`cl` leaves `__STDC__` to `/Zc:__STDC__`, and the C runtime's headers declare the POSIX
     // names only without it.)
@@ -162,9 +158,6 @@ pub(crate) fn predefined_macros(target: Target) -> String {
         if target.os == Os::MacOs { "_" } else { "" },
     );
     def("__REGISTER_PREFIX__", "");
-    if !char_signed {
-        def("__CHAR_UNSIGNED__", "1");
-    }
 
     let long = if lp64 { 8 } else { 4 };
     def("__CHAR_BIT__", "8");

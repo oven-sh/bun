@@ -198,10 +198,15 @@ pub(crate) struct PpToken {
 /// preprocessor (for the parser).
 pub(crate) trait TokenSource {
     fn next_token(&mut self) -> Res<PpToken>;
+    /// What comes after the end of the input is the compiler's functions for C11 G.5.1 (see
+    /// `include/bun_cc_complex.h`), where there are files to read them from.
+    fn read_complex_recovery(&mut self) {}
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Kw {
+    /// `_Imaginary`: a keyword of C11's optional Annex G that no compiler has the types of.
+    Imaginary,
     Alignas,
     Alignof,
     Asm,
@@ -271,7 +276,6 @@ pub(crate) enum Kw {
 /// the value of character constants such as `'\xff'`, and whether Microsoft's keywords exist.
 #[derive(Clone, Copy)]
 pub(crate) struct Dialect {
-    pub(crate) char_is_signed: bool,
     pub(crate) microsoft: bool,
 }
 
@@ -309,7 +313,8 @@ fn keyword(ident: &[u8]) -> Option<Kw> {
         b"break" => Kw::Break,
         b"case" => Kw::Case,
         b"char" => Kw::Char,
-        b"_Complex" | b"_Imaginary" | b"__complex__" => Kw::Complex,
+        b"_Complex" | b"__complex__" => Kw::Complex,
+        b"_Imaginary" => Kw::Imaginary,
         b"const" | b"__const" | b"__const__" => Kw::Const,
         b"continue" => Kw::Continue,
         b"default" => Kw::Default,
@@ -460,7 +465,6 @@ pub(crate) fn classify(
     warnings: &mut Vec<(Loc, String)>,
 ) -> Res<Token> {
     let loc = pp.loc;
-    let char_is_signed = dialect.char_is_signed;
     let microsoft = |text: &[u8]| {
         if dialect.microsoft {
             microsoft_keyword(text)
@@ -547,11 +551,8 @@ pub(crate) fn classify(
             let bytes = decode_escapes(body, loc, warnings)?;
             match bytes.as_slice() {
                 [] => return err(loc, "empty character constant"),
-                [b] => Tok::Char(if char_is_signed {
-                    i64::from(*b as i8)
-                } else {
-                    i64::from(*b)
-                }),
+                // (Plain `char` is signed on every target there is.)
+                [b] => Tok::Char(i64::from(*b as i8)),
                 // Implementation-defined; as GCC and Clang have it, an int made of the last four
                 // characters, the first of them in the most significant byte.
                 several => Tok::Char(i64::from(

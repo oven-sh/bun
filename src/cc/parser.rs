@@ -461,12 +461,33 @@ impl<S: TokenSource> Parser<S> {
     // ───────────────────────────── translation unit ─────────────────────────────
 
     pub(crate) fn parse_program(mut self) -> Res<Program> {
-        while self.cur.tok != Tok::Eof {
-            if self.eat(Punct::Semi)? {
-                continue;
+        let mut read_complex_recovery = false;
+        loop {
+            while self.cur.tok != Tok::Eof {
+                if self.eat(Punct::Semi)? {
+                    continue;
+                }
+                self.parse_external_declaration()?;
             }
-            self.parse_external_declaration()?;
+            // (Once, after everything else: nothing of the program's is in scope of theirs.)
+            if !self.sema.complex_recovery_needed.get() || read_complex_recovery {
+                break;
+            }
+            read_complex_recovery = true;
+            self.src.read_complex_recovery();
+            self.bump()?;
         }
+        let complex_recovery = [
+            "__bun_cc_complex_multiply_float",
+            "__bun_cc_complex_divide_float",
+            "__bun_cc_complex_multiply_double",
+            "__bun_cc_complex_divide_double",
+        ]
+        .map(|name| self.sema.file_scope_function(name));
+        let complex_recovery = match complex_recovery {
+            [Some(a), Some(b), Some(c), Some(d)] if read_complex_recovery => Some([a, b, c, d]),
+            _ => None,
+        };
         let mut sema = self.sema;
         // The loader calls constructors and destructors as `void f(void)`. One that is
         // declared with parameters (or a result) gets a function of that shape in front of
@@ -583,6 +604,7 @@ impl<S: TokenSource> Parser<S> {
             warnings,
             function_aliases: sema.function_aliases,
             asm_blocks: sema.asm_blocks,
+            complex_recovery,
         })
     }
 
@@ -719,6 +741,9 @@ impl<S: TokenSource> Parser<S> {
                 let Some(name) = one.name.clone() else {
                     return err(one.loc, "expected a parameter name");
                 };
+                if declared_names.contains(&name) {
+                    return err(one.loc, format!("redefinition of parameter '{name}'"));
+                }
                 let Some(param) = params.iter_mut().find(|p| p.name.as_ref() == Some(&name)) else {
                     return err(
                         one.loc,
@@ -1322,6 +1347,7 @@ impl<S: TokenSource> Parser<S> {
                     | Kw::Bool
                     | Kw::Char
                     | Kw::Complex
+                    | Kw::Imaginary
                     | Kw::Const
                     | Kw::Double
                     | Kw::Enum
@@ -1366,6 +1392,7 @@ impl<S: TokenSource> Parser<S> {
                     | Kw::Bool
                     | Kw::Char
                     | Kw::Complex
+                    | Kw::Imaginary
                     | Kw::Const
                     | Kw::Double
                     | Kw::Enum
@@ -1755,6 +1782,9 @@ impl<S: TokenSource> Parser<S> {
                     Kw::Signed => signed += 1,
                     Kw::Unsigned => unsigned += 1,
                     Kw::Complex => complex += 1,
+                    Kw::Imaginary => {
+                        return err(tloc, "imaginary types are not supported");
+                    }
                     Kw::Int128 => int128 += 1,
                     Kw::Struct | Kw::Union => {
                         if seen_type {
@@ -1792,7 +1822,11 @@ impl<S: TokenSource> Parser<S> {
                         let ty = if self.is_type_start() {
                             self.parse_type_name()?
                         } else {
-                            self.parse_expr()?.ty.clone()
+                            let operand = self.parse_expr()?;
+                            if matches!(operand.kind, ExprKind::BitField { .. }) {
+                                return err(operand.loc, "'typeof' applied to a bit-field");
+                            }
+                            operand.ty.clone()
                         };
                         self.expect(Punct::RParen)?;
                         other = Some(if unqualified {
@@ -1935,9 +1969,7 @@ impl<S: TokenSource> Parser<S> {
             let complex_of = match ty {
                 Type::Float => Some(Type::ComplexFloat),
                 Type::Double => Some(Type::ComplexDouble),
-                Type::Wide(WideKind::LongDouble | WideKind::QuadLongDouble) => {
-                    Some(Type::Wide(WideKind::ComplexLongDouble))
-                }
+                Type::Wide(WideKind::LongDouble) => Some(Type::Wide(WideKind::ComplexLongDouble)),
                 Type::Wide(WideKind::Float128) => Some(Type::Wide(WideKind::ComplexFloat128)),
                 _ => None,
             };
@@ -2977,6 +3009,11 @@ impl<S: TokenSource> Parser<S> {
                 Type::Array(elem, _) | Type::Vla(elem, _) => Type::Ptr(elem),
                 Type::Func(_) => decl.ty.ptr_to(),
                 Type::Void => return err(decl.loc, "parameter has type void"),
+                // (`(void)` alone is "no parameters", and was taken before this; `(const void)` is
+                // a parameter of type void like any other.)
+                Type::Qualified(_, ref inner) if matches!(**inner, Type::Void) => {
+                    return err(decl.loc, "parameter has type void");
+                }
                 other => other.unatomic().clone(),
             };
             // Later parameters may use this one in an array bound: `int n, int a[n]`.
@@ -3898,6 +3935,22 @@ impl<S: TokenSource> Parser<S> {
         } else {
             &[b"yield", b"nop", b"isb"]
         };
+        // Windows keeps xmm6 to xmm15 across calls: a statement that does anything and says it
+        // changes one would have to save it, whichever way the statement is compiled below.
+        if x86 && self.sema.tcx.target.os == crate::types::Os::Windows && !instructions.is_empty() {
+            let kept = clobber_list
+                .iter()
+                .find(|name| crate::asm_stmt::register_number(name).is_some_and(|r| r >= 22));
+            if let Some(name) = kept {
+                return err(
+                    loc,
+                    format!(
+                        "inline assembly: '{}' is kept across calls on Windows, and the statement would have to save it: xmm0 to xmm5 are there to be used",
+                        crate::token::display_bytes(name).to_ascii_lowercase()
+                    ),
+                );
+            }
+        }
         // The ways of spelling a full memory fence.
         let locked_no_op = |text: &[u8]| {
             [
@@ -4562,8 +4615,13 @@ impl<S: TokenSource> Parser<S> {
                         v as u64
                     }
                 };
+                // `case 3 ... 1:` names no value: a label nothing jumps to (GCC and Clang warn).
                 if key(high) < key(value) {
-                    return err(loc, "empty case range");
+                    self.sema
+                        .warnings
+                        .borrow_mut()
+                        .push((loc, "empty case range".to_string()));
+                    return Ok(Some(label));
                 }
                 // The ranges so far are disjoint, so only the last one that starts at or below
                 // `high` can reach into this one.
@@ -5791,6 +5849,52 @@ impl<S: TokenSource> Parser<S> {
                 let dst = args.swap_remove(0);
                 Ok(Some(self.sema.va_copy(dst, src, loc)?))
             }
+            // Of a constant these are constants, where GCC and Clang take them as such: an
+            // enumerator, the size of an array, an initializer of an object with static storage.
+            "abs" | "labs" | "llabs" | "strlen" if self.at(Punct::LParen) => {
+                let Some(fty) = library_prototype(short, self.sema.tcx.target) else {
+                    return Ok(None);
+                };
+                let args = self.parse_builtin_args()?;
+                if let [only] = args.as_slice() {
+                    if short == "strlen" {
+                        let literal = match &only.kind {
+                            ExprKind::StrLit(id) => Some(*id),
+                            ExprKind::Decay(inner) => match &inner.kind {
+                                ExprKind::StrLit(id) => Some(*id),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        let of_bytes = match only.ty.unqualified() {
+                            Type::Ptr(to) | Type::Array(to, _) => {
+                                self.sema.tcx.size_of(to) == Some(1)
+                            }
+                            _ => false,
+                        };
+                        if let Some(id) = literal.filter(|_| of_bytes) {
+                            let bytes = &self.sema.strings[id as usize].bytes;
+                            let length = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+                            return Ok(Some(self.sema.int_lit(
+                                length as i64,
+                                fty.ret.clone(),
+                                loc,
+                            )?));
+                        }
+                    } else if let Ok(value) = self.sema.const_int(only) {
+                        let wide = self.sema.tcx.size_of(&fty.ret) == Some(8);
+                        let magnitude = if wide {
+                            value.wrapping_abs()
+                        } else {
+                            i64::from((value as i32).wrapping_abs())
+                        };
+                        return Ok(Some(self.sema.int_lit(magnitude, fty.ret.clone(), loc)?));
+                    }
+                }
+                let id = self.sema.declare_library_function(short, fty, loc)?;
+                let callee = self.sema.function_ref(id, loc)?;
+                Ok(Some(self.sema.call(callee, args, loc)?))
+            }
             _ => {
                 // `__builtin_memcpy` and friends are the C library functions of the same name.
                 let Some(fty) = library_prototype(short, self.sema.tcx.target) else {
@@ -5993,6 +6097,8 @@ impl<S: TokenSource> Parser<S> {
             "elementwise_abs" => Some(VecBuiltin::Abs),
             "elementwise_min" => Some(VecBuiltin::Min),
             "elementwise_max" => Some(VecBuiltin::Max),
+            "bir_second_if_less" => Some(VecBuiltin::SecondIfLess),
+            "bir_second_if_greater" => Some(VecBuiltin::SecondIfGreater),
             "elementwise_minimum" => Some(VecBuiltin::Minimum),
             "elementwise_maximum" => Some(VecBuiltin::Maximum),
             "elementwise_sqrt" => Some(VecBuiltin::Sqrt),

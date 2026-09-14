@@ -42,6 +42,13 @@ int main(void) {
   the_other_way_type second = the_other_way;
   printf("%d %d\n", first(1, 1.5, 2), second(1, 1.5, 2));
   printf("%d %d\n", SIGNALLING_IS_NOT_A_NUMBER(), THE_OTHER_TWO());
+  // The questions are answered in ordinary text too, not only after #if.
+#if defined __has_attribute && defined __has_builtin
+  int in_ordinary_text = __has_builtin(__builtin_expect) + __has_attribute(aligned) * 2 + __has_attribute(no_such_attribute_anywhere) * 4;
+#else
+  int in_ordinary_text = 3;
+#endif
+  printf("%d\n", in_ordinary_text);
   // Here the two calling-convention attributes are never both there, and one always is.
 #if defined __BUN_CC__ && __has_attribute(ms_abi) + __has_attribute(sysv_abi) != 1
   printf("one of ms_abi and sysv_abi, not %d\n", __has_attribute(ms_abi) + __has_attribute(sysv_abi));

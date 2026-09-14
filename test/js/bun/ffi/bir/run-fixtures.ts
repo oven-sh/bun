@@ -38,7 +38,8 @@ function microsoftHeaders() {
  * functions Windows does not have), `lp64` (a 64-bit `long`: not Windows), `sysv` (the System V layout of bit-fields
  * and choice of enumeration types, which Windows does not share), `c99-inline` (C99's and GNU C's rules for which
  * `inline` definitions other files see: Microsoft C has its own), `windows` (Microsoft's headers and C library), or
- * `uchar` (a C library with `<uchar.h>`: not Apple's).
+ * `uchar` (a C library with `<uchar.h>`: not Apple's), or `struct-by-reference` (a convention that passes a large
+ * structure as the address of a copy the caller makes: arm64 and Windows).
  * Several of them, separated by white space, must all hold.
  */
 export function meets(requirement: string | undefined): boolean {
@@ -66,6 +67,8 @@ export function meets(requirement: string | undefined): boolean {
       return isWindows;
     case "uchar":
       return !isMacOS;
+    case "struct-by-reference":
+      return isArm64 || isWindows;
     default:
       throw new Error(`unknown requirement ${JSON.stringify(requirement)}`);
   }

@@ -43,8 +43,8 @@ __BUN_CC_INTRIN __m128d _mm_mul_pd(__m128d __a, __m128d __b) { return __a * __b;
 __BUN_CC_INTRIN __m128d _mm_div_pd(__m128d __a, __m128d __b) { return __a / __b; }
 __BUN_CC_INTRIN __m128d _mm_sqrt_pd(__m128d __a) { return __builtin_elementwise_sqrt(__a); }
 /* As for MINPS: the second operand when the two are unordered or equal. */
-__BUN_CC_INTRIN __m128d _mm_min_pd(__m128d __a, __m128d __b) { return __builtin_elementwise_min(__b, __a); }
-__BUN_CC_INTRIN __m128d _mm_max_pd(__m128d __a, __m128d __b) { return __builtin_elementwise_max(__b, __a); }
+__BUN_CC_INTRIN __m128d _mm_min_pd(__m128d __a, __m128d __b) { return __builtin_bir_second_if_less(__b, __a); }
+__BUN_CC_INTRIN __m128d _mm_max_pd(__m128d __a, __m128d __b) { return __builtin_bir_second_if_greater(__b, __a); }
 
 __BUN_CC_INTRIN __m128d _mm_and_pd(__m128d __a, __m128d __b) { return (__m128d)((__v2du)__a & (__v2du)__b); }
 __BUN_CC_INTRIN __m128d _mm_andnot_pd(__m128d __a, __m128d __b) { return (__m128d)(~(__v2du)__a & (__v2du)__b); }
@@ -314,8 +314,8 @@ __BUN_CC_INTRIN __m128d _mm_sub_sd(__m128d __a, __m128d __b) { __a[0] = __a[0] -
 __BUN_CC_INTRIN __m128d _mm_mul_sd(__m128d __a, __m128d __b) { __a[0] = __a[0] * __b[0]; return __a; }
 __BUN_CC_INTRIN __m128d _mm_div_sd(__m128d __a, __m128d __b) { __a[0] = __a[0] / __b[0]; return __a; }
 __BUN_CC_INTRIN __m128d _mm_sqrt_sd(__m128d __a, __m128d __b) { __a[0] = __builtin_elementwise_sqrt(__b)[0]; return __a; }
-__BUN_CC_INTRIN __m128d _mm_min_sd(__m128d __a, __m128d __b) { __a[0] = __builtin_elementwise_min(__b, __a)[0]; return __a; }
-__BUN_CC_INTRIN __m128d _mm_max_sd(__m128d __a, __m128d __b) { __a[0] = __builtin_elementwise_max(__b, __a)[0]; return __a; }
+__BUN_CC_INTRIN __m128d _mm_min_sd(__m128d __a, __m128d __b) { __a[0] = __builtin_bir_second_if_less(__b, __a)[0]; return __a; }
+__BUN_CC_INTRIN __m128d _mm_max_sd(__m128d __a, __m128d __b) { __a[0] = __builtin_bir_second_if_greater(__b, __a)[0]; return __a; }
 __BUN_CC_INTRIN __m128d _mm_move_sd(__m128d __a, __m128d __b) { __a[0] = __b[0]; return __a; }
 
 __BUN_CC_INTRIN __m128d _mm_cmpnlt_pd(__m128d __a, __m128d __b) { return (__m128d)~(__v2di)(__a < __b); }

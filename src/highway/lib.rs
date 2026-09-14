@@ -648,15 +648,17 @@ pub fn encode_hex_lower(src: &[u8], dst: &mut [u8]) {
 /// bytes written (`min(src.len() / 2, dst.len())` when the input is fully
 /// valid). A trailing lone hex digit is ignored.
 #[inline(always)]
-pub fn decode_hex(src: &[u8], dst: &mut [u8]) -> usize {
+pub fn decode_hex(src: &[u8], dst: &mut [core::mem::MaybeUninit<u8>]) -> usize {
     let pairs = (src.len() / 2).min(dst.len());
     if pairs == 0 {
         return 0;
     }
 
     // SAFETY: `src` is readable for at least `2 * pairs` bytes and `dst` is
-    // writable for at least `pairs` bytes; the kernel reads/writes at most that.
-    let written = unsafe { highway_decode_hex8(src.as_ptr(), dst.as_mut_ptr(), pairs) };
+    // writable for at least `pairs` bytes; the kernel only writes `dst`, and
+    // initializes exactly the `written` leading bytes it reports.
+    let written =
+        unsafe { highway_decode_hex8(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), pairs) };
 
     debug_assert!(written <= pairs);
     written
@@ -666,15 +668,17 @@ pub fn decode_hex(src: &[u8], dst: &mut [u8]) -> usize {
 /// byte, as Node's `Buffer` hex decoder does: U+FF41 decodes as `'A'`, and a
 /// unit whose low byte is not a hex digit stops decoding.
 #[inline(always)]
-pub fn decode_hex_u16(src: &[u16], dst: &mut [u8]) -> usize {
+pub fn decode_hex_u16(src: &[u16], dst: &mut [core::mem::MaybeUninit<u8>]) -> usize {
     let pairs = (src.len() / 2).min(dst.len());
     if pairs == 0 {
         return 0;
     }
 
     // SAFETY: `src` is readable for at least `2 * pairs` code units and `dst`
-    // is writable for at least `pairs` bytes; the kernel reads/writes at most that.
-    let written = unsafe { highway_decode_hex16(src.as_ptr(), dst.as_mut_ptr(), pairs) };
+    // is writable for at least `pairs` bytes; the kernel only writes `dst`, and
+    // initializes exactly the `written` leading bytes it reports.
+    let written =
+        unsafe { highway_decode_hex16(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), pairs) };
 
     debug_assert!(written <= pairs);
     written

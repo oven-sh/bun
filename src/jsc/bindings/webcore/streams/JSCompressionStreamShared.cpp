@@ -388,19 +388,32 @@ static CodecStepResult deliverAsyncOutput(JSGlobalObject* globalObject, JSTransf
     return step;
 }
 
-// JS-thread completion of an off-thread step. `out` borrows the coder's buffer, so it is
+// `bun_core::ffi::FfiSlice` — a borrowed `&[u8]` passed by value.
+struct FfiSlice {
+    const uint8_t* ptr;
+    size_t len;
+};
+
+// JS-thread completion of an off-thread step. The step owned the codec state (`codec`) while it
+// ran; it goes back to the stream's coder first. `out` borrows the step's buffer, so it is
 // consumed BEFORE m_asyncCodecInFlight is cleared and the coder may be released or
 // re-dispatched. Entered from the event loop with no JS above it (a TopExceptionScope, and
 // atStreamsBoundary for the delivery): a failed delivery is the pending chunk's rejection.
-extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell, const uint8_t* out, size_t outLen, bool more, JSC::EncodedJSValue error)
+extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell, void* codec, FfiSlice outSlice, bool more, JSC::EncodedJSValue error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(streamCell));
     ASSERT(stream);
-    if (!stream) [[unlikely]]
+    if (!stream) [[unlikely]] {
+        CompressionStreamCoder__restore(nullptr, codec);
         return;
+    }
     ASSERT(stream->m_asyncCodecInFlight);
+    // Strongly held and in flight, so the stream still has its coder.
+    CompressionStreamCoder__restore(coderOf(stream), codec);
+    const uint8_t* out = outSlice.ptr;
+    size_t outLen = outSlice.len;
 
     CodecStepResult step;
     step.more = more;

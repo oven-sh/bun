@@ -1,3 +1,5 @@
+use core::mem::MaybeUninit;
+
 use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
 
 // ASCII control codes used in the ignore set below.
@@ -20,8 +22,21 @@ static MIXED_DECODER: zig_base64::Base64DecoderWithIgnore = {
     decoder
 };
 
+/// An initialized byte buffer viewed as write slots. Sound because `u8` has no
+/// invalid bit patterns and nothing here ever stores `MaybeUninit::uninit()`.
+#[inline]
+pub(crate) fn as_uninit_mut(bytes: &mut [u8]) -> &mut [MaybeUninit<u8>] {
+    // SAFETY: same layout; every slot starts (and, written only via `write`, stays) initialized.
+    unsafe { &mut *(core::ptr::from_mut(bytes) as *mut [MaybeUninit<u8>]) }
+}
+
 pub fn decode(destination: &mut [u8], source: &[u8]) -> SIMDUTFResult {
-    let result = simdutf::base64::decode(source, destination, false);
+    decode_into_uninit(as_uninit_mut(destination), source)
+}
+
+/// [`decode`] into uninitialized storage; the leading `count` slots are initialized on return.
+fn decode_into_uninit(destination: &mut [MaybeUninit<u8>], source: &[u8]) -> SIMDUTFResult {
+    let result = simdutf::base64::decode_into_uninit(source, destination, false);
 
     if !result.is_successful() {
         // The input does not follow the WHATWG forgiving-base64 specification
@@ -65,10 +80,20 @@ pub const fn decode_lenient_len(source_len: usize) -> usize {
 ///
 /// Returns the number of bytes written to `destination`.
 pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -> usize {
+    decode_lenient_into_uninit(as_uninit_mut(destination), source, is_urlsafe)
+}
+
+/// [`decode_lenient`] into uninitialized storage; returns how many leading
+/// slots of `destination` it initialized.
+fn decode_lenient_into_uninit(
+    destination: &mut [MaybeUninit<u8>],
+    source: &[u8],
+    is_urlsafe: bool,
+) -> usize {
     // Fast path: the common case is strictly valid base64 for the requested
     // alphabet (possibly with whitespace and padding), which simdutf decodes
     // with its fastest kernel. This is the same first attempt Node.js makes.
-    let strict = simdutf::base64::decode(source, destination, is_urlsafe);
+    let strict = simdutf::base64::decode_into_uninit(source, destination, is_urlsafe);
     if strict.is_successful() {
         return strict.count;
     }
@@ -87,7 +112,7 @@ pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -
         source
     };
 
-    let result = simdutf::base64::decode_lenient(source, destination);
+    let result = simdutf::base64::decode_lenient_into_uninit(source, destination);
     if result.is_successful() {
         return result.count;
     }
@@ -99,6 +124,19 @@ pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -
     wrote
 }
 
+/// [`decode_lenient`] appended to `out` (reserving the worst case,
+/// [`decode_lenient_len`], itself); returns the number of bytes appended.
+pub fn decode_lenient_append(out: &mut Vec<u8>, source: &[u8], is_urlsafe: bool) -> usize {
+    let len = decode_lenient_len(source.len());
+    // SAFETY: `decode_lenient_into_uninit` reports how many leading slots it initialized (`<= len`).
+    unsafe {
+        bun_core::vec::fill_spare(out, len, |spare| {
+            let wrote = decode_lenient_into_uninit(&mut spare[..len], source, is_urlsafe);
+            (wrote, wrote)
+        })
+    }
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeAllocError {
     #[error("DecodingFailed")]
@@ -108,14 +146,12 @@ pub enum DecodeAllocError {
 pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
     let len = decode_len(input);
     let mut dest: Vec<u8> = Vec::with_capacity(len);
-    // SAFETY: both decoders behind `decode` only write the destination, never read it.
-    let destination = unsafe { bun_core::vec::spare_bytes_mut(&mut dest) };
-    let result = decode(&mut destination[..len], input);
+    let result = decode_into_uninit(&mut dest.spare_capacity_mut()[..len], input);
     if !result.is_successful() {
         return Err(DecodeAllocError::DecodingFailed);
     }
-    // SAFETY: on success the decoder wrote the first `result.count` (<= `len`) bytes of the spare.
-    unsafe { bun_core::vec::commit_spare(&mut dest, result.count) };
+    // SAFETY: on success the decoder initialized the first `result.count` (<= `len`) spare slots.
+    unsafe { dest.set_len(result.count) };
     Ok(dest)
 }
 
@@ -123,15 +159,24 @@ pub use bun_core::base64::encode;
 
 /// [`encode`] appended to `out` (reserving the room itself); returns the number of bytes appended.
 pub fn encode_append(out: &mut Vec<u8>, source: &[u8]) -> usize {
-    let len = simdutf::base64::encode_len(source.len(), false);
-    // SAFETY: `encode_raw` writes exactly `len` bytes into the `len` spare bytes reserved here.
+    encode_append_impl(out, source, false)
+}
+
+fn encode_append_impl(out: &mut Vec<u8>, source: &[u8], is_urlsafe: bool) -> usize {
+    let len = simdutf::base64::encode_len(source.len(), is_urlsafe);
+    // SAFETY: `encode_into_uninit` initializes exactly the `len` leading spare slots reserved here.
     unsafe {
         bun_core::vec::fill_spare(out, len, |spare| {
-            let written = simdutf::base64::encode_raw(source, spare.as_mut_ptr(), false);
+            let written = simdutf::base64::encode_into_uninit(source, spare, is_urlsafe);
             debug_assert_eq!(written, len);
             (written, written)
         })
     }
+}
+
+/// [`encode_url_safe`] appended to `out` (reserving the room itself); returns the number of bytes appended.
+pub fn encode_url_safe_append(out: &mut Vec<u8>, source: &[u8]) -> usize {
+    encode_append_impl(out, source, true)
 }
 
 pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
@@ -398,6 +443,8 @@ pub mod vlq {
 }
 
 pub mod zig_base64 {
+    use core::mem::MaybeUninit;
+
     #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
     pub enum Error {
         #[error("InvalidCharacter")]
@@ -680,7 +727,7 @@ pub mod zig_base64 {
         /// Returns the number of bytes written to dest.
         pub(crate) fn decode(
             &self,
-            dest: &mut [u8],
+            dest: &mut [MaybeUninit<u8>],
             source: &[u8],
             wrote: &mut usize,
         ) -> Result<(), Error> {
@@ -716,7 +763,7 @@ pub mod zig_base64 {
                         return Err(Error::NoSpaceLeft);
                     }
                     acc_len -= 8;
-                    dest[*wrote] = (acc >> acc_len) as u8;
+                    dest[*wrote].write((acc >> acc_len) as u8);
                     *wrote += 1;
                 }
             }
@@ -875,7 +922,11 @@ pub mod zig_base64 {
                 let decoded = &mut buffer[..];
                 let mut written: usize = 0;
                 decoder_ignore_nothing
-                    .decode(decoded, expected_with_ignore, &mut written)
+                    .decode(
+                        crate::as_uninit_mut(decoded),
+                        expected_with_ignore,
+                        &mut written,
+                    )
                     .unwrap();
                 assert!(written <= decoded.len());
                 assert_eq!(expected_decoded, &decoded[0..written]);
@@ -888,7 +939,7 @@ pub mod zig_base64 {
             let decoded = &mut buffer[..];
             let mut written: usize = 0;
             decoder_ignore_space
-                .decode(decoded, encoded, &mut written)
+                .decode(crate::as_uninit_mut(decoded), encoded, &mut written)
                 .unwrap();
             assert_eq!(expected_decoded, &decoded[0..written]);
         }
@@ -916,7 +967,11 @@ pub mod zig_base64 {
             }
 
             let mut written: usize = 0;
-            let result = decoder_ignore_space.decode(&mut buffer[..], encoded, &mut written);
+            let result = decoder_ignore_space.decode(
+                crate::as_uninit_mut(&mut buffer[..]),
+                encoded,
+                &mut written,
+            );
             match expected_with_ignore {
                 Some(expected) => assert_eq!(result.unwrap_err(), expected),
                 None => assert!(result.is_ok()),
@@ -929,7 +984,8 @@ pub mod zig_base64 {
             let size = codecs.decoder.calc_size_for_slice(encoded).unwrap() - 1;
             let decoded = &mut buffer[0..size];
             let mut written: usize = 0;
-            match decoder_ignore_space.decode(decoded, encoded, &mut written) {
+            match decoder_ignore_space.decode(crate::as_uninit_mut(decoded), encoded, &mut written)
+            {
                 Ok(_) => panic!("ExpectedError"),
                 Err(err) => assert_eq!(err, Error::NoSpaceLeft),
             }

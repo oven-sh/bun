@@ -1330,8 +1330,7 @@ pub struct BundleOptions<'a> {
     /// assigning to them is silently accepted instead of throwing. Deprecated;
     /// off makes them getter-only like real module namespace objects.
     pub deprecated_namespace_object_setters: bool,
-    /// Emit bundled top-level `const`/`let` as `var` (the default). `false` keeps the declared
-    /// kind in scope-hoisted modules so a use-before-init read across an import cycle throws.
+    /// Emit top-level `const`/`let` as `var` (default). `false` keeps the kind in scope-hoisted modules.
     pub top_level_var: bool,
     pub bytecode: bool,
     /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).

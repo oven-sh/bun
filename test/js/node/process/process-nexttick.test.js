@@ -2,6 +2,7 @@
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
 import { expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 const isBun = !!process.versions.bun;
 
 it("process.nextTick", async () => {
@@ -1035,4 +1036,42 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 
   expect(call1).toBe(true);
   expect(call2).toBe(true);
+});
+
+// https://github.com/oven-sh/bun/issues/42723
+it("process.nextTick drains the queue when Array.prototype has an index setter", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `Object.defineProperty(Array.prototype, "2", { set() {} });
+       for (let i = 0; i < 4; i++) process.nextTick(() => console.log("tick " + i));
+       setTimeout(() => console.log("timer"), 1);`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("tick 0\ntick 1\ntick 2\ntick 3\ntimer\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+it("child_process.exec does not hang when Array.prototype has an index setter", async () => {
+  // The spawn schedules several nextTicks. The callback must run and the process must exit.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { exec } = require("child_process");
+       Object.defineProperty(Array.prototype, "2", { set() {} });
+       exec("pwd", () => console.log("callback fired"));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("callback fired\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

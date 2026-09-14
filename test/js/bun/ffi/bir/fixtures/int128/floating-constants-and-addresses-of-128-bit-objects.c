@@ -76,7 +76,7 @@ int main(void) {
   CHECK(s_ld_max64 == (LDBL_MANT_DIG >= 64 ? U(0, 0xffffffffffffffff) : U(1, 0)) && (u128)18446744073709551615.0L == s_ld_max64);
   CHECK(s_ld_2_63 == U(0, 0x8000000000000000) && (u128)9223372036854775808.0L == s_ld_2_63);
   CHECK(s_half == 0 && s_minus_half == 0 && s_small == -3 && s_bool == 1 && (u128)0.5 == 0 && (i128)-3.75 == -3);
-  CHECK((unsigned long)1.8e19 == 18000000000000000000ul && (long)-9.2e18 == -9200000000000000000);
+  CHECK((unsigned long long)1.8e19 == 18000000000000000000ull && (long long)-9.2e18 == -9200000000000000000ll);
   // An array size and a case label are integer constant expressions.
   char sized[(u128)2.5 + (i128)1.5];
   switch ((int)sizeof sized) { case (int)(i128)3.9: CHECK(sizeof sized == 3); break; default: CHECK(0); }

@@ -417,3 +417,19 @@ x86-64 Linux). These are the exceptions, and why.
   compiler reads it wrongly at -O0 and crashes at -O1, so there is nothing to agree with
   (varargs/a-structure-that-holds-a-vector-through-an-ellipsis has the shapes that do have a reference).
 - Conversions between `long double` and `__int128` at run time; `_Atomic` structures; the rest of section 7.
+
+## 12. Open
+
+Known after the review and not done, each in a line.
+
+- Every module image that has a constant and an initialized writable object carries up to 16 KiB of zeros, the padding
+  between the two parts: the format needs two spans of data for it to go.
+- NEON `vmin`/`vmax` of floating lanes do not have the instructions' results for a NaN: that needs a minimum and a maximum
+  in BIR that pass a NaN on.
+- Initialized data over 16 MiB is diagnosed, not loaded: the decoder counts those bytes like it counts everything else.
+- The path of a source file has to be UTF-8.
+- Loops over a few constants and a small local array (a ChaCha round) are not unrolled: twice as slow there as they were
+  with the pass that is gone; it would be scalar replacement in the backend.
+- Two places in JavaScriptCore take seconds on huge generated expressions: a sum of 10,000 `__int128` terms (the colouring
+  of stack slots in Air) and a `?:` chain of 20,000 links (the inference of switches in B3).
+- `abort()` on Windows ends the process with the system's fast-fail status and no report, as it does for a native program.

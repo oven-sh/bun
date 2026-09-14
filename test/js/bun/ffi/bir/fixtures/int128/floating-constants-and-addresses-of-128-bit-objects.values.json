@@ -10,7 +10,7 @@
 ["s_ld_max64 == (LDBL_MANT_DIG >= 64 ? U(0, 0xffffffffffffffff) : U(1, 0)) && (u128)18446744073709551615.0L == s_ld_max64", 1],
 ["s_ld_2_63 == U(0, 0x8000000000000000) && (u128)9223372036854775808.0L == s_ld_2_63", 1],
 ["s_half == 0 && s_minus_half == 0 && s_small == -3 && s_bool == 1 && (u128)0.5 == 0 && (i128)-3.75 == -3", 1],
-["(unsigned long)1.8e19 == 18000000000000000000ul && (long)-9.2e18 == -9200000000000000000", 1],
+["(unsigned long long)1.8e19 == 18000000000000000000ull && (long long)-9.2e18 == -9200000000000000000ll", 1],
 ["sizeof sized == 3", 1],
 ["s_d_all_ones == 0x1p128 && s_d_all_ones == (double)v_ones && (double)~(u128)0 == 0x1p128", 1],
 ["s_d_2_100 == 0x1p100 && s_d_2_100 == (double)v_2_100 && s_d_neg_2_100 == -0x1p100 && s_d_neg_2_100 == (double)v_neg", 1],

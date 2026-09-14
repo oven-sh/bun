@@ -1,6 +1,6 @@
 [
 ["CLZ_1 == 31 && CLZ_TOP == 0 && CLZL == (int)sizeof(long) * CHAR_BIT - 1 && CLZLL == 55", 1],
-["CTZ_8 == 3 && CTZL == 40 && CTZLL == 63", 1],
+["CTZ_8 == 3 && CTZL == 20 && CTZLL == 63", 1],
 ["POP == 8 && POPL == (int)sizeof(long) * CHAR_BIT && POPLL == 64", 1],
 ["PARITY == 1 && PARITYLL == 0 && FFS_0 == 0 && FFS_8 == 4 && FFSLL == 51", 1],
 ["CLRSB_0 == 31 && CLRSB_M1 == 31 && CLRSBLL == 62", 1],

@@ -17,7 +17,7 @@ struct not_packed { char c; int i; };
 PRAGMA(pack(2))
 struct packed_to_two { char c; int i; };
 PRAGMA(pack())
-#define DECLARE(name) _Pragma("pack(1)") struct name { char c; long l; }; _Pragma("pack()")
+#define DECLARE(name) _Pragma("pack(1)") struct name { char c; long long l; }; _Pragma("pack()")
 DECLARE(declared_in_a_macro)
 _Pragma(L"pack(1)")
 struct wide_string { char c; short s; };

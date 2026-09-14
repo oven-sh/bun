@@ -10,7 +10,7 @@ static int checks, wrong;
 
 enum {
   CLZ_1 = __builtin_clz(1), CLZ_TOP = __builtin_clz(0x80000000u), CLZL = __builtin_clzl(1ul), CLZLL = __builtin_clzll(0x100ull),
-  CTZ_8 = __builtin_ctz(8), CTZL = __builtin_ctzl(1ul << 40), CTZLL = __builtin_ctzll(1ull << 63),
+  CTZ_8 = __builtin_ctz(8), CTZL = __builtin_ctzl(1ul << 20), CTZLL = __builtin_ctzll(1ull << 63),
   POP = __builtin_popcount(0xf0f0), POPL = __builtin_popcountl(~0ul), POPLL = __builtin_popcountll(~0ull),
   PARITY = __builtin_parity(7), PARITYLL = __builtin_parityll(3ull << 40),
   FFS_0 = __builtin_ffs(0), FFS_8 = __builtin_ffs(8), FFSLL = __builtin_ffsll(1ll << 50),
@@ -32,7 +32,7 @@ static void *pside(void *p) { calls++; return p; }
 
 int main(void) {
   CHECK(CLZ_1 == 31 && CLZ_TOP == 0 && CLZL == (int)sizeof(long) * CHAR_BIT - 1 && CLZLL == 55);
-  CHECK(CTZ_8 == 3 && CTZL == 40 && CTZLL == 63);
+  CHECK(CTZ_8 == 3 && CTZL == 20 && CTZLL == 63);
   CHECK(POP == 8 && POPL == (int)sizeof(long) * CHAR_BIT && POPLL == 64);
   CHECK(PARITY == 1 && PARITYLL == 0 && FFS_0 == 0 && FFS_8 == 4 && FFSLL == 51);
   CHECK(CLRSB_0 == 31 && CLRSB_M1 == 31 && CLRSBLL == 62);

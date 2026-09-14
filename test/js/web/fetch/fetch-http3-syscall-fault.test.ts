@@ -180,8 +180,7 @@ test.skipIf(isWindows)(
     // without SO_BROADCAST (EACCES, or ENETUNREACH with no default route). As an
     // IP literal it skips DNS and the connect-time route probe, so packets_out
     // is the first to see the error.
-    using dir = tempDir("h3-unsendable", {
-      "client.mjs": `
+    const client = `
       await using server = Bun.serve({
         port: 0, hostname: "127.0.0.1",
         ...${JSON.stringify({ tls, http3: true, http1: false })},
@@ -196,13 +195,11 @@ test.skipIf(isWindows)(
       const outcome = await h3("https://255.255.255.255/", 1000).then(res => "status " + res.status, e => e.name);
       const { user, system } = process.cpuUsage(cpu);
       console.log(JSON.stringify({ warmup, outcome, cpuMs: (user + system) / 1000, wallMs: performance.now() - start }));
-    `,
-    });
+    `;
     // A proxy from the environment would make fetch refuse HTTP/3 up front.
     const { HTTP_PROXY, HTTPS_PROXY, http_proxy, https_proxy, ...env } = bunEnv;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "client.mjs"],
-      cwd: String(dir),
+      cmd: [bunExe(), "-e", client],
       env,
       stdout: "pipe",
       stderr: "pipe",
@@ -308,7 +305,14 @@ const MTU_SHIM_C = /* c */ `
 
 /* An egress interface that only fits UDP payloads up to FAKE_MAX_PAYLOAD
  * bytes. With DF set the kernel rejects a larger datagram with EMSGSIZE. */
-static int (*real_sendmmsg)(int, struct mmsghdr *, unsigned, int);
+/* The type of sendmmsg's flags differs: int on glibc, unsigned int on musl. */
+#ifdef __GLIBC__
+typedef int mmsg_flags_t;
+#else
+typedef unsigned int mmsg_flags_t;
+#endif
+
+static int (*real_sendmmsg)(int, struct mmsghdr *, unsigned, mmsg_flags_t);
 static ssize_t (*real_sendmsg)(int, const struct msghdr *, int);
 static size_t limit;
 
@@ -332,7 +336,7 @@ static int is_udp(int fd) {
     return type == SOCK_DGRAM;
 }
 
-int sendmmsg(int fd, struct mmsghdr *mm, unsigned n, int flags) {
+int sendmmsg(int fd, struct mmsghdr *mm, unsigned n, mmsg_flags_t flags) {
     init();
     if (!is_udp(fd)) return real_sendmmsg(fd, mm, n, flags);
     /* sendmmsg(2): stop at the first failing message. Report the count when
@@ -409,8 +413,7 @@ test.skipIf(!isLinux || !cc)("a DPLPMTUD probe above the egress MTU does not sta
     stderr: "pipe",
   });
   const [buildErr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
-  expect(buildErr).toBe("");
-  expect(buildExit).toBe(0);
+  if (buildExit !== 0) throw new Error("shim compile failed: " + buildErr);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "client.mjs"],

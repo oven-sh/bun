@@ -261,7 +261,9 @@ static inline int us_quic_send_would_block(int err) {
 #if defined(__linux__)
 static int us_quic_sendmmsg(int fd, struct mmsghdr *mm, unsigned k) {
     ssize_t injected = 0; int unused = 0;
-    if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) return (int) injected;
+    /* The result is a message count, and the caller's loop needs it to advance.
+     * An injected 0 (the "zero" action) is one datagram sent, as in us_quic_send_one. */
+    if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) return injected < 0 ? -1 : 1;
     (void) injected; (void) unused;
     int r;
     do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);

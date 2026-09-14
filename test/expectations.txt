@@ -35,3 +35,15 @@
 # only hold on the distributing model. Passes on macOS and Windows.
 # (Verified still failing on every Linux lane, build 87834.)
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
+
+# Both files pass `server._handle` to a detached child, which then serves the
+# inherited socket with http.createServer().listen({ fd: 3 }). The spawn half
+# works; http.Server#listen ignores `fd` (it listens on a fresh port), so the
+# test's request to the inherited port is never answered: the file hangs until
+# the runner kills it and leaves the detached child running. Before #39220 the
+# spawn threw inside the intermediate process and both files exited 0 without
+# testing anything. Remove these entries when http listen({ fd }) lands
+# (#36491 / #34659); the Bun-side coverage of the spawn half is in
+# test/js/node/child_process/child-process-stdio.test.js.
+test/js/node/test/parallel/test-listen-fd-detached.js [ TIMEOUT ] # child's http listen({ fd: 3 }) ignores the fd
+test/js/node/test/parallel/test-listen-fd-detached-inherit.js [ TIMEOUT ] # child's http listen({ fd: 3 }) ignores the fd

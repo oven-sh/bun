@@ -64,7 +64,7 @@ class Response extends WebResponse {
         if (!this[kFetched]) return null;
         web = new ReadableStream({ start: closeEmptyBody });
       }
-      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({}, web);
+      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({ responseBody: true }, web);
     }
 
     return body;
@@ -76,46 +76,16 @@ class Response extends WebResponse {
 
   clone() {
     const cloned = Object.setPrototypeOf(super.clone(this), ResponsePrototype);
+    // clone() moved the body to a new web stream, so `body` gets a new node stream, as in node-fetch.
+    this[kBody] = undefined;
     if (this[kFetched]) cloned[kFetched] = true;
     return cloned;
-  }
-
-  async arrayBuffer() {
-    // load the getter
-    void this.body;
-    return await super.arrayBuffer();
-  }
-
-  async blob() {
-    // load the getter
-    void this.body;
-    return await super.blob();
-  }
-
-  async formData() {
-    // load the getter
-    void this.body;
-    return await super.formData();
-  }
-
-  async json() {
-    // load the getter
-    void this.body;
-    return await super.json();
   }
 
   // This is a deprecated function in node-fetch
   // but is still used by some libraries and frameworks (like Astro)
   async buffer() {
-    // load the getter
-    void this.body;
     return new $Buffer(await super.arrayBuffer());
-  }
-
-  async text() {
-    // load the getter
-    void this.body;
-    return await super.text();
   }
 
   get type() {

@@ -876,6 +876,27 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     continue;
                 }
 
+                // `HTTPThread::drain_events` hands a socket out before the loop
+                // polls it, so input the origin already wrote is unread in the
+                // kernel and invisible to the checks above; reuse answers this
+                // request with it. Same verdicts the idle handlers reach after
+                // a poll: `Handler::on_data` terminates, `Handler::on_end`
+                // closes. HTTP/2 idle frames are healthy, so `on_idle_data`
+                // keeps deciding for those.
+                if socket.h2_session.is_none() {
+                    match http_socket.queued_input() {
+                        uws::QueuedInput::None => {}
+                        uws::QueuedInput::Eof => {
+                            Self::close_socket(http_socket);
+                            continue;
+                        }
+                        uws::QueuedInput::Data | uws::QueuedInput::Error => {
+                            Self::terminate_socket(http_socket);
+                            continue;
+                        }
+                    }
+                }
+
                 // Transfer tunnel ownership (the parked strong ref) to the caller.
                 let tunnel: Option<RefPtr<ProxyTunnel>> = socket.proxy_tunnel.take();
                 socket.target_hostname = Box::default();

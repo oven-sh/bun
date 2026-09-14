@@ -228,32 +228,33 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (!isESM) {
         if (globalObject) [[likely]] {
             if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
-                auto overrideHandler = uncheckedDowncast<JSObject>(globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(globalObject));
-                if (overrideHandler) [[likely]] {
-                    ASSERT(overrideHandler->isCallable());
-
-                    MarkedArgumentBuffer args;
-                    args.append(moduleName);
-                    args.append(parentModule);
-                    args.append(jsBoolean(false));
-                    args.append(resolveFilenameOptions);
-
-                    JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
-                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), thisValue, args);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    if (!isRequireDotResolve) {
-                        JSString* string = result.toString(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        auto str = string->value(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
-                        if (!prefixed.isNull()) {
-                            return JSValue::encode(jsString(vm, prefixed));
-                        }
-                        return JSC::JSValue::encode(string);
-                    }
-                    return JSC::JSValue::encode(result);
+                JSValue overrideHandler = globalObject->m_moduleResolveFilenameOverride.get();
+                JSC::CallData overrideCallData = JSC::getCallData(overrideHandler);
+                if (overrideCallData.type == JSC::CallData::Type::None) [[unlikely]] {
+                    return JSC::throwVMTypeError(lexicalGlobalObject, scope, "Module._resolveFilename is not a function"_s);
                 }
+
+                MarkedArgumentBuffer args;
+                args.append(moduleName);
+                args.append(parentModule);
+                args.append(jsBoolean(false));
+                args.append(resolveFilenameOptions);
+
+                JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+                JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, overrideCallData, thisValue, args);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!isRequireDotResolve) {
+                    JSString* string = result.toString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    auto str = string->value(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
+                    if (!prefixed.isNull()) {
+                        return JSValue::encode(jsString(vm, prefixed));
+                    }
+                    return JSC::JSValue::encode(string);
+                }
+                return JSC::JSValue::encode(result);
             }
         }
 

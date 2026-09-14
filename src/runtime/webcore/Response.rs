@@ -979,7 +979,7 @@ impl Response {
                     status_code: 302,
                     ..Default::default()
                 }),
-                body: JsCell::new(Body::new(BodyValue::Empty)),
+                body: JsCell::new(Body::new(BodyValue::Null)),
                 ..Default::default()
             };
 
@@ -1035,7 +1035,7 @@ impl Response {
                 status_code: 0,
                 ..Default::default()
             }),
-            body: JsCell::new(Body::new(BodyValue::Empty)),
+            body: JsCell::new(Body::new(BodyValue::Null)),
             ..Default::default()
         }));
 
@@ -1071,7 +1071,7 @@ impl Response {
                             status_code: 302,
                             ..Default::default()
                         }),
-                        body: JsCell::new(Body::new(BodyValue::Empty)),
+                        body: JsCell::new(Body::new(BodyValue::Null)),
                         js_ref: JsCell::new(JsRef::init_weak(js_this)),
                         ..Default::default()
                     };

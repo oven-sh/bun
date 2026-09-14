@@ -47,13 +47,6 @@ unsafe extern "C" {
         arg3: *const EncodedSlice,
         arg4: u32,
     ) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__createValue(
-        arg0: *const JSGlobalObject,
-        arg1: *mut StringPointer,
-        arg2: *mut StringPointer,
-        arg3: *const EncodedSlice,
-        arg4: u32,
-    ) -> JSValue;
     // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
     // to a non-null `*mut` and the C++ refcount decrement is interior to the cell.
     safe fn WebCore__FetchHeaders__deref(arg0: &mut FetchHeaders);
@@ -145,23 +138,6 @@ impl FetchHeaders {
         // passed by address only.
         crate::call_null_is_throw(global, || unsafe {
             WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_)
-        })
-    }
-
-    /// Like [`create`](Self::create) but wrapped as a JS `Headers`. The C++
-    /// side returns the wrapper even after `fill` threw, so the exception state
-    /// is checked explicitly.
-    pub fn from(
-        global: &JSGlobalObject,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: &EncodedSlice,
-        count_: u32,
-    ) -> JsResult<JSValue> {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only.
-        crate::call_check_slow(global, || unsafe {
-            WebCore__FetchHeaders__createValue(global, names, values, buf, count_)
         })
     }
 

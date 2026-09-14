@@ -1,7 +1,7 @@
 // JSDirectStreamSource — a `type:"direct"` underlying source, converted ONCE at stream
 // construction: the user object (the `this` of every call) and its pull / cancel / close
 // methods. Held by the stream while DirectPending, then by whichever consumer takes the
-// stream (JSDirectStreamController, JSDirectSinkCloseState, JSOneShotDirectSink); nobody
+// stream (JSDirectStreamController, the native sink controller, JSOneShotDirectSink); nobody
 // reads a property of the user object after construction.
 // Internal cell: no prototype, no constructor, never exposed to JS.
 #pragma once

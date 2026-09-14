@@ -105,6 +105,9 @@ public:
     // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
     // throwing stub" trick).
     bool m_closed : 1 { false };
+    // The source already ended the stream: closed, or end()/close() ran inside pull() and
+    // completes when pull() returns. The five methods no-op from this point, not from m_closed.
+    bool sourceEnded() const { return m_closed || m_deferClose == 1; }
     // An async pull()'s returned promise has not yet settled; cleared by its settlement
     // reactions. m_pullAgain is set only when a NEW read arrives while m_pullInFlight
     // (edge-triggered, matching the spec default controller's [[pullAgain]]).
@@ -116,6 +119,8 @@ public:
     // process.nextTick job delivers it during the same microtask/nextTick drain.
     bool m_endOfTickFlushArmed : 1 { false };
     bool m_finalChunkArmed : 1 { false };
+    // A whole-body consumer (.text() etc.): an async pull() resolving without close()/end() closes.
+    bool m_closeOnPullSettled : 1 { false };
     // ArrayBuffer sink: the bytes write() accepted since it armed m_pendingWrite (saturating).
     uint32_t m_pendingWriteLength { 0 };
     // ArrayBuffer sink: m_buffer's capacity as last reported to the heap (reportExtraMemoryAllocated);

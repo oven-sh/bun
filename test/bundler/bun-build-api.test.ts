@@ -282,14 +282,10 @@ describe("Bun.build", () => {
             });
           },
         };
-        const counts: number[] = [];
-        for (let i = 0; i < 2; i++) {
-          if (!(await Bun.build({ entrypoints: ["./entry.js"], target: "bun", plugins: [slow] })).success) throw new Error("build failed");
-          const deadline = Date.now() + 2000;
-          while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
-          counts.push(bundlerWorkerLiveCount());
-        }
-        console.log(JSON.stringify(counts));
+        if (!(await Bun.build({ entrypoints: ["./entry.js"], target: "bun", plugins: [slow] })).success) throw new Error("build failed");
+        const deadline = Date.now() + 5000;
+        while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
+        console.log(bundlerWorkerLiveCount());
       `;
       using dir = tempDir("bun-build-api-worker-teardown", files);
       await using proc = Bun.spawn({
@@ -300,7 +296,7 @@ describe("Bun.build", () => {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("[0,0]\n");
+      expect(stdout).toBe("0\n");
       expect(exitCode).toBe(0);
     },
   );

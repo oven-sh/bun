@@ -1453,12 +1453,12 @@ impl Event {
     /// Post a notification to the event if it doesn't have one already
     /// then wake up a waiting thread if there is one as well.
     fn notify(&self) {
-        // Release barrier to ensure any operations before this are this to happen before the wait() in the other threads.
         let mut word = self.state.load(Ordering::Relaxed);
         loop {
             if word & Self::STATE_MASK == Self::SHUTDOWN {
                 return;
             }
+            // Release barrier to ensure any operations before this happen before the wait() in the other threads.
             match self.state.compare_exchange_weak(
                 word,
                 (word & !Self::STATE_MASK) | Self::NOTIFIED,

@@ -519,6 +519,7 @@ impl ExprParser<'_> {
                         })
                     }
                     Tok::Char(v) => Ok(Value::signed(v)),
+                    Tok::NotANumber(message) => err(loc, message.to_string()),
                     _ => err(loc, "floating constant in preprocessor expression"),
                 }
             }

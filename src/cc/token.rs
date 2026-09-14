@@ -359,6 +359,11 @@ pub(crate) struct IntSuffix {
     pub(crate) longs: u8,
 }
 
+/// Whether a narrow string literal was written `u8"..."`: it means the same bytes here, but
+/// may not stand next to a wide literal.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Utf8Prefix(pub(crate) bool);
+
 /// The element type of a prefixed literal: `wchar_t`, `char16_t` or `char32_t`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum WideKind {
@@ -392,7 +397,7 @@ pub(crate) enum Tok {
     /// Decoded bytes of one string literal, without the terminating NUL; and which of the bytes
     /// above 127 were written as octal or hexadecimal escapes (one code unit each, when a wide
     /// literal next to this one makes the whole wide) rather than as UTF-8 of a source character.
-    Str(Vec<u8>, Vec<u32>),
+    Str(Vec<u8>, Vec<u32>, Utf8Prefix),
     /// An `L`, `u` or `U` character constant.
     WideChar(WideKind, u32),
     /// An `L`, `u` or `U` string literal as code points (escapes give raw values).
@@ -406,6 +411,10 @@ pub(crate) enum Tok {
     PragmaMsStruct(bool),
     /// `#pragma redefine_extname name symbol`: `name` is linked as `symbol`.
     PragmaRedefine(Rc<str>, Rc<str>),
+    /// A preprocessing number that is no constant of C (`10.13.4`), with what is wrong with
+    /// it. It is a token like any other until something wants its value: the arguments of an
+    /// attribute nobody here reads are full of them.
+    NotANumber(Rc<str>),
 }
 
 /// What a `#pragma pack` does to the maximum member alignment. `None` is the default
@@ -437,6 +446,7 @@ impl Tok {
             Tok::PragmaWeak(_) => "'#pragma weak'".to_string(),
             Tok::PragmaMsStruct(_) => "'#pragma ms_struct'".to_string(),
             Tok::PragmaRedefine(..) => "'#pragma redefine_extname'".to_string(),
+            Tok::NotANumber(_) => "something that is not a number".to_string(),
         }
     }
 }
@@ -468,7 +478,10 @@ pub(crate) fn classify(
                 Err(_) => return err(loc, "identifier is not valid UTF-8"),
             },
         },
-        PpKind::Number => parse_number(&pp.text, loc)?,
+        PpKind::Number => match parse_number(&pp.text, loc) {
+            Ok(number) => number,
+            Err(error) => Tok::NotANumber(Rc::from(error.msg)),
+        },
         PpKind::Pragma => {
             let value = |text: &[u8]| -> Option<u32> {
                 std::str::from_utf8(text).ok().and_then(|t| t.parse().ok())
@@ -551,7 +564,11 @@ pub(crate) fn classify(
         PpKind::StrLit => {
             let body = literal_body(&pp.text, b'"', loc)?;
             let bytes = decode_escapes(body, loc, warnings)?;
-            Tok::Str(bytes, high_bytes_from_escapes(body))
+            Tok::Str(
+                bytes,
+                high_bytes_from_escapes(body),
+                Utf8Prefix(pp.text.starts_with(b"u8")),
+            )
         }
     };
     Ok(Token { tok, loc })

@@ -122,12 +122,17 @@ function expectValues(valuesPath: string, result: Result) {
   expect(result.exitCode, result.stderr).toEqual(0);
 }
 
-/** What `<name>.expected` and `<name>.status` say: the lines printed, and the exit status (0 without the file). */
+/**
+ * What `<name>.expected` and `<name>.status` say: the lines printed, and the exit status: 0 without the file, any
+ * status but 0 when the file says `nonzero` (a program that ends in a fault, whose status the platform chooses).
+ */
 function expectOutput(expectedPath: string, statusPath: string, result: Result) {
   expect(lines(result.stdout).split("\n"), result.stderr).toEqual(
     lines(readFileSync(expectedPath, "utf8")).split("\n"),
   );
-  expect(result.exitCode, result.stderr).toEqual(existsSync(statusPath) ? Number(readFileSync(statusPath, "utf8")) : 0);
+  const status = existsSync(statusPath) ? readFileSync(statusPath, "utf8").trim() : "0";
+  if (status === "nonzero") expect(result.exitCode, result.stderr).not.toEqual(0);
+  else expect(result.exitCode, result.stderr).toEqual(Number(status));
 }
 
 /**

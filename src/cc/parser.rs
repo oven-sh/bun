@@ -74,6 +74,7 @@ struct DeclSpec {
     is_typedef: bool,
     is_inline: bool,
     is_noreturn: bool,
+    incomplete_enum: Option<Rc<str>>,
     thread_local: bool,
     attrs: Attrs,
     loc: Loc,
@@ -147,6 +148,9 @@ pub(crate) struct Parser<S: TokenSource> {
     /// `count = length` assignments of variable length array types that were just parsed
     /// and must be evaluated at this point of the program.
     pending_vla: Vec<Expr>,
+    /// Set by an `enum tag` specifier whose enumeration has no enumerator list yet: an
+    /// incomplete type, which only a pointer may be made of.
+    incomplete_enum: Option<Rc<str>>,
     /// The `VlaScope`s around the current position, outermost first.
     vla_path: Vec<u32>,
     /// A variable length array object was declared by the block item just parsed.
@@ -231,6 +235,7 @@ impl<S: TokenSource> Parser<S> {
             continue_targets: 0,
             param_depth: 0,
             pending_vla: Vec::new(),
+            incomplete_enum: None,
             vla_path: Vec::new(),
             vla_declared: false,
             gotos: Vec::new(),
@@ -522,7 +527,7 @@ impl<S: TokenSource> Parser<S> {
         let mut message = None;
         if self.eat(Punct::Comma)? {
             match self.bump()?.tok {
-                Tok::Str(bytes, _) => message = Some(crate::token::display_bytes(&bytes)),
+                Tok::Str(bytes, ..) => message = Some(crate::token::display_bytes(&bytes)),
                 _ => return err(loc, "expected a string literal in _Static_assert"),
             }
         }
@@ -753,6 +758,18 @@ impl<S: TokenSource> Parser<S> {
         }
         if let (Some((_, at)), true) = (spec.attrs.alignas, spec.is_register) {
             return err(at, "'_Alignas' cannot be applied to a register variable");
+        }
+        if let Some(tag) = &spec.incomplete_enum {
+            let mut object = &decl.ty;
+            while let Type::Array(elem, _) = object.unqualified() {
+                object = elem;
+            }
+            if !object.is_ptr() && !object.is_func() && spec.storage != Storage::Extern {
+                return err(
+                    decl.loc,
+                    format!("variable has incomplete type 'enum {tag}'"),
+                );
+            }
         }
         self.check_alignas(spec, &decl.ty)
     }
@@ -1270,7 +1287,7 @@ impl<S: TokenSource> Parser<S> {
                 let loc = self.bump()?.loc;
                 self.bump()?;
                 let mut label = Vec::new();
-                while let Tok::Str(part, _) = &self.cur.tok {
+                while let Tok::Str(part, ..) = &self.cur.tok {
                     label.extend_from_slice(part);
                     self.bump()?;
                 }
@@ -1383,7 +1400,7 @@ impl<S: TokenSource> Parser<S> {
                 "alias" | "weakref" if has_args => {
                     let aloc = self.bump()?.loc;
                     let mut target = Vec::new();
-                    while let Tok::Str(part, _) = &self.cur.tok {
+                    while let Tok::Str(part, ..) = &self.cur.tok {
                         target.extend_from_slice(part);
                         self.bump()?;
                     }
@@ -1512,6 +1529,7 @@ impl<S: TokenSource> Parser<S> {
 
     fn parse_declspec(&mut self) -> Res<DeclSpec> {
         self.enter()?;
+        self.incomplete_enum = None;
         let loc = self.loc();
         let mut storage = Storage::None;
         let mut is_typedef = false;
@@ -1892,6 +1910,7 @@ impl<S: TokenSource> Parser<S> {
             is_typedef,
             is_inline,
             is_noreturn,
+            incomplete_enum: self.incomplete_enum.take(),
             thread_local: thread_local || attrs.thread,
             attrs,
             loc,
@@ -2144,6 +2163,9 @@ impl<S: TokenSource> Parser<S> {
             if let (Some(ty), None) = (&fixed_type, self.sema.lookup_tag(&tag)) {
                 self.sema.bind_tag(tag, Tag::Enum(ty.clone()));
                 return Ok(ty.clone());
+            }
+            if !self.sema.defined_enums.iter().any(|(_, name)| *name == tag) {
+                self.incomplete_enum = Some(Rc::clone(&tag));
             }
             return match self.sema.lookup_tag(&tag) {
                 Some(Tag::Enum(ty)) => Ok(ty),
@@ -3551,7 +3573,7 @@ impl<S: TokenSource> Parser<S> {
         }
         self.expect(Punct::LParen)?;
         let mut template = Vec::new();
-        while let Tok::Str(part, _) = &self.cur.tok {
+        while let Tok::Str(part, ..) = &self.cur.tok {
             template.extend_from_slice(part);
             self.bump()?;
         }
@@ -3581,7 +3603,7 @@ impl<S: TokenSource> Parser<S> {
             }
             loop {
                 if section == 2 {
-                    let Tok::Str(name, _) = &self.cur.tok else {
+                    let Tok::Str(name, ..) = &self.cur.tok else {
                         return err(self.loc(), "expected a clobber string");
                     };
                     clobbers_memory |= &name[..] == b"memory";
@@ -3595,7 +3617,7 @@ impl<S: TokenSource> Parser<S> {
                     }
                     operand_names[section].push(operand_name);
                     let mut constraint = Vec::new();
-                    while let Tok::Str(part, _) = &self.cur.tok {
+                    while let Tok::Str(part, ..) = &self.cur.tok {
                         constraint.extend_from_slice(part);
                         self.bump()?;
                     }
@@ -4715,9 +4737,11 @@ impl<S: TokenSource> Parser<S> {
                 let mut narrow: Vec<u8> = Vec::new();
                 let mut points: Vec<u32> = Vec::new();
                 let mut wide = None;
+                let mut utf8_prefixed = false;
                 loop {
                     match &self.cur.tok {
-                        Tok::Str(part, escaped) => {
+                        Tok::Str(part, escaped, utf8) => {
+                            utf8_prefixed |= utf8.0;
                             narrow.extend_from_slice(part);
                             // Source characters become their code points; a byte written as an
                             // escape is one element.
@@ -4747,6 +4771,12 @@ impl<S: TokenSource> Parser<S> {
                     }
                     self.bump()?;
                 }
+                if wide.is_some() && utf8_prefixed {
+                    return err(
+                        loc,
+                        "concatenation of string literals with different prefixes",
+                    );
+                }
                 match wide {
                     Some(kind) => {
                         let elem = self.sema.wide_elem_type(kind);
@@ -4769,6 +4799,7 @@ impl<S: TokenSource> Parser<S> {
                 Ok(e)
             }
             Tok::Kw(Kw::Generic) => self.parse_generic(),
+            Tok::NotANumber(message) => err(loc, message.to_string()),
             other => err(
                 loc,
                 format!("expected an expression before {}", other.describe()),
@@ -5052,7 +5083,7 @@ impl<S: TokenSource> Parser<S> {
             }
             "cpu_supports" | "cpu_is" => {
                 self.expect(Punct::LParen)?;
-                let Tok::Str(feature, _) = self.cur.tok.clone() else {
+                let Tok::Str(feature, ..) = self.cur.tok.clone() else {
                     return err(loc, format!("{name} takes a string literal"));
                 };
                 self.bump()?;
@@ -5098,7 +5129,7 @@ impl<S: TokenSource> Parser<S> {
             "bun_unsupported" => {
                 self.expect(Punct::LParen)?;
                 let mut message = Vec::new();
-                while let Tok::Str(part, _) = &self.cur.tok {
+                while let Tok::Str(part, ..) = &self.cur.tok {
                     message.extend_from_slice(part);
                     self.bump()?;
                 }

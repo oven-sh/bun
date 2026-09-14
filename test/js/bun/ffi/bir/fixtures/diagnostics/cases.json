@@ -3736,5 +3736,54 @@
   "line": 1,
   "column": 1,
   "message": "expected a type before '_Pragma'"
+ },
+ {
+  "about": "6.7.2.3p3: an enumeration that has no enumerator list yet is an incomplete type",
+  "source": "enum never_defined x;\nint main(void) { return 0; }",
+  "line": 1,
+  "column": 20,
+  "message": "variable has incomplete type 'enum never_defined'"
+ },
+ {
+  "about": "6.7.2.3p3: an enumeration that has no enumerator list yet is an incomplete type",
+  "source": "int main(void) { enum later value; enum later { A }; return 0; }",
+  "line": 1,
+  "column": 29,
+  "message": "variable has incomplete type 'enum later'"
+ },
+ {
+  "about": "6.4.5p2: adjacent string literals do not mix a UTF-8 prefix with a wide one",
+  "source": "const void *p = u8\"a\" L\"b\";\nint main(void) { return 0; }",
+  "line": 1,
+  "column": 17,
+  "message": "concatenation of string literals with different prefixes"
+ },
+ {
+  "about": "6.4.5p2: adjacent string literals do not mix a UTF-8 prefix with a wide one",
+  "source": "const void *p = U\"a\" u8\"b\";\nint main(void) { return 0; }",
+  "line": 1,
+  "column": 17,
+  "message": "concatenation of string literals with different prefixes"
+ },
+ {
+  "about": "6.4.4.2: a preprocessing number that is no constant is an error where a constant is wanted, and only there",
+  "source": "int x = 10.13.4;\nint main(void) { return 0; }",
+  "line": 1,
+  "column": 9,
+  "message": "invalid floating constant '10.13.4'"
+ },
+ {
+  "about": "6.4.4.2: a preprocessing number that is no constant is an error where a constant is wanted, and only there",
+  "source": "#if 10.13.4\n#endif\nint main(void) { return 0; }",
+  "line": 1,
+  "column": 5,
+  "message": "invalid floating constant '10.13.4'"
+ },
+ {
+  "about": "6.4.4.2: a preprocessing number that is no constant is an error where a constant is wanted, and only there",
+  "source": "int f(void) __attribute__((aligned(10.13.4)));\nint main(void) { return 0; }",
+  "line": 1,
+  "column": 36,
+  "message": "invalid floating constant '10.13.4'"
  }
 ]

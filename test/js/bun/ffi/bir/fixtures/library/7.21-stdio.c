@@ -34,10 +34,11 @@ int main(void) {
   printf("%s\n", line);
   snprintf(line, sizeof line, "%hhu|%hu|%lu|%llu|%llx", (unsigned char)255, (unsigned short)65535, 4294967295UL, 18446744073709551615ULL, 0xdeadbeefcafeULL);
   printf("%s\n", line);
-  // Floating: f e g a, their capitals, long double.
-  snprintf(line, sizeof line, "%f|%.2f|%e|%.3E|%g|%G|%10.4f|%-10.2e|%+.1f|%.0f|%#.0f", 3.14159, 2.71828, 12345.678, 0.00012, 0.0001, 1e20, 3.14159, 31415.9, 2.0, 2.5, 3.0);
+  // Floating: f e g a, their capitals, long double. (No exact ties for %.0f and no %a without a precision: the
+  // libraries round the first and pad the second differently.)
+  snprintf(line, sizeof line, "%f|%.2f|%e|%.3E|%g|%G|%10.4f|%-10.2e|%+.1f|%.0f|%#.0f", 3.14159, 2.71828, 12345.678, 0.00012, 0.0001, 1e20, 3.14159, 31415.9, 2.0, 2.75, 3.0);
   printf("%s\n", line);
-  snprintf(line, sizeof line, "%a|%A|%.1a|%Lf|%Le|%Lg", 1.0, 0.5, 1.0, 1.5L, 1500.0L, 0.25L);
+  snprintf(line, sizeof line, "%.1a|%.0A|%.3a|%Lf|%Le|%Lg", 1.0, 0.5, 1.5, 1.5L, 1500.0L, 0.25L);
   printf("%s\n", line);
   // Strings and pointers. (%n is in a fixture of its own: Microsoft's library refuses it unless asked.)
   snprintf(line, sizeof line, "%s|%10s|%-10s|%.3s|%.*s|%c", "text", "right", "left", "truncated", 2, "abc", 'z');

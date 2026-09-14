@@ -75,7 +75,10 @@ int main(void) {
   // The counters and the file names.
   int first = __COUNTER__, second = __COUNTER__;
   CHECK(second == first + 1 && __INCLUDE_LEVEL__ == 0 && sizeof(__BASE_FILE__) > 1 && sizeof(__TIMESTAMP__) > 1);
-  CHECK(__STDC__ == 1 && __STDC_HOSTED__ == 1 && __STDC_VERSION__ >= 201112L);
+  CHECK(__STDC_HOSTED__ == 1 && __STDC_VERSION__ >= 201112L);
+#ifndef _MSC_VER
+  CHECK(__STDC__ == 1);             // (Microsoft C leaves it undefined unless its extensions are turned off.)
+#endif
   printf("%d wrong\n", wrong);
   return wrong != 0;
 }

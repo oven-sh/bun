@@ -237,6 +237,14 @@ impl Cmd {
             );
             match interp.as_cmd(this).state {
                 CmdState::Idle => {
+                    // `FOO=bar cmd` is scoped to one command; drop whatever a
+                    // previous sibling left so only this command's assigns are seen.
+                    interp
+                        .as_cmd_mut(this)
+                        .base
+                        .shell_mut()
+                        .cmd_local_env
+                        .clear();
                     if !n.assigns.is_empty() {
                         interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
                         let child = Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd);
@@ -466,13 +474,13 @@ impl Cmd {
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
-        // Fill env from export_env + cmd_local_env.
+        // Fill env from export_env + cmd_local_env; cmd_local_env wins on overlap.
         {
             let env = interp.as_cmd_mut(this).base.shell_mut();
             let mut iter = env.export_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
+            spawn_args.fill_env::<false>(&mut iter, Some(&env.cmd_local_env));
             let mut iter = env.cmd_local_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
+            spawn_args.fill_env::<false>(&mut iter, None);
         }
 
         // Resolve argv[0] via PATH (`bun_which::which`).

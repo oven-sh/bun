@@ -1768,6 +1768,58 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test("each FetchContext has its own h2 session, and onStats counts the stream's bytes", async () => {
+    let sessions = 0;
+    const server = makeH2Server({}, (req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", c => chunks.push(c));
+      req.on("end", () => res.end(String(Buffer.concat(chunks).length)));
+    });
+    server.on("session", () => sessions++);
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnCapped({
+        cmd: [
+          bunExe(),
+          "--no-warnings",
+          "-e",
+          `const url = "https://localhost:${port}/";
+           using one = new Bun.FetchContext({ tls: { rejectUnauthorized: false } });
+           using other = new Bun.FetchContext({ tls: { rejectUnauthorized: false } });
+           const stats = [];
+           const post = context =>
+             fetch(url, { protocol: "http2", context, method: "POST", body: Buffer.alloc(5000, "x"), onStats: s => stats.push(s) }).then(r => r.text());
+           console.log(JSON.stringify([await post(one), await post(one), await post(other)]));
+           console.log(JSON.stringify(stats.map(s => [s.requestBodyBytesSent, s.bytesWritten > 5000, s.responseStarted, s.socketReused])));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(
+        stdout
+          .trim()
+          .split("\n")
+          .map(line => JSON.parse(line)),
+      ).toEqual([
+        ["5000", "5000", "5000"],
+        [
+          [5000, true, true, false],
+          [5000, true, true, true],
+          [5000, true, true, false],
+        ],
+      ]);
+      expect(sessions).toBe(2);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
   test.each([
     ["small (shared-buffer fast path)", 32 * 1024],
     ["large (zlib-streaming spill path)", 600 * 1024],

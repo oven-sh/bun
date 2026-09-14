@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tmpdirSync } from "harness";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -829,6 +831,25 @@ describe.concurrent("fetch-tls", () => {
     expect(strict).toBe("pinned certificate mismatch");
     expect(calls).toEqual(["permissive", "strict"]);
     expect(server.connections).toBe(2);
+  });
+
+  it("an https request to a server that does not speak TLS rejects with EPROTO", async () => {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      // Answers the ClientHello in plaintext and leaves closing to the client.
+      socket.once("data", () => socket.write("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const error = await fetch(`https://127.0.0.1:${(server.address() as net.AddressInfo).port}/`).catch(e => e);
+      expect({ code: error.code, message: error.message }).toEqual({
+        code: "EPROTO",
+        message: "EPROTO: The TLS handshake failed. Does the server speak TLS on this port?",
+      });
+    } finally {
+      server.close();
+    }
   });
 
   it("a checkServerIdentity on a plain http request does not cost it its keep-alive", async () => {

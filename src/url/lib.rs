@@ -660,10 +660,18 @@ impl<'a> URL<'a> {
                     // what precedes the last `@` of the authority.
                     if offset > 0 {
                         let rest = &base[offset as usize..];
-                        let authority =
-                            &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
-                        if let Some(at) = strings::last_index_of_char(authority, b'@') {
-                            let userinfo = &authority[..at];
+                        // One pass over the authority, which is short: the last
+                        // `@` before the first `/`, `?` or `#` ends the userinfo.
+                        let mut last_at = None;
+                        for (i, &byte) in rest.iter().enumerate() {
+                            match byte {
+                                b'@' => last_at = Some(i),
+                                b'/' | b'?' | b'#' => break,
+                                _ => {}
+                            }
+                        }
+                        if let Some(at) = last_at {
+                            let userinfo = &rest[..at];
                             (url.username, url.password) =
                                 strings::split_once_char(userinfo, b':').unwrap_or((userinfo, b""));
                             offset += u32::try_from(at + 1).expect("int cast");

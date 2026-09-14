@@ -1098,6 +1098,24 @@ impl JSValue {
         }
     }
 
+    /// `get` without the per-call `StringImpl` and atom-table probe.
+    pub fn get_fetch_option(
+        self,
+        global: &JSGlobalObject,
+        name: crate::FetchOptionName,
+    ) -> JsResult<Option<JSValue>> {
+        debug_assert!(self.is_object());
+        debug_assert_eq!(Bun__FetchOptionName__count(), crate::FetchOptionName::COUNT);
+        let v = host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__getFetchOption(self, global, name as u8)
+        })?;
+        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() {
+            Ok(None)
+        } else {
+            Ok(Some(v))
+        }
+    }
+
     /// Safe to use on any JSValue.
     /// Returns true iff the value is an object whose `toString` property is a callable cell.
     pub fn implements_to_string(self, global: &JSGlobalObject) -> JsResult<bool> {
@@ -1236,16 +1254,37 @@ impl JSValue {
         let Some(v) = self.get(global, property)? else {
             return Ok(None);
         };
-        if v.is_undefined_or_null() {
+        v.function_or_nullish(global, property)
+    }
+
+    /// `get_function` for a `FetchOptionName`.
+    pub fn get_fetch_option_function(
+        self,
+        global: &JSGlobalObject,
+        name: crate::FetchOptionName,
+    ) -> JsResult<Option<JSValue>> {
+        let Some(v) = self.get_fetch_option(global, name)? else {
+            return Ok(None);
+        };
+        v.function_or_nullish(global, name.as_str().as_bytes())
+    }
+
+    /// `self` as the value of the option `name`: a function, or absent when nullish.
+    fn function_or_nullish(
+        self,
+        global: &JSGlobalObject,
+        name: &[u8],
+    ) -> JsResult<Option<JSValue>> {
+        if self.is_undefined_or_null() {
             return Ok(None);
         }
-        if !v.is_cell() || !v.is_callable() {
+        if !self.is_cell() || !self.is_callable() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "{} must be a function",
-                bstr::BStr::new(property),
+                bstr::BStr::new(name),
             )));
         }
-        Ok(Some(v))
+        Ok(Some(self))
     }
     /// Missing/undefined → `None`;
     /// boolean → `Some(b)`; anything else throws `ERR_INVALID_ARG_TYPE`.
@@ -2008,6 +2047,12 @@ unsafe extern "C" {
     safe fn JSC__JSValue__coerceToInt32(this: JSValue, global: &JSGlobalObject) -> i32;
     safe fn JSC__JSValue__coerceToInt64(this: JSValue, global: &JSGlobalObject) -> i64;
     safe fn JSC__JSValue__fastGet(this: JSValue, global: &JSGlobalObject, builtin: u8) -> JSValue;
+    safe fn JSC__JSValue__getFetchOption(
+        this: JSValue,
+        global: &JSGlobalObject,
+        name: u8,
+    ) -> JSValue;
+    safe fn Bun__FetchOptionName__count() -> u8;
     safe fn JSC__JSValue__jsonStringify(
         this: JSValue,
         global: &JSGlobalObject,

@@ -788,12 +788,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
     /// How long a parked socket may sit idle; 0 is the 5 minute default.
     fn arm_idle_timeout(socket: HTTPSocket<SSL>, idle_timeout_seconds: u32) {
-        socket.timeout(0);
-        if idle_timeout_seconds == 0 {
-            socket.set_timeout_minutes(5);
-        } else {
-            socket.set_timeout(idle_timeout_seconds);
-        }
+        socket.set_timeout(match idle_timeout_seconds {
+            0 => 5 * 60,
+            seconds => seconds,
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1416,14 +1414,10 @@ impl<const SSL: bool> Handler<SSL> {
             } else {
                 // if we are here is because server rejected us, and the error_no is the cause of this
                 // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
-                if client.flags.did_have_handshaking_error {
-                    client.close_and_fail::<SSL>(
-                        get_cert_error_from_no(handshake_error.error_no),
-                        socket,
-                    );
-                    return;
-                }
-                client.close_and_fail::<SSL>(crate::Error::TLSHandshakeFailed, socket);
+                client.close_and_fail::<SSL>(
+                    crate::handshake_failure(handshake_error.error_no),
+                    socket,
+                );
                 return;
             }
         }

@@ -645,14 +645,6 @@ impl<'a> AsyncHTTP<'a> {
         // SAFETY: see above — sole owner, callback completed.
         drop(unsafe { bun_core::heap::take(ctx.as_ptr()) });
         if let Some(err) = result.fail {
-            // The blocking callers are CLI commands that print only the error's name.
-            if let Some(reply) = &result.proxy_connect_response {
-                bun_core::pretty_errorln!(
-                    "<r><yellow>note<r>: the proxy answered CONNECT with {} {}",
-                    reply.response.status_code,
-                    bstr::BStr::new(reply.response.status),
-                );
-            }
             return Err(err);
         }
         let Some(metadata) = result.metadata else {

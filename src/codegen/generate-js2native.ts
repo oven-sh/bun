@@ -91,6 +91,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
   "runtime/webcore/ByteStream.rs": "runtime/webcore/ByteStream.rs",
   "runtime/webcore/FileSink.rs": "runtime/webcore/FileSink.rs",
+  "runtime/webcore/fetch.rs": "runtime/webcore/fetch.rs",
   "shell.rs": "runtime/shell/shell.rs",
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
   "string/immutable/unicode.rs": "bun_core/string/immutable/unicode.rs",

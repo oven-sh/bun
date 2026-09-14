@@ -36,6 +36,11 @@ pub mod compress_body;
 pub mod fetch_context;
 pub use self::fetch_context::FetchContext;
 
+/// `proxyInternals` of `bun:internal-for-testing`. `generated_js2native.rs`
+/// snake-cases `TestingAPIs` as `testing_ap_is`.
+#[path = "fetch/proxy_testing.rs"]
+pub mod testing_ap_is;
+
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
@@ -81,8 +86,6 @@ pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
 // Local extension shims (upstream methods not yet ported / not in scope)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The HTTP thread connects to the `unix` path later and the keep-alive pool
-/// keys on it, so a relative path is anchored to `cwd` at call time, unnormalized.
 /// The `unix` option when it is a non-empty string.
 fn parse_unix(
     vm: &VirtualMachine,
@@ -98,6 +101,8 @@ fn parse_unix(
     )))
 }
 
+/// The HTTP thread connects to the `unix` path later and the keep-alive pool
+/// keys on it, so a relative path is anchored to `cwd` at call time, unnormalized.
 fn absolute_unix_socket_path(cwd: &[u8], path: Vec<u8>) -> Box<[u8]> {
     // Windows: bsd.c has no long-path fallback. Leading NUL: Linux abstract socket.
     if cfg!(windows) || path.first() == Some(&0) || bun_paths::is_absolute(&path) {
@@ -546,7 +551,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "method"
     let mut method = 'extract_method: {
         if let Some(options) = options_object {
-            if let Some(method_) = options.get_truthy(global_this, "method")? {
+            if let Some(method_) = options.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
                 break 'extract_method method_jsc::from_js(global_this, method_)?;
             }
         }
@@ -556,7 +561,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_init_object {
-            if let Some(method_) = req.get_truthy(global_this, "method")? {
+            if let Some(method_) = req.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
                 break 'extract_method method_jsc::from_js(global_this, method_)?;
             }
         }
@@ -574,7 +579,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(decompression_value) = obj.get(global_this, "decompress")? {
+                if let Some(decompression_value) =
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Decompress)?
+                {
                     if decompression_value.is_boolean() {
                         break 'extract_disable_decompression !decompression_value.as_boolean();
                     } else if decompression_value.is_number() {
@@ -596,7 +603,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(compress_value) = obj.get(global_this, "compress")? {
+                if let Some(compress_value) =
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Compress)?
+                {
                     if !compress_value.is_undefined() {
                         compress = compress_body::from_js(global_this, compress_value)?;
                         break 'extract_compress;
@@ -615,7 +624,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(value) = obj.get(global_this, "maxRedirects")? {
+                if let Some(value) =
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::MaxRedirects)?
+                {
                     if !value.is_undefined_or_null() {
                         if !value.is_number() {
                             return Err(global_this.throw_invalid_arguments(format_args!(
@@ -644,7 +655,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(value) = obj.get(global_this, "context")? {
+                if let Some(value) =
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Context)?
+                {
                     if !value.is_undefined_or_null() {
                         break 'extract_context Some(fetch_context::ContextRef::from_js(
                             global_this,
@@ -667,7 +680,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(tls) = obj.get(global_this, "tls")? {
+                if let Some(tls) = obj.get_fetch_option(global_this, jsc::FetchOptionName::Tls)? {
                     if tls.is_object() {
                         request_has_tls = true;
                         let parsed = fetch_context::parse_tls(vm, global_this, tls)?;
@@ -706,7 +719,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(socket_path) = obj.get(global_this, "unix")? {
+                if let Some(socket_path) =
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Unix)?
+                {
                     if let Some(path) = parse_unix(vm, global_this, socket_path)? {
                         break 'extract_unix_socket_path path;
                     }
@@ -725,7 +740,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(protocol_val) = obj.get(global_this, "protocol")? {
+                if let Some(protocol_val) =
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Protocol)?
+                {
                     if protocol_val.is_string() {
                         let str = protocol_val.to_js_string_view(global_this)?;
                         if str.eq_ascii(b"http2") || str.eq_ascii(b"h2") {
@@ -755,7 +772,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(timeout_value) = obj.get(global_this, "timeout")? {
+                if let Some(timeout_value) =
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Timeout)?
+                {
                     if timeout_value.is_boolean() {
                         break 'extract_disable_timeout !timeout_value.as_boolean();
                     } else if timeout_value.is_number() {
@@ -821,7 +840,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(keepalive_value) = obj.get(global_this, "keepalive")? {
+                if let Some(keepalive_value) =
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Keepalive)?
+                {
                     if keepalive_value.is_boolean() {
                         break 'extract_disable_keepalive !keepalive_value.as_boolean();
                     } else if keepalive_value.is_number() {
@@ -843,7 +864,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(verb) = obj.get(global_this, "verbose")? {
+                if let Some(verb) =
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Verbose)?
+                {
                     if verb.is_string() {
                         if verb.to_js_string_view(global_this)?.eq_ascii(b"curl") {
                             break 'extract_verbose http::HTTPVerboseLevel::Curl;
@@ -873,7 +896,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ];
         for obj in objects_to_try {
             if !obj.is_empty() && proxy_option.is_none() {
-                if let Some(proxy_arg) = obj.get(global_this, "proxy")? {
+                if let Some(proxy_arg) =
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Proxy)?
+                {
                     proxy_option = fetch_context::parse_proxy(global_this, proxy_arg)?;
                 }
             }
@@ -929,10 +954,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if lookup.is_none() {
-                    lookup = obj.get_function(global_this, "lookup")?;
+                    lookup =
+                        obj.get_fetch_option_function(global_this, jsc::FetchOptionName::Lookup)?;
                 }
                 if on_stats.is_none() {
-                    on_stats = obj.get_function(global_this, "onStats")?;
+                    on_stats =
+                        obj.get_fetch_option_function(global_this, jsc::FetchOptionName::OnStats)?;
                 }
             }
         }
@@ -957,7 +984,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // non-AbortSignal is a TypeError.
     signal = 'extract_signal: {
         if let Some(options) = options_object {
-            if let Some(signal_) = options.get(global_this, "signal")? {
+            if let Some(signal_) = options.fast_get(global_this, jsc::BuiltinName::signal)? {
                 if signal_.is_null() {
                     break 'extract_signal None;
                 }
@@ -980,7 +1007,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(options) = request_init_object {
-            if let Some(signal_) = options.get(global_this, "signal")? {
+            if let Some(signal_) = options.fast_get(global_this, jsc::BuiltinName::signal)? {
                 if signal_.is_null() {
                     break 'extract_signal None;
                 }
@@ -1651,7 +1678,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         // `defer credentialsWithOptions.deinit()` → Drop.
 
         if let Some(options) = options_object {
-            if let Some(s3_options) = options.get_truthy(global_this, "s3")? {
+            if let Some(s3_options) =
+                options.get_fetch_option(global_this, jsc::FetchOptionName::S3)?
+            {
                 let s3_options: JSValue = s3_options;
                 if s3_options.is_object() {
                     s3_options.ensure_still_alive();

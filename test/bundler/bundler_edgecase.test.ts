@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
@@ -4241,6 +4241,63 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "m user" },
+  });
+
+  // A source file that is not UTF-8 is decoded the way Node.js decodes it: each
+  // ill-formed sequence becomes U+FFFD. The hashbang line, legal comments, regex
+  // bodies and tagged template raw strings are copied from the source text, so
+  // the bytes of a Latin-1 file used to reach the output as they were.
+  const latin1 = (s: string) => Buffer.from(s, "latin1");
+  // \xA9 and \xFB cannot start a UTF-8 sequence. \xE9 and \xE2\x82 start one
+  // that the next byte does not continue. \xED\xA0\x80 is an encoded surrogate.
+  const notUtf8Source = latin1(
+    [
+      "#!/usr/bin/env node caf\xE9",
+      "/*! (c) Soci\xE9t\xE9 */",
+      "//! licence \xA9",
+      "globalThis.raw = String.raw`w\xA9`;",
+      "console.log(JSON.stringify([",
+      '  "s\xA9 caf\xE9", `t\xFB caf\xE9`, { "k\xA9": 1 }, "p\xE2\x82q", "s\xED\xA0\x80",',
+      '  /^r\xA9$/.test("r\\uFFFD"), /^r\xA9$/.test("r\\u00A9"),',
+      "]));",
+      "",
+    ].join("\n"),
+  );
+  for (const target of ["node", "bun", "browser"] as const) {
+    for (const minify of [false, true]) {
+      itBundled(`edgecase/SourceFileNotUtf8/${target}${minify ? "/minify" : ""}`, {
+        target,
+        minifyWhitespace: minify,
+        minifyIdentifiers: minify,
+        minifySyntax: minify,
+        sourceMap: "external",
+        files: {
+          "/entry.js": notUtf8Source,
+        },
+        onAfterBundle(api) {
+          const strict = new TextDecoder("utf-8", { fatal: true });
+          const text = strict.decode(readFileSync(api.outfile));
+          expect(text).toStartWith("#!/usr/bin/env node caf\uFFFD\n");
+          expect(text).toContain("/*! (c) Soci\uFFFDt\uFFFD */");
+          expect(text).toContain("//! licence \uFFFD\n");
+          const map = JSON.parse(strict.decode(readFileSync(api.outfile + ".map")));
+          expect(map.sourcesContent).toEqual([new TextDecoder().decode(notUtf8Source)]);
+        },
+        run: {
+          stdout: '["s\uFFFD caf\uFFFD","t\uFFFD caf\uFFFD",{"k\uFFFD":1},"p\uFFFDq","s\uFFFD\uFFFD\uFFFD",true,false]',
+        },
+      });
+    }
+  }
+  // In the Latin-1 reading \xFB is a letter, so it used to become part of the
+  // identifier and was printed raw. Node.js rejects the file.
+  itBundled("edgecase/SourceFileNotUtf8Identifier", {
+    files: {
+      "/entry.js": latin1("export const v\xFB0 = 1;\n"),
+    },
+    bundleErrors: {
+      "/entry.js": ['Expected ";" but found "\uFFFD"', 'The constant "v" must be initialized', "Unexpected \uFFFD"],
+    },
   });
 });
 

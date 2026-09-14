@@ -1517,6 +1517,21 @@ impl<'a> Transpiler<'a> {
             // the erasure.
             let contents: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
+            // JavaScript source text is UTF-8 (see `ParseTask`). `RETURN_FILE_ONLY`
+            // callers and a WebAssembly binary get the bytes as they are.
+            let contents: &'static [u8] = if !RETURN_FILE_ONLY
+                && loader.is_javascript_like()
+                && !contents.starts_with(b"\0asm")
+            {
+                // SAFETY: the copy lives in `arena`, which also holds `source`.
+                unsafe {
+                    bun_ptr::detach_lifetime_ref::<[u8]>(strings::replace_invalid_utf8(
+                        contents, arena,
+                    ))
+                }
+            } else {
+                contents
+            };
             match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair { path, contents })
             {
                 Ok(s) => break 'brk s,

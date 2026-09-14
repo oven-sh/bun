@@ -919,3 +919,27 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+// 0xFB is a letter in Latin-1, so the lexer used to make it part of the identifier.
+// The HMR module's export table then carried the raw byte into the client script.
+devTest("an export name with a byte that is not UTF-8 is a syntax error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import * as m from './m0';
+      console.log('keys: ' + Object.keys(m));
+    `,
+    "m0.ts": Buffer.from("export const v\xFB0 = 1;\n", "latin1"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        `m0.ts:1:14: error: The constant "v" must be initialized`,
+        `m0.ts:1:15: error: Expected ";" but found "\uFFFD"`,
+        `m0.ts:1:16: error: Unexpected \uFFFD`,
+      ],
+    });
+  },
+});

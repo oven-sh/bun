@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -39,5 +39,69 @@ describe.concurrent("run-unicode", () => {
   "Fran\u00E7ais": 123,
   bbb: 123,
 }`);
+  });
+
+  // Node.js decodes a module as UTF-8 and turns each ill-formed sequence into
+  // U+FFFD before it parses. Bun read a byte that cannot start a sequence as
+  // Latin-1, so "\xA9" was "©" and `v\xFB` was an identifier.
+  describe("a source file that is not UTF-8", () => {
+    const latin1 = (s: string) => Buffer.from(s, "latin1");
+    const source = latin1(
+      [
+        "/*! (c) Soci\xE9t\xE9 */",
+        "console.log(JSON.stringify([",
+        '  "s\xA9 caf\xE9", `t\xFB caf\xE9`, { "k\xA9": 1 }, "p\xE2\x82q", "s\xED\xA0\x80",',
+        '  /^r\xA9$/.test("r\\uFFFD"), /^r\xA9$/.test("r\\u00A9"),',
+        "]));",
+        "",
+      ].join("\n"),
+    );
+    const decoded =
+      '["s\uFFFD caf\uFFFD","t\uFFFD caf\uFFFD",{"k\uFFFD":1},"p\uFFFDq","s\uFFFD\uFFFD\uFFFD",true,false]\n';
+
+    test("runs with the text Node.js sees", async () => {
+      using dir = tempDir("run-not-utf8", { "latin1.js": source });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "latin1.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: decoded, stderr: "", exitCode: 0 });
+    });
+
+    test("bun build --no-bundle writes valid UTF-8", async () => {
+      using dir = tempDir("transpile-not-utf8", { "latin1.js": source });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", "latin1.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(stdout);
+      expect(text).toContain("/*! (c) Soci\uFFFDt\uFFFD */");
+      expect(text).toContain("/^r\uFFFD$/");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a byte that is a letter in Latin-1 does not start an identifier", async () => {
+      using dir = tempDir("ident-not-utf8", { "latin1.js": latin1("const v\xFB0 = 1;\nconsole.log(v\xFB0);\n") });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "latin1.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain('Expected ";" but found "\uFFFD"');
+      expect(exitCode).toBe(1);
+    });
   });
 });

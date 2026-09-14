@@ -115,13 +115,8 @@ pub struct FetchTasklet {
     /// The response body stream while this tasklet is its producer.
     pub(crate) response_stream: crate::webcore::byte_stream::ProducerHold,
     pub(crate) request_headers: Headers,
-    /// The caller `Content-Length` that frames a streaming request body (the same
-    /// value handed to the HTTP thread in `http::http_request_body::Stream`).
-    /// `Some` means the body bytes go on the wire unframed behind this exact
-    /// count, so `write_request_data` counts them against it. JS thread only.
+    /// `Content-Length` framing a streaming body; `write_request_data` counts against it.
     pub(crate) declared_request_body_len: Option<u64>,
-    /// Request body bytes handed to the HTTP thread. Only counted while
-    /// `declared_request_body_len` is `Some`. JS thread only.
     pub(crate) request_body_len_written: u64,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
@@ -2022,10 +2017,7 @@ impl FetchTasklet {
         http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
-            // `fetch_impl` decided the framing before it queued the request. The
-            // HTTP thread gets it in the `Stream` below and prints it; this side
-            // writes the bytes to match. An upgraded connection tunnels its
-            // "body", so those bytes are not counted.
+            // An upgraded connection tunnels its "body", so those bytes are not counted.
             let framing = fetch_options.stream_framing;
             if !fetch_tasklet.upgraded_connection {
                 fetch_tasklet.declared_request_body_len = framing.content_length;
@@ -2138,21 +2130,12 @@ impl FetchTasklet {
         Ok(())
     }
 
-    /// Whether the request body should skip chunked transfer encoding framing.
-    /// True for upgraded connections (e.g. WebSocket), HTTP/2 (DATA frames), or
-    /// when the head carries the caller's Content-Length instead.
+    /// True for upgraded connections, HTTP/2 (DATA frames) and `Content-Length` framing.
     pub(crate) fn skip_chunked_framing(&self) -> bool {
         self.upgraded_connection || self.result.is_http2 || self.declared_request_body_len.is_some()
     }
 
-    /// Reject the fetch because the request body does not match the
-    /// `Content-Length` the caller declared for it. Mirrors the server side
-    /// (`NodeHTTPResponse` with a strict content length). The reason reaches the
-    /// fetch promise the way an `AbortSignal` reason does, and shutting the
-    /// transport down keeps the connection out of the keep-alive pool. This does
-    /// not touch the sink: on the surplus path the sink is mid-write, and the
-    /// `Writable::Err` that `write_request_data` returns is what stops the body
-    /// stream. On the shortfall path the stream has already ended.
+    /// Does not touch the sink (it can be mid-write): the caller stops the body stream.
     fn fail_content_length_mismatch(&mut self, written: u64, declared: u64) {
         if !self.abort_reason.has() {
             let global_this = self.global_this;
@@ -2191,10 +2174,7 @@ impl FetchTasklet {
         if utf8_len == 0 {
             return Writable::Owned(0);
         }
-        // The caller declared the length of a body this client cannot measure, and
-        // the head already announced it. A surplus byte would land on the
-        // connection after the declared end, where a keep-alive peer reads it as
-        // the start of the next request, so fail the request instead of writing it.
+        // A surplus byte would sit where a keep-alive peer parses the next request.
         if let Some(declared) = self.declared_request_body_len {
             let written = self
                 .request_body_len_written
@@ -2274,9 +2254,7 @@ impl FetchTasklet {
                 FetchTasklet::deref(this_ptr);
                 return;
             }
-            // The body ended short of the length the head announced. Nothing can
-            // complete the message now, and the peer would wait for the missing
-            // bytes, so fail the request instead of going idle mid-message.
+            // Short of the announced length, the peer would wait for the rest forever.
             let written = self.request_body_len_written;
             if let Some(declared) = self.declared_request_body_len
                 && written < declared
@@ -2649,8 +2627,7 @@ pub struct FetchOptions {
     pub method: Method,
     pub(crate) headers: Headers,
     pub(crate) body: HTTPRequestBody,
-    /// How a `ReadableStream` `body` is framed, decided from `headers` (its
-    /// `transfer_encoding` points into `headers.buf`). Unused for other bodies.
+    /// For a `ReadableStream` body; `transfer_encoding` points into `headers.buf`.
     pub(crate) stream_framing: http::http_request_body::StreamFraming,
     pub(crate) disable_timeout: bool,
     /// Per-request idle-timeout override, from `fetch(url, { timeout: <ms> })`.

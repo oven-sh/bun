@@ -1755,9 +1755,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // A streaming body goes out under the framing its headers describe, or not at
-    // all. Decide that here, once, while a caller value no stream body can be sent
-    // under can still reject before anything is queued or a byte is written.
+    // Decided before anything is queued, so an unusable framing header rejects up front.
     let mut stream_framing = http::http_request_body::StreamFraming::default();
     if matches!(body, HTTPRequestBody::ReadableStream(_))
         && let Some(request_headers) = &headers

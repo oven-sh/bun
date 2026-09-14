@@ -2385,8 +2385,6 @@ impl<'a> HTTPClient<'a> {
             match hash {
                 h if h == hash_header_const(b"Content-Length") => {
                     // Content-Length is always consumed (never written to the buffer).
-                    // A streaming body's framing comes from its `Stream`, never
-                    // from this row.
                     if !self.flags.is_streaming_request_body {
                         original_content_length = Some(self.header_str(header_values[i]));
                     }
@@ -2444,9 +2442,7 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    // Never forwarded from here. A fixed-size body is framed by its
-                    // computed Content-Length. A streaming body's `Stream` carries
-                    // the Transfer-Encoding to announce, the caller's own included.
+                    // Framing is ours: a computed Content-Length, or what the `Stream` carries.
                     continue;
                 }
                 _ => {}
@@ -2491,9 +2487,7 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                // Print the framing the producer decided (`StreamFraming`); it
-                // fills the stream buffer to match. Nothing here parses a caller
-                // framing header. An upgrade request tunnels the bytes unframed.
+                // `StreamFraming`, decided by the producer. An upgrade tunnels the bytes unframed.
                 let (content_length, transfer_encoding) = match &self.state.original_request_body {
                     HTTPRequestBody::Stream(stream) => {
                         (stream.content_length, stream.transfer_encoding)

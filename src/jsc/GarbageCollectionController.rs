@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,65,65": first after 10 s of quiet, then one per CodeBlock-aging lease; 0 = off; main thread only) full collections so JSC can age out code that no longer runs, plus a page-out of a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and an idle ladder (main thread only): each time the heap has been quiet for another `BUN_IDLE_GC_SECONDS` entry (default "30,90,480": after 30 s, 2 min and 10 min; ""/0 = off) a full collection so JSC can age out code that no longer runs. The second one also pages out a standalone executable's embedded module graph; the tick after the last one pages out the module graph and the executable's own code and constants. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -20,92 +20,21 @@ pub struct GarbageCollectionController {
     pub(crate) gc_timer_interval: Cell<i32>,
     pub(crate) gc_repeating_timer_fast: Cell<bool>,
     pub(crate) disabled: Cell<bool>,
-    /// Idle full collections: cumulative quiet thresholds (ms; empty = off) parsed from `BUN_IDLE_GC_SECONDS`, and the
-    /// nominal time (from tick intervals) since the JS heap last grew.
-    idle_gc_at_ms: Cell<[u32; 3]>,
+    /// The idle ladder: the quiet time (ms, cumulative; 0 = unused) at which each rung runs, from `BUN_IDLE_GC_SECONDS`,
+    /// and the nominal time (from tick intervals) since the JS heap last grew.
+    idle_rungs_ms: Cell<[u32; 3]>,
     idle_quiet_ms: Cell<u32>,
-    #[cfg(target_os = "linux")]
-    idle_image_page_out: IdleImagePageOut,
-}
-
-/// The executable's own code and constants are only paged out for a process that is at rest, which a heap that stopped
-/// growing does not prove: also under `MAX_CPU_PERCENT` of the CPU (all threads) both since the heap last grew and
-/// over the last tick, on a tick without an idle collection (which runs that code), retried each tick until then, and
-/// not again for `MIN_INTERVAL`.
-#[cfg(target_os = "linux")]
-#[derive(Default)]
-struct IdleImagePageOut {
-    quiet_since: Cell<Option<CpuSample>>,
-    /// Set with the last idle collection: the sample at the previous tick.
-    pending: Cell<Option<CpuSample>>,
-    last: Cell<Option<std::time::Instant>>,
+    /// The process's CPU time (ms, all threads) when the heap went quiet.
+    quiet_since_cpu_ms: Cell<u64>,
+    /// Set by the last rung: a later quiet tick, when that rung's collection is over, pages the executable out.
+    page_out_due: Cell<bool>,
 }
 
 #[cfg(target_os = "linux")]
-#[derive(Clone, Copy)]
-struct CpuSample {
-    at: std::time::Instant,
-    cpu_ms: u64,
-}
-
-#[cfg(target_os = "linux")]
-impl CpuSample {
-    fn now() -> Self {
-        Self {
-            at: std::time::Instant::now(),
-            cpu_ms: bun_core::time::process_cpu_time_ms(),
-        }
-    }
-
-    fn at_rest_until(self, now: Self) -> bool {
-        u128::from(now.cpu_ms.saturating_sub(self.cpu_ms)) * 100
-            <= now.at.duration_since(self.at).as_millis() * IdleImagePageOut::MAX_CPU_PERCENT
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl IdleImagePageOut {
-    const MAX_CPU_PERCENT: u128 = 3;
-    const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
-
-    fn heap_grew(&self) {
-        self.quiet_since.set(None);
-        self.pending.set(None);
-    }
-
-    /// A quiet tick that runs no idle collection. `true`: page the image out now.
-    fn quiet_tick(&self) -> bool {
-        let Some(previous) = self.pending.get() else {
-            return false;
-        };
-        let now = CpuSample::now();
-        if self
-            .last
-            .get()
-            .is_some_and(|last| now.at.duration_since(last) < Self::MIN_INTERVAL)
-        {
-            self.pending.set(Some(now));
-            return false;
-        }
-        let at_rest = previous.at_rest_until(now)
-            && self
-                .quiet_since
-                .get()
-                .is_some_and(|since| since.at_rest_until(now));
-        self.pending.set(if at_rest { None } else { Some(now) });
-        if at_rest {
-            self.last.set(Some(now.at));
-        }
-        at_rest
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn spawn_idle_page_out(f: impl FnOnce() + Send + 'static) {
-    let _ = std::thread::Builder::new()
-        .name("idle page-out".into())
-        .stack_size(64 * 1024)
-        .spawn(f);
+use bun_core::time::process_cpu_time_ms;
+#[cfg(not(target_os = "linux"))]
+fn process_cpu_time_ms() -> u64 {
+    0
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -122,10 +51,10 @@ impl Default for GarbageCollectionController {
             gc_timer_interval: Cell::new(0),
             gc_repeating_timer_fast: Cell::new(true),
             disabled: Cell::new(false),
-            idle_gc_at_ms: Cell::new([0; 3]),
+            idle_rungs_ms: Cell::new([0; 3]),
             idle_quiet_ms: Cell::new(0),
-            #[cfg(target_os = "linux")]
-            idle_image_page_out: IdleImagePageOut::default(),
+            quiet_since_cpu_ms: Cell::new(0),
+            page_out_due: Cell::new(false),
         }
     }
 }
@@ -178,9 +107,9 @@ impl GarbageCollectionController {
             .set(env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false));
 
         if vm.is_main_thread() {
-            // "a,b,c,...": seconds of quiet before the first idle full collection, then between consecutive ones (spaced a
-            // CodeBlock-aging lease apart so each can expire what has not run since the previous); "0"/"" = off.
-            let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(b"10,65,65");
+            // "a,b,c": seconds of quiet before the first rung, then between consecutive ones (at least a CodeBlock-aging
+            // lease, so that each collection can expire what has not run since the previous one).
+            let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(b"30,90,480");
             let mut at = [0u32; 3];
             let mut sum = 0u32;
             for (slot, part) in at.iter_mut().zip(bun_core::strings::split(spec, b",")) {
@@ -192,61 +121,86 @@ impl GarbageCollectionController {
                 sum = sum.saturating_add(secs.min(3600) * 1000);
                 *slot = sum;
             }
-            self.idle_gc_at_ms.set(at);
+            self.idle_rungs_ms.set(at);
         }
     }
 
-    /// Decides whether this tick's collection should be a full one. After the first `BUN_IDLE_GC_SECONDS` entry (main
-    /// thread only) of ticks in which the heap did not grow, the tick's collection is made Full (it collects what the
-    /// last burst left and lets JSC snapshot which code is still running), and again after each further entry of quiet
-    /// (the second also pages out an embedded module graph; the last is followed, a tick later, by the executable's code
-    /// and constants): JSC
-    /// drops code that has not run since the previous one, and each round makes a little more releasable (code whose
-    /// last owner died in that collection, pages it emptied). Returns (full, ms until the next such tick is due).
+    // A heap that stopped growing does not prove that the process is at rest: the executable is only paged out if the
+    // process (all threads) has used less of a CPU than this since the heap went quiet.
+    const PAGE_OUT_MAX_CPU_PERCENT: u64 = 3;
+
+    /// One tick on the idle ladder. Returns whether a rung ran (this tick's collection is then an idle full one: it
+    /// collects what the last burst left, and JSC drops code that has not run since the previous one) and the ms until
+    /// the next rung is due.
     fn idle_tick(&self, vm: &VirtualMachine, grew: bool, interval_ms: i32) -> (bool, Option<u32>) {
-        let dues = self.idle_gc_at_ms.get();
-        if dues[0] == 0 || vm.is_inspector_enabled() {
+        let rungs = self.idle_rungs_ms.get();
+        if rungs[0] == 0 || vm.is_inspector_enabled() {
             return (false, None);
         }
         if grew {
             self.idle_quiet_ms.set(0);
-            #[cfg(target_os = "linux")]
-            self.idle_image_page_out.heap_grew();
+            self.page_out_due.set(false);
             return (false, None);
         }
         let before = self.idle_quiet_ms.get();
+        if before == 0 {
+            self.quiet_since_cpu_ms.set(process_cpu_time_ms());
+        }
         let quiet = before.saturating_add(interval_ms.max(0) as u32);
         self.idle_quiet_ms.set(quiet);
-        let dues = dues.into_iter().filter(|&due| due != 0);
-        let crossed = |due: u32| before < due && quiet >= due;
-        let full = dues.clone().any(crossed);
-        // The module graph's page-out goes with the second collection (or the only one): after a pause of a few seconds
-        // the user is likely to come straight back, and those file-backed pages would just be read in again.
-        #[cfg(target_os = "linux")]
-        {
-            let image = &self.idle_image_page_out;
-            if image.quiet_since.get().is_none() {
-                image.quiet_since.set(Some(CpuSample::now()));
-            }
-            let at = self.idle_gc_at_ms.get();
-            if crossed(if at[1] != 0 { at[1] } else { at[0] }) {
-                if let Some(graph) = vm.standalone_module_graph {
-                    // SAFETY: VM-free — `graph` is the process-lifetime, immutable embedded module graph; the thread
-                    // only madvise()s file-backed pages of the executable and touches no VM or JS state.
-                    spawn_idle_page_out(move || graph.page_out());
-                }
-            }
-            // The image goes after the last idle collection: an earlier page-out would be read back by the next one.
-            if dues.clone().next_back().is_some_and(crossed) {
-                image.pending.set(Some(CpuSample::now()));
-            } else if !full && image.quiet_tick() {
-                spawn_idle_page_out(bun_sys::elf::page_out_program_image);
+        let crossed = |at: u32| before < at && quiet >= at;
+        let last = rungs.iter().rposition(|&at| at != 0).unwrap_or(0);
+        // The last rung comes round again every time the quiet has lasted that long once more: a parked program's
+        // occasional jobs run code and read pages back in.
+        let last_ran = quiet / rungs[last] > before / rungs[last];
+        let ran = last_ran || rungs.iter().any(|&at| crossed(at));
+        // The module graph goes with the second collection (or the only one): after a pause of a few seconds the user is
+        // likely to come straight back.
+        if crossed(rungs[last.min(1)]) {
+            Self::page_out(vm, false);
+        }
+        // The executable goes on a tick after the last collection, which runs that code.
+        if last_ran {
+            self.page_out_due.set(true);
+        } else if !ran && self.page_out_due.get() {
+            let cpu = process_cpu_time_ms().saturating_sub(self.quiet_since_cpu_ms.get());
+            if cpu * 100 <= u64::from(quiet) * Self::PAGE_OUT_MAX_CPU_PERCENT {
+                self.page_out_due.set(false);
+                Self::page_out(vm, true);
             }
         }
-        (
-            full,
-            dues.clone().find(|&due| quiet < due).map(|due| due - quiet),
-        )
+        let due_in = rungs
+            .iter()
+            .find(|&&at| quiet < at)
+            .map_or(rungs[last] - quiet % rungs[last], |&at| at - quiet);
+        (ran, Some(due_in))
+    }
+
+    /// Hand the pages of a standalone executable's embedded module graph, and with `image` those of its own code and
+    /// constants, back to the kernel; they are read from the file again when touched.
+    fn page_out(vm: &VirtualMachine, image: bool) {
+        #[cfg(target_os = "linux")]
+        {
+            let graph = vm.standalone_module_graph;
+            if graph.is_none() && !image {
+                return;
+            }
+            // SAFETY: VM-free — the thread only madvise()s file-backed pages of the executable (`graph` is the
+            // process-lifetime, immutable embedded module graph) and touches no VM or JS state.
+            let _ = std::thread::Builder::new()
+                .name("idle page-out".into())
+                .stack_size(64 * 1024)
+                .spawn(move || {
+                    if let Some(graph) = graph {
+                        graph.page_out();
+                    }
+                    if image {
+                        bun_sys::elf::page_out_program_image();
+                    }
+                });
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = (vm, image);
     }
 
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the

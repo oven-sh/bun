@@ -1315,6 +1315,19 @@ unsafe fn timer_remove(
     unsafe { &mut (*state).timer }.remove(t);
 }
 
+/// `vm.timer.fake_timers.min_delay_ms()` — for `AbortSignal::Timeout`, which
+/// turns its delay into a deadline below this tier.
+///
+/// # Safety
+/// `vm` is a live `VirtualMachine`.
+unsafe fn timer_min_delay_ms(vm: *mut VirtualMachine) -> u32 {
+    // SAFETY: per fn contract.
+    let state = unsafe { runtime_state_of(vm) };
+    debug_assert!(!state.is_null(), "timer_min_delay_ms before init_runtime_state");
+    // SAFETY: see `timer_insert` — leaf hook, field read only.
+    unsafe { (*state).timer.fake_timers.min_delay_ms() }
+}
+
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
 /// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
 ///
@@ -1516,6 +1529,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     print_exception,
     timer_insert,
     timer_remove,
+    timer_min_delay_ms,
     default_client_ssl_ctx,
     ssl_ctx_cache_get_or_create,
     create_node_fs,

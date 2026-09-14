@@ -21,6 +21,10 @@ unsafe extern "C" {
 #[derive(Default)]
 pub struct FakeTimers {
     active: bool,
+    /// Nesting depth of [`FakeTimers::fire`]: above zero while a fake timer's
+    /// callback runs, up to the end of the microtasks it drains on return
+    /// (an `await Bun.sleep(0)` loop re-arms from there).
+    firing: u32,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
     /// - peek/takeFirst (provided by TimerHeap)
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
@@ -174,6 +178,17 @@ impl FakeTimers {
         self.active
     }
 
+    /// The shortest delay a timer armed now can have: 1ms while a fake timer's
+    /// callback runs, as in `@sinonjs/fake-timers` (`addTimer`,
+    /// `clock.duringTick`). With no delay the timer is due again in the drain
+    /// that runs the callback, so a callback that re-arms itself that way
+    /// (`AbortSignal.timeout(0)` from its own abort listener, a
+    /// `while (..) await Bun.sleep(0)` loop) never lets
+    /// `advanceTimersByTime()` / `runOnlyPendingTimers()` return.
+    pub(crate) fn min_delay_ms(&self) -> u32 {
+        if self.active && self.firing > 0 { 1 } else { 0 }
+    }
+
     fn activate(&mut self, js_now: f64, global: &JSGlobalObject) {
         self.active = true;
         CURRENT_TIME.set(global, &Timespec::EPOCH, Some(js_now));
@@ -261,9 +276,15 @@ impl FakeTimers {
             debug_assert!(now.eql(&prev.unwrap()) || now.greater(&prev.unwrap()));
         }
         CURRENT_TIME.set(global, &now, None);
+        let all = timer_all();
+        // SAFETY: `all` is the live per-thread `All`; the borrow ends at this
+        // statement, before `EventLoopTimer::fire` re-enters `All::insert`.
+        unsafe { (*all).fake_timers.firing += 1 };
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
         let fired = unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        // SAFETY: as above; the callback has returned.
+        unsafe { (*all).fake_timers.firing -= 1 };
         match fired {
             Ok(()) => Ok(()),
             Err(err) => bun_jsc::task::report_error_or_terminate(global, err)

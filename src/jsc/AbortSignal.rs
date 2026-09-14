@@ -290,6 +290,9 @@ bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
 impl Timeout {
     fn init(vm: *mut VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
+        // SAFETY: `vm` is the live per-thread VM (JS-thread-only call site).
+        let min_delay = unsafe { VirtualMachine::timer_min_delay_ms(vm) };
+        let milliseconds = milliseconds.max(u64::from(min_delay));
         let deadline = bun_core::Timespec::now_allow_mocked_time()
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 

@@ -2312,6 +2312,8 @@ pub struct RuntimeHooks {
         vm: *mut VirtualMachine,
         timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
     ),
+    /// `vm.timer.fake_timers.min_delay_ms()` — see `timer_insert`.
+    pub timer_min_delay_ms: unsafe fn(vm: *mut VirtualMachine) -> u32,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
     /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
     /// supply explicit options. The storage slot lives in `RareData`
@@ -2553,6 +2555,19 @@ impl VirtualMachine {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: per fn contract; `vm` is the live per-thread VM.
         unsafe { (hooks.timer_remove)(vm, timer) }
+    }
+
+    /// The shortest delay, in milliseconds, a timer armed now can have. Above
+    /// zero only while `jest.useFakeTimers()` runs a timer's callback. See
+    /// [`Self::timer_insert`] for why this is a hook.
+    ///
+    /// # Safety
+    /// `vm` must be the live per-thread VM; caller must be on the JS thread.
+    #[inline]
+    pub unsafe fn timer_min_delay_ms(vm: *mut Self) -> u32 {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        // SAFETY: per fn contract.
+        unsafe { (hooks.timer_min_delay_ms)(vm) }
     }
 }
 

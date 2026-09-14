@@ -509,8 +509,17 @@ describe("fetch protocol: http3", () => {
   test("ReadableStream request body that does not match its declared content-length rejects", async () => {
     const outcomes: unknown[] = [];
     for (const declared of ["19", "2", "50"]) {
+      // An origin of its own per case: resetting an upload that declared a
+      // content-length can take the whole pooled QUIC session down with it.
+      await using origin = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        fetch: async req => new Response(await req.bytes()),
+      });
       outcomes.push(
-        await fetch(`${base}/echo`, {
+        await fetch(`https://127.0.0.1:${origin.port}/echo`, {
           ...h3,
           method: "POST",
           headers: { "content-length": declared },

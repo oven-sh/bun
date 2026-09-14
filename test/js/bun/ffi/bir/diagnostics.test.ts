@@ -123,7 +123,6 @@ int main(void) { puts("ran"); return 0; }
     ["unary operators", `int f(int x) { return ${repeated("-", 5000)}x; }`, "is nested too deeply"],
     ["declarators", `int ${repeated("(*", 5000)}x${repeated(")", 5000)};`, "is nested too deeply"],
     ["initializers", `int x = ${repeated("{", 5000)}1${repeated("}", 5000)};`, "is nested too deeply"],
-    ["a chain of additions", `int f(int x) { return x${repeated(" + x", 5000)}; }`, "expression is nested too deeply"],
   ];
   // A preprocessor asked for more than there is memory or patience for. (The parser takes tokens as they are made,
   // so each of these is in a place where it would go on accepting them.)

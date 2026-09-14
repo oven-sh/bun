@@ -329,12 +329,15 @@ go tool pprof -top -sample_index=alloc_space heap.pb.gz
 Bun.pprof.heap.start();
 
 Bun.serve({
+  hostname: "127.0.0.1",
   routes: {
     "/debug/pprof/heap": () => new Response(Bun.pprof.heap.profile()),
   },
   fetch: () => new Response("hello"),
 });
 ```
+
+A profile names the functions and files of the program, so keep the endpoint off public interfaces: bind it to `127.0.0.1` as above, or put it behind the authentication the scraper uses.
 
 | API / flag                                  | Description                                                       |
 | ------------------------------------------- | ----------------------------------------------------------------- |

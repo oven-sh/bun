@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
+import { decode } from "./pprof-decode";
 
 // An ASAN build gives malloc to the sanitizer: only Bun's arenas reach the allocator that is
 // being profiled, so there is nothing to measure for an ArrayBuffer.
@@ -10,9 +12,12 @@ import { join } from "node:path";
 const quantitative = !isASAN && !(isWindows && process.arch === "x64");
 const MiB = 1024 * 1024;
 
+// The fixtures import each other and the decoder: each run gets its own copy of this directory.
 async function runFixture(name: string, ...args: string[]) {
+  using dir = tempDir("pprof-heap-fixture", import.meta.dir);
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, name), ...args],
+    cmd: [bunExe(), name, ...args],
+    cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -179,6 +184,8 @@ describe.concurrent("Bun.pprof.heap", () => {
         expect(result.hasNativeFramesBelow).toBe(true);
         expect(result.hasNativeFramesAbove).toBe(true);
         expect(result.nativeFramesHaveMappings).toBe(true);
+        // Every Linux build of Bun is linked with --build-id=sha1.
+        if (isLinux) expect(result.executableBuildId).toMatch(/^[0-9a-f]{40}$/);
         // macOS gives the main thread no name.
         if (isLinux) expect(result.labels.thread).toBeString();
       }
@@ -270,7 +277,7 @@ describe.concurrent("Bun.pprof.heap", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
       expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     }
     await using proc = Bun.spawn({ cmd: [executable], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -297,6 +304,14 @@ describe.concurrent("Bun.pprof.heap", () => {
     expect(last.allocSpace).toBeGreaterThan(rounds[0].allocSpace * 3);
     expect(last.allocSpace).toBeGreaterThan(64 * MiB);
     expect(last.inuseSpace).toBeLessThan(last.allocSpace * 0.1);
+  });
+
+  test("the decoder these tests read profiles with rejects a truncated packed varint", () => {
+    // Sample { location_id: [packed] } whose one varint ends on a continuation byte.
+    const truncated = gzipSync(new Uint8Array([0x12, 0x03, 0x0a, 0x01, 0x80]));
+    expect(() => decode(truncated)).toThrow("truncated varint");
+    const whole = gzipSync(new Uint8Array([0x12, 0x04, 0x0a, 0x02, 0x80, 0x01]));
+    expect(() => decode(whole)).toThrow("a sample refers to a missing location 128");
   });
 
   test("stop() releases what the session held", async () => {

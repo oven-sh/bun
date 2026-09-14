@@ -4,29 +4,31 @@ import { gunzipSync } from "node:zlib";
 
 type Field = { field: number; varint?: bigint; bytes?: Uint8Array };
 
+/** The varint at `at.pos`, which it moves past it. */
+function readVarint(buf: Uint8Array, at: { pos: number }): bigint {
+  let result = 0n;
+  for (let shift = 0n; ; shift += 7n) {
+    if (at.pos >= buf.length) throw new Error("truncated varint");
+    const byte = buf[at.pos++];
+    result |= BigInt(byte & 0x7f) << shift;
+    if (!(byte & 0x80)) return result;
+  }
+}
+
 function* fields(buf: Uint8Array): Generator<Field> {
-  let pos = 0;
-  const varint = () => {
-    let result = 0n;
-    for (let shift = 0n; ; shift += 7n) {
-      if (pos >= buf.length) throw new Error("truncated varint");
-      const byte = buf[pos++];
-      result |= BigInt(byte & 0x7f) << shift;
-      if (!(byte & 0x80)) return result;
-    }
-  };
-  while (pos < buf.length) {
-    const key = Number(varint());
+  const at = { pos: 0 };
+  while (at.pos < buf.length) {
+    const key = Number(readVarint(buf, at));
     const field = key >> 3;
     switch (key & 7) {
       case 0:
-        yield { field, varint: varint() };
+        yield { field, varint: readVarint(buf, at) };
         break;
       case 2: {
-        const length = Number(varint());
-        if (pos + length > buf.length) throw new Error("truncated field " + field);
-        yield { field, bytes: buf.subarray(pos, pos + length) };
-        pos += length;
+        const length = Number(readVarint(buf, at));
+        if (at.pos + length > buf.length) throw new Error("truncated field " + field);
+        yield { field, bytes: buf.subarray(at.pos, at.pos + length) };
+        at.pos += length;
         break;
       }
       default:
@@ -38,17 +40,8 @@ function* fields(buf: Uint8Array): Generator<Field> {
 function packed(f: Field): bigint[] {
   if (f.varint !== undefined) return [f.varint];
   const out: bigint[] = [];
-  const buf = f.bytes!;
-  let pos = 0;
-  while (pos < buf.length) {
-    let result = 0n;
-    for (let shift = 0n; ; shift += 7n) {
-      const byte = buf[pos++];
-      result |= BigInt(byte & 0x7f) << shift;
-      if (!(byte & 0x80)) break;
-    }
-    out.push(result);
-  }
+  const at = { pos: 0 };
+  while (at.pos < f.bytes!.length) out.push(readVarint(f.bytes!, at));
   return out;
 }
 

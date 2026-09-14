@@ -49,6 +49,8 @@ console.log(
     hasNativeFramesBelow: sample.stack.slice(0, keepIndex).some(f => f.address !== undefined),
     hasNativeFramesAbove: sample.stack.slice(keepIndex).some(f => f.address !== undefined),
     nativeFramesHaveMappings: sample.stack.every(f => f.address === undefined || f.mapping?.file !== ""),
+    executableBuildId: profile.mappings.find(m => m.file === require("node:fs").realpathSync(process.execPath))
+      ?.buildId,
     labels: sample.labels,
   }),
 );

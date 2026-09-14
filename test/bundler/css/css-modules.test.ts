@@ -254,6 +254,77 @@ describe("css", () => {
     },
   });
 
+  // A class used only inside a `::view-transition-*(.class)` selector is
+  // hashed in the CSS, so it must also be in the exports object. Otherwise
+  // JS cannot set `view-transition-class` to the hashed name.
+  // https://github.com/oven-sh/bun/issues/42726
+  itBundled("css-module/ViewTransitionClassExported", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        ::view-transition-group(.overlay) { z-index: 100 }
+        ::view-transition-image-pair(.pair) { isolation: auto }
+        ::view-transition-old(.slide-out) { opacity: 0 }
+        ::view-transition-new(.slide-in) { opacity: 1 }
+        ::view-transition-group(hero) { animation-duration: 1s }
+        .plain { color: red }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const plain = css.match(/\.plain_([A-Za-z0-9_-]+)\s*\{/);
+      expect(plain, ".plain should be scoped").not.toBeNull();
+      const hash = plain![1];
+
+      expect(css).toEqualIgnoringWhitespace(`
+        /* styles.module.css */
+        ::view-transition-group(.overlay_${hash}) {
+          z-index: 100;
+        }
+
+        ::view-transition-image-pair(.pair_${hash}) {
+          isolation: auto;
+        }
+
+        ::view-transition-old(.slide-out_${hash}) {
+          opacity: 0;
+        }
+
+        ::view-transition-new(.slide-in_${hash}) {
+          opacity: 1;
+        }
+
+        ::view-transition-group(hero_${hash}) {
+          animation-duration: 1s;
+        }
+
+        .plain_${hash} {
+          color: red;
+        }
+      `);
+
+      const js = api.readFile("/out/entry.js");
+      expect(js).toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          overlay: "overlay_${hash}",
+          pair: "pair_${hash}",
+          "slide-out": "slide-out_${hash}",
+          "slide-in": "slide-in_${hash}",
+          plain: "plain_${hash}"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+      `);
+    },
+  });
+
   // Values the grammar rejects stay untouched, so a future keyword or a
   // var() reference is not hashed as if it were a name.
   itBundled("css-module/ViewTransitionUnparsedValuesNotScoped", {

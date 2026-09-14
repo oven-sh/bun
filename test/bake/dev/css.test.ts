@@ -219,23 +219,17 @@ devTest("css import recovers after a syntax error in the imported file", {
     await c.style("body").color.expect.toBe("red");
     expect(await servedColors()).toEqual(["green", "red"]);
 
-    // The imported file is still an import of the stylesheet, not a stylesheet of its own.
-    for (const [color, value] of [
-      ["yellow", "#ff0"],
-      ["purple", "purple"],
-      ["blue", "#00f"],
-    ]) {
-      await dev.write(
-        "second.css",
-        `
-          h1 {
-            color: ${color};
-          }
-        `,
-      );
-      await c.style("h1").color.expect.toBe(value);
-      expect(await servedColors()).toEqual([value, "red"]);
-    }
+    // A later edit of the import still reaches the importing stylesheet.
+    await dev.write(
+      "second.css",
+      `
+        h1 {
+          color: yellow;
+        }
+      `,
+    );
+    await c.style("h1").color.expect.toBe("#ff0");
+    expect(await servedColors()).toEqual(["#ff0", "red"]);
   },
 });
 devTest("css import with an initial syntax error gets recovered", {

@@ -960,6 +960,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     EdgeAttachmentMode::Css,
                 )?;
                 if result == EdgeAttachmentResult::Continue && src.is_valid() {
+                    if ctx.loaders[src.get() as usize].is_css() {
+                        self.recover_failed_css_import(key);
+                    }
                     queue.push(src);
                 }
             }
@@ -1004,9 +1007,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 } else if mode == EdgeAttachmentMode::Css {
                     let index = self.insert_empty(key, kind)?.index;
                     ctx.gts.resize(SIDE, index.get() as usize + 1)?;
-                    if kind == FileKind::Css {
-                        self.recover_failed_css_import(index);
-                    }
                     break 'brk (index, kind);
                 }
             }
@@ -1070,12 +1070,38 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(EdgeAttachmentResult::Continue)
     }
 
+    /// True for a file that CSS roots inline and nothing else imports: it gets no chunk of its own.
+    fn only_css_roots_import(&self, index: usize) -> bool {
+        let mut it = self.edge_lists[index].first_dep;
+        let mut any = false;
+        while let Some(edge_index) = it {
+            let entry = self.edges[edge_index.get() as usize];
+            let dep = entry.dependency.get() as usize;
+            if !matches!(
+                self.bundled_files.values()[dep].content,
+                Content::CssRoot(_),
+            ) {
+                return false;
+            }
+            any = true;
+            it = entry.next_dependency;
+        }
+        any
+    }
+
     /// A stylesheet that only CSS roots import gets no chunk of its own, so `receive_chunk` never
     /// clears its failure. The root that reaches it here was bundled with it inlined, unless it
     /// failed again: every failure of this bundle is in `failures_added`.
-    fn recover_failed_css_import(&mut self, index: FileIndex<SIDE>) {
+    fn recover_failed_css_import(&mut self, key: &[u8]) {
         debug_assert!(matches!(SIDE, Side::Client));
-        if !self.bundled_files.values()[index.get() as usize].failed {
+        let Some(index) = self.bundled_files.get_index(key) else {
+            return;
+        };
+        if !self.bundled_files.values()[index].failed {
+            return;
+        }
+        // HTML or a script also imports it: `invalidate` queues it by itself, as a root.
+        if !self.only_css_roots_import(index) {
             return;
         }
         let failed_in_this_bundle =
@@ -1085,14 +1111,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 .any(|failure| {
                     matches!(
                         failure.get_owner(),
-                        serialized_failure::Owner::Client(owner) if owner.get() == index.get()
+                        serialized_failure::Owner::Client(owner) if owner.get() as usize == index
                     )
                 });
         if failed_in_this_bundle {
             return;
         }
 
-        let owner = serialized_failure::OwnerPacked::new(Side::Client, index.get());
+        let owner = serialized_failure::OwnerPacked::new(Side::Client, index as u32);
         let kv = self
             .dev_bundling_failures()
             .fetch_swap_remove(&owner)
@@ -1103,7 +1129,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             });
         self.dev_incremental_result().failures_removed.push(kv.1);
 
-        let file = &mut self.bundled_files.values_mut()[index.get() as usize];
+        let file = &mut self.bundled_files.values_mut()[index];
         debug_assert!(matches!(file.content, Content::Unknown));
         file.failed = false;
         file.kind = FileKind::Css;
@@ -1723,27 +1749,21 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     // A file that failed to bundle has no content to say what it was. A CSS root
                     // inlines the files it imports, so the root is what has to be bundled again.
                     Content::Unknown => {
-                        let mut imported_by_css_root = false;
-                        let mut imported_by_other = false;
                         let mut it = self.edge_lists[index].first_dep;
                         while let Some(edge_index) = it {
                             let entry = self.edges[edge_index.get() as usize];
                             let dep = entry.dependency.get() as usize;
                             if matches!(
                                 self.bundled_files.values()[dep].content,
-                                Content::CssRoot(_)
+                                Content::CssRoot(_),
                             ) {
-                                imported_by_css_root = true;
                                 self.stale_files.set(dep);
                                 let k = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[dep]);
                                 entry_points.append_css(k.slice())?;
-                            } else {
-                                imported_by_other = true;
                             }
                             it = entry.next_dependency;
                         }
-                        // A file that only CSS roots import gets no chunk of its own.
-                        if (imported_by_other || !imported_by_css_root)
+                        if !self.only_css_roots_import(index)
                             && !self.bundled_files.values()[index].is_hmr_root
                         {
                             self.append_client_entry_point(entry_points, index)?;

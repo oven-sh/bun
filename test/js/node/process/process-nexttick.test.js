@@ -2,7 +2,7 @@
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 const isBun = !!process.versions.bun;
 
 it("process.nextTick", async () => {
@@ -1078,7 +1078,7 @@ it("child_process.exec does not hang when Array.prototype has an index setter", 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(["exec callback fired\n", "exec threw\n"]).toContain(stdout);
+  expect(stdout).toBe(isWindows ? "exec threw\n" : "exec callback fired\n");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

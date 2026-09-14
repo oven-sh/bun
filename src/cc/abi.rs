@@ -103,6 +103,9 @@ struct Field {
 
 /// Flattens `ty` into scalar fields. Fails on member types that cannot be passed at all.
 fn flatten(tcx: &TypeCtx, ty: &Type, base: u64, out: &mut Vec<Field>) -> Result<(), String> {
+    if !tcx.stack_check.is_safe_to_recurse() {
+        return Err("a structure passed or returned by value is nested too deeply".to_string());
+    }
     match ty {
         Type::Struct(id) => {
             for m in tcx.struct_def(*id).members() {
@@ -258,11 +261,6 @@ pub(crate) fn sysv_classify(tcx: &TypeCtx, ty: &Type) -> Result<Option<Vec<Piece
     if size > 16 || fields.iter().any(|f| f.offset % f.align != 0) {
         return Ok(None);
     }
-    // X87 merged with anything else is MEMORY, and X87UP without an X87 before it is too. What
-    // is left is the aggregate that holds exactly one `long double`: MEMORY as an argument.
-    if fields.iter().any(|f| f.kind == Leaf::X87) {
-        return Ok(None);
-    }
     #[derive(Clone, Copy, PartialEq)]
     enum Class {
         /// No field reaches into the eightbyte (the tail of an over-aligned structure): it
@@ -271,26 +269,55 @@ pub(crate) fn sysv_classify(tcx: &TypeCtx, ty: &Type) -> Result<Option<Vec<Piece
         Integer,
         Sse,
         SseUp,
+        /// The two eightbytes of an x87 `long double`.
+        X87,
+        X87Up,
+        Memory,
     }
-    // INTEGER wins when an eightbyte mixes classes, then SSE; SSEUP survives only where
-    // nothing but upper vector halves live.
+    // The classes of what lies in an eightbyte are merged (3.2.3, 4): INTEGER wins over
+    // everything, the x87 `long double` included (a union of one with integers over both of its
+    // halves is two integers); x87 with SSE is MEMORY; then SSE; SSEUP survives only where nothing
+    // but upper vector halves live.
     let classes: Vec<Class> = (0..size.div_ceil(8))
         .map(|i| {
             let (start, end) = (i * 8, (i * 8 + 8).min(size));
             let inside = |f: &&Field| f.offset < end && f.offset + f.size > start;
             let is_upper_half = |f: &Field| f.kind == Leaf::V128 && f.offset != start;
-            let count = fields.iter().filter(inside).count();
-            if count == 0 {
+            let here = || fields.iter().filter(inside);
+            if here().count() == 0 {
                 Class::None
-            } else if fields.iter().filter(inside).any(|f| f.kind == Leaf::Int) {
+            } else if here().any(|f| f.kind == Leaf::Int) {
                 Class::Integer
-            } else if fields.iter().filter(inside).all(is_upper_half) {
+            } else if here().any(|f| f.kind == Leaf::X87) {
+                if !here().all(|f| f.kind == Leaf::X87) {
+                    Class::Memory
+                } else if here().all(|f| f.offset == start) {
+                    Class::X87
+                } else if here().all(|f| f.offset + 8 == start) {
+                    Class::X87Up
+                } else {
+                    Class::Memory
+                }
+            } else if here().all(is_upper_half) {
                 Class::SseUp
             } else {
                 Class::Sse
             }
         })
         .collect();
+    // (5): MEMORY anywhere is MEMORY everywhere, and so is an X87UP that no X87 comes before.
+    let x87_halves_apart = classes
+        .iter()
+        .enumerate()
+        .any(|(i, class)| *class == Class::X87Up && (i == 0 || classes[i - 1] != Class::X87));
+    if classes.contains(&Class::Memory) || x87_halves_apart {
+        return Ok(None);
+    }
+    // What is left with an X87 in it is the aggregate that is exactly one `long double`: MEMORY as
+    // an argument. (As a result it is `is_only_long_double`'s.)
+    if classes.contains(&Class::X87) {
+        return Ok(None);
+    }
     if classes == [Class::Sse, Class::SseUp] {
         return Ok(Some(vec![Piece {
             offset: 0,

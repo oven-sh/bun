@@ -10,6 +10,7 @@ mod asm_stmt;
 mod ast;
 mod bir;
 pub use bir::MAGIC as BIR_MAGIC;
+pub use files::MAX_SOURCE_BYTES;
 mod codegen;
 mod constexpr;
 mod diagnostics;

@@ -25,6 +25,18 @@ typedef struct { char a; double b; } CD;
 typedef struct { float a[2]; long b; } F2L;
 // More than two eightbytes, or an unaligned member: memory.
 typedef struct { long a, b, c; } MEM;
+// A union merges what its members put in each eightbyte, and INTEGER wins over everything, the two halves of an x87
+// `long double` included: the union every C library takes a long double apart with is two integers.
+typedef union { long double f; struct { unsigned long m; unsigned short se; } i; } LDSHAPE;
+typedef union { long double f; int words[4] __attribute__((aligned(16))); } LDWORDS;
+typedef union { long double f; struct { unsigned long m; unsigned se; unsigned short pad; } i; } LDSHAPE_PADDED;
+typedef union { long double f; __int128 all; } LDWIDE;
+// Where the second half of the long double is alone in its eightbyte, or the first half meets a `double`, or there is
+// more after it: memory.
+typedef union { long double f; long first_half_only; } LD_AND_LONG;
+typedef union { long double f; double halves[2]; } LD_AND_DOUBLES;
+typedef struct { long double f; int after; } LD_THEN_INT;
+typedef struct { long double f; } LD_ALONE;
 
 #define NOINLINE __attribute__((noinline))
 // The address of a function with nothing left that says which function: what the other half of a program would hold.
@@ -59,6 +71,23 @@ static NOINLINE long takes_cd(CD s, long after) { return (long)(s.b * 4) * 10000
 static NOINLINE AL16 returns_al16(long v) { AL16 s = { v }; return s; }
 static NOINLINE AL16D returns_al16d(double v) { AL16D s = { v }; return s; }
 static NOINLINE DI returns_di(double a, int b) { DI s = { a, b }; return s; }
+
+static NOINLINE long three_integers(unsigned long a, unsigned long b, long c) { return (long)(a >> 60) * 100000 + (long)(b & 0xffff) * 10 + c; }
+static NOINLINE long takes_ldshape(LDSHAPE u, long after) { return (long)(u.i.m >> 60) * 100000 + u.i.se * 10 + after; }
+static NOINLINE long takes_ldshape_last(long a, long b, long c, long d, long e, LDSHAPE u, long after) { return a + b + c + d + e + (long)(u.i.m >> 60) * 100000 + u.i.se * 10 + after * 1000000; }
+static NOINLINE LDSHAPE returns_ldshape(long double x) { LDSHAPE u; u.i.m = 0; u.i.se = 0; u.f = x; return u; }
+typedef struct { unsigned long low, high; } TWO_WORDS;
+static NOINLINE long exponent_of_variadic(int n, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, n);
+  long total = 0;
+  for (int i = 0; i < n; i++) {
+    LDSHAPE u = __builtin_va_arg(ap, LDSHAPE);
+    total = total * 100000 + u.i.se;
+  }
+  __builtin_va_end(ap);
+  return total;
+}
 
 static long sum_variadic(int n, ...) {
   __builtin_va_list ap;
@@ -120,6 +149,35 @@ int main(void) {
   CHECK(AS(long (*)(long), returns_al16)(77) == 77);
   CHECK(AS(double (*)(double), returns_al16d)(2.5) == 2.5);
   CHECK(AS(double (*)(double, int), returns_di)(2.5, 6) == 2.5 && (AS(long (*)(double, int), returns_di)(2.5, 6) & 0xffffffff) == 6);
+  // The unions with a long double in them. (8.0L is 0x8000000000000000 with exponent 0x4002.)
+  LDSHAPE shape;
+  shape.i.m = 0;
+  shape.i.se = 0;
+  shape.f = 8.0L;
+  LDWORDS words = { 8.0L };
+  LDSHAPE_PADDED padded;
+  padded.i.se = 0;
+  padded.f = 8.0L;
+  LDWIDE wide = { 8.0L };
+  CHECK(AS(long (*)(LDSHAPE, long), three_integers)(shape, 7) == 8 * 100000 + 0x4002 * 10 + 7);
+  CHECK(AS(long (*)(LDWORDS, long), three_integers)(words, 7) == 8 * 100000 + 0x4002 * 10 + 7);
+  CHECK(AS(long (*)(LDSHAPE_PADDED, long), three_integers)(padded, 7) == 8 * 100000 + 0x4002 * 10 + 7);
+  CHECK(AS(long (*)(LDWIDE, long), three_integers)(wide, 7) == 8 * 100000 + 0x4002 * 10 + 7);
+  CHECK(AS(long (*)(unsigned long, unsigned long, long), takes_ldshape)(0x8000000000000000ul, 0x4002, 7) == 8 * 100000 + 0x4002 * 10 + 7);
+  // (One register left for two eightbytes: the whole of it goes to memory, and the register to what follows.)
+  CHECK(takes_ldshape_last(1, 2, 3, 4, 5, shape, 9) == 15 + 8 * 100000 + 0x4002 * 10 + 9000000);
+  CHECK(AS(TWO_WORDS (*)(long double), returns_ldshape)(8.0L).low == 0x8000000000000000ul && (AS(TWO_WORDS (*)(long double), returns_ldshape)(8.0L).high & 0xffff) == 0x4002);
+  CHECK(exponent_of_variadic(2, shape, shape) == 0x4002 * 100000L + 0x4002);
+  CHECK(AS(long (*)(int, ...), exponent_of_variadic)(1, 0x8000000000000000ul, 0x4002ul) == 0x4002);
+  // The ones that stay in memory: what follows them is in the first register.
+  LD_AND_LONG and_long = { 8.0L };
+  LD_AND_DOUBLES and_doubles = { 8.0L };
+  LD_THEN_INT then_int = { 8.0L, 1 };
+  LD_ALONE alone = { 8.0L };
+  CHECK(AS(long (*)(LD_AND_LONG, long), first_integer)(and_long, 42) == 42);
+  CHECK(AS(long (*)(LD_AND_DOUBLES, long), first_integer)(and_doubles, 42) == 42);
+  CHECK(AS(long (*)(LD_THEN_INT, long), first_integer)(then_int, 42) == 42);
+  CHECK(AS(long (*)(LD_ALONE, long), first_integer)(alone, 42) == 42);
   // Through an ellipsis the rules are the same, in both directions.
   CHECK(sum_variadic(2, s, 5L, (AL16){ 3 }, 4L) == (7 * 10 + 5) * 100 + 3 * 10 + 4);
   CHECK(variadic_scalars(4, s, 5L, (AL16){ 3 }, 4L) == 7534);

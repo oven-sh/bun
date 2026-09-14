@@ -1,7 +1,6 @@
 //! Reading source files and finding the directories a platform keeps its C headers in.
 
 use bun_core::{env_var, strings};
-use bun_paths::resolve_path::{self, platform};
 use bun_sys::{Dir, Fd, File};
 
 use crate::types::{Arch, Os, Target};
@@ -22,7 +21,7 @@ pub(crate) enum Unreadable {
 }
 
 /// The largest source file there can be: positions in one are 32 bits.
-pub(crate) const MAX_SOURCE_BYTES: u64 = 1 << 30;
+pub const MAX_SOURCE_BYTES: u64 = 1 << 30;
 
 /// Opens, checks and reads: only a regular file of a sane size is source text. (A FIFO would
 /// block, `/dev/zero` never ends, a directory is not text.)
@@ -80,28 +79,48 @@ pub(crate) fn read(path: &[u8], any_case: bool) -> Result<Loaded, Unreadable> {
     }
 }
 
-/// `path` with each component spelled the way the directory that holds it spells it.
+/// `path` with each component spelled the way the directory that holds it spells it: from the
+/// front, one directory at a time, a component that is not there under its own spelling looked
+/// for among the directory's entries without regard to case.
 fn spelled_on_disk(path: &[u8]) -> Option<Vec<u8>> {
     if bun_sys::exists(path) {
         return Some(path.to_vec());
     }
-    let name = bun_paths::basename(path);
-    if name.is_empty() || name.len() == path.len() {
-        return None;
+    // What has been found so far: the root, or nothing for the working directory.
+    let mut found: Vec<u8> = if path.starts_with(b"/") {
+        b"/".to_vec()
+    } else {
+        Vec::new()
+    };
+    for name in strings::split(path, b"/") {
+        if name.is_empty() || name == b"." {
+            continue;
+        }
+        let mut next = found.clone();
+        if !next.is_empty() && next.last() != Some(&b'/') {
+            next.push(b'/');
+        }
+        let directory_end = next.len();
+        next.extend_from_slice(name);
+        if name != b".." && !bun_sys::exists(&next) {
+            let holder: &[u8] = if found.is_empty() { b"." } else { &found };
+            let spelled = spelled_in(holder, name)?;
+            next.truncate(directory_end);
+            next.extend_from_slice(&spelled);
+        }
+        found = next;
     }
-    let parent = resolve_path::dirname::<platform::Posix>(path);
-    let parent = spelled_on_disk(parent)?;
-    let dir = Dir::open(&parent).ok()?;
+    bun_sys::exists(&found).then_some(found)
+}
+
+/// The entry of `directory` that is `name` but for the case of its letters.
+fn spelled_in(directory: &[u8], name: &[u8]) -> Option<Vec<u8>> {
+    let dir = Dir::open(directory).ok()?;
     let mut entries = bun_sys::dir_iterator::iterate(dir.fd());
     while let Ok(Some(entry)) = entries.next() {
         let spelled = entry.name.slice_u8();
         if strings::eql_case_insensitive_ascii(spelled, name, true) {
-            let mut found = parent;
-            if found.last() != Some(&b'/') {
-                found.push(b'/');
-            }
-            found.extend_from_slice(spelled);
-            return Some(found);
+            return Some(spelled.to_vec());
         }
     }
     None
@@ -152,22 +171,21 @@ pub(crate) fn system_include_dirs(target: Target) -> Vec<String> {
                     dirs.push(dir.to_owned());
                 }
             }
-            // The C library's headers are in the SDK, which `xcrun --show-sdk-path` would name;
-            // these are the places it names, and `SDKROOT` is what clang reads for another.
+            // The C library's headers are in the SDK: the one `SDKROOT` names, which is how `xcrun`,
+            // Xcode and clang are told which, or else the first of the places `xcrun
+            // --show-sdk-path` names that has one.
             const SDKS: [&str; 2] = [
                 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
                 "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
             ];
-            if let Some(sdk) = SDKS
-                .into_iter()
-                .find(|sdk| bun_sys::exists(joined(&[sdk, "/usr/include/stdio.h"]).as_bytes()))
-            {
-                dirs.push(joined(&[sdk, "/usr/include"]));
-            }
-            if let Some(sdk) = env_var::SDKROOT::platform_get()
-                && let Ok(sdk) = core::str::from_utf8(sdk)
-                && !sdk.is_empty()
-            {
+            let named = env_var::SDKROOT::platform_get()
+                .and_then(|sdk| core::str::from_utf8(sdk).ok())
+                .filter(|sdk| !sdk.is_empty());
+            let installed = || {
+                SDKS.into_iter()
+                    .find(|sdk| bun_sys::exists(joined(&[sdk, "/usr/include/stdio.h"]).as_bytes()))
+            };
+            if let Some(sdk) = named.or_else(installed) {
                 dirs.push(joined(&[sdk, "/usr/include"]));
             }
         }

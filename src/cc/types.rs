@@ -254,7 +254,19 @@ pub(crate) struct Layout {
     pub(crate) members: Vec<Member>,
     pub(crate) size: u64,
     pub(crate) align: u64,
+    /// The alignment that was asked for in so many words (`__declspec(align)`, `aligned`,
+    /// `_Alignas`), on the type itself, on a member or on the type of one, however deep: in
+    /// Microsoft's ABI `#pragma pack` and `packed` do not take that away from a member of this type.
+    pub(crate) required_align: u64,
+    /// How deep a walk of this structure's members, their elements and their members goes: one
+    /// more than the deepest of its members' types (`TypeCtx::struct_nesting`). Bounded,
+    /// `MAX_STRUCT_NESTING`.
+    pub(crate) nesting: u32,
 }
+
+/// The most structures and arrays there are one inside another, by value. Each structure can be
+/// declared by itself, so nothing about the text of a program bounds it.
+pub(crate) const MAX_STRUCT_NESTING: u32 = 500;
 
 impl StructDef {
     pub(crate) fn is_complete(&self) -> bool {
@@ -522,12 +534,17 @@ impl Type {
         }
     }
 
-    /// The type of the value an lvalue of this type holds: without qualifiers and `_Atomic`.
-    /// How many pointer, array and function types this one is derived through, counted up to
-    /// `most`.
+    /// How many pointer, array and function types this one is derived through, down its deepest
+    /// path (a function type goes on in what it returns and in each of its parameters), counted
+    /// up to a little past `most`.
     pub(crate) fn derivations(&self, most: usize) -> usize {
-        let (mut ty, mut count) = (self, 0);
-        while count < most {
+        self.derivations_under(0, most)
+    }
+
+    /// `derivations`, of a type that is itself `above` derivations down.
+    fn derivations_under(&self, above: usize, most: usize) -> usize {
+        let (mut ty, mut count, mut deepest) = (self, above, above);
+        while count <= most {
             ty = match ty {
                 Type::Ptr(inner) | Type::Array(inner, _) | Type::Vla(inner, _) => {
                     count += 1;
@@ -535,15 +552,23 @@ impl Type {
                 }
                 Type::Func(f) => {
                     count += 1;
+                    // (As deep as `most` allows and no deeper: what is past it is not looked at.)
+                    for param in &f.params {
+                        deepest = deepest.max(param.derivations_under(count, most));
+                        if deepest > most {
+                            return deepest;
+                        }
+                    }
                     &f.ret
                 }
                 Type::Atomic(inner) | Type::Qualified(_, inner) => inner,
                 _ => break,
             };
         }
-        count
+        deepest.max(count)
     }
 
+    /// The type of the value an lvalue of this type holds: without qualifiers and `_Atomic`.
     pub(crate) fn unatomic(&self) -> &Type {
         match self {
             Type::Atomic(inner) => inner,
@@ -658,6 +683,39 @@ impl TypeCtx {
             Type::Wide(WideKind::Float128 | WideKind::ComplexFloat128) => 16,
             other => self.size_of(other)?,
         })
+    }
+
+    /// How many levels a walk of `ty` down to its scalars has: one for a structure and for the
+    /// members below it (`Layout::nesting`), one for each dimension of an array.
+    pub(crate) fn struct_nesting(&self, ty: &Type) -> u32 {
+        match ty {
+            Type::Array(elem, _) | Type::Vla(elem, _) => 1 + self.struct_nesting(elem),
+            Type::Struct(id) => self
+                .struct_def(*id)
+                .layout
+                .as_ref()
+                .map_or(1, |layout| layout.nesting),
+            Type::Qualified(_, inner) | Type::Atomic(inner) => self.struct_nesting(inner),
+            _ => 0,
+        }
+    }
+
+    /// The alignment `ty` was given in so many words (`Layout::required_align`), or 1.
+    pub(crate) fn required_align(&self, ty: &Type) -> u64 {
+        match ty {
+            Type::Array(elem, _) | Type::Vla(elem, _) => self.required_align(elem),
+            Type::Struct(id) => self
+                .struct_def(*id)
+                .layout
+                .as_ref()
+                .map_or(1, |layout| layout.required_align),
+            Type::Qualified(quals, inner) => quals
+                .alignment()
+                .unwrap_or(1)
+                .max(self.required_align(inner)),
+            Type::Atomic(inner) => self.required_align(inner),
+            _ => 1,
+        }
     }
 
     pub(crate) fn is_complete(&self, ty: &Type) -> bool {

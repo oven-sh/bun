@@ -118,12 +118,22 @@ fn directory_of(path: &str) -> &str {
 }
 
 fn join(dir: &str, name: &str) -> String {
+    // A path is written one way throughout, the way this system writes them.
+    let (separator, name) = if cfg!(windows) {
+        let written: String = name
+            .chars()
+            .map(|c| if c == '/' { '\\' } else { c })
+            .collect();
+        ('\\', written)
+    } else {
+        ('/', name.to_string())
+    };
     if dir.is_empty() {
-        name.to_string()
-    } else if dir.ends_with('/') {
+        name
+    } else if dir.ends_with(['/', separator]) {
         format!("{dir}{name}")
     } else {
-        format!("{dir}/{name}")
+        format!("{dir}{separator}{name}")
     }
 }
 
@@ -309,7 +319,8 @@ impl Preprocessor {
                 } else {
                     SearchFrom::TheStart
                 };
-                self.include(search, name_tok.loc)
+                // (`#import` is `#include` of a file that says `#pragma once`.)
+                self.include(search, name == b"import", name_tok.loc)
             }
             b"define" => {
                 let line = self.read_line()?;
@@ -999,7 +1010,7 @@ impl Preprocessor {
         }
     }
 
-    fn include(&mut self, search: SearchFrom, loc: Loc) -> Res<()> {
+    fn include(&mut self, search: SearchFrom, once: bool, loc: Loc) -> Res<()> {
         let angled_name = match self.frames.last_mut() {
             Some(frame) if frame.peeked.is_none() => frame.lexer.angled_header_name(),
             _ => None,
@@ -1037,8 +1048,12 @@ impl Preprocessor {
         let Some((path, found_at)) = self.resolve_include(&name, form, search) else {
             return self.not_included(&name, form, loc);
         };
-        if self.pragma_once.contains(&self.file_key(&path)) {
+        let key = self.file_key(&path);
+        if self.pragma_once.contains(&key) {
             return Ok(());
+        }
+        if once {
+            self.pragma_once.insert(key);
         }
         if self.frames.len() >= MAX_INCLUDE_DEPTH {
             return err(loc, "#include is nested too deeply");

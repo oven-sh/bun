@@ -840,5 +840,365 @@
     ],
     "output": "",
     "status": 0
+  },
+  {
+    "name": "a chain of 100000 structures each holding the last, initialized",
+    "source": [
+      "struct S0 { int x; };\n",
+      {
+        "each": "struct S{i+1} { struct S{i} a; };\n",
+        "count": 100000,
+        "from": 0
+      },
+      "struct S100000 g = {0};\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "structures are nested too deeply"
+    }
+  },
+  {
+    "name": "a chain of 100000 structures each holding the last, as a local",
+    "source": [
+      "struct S0 { int x; };\n",
+      {
+        "each": "struct S{i+1} { struct S{i} a; };\n",
+        "count": 100000,
+        "from": 0
+      },
+      "int f(void) { struct S100000 l; (void)l; return 0; }\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "structures are nested too deeply"
+    }
+  },
+  {
+    "name": "a chain of 100000 structures each holding an array of the last",
+    "source": [
+      "struct S0 { int x; };\n",
+      {
+        "each": "struct S{i+1} { struct S{i} a[1]; };\n",
+        "count": 100000,
+        "from": 0
+      },
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "structures are nested too deeply"
+    }
+  },
+  {
+    "name": "a chain of 100000 unions and anonymous structures each holding the last",
+    "source": [
+      "union S0 { int x; };\n",
+      {
+        "each": "union S{i+1} { struct { union S{i} a; }; };\n",
+        "count": 100000,
+        "from": 0
+      },
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "structures are nested too deeply"
+    }
+  },
+  {
+    "name": "400 structures each holding the last",
+    "source": [
+      "#include <stdio.h>\n",
+      "struct S0 { int x; };\n",
+      {
+        "each": "struct S{i+1} { struct S{i} a; };\n",
+        "count": 400,
+        "from": 0
+      },
+      "static struct S400 g = {0};\nstruct S400 pass(struct S400 v) { return v; }\nint main(void) { struct S400 l = pass(g); printf(\"%d %d\\n\", (int)sizeof l, l",
+      [".a", 400],
+      ".x); return 0; }\n"
+    ],
+    "output": "4 0\n",
+    "status": 0
+  },
+  {
+    "name": "100000 variables with a cleanup in one block",
+    "source": [
+      "void c(int *p) { (void)p; }\nvoid f(void) { ",
+      {
+        "each": "int v{i} __attribute__((cleanup(c))) = 0; ",
+        "count": 100000,
+        "from": 0
+      },
+      "}\nint main(void) { f(); return 0; }\n"
+    ],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "100000 variables with a cleanup in the first clause of a for",
+    "source": [
+      "void c(int *p) { (void)p; }\nvoid f(void) { for (int first __attribute__((cleanup(c))) = 0",
+      {
+        "each": ", v{i} __attribute__((cleanup(c))) = 0",
+        "count": 100000,
+        "from": 0
+      },
+      "; first < 1; first++) { } }\nint main(void) { f(); return 0; }\n"
+    ],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "300 variables with a cleanup in one block, left by return",
+    "source": [
+      "#include <stdio.h>\nstatic int order[300], count;\nvoid c(int *p) { order[count++] = *p; }\nint f(void) { ",
+      {
+        "each": "int v{i} __attribute__((cleanup(c))) = {i}; ",
+        "count": 300,
+        "from": 0
+      },
+      "return v299; }\nint main(void) { int r = f(); printf(\"%d %d %d %d %d\\n\", r, count, order[0], order[1], order[299]); return 0; }\n"
+    ],
+    "output": "299 300 299 298 0\n",
+    "status": 0
+  },
+  {
+    "name": "a chain of 1000 function types each taking a pointer to the last",
+    "source": [
+      "typedef void F0(void);\n",
+      {
+        "each": "typedef void F{i+1}(F{i} *);\n",
+        "count": 1000,
+        "from": 0
+      },
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "a type is derived through too many pointers, arrays and functions"
+    }
+  },
+  {
+    "name": "a chain of 100000 function types each taking a pointer to the last",
+    "source": [
+      "typedef void F0(void);\n",
+      {
+        "each": "typedef void F{i+1}(F{i} *);\n",
+        "count": 100000,
+        "from": 0
+      },
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "a type is derived through too many pointers, arrays and functions"
+    }
+  },
+  {
+    "name": "a chain of 1000 function types, through the parameter and the result in turn",
+    "source": [
+      "typedef void F0(void);\n",
+      {
+        "each": "typedef F{i} *G{i}(void); typedef void F{i+1}(G{i} *);\n",
+        "count": 1000,
+        "from": 0
+      },
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "a type is derived through too many pointers, arrays and functions"
+    }
+  },
+  {
+    "name": "a chain of 100 function types each taking a pointer to the last",
+    "source": [
+      "#include <stdio.h>\ntypedef void F0(void);\n",
+      {
+        "each": "typedef void F{i+1}(F{i} *);\n",
+        "count": 100,
+        "from": 0
+      },
+      "static void last(F99 *f) { (void)f; puts(\"called\"); }\nint main(void) { F100 *p = last; p(0); return 0; }\n"
+    ],
+    "output": "called\n",
+    "status": 0
+  },
+  {
+    "name": "#import brings a file in once",
+    "files": {
+      "imp.h": ["enum { HERE = __COUNTER__ };\n"]
+    },
+    "source": [
+      "#import \"imp.h\"\n#import \"imp.h\"\n#include \"imp.h\"\n#import \"./imp.h\"\n#include <stdio.h>\nint main(void) { printf(\"%d %d\\n\", HERE, __COUNTER__); return 0; }\n"
+    ],
+    "output": "0 1\n",
+    "status": 0
+  },
+  {
+    "name": "a call with 20000 arguments",
+    "source": [
+      "#include <stdarg.h>\n#include <stdio.h>\nstatic long sum(int n, ...) { va_list ap; va_start(ap, n); long total = 0; for (int i = 0; i < n; i++) total += va_arg(ap, int); va_end(ap); return total; }\nint main(void) { printf(\"%ld\\n\", sum(20000",
+      [", 3", 20000],
+      ")); return 0; }\n"
+    ],
+    "output": "60000\n",
+    "status": 0
+  },
+  {
+    "name": "a call with 300000 arguments to a function without a prototype",
+    "source": [
+      "int g();\nint f(void) { return g(1",
+      [", 1", 299999],
+      "); }\n",
+      "int main(void) { return 0; }\n",
+      "int g() { return 0; }\n"
+    ],
+    "output": "",
+    "status": 0
+  },
+  {
+    "name": "a function with 100000 parameters",
+    "source": [
+      "int f(",
+      {
+        "each": "int p{i}, ",
+        "count": 99999,
+        "from": 0
+      },
+      "int last) { return last; }\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "output": "",
+    "status": 0
+  },
+  {
+    "name": "a structure with 100000 members",
+    "source": [
+      "#include <stdio.h>\nstruct big { ",
+      {
+        "each": "char m{i}; ",
+        "count": 100000,
+        "from": 0
+      },
+      "};\nint main(void) { struct big *p = 0; printf(\"%d %d\\n\", (int)sizeof(struct big), (int)(long)&p->m99999); return 0; }\n"
+    ],
+    "output": "100000 99999\n",
+    "status": 0
+  },
+  {
+    "name": "a table of 300000 string literals",
+    "source": [
+      "#include <stdio.h>\nstatic const char *const words[] = {\n",
+      {
+        "each": "  \"w{i}\",\n",
+        "count": 300000,
+        "from": 0
+      },
+      "};\nint main(void) { printf(\"%s %s %d\\n\", words[0], words[299999], (int)(sizeof words / sizeof words[0])); return 0; }\n"
+    ],
+    "output": "w0 w299999 300000\n",
+    "status": 0
+  },
+  {
+    "name": "a table of 300000 addresses, with two entries given twice",
+    "source": [
+      "#include <stdio.h>\nstatic int x[300000], other;\nstatic int *const table[] = {\n",
+      {
+        "each": "  &x[{i}],\n",
+        "count": 300000,
+        "from": 0
+      },
+      "  [5] = &other, [7] = &other, [7] = &x[1],\n};\nint main(void) { printf(\"%d %d %d %d\\n\", (int)(table[299999] - x), table[5] == &other, (int)(table[7] - x), (int)(table[6] - x)); return 0; }\n"
+    ],
+    "output": "299999 1 1 6\n",
+    "status": 0
+  },
+  {
+    "name": "a thread-local table of 100000 structures with a pointer each",
+    "source": [
+      "#include <stdio.h>\nstatic int x;\nstruct entry { int n; int *p; };\nstatic _Thread_local struct entry table[] = {\n",
+      {
+        "each": "  { {i}, &x },\n",
+        "count": 100000,
+        "from": 0
+      },
+      "};\nint main(void) { printf(\"%d %d\\n\", table[99999].n, table[99999].p == &x); return 0; }\n"
+    ],
+    "output": "99999 1\n",
+    "status": 0
+  },
+  {
+    "name": "a table of 300000 doubles",
+    "source": [
+      "#include <stdio.h>\nstatic const double table[] = {\n",
+      {
+        "each": "  {i}.5,\n",
+        "count": 300000,
+        "from": 0
+      },
+      "};\nint main(void) { printf(\"%.1f\\n\", table[299999]); return 0; }\n"
+    ],
+    "output": "299999.5\n",
+    "status": 0
+  },
+  {
+    "name": "100000 structures designated from the last to the first",
+    "source": [
+      "#include <stdio.h>\nstruct pair { int a, b; };\nstatic struct pair table[100000] = {\n",
+      {
+        "each": "  [99999 - {i}] = { {i}, 1 },\n",
+        "count": 100000,
+        "from": 0
+      },
+      "};\nint main(void) { printf(\"%d %d %d\\n\", table[0].a, table[99999].a, table[50000].b); return 0; }\n"
+    ],
+    "output": "99999 0 1\n",
+    "status": 0
+  },
+  {
+    "name": "100000 structures, the first one given again between each",
+    "source": [
+      "#include <stdio.h>\nstruct pair { int a, b; };\nstatic struct pair table[50001] = {\n",
+      {
+        "each": "  [0] = { {i}, 2 }, [{i+1}] = { {i}, 3 },\n",
+        "count": 50000,
+        "from": 0
+      },
+      "};\nint main(void) { printf(\"%d %d %d %d\\n\", table[0].a, table[0].b, table[50000].a, table[50000].b); return 0; }\n"
+    ],
+    "output": "49999 2 49999 3\n",
+    "status": 0
+  },
+  {
+    "name": "the program is a file larger than a gibibyte",
+    "source": [""],
+    "sparse": {
+      "test.c": 1073741825
+    },
+    "error": {
+      "contains": "test.c' cannot be read: larger than 1073741824 bytes"
+    }
+  },
+  {
+    "name": "a range designator for each of 100000 dimensions",
+    "source": ["int a[1] = { ", ["[0 ... 0]", 100000], " = 1 };\nint main(void) { return 0; }\n"],
+    "error": {
+      "contains": "error: "
+    }
+  },
+  {
+    "name": "500 structures each holding a 1 by 1 by 1 array of the last",
+    "source": [
+      "struct S0 { int x; };\n",
+      {
+        "each": "struct S{i+1} { struct S{i} a[1][1][1]; };\n",
+        "count": 500,
+        "from": 0
+      },
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "structures are nested too deeply"
+    }
   }
 ]

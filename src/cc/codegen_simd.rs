@@ -336,9 +336,10 @@ impl FnGen<'_, '_> {
     /// Evaluates the operands of a builtin left to right.
     fn gen_operands(&mut self, args: &[Expr]) -> Res<Vec<V>> {
         let mut held = Vec::with_capacity(args.len());
+        let last_with_control_flow = args.iter().rposition(|a| a.has_control_flow);
         for (i, arg) in args.iter().enumerate() {
             let v = self.gen_value(arg)?;
-            let later = args[i + 1..].iter().any(|a| a.has_control_flow);
+            let later = last_with_control_flow.is_some_and(|last| last > i);
             held.push((self.hold(v, later), arg.ty.is_vector()));
         }
         let mut values = Vec::with_capacity(held.len());

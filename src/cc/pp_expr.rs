@@ -327,6 +327,15 @@ const SUPPORTED_BUILTINS: &[&str] = &[
 
 /// Whether `name` is a builtin of this compiler for `target`.
 pub(crate) fn has_builtin(name: &str, target: crate::types::Target) -> bool {
+    knows_builtin(name, target) && !REFUSED_BUILTINS.contains(&name)
+}
+
+/// The builtins the parser knows only to say, where one is called, why it cannot be had.
+const REFUSED_BUILTINS: &[&str] = &["__builtin_nans", "__builtin_nansf", "__builtin_nansl"];
+
+/// Whether the parser has anything to say about `name` as a builtin: `has_builtin`, or a refusal
+/// in words of its own.
+pub(crate) fn knows_builtin(name: &str, target: crate::types::Target) -> bool {
     SUPPORTED_BUILTINS.contains(&name)
         || name
             .strip_prefix("__builtin_")
@@ -476,7 +485,9 @@ impl Preprocessor {
                 self.resolve_include(&header, form, search).is_some()
             }
             b"__has_attribute" => match operand.as_slice() {
-                [t] if t.kind == PpKind::Ident => crate::parser::has_attribute(&t.text),
+                [t] if t.kind == PpKind::Ident => {
+                    crate::parser::has_attribute(&t.text, self.target)
+                }
                 _ => false,
             },
             b"__has_builtin" => match operand.as_slice() {

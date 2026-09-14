@@ -28,7 +28,11 @@ const MAX_BYTES: u64 = 512;
 /// The scalar elements of `ty` at `base`, in address order; `false` if it has a part that
 /// cannot be a BIR local (a union, a bit-field, a 128-bit or complex or vector element).
 fn flatten(tcx: &TypeCtx, ty: &Type, base: u64, out: &mut Vec<(u64, Type)>) -> bool {
-    if ty.is_volatile() || ty.is_atomic() || out.len() > MAX_LEAVES {
+    if ty.is_volatile()
+        || ty.is_atomic()
+        || out.len() > MAX_LEAVES
+        || !tcx.stack_check.is_safe_to_recurse()
+    {
         return false;
     }
     match ty.unqualified() {

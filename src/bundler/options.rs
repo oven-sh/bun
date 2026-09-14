@@ -1179,7 +1179,7 @@ pub fn c_target(
 /// The largest C source file the compiler takes (positions in one are 32 bits). What it says of a
 /// larger one is said of the file's size where a file is about to be read for it, so that such a
 /// file is not read to find out.
-pub const C_MAX_SOURCE_BYTES: u64 = 1 << 30;
+pub const C_MAX_SOURCE_BYTES: u64 = bun_cc::MAX_SOURCE_BYTES;
 
 /// The message the compiler has for a source file of more than [`C_MAX_SOURCE_BYTES`].
 pub fn c_source_too_large(path: &[u8]) -> String {

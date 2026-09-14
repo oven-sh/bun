@@ -5,7 +5,7 @@
 //! promotions, the usual arithmetic conversions, array/function decay, pointer
 //! arithmetic scaling, assignment conversions and default argument promotions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use crate::ast::*;
@@ -173,9 +173,8 @@ pub(crate) struct Sema {
     pub(crate) flexible_end: std::cell::Cell<u64>,
     /// The depth of the deepest expression made since this was last reset.
     pub(crate) deepest_expr: std::cell::Cell<u32>,
-    /// For `elaborate_init`: how many of the items so far have been looked at, and the highest
-    /// offset among them.
-    pub(crate) init_highest: std::cell::Cell<(usize, u64)>,
+    /// For `elaborate_init`: where the items so far write.
+    pub(crate) init_index: std::cell::RefCell<crate::init::InitIndex>,
     /// Other external names of functions this unit defines: (name, function).
     pub(crate) function_aliases: Vec<(Rc<str>, FuncId)>,
     /// See `Intrinsic::InlineAsm`.
@@ -279,7 +278,7 @@ impl Sema {
             defined_enums: Vec::new(),
             flexible_end: std::cell::Cell::new(0),
             deepest_expr: std::cell::Cell::new(0),
-            init_highest: std::cell::Cell::new((0, 0)),
+            init_index: std::cell::RefCell::default(),
             function_aliases: Vec::new(),
             asm_blocks: Vec::new(),
             pragma_weak: Vec::new(),
@@ -409,6 +408,7 @@ impl Sema {
             return err(loc, format!("redefinition of '{kind}'"));
         }
         let mut members: Vec<Member> = Vec::with_capacity(fields.len());
+        let mut member_names: BTreeSet<Rc<str>> = BTreeSet::new();
         // Everything is tracked in bits so bit-fields and ordinary members share one cursor.
         let mut bit_pos: u64 = 0;
         let mut size_bits: u64 = 0;
@@ -419,7 +419,12 @@ impl Sema {
         // Clang has two implementations of the Microsoft rules, which part ways on attributes
         // and in unions: the one for Windows targets, and `ms_struct` on the others.
         let windows = self.tcx.target.os == crate::types::Os::Windows;
+        // Microsoft's `#pragma pack` of more than a pointer's size says nothing: alignments above
+        // it are only ever asked for, and what is asked for is kept.
+        let pragma_pack = pragma_pack.filter(|&limit| !windows || limit <= 8);
         let nfields = fields.len();
+        let mut required_align = min_align.unwrap_or(1);
+        let mut nesting = 1;
         for (i, field) in fields.into_iter().enumerate() {
             let FieldDecl {
                 name,
@@ -429,6 +434,21 @@ impl Sema {
                 align: field_align,
                 packed: field_packed,
             } = field;
+            nesting = nesting.max(1 + self.tcx.struct_nesting(&ty));
+            if nesting > crate::types::MAX_STRUCT_NESTING {
+                return err(loc, "structures are nested too deeply");
+            }
+            // An alignment that the member's type was given, or a type inside it, counts as
+            // written on the member for Microsoft: packing does not take it away, and the
+            // structure passes it on.
+            let field_align = match (windows, self.tcx.required_align(&ty)) {
+                (true, of_the_type @ 2..) => Some(field_align.unwrap_or(1).max(of_the_type)),
+                _ => field_align,
+            };
+            // (Written on a bit-field it aligns the bit-field, and is not passed on.)
+            if bit_width.is_none() {
+                required_align = required_align.max(field_align.unwrap_or(1));
+            }
             // `T a[];` closes a struct; GNU C also takes it in a union and on its own.
             let is_flexible = matches!(ty, Type::Array(_, None))
                 && (i + 1 == nfields || is_union)
@@ -447,7 +467,7 @@ impl Sema {
                 }
             };
             if let Some(n) = &name {
-                let clash = members.iter().any(|m| m.name.as_deref() == Some(&**n));
+                let clash = !member_names.insert(Rc::clone(n));
                 if clash {
                     return err(loc, format!("duplicate member '{n}'"));
                 }
@@ -685,6 +705,8 @@ impl Sema {
             members,
             size,
             align,
+            required_align,
+            nesting,
         });
         Ok(())
     }

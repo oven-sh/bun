@@ -129,6 +129,29 @@ export async function run(
 }
 
 /**
+ * Compiles the C of `dir`/`file` for another system than this one, which is what `bun build --compile --target` does
+ * before it writes anything; what it said. (The executable it is told to take for the other system's is this one,
+ * which keeps it off the network and makes it stop there; the C is compiled by then.)
+ */
+export async function compileFor(
+  dir: string,
+  file: string,
+  target: "bun-windows-x64" | "bun-darwin-arm64" | "bun-linux-x64",
+) {
+  const out = await run(dir, [
+    "build",
+    "--compile",
+    `--target=${target}`,
+    "--compile-executable-path",
+    bunExe(),
+    file,
+    "--outfile",
+    "never-written",
+  ]);
+  return lines(out.stderr);
+}
+
+/**
  * `bun build <entries> --target=bun --outdir <out>`, run in `dir` (where the entries are) as a user would: the C is
  * compiled now, and what the bundle carries is its compiled form. The path of the bundle's entry point.
  */

@@ -1534,7 +1534,8 @@ impl<'a> FnGen<'a, '_> {
         }
 
         // Evaluate every argument first: scalars to their value, aggregates to their address.
-        let any_cf_after = |from: usize| args[from..].iter().any(|a| a.has_control_flow);
+        let last_with_control_flow = args.iter().rposition(|a| a.has_control_flow);
+        let any_cf_after = |from: usize| last_with_control_flow.is_some_and(|last| last >= from);
         let held_pointer = match target {
             Callee::Indirect(v) => Some(self.hold(v, any_cf_after(0))),
             _ => None,

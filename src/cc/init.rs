@@ -1,13 +1,40 @@
 //! Initializers: the parsed brace tree, and its elaboration against the type being
 //! initialized (C11 6.7.9) into a flat list of writes at byte offsets.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::ast::*;
 use crate::constexpr::{self, AddrBase, Const};
 use crate::sema::Sema;
 use crate::token::{Loc, Res, err};
-use crate::types::Type;
+use crate::types::{StructId, Type};
+
+/// Where the writes of the initializer being elaborated are, so that a later initializer for
+/// bytes that have one finds it without looking at every write so far (C11 6.7.9p19: the later one
+/// overrides).
+#[derive(Default)]
+pub(crate) struct InitIndex {
+    /// How many of the items have been entered in `at`.
+    seen: usize,
+    /// The items that write at each offset and are not overridden, as positions in the list.
+    at: BTreeMap<u64, Vec<usize>>,
+    /// The items a later initializer has overridden, to be taken out of the list at the end.
+    overridden: Vec<usize>,
+    /// The member each union was last given a value through: (where it is, which union it is). (One
+    /// that an enclosing brace list has since overridden stays: all it can do is override what is
+    /// already gone.)
+    chosen: BTreeMap<(u64, StructId), u64>,
+}
+
+fn written_at(item: &InitItem) -> u64 {
+    match item {
+        InitItem::Scalar { offset, .. }
+        | InitItem::Bytes { offset, .. }
+        | InitItem::Copy { offset, .. }
+        | InitItem::Bits { offset, .. } => *offset,
+    }
+}
 
 #[derive(Clone)]
 pub(crate) enum Designator {
@@ -51,6 +78,10 @@ impl Sema {
             let Designator::Range(first, last, loc) = entry.designators[at] else {
                 continue;
             };
+            // (One level for each range of a path.)
+            if !self.tcx.stack_check.is_safe_to_recurse() {
+                return err(loc, "initializer is nested too deeply");
+            }
             let count = last - first + 1;
             if count > budget {
                 return err(loc, "range designators initialize too many elements");
@@ -141,8 +172,19 @@ impl Sema {
     ) -> Res<(Type, Vec<InitItem>)> {
         let mut out = Vec::new();
         self.flexible_end.set(0);
-        self.init_highest.set((0, 0));
+        self.init_index.take();
         let count = self.init_object(ty, 0, init, &mut out)?;
+        let mut overridden = self.init_index.take().overridden;
+        if !overridden.is_empty() {
+            overridden.sort_unstable();
+            let (mut position, mut next) = (0, 0);
+            out.retain(|_| {
+                let drop = overridden.get(next) == Some(&position);
+                position += 1;
+                next += usize::from(drop);
+                !drop
+            });
+        }
         let ty = match ty {
             Type::Array(elem, None) => Type::Array(Rc::clone(elem), Some(count)),
             other => other.clone(),
@@ -158,6 +200,37 @@ impl Sema {
                 ),
             ),
         }
+    }
+
+    /// What has been written to the `size` bytes at `offset` is overridden by what comes next.
+    fn override_bytes(&self, offset: u64, size: u64, out: &[InitItem]) {
+        let mut index = self.init_index.borrow_mut();
+        let index = &mut *index;
+        for (position, item) in out.iter().enumerate().skip(index.seen) {
+            index.at.entry(written_at(item)).or_default().push(position);
+        }
+        index.seen = out.len();
+        let end = offset.saturating_add(size);
+        let written: Vec<u64> = index.at.range(offset..end).map(|(at, _)| *at).collect();
+        for at in written {
+            index
+                .overridden
+                .extend(index.at.remove(&at).unwrap_or_default());
+        }
+    }
+
+    /// The union `id` at `offset` is given a value through `member`: a union has the value of one
+    /// member, the last one named, so what another member was given is gone.
+    fn choose_member(&self, offset: u64, id: StructId, member: u64, out: &[InitItem]) {
+        let before = self.init_index.borrow().chosen.get(&(offset, id)).copied();
+        if before.is_some_and(|before| before != member) {
+            let size = self.tcx.size_of(&Type::Struct(id)).unwrap_or(0);
+            self.override_bytes(offset, size, out);
+        }
+        self.init_index
+            .borrow_mut()
+            .chosen
+            .insert((offset, id), member);
     }
 
     /// Whether an automatic object of type `ty` is cleared before `items` are written (C11
@@ -243,23 +316,8 @@ impl Sema {
                 }
                 // A brace list initializes the whole sub-object: what an earlier designator gave
                 // any part of it is overridden, mentioned again or not (C11 6.7.9p19).
-                let at = |item: &InitItem| match item {
-                    InitItem::Scalar { offset, .. }
-                    | InitItem::Bytes { offset, .. }
-                    | InitItem::Copy { offset, .. }
-                    | InitItem::Bits { offset, .. } => *offset,
-                };
-                // Without designators everything written so far lies below this sub-object, which
-                // the highest offset so far says without looking at every item for every list.
-                let (seen, highest) = self.init_highest.get();
-                let highest = out[seen.min(out.len())..]
-                    .iter()
-                    .map(at)
-                    .fold(highest, u64::max);
-                self.init_highest.set((out.len(), highest));
-                if let (Some(size), true) = (self.tcx.size_of(ty), highest >= offset) {
-                    out.retain(|item| at(item) < offset || at(item) >= offset + size);
-                    self.init_highest.set((0, 0));
+                if let Some(size) = self.tcx.size_of(ty) {
+                    self.override_bytes(offset, size, out);
                 }
                 let mut pos = 0;
                 let count = self.init_list(ty, offset, &mut entries, &mut pos, true, 0, out)?;
@@ -380,6 +438,13 @@ impl Sema {
         desig_skip: usize,
         out: &mut Vec<InitItem>,
     ) -> Res<u64> {
+        if !self.tcx.stack_check.is_safe_to_recurse() {
+            let loc = entries
+                .get(*pos)
+                .or_else(|| entries.last())
+                .map(|entry| entry.loc);
+            return err(loc.unwrap_or_default(), "initializer is nested too deeply");
+        }
         let limit: Option<u64> = match ty {
             Type::Array(_, len) => *len,
             Type::Struct(id) => {
@@ -452,6 +517,11 @@ impl Sema {
             }
             first = false;
 
+            if let Type::Struct(id) = ty {
+                if self.tcx.struct_def(*id).is_union {
+                    self.choose_member(base, *id, cur, out);
+                }
+            }
             // A bit-field member takes one scalar initializer.
             if let Type::Struct(id) = ty {
                 let m = &self.tcx.struct_def(*id).members()[cur as usize];
@@ -583,7 +653,17 @@ impl Sema {
         };
         let size = size.max(self.flexible_end.get());
         let mut bytes = vec![0u8; size as usize];
-        let mut relocs: Vec<DataReloc> = Vec::new();
+        // (By offset: a later initializer for the same bytes replaces an earlier one's.)
+        let mut relocs: BTreeMap<u64, DataReloc> = BTreeMap::new();
+        let forget = |relocs: &mut BTreeMap<u64, DataReloc>, from: u64, to: u64| {
+            let inside: Vec<u64> = relocs
+                .range(from.saturating_sub(7)..to)
+                .map(|(at, _)| *at)
+                .collect();
+            for at in inside {
+                relocs.remove(&at);
+            }
+        };
         for item in items {
             match item {
                 InitItem::Scalar { offset, expr } => {
@@ -593,8 +673,7 @@ impl Sema {
                     if end > bytes.len() {
                         return err(expr.loc, "initializer writes outside the object");
                     }
-                    // A later initializer for the same bytes replaces an earlier one.
-                    relocs.retain(|r| r.offset + 8 <= *offset || r.offset >= offset + width);
+                    forget(&mut relocs, *offset, offset + width);
                     if expr.ty.is_vector() {
                         let Some(lanes) = self.const_vector_bytes(expr) else {
                             return err(
@@ -636,11 +715,14 @@ impl Sema {
                             bytes[start..end].fill(0);
                             bytes[start..start + literal.init.len()].copy_from_slice(&literal.init);
                             for r in &literal.relocs {
-                                relocs.push(DataReloc {
-                                    offset: offset + r.offset,
-                                    target: r.target.clone(),
-                                    addend: r.addend,
-                                });
+                                relocs.insert(
+                                    offset + r.offset,
+                                    DataReloc {
+                                        offset: offset + r.offset,
+                                        target: r.target.clone(),
+                                        addend: r.addend,
+                                    },
+                                );
                             }
                             continue;
                         }
@@ -695,11 +777,14 @@ impl Sema {
                                 AddrBase::Func(id) => RelocTarget::Func(id),
                                 AddrBase::Str(id) => RelocTarget::Str(id),
                             };
-                            relocs.push(DataReloc {
-                                offset: *offset,
-                                target,
-                                addend,
-                            });
+                            relocs.insert(
+                                *offset,
+                                DataReloc {
+                                    offset: *offset,
+                                    target,
+                                    addend,
+                                },
+                            );
                         }
                     }
                 }
@@ -712,7 +797,7 @@ impl Sema {
                     if end > bytes.len() {
                         return err(loc, "initializer writes outside the object");
                     }
-                    relocs.retain(|r| r.offset + 8 <= *offset || r.offset >= end as u64);
+                    forget(&mut relocs, *offset, end as u64);
                     bytes[start..end].copy_from_slice(data);
                 }
                 InitItem::Copy { offset, expr, size }
@@ -729,7 +814,7 @@ impl Sema {
                             "initializer element is not a compile-time constant",
                         )
                     };
-                    relocs.retain(|r| r.offset + 8 <= *offset || r.offset >= end as u64);
+                    forget(&mut relocs, *offset, end as u64);
                     if expr.ty.is_int128() {
                         let Some(v) = constexpr::eval_int128(expr, &self.tcx) else {
                             return not_constant();
@@ -777,16 +862,19 @@ impl Sema {
                     if end > bytes.len() {
                         return err(expr.loc, "initializer writes outside the object");
                     }
-                    relocs.retain(|r| r.offset + 8 <= *offset || r.offset >= end as u64);
+                    forget(&mut relocs, *offset, end as u64);
                     bytes[start..end].fill(0);
                     let n = source.init.len().min(*size as usize);
                     bytes[start..start + n].copy_from_slice(&source.init[..n]);
                     for r in &source.relocs {
-                        relocs.push(DataReloc {
-                            offset: offset + r.offset,
-                            target: r.target.clone(),
-                            addend: r.addend,
-                        });
+                        relocs.insert(
+                            offset + r.offset,
+                            DataReloc {
+                                offset: offset + r.offset,
+                                target: r.target.clone(),
+                                addend: r.addend,
+                            },
+                        );
                     }
                 }
                 InitItem::Bits {
@@ -820,6 +908,6 @@ impl Sema {
             used -= 1;
         }
         bytes.truncate(used);
-        Ok((bytes, relocs))
+        Ok((bytes, relocs.into_values().collect()))
     }
 }

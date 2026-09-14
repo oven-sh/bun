@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, tempDir } from "harness";
+import { bunEnv, isWindows, tempDir } from "harness";
 import { join, sep } from "node:path";
-import { includePath, lines, run, runFixtures, supported } from "./run-fixtures";
+import { compileFor, includePath, lines, run, runFixtures, supported } from "./run-fixtures";
 
 // Macros, conditionals, includes, the predefined macros and the corners of the source text.
 runFixtures("preprocessor");
@@ -123,12 +123,49 @@ int main(void) {
         expect(exitCode).toBe(0);
       } else {
         // (Said of the #include that was one too many, in the 200th file.)
-        expect(lines(stderr).replaceAll(String(dir) + sep, "")).toContain(
-          "error: #include is nested too deeply\n    at h199.h:1:2\n",
-        );
+        // (Whichever way the path of the directory is written.)
+        expect(
+          lines(stderr)
+            .replaceAll("\\", "/")
+            .replaceAll(String(dir).replaceAll("\\", "/") + "/", ""),
+        ).toContain("error: #include is nested too deeply\n    at h199.h:1:2\n");
         expect(stdout).toBe("");
         expect(exitCode).toBe(1);
       }
     });
   }
 });
+
+// Microsoft's file systems do not tell the case of letters apart and its headers lean on that, so compiling for
+// Windows on a system that does, a header is looked for under the spelling the directory has for it: one directory at
+// a time from the front of the path, however many there are.
+describe.skipIf(isWindows)(
+  "preprocessor: compiling for Windows, a header is found whatever the case of its name",
+  () => {
+    // (A header that is found ends the compilation with a sentence of its own.)
+    const found = "#define FOUND 1\n";
+    const asks = (include: string) => `#include ${include}\n_Static_assert(FOUND != 1, "the header was found");\n`;
+    const foundIt = "error: static assertion failed: the header was found\n";
+    test.concurrent.each([
+      ["in a directory of the working directory, by the case of both", '"inc\\mixedcase.h"', "Inc/MixedCase.h"],
+      ["beside the source file", '"MIXEDCASE.H"', "mixedcase.h"],
+      ["with forward slashes and dots", '"./INC/../inc/./MixedCase.H"', "Inc/mixedcase.h"],
+      ["fifty directories down, the last under another case", `"${"d/".repeat(50)}LAST.H"`, `${"d/".repeat(50)}last.h`],
+      ["fifty directories down, each under another case", `"${"D/".repeat(50)}last.h"`, `${"d/".repeat(50)}last.h`],
+    ])("%s", async (_, include, onDisk) => {
+      using dir = tempDir("bir-header-case", { "w.c": asks(include), [onDisk]: found });
+      expect(await compileFor(String(dir), "w.c", "bun-windows-x64")).toContain(foundIt);
+    });
+    test.concurrent("a header that is not there under any case, five hundred directories down", async () => {
+      const name = `${"a/".repeat(500)}x.h`;
+      using dir = tempDir("bir-header-case", { "w.c": asks(`"${name}"`), "a/a/other.h": found });
+      expect(await compileFor(String(dir), "w.c", "bun-windows-x64")).toContain(`error: '${name}' file not found\n`);
+    });
+    test.concurrent("a component that is a file and not a directory", async () => {
+      using dir = tempDir("bir-header-case", { "w.c": asks('"INC/mixedcase.h/x.h"'), "inc/mixedcase.h": found });
+      expect(await compileFor(String(dir), "w.c", "bun-windows-x64")).toContain(
+        "error: 'INC/mixedcase.h/x.h' file not found\n",
+      );
+    });
+  },
+);

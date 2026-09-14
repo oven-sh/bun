@@ -4,7 +4,7 @@
 //! classifies them (`token::classify`), and recognises the C grammar. Meaning — scopes,
 //! types, conversions — is delegated to [`Sema`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use crate::ast::*;
@@ -77,6 +77,33 @@ struct Attrs {
     /// `__declspec(align(N))`, Microsoft's spelling (it is in `aligned` too): written ahead of
     /// a structure's definition it is the structure's, not the declared object's.
     declspec_align: Option<u64>,
+}
+
+impl Attrs {
+    /// Takes what `written_before` says and this does not: the attributes ahead of a declarator
+    /// (`int a, __attribute__((aligned(64))) b;`) are that declarator's, like the ones after it.
+    fn absorb(&mut self, written_before: Attrs) {
+        self.aligned = stricter_alignment(self.aligned, written_before.aligned);
+        self.alignas = self.alignas.or(written_before.alignas);
+        self.packed |= written_before.packed;
+        self.asm_label = self.asm_label.take().or(written_before.asm_label);
+        self.vector_bytes = self.vector_bytes.or(written_before.vector_bytes);
+        self.vector_count = self.vector_count.or(written_before.vector_count);
+        self.constructor = self.constructor.or(written_before.constructor);
+        self.destructor = self.destructor.or(written_before.destructor);
+        self.alias = self.alias.take().or(written_before.alias);
+        self.cleanup = self.cleanup.take().or(written_before.cleanup);
+        self.transparent_union |= written_before.transparent_union;
+        self.ms_struct = self.ms_struct.or(written_before.ms_struct);
+        self.inlining |= written_before.inlining;
+        self.gnu_inline |= written_before.gnu_inline;
+        self.mode = self.mode.take().or(written_before.mode);
+        self.weak |= written_before.weak;
+        self.thread |= written_before.thread;
+        self.selectany |= written_before.selectany;
+        self.declspec_align =
+            stricter_alignment(self.declspec_align, written_before.declspec_align);
+    }
 }
 
 struct DeclSpec {
@@ -191,7 +218,8 @@ pub(crate) struct Parser<S: TokenSource> {
     pending_cleanups: Vec<Expr>,
     /// A `cleanup` attribute written among a declarator's pointer qualifiers
     /// (`char *__attribute__((cleanup(f))) p`): it belongs to the variable being declared.
-    declarator_cleanup: Option<(Rc<str>, Loc)>,
+    /// The attributes written among the qualifiers ahead of the declarator being parsed.
+    declarator_attrs: Option<Attrs>,
     /// See `Attrs::declspec_align`.
     declspec_struct_align: Option<u64>,
 }
@@ -267,7 +295,7 @@ impl<S: TokenSource> Parser<S> {
             ms_struct: false,
             declarator_parens: 0,
             pending_cleanups: Vec::new(),
-            declarator_cleanup: None,
+            declarator_attrs: None,
             declspec_struct_align: None,
         };
         parser.cur = parser.fetch()?;
@@ -548,9 +576,10 @@ impl<S: TokenSource> Parser<S> {
         let value = self.sema.const_int(&cond)?;
         let mut message = None;
         if self.eat(Punct::Comma)? {
-            match self.bump()?.tok {
-                Tok::Str(bytes, ..) => message = Some(crate::token::display_bytes(&bytes)),
-                _ => return err(loc, "expected a string literal in _Static_assert"),
+            // (With any prefix, as GCC and Clang take it: it is only ever printed.)
+            match self.adjacent_strings(true)? {
+                Some(bytes) => message = Some(crate::token::display_bytes(&bytes)),
+                None => return err(loc, "expected a string literal in _Static_assert"),
             }
         }
         self.expect(Punct::RParen)?;
@@ -1339,11 +1368,7 @@ impl<S: TokenSource> Parser<S> {
             } else if self.at_kw(Kw::Asm) && matches!(self.peek2()?, Tok::Punct(Punct::LParen)) {
                 let loc = self.bump()?.loc;
                 self.bump()?;
-                let mut label = Vec::new();
-                while let Tok::Str(part, ..) = &self.cur.tok {
-                    label.extend_from_slice(part);
-                    self.bump()?;
-                }
+                let label = self.adjacent_strings(false)?.unwrap_or_default();
                 if label.is_empty() || !self.at(Punct::RParen) {
                     return err(loc, "inline assembly is not supported yet");
                 }
@@ -1453,11 +1478,7 @@ impl<S: TokenSource> Parser<S> {
                 }
                 "alias" | "weakref" if has_args => {
                     let aloc = self.bump()?.loc;
-                    let mut target = Vec::new();
-                    while let Tok::Str(part, ..) = &self.cur.tok {
-                        target.extend_from_slice(part);
-                        self.bump()?;
-                    }
+                    let target = self.adjacent_strings(false)?.unwrap_or_default();
                     self.expect(Punct::RParen)?;
                     match std::str::from_utf8(&target) {
                         Ok(target) if !target.is_empty() => {
@@ -2375,8 +2396,10 @@ impl<S: TokenSource> Parser<S> {
 
     // ───────────────────────────── declarators ─────────────────────────────
 
-    /// Skips type qualifiers; returns whether `_Atomic` and `volatile` were among them.
-    fn skip_qualifiers(&mut self) -> Res<(bool, Quals)> {
+    /// Skips type qualifiers; returns whether `_Atomic` and `volatile` were among them. Attributes
+    /// among them are kept for the declarator when they are `ahead_of_it`; after a `*` they are about
+    /// the pointer, where only `cleanup` means anything.
+    fn skip_qualifiers(&mut self, ahead_of_it: bool) -> Res<(bool, Quals)> {
         let (mut atomic, mut quals) = (false, Quals::NONE);
         loop {
             match &self.cur.tok {
@@ -2399,8 +2422,20 @@ impl<S: TokenSource> Parser<S> {
                 Tok::Kw(Kw::Attribute) => {
                     let mut attrs = Attrs::default();
                     self.parse_attributes(&mut attrs)?;
-                    if attrs.cleanup.is_some() {
-                        self.declarator_cleanup = attrs.cleanup;
+                    if ahead_of_it && self.declarator_parens == 0 {
+                        match &mut self.declarator_attrs {
+                            Some(kept) => kept.absorb(attrs),
+                            None => self.declarator_attrs = Some(attrs),
+                        }
+                    } else if attrs.cleanup.is_some() {
+                        let cleanup = Attrs {
+                            cleanup: attrs.cleanup,
+                            ..Attrs::default()
+                        };
+                        match &mut self.declarator_attrs {
+                            Some(kept) => kept.absorb(cleanup),
+                            None => self.declarator_attrs = Some(cleanup),
+                        }
                     }
                 }
                 _ => return Ok((atomic, quals)),
@@ -2539,16 +2574,15 @@ impl<S: TokenSource> Parser<S> {
         let mut ops = Vec::new();
         let mut name = None;
         let loc = self.loc();
-        let outer_cleanup = self.declarator_cleanup.take();
+        let outer_attrs = self.declarator_attrs.take();
         self.parse_declarator_ops(&mut ops, &mut name)?;
         if !ops.is_empty() {
             self.check_derivations(base.derivations(MAX_DERIVATIONS) + ops.len())?;
         }
         let mut attrs = Attrs::default();
         self.parse_attributes(&mut attrs)?;
-        let among_pointers = std::mem::replace(&mut self.declarator_cleanup, outer_cleanup);
-        if attrs.cleanup.is_none() {
-            attrs.cleanup = among_pointers;
+        if let Some(written_before) = std::mem::replace(&mut self.declarator_attrs, outer_attrs) {
+            attrs.absorb(written_before);
         }
         // A vector attribute after the declarator applies to the innermost type.
         let mut ty = self.apply_vector_attrs(base, &mut attrs)?;
@@ -2642,6 +2676,8 @@ impl<S: TokenSource> Parser<S> {
                     };
                     ty = Type::Func(Rc::new(fty));
                     params = Some(ps);
+                    // (The parameters' types count: a function type is as deep as the deepest.)
+                    self.check_derivations(ty.derivations(MAX_DERIVATIONS))?;
                 }
             }
         }
@@ -2676,12 +2712,12 @@ impl<S: TokenSource> Parser<S> {
         name: &mut Option<(Rc<str>, Loc)>,
     ) -> Res<()> {
         self.enter()?;
-        if self.skip_qualifiers()?.0 {
+        if self.skip_qualifiers(true)?.0 {
             return self.unsupported("_Atomic in this position");
         }
         let mut pointers: Vec<(bool, Quals)> = Vec::new();
         while self.eat(Punct::Star)? {
-            pointers.push(self.skip_qualifiers()?);
+            pointers.push(self.skip_qualifiers(false)?);
             self.check_derivations(pointers.len())?;
         }
         let mut inner = Vec::new();
@@ -2834,6 +2870,7 @@ impl<S: TokenSource> Parser<S> {
         self.sema.push_scope();
         self.param_depth += 1;
         let mut params: Vec<Param> = Vec::new();
+        let mut names: BTreeSet<Rc<str>> = BTreeSet::new();
         let mut variadic = false;
         loop {
             if self.eat(Punct::Ellipsis)? {
@@ -2880,7 +2917,7 @@ impl<S: TokenSource> Parser<S> {
             };
             // Later parameters may use this one in an array bound: `int n, int a[n]`.
             if let Some(name) = &decl.name {
-                if params.iter().any(|p: &Param| p.name.as_ref() == Some(name)) {
+                if !names.insert(Rc::clone(name)) {
                     return err(decl.loc, format!("redefinition of '{name}'"));
                 }
                 self.sema
@@ -3056,8 +3093,10 @@ impl<S: TokenSource> Parser<S> {
                 scopes.push((before, id, None));
                 has_vla_scope = true;
             }
-            // A variable with a cleanup: what follows its declaration is a scope of its own.
+            // A variable with a cleanup: what follows its declaration is a scope of its own, one
+            // level of nesting that is not written out.
             for cleanup in std::mem::take(&mut self.pending_cleanups) {
+                self.enter()?;
                 let id = self.sema.new_vla_scope();
                 self.vla_path.push(id);
                 scopes.push((stmts.len(), id, Some(Box::new(cleanup))));
@@ -3071,6 +3110,9 @@ impl<S: TokenSource> Parser<S> {
         }
         while let Some((start, id, cleanup)) = scopes.pop() {
             self.vla_path.pop();
+            if cleanup.is_some() {
+                self.leave();
+            }
             let body = stmts.split_off(start.min(stmts.len()));
             stmts.push(Stmt::VlaScope { id, cleanup, body });
         }
@@ -3472,6 +3514,7 @@ impl<S: TokenSource> Parser<S> {
             let mut stmts = Vec::new();
             self.parse_local_declaration(&mut stmts)?;
             for cleanup in std::mem::take(&mut self.pending_cleanups) {
+                self.enter()?;
                 let id = self.sema.new_vla_scope();
                 self.vla_path.push(id);
                 cleanups.push((id, cleanup));
@@ -3513,6 +3556,7 @@ impl<S: TokenSource> Parser<S> {
         }];
         while let Some((id, cleanup)) = cleanups.pop() {
             self.vla_path.pop();
+            self.leave();
             scoped = vec![Stmt::VlaScope {
                 id,
                 cleanup: Some(Box::new(cleanup)),
@@ -3705,11 +3749,7 @@ impl<S: TokenSource> Parser<S> {
             }
         }
         self.expect(Punct::LParen)?;
-        let mut template = Vec::new();
-        while let Tok::Str(part, ..) = &self.cur.tok {
-            template.extend_from_slice(part);
-            self.bump()?;
-        }
+        let mut template = self.adjacent_strings(false)?.unwrap_or_default();
         // outputs, inputs: [name] "constraint" (expression)
         let mut operands: [Vec<(Vec<u8>, Expr)>; 2] = [Vec::new(), Vec::new()];
         let mut operand_names: [Vec<Option<Vec<u8>>>; 2] = [Vec::new(), Vec::new()];
@@ -3736,12 +3776,11 @@ impl<S: TokenSource> Parser<S> {
             }
             loop {
                 if section == 2 {
-                    let Tok::Str(name, ..) = &self.cur.tok else {
+                    let Some(name) = self.adjacent_strings(false)? else {
                         return err(self.loc(), "expected a clobber string");
                     };
                     clobbers_memory |= &name[..] == b"memory";
-                    clobber_list.push(name.clone());
-                    self.bump()?;
+                    clobber_list.push(name);
                 } else {
                     let mut operand_name = None;
                     if self.eat(Punct::LBracket)? {
@@ -3749,11 +3788,7 @@ impl<S: TokenSource> Parser<S> {
                         self.expect(Punct::RBracket)?;
                     }
                     operand_names[section].push(operand_name);
-                    let mut constraint = Vec::new();
-                    while let Tok::Str(part, ..) = &self.cur.tok {
-                        constraint.extend_from_slice(part);
-                        self.bump()?;
-                    }
+                    let constraint = self.adjacent_strings(false)?.unwrap_or_default();
                     if constraint.is_empty() {
                         return err(self.loc(), "expected an operand constraint string");
                     }
@@ -4930,6 +4965,29 @@ impl<S: TokenSource> Parser<S> {
 
     /// A string literal and the ones that follow it.
     #[inline(never)]
+    /// The string literals at the cursor as one (translation phase 6 makes one of adjacent ones
+    /// wherever a string literal is wanted, not only in an expression), or nothing if there is
+    /// none there. `any_prefix`: `L"..."`, `u"..."` and `U"..."` too, as the text they spell.
+    fn adjacent_strings(&mut self, any_prefix: bool) -> Res<Option<Vec<u8>>> {
+        let mut bytes: Option<Vec<u8>> = None;
+        loop {
+            match &self.cur.tok {
+                Tok::Str(part, ..) => bytes.get_or_insert_default().extend_from_slice(part),
+                Tok::WideStr(_, points) if any_prefix => {
+                    let text: String = points
+                        .iter()
+                        .map(|&point| char::from_u32(point).unwrap_or(char::REPLACEMENT_CHARACTER))
+                        .collect();
+                    bytes
+                        .get_or_insert_default()
+                        .extend_from_slice(text.as_bytes());
+                }
+                _ => return Ok(bytes),
+            }
+            self.bump()?;
+        }
+    }
+
     fn parse_string_literals(&mut self, loc: Loc) -> Res<Expr> {
         // Adjacent string literals concatenate (translation phase 6); one wide part
         // makes the whole literal wide.
@@ -5169,7 +5227,7 @@ impl<S: TokenSource> Parser<S> {
     fn parse_builtin(&mut self, name: &str, loc: Loc) -> Res<Option<Expr>> {
         // (Microsoft's rotates aside, which are functions of its headers elsewhere.)
         let microsoft = !name.starts_with("__");
-        if !microsoft && !crate::pp_expr::has_builtin(name, self.sema.tcx.target) {
+        if !microsoft && !crate::pp_expr::knows_builtin(name, self.sema.tcx.target) {
             return Ok(None);
         }
         if name.starts_with("__atomic_")
@@ -5368,10 +5426,9 @@ impl<S: TokenSource> Parser<S> {
             }
             "cpu_supports" | "cpu_is" => {
                 self.expect(Punct::LParen)?;
-                let Tok::Str(feature, ..) = self.cur.tok.clone() else {
+                let Some(feature) = self.adjacent_strings(false)? else {
                     return err(loc, format!("{name} takes a string literal"));
                 };
-                self.bump()?;
                 self.expect(Punct::RParen)?;
                 // No processor model is ever claimed.
                 if short == "cpu_is" {
@@ -5421,11 +5478,7 @@ impl<S: TokenSource> Parser<S> {
             // compiled into code that is used.
             "bun_unsupported" => {
                 self.expect(Punct::LParen)?;
-                let mut message = Vec::new();
-                while let Tok::Str(part, ..) = &self.cur.tok {
-                    message.extend_from_slice(part);
-                    self.bump()?;
-                }
+                let message = self.adjacent_strings(false)?.unwrap_or_default();
                 self.expect(Punct::RParen)?;
                 let message = format!("{} is not supported", crate::token::display_bytes(&message));
                 Ok(Some(self.sema.unsupported_value(
@@ -6135,11 +6188,16 @@ const IMPLEMENTED_ATTRIBUTES: &[&str] = &[
 
 /// What `__has_attribute(name)` says: whether the attribute is implemented, or is one of those
 /// that say something about the code without changing what it means.
-pub(crate) fn has_attribute(name: &[u8]) -> bool {
+pub(crate) fn has_attribute(name: &[u8], target: Target) -> bool {
     let name = name
         .strip_prefix(b"__")
         .and_then(|n| n.strip_suffix(b"__"))
         .unwrap_or(name);
+    // The calling convention the target has is there to be named; the other one is refused.
+    let windows = target.os == crate::types::Os::Windows;
+    if name == b"ms_abi" || name == b"sysv_abi" {
+        return (name == b"ms_abi") == windows;
+    }
     IMPLEMENTED_ATTRIBUTES
         .iter()
         .chain(IGNORED_ATTRIBUTES)

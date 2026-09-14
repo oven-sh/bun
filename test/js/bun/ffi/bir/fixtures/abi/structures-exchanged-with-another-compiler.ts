@@ -10,9 +10,10 @@ const theirs = cc({
   define: { THEIR_SIDE: "1" },
   symbols: {
     their_table: { args: [], returns: "ptr" },
+    their_check: { args: ["ptr"], returns: "int" },
   },
 });
-// This side calls into the other with every shape.
-const wrong = ours.check_against(theirs.symbols.their_table());
+// Each side calls into the other with every shape.
+const wrong = ours.check_against(theirs.symbols.their_table()) + theirs.symbols.their_check(ours.our_table());
 theirs.close();
 process.exit(wrong ? 1 : 0);

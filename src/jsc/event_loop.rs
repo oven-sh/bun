@@ -1112,8 +1112,7 @@ impl EventLoop {
         self.wait_for_promise_impl::<false>(promise)
     }
 
-    /// [`Self::wait_for_promise`] for the entry of `bun run`: also `Ok`, with `promise` pending,
-    /// once a fatal error is counted during the wait. That ends the run loop too (#22546).
+    /// [`Self::wait_for_promise`], or until a fatal error is counted during the wait (#22546).
     pub fn wait_for_module_promise(
         &mut self,
         promise: *mut jsc::JSInternalPromise,

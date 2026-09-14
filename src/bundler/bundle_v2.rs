@@ -222,10 +222,8 @@ impl<'a> BundleV2<'a> {
         // SAFETY: BACKREF — heap-owned by hot_reloader / DevServer (set via
         // `install_bun_watcher`), live for the process under `--watch`. The
         // watcher storage is disjoint from `self`; `&mut self` excludes any
-        // other safe projection from this `BundleV2`. `add_file` is driven
-        // from the bundle thread (`thread_lock`-asserted); parse workers reach
-        // the watcher only through `watch_file_before_read`, and `Watcher`
-        // serializes both with its own mutex.
+        // other safe projection from this `BundleV2`, and this projection is
+        // only used on the single bundle thread (`thread_lock`-asserted).
         self.bun_watcher.map(|mut p| unsafe { p.as_mut() })
     }
 
@@ -5471,9 +5469,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// Watch `path` before a parse worker reads it, so a save that lands
-        /// while the file is parsed still raises an event.
-        /// `on_parse_task_complete` adds the watch only after the parse.
+        /// See `Watcher::add_file_before_read`. Runs on parse worker threads.
         pub(crate) fn watch_file_before_read(&self, path: &Fs::Path) {
             let Some(mut bun_watcher) = self.bun_watcher else {
                 return;
@@ -7256,41 +7252,41 @@ pub mod bv2_impl {
                 }
             }
 
-            // The parse worker watched the file before it read it
-            // (`watch_file_before_read`); this settles who owns the descriptor
-            // it read through.
-            let watcher_data = &parse_result.watcher_data;
-            if this.bun_watcher.is_some() && watcher_data.fd.is_valid() {
-                let source_index = parse_result.value.source_index();
-                // Read the source path before `should_add_watcher(&self)` so the column borrow is released.
-                let source_path = this.graph.input_files.items_source()[source_index as usize]
-                    .path
-                    .text;
-                // A descriptor the resolver cache owns stays with it.
-                let adopted = watcher_data.owns_fd && this.should_add_watcher(source_path) && {
-                    let fd = watcher_data.fd;
-                    let dir_fd = watcher_data.dir_fd;
-                    let hash = bun_wyhash::hash(source_path) as u32;
-                    let bun_watcher = this.bun_watcher_mut().unwrap();
-                    // The watcher keeps the path past this bundle; borrow it
-                    // only when it is interned for the process lifetime
-                    // (`dupe_alloc` leaves other paths in the bundle arena).
-                    let added = if Fs::as_interned_path(source_path).is_some() {
-                        bun_watcher.add_file::<{ cfg!(windows) }>(
-                            fd,
-                            source_path,
-                            hash,
-                            dir_fd,
-                            None,
-                        )
-                    } else {
-                        bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
-                    };
-                    matches!(added, Ok(bun_watcher::FdOwnership::Watcher))
-                };
-                // Nothing else closes the fd this parse opened.
-                if !adopted && watcher_data.owns_fd {
-                    let _ = bun_sys::close(watcher_data.fd);
+            // The parse worker already watches the file (`watch_file_before_read`); settle who owns the read fd.
+            if this.bun_watcher.is_some() {
+                if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
+                    let source_index = parse_result.value.source_index();
+                    // borrowck — read the source path before
+                    // `should_add_watcher(&self)` so the column borrow is released.
+                    let source_path = this.graph.input_files.items_source()[source_index as usize]
+                        .path
+                        .text;
+                    let owns_fd = parse_result.watcher_data.owns_fd;
+                    let mut adopted = false;
+                    if owns_fd && this.should_add_watcher(source_path) {
+                        let fd = parse_result.watcher_data.fd;
+                        let dir_fd = parse_result.watcher_data.dir_fd;
+                        let hash = bun_wyhash::hash(source_path) as u32;
+                        let bun_watcher = this.bun_watcher_mut().unwrap();
+                        // The watcher keeps the path past this bundle; borrow it
+                        // only when it is interned for the process lifetime
+                        // (`dupe_alloc` leaves other paths in the bundle arena).
+                        let added = if Fs::as_interned_path(source_path).is_some() {
+                            bun_watcher.add_file::<{ cfg!(windows) }>(
+                                fd,
+                                source_path,
+                                hash,
+                                dir_fd,
+                                None,
+                            )
+                        } else {
+                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
+                        };
+                        adopted = matches!(added, Ok(bun_watcher::FdOwnership::Watcher));
+                    }
+                    if owns_fd && !adopted {
+                        let _ = bun_sys::close(parse_result.watcher_data.fd);
+                    }
                 }
             }
 

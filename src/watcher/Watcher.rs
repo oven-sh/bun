@@ -34,8 +34,7 @@ pub const REQUIRES_FILE_DESCRIPTORS: bool = false;
 
 /// Open flags for an fd that exists only to receive kqueue VNODE events.
 /// Darwin has O_EVTONLY (no read/write access requested); FreeBSD has no
-/// equivalent, so the watch fd is a plain O_RDONLY. `O_CLOEXEC` keeps the fd
-/// out of the image that `--watch` and `--hot` `execve` into on reload.
+/// equivalent, so the watch fd is a plain O_RDONLY.
 #[cfg(target_os = "macos")]
 pub const WATCH_OPEN_FLAGS: i32 = libc::O_EVTONLY | bun_sys::O::CLOEXEC;
 #[cfg(not(target_os = "macos"))]
@@ -867,27 +866,13 @@ impl Watcher {
         }
     }
 
-    /// Watch `file_path` before its caller reads it.
-    ///
-    /// The module loader and the bundler read a file, parse it, and only then
-    /// pass the read descriptor to [`Self::add_file`]. A save between that
-    /// read and that call raises no event, so the stale module stays loaded
-    /// until the next save. An entry added here reports the save; the later
-    /// [`Self::add_file`] finds it and only decides who owns the read
-    /// descriptor.
-    ///
-    /// Does not take the read descriptor: `flush_evictions` closes a stored
-    /// descriptor from the watcher thread, and that must not happen under a
-    /// read in progress. kqueue gets its own event-only descriptor; inotify
-    /// and Windows watch by path.
+    /// Watch `file_path` before its caller reads it. The `add_file` after the parse then only settles who owns the read fd.
     pub fn add_file_before_read(&mut self, file_path: &[u8]) -> bool {
-        // No open has vetted the length yet; the append copies the path into
-        // a pooled path buffer.
+        // No open has checked the length yet.
         if file_path.len() >= bun_paths::MAX_PATH_BYTES {
             return false;
         }
-        // `append_file_assume_capacity` warns about this path. Leave that to
-        // the `add_file` after the read so the warning prints once.
+        // The `add_file` after the read prints the out-of-root warning, once.
         #[cfg(windows)]
         if bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path)
             == bun_paths::resolve_path::ParentEqual::Unrelated
@@ -916,10 +901,7 @@ impl Watcher {
                 // directory-event recovery sees a valid fd. A valid stored fd
                 // is never replaced: the watchlist owns it until eviction,
                 // and the old overwrite leaked it.
-                //
-                // Not an fd to a file that a rename has since replaced: the
-                // watch follows that inode, and inotify reports
-                // IN_DELETE_SELF only once the caller's close destroys it.
+                // An fd to a file that a rename has since replaced would pin the inode inotify waits on.
                 let fds = self.watchlist.items_fd_mut();
                 if !fds[index as usize].is_valid() && Self::is_file_at_path(fd, file_path) {
                     fds[index as usize] = fd;

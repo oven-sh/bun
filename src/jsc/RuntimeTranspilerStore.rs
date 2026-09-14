@@ -873,8 +873,7 @@ impl TranspilerJob {
         let is_watcher_enabled =
             import_watcher.is_some_and(|iw| !matches!(&*iw, ImportWatcher::None));
 
-        // Watch before the read: a save that lands while this module is
-        // parsed must still raise an event.
+        // Watch before the read, so a save during the parse still raises an event.
         if is_watcher_enabled
             && !is_node_override
             && bun_paths::is_absolute(path.text)

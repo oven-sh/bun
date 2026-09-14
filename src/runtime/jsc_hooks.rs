@@ -3499,9 +3499,7 @@ fn transpile_source_code_inner(
     }
 }
 
-/// Watch `path` before the parse reads it (same filter as
-/// [`maybe_watch_file`]), so a save that lands while the module is parsed
-/// still raises an event.
+/// [`maybe_watch_file`]'s filter, before the parse reads `path`. See `Watcher::add_file_before_read`.
 #[inline]
 fn maybe_watch_file_before_read(
     jsc_vm: *mut VirtualMachine,

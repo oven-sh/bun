@@ -76,7 +76,7 @@ int main(void) {
     [
       "a header that includes itself",
       '#include "loop.h"\nint main(void) { return 0; }\n',
-      "#include nested too deeply",
+      "#include is nested too deeply",
     ],
     ["#include without a name", "#include\nint main(void) { return 0; }\n", "#include expects"],
     [

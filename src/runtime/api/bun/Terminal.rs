@@ -1471,23 +1471,20 @@ impl Terminal {
             let r = w.write(bytes);
             (r, w.has_pending_data())
         });
-        // The writer can finish inside `write()`. A `uv_write` that fails at
-        // once (Windows, after the child is gone) or a failed poll registration
-        // (POSIX) reports `on_writer_error`, which closes the terminal, and the
-        // writer keeps the bytes. No drain follows them, so they root nothing.
-        if !self.flags.get().contains(Flags::WRITER_DONE) {
-            self.writer_has_buffered.set(has_pending);
-            if has_pending {
-                // Keep the wrapper rooted for the pending drain dispatch; a write
-                // after PTY EOF finds it already downgraded.
-                self.this_value.with_mut(|v| v.upgrade(global_object));
-            }
-            // A second write() can drain what an earlier one buffered; on_write saw
-            // the cleared flag, so fire drain here (outside `with_mut`).
-            #[cfg(unix)]
-            if had_buffered && !has_pending {
-                self.on_writer_ready();
-            }
+        // The writer can close inside `write()` and keep the bytes; no drain follows them.
+        let writer_done = self.flags.get().contains(Flags::WRITER_DONE);
+        let has_pending = has_pending && !writer_done;
+        self.writer_has_buffered.set(has_pending);
+        if has_pending {
+            // Keep the wrapper rooted for the pending drain dispatch; a write
+            // after PTY EOF finds it already downgraded.
+            self.this_value.with_mut(|v| v.upgrade(global_object));
+        }
+        // A second write() can drain what an earlier one buffered; on_write saw
+        // the cleared flag, so fire drain here (outside `with_mut`).
+        #[cfg(unix)]
+        if had_buffered && !has_pending && !writer_done {
+            self.on_writer_ready();
         }
         #[cfg(not(unix))]
         let _ = had_buffered;

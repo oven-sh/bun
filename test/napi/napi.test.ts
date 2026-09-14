@@ -1876,6 +1876,7 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       const { lines, stderr, exitCode } = await runBunTest([], files, noDestruct);
       expect(stderr).toContain("1 pass");
       expect(lines).toEqual(setupLines.toSorted());
+      if (exitCode !== 0) expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
@@ -1887,6 +1888,7 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("2 pass");
       expect(output).not.toContain("executed at position");
       expect(output).not.toContain("finalize order");
+      if (exitCode !== 0) expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
@@ -1898,6 +1900,7 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       });
       expect(stderr).toContain("1 pass");
       expect(lines).toEqual(teardownLines.toSorted());
+      if (exitCode !== 0) expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 

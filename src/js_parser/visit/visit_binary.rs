@@ -120,8 +120,16 @@ impl BinaryExpressionVisitor {
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 
-        // Propagate name for anonymous decorated class expressions in assignments
-        if e_.op == Op::Code::BinAssign && was_anonymous_named_expr {
+        // Only these four assignment operators perform NamedEvaluation of the right operand.
+        if was_anonymous_named_expr
+            && matches!(
+                e_.op,
+                Op::Code::BinAssign
+                    | Op::Code::BinNullishCoalescingAssign
+                    | Op::Code::BinLogicalOrAssign
+                    | Op::Code::BinLogicalAndAssign
+            )
+        {
             if let ExprData::EClass(class) = &e_.right.data {
                 if class.should_lower_standard_decorators {
                     if let ExprData::EIdentifier(ident) = e_.left.data {

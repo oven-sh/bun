@@ -1112,10 +1112,8 @@ impl EventLoop {
         self.wait_for_promise_impl::<false>(promise)
     }
 
-    /// [`wait_for_promise`](Self::wait_for_promise) for the entry module of `bun run`. Also returns
-    /// `Ok`, with `promise` still pending, when a fatal error is counted during the wait: that stops
-    /// the run loop, so it stops a top-level await too (#22546). An error counted before the wait
-    /// (by a `--preload`) does not end it: the entry still has to load and start.
+    /// [`Self::wait_for_promise`] for the entry of `bun run`: also `Ok`, with `promise` pending,
+    /// once a fatal error is counted during the wait. That ends the run loop too (#22546).
     pub fn wait_for_module_promise(
         &mut self,
         promise: *mut jsc::JSInternalPromise,
@@ -1128,6 +1126,7 @@ impl EventLoop {
         promise: jsc::AnyPromise,
     ) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
+        // An error a `--preload` left behind does not count: the entry still has to load and start.
         let errors_before = self.vm_ref().unhandled_error_counter;
         let waiting = |this: &Self| {
             promise.status() == PromiseStatus::Pending

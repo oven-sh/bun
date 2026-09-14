@@ -923,7 +923,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else if dependency.behavior.is_peer() {
-                                        warn_unmet_peer_dependency(this, name, &version);
+                                        warn_unmet_peer_dependency(this, name, &version, err);
                                     } else {
                                         this.log_mut()
                     .add_error_fmt(
@@ -945,7 +945,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else if dependency.behavior.is_peer() {
-                                        warn_unmet_peer_dependency(this, name, &version);
+                                        warn_unmet_peer_dependency(this, name, &version, err);
                                     } else {
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
@@ -962,6 +962,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
+                                    } else if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version, err);
                                     } else {
                                         let age_gate_ms =
                                             this.options.minimum_release_age_ms.unwrap_or(0.0);
@@ -1200,19 +1202,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                             find_result.package, min_age_ms,
                                                         )
                                                     {
-                                                        let package_name = this.lockfile.str(&name);
-                                                        let min_age_seconds = min_age_ms / MS_PER_S;
-                                                        let _ = this.log_mut().add_error_fmt(
-                                                            None,
-                                                            bun_ast::Loc::EMPTY,
-                                                            format_args!(
-                                                                "Version \"{}@{}\" was published within minimum release age of {} seconds",
-                                                                bstr::BStr::new(package_name),
-                                                                find_result.version.fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                                                min_age_seconds,
-                                                            ),
-                                                        );
-                                                        return Ok(());
+                                                        // Reported by the `TooRecentVersion` arm above, like a fresh manifest would be.
+                                                        resolve_result_ =
+                                                            Err(crate::Error::TooRecentVersion);
+                                                        let _ = this
+                                                            .network_dedupe_map
+                                                            .remove(&task_id);
+                                                        continue 'retry_with_new_resolve_result;
                                                     }
                                                 }
                                                 // reshaped for borrowck — `find_result`
@@ -1835,21 +1831,37 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 }
 
 /// Unmet peers stay unresolved instead of failing the install; see `may_stay_unresolved`.
+/// `err` is the `NoMatchingVersion` / `DistTagNotFound` / `TooRecentVersion` the lookup returned.
 #[cold]
 #[inline(never)]
 fn warn_unmet_peer_dependency(
     this: &PackageManager,
     name: SemverString,
     version: &dependency::Version,
+    err: crate::Error,
 ) {
-    bun_ast::add_warning_pretty!(
-        this.log_mut(),
-        None,
-        bun_ast::Loc::EMPTY,
-        "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
-        bstr::BStr::new(this.lockfile.str(&version.literal)),
-        bstr::BStr::new(this.lockfile.str(&name)),
-    );
+    let literal = bstr::BStr::new(this.lockfile.str(&version.literal));
+    let name = bstr::BStr::new(this.lockfile.str(&name));
+    if err == crate::Error::TooRecentVersion {
+        bun_ast::add_warning_pretty!(
+            this.log_mut(),
+            None,
+            bun_ast::Loc::EMPTY,
+            "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
+            literal,
+            name,
+            this.options.minimum_release_age_ms.unwrap_or(0.0) / MS_PER_S,
+        );
+    } else {
+        bun_ast::add_warning_pretty!(
+            this.log_mut(),
+            None,
+            bun_ast::Loc::EMPTY,
+            "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
+            literal,
+            name,
+        );
+    }
 }
 
 /// Allocate and initialise an `.extract` Task for an npm tarball.
@@ -2784,6 +2796,10 @@ fn get_or_put_resolved_package(
                 Npm::FindVersionResult::Err(err_type) => match err_type {
                     Npm::FindVersionError::TooRecent
                     | Npm::FindVersionError::AllVersionsTooRecent => {
+                        // The peer pass may still bind it to a same-named package in the tree.
+                        if behavior.is_peer() && !install_peer {
+                            return Ok(None);
+                        }
                         return Err(crate::Error::TooRecentVersion);
                     }
                     Npm::FindVersionError::NotFound => None, // Handle below with existing logic

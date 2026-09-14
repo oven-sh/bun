@@ -705,7 +705,7 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
     "afterImport",
     "afterDynamicImportStarted",
   ] as const) {
-    test(`dispose ${when}: that instance's work rejects, siblings complete, a fresh instance works`, async () => {
+    test(`dispose ${when}: what that instance starts afterwards rejects, siblings complete, a fresh instance works`, async () => {
       const log: string[] = [];
       const a = graph("a", log),
         b = graph("b", log);
@@ -719,6 +719,7 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
         const p = a.import(join(dir, "slow.mjs"));
         while (!log.includes("slow-start@a")) await new Promise<void>(r => setImmediate(r)); // a is now parked in its TLA
         a.dispose();
+        // Parked in a top-level await on a timer that still fires (no isolateIO): left to finish.
         aOutcome = await p.then(() => "resolved", errorName);
       } else if (when === "afterImport") {
         const m = await a.import(join(dir, "slow.mjs"));
@@ -742,7 +743,7 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
         bLog: log.filter(l => l.endsWith("@b")),
         cLog: log.filter(l => l.endsWith("@c")),
       }).toEqual({
-        aOutcome: "Error",
+        aOutcome: when === "duringDependencyTla" ? "resolved" : "Error",
         bResult: { who: "b", late: "b" },
         cResult: { who: "c", late: "c" },
         bLog: ["slow-start@b", "slow-end@b", "late@b"],

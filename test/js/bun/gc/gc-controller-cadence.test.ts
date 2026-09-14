@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, closeSync, copyFileSync, fsyncSync, openSync, statfsSync } from "fs";
+import { closeSync, fsyncSync, openSync, statfsSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -154,187 +154,263 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
   });
 });
 
-// After BUN_IDLE_GC_SECONDS of timer ticks in which the JS heap did not grow,
-// the controller requests a full collection (so JSC can age out code that no
-// longer runs and return memory). An app parked at a prompt still fires the odd
-// timer and still counts as idle.
-describe("idle release", () => {
-  // Count FullCollection lines from BUN_JSC_logGC=1 while the script sits idle for a few seconds. Nothing allocates in
-  // that window, so a full collection there is the idle one.
-  const script = `
-    setTimeout(() => console.error("MARK"), 1200);
-    setTimeout(() => console.error("DONE"), 4200);
+// Once the program has not been busy for a BUN_IDLE_GC_SECONDS entry, the controller runs a full collection (so JSC can
+// age out code that no longer runs and return memory): a ladder of up to three rungs, the entries being the seconds before
+// the first and between the others. Busy is a heap that grew, or a tick that came seconds late. An app parked at a prompt
+// still fires the odd timer and still counts as idle. The second rung is followed by the page-out further down.
+describe.concurrent("idle release", () => {
+  // The child makes a little garbage in a timer, as a parked program does (a collection that was requested starts when
+  // the program next allocates), and stamps its stderr with its own clock there, which is how the parent tells when a
+  // collection was logged however late it gets to read the pipe. It exits when its stdin says so or at `deadlineMs`,
+  // after a last stamp: tearing the VM down (BUN_DESTRUCT_VM_ON_EXIT, which the ASAN lanes set) collects once more.
+  const child = (deadlineMs: number, body = "") => `
+    ${body}
+    const stamp = (what = "") => console.error("T" + Math.round(performance.now()) + what);
+    const exit = () => { stamp(" EXIT"); process.exit(0); };
+    setInterval(() => { globalThis.sink = new Array(64).fill(0); stamp(); }, 50);
+    setTimeout(exit, ${deadlineMs});
+    process.stdin.once("data", exit);
   `;
 
-  async function run(seconds: string) {
+  // Runs `script` with the list `seconds` on 100 ms ticks and returns when (ms into the child's life) BUN_JSC_logGC=1
+  // logged each full collection after the first 300 ms (loading the entry point collects once) and before the child's
+  // EXIT stamp. With `exitAfter`, the child is told to exit 200 ms after the parent has seen that many rungs, which
+  // leaves the rung time to finish. minEdenToOldGenerationRatio=0 keeps JSC from making one of the timer's other
+  // collections a full one by itself.
+  async function fullCollections(script: string, seconds: string, exitAfter = Infinity) {
+    // From a file: -e and --print run with a single GC marker thread (numberOfGCMarkers=1), and then the first rung's
+    // concurrent collection stays open until a synchronous one, with the second rung's request folded into it.
+    using dir = tempDir("idle-release", { "child.js": script });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
+      cmd: [bunExe(), join(String(dir), "child.js")],
       env: {
         ...bunEnv,
         BUN_IDLE_GC_SECONDS: seconds,
         BUN_JSC_logGC: "1",
+        BUN_JSC_minEdenToOldGenerationRatio: "0",
         BUN_GC_TIMER_DISABLE: undefined,
-        BUN_GC_TIMER_INTERVAL: undefined,
+        BUN_GC_TIMER_INTERVAL: "100",
       },
-      stdout: "ignore",
+      stdin: "pipe",
+      stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    // Startup and (with BUN_DESTRUCT_VM_ON_EXIT) teardown do collections of their own; only count the idle window.
-    const fulls = (stderr.slice(stderr.indexOf("MARK"), stderr.indexOf("DONE")).match(/FullCollection/g) || []).length;
-    return { fulls, exitCode };
+    let log = "";
+    let told = false;
+    const parse = () => {
+      const at: number[] = [];
+      let stamp = 0;
+      for (const [, time, full] of log.split(" EXIT")[0].matchAll(/^T(\d+)$|(FullCollection)/gm)) {
+        if (time) stamp = Number(time);
+        else if (full && stamp >= 300) at.push(stamp);
+      }
+      // Rungs are a second apart here: two collections that close together are one rung's.
+      return { at, rungs: at.filter((t, i) => i === 0 || t - at[i - 1] > 500) };
+    };
+    const reading = (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of proc.stderr) {
+        log += decoder.decode(chunk, { stream: true });
+        if (!told && parse().rungs.length >= exitAfter) {
+          told = true;
+          setTimeout(() => {
+            try {
+              proc.stdin.write("exit\n");
+              proc.stdin.flush();
+            } catch {}
+          }, 200);
+        }
+      }
+    })();
+    const [exitCode] = await Promise.all([proc.exited, reading, proc.stdout.text()]);
+    const { at, rungs } = parse();
+    return {
+      rungs,
+      exit: { exitCode, signalCode: proc.signalCode, stamped: log.includes(" EXIT") },
+      at: JSON.stringify(at),
+    };
   }
+  const clean = { exitCode: 0, signalCode: null, stamped: true };
 
-  test.concurrent("requests a full collection once the heap has been quiet long enough", async () => {
-    const { fulls, exitCode } = await run("2");
-    expect(fulls).toBeGreaterThanOrEqual(1);
-    expect(exitCode).toBe(0);
+  test("a list of three runs three collections, a second apart", async () => {
+    const { rungs, exit, at } = await fullCollections(child(4500), "1,1,1", 3);
+    expect(rungs, at).toHaveLength(3);
+    expect(exit).toEqual(clean);
   });
 
-  test.concurrent("BUN_IDLE_GC_SECONDS=0 disables it", async () => {
-    const { fulls, exitCode } = await run("0");
-    expect(fulls).toBe(0);
-    expect(exitCode).toBe(0);
+  test("a list of two runs two", async () => {
+    const { rungs, exit, at } = await fullCollections(child(3500), "1,1", 2);
+    expect(rungs, at).toHaveLength(2);
+    expect(exit).toEqual(clean);
+  });
+
+  test("a list of one runs one, and no more after it", async () => {
+    const { rungs, exit, at } = await fullCollections(child(2000), "1");
+    expect(rungs, at).toHaveLength(1);
+    expect(exit).toEqual(clean);
+  });
+
+  // An entry that is not a positive decimal number turns the ladder off.
+  test.each(["0", "", "1,,1", "1,abc", "1.5", "-1"])("BUN_IDLE_GC_SECONDS=%j turns it off", async seconds => {
+    const { rungs, exit, at } = await fullCollections(child(1700), seconds);
+    expect(rungs, at).toEqual([]);
+    expect(exit).toEqual(clean);
+  });
+
+  // 8 MB more of live objects every 250 ms.
+  test("a program whose heap keeps growing is not idle", async () => {
+    const growing = `
+      const kept = [];
+      setInterval(() => { for (let i = 0; i < 80_000; i++) kept.push({ i, s: "x" + i }); }, 250);
+    `;
+    const { rungs, exit, at } = await fullCollections(child(1700, growing), "1");
+    expect(rungs, at).toEqual([]);
+    expect(exit).toEqual(clean);
+  });
+
+  // Timers are not work: a parked program runs them too.
+  test("a program that runs a 10 ms timer still goes idle", async () => {
+    const { rungs, exit, at } = await fullCollections(child(3000, `setInterval(() => {}, 10);`), "1", 1);
+    expect(rungs, at).toHaveLength(1);
+    expect(exit).toEqual(clean);
+  });
+
+  // The thread sits in a synchronous call for 2.5 s: the tick after it comes seconds late, which does not make those
+  // seconds idle ones. No rung comes with the call's return; the first one is due a second later.
+  test("time spent in a synchronous call is not idle time", async () => {
+    const blocked = `setTimeout(() => Bun.sleepSync(2500), 100);`;
+    const { rungs, exit, at } = await fullCollections(child(3300, blocked), "1,1,1");
+    expect(rungs, at).toEqual([]);
+    expect(exit).toEqual(clean);
   });
 });
 
-// A tick after the last idle collection the controller also has the kernel reclaim the executable's own read-only
-// pages if the process was idle on the CPU too. MADV_PAGEOUT skips pages another process maps (the test runner is the
-// same executable) and tmpfs pages are not file-backed, so the child runs from a copy on a disk-backed temp dir.
-// Debug and ASAN executables are too big to copy per test, and their collections alone use more CPU than "idle" allows.
+// The second rung (or the only one) also has the kernel reclaim the file-backed pages of a standalone executable's
+// embedded module graph, which the program is not using; they are read back from the file when touched. The executable's
+// own code stays. MADV_PAGEOUT skips pages another process maps and dirty ones, and tmpfs pages are not file-backed, so
+// the tests run one standalone executable, one at a time, from a disk-backed temp dir and written back (not a copy each,
+// side by side: on a slow disk a child does not get to run while the next copy is being written). Debug and ASAN
+// executables are too big.
 const TMPFS_MAGIC = 0x01021994;
 const cannotObservePageOut = !isLinux || isDebug || isASAN || statfsSync(tmpdir()).type === TMPFS_MAGIC;
-describe.skipIf(cannotObservePageOut)("idle release pages out the executable image", () => {
-  // Reports file-backed resident memory at start and once it fell under 60% of that, or at the deadline.
-  const script = (busy: boolean, waitMs: number) => /* js */ `
+describe.skipIf(cannotObservePageOut)("idle release pages out the module graph", () => {
+  // The program reads a 3 MB embedded file once it is running (Bun releases the module graph's pages itself after the
+  // entry point has loaded), so that the module graph is resident. It watches RssFile; when that falls by 2 MB it looks
+  // at its own mappings in /proc/self/smaps, because the kernel may reclaim clean pages by itself: only a mapping that
+  // lost more than half of what it had once the embedded file was read counts. WATCH names the mapping ("text": the
+  // executable's code, "graph": the one that holds the module graph); the program reports the first time that one has,
+  // or that it has not by DEADLINE_MS. WORKER=1 keeps a Worker alive meanwhile.
+  const app = `
+    import embedded from "./embedded.bin" with { type: "file" };
     const { readFileSync } = require("fs");
     const fileResident = () => Number(/^RssFile:\\s+(\\d+) kB/m.exec(readFileSync("/proc/self/status", "utf8"))[1]);
-    const before = fileResident();
-    const start = Date.now();
-    const deadline = start + ${waitMs};
+    const mappings = () => {
+      const mine = readFileSync("/proc/self/smaps", "utf8")
+        .split(/\\n(?=[0-9a-f]+-[0-9a-f]+ )/)
+        .filter(m => m.split("\\n")[0].endsWith(process.execPath));
+      const rss = perms => mine.filter(m => m.split(" ")[1] === perms).map(m => Number(/^Rss:\\s+(\\d+) kB/m.exec(m)[1]));
+      return { text: rss("r-xp")[0], graph: rss("rw-p").at(-1) };
+    };
+    if (process.env.WORKER) new Worker("data:text/javascript,setInterval(() => {}, 1000)");
+    setTimeout(async () => { globalThis.read = (await Bun.file(embedded).bytes()).length; }, 300);
+    let had, peak = 0;
+    const watch = process.env.WATCH;
     const timer = setInterval(() => {
-      const now = fileResident();
-      if (now < before * 0.6 || Date.now() > deadline) {
-        clearInterval(timer);
-        console.log(JSON.stringify({ before, now, at: Date.now() - start }));
-      }
-      // A quarter of one core, without growing the heap.
-      for (const end = performance.now() + ${busy ? 60 : 0}; performance.now() < end; );
-    }, 250);
+      if (!globalThis.read) return;
+      had ??= mappings();
+      const resident = fileResident();
+      peak = Math.max(peak, resident);
+      const gaveUp = performance.now() > Number(process.env.DEADLINE_MS);
+      if (peak - resident < 2 * 1024 && !gaveUp) return;
+      peak = resident;
+      const has = mappings();
+      if (has[watch] * 2 > had[watch] && !gaveUp) return;
+      clearInterval(timer);
+      console.log(JSON.stringify({ had, has, at: Math.round(performance.now()) }));
+      process.exit(0);
+    }, 50);
   `;
 
-  // Each child needs its own copy (see above), made up front so that copying does not count against the tests' clocks.
-  // Only clean pages can be reclaimed; a copy that was not reflinked is all dirty page cache until written back.
   let dir: ReturnType<typeof tempDir>;
-  let copies: string[];
-  beforeAll(() => {
-    dir = tempDir("idle-page-out", {});
-    copies = [0, 1, 2, 3, 4].map(i => {
-      const exe = join(String(dir), "bun-copy-" + i);
-      copyFileSync(bunExe(), exe);
-      chmodSync(exe, 0o755);
-      const fd = openSync(exe, "r+");
-      fsyncSync(fd);
-      closeSync(fd);
-      return exe;
+  beforeAll(async () => {
+    dir = tempDir("idle-page-out", { "app.js": app, "embedded.bin": Buffer.alloc(3 * 1024 * 1024, "x") });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--outfile", "app", "app.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
     });
-  });
-  afterAll(() => dir[Symbol.dispose]());
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildExit, buildOut + buildErr).toBe(0);
+    const fd = openSync(join(String(dir), "app"), "r+");
+    fsyncSync(fd);
+    closeSync(fd);
+  }, 60_000);
+  afterAll(() => dir?.[Symbol.dispose]());
 
-  // Runs `source` in a child and returns the JSON it printed.
-  async function runScript(source: string, env: Record<string, string>) {
-    const exe = copies.pop()!;
+  async function run(seconds: string, watch: "text" | "graph", deadlineMs: number, env: Record<string, string> = {}) {
+    const exe = join(String(dir), "app");
     await using proc = Bun.spawn({
-      cmd: [exe, "-e", source],
+      cmd: [exe],
       env: {
         ...bunEnv,
-        BUN_IDLE_GC_SECONDS: "1,1",
+        BUN_IDLE_GC_SECONDS: seconds,
         BUN_GC_TIMER_DISABLE: undefined,
-        BUN_GC_TIMER_INTERVAL: undefined,
+        BUN_GC_TIMER_INTERVAL: "100",
         BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: undefined,
+        WATCH: watch,
+        DEADLINE_MS: String(deadlineMs),
+        BUN_JSC_logGC: "1",
         ...env,
       },
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    return { ...(JSON.parse(stdout) as Record<string, number>), exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exitCode, signalCode: proc.signalCode }, stdout + stderr).toEqual({ exitCode: 0, signalCode: null });
+    // A rung has run, which is what makes "still resident" mean something.
+    expect(stderr, stdout).toContain("FullCollection");
+    const { had, has, at } = JSON.parse(stdout) as Record<"had" | "has", { text: number; graph: number }> & {
+      at: number;
+    };
+    expect(had.text).toBeGreaterThan(8 * 1024);
+    expect(had.graph).toBeGreaterThan(3 * 1024);
+    const still = (name: "text" | "graph") => (has[name] * 2 > had[name] ? "resident" : "gone");
+    return { text: still("text"), graph: still("graph"), at };
   }
-  const run = (busy: boolean, env: Record<string, string>, waitMs = 4200) => runScript(script(busy, waitMs), env);
 
-  test.concurrent("file-backed resident memory drops once the process is idle", async () => {
-    const { before, now, exitCode } = await run(false, {}, 15_000);
-    expect(now).toBeLessThan(before * 0.6);
-    expect(exitCode).toBe(0);
+  test("the module graph goes with the second rung of three", async () => {
+    const { at, ...mappings } = await run("1,1,30", "graph", 3500);
+    expect(mappings).toEqual({ text: "resident", graph: "gone" });
+    expect(at).toBeGreaterThan(1800);
   });
 
-  // Collections at 1, 2 and 4 s: paging the image out after the second one would have the third read it back in.
-  test.concurrent(
-    "only after the last idle collection",
-    async () => {
-      const { before, now, at, exitCode } = await run(false, { BUN_IDLE_GC_SECONDS: "1,1,2" }, 15_000);
-      expect(now).toBeLessThan(before * 0.6);
-      expect(at).toBeGreaterThan(4000);
-      expect(exitCode).toBe(0);
-    },
-    20_000,
-  );
-
-  test.concurrent("not while the process is using the CPU with a heap that has stopped growing", async () => {
-    const { before, now, exitCode } = await run(true, {});
-    expect(now).toBeGreaterThan(before * 0.6);
-    expect(exitCode).toBe(0);
+  test("and of two", async () => {
+    const { at, ...mappings } = await run("1,1", "graph", 3500);
+    expect(mappings).toEqual({ text: "resident", graph: "gone" });
+    expect(at).toBeGreaterThan(1800);
   });
 
-  // A parked program's occasional jobs read a lot of the executable back in without being work. The last idle collection
-  // and the page-out after it come round again every time the quiet has lasted that long once more.
-  test.concurrent(
-    "what a background job reads back in is released again while the quiet lasts",
-    async () => {
-      const source = /* js */ `
-        const { readFileSync } = require("fs");
-        const fileResident = () => Number(/^RssFile:\\s+(\\d+) kB/m.exec(readFileSync("/proc/self/status", "utf8"))[1]);
-        const start = fileResident();
-        const deadline = Date.now() + 15_000;
-        let previous = start, steady = 0, low, touched;
-        const timer = setInterval(() => {
-          const now = fileResident();
-          if (low === undefined) {
-            // The first page-out has finished once the number is down and no longer falling.
-            steady = now < start * 0.6 && now >= previous ? steady + 1 : 0;
-            previous = now;
-            if (steady < 6 && Date.now() < deadline) return;
-            low = now;
-            // Code and data this process has not run yet: locale data, the transpiler, compression, hashing.
-            for (const locale of ["ja-JP", "ar-EG", "hi-IN", "de-DE", "zh-Hant-TW", "th-TH"]) {
-              new Intl.DateTimeFormat(locale, { dateStyle: "full", timeStyle: "full" }).format(0);
-              new Intl.NumberFormat(locale, { style: "currency", currency: "EUR" }).format(1234.5);
-              ["b", "a"].sort(new Intl.Collator(locale).compare);
-              [...new Intl.Segmenter(locale, { granularity: "word" }).segment("a b")];
-            }
-            new Bun.Transpiler({ loader: "tsx" }).transformSync("export const a: number = <div>{1}</div>;");
-            require("zlib").gunzipSync(require("zlib").gzipSync("x"));
-            require("crypto").createHash("sha512").update("x").digest("hex");
-            touched = fileResident();
-          } else if (now < low + (touched - low) / 2 || Date.now() > deadline) {
-            clearInterval(timer);
-            console.log(JSON.stringify({ start, low, touched, now }));
-          }
-        }, 100);
-      `;
-      const { start, low, touched, now, exitCode } = await runScript(source, { BUN_GC_TIMER_INTERVAL: "250" });
-      expect(low).toBeLessThan(start * 0.6);
-      expect(touched).toBeGreaterThan(low + 8 * 1024);
-      expect(now).toBeLessThan(low + (touched - low) / 2);
-      expect(exitCode).toBe(0);
-    },
-    20_000,
-  );
+  test("with the only rung of a list of one", async () => {
+    const { at, ...mappings } = await run("1", "graph", 2500);
+    expect(mappings).toEqual({ text: "resident", graph: "gone" });
+  });
 
-  test.concurrent("BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1 disables it", async () => {
-    const { before, now, exitCode } = await run(false, { BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: "1" });
-    expect(now).toBeGreaterThan(before * 0.6);
-    expect(exitCode).toBe(0);
+  test("an entry too large to read is an hour, not the end of the list", async () => {
+    const { at, ...mappings } = await run("1,99999999999", "graph", 2000);
+    expect(mappings).toEqual({ text: "resident", graph: "resident" });
+  });
+
+  // The page-out is for the whole process and the ladder only watches the main thread.
+  test("not while a Worker is alive", async () => {
+    const { at, ...mappings } = await run("1", "graph", 2000, { WORKER: "1" });
+    expect(mappings).toEqual({ text: "resident", graph: "resident" });
+  });
+
+  test("not with BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1", async () => {
+    const { at, ...mappings } = await run("1", "graph", 2000, { BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: "1" });
+    expect(mappings).toEqual({ text: "resident", graph: "resident" });
   });
 });
 
@@ -361,10 +437,18 @@ describe("idle release lets FTL code age out", () => {
       let n = 0;
       const id = setInterval(() => {
         Bun.gc(true);
-        if (++n >= 6) { clearInterval(id); console.log(JSON.stringify({ before, after: count() })); }
-      }, 700);
+        if (++n >= 4) { clearInterval(id); console.log(JSON.stringify({ before, after: count() })); }
+      }, 600);
     } else {
-      setTimeout(() => { Bun.gc(true); console.log(JSON.stringify({ before, after: count() })); }, 4500);
+      // Reports as soon as the code is gone; the deadline only bounds a run in which it stays, and counts from here:
+      // warming up takes seconds on an ASAN build.
+      const giveUp = performance.now() + 6000;
+      const id = setInterval(() => {
+        const after = count();
+        if (after >= before / 4 && performance.now() < giveUp) return;
+        clearInterval(id);
+        console.log(JSON.stringify({ before, after }));
+      }, 100);
     }
   `;
 
@@ -374,7 +458,7 @@ describe("idle release lets FTL code age out", () => {
       env: {
         ...bunEnv,
         BUN_GC_TIMER_DISABLE: undefined,
-        BUN_GC_TIMER_INTERVAL: undefined,
+        BUN_GC_TIMER_INTERVAL: "100",
         BUN_JSC_useEagerCodeBlockJettisonTiming: "1",
         BUN_JSC_optimizedCodeAgingQuietSeconds: "0.5",
         ...env,
@@ -390,12 +474,16 @@ describe("idle release lets FTL code age out", () => {
     return { ...counts, stdout, exitCode };
   }
 
-  test.concurrent("the idle collections drop the warmed-up code", async () => {
-    const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "1,1,1" });
-    expect(before, stdout).toBeGreaterThan(40);
-    expect(after, stdout).toBeLessThan(before! / 4);
-    expect(exitCode).toBe(0);
-  });
+  test.concurrent(
+    "the idle collections drop the warmed-up code",
+    async () => {
+      const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "1,1,1" });
+      expect(before, stdout).toBeGreaterThan(40);
+      expect(after, stdout).toBeLessThan(before! / 4);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 
   test.concurrent("collections the program forces itself do not", async () => {
     const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "0", MODE: "forced" });

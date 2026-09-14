@@ -26,6 +26,7 @@
 #include "AsyncSocket.h"
 
 extern "C" int bun_is_exiting();
+extern "C" void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
 
 namespace uWS {
 struct Loop {
@@ -83,8 +84,15 @@ private:
     }
 
     static Loop *create(void *hint) {
-        Loop *loop = ((Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData)))->init();
-        return loop;
+        Loop *loop = (Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData));
+        if (!loop) {
+            /* The per-thread loop is not recoverable; every caller of get()
+             * dereferences it. Only Bun.spawnSync's isolated loop (created
+             * through the Rust uws::Loop::create) surfaces this as an error. */
+            static const char msg[] = "failed to create the event loop (out of file descriptors?)";
+            Bun__panic(msg, sizeof(msg) - 1);
+        }
+        return loop->init();
     }
 
     /* What to do with loops created with existingNativeLoop? */

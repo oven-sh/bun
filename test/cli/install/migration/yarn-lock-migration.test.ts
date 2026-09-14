@@ -1640,3 +1640,155 @@ fsevents@^2.3.2:
     expect(bunLockContent).toContain("@esbuild/darwin-arm64");
   });
 });
+
+describe.concurrent("yarn.lock entries the migration cannot build a resolution for", () => {
+  // After migrating, bun fetches the manifest of every migrated registry package (for bin
+  // metadata), so the registry has to answer for "pinned". Nothing below downloads a tarball.
+  function manifestOnlyRegistry() {
+    return Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        const name = new URL(req.url).pathname.slice(1);
+        if (name !== "pinned") return new Response("not found", { status: 404 });
+        return Response.json({
+          name,
+          "dist-tags": { latest: "2.0.0" },
+          versions: { "2.0.0": { name, version: "2.0.0", dist: { tarball: `${server.url}pinned-2.0.0.tgz` } } },
+        });
+      },
+    });
+  }
+
+  const registryTarball = (name: string, version: string) =>
+    `https://registry.yarnpkg.com/${name}/-/${name}-${version}.tgz#0000000000000000000000000000000000000000`;
+
+  const header = "# yarn lockfile v1\n\n\n";
+  const pinnedEntry = (dependencies = "") =>
+    `pinned@^2.0.0:\n  version "2.0.0"\n  resolved "${registryTarball("pinned", "2.0.0")}"\n${dependencies}`;
+  const brokenEntry = `broken@^1.0.0:\n  version "not-a-version"\n  resolved "${registryTarball("broken", "1.0.0")}"\n`;
+  const brokenWarning = 'warn: skipped "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"';
+
+  async function run(cwd: string, registry: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A skipped entry leaves its dependents with the same unresolved edge as a spec that has no
+  // yarn.lock entry at all, which `bun install` reports instead of resolving. Before the entry was
+  // skipped, install crashed on the package's missing resolution (debug builds) or wrote a bun.lock
+  // that listed the dependency without a package for it.
+  test("bun install: a root dependency on a skipped entry is reported as unresolved", async () => {
+    using registry = manifestOnlyRegistry();
+    using dir = tempDir("yarn-migration-skipped-root-dep", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { broken: "^1.0.0", pinned: "^2.0.0" } }),
+      "yarn.lock": header + brokenEntry + "\n" + pinnedEntry(),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), registry.url.href, "install", "--lockfile-only");
+
+    expect(stderr).toContain(brokenWarning);
+    expect(stderr).toContain("error: broken@^1.0.0 failed to resolve");
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun install: a transitive dependency on a skipped entry is reported as unresolved", async () => {
+    using registry = manifestOnlyRegistry();
+    using dir = tempDir("yarn-migration-skipped-transitive-dep", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { pinned: "^2.0.0" } }),
+      "yarn.lock": header + brokenEntry + "\n" + pinnedEntry('  dependencies:\n    broken "^1.0.0"\n'),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), registry.url.href, "install", "--lockfile-only");
+
+    expect(stderr).toContain(brokenWarning);
+    expect(stderr).toContain("error: broken@^1.0.0 failed to resolve");
+    expect(exitCode).toBe(1);
+  });
+
+  const skippedEntries: [label: string, brokenRange: string, entry: string, warning: string][] = [
+    [
+      "version is not semver",
+      "^1.0.0",
+      brokenEntry,
+      'skipped "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
+    ],
+    [
+      "version is not semver and there is no resolved field",
+      "^1.0.0",
+      'broken@^1.0.0:\n  version "not-a-version"\n',
+      'skipped "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
+    ],
+    [
+      "there is no version field",
+      "^1.0.0",
+      `broken@^1.0.0:\n  resolved "${registryTarball("broken", "1.0.0")}"\n`,
+      'skipped "broken@^1.0.0" from yarn.lock: missing "version" field',
+    ],
+    [
+      "npm: alias without a resolved field",
+      "npm:actual@^1.0.0",
+      '"broken@npm:actual@^1.0.0":\n  version "1.0.0"\n',
+      'skipped "broken@npm:actual@^1.0.0" from yarn.lock: missing "resolved" field',
+    ],
+    [
+      "tarball URL spec without a resolved field",
+      "https://example.com/broken-1.0.0.tgz",
+      '"broken@https://example.com/broken-1.0.0.tgz":\n  version "1.0.0"\n',
+      'skipped "broken@https://example.com/broken-1.0.0.tgz" from yarn.lock: missing "resolved" field',
+    ],
+    [
+      "entry shared by several specs",
+      "^1.0.0",
+      `broken@^1.0.0, broken@^1.2.0:\n  version "not-a-version"\n  resolved "${registryTarball("broken", "1.0.0")}"\n`,
+      'skipped "broken@^1.0.0, broken@^1.2.0" from yarn.lock: invalid version "not-a-version"',
+    ],
+  ];
+
+  test.each(skippedEntries)(
+    "bun pm migrate warns and keeps the other entries when %s",
+    async (_, range, entry, warning) => {
+      using registry = manifestOnlyRegistry();
+      using dir = tempDir("yarn-migration-skipped-entry", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { broken: range, pinned: "^2.0.0" } }),
+        "yarn.lock": header + entry + "\n" + pinnedEntry(),
+      });
+
+      const { stderr, exitCode } = await run(String(dir), registry.url.href, "pm", "migrate", "-f");
+
+      expect(stderr).toContain(`warn: ${warning}`);
+      expect(stderr).toContain("migrated lockfile from yarn.lock");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await Bun.file(join(String(dir), "bun.lock")).text();
+      expect(bunLock).toContain('"pinned": ["pinned@2.0.0", "", {}, ""]');
+      expect(bunLock).not.toContain('"broken": [');
+    },
+  );
+
+  test("bun pm migrate keeps a version of a package whose other version is skipped", async () => {
+    using registry = manifestOnlyRegistry();
+    using dir = tempDir("yarn-migration-skipped-sibling-version", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { pinned: "^2.0.0" } }),
+      "yarn.lock":
+        header +
+        `pinned@^1.0.0:\n  version "not-a-version"\n  resolved "${registryTarball("pinned", "1.0.0")}"\n\n` +
+        pinnedEntry(),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), registry.url.href, "pm", "migrate", "-f");
+
+    expect(stderr).toContain('warn: skipped "pinned@^1.0.0" from yarn.lock: invalid version "not-a-version"');
+    expect(exitCode).toBe(0);
+
+    const bunLock = await Bun.file(join(String(dir), "bun.lock")).text();
+    expect(bunLock).toContain('"pinned": ["pinned@2.0.0", "", {}, ""]');
+  });
+});

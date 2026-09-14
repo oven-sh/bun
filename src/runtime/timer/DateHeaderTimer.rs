@@ -13,20 +13,15 @@
 //!
 //! Note that we only check for potential updates ot this timer once per event loop tick.
 
+use crate::jsc_hooks::timer_all_opt;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_uws::Loop;
 
-use crate::jsc_hooks::timer_all;
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop) {
-    if let Some(vm_ptr) = VirtualMachine::get_or_null() {
-        // SAFETY: loop_ is a valid uws Loop pointer passed from C++ and lives
-        // for the call duration.
-        let loop_ref = unsafe { &*loop_ };
-        // SAFETY: single JS thread; `timer_all()` returns the live per-thread
-        // `All` (non-null after init). `update_date_header_timer_if_necessary`
-        // takes the VM by raw pointer to avoid aliased-`&mut` (jsc/runtime crate cycle).
-        unsafe { (*timer_all()).update_date_header_timer_if_necessary(loop_ref, vm_ptr) };
+// HOST_EXPORT(Bun__internal_ensureDateHeaderTimerIsEnabled, c)
+pub fn ensure_date_header_timer_is_enabled(loop_: &bun_uws::Loop) {
+    if VirtualMachine::get_or_null().is_none() {
+        return;
+    }
+    if let Some(all) = timer_all_opt() {
+        all.update_date_header_timer_if_necessary(loop_, VirtualMachine::get());
     }
 }

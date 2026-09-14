@@ -158,41 +158,34 @@ pub(crate) fn runtime_state() -> *mut RuntimeState {
     RUNTIME_STATE.with(Cell::get)
 }
 
-/// Recover this thread's `timer::All` heap as a raw pointer.
+/// This thread's `timer::All`, or `None` before [`init_runtime_state`] has run
+/// (e.g. `bun_jsc` unit tests with no high tier, or `Bun__Timer__getNextID`
+/// racing init).
 ///
-/// Note: `bun_jsc::VirtualMachine.timer` is a `()` placeholder;
-/// the real `All` lives in [`RuntimeState::timer`] until that slot widens.
-/// Null only before [`init_runtime_state`] has run (e.g. `bun_jsc` unit tests
-/// with no high tier, or `Bun__Timer__getNextID` racing init).
-///
-/// Returns `*mut` (NOT `&mut`) so callers that are themselves fields of `All`
-/// (`DateHeaderTimer`, `EventLoopDelayMonitor`, `FakeTimers`) can dereference
-/// per-field under `// SAFETY:` without forming an aliased `&mut All` while
-/// `&mut self` is live (raw-ptr-per-field re-entry pattern, see `auto_tick`).
+/// Note: `bun_jsc::VirtualMachine.timer` is a `()` placeholder; the real `All`
+/// lives in [`RuntimeState::timer`] until that slot widens. `All` is
+/// `&self`-only (interior mutability), so the shared borrow is sound across
+/// the JS re-entry its own methods perform.
 #[inline]
-pub(crate) fn timer_all() -> *mut timer::All {
+pub(crate) fn timer_all_opt() -> Option<&'static timer::All> {
     let state = runtime_state();
     if state.is_null() {
-        return ptr::null_mut();
+        return None;
     }
     // SAFETY: `state` is the live boxed `RuntimeState` for this thread;
-    // `timer` is an embedded field at a stable address for the VM lifetime.
-    unsafe { ptr::addr_of_mut!((*state).timer) }
+    // `timer` is an embedded field at a stable address for the VM lifetime and
+    // is never borrowed `&mut`.
+    Some(unsafe { &*ptr::addr_of!((*state).timer) })
 }
 
-/// [`timer_all`] but `&'static mut` — only valid once `RuntimeState` is
-/// installed (true for every JS host-call entry point) and only for callers
-/// that are NOT themselves fields of `All` (`Subprocess`, `DevServer`,
-/// `cron`, sockets). Single JS thread + boxed-for-process-lifetime ⇒ the
-/// borrow is sound; callers must not hold it across a JS re-entry that could
-/// itself call this (every use is single-expression).
+/// [`timer_all_opt`] for callers that run only once `RuntimeState` is
+/// installed (every JS host-call entry point and event-loop tick).
 #[inline]
-pub(crate) fn timer_all_mut() -> &'static mut timer::All {
+pub(crate) fn timer_all() -> &'static timer::All {
     let state = runtime_state();
     debug_assert!(!state.is_null(), "RuntimeState not installed");
-    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-    // single JS thread so no concurrent `&mut`.
-    unsafe { &mut (*state).timer }
+    // SAFETY: see `timer_all_opt`; non-null once `init_runtime_state` has run.
+    unsafe { &*ptr::addr_of!((*state).timer) }
 }
 
 #[inline]
@@ -1003,16 +996,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
     let state = runtime_state();
     if !state.is_null() {
-        // SAFETY: `state` is the live per-thread `RuntimeState`; `loop_` is the
-        // live per-thread uws loop; `vm` per fn contract. The re-entrant
-        // `All::insert`/`update` inside `DateHeaderTimer::enable` touches only
-        // fields disjoint from `date_header_timer` (raw-ptr-per-field pattern,
-        // same as `Bun__internal_ensureDateHeaderTimerIsEnabled`).
-        unsafe {
-            (*state)
-                .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
-        };
+        // SAFETY: `loop_` is the live per-thread uws loop; `vm` per fn contract.
+        timer_all().update_date_header_timer_if_necessary(unsafe { &*loop_ }, unsafe { &*vm });
     }
     // SAFETY: `el` is the live per-thread event loop.
     unsafe { (*el).run_imminent_gc_timer() };
@@ -1063,31 +1048,17 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             // timer armed after the poll deadline is computed is not in that deadline.
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
-            // Note (§Forbidden aliased-&mut): `get_timeout` may fire a
-            // `WTFTimer` JS callback.
-            // A re-entrant `setTimeout`/`clearTimeout` reaches
-            // `timer::All::insert`/`remove` via `runtime_state()` and would
-            // mint a second `&mut timer` if we held `&mut (*state).timer`
-            // across the call. Pass the raw `*mut Self` instead;
-            // `timer::All::get_timeout` forms short-lived `&mut` only around
-            // heap ops that cannot re-enter JS, releasing the borrow before
-            // invoking `fire()`.
+            // `get_timeout` may fire a `WTFTimer`.
             // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
             // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
             // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;
-            // SAFETY: `state` is the live per-thread `RuntimeState`; the
-            // `timer` field address is stable for the VM lifetime.
-            let have_timeout = unsafe {
-                timer::All::get_timeout(
-                    &mut (*state).timer,
-                    &mut timespec,
-                    has_pending_immediate,
-                    quic_next_tick_us,
-                    vm.cast(),
-                    &mut now,
-                )
-            };
+            let have_timeout = timer_all().get_timeout(
+                &mut timespec,
+                has_pending_immediate,
+                quic_next_tick_us,
+                &mut now,
+            );
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
@@ -1100,19 +1071,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         }
     }
 
+    // SAFETY: per fn contract.
     #[cfg(unix)]
-    {
-        // Note (§Forbidden aliased-&mut): `drain_timers` fires user
-        // `setTimeout` callbacks which may re-enter `timer::All::insert`/
-        // `remove` via `runtime_state()`. Pass raw `*mut Self` so no
-        // long-lived `&mut (*state).timer` is held across `fire()`;
-        // `drain_timers` forms short-lived `&mut` only around heap pop/peek.
-        // SAFETY: `state` is the live per-thread `RuntimeState`; the `timer`
-        // field address is stable for the VM lifetime.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
-    }
-    #[cfg(not(unix))]
-    let _ = state;
+    timer_all().drain_timers(unsafe { &*vm });
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1163,11 +1124,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     let state = runtime_state();
     if !state.is_null() {
         // SAFETY: see the matching call in `auto_tick` above.
-        unsafe {
-            (*state)
-                .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
-        };
+        timer_all().update_date_header_timer_if_necessary(unsafe { &*loop_ }, unsafe { &*vm });
     }
 
     if state.is_null() {
@@ -1203,18 +1160,12 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
             // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;
-            // SAFETY: `state` is the live per-thread `RuntimeState`; see
-            // Note on `auto_tick` re: aliased-&mut across `fire()`.
-            let have_timeout = unsafe {
-                timer::All::get_timeout(
-                    &mut (*state).timer,
-                    &mut timespec,
-                    has_pending_immediate,
-                    quic_next_tick_us,
-                    vm.cast(),
-                    &mut now,
-                )
-            };
+            let have_timeout = timer_all().get_timeout(
+                &mut timespec,
+                has_pending_immediate,
+                quic_next_tick_us,
+                &mut now,
+            );
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
@@ -1227,14 +1178,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         }
     }
 
+    // SAFETY: per fn contract.
     #[cfg(unix)]
-    {
-        // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
-        // on `auto_tick` re: aliased-&mut across `fire()`.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
-    }
-    #[cfg(not(unix))]
-    let _ = state;
+    timer_all().drain_timers(unsafe { &*vm });
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1295,9 +1241,9 @@ unsafe fn timer_insert(
     // SAFETY: per fn contract.
     let state = unsafe { runtime_state_of(vm) };
     debug_assert!(!state.is_null(), "timer_insert before init_runtime_state");
-    // SAFETY: this leaf hook runs no JS, so a short-lived `&mut RuntimeState`
-    // does not alias anything. `Timer::All::insert` re-derefs `t` per-field.
-    unsafe { &mut (*state).timer }.insert(t);
+    // SAFETY: `state` is live (leaf hook, JS thread); `t` per fn contract is
+    // the slot of a live `TimerOwner`.
+    unsafe { (*state).timer.insert(timer::TimerRef::from_raw(t)) };
 }
 
 /// `vm.timer.remove(timer)` — counterpart to [`timer_insert`].
@@ -1311,8 +1257,8 @@ unsafe fn timer_remove(
     // SAFETY: per fn contract.
     let state = unsafe { runtime_state_of(vm) };
     debug_assert!(!state.is_null(), "timer_remove before init_runtime_state");
-    // SAFETY: see `timer_insert` — leaf hook, short-lived `&mut RuntimeState`.
-    unsafe { &mut (*state).timer }.remove(t);
+    // SAFETY: see `timer_insert`.
+    unsafe { (*state).timer.remove(timer::TimerRef::from_raw(t)) };
 }
 
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
@@ -1643,11 +1589,8 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     unsafe {
         crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
     }
-    // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
-    // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
-    unsafe {
-        crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
-    }
+    // SAFETY: `vm` per fn contract.
+    timer_all().cancel_all_timeout_objects(unsafe { &*vm });
 }
 
 /// `RuntimeHooks::close_timer_loop_handles_after_vm_destroyed`: teardown-only companion of
@@ -1657,12 +1600,7 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
 /// `runtime_state()` is installed; JS thread; the JSC VM is already destroyed.
 unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) {
     #[cfg(windows)]
-    {
-        let state = runtime_state();
-        debug_assert!(!state.is_null());
-        // SAFETY: live boxed per-thread RuntimeState (fn contract).
-        unsafe { (*state).timer.close_loop_handles_for_vm_teardown() };
-    }
+    timer_all().close_loop_handles_for_vm_teardown();
 }
 
 /// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].
@@ -1676,12 +1614,9 @@ unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> S
 
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
 unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
-    let all = timer_all();
-    if all.is_null() {
-        return;
+    if let Some(all) = timer_all_opt() {
+        all.disarm_all_for_vm_teardown();
     }
-    // SAFETY: live per-thread `All`; JS thread; teardown has forbidden script.
-    unsafe { crate::timer::All::disarm_all_for_vm_teardown(all) };
 }
 
 /// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS
@@ -1746,19 +1681,10 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
     // touch the outgoing signals.
     {
         let all = timer_all();
-        // SAFETY: `state` is non-null so `timer_all()` is non-null; single
-        // JS thread, no re-entry while we hold the field borrow.
-        if !all.is_null() && unsafe { (*all).fake_timers.is_active() } {
-            let global = vm.global();
-            // SAFETY: as above; only touches `fake_timers.active` and the
-            // `CURRENT_TIME` static.
-            unsafe { (*all).fake_timers.reset_for_isolation(global) };
+        if all.fake_timers.is_active() {
+            all.fake_timers.reset_for_isolation(vm.global());
         }
-        if !all.is_null() {
-            // SAFETY: as above; `disable` borrows only `event_loop_delay` and
-            // reaches the heap through `timer_all()` (disjoint-field access).
-            unsafe { (*all).event_loop_delay.disable() };
-        }
+        all.event_loop_delay.disable(all);
     }
     // Entries that stay registered across a test-isolation swap.
     let mut kept: Vec<ActiveHandle> = Vec::new();

@@ -537,29 +537,64 @@ pub fn host_fn_construct_this<R: IntoHostConstructReturn>(
 // (Phase 3 of `R-2-design.md` deletes them and drops the `_shared` suffix).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Prototype method (`sharedThis`): `fn(&self, &JSGlobalObject, &CallFrame) -> R`.
+/// How a `sharedThis` prototype method receives the wrapper's `m_ctx`: as a
+/// plain `&T`, or as a [`ThisPtr<T>`](bun_ptr::ThisPtr) when the method needs
+/// the allocation's root pointer (to take/release intrusive refs on itself or
+/// hand itself to a dispatch path that may). The generated thunk is generic
+/// over this, so the method's own signature picks.
+pub trait HostReceiver<'a, T: 'a>: Sized {
+    /// # Safety
+    /// `this` is the live, non-null `m_ctx` of a JS wrapper that stays rooted
+    /// for `'a`.
+    unsafe fn from_m_ctx(this: *mut T) -> Self;
+}
+impl<'a, T: 'a> HostReceiver<'a, T> for &'a T {
+    #[inline(always)]
+    unsafe fn from_m_ctx(this: *mut T) -> Self {
+        // SAFETY: trait contract.
+        unsafe { &*this }
+    }
+}
+impl<'a, T: 'a> HostReceiver<'a, T> for bun_ptr::ThisPtr<T> {
+    #[inline(always)]
+    unsafe fn from_m_ctx(this: *mut T) -> Self {
+        // SAFETY: trait contract.
+        unsafe { bun_ptr::ThisPtr::new(this) }
+    }
+}
+
+/// Prototype method (`sharedThis`) taking `&self` or `this: ThisPtr<Self>`.
+///
+/// # Safety
+/// `this` is the live `m_ctx` of the JS wrapper the call was dispatched on.
 #[track_caller]
 #[inline]
-pub fn host_fn_this_shared<T, R: IntoHostFnReturn>(
-    this: &T,
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-    f: impl FnOnce(&T, &JSGlobalObject, &CallFrame) -> R,
+pub unsafe fn host_fn_this_ptr<'a, T: 'a, Rcv: HostReceiver<'a, T>, R: IntoHostFnReturn>(
+    this: *mut T,
+    global: &'a JSGlobalObject,
+    callframe: &'a CallFrame,
+    f: impl FnOnce(Rcv, &'a JSGlobalObject, &'a CallFrame) -> R,
 ) -> JSValue {
+    // SAFETY: fn contract.
+    let this = unsafe { Rcv::from_m_ctx(this) };
     host_fn_result(global, || f(this, global, callframe))
 }
 
-/// Prototype method (`sharedThis`, passThis):
-/// `fn(&self, &JSGlobalObject, &CallFrame, JSValue) -> R`.
+/// [`host_fn_this_ptr`] with `passThis`.
+///
+/// # Safety
+/// As [`host_fn_this_ptr`].
 #[track_caller]
 #[inline]
-pub fn host_fn_this_value_shared<T, R: IntoHostFnReturn>(
-    this: &T,
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
+pub unsafe fn host_fn_this_value_ptr<'a, T: 'a, Rcv: HostReceiver<'a, T>, R: IntoHostFnReturn>(
+    this: *mut T,
+    global: &'a JSGlobalObject,
+    callframe: &'a CallFrame,
     js_this: JSValue,
-    f: impl FnOnce(&T, &JSGlobalObject, &CallFrame, JSValue) -> R,
+    f: impl FnOnce(Rcv, &'a JSGlobalObject, &'a CallFrame, JSValue) -> R,
 ) -> JSValue {
+    // SAFETY: fn contract.
+    let this = unsafe { Rcv::from_m_ctx(this) };
     host_fn_result(global, || f(this, global, callframe, js_this))
 }
 

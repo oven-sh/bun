@@ -452,8 +452,13 @@ impl SourceMapStore {
     }
 
     #[inline]
-    fn timer_all<'a>() -> &'a mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
+    fn timer_all() -> &'static crate::timer::All {
+        crate::jsc_hooks::timer_all()
+    }
+
+    #[inline]
+    fn sweep_timer_ref(&mut self) -> crate::timer::TimerRef {
+        crate::timer::TimerRef::from_mut(self, |s| &mut s.weak_ref_sweep_timer)
     }
 
     pub(crate) fn put_or_increment_ref_count(
@@ -535,7 +540,7 @@ impl SourceMapStore {
                 if self.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE
                     && self.weak_ref_sweep_timer.next.sec == first.expire
                 {
-                    Self::timer_all().remove(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer));
+                    Self::timer_all().remove(self.sweep_timer_ref());
                 }
             }
         }
@@ -550,7 +555,7 @@ impl SourceMapStore {
 
         if self.weak_ref_sweep_timer.state != EventLoopTimerState::ACTIVE {
             map_log!("arming weak ref sweep timer");
-            Self::timer_all().update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
+            Self::timer_all().update(self.sweep_timer_ref(), &expire);
         }
         map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }
@@ -644,7 +649,7 @@ impl SourceMapStore {
                 store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
                 store.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
                 Self::timer_all().update(
-                    core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
+                    store.sweep_timer_ref(),
                     &Timespec {
                         sec: item.expire + 1,
                         nsec: 0,

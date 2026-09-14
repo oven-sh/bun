@@ -90,10 +90,47 @@ async function runProgram(exe: string, cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
+type Result = { stdout: string; stderr: string; exitCode: number | null };
+
+/**
+ * The checks of a program that reports every value it checks as a line `<expression> => <value>` and ends with
+ * `<n> checks, <m> wrong`: the values it printed, keyed by expression (a repeated expression gets ` #2`, ` #3`, ...),
+ * must equal the `[key, value]` pairs of the JSON file at `valuesPath`.
+ */
+function expectValues(valuesPath: string, result: Result) {
+  const expected: [string, number][] = JSON.parse(readFileSync(valuesPath, "utf8"));
+  const seen = new Map<string, number>();
+  const actual: [string, number][] = [];
+  const rest: string[] = [];
+  for (const line of lines(result.stdout).split("\n")) {
+    const at = line.lastIndexOf(" => ");
+    if (at < 0) {
+      rest.push(line);
+      continue;
+    }
+    const expression = line.slice(0, at);
+    const count = (seen.get(expression) ?? 0) + 1;
+    seen.set(expression, count);
+    actual.push([count === 1 ? expression : `${expression} #${count}`, Number(line.slice(at + 4))]);
+  }
+  expect(actual, result.stderr).toEqual(expected);
+  expect(rest.slice(-2), result.stderr).toEqual([`${expected.length} checks, 0 wrong`, ""]);
+  expect(result.exitCode, result.stderr).toEqual(0);
+}
+
+/** What `<name>.expected` and `<name>.status` say: the lines printed, and the exit status (0 without the file). */
+function expectOutput(expectedPath: string, statusPath: string, result: Result) {
+  expect(lines(result.stdout).split("\n"), result.stderr).toEqual(
+    lines(readFileSync(expectedPath, "utf8")).split("\n"),
+  );
+  expect(result.exitCode, result.stderr).toEqual(existsSync(statusPath) ? Number(readFileSync(statusPath, "utf8")) : 0);
+}
+
 /**
  * Two tests per `fixtures/<area>/<name>.c`: the file is run as a program on the fly (`bun name.c`), and built
  * into a standalone executable (`bun build --compile name.c`) that is then run. Either way it must print what
- * `<name>.expected` holds and exit with the status in `<name>.status` (0 when there is no such file).
+ * `<name>.expected` holds and exit with the status in `<name>.status` (0 when there is no such file); or, when
+ * there is a `<name>.values.json` instead, report exactly the values that file lists (see `expectValues`).
  * A `<name>.ts` next to it is run (and built) instead when the C file is easier to check by calling into it.
  * A fixture whose `<name>.requires` names something this machine is not is reported as skipped.
  * `failing` names the fixtures the real backend gets wrong today, with the reason.
@@ -104,19 +141,17 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
   describe.skipIf(!supported)(area, () => {
     for (const name of names) {
       const expectedPath = join(dir, `${name}.expected`);
+      const valuesPath = join(dir, `${name}.values.json`);
       // A C file without an expectation is part of another fixture (a second translation unit, an include).
-      if (!existsSync(expectedPath)) continue;
+      if (!existsSync(expectedPath) && !existsSync(valuesPath)) continue;
       const applies = meets(requirementIn(join(dir, `${name}.requires`)));
       const declare = name in failing ? test.failing : test.concurrent;
       const title = name in failing ? `${name} (${failing[name]})` : name;
       const entry = existsSync(join(dir, `${name}.ts`)) ? `${name}.ts` : `${name}.c`;
-      const statusPath = join(dir, `${name}.status`);
-      const check = (result: { stdout: string; stderr: string; exitCode: number | null }) => {
-        expect(lines(result.stdout), result.stderr).toBe(lines(readFileSync(expectedPath, "utf8")));
-        expect(result.exitCode, result.stderr).toBe(
-          existsSync(statusPath) ? Number(readFileSync(statusPath, "utf8")) : 0,
-        );
-      };
+      const check = (result: Result) =>
+        existsSync(valuesPath)
+          ? expectValues(valuesPath, result)
+          : expectOutput(expectedPath, join(dir, `${name}.status`), result);
       declare.skipIf(!applies)(title, async () => check(await run(dir, [entry])));
       declare.skipIf(!applies)(`${title} (compiled)`, async () => {
         using out = tempDir(`bir-${name}`, {});
@@ -133,7 +168,7 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
 /**
  * One test per directory `fixtures/<area>/<name>/`: its C files are linked into one program with
  * `bun build --compile main.c <the others> --outfile …`, and the program must print what `expected` holds and exit
- * with the status in `status` (0 when there is no such file).
+ * with the status in `status` (0 when there is no such file); or report the values `values.json` lists.
  */
 export function runProjects(area: string, failing: Record<string, string> = {}) {
   const root = join(import.meta.dir, "fixtures", area);
@@ -153,10 +188,9 @@ export function runProjects(area: string, failing: Record<string, string> = {}) 
         const build = await run(dir, ["build", "--compile", "main.c", ...units, "--outfile", exe]);
         expect(build.stderr).not.toContain("error:");
         expect(build.exitCode, build.stderr).toBe(0);
-        const { stdout, stderr, exitCode } = await runProgram(exe, dir);
-        const statusPath = join(dir, "status");
-        expect(lines(stdout), stderr).toBe(lines(readFileSync(join(dir, "expected"), "utf8")));
-        expect(exitCode, stderr).toBe(existsSync(statusPath) ? Number(readFileSync(statusPath, "utf8")) : 0);
+        const result = await runProgram(exe, dir);
+        if (existsSync(join(dir, "values.json"))) expectValues(join(dir, "values.json"), result);
+        else expectOutput(join(dir, "expected"), join(dir, "status"), result);
       });
     }
   });

@@ -1,5 +1,5 @@
 // From chibicc (https://github.com/rui314/chibicc), test/common, MIT licence: see ../../chibicc/LICENSE and NOTICE.
-// Changed here: a failed check is counted instead of ending the program.
+// Changed here: every checked value is printed, and a failed check is counted instead of ending the program.
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,10 +7,8 @@ static int checks_made, checks_wrong;
 
 void assert(int expected, int actual, char *code) {
   checks_made++;
-  if (expected != actual) {
-    checks_wrong++;
-    printf("%s => %d expected but got %d\n", code, expected, actual);
-  }
+  printf("%s => %d\n", code, actual);
+  if (expected != actual) checks_wrong++;
 }
 int checks_done(void) {
   printf("%d checks, %d wrong\n", checks_made, checks_wrong);

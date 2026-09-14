@@ -1,0 +1,10 @@
+[
+["(int){1}", 1],
+["((int[]){0,1,2})[2]", 2],
+["((struct {char a; int b;}){'a', 3}).a", 97],
+["({ int x=3; (int){x}; })", 3],
+["tree->val", 1],
+["tree->lhs->val", 2],
+["tree->lhs->lhs->val", 3],
+["tree->lhs->rhs->val", 4]
+]

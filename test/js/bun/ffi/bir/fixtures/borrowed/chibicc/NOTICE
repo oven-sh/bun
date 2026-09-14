@@ -6,8 +6,11 @@ chibicc is under the MIT licence; its text is in LICENSE next to this file.
 What was changed, in every file:
 - `#include "test.h"` became the standard headers test.h stands for, and the helper translation unit every test
   is linked with upstream (test/common) is appended to the file, so that one file is one program.
-- ASSERT counts a failed check and goes on instead of ending the program, and the program ends by printing
-  `N checks, 0 wrong` where upstream prints `OK`.
+- ASSERT prints `<expression> => <value>` for every check, as upstream's does, but counts a failed check and goes on
+  instead of ending the program, and the program ends by printing `N checks, 0 wrong` where upstream prints `OK`.
+- Next to each file, `<name>.values.json` lists every ASSERT of the file as `[expression, expected value]`: the first
+  arguments upstream wrote, evaluated by GCC where they are not plain numbers. The test compares what the program
+  printed with that list, value by value.
 - test/function.c is kept as two translation units (../projects/chibicc-function/main.c and common.c), because it
   declares functions of common with other return types than they are defined with, on purpose. Its own
   declarations of `va_list`, `sprintf` and `vsprintf`, and its use of chibicc's `__va_area__`, became <stdarg.h>;

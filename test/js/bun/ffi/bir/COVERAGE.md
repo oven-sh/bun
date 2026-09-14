@@ -3,7 +3,8 @@
 One row per item of the C surface; each row names the fixture(s) under `fixtures/` that exercise it (`area/name`
 is `fixtures/area/name.c`, or the directory `fixtures/area/name/` for a project), or says what is missing.
 Every fixture is a self-checking program run two ways (`bun name.c`, and `bun build --compile` then the executable)
-against one `.expected`, which was produced by GCC and Clang agreeing with each other.
+against one `.expected`, which was produced by GCC and Clang agreeing with each other; the tests taken from other
+compilers also print every value they check, and the test compares them one by one with `<name>.values.json`.
 
 Status: **covered** (a fixture exists and passes), **not yet** (planned, no fixture), **not supported** (the
 compiler refuses it on purpose; the diagnostic is asserted by a case in `fixtures/diagnostics/cases.json`).

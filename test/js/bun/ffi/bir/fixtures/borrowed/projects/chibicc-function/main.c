@@ -1,7 +1,8 @@
-// From chibicc (https://github.com/rui314/chibicc), test/function.c, MIT licence: see LICENSE and NOTICE in this directory.
-// Changed here: test.h (as the standard headers it stands for) and the helper translation unit ("common") are
-// kept as a second translation unit (common.c), a failed ASSERT is
-// counted instead of ending the program, and the program ends by printing how many checks were made.
+// From chibicc (https://github.com/rui314/chibicc), test/function.c, MIT licence:
+// see ../../chibicc/LICENSE and NOTICE.
+// Changed here: test.h became the standard headers it stands for, and the helper translation unit ("common") is a
+// second translation unit (common.c), where ASSERT prints the value of every expression it checks and counts a
+// failed check instead of ending the program, which ends by printing how many checks were made.
 #define ASSERT(x, y) assert(x, y, #y)
 
 #include <stdarg.h>

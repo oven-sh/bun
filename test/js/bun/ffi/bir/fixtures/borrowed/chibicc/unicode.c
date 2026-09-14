@@ -1,7 +1,7 @@
 // From chibicc (https://github.com/rui314/chibicc), test/unicode.c, MIT licence: see LICENSE and NOTICE in this directory.
 // Changed here: test.h (as the standard headers it stands for) and the helper translation unit ("common") are
-// folded into the file, a failed ASSERT is
-// counted instead of ending the program, and the program ends by printing how many checks were made.
+// folded into the file; ASSERT prints the value of every expression it checks and counts a failed check instead of
+// ending the program, which ends by printing how many checks were made.
 #define ASSERT(x, y) assert(x, y, #y)
 
 static int checks_made, checks_wrong;
@@ -117,10 +117,8 @@ int main() {
 
 void assert(int expected, int actual, char *code) {
   checks_made++;
-  if (expected != actual) {
-    checks_wrong++;
-    printf("%s => %d expected but got %d\n", code, expected, actual);
-  }
+  printf("%s => %d\n", code, actual);
+  if (expected != actual) checks_wrong++;
 }
 static int checks_done(void) {
   printf("%d checks, %d wrong\n", checks_made, checks_wrong);

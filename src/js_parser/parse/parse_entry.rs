@@ -78,9 +78,7 @@ pub struct Options<'a> {
 
     pub tree_shaking: bool,
     pub bundle: bool,
-    /// When bundling, emit top-level `const`/`let` as `var` (the default). `false` keeps the
-    /// declared kind in scope-hoisted modules, so a use-before-init read across an import
-    /// cycle throws the same `ReferenceError` as the unbundled run.
+    /// With `bundle`, emit top-level `const`/`let` as `var` (default). `false` keeps the kind (TDZ stays).
     pub top_level_var: bool,
     pub code_splitting: bool,
     pub package_version: &'a [u8],

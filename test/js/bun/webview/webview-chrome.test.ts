@@ -1125,6 +1125,30 @@ it("chrome: console callback receives (type, ...args)", async () => {
   expect(calls[2]).toEqual(["error", "boom"]);
 });
 
+it("chrome: console callback unwraps args whose RemoteObject has no value field", async () => {
+  const calls: unknown[][] = [];
+  await using view = new Bun.WebView({
+    backend: chrome,
+    width: 200,
+    height: 200,
+    console: (...call: unknown[]) => calls.push(call),
+  });
+  await view.navigate(html("<body></body>"));
+  // CDP encodes null as {type:"object", subtype:"null"} and the numbers JSON
+  // can't carry as {type:"number", unserializableValue:"NaN"} with no value
+  // field. The callback still has to receive the primitive itself.
+  await view.evaluate("console.log(null, NaN, Infinity, -Infinity, -0)");
+  // bigint and symbol have no value field either; they arrive as their
+  // description string.
+  await view.evaluate("console.log(undefined, 1n, Symbol('q'))");
+
+  expect(calls).toEqual([
+    ["log", null, NaN, Infinity, -Infinity, -0],
+    ["log", undefined, "1n", "Symbol(q)"],
+  ]);
+  expect(Object.is(calls[0][5], -0)).toBe(true);
+});
+
 it("chrome: console: globalThis.console forwards to parent's stdout", async () => {
   // Subprocess so stdout capture is clean and the globalThis.console
   // identity check hits the subprocess's own console.
@@ -1139,6 +1163,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       });
       await view.navigate("data:text/html,<body></body>");
       await view.evaluate("console.log('from page', 1, 2)");
+      await view.evaluate("console.log(null, NaN, Infinity, -Infinity, -0)");
       await view.evaluate("console.error('page error')");
       view.close();
       `,
@@ -1149,10 +1174,9 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
   });
   const [stdout, stderr, exit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // ConsoleClient::logWithLevel — Bun's formatter applies. Log → stdout,
-  // Error → stderr. The args forward with Bun's util.inspect formatting.
-  expect(stdout).toContain("from page");
-  expect(stdout).toContain("1");
-  expect(stdout).toContain("2");
+  // Error → stderr. The args forward with Bun's util.inspect formatting, so
+  // the second line reads exactly as a local console.log of those values.
+  expect(stdout).toBe("from page 1 2\nnull NaN Infinity -Infinity -0\n");
   expect(stderr).toContain("page error");
   expect(exit).toBe(0);
 });

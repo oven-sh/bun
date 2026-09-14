@@ -1,3 +1,6 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -310,5 +313,133 @@ describe("css", () => {
       const betaOwn = beta![1].split(" ").find(name => name.startsWith("betaGamma_"))!;
       expect(css).toContain(`.${betaOwn}`);
     },
+  });
+});
+
+describe.concurrent("css parser warning locations", () => {
+  // The CSS parser tracks lines 0-based internally. Parse errors are converted
+  // to the logger's 1-based lines; warnings (and their notes) must be too.
+  test("warnings and notes report 1-based lines, like errors", async () => {
+    using dir = tempDir("css-module-warnings", {
+      "styles.module.css": [
+        /*  1 */ "@unknownrule foo;",
+        /*  2 */ ".base { color: red; }",
+        /*  3 */ ".outer {",
+        /*  4 */ "  .inner {",
+        /*  5 */ "    composes: base;",
+        /*  6 */ "  }",
+        /*  7 */ "}",
+        /*  8 */ ".a .b {",
+        /*  9 */ "  color: blue;",
+        /* 10 */ "  composes: base;",
+        /* 11 */ "}",
+        /* 12 */ ".c::custom-thing { color: green; }",
+        /* 13 */ "@other bar;",
+      ].join("\n"),
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "styles.module.css")],
+      throw: false,
+    });
+
+    const toPlain = (log: { message: string; position: Position | null }) => ({
+      message: log.message,
+      file: log.position!.file,
+      line: log.position!.line,
+      column: log.position!.column,
+    });
+    // The `.notes` getter is not declared in bun-types yet.
+    type WithNotes = BuildMessage & { notes: BuildMessage[] };
+    const warnings = result.logs
+      // The misplaced `composes` declarations also make printing the stylesheet fail.
+      .filter(log => log.level !== "error")
+      .map(log => ({ ...toPlain(log), notes: (log as WithNotes).notes.map(toPlain) }));
+
+    expect(warnings).toEqual([
+      {
+        message: "invalid @ rule encountered: '@unknownrule'",
+        file: "styles.module.css",
+        line: 1,
+        column: 13,
+        notes: [],
+      },
+      {
+        message: '"composes" is not allowed inside nested selectors',
+        file: "styles.module.css",
+        line: 4,
+        column: 3,
+        notes: [],
+      },
+      {
+        message: '"composes" only works inside single class selectors',
+        file: "styles.module.css",
+        line: 10,
+        column: 12,
+        notes: [
+          {
+            message: "The parent selector is not a single class selector because of the syntax here:",
+            file: "styles.module.css",
+            line: 8,
+            column: 1,
+          },
+        ],
+      },
+      {
+        message: "Invalid selector. Unsupported pseudo-class or pseudo-element 'custom-thing'",
+        file: "styles.module.css",
+        line: 12,
+        column: 4,
+        notes: [],
+      },
+      {
+        message: "invalid @ rule encountered: '@other'",
+        file: "styles.module.css",
+        line: 13,
+        column: 7,
+        notes: [],
+      },
+    ]);
+  });
+
+  test("warnings in a stylesheet that is not a CSS module report 1-based lines", async () => {
+    using dir = tempDir("css-warnings", {
+      "styles.css": "@unknownrule foo;\n.a { color: red; }\n\n@other bar;\n",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "styles.css")],
+      throw: false,
+    });
+
+    expect(result.logs.map(log => [log.message, log.position!.line, log.position!.column])).toEqual([
+      ["invalid @ rule encountered: '@unknownrule'", 1, 13],
+      ["invalid @ rule encountered: '@other'", 4, 7],
+    ]);
+    expect(result.success).toBe(true);
+  });
+
+  test("bun build prints warning locations as file:line:column", async () => {
+    using dir = tempDir("css-module-warnings-cli", {
+      "styles.module.css": "@unknownrule foo;\n.a { color: red; }\n@other bar;\n",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./styles.module.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "warn: invalid @ rule encountered: '@unknownrule'
+         at styles.module.css:1:13
+
+      warn: invalid @ rule encountered: '@other'
+         at styles.module.css:3:7"
+    `);
+    expect(exitCode).toBe(0);
   });
 });

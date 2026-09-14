@@ -7788,43 +7788,45 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
 // ───────────────────────────────────────────────────────────────────────────
 
 /// A `var` that starts an unbundled ES module. C++ (`initializeHoistedBindings`) matches the text at link time.
-struct HoistedModuleBinding {
-    name: HoistedModuleBindingName,
-    /// The exact text that `print_ast` prints.
-    declaration: &'static core::ffi::CStr,
-    /// The variable that `declaration` declares.
-    variable: &'static core::ffi::CStr,
-    /// The property of `import.meta` that `declaration` reads.
-    import_meta_property: &'static core::ffi::CStr,
-}
-
-enum HoistedModuleBindingName {
+#[derive(Copy, Clone)]
+enum HoistedModuleBinding {
     Require,
     Dirname,
     Filename,
 }
 
-const HOISTED_MODULE_BINDINGS: [HoistedModuleBinding; 3] = [
-    // Not `import.meta.require` at each call site: https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
-    HoistedModuleBinding {
-        name: HoistedModuleBindingName::Require,
-        declaration: c"var {require}=import.meta;",
-        variable: c"require",
-        import_meta_property: c"require",
-    },
-    HoistedModuleBinding {
-        name: HoistedModuleBindingName::Dirname,
-        declaration: c"var __dirname=import.meta.dir;",
-        variable: c"__dirname",
-        import_meta_property: c"dir",
-    },
-    HoistedModuleBinding {
-        name: HoistedModuleBindingName::Filename,
-        declaration: c"var __filename=import.meta.path;",
-        variable: c"__filename",
-        import_meta_property: c"path",
-    },
-];
+impl HoistedModuleBinding {
+    /// In the order `print_ast` prints them.
+    const ALL: [Self; 3] = [Self::Require, Self::Dirname, Self::Filename];
+
+    /// The exact text that `print_ast` prints.
+    const fn declaration(self) -> &'static core::ffi::CStr {
+        match self {
+            // Not `import.meta.require` at each call site: https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
+            Self::Require => c"var {require}=import.meta;",
+            Self::Dirname => c"var __dirname=import.meta.dir;",
+            Self::Filename => c"var __filename=import.meta.path;",
+        }
+    }
+
+    /// The variable that `declaration` declares.
+    const fn variable(self) -> &'static core::ffi::CStr {
+        match self {
+            Self::Require => c"require",
+            Self::Dirname => c"__dirname",
+            Self::Filename => c"__filename",
+        }
+    }
+
+    /// The property of `import.meta` that `declaration` reads.
+    const fn import_meta_property(self) -> &'static core::ffi::CStr {
+        match self {
+            Self::Require => c"require",
+            Self::Dirname => c"dir",
+            Self::Filename => c"path",
+        }
+    }
+}
 
 /// `HoistedModuleBinding` for C++ (`BunHoistedModuleBinding` in ImportMetaObject.cpp).
 #[repr(C)]
@@ -7834,16 +7836,16 @@ struct HoistedModuleBindingRaw {
     import_meta_property: *const core::ffi::c_char,
 }
 
-/// Entry `index` of `HOISTED_MODULE_BINDINGS`. Returns false after the last one.
+/// Entry `index` of `HoistedModuleBinding::ALL`. Returns false after the last one.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__hoistedModuleBinding(index: usize, out: &mut HoistedModuleBindingRaw) -> bool {
-    let Some(binding) = HOISTED_MODULE_BINDINGS.get(index) else {
+    let Some(binding) = HoistedModuleBinding::ALL.get(index) else {
         return false;
     };
     *out = HoistedModuleBindingRaw {
-        declaration: binding.declaration.as_ptr(),
-        variable: binding.variable.as_ptr(),
-        import_meta_property: binding.import_meta_property.as_ptr(),
+        declaration: binding.declaration().as_ptr(),
+        variable: binding.variable().as_ptr(),
+        import_meta_property: binding.import_meta_property().as_ptr(),
     };
     true
 }
@@ -7993,23 +7995,23 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     if !printer.options.bundling {
         let mut declared_any = false;
-        for binding in &HOISTED_MODULE_BINDINGS {
-            let declare = match binding.name {
+        for binding in HoistedModuleBinding::ALL {
+            let declare = match binding {
                 // `uses_require_ref` means `require` is unbound, so this cannot collide.
-                HoistedModuleBindingName::Require => {
+                HoistedModuleBinding::Require => {
                     tree.uses_require_ref
                         && tree.exports_kind == js_ast::ExportsKind::Esm
                         && printer.options.target == bun_ast::Target::Bun
                 }
-                HoistedModuleBindingName::Dirname => tree.uses_dirname_ref,
-                HoistedModuleBindingName::Filename => tree.uses_filename_ref,
+                HoistedModuleBinding::Dirname => tree.uses_dirname_ref,
+                HoistedModuleBinding::Filename => tree.uses_filename_ref,
             };
             if !declare {
                 continue;
             }
             // C++ matches the declarations at the start of the source.
             debug_assert!(declared_any || printer.writer.slice().is_empty());
-            printer.print(binding.declaration.to_bytes());
+            printer.print(binding.declaration().to_bytes());
             declared_any = true;
         }
 

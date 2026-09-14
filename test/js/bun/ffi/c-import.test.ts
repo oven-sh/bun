@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, symlinkSync, truncateSync } from "fs";
 import { bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
-import { cEnv as env, lines, supported } from "./bir/run-fixtures";
+import { cEnv as env, lines, repeated, supported } from "./bir/run-fixtures";
 
 // `import … from "./x.c"` compiles the file with Bun's own C compiler (bun_cc + JavaScriptCore's B3).
 // C's stdout is in text mode on Windows: "\r\n" there.
@@ -1422,7 +1422,7 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
     [
       "has printed more than its buffer holds",
       `int main(void) { for (int i = 0; i < 3000; i++) puts("line"); return 0; }`,
-      "line\n".repeat(3000) + "exit event 0 undefined\n",
+      repeated("line\n", 3000) + "exit event 0 undefined\n",
       0,
     ],
     // C's exit() is the C library's: it ends the process without JavaScript's listeners.
@@ -1938,7 +1938,7 @@ describe.skipIf(!supported)("bundling a .c file", () => {
       const api = await run(root, ["build.ts"]);
       expect(api.stderr).toBe("");
       const line = `error ${join(root, "sub", "h", "bad.h")} warn ${join(root, "warn.c")} error ${join(root, "helper.c")} error ${join(root, "javascript.ts")}\n`;
-      expect(api.stdout).toBe(line.repeat(3));
+      expect(api.stdout).toBe(line + line + line);
       // The command line says the same from any directory.
       for (const [cwd, entry] of [
         [root, "header.ts"],

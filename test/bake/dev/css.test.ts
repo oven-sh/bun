@@ -288,6 +288,54 @@ devTest("css import with an initial syntax error comes back in the stylesheet th
     await c.style("body").color.expect.toBe("red");
   },
 });
+devTest("css file that the page links and another linked stylesheet imports comes back in both", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css", "shared.css"],
+      body: `<h1>hello</h1>`,
+    }),
+    "styles.css": `
+      @import "./shared.css";
+      body {
+        color: red;
+      }
+    `,
+    "shared.css": `
+      .one {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    const stylesheets = async () => {
+      const html = await (await dev.fetch("/")).text();
+      const hrefs = [...html.matchAll(/<link rel="stylesheet"[^>]*href="([^"]+)"/g)].map(m => m[1]);
+      return Promise.all(hrefs.map(async href => (await dev.fetch(href)).text()));
+    };
+    expect((await stylesheets()).map(css => css.includes(".one"))).toEqual([true, true]);
+
+    await dev.write(
+      "shared.css",
+      `
+        .two {
+          color: red;
+          background-color
+        }
+      `,
+    );
+    // `shared.css` is a root of its own and a part of `styles.css`. The repair
+    // must bundle both.
+    await dev.write(
+      "shared.css",
+      `
+        .two {
+          color: red;
+        }
+      `,
+    );
+    expect((await stylesheets()).map(css => css.includes(".two"))).toEqual([true, true]);
+  },
+});
 devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({

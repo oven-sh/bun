@@ -41,6 +41,10 @@ impl ExternResolver {
     ) -> *mut c_void {
         // SAFETY: `name` is NUL-terminated with `name_len` bytes before the NUL.
         let name = unsafe { ZStr::from_raw(name.cast::<u8>(), name_len) };
+        #[cfg(not(windows))]
+        if let Some(address) = compiler_runtime::find(name.as_bytes()) {
+            return address;
+        }
         if let Some(address) = bun_sys::dlsym_impl(None, name) {
             return address;
         }
@@ -51,6 +55,63 @@ impl ExternResolver {
             return address;
         }
         glibc_static_stub(name.as_bytes()).unwrap_or(core::ptr::null_mut())
+    }
+}
+
+/// The 128-bit integer routines of a C compiler's runtime library, which compiled code calls for what
+/// the machine has no instruction for. A toolchain links them statically into each program, so whether
+/// this process happens to export its own copies depends on how it was linked; these are the ones
+/// compiled C gets. `__int128` is passed and returned by value here, in a register pair, as the
+/// System V and AAPCS64 conventions have it (Windows passes it by address: `windows_runtime`).
+#[cfg(not(windows))]
+mod compiler_runtime {
+    use core::ffi::c_void;
+
+    macro_rules! binary {
+        ($name:ident, $int:ty, $op:ident) => {
+            extern "C" fn $name(a: $int, b: $int) -> $int {
+                // Division by zero is undefined in C; it must not be a Rust panic through C frames.
+                a.$op(b).unwrap_or(0)
+            }
+        };
+    }
+    binary!(udivti3, u128, checked_div);
+    binary!(umodti3, u128, checked_rem);
+    binary!(divti3, i128, checked_div);
+    binary!(modti3, i128, checked_rem);
+
+    macro_rules! convert {
+        ($name:ident, $from:ty, $to:ty) => {
+            extern "C" fn $name(value: $from) -> $to {
+                value as $to
+            }
+        };
+    }
+    convert!(floattidf, i128, f64);
+    convert!(floatuntidf, u128, f64);
+    convert!(floattisf, i128, f32);
+    convert!(floatuntisf, u128, f32);
+    convert!(fixdfti, f64, i128);
+    convert!(fixunsdfti, f64, u128);
+    convert!(fixsfti, f32, i128);
+    convert!(fixunssfti, f32, u128);
+
+    pub(super) fn find(name: &[u8]) -> Option<*mut c_void> {
+        Some(match name {
+            b"__udivti3" => udivti3 as *mut c_void,
+            b"__umodti3" => umodti3 as *mut c_void,
+            b"__divti3" => divti3 as *mut c_void,
+            b"__modti3" => modti3 as *mut c_void,
+            b"__floattidf" => floattidf as *mut c_void,
+            b"__floatuntidf" => floatuntidf as *mut c_void,
+            b"__floattisf" => floattisf as *mut c_void,
+            b"__floatuntisf" => floatuntisf as *mut c_void,
+            b"__fixdfti" => fixdfti as *mut c_void,
+            b"__fixunsdfti" => fixunsdfti as *mut c_void,
+            b"__fixsfti" => fixsfti as *mut c_void,
+            b"__fixunssfti" => fixunssfti as *mut c_void,
+            _ => return None,
+        })
     }
 }
 

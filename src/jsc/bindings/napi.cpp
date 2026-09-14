@@ -103,7 +103,16 @@ using namespace Zig;
     /* Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...) */       \
     if (WebCore::clientData(_env->vm())->isStoppingOrStopped(_env->vm()))       \
         [[unlikely]]                                                            \
-        return napi_set_last_error(_env, _env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
+        return napi_set_last_error(_env, _env->cannotCallIntoJSStatus());
+
+// For napi_throw* in a finalizer that NapiEnv::cleanup() runs. Node runs no JS there, so nothing is ever pending
+// and this is the only way they fail. Bun runs the JS, so check this before any pending-exception check:
+// node-addon-api (NODE_API_SWALLOW_UNTHROWABLE_EXCEPTIONS) calls napi_fatal_error on any other result.
+#define NAPI_RETURN_IF_FINISHING_FINALIZERS(_env)                               \
+    do {                                                                        \
+        if ((_env)->isFinishingFinalizers()) [[unlikely]]                       \
+            return napi_set_last_error(_env, (_env)->cannotCallIntoJSStatus()); \
+    } while (0)
 
 // Only use this for functions that need their own throw or catch scope. Functions that call into
 // JS code that might throw should use NAPI_RETURN_IF_EXCEPTION.
@@ -1056,6 +1065,7 @@ static JSC::ErrorInstance* createErrorWithCode(JSC::VM& vm, JSC::JSGlobalObject*
 // used to implement napi_throw_*_error
 static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, const char* msg_utf8, JSC::ErrorType type)
 {
+    NAPI_RETURN_IF_FINISHING_FINALIZERS(env);
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
 
@@ -1407,11 +1417,9 @@ extern "C" napi_status napi_fatal_exception(napi_env env,
 
 extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
-    NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
-    if (env->isFinishingFinalizers()) {
-        return napi_set_last_error(env, env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
-    }
+    NAPI_RETURN_IF_FINISHING_FINALIZERS(env);
+    NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, error);
     env->scheduleException(toJS(error));
     NAPI_RETURN_SUCCESS(env);

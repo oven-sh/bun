@@ -1582,6 +1582,46 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(stderr).toBe("");
   });
 
+  // In a finalizer that runs at env teardown, every napi_throw* call fails with
+  // the status Node returns there for the version the module declares:
+  // napi_cannot_run_js (23) from 10 on, napi_pending_exception (10) below. It
+  // leaves nothing pending. With NODE_API_SWALLOW_UNTHROWABLE_EXCEPTIONS,
+  // node-addon-api passes any other result of napi_throw to napi_fatal_error.
+  // Node runs no JS in these finalizers and Bun does, so the fixture checks
+  // both before and after a JS call that throws.
+  describe.each([
+    [10, 23],
+    [8, 10],
+  ])("napi_throw* in a teardown finalizer (NAPI_VERSION=%d)", (version, status) => {
+    it.each(["the main thread", "a worker"])("fails like Node when %s exits", async thread => {
+      const setup = `
+        const addon = require(${JSON.stringify(
+          join(__dirname, `napi-app/build/Debug/test_teardown_finalizer_js_throw_v${version}.node`),
+        )});
+        globalThis.keep = addon.setup(() => { throw new Error("from js"); });
+      `;
+      const code =
+        thread === "a worker"
+          ? `new (require("worker_threads").Worker)(${JSON.stringify(setup)}, { eval: true });`
+          : setup;
+      const run = async (exe: string) => {
+        await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
+      };
+      const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+      expect(bun).toEqual(node);
+      const statuses = ["throw", "throw_error", "throw_type_error", "throw_range_error", "throw_syntax_error"]
+        .map(name => `${name}=${status}`)
+        .join(" ");
+      expect(bun).toEqual({
+        stdout: [`nothing pending: ${statuses}`, "call_function=failed", `after the call: ${statuses}`],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
     // This test ensures that napi_reference_unref can be called during GC
     // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion for regular modules.

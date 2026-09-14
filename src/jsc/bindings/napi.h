@@ -501,6 +501,12 @@ public:
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
 
+    // The status of a call that Node refuses because !can_call_into_js().
+    inline napi_status cannotCallIntoJSStatus() const
+    {
+        return m_napiModule.nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception;
+    }
+
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
     napi_extended_error_info m_lastNapiErrorInfo = {

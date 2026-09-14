@@ -330,5 +330,27 @@
                 "NAPI_VERSION=8",
             ],
         },
+        {
+            "target_name": "test_teardown_finalizer_js_throw_v10",
+            "sources": ["test_teardown_finalizer_js_throw.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NAPI_VERSION=10",
+            ],
+        },
+        {
+            "target_name": "test_teardown_finalizer_js_throw_v8",
+            "sources": ["test_teardown_finalizer_js_throw.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NAPI_VERSION=8",
+            ],
+        },
     ]
 }

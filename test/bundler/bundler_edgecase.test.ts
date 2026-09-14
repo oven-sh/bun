@@ -4361,8 +4361,69 @@ for (const backend of ["api", "cli"] as const) {
         },
       },
     });
-    // A module the linker wraps in an __esm closure (here: reached through import() without code
-    // splitting) hoists its declarations out of the closure as var. The option does not reach it.
+    // The binding the linker makes for `export default <expr>` follows the option too.
+    itBundled("edgecase/TopLevelVarOffExportDefaultExprIsConst", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import "./late";
+          import early from "./early";
+          console.log(early.name);
+        `,
+        "/early.ts": /* ts */ `
+          import late from "./late";
+          export default { name: "early", dep: late };
+        `,
+        "/late.ts": /* ts */ `
+          import early from "./early";
+          export const peek = () => early.name;
+          export default { name: "late" };
+        `,
+      },
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toMatch(/const late_default = /);
+        api.expectFile("/out.js").toMatch(/const early_default = /);
+      },
+      run: {
+        error: "ReferenceError: Cannot access 'late_default' before initialization.",
+        validate({ stderr }) {
+          expect(stderr).toContain("ReferenceError: Cannot access 'late_default' before initialization.");
+        },
+      },
+    });
+    // A CommonJS module keeps the declared kind inside its __commonJS wrapper. Nothing is hoisted.
+    itBundled("edgecase/TopLevelVarOffCommonJSWrapperKeepsKind", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import a from "./a.cjs";
+          console.log(a.helper(), a.n);
+        `,
+        "/a.cjs": /* js */ `
+          const b = require("./b.cjs");
+          const helper = () => "h" + b.v;
+          let n = 0;
+          n++;
+          module.exports = { helper, n };
+        `,
+        "/b.cjs": /* js */ `
+          exports.v = "v";
+        `,
+      },
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api
+          .expectFile("/out.js")
+          .toMatch(/__commonJS\(function\(exports, module\) \{\n\s*const b = require_b\(\);\n\s*const helper = /);
+        api.expectFile("/out.js").toContain("let n = 0;");
+      },
+      run: { stdout: "hv 1" },
+    });
+    // An ES module the linker wraps in an __esm closure (here: reached through import() without
+    // code splitting) hoists its declarations out of the closure as var. The option does not reach it.
     itBundled("edgecase/TopLevelVarOffWrappedModuleStillVar", {
       files: {
         ...tdzAcrossCycleFiles,

@@ -1442,9 +1442,9 @@ Default `true`. When a namespace object does have to be created, each property c
 
 Default `true`. The bundler emits top-level `const` and `let` declarations as `var`. A `var` has no temporal dead zone, so a module that reads another module's export before that module has run gets `undefined` instead of a `ReferenceError`. This happens in an import cycle where one side reads the other at module evaluation time.
 
-Set this to `false` to keep the declared kind. A module the bundler merges into the output scope then throws the same `ReferenceError: Cannot access 'x' before initialization` as the unbundled code.
+Set this to `false` to keep the declared kind. A module the bundler merges into the output scope then throws the same `ReferenceError: Cannot access 'x' before initialization` as the unbundled code. The binding the bundler creates for `export default <expr>` becomes a `const` as well. With `minify.syntax`, a `const` becomes `let`, which keeps the temporal dead zone.
 
-A module that the bundler wraps in a lazy closure is not affected. The bundler wraps a module that is `require()`d, a module that is `import()`ed without code splitting, and the modules those import. It hoists their declarations out of the closure as `var`, so a read before initialization still gets `undefined`.
+An ES module that the bundler wraps in a lazy `__esm` closure is not affected. The bundler wraps an ES module that is `require()`d, an ES module that is `import()`ed without code splitting, and the modules those import. It hoists their declarations out of the closure as `var`, so a read before initialization still gets `undefined`. A CommonJS module keeps the declared kind inside its `__commonJS` wrapper, as in Node.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1892,6 +1892,7 @@ interface BuildConfig {
   /**
    * Emit top-level const/let as var (default). Set to `false` to keep the
    * declared kind so a read before initialization throws a ReferenceError.
+   * An ES module wrapped in a lazy closure still hoists to var.
    */
   topLevelVar?: boolean;
 

@@ -3393,13 +3393,16 @@ declare module "bun" {
     /**
      * Emit top-level `const` and `let` declarations as `var` in the bundle.
      * When `false`, a module the bundler merges into the output scope keeps
-     * the declared kind, so a read before initialization (for example across
-     * an import cycle) throws a `ReferenceError` like the unbundled code.
+     * the declared kind, and the binding it creates for `export default <expr>`
+     * is a `const`. A read before initialization (for example across an
+     * import cycle) then throws a `ReferenceError` like the unbundled code.
+     * With `minify.syntax`, a `const` becomes `let`. The TDZ stays.
      *
-     * A module that the bundler wraps in a lazy closure still hoists its
-     * declarations as `var` and reads `undefined` before initialization. The
-     * bundler wraps a module that is `require()`d, a module that is
-     * `import()`ed without code splitting, and the modules those import.
+     * An ES module that the bundler wraps in a lazy `__esm` closure still
+     * hoists its declarations as `var` and reads `undefined` before
+     * initialization. The bundler wraps an ES module that is `require()`d, one
+     * that is `import()`ed without code splitting, and the modules those
+     * import. A CommonJS module keeps the declared kind inside its wrapper.
      *
      * @default true
      */

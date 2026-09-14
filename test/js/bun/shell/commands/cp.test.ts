@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { lstatSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,144 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// The builtin is the default only on Windows; on POSIX it is enabled by an env
+// var that is read once per process, so each of these runs cp in a child bun.
+describe.concurrent("bunshell cp -R of a source written as dir/. or dir/..", () => {
+  const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+  /** `d` is the directory being copied, `e` the existing (empty) target directory. */
+  function setup() {
+    return tempDir("shell-cp-dot-source", {
+      "d": { "f": "F\n", "sub": { "g": "G\n" } },
+      "e": {},
+      "other": "other\n",
+    });
+  }
+
+  /** Runs `command` through the shell in `cwd` and returns cp's exit code followed by its stderr. */
+  async function cp(cwd: string, command: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.$\`${command}\`.nothrow().quiet();
+         process.stdout.write(result.exitCode + "\\n" + result.stderr.toString());`,
+      ],
+      cwd,
+      env: builtinEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const copied = { stdout: "0\n", stderr: "", exitCode: 0 };
+  function failed(message: string) {
+    return { stdout: `1\ncp: ${message}\n`, stderr: "", exitCode: 0 };
+  }
+
+  /** Every path under `dir`, relative to it, with `/` separators. */
+  function tree(dir: string) {
+    return readdirSync(dir, { recursive: true })
+      .map(entry => String(entry).replaceAll("\\", "/"))
+      .sort();
+  }
+  const contentsOfD = ["f", "sub", "sub/g"];
+  const dItself = ["d", "d/f", "d/sub", "d/sub/g"];
+
+  test.each(["d/.", "d/./", "./d/.", "d/sub/.."])("cp -R %s e copies the contents of d into e", async operand => {
+    using dir = setup();
+    expect(await cp(String(dir), `cp -R ${operand} e`)).toEqual(copied);
+    expect(tree(join(String(dir), "e"))).toEqual(contentsOfD);
+    expect(readFileSync(join(String(dir), "e/sub/g"), "utf8")).toBe("G\n");
+  });
+
+  test("cp -R . ../e run inside d copies the contents of d into e", async () => {
+    using dir = setup();
+    expect(await cp(join(String(dir), "d"), "cp -R . ../e")).toEqual(copied);
+    expect(tree(join(String(dir), "e"))).toEqual(contentsOfD);
+  });
+
+  test("cp -R d/. other e applies to that operand only", async () => {
+    using dir = setup();
+    expect(await cp(String(dir), "cp -R d/. other e")).toEqual(copied);
+    expect(tree(join(String(dir), "e"))).toEqual(["f", "other", "sub", "sub/g"]);
+  });
+
+  test("cp -R d/. e keeps what e already holds", async () => {
+    using dir = setup();
+    writeFileSync(join(String(dir), "e/kept"), "kept\n");
+    expect(await cp(String(dir), "cp -R d/. e")).toEqual(copied);
+    expect(tree(join(String(dir), "e"))).toEqual(["f", "kept", "sub", "sub/g"]);
+  });
+
+  test.each(["d", "d/", "./d"])("cp -R %s e copies d itself into e", async operand => {
+    using dir = setup();
+    expect(await cp(String(dir), `cp -R ${operand} e`)).toEqual(copied);
+    expect(tree(join(String(dir), "e"))).toEqual(dItself);
+  });
+
+  test("cp -R d/. new creates new holding the contents of d", async () => {
+    using dir = setup();
+    expect(await cp(String(dir), "cp -R d/. new")).toEqual(copied);
+    expect(tree(join(String(dir), "new"))).toEqual(contentsOfD);
+  });
+
+  test("cp d/. e without -R is refused", async () => {
+    using dir = setup();
+    expect(await cp(String(dir), "cp d/. e")).toEqual(failed("d/. is a directory (not copied)"));
+    expect(tree(join(String(dir), "e"))).toEqual([]);
+  });
+
+  test.each(["cp -R other/. e", "cp other/. e"])("%s fails because other is a file", async command => {
+    using dir = setup();
+    expect(await cp(String(dir), command)).toEqual(failed("Not a directory: other/."));
+    expect(tree(join(String(dir), "e"))).toEqual([]);
+  });
+
+  // Creating symlinks needs extra privileges on Windows.
+  describe.concurrent.skipIf(isWindows)("through a symlink", () => {
+    /** Adds `dirlink -> d`, `filelink -> other` and `dangling -> nowhere` to the fixture. */
+    function setupWithLinks() {
+      const dir = setup();
+      symlinkSync("d", join(String(dir), "dirlink"));
+      symlinkSync("other", join(String(dir), "filelink"));
+      symlinkSync("nowhere", join(String(dir), "dangling"));
+      return dir;
+    }
+
+    test("cp -R dirlink/. e copies the contents of the directory the link points to", async () => {
+      using dir = setupWithLinks();
+      expect(await cp(String(dir), "cp -R dirlink/. e")).toEqual(copied);
+      expect(tree(join(String(dir), "e"))).toEqual(contentsOfD);
+    });
+
+    test("cp -R dirlink e still copies the link itself", async () => {
+      using dir = setupWithLinks();
+      expect(await cp(String(dir), "cp -R dirlink e")).toEqual(copied);
+      expect(readdirSync(join(String(dir), "e"))).toEqual(["dirlink"]);
+      expect(lstatSync(join(String(dir), "e/dirlink")).isSymbolicLink()).toBeTrue();
+    });
+
+    test("cp dirlink/. e without -R is refused", async () => {
+      using dir = setupWithLinks();
+      expect(await cp(String(dir), "cp dirlink/. e")).toEqual(failed("dirlink/. is a directory (not copied)"));
+      expect(tree(join(String(dir), "e"))).toEqual([]);
+    });
+
+    test("cp -R filelink/. e fails because the link points to a file", async () => {
+      using dir = setupWithLinks();
+      expect(await cp(String(dir), "cp -R filelink/. e")).toEqual(failed("Not a directory: filelink/."));
+      expect(tree(join(String(dir), "e"))).toEqual([]);
+    });
+
+    test("cp -R dangling/. e fails because the link points nowhere", async () => {
+      using dir = setupWithLinks();
+      expect(await cp(String(dir), "cp -R dangling/. e")).toEqual(failed("No such file or directory: dangling/."));
+      expect(tree(join(String(dir), "e"))).toEqual([]);
+    });
   });
 });
 

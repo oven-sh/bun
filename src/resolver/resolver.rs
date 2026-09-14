@@ -709,15 +709,8 @@ impl<'a> Resolver<'a> {
         unsafe { core::ptr::addr_of_mut!((*self.fs).fs) }
     }
 
-    /// Whether the cache keeps an open fd for `path` (a directory, or a file
-    /// inside one).
-    ///
-    /// With a watcher installed, `store_fd` exists so the watcher can adopt
-    /// the directory fds. It never watches anything under `node_modules`
-    /// (`Watcher::on_maybe_watch_directory`), and the cache is keyed by path
-    /// string, so with the isolated linker every dependent that reaches a
-    /// shared package through its own `node_modules/.bun/<dep>/node_modules/`
-    /// symlink would hold one more fd on the same real directory.
+    /// `store_fd` keeps fds for the watcher to adopt, and the watcher never
+    /// watches anything under `node_modules`.
     #[inline]
     pub(crate) fn should_store_fd(&self, path: &[u8]) -> bool {
         self.store_fd && !(self.watcher.is_some() && strings::contains(path, b"node_modules"))
@@ -4389,10 +4382,7 @@ impl<'a> Resolver<'a> {
         let open_dir_count = core::cell::Cell::new(0usize);
 
         // When this function halts, any item not processed means it's not found.
-        // Every fd opened in this walk is closed on exit unless a `DirEntry`
-        // took it (the loop pops `open_dir_count` when one does).
-        // NOTE: capture only `open_dir_count` by-Cell so the guard doesn't pin
-        // `&mut self` across the loop body.
+        // `open_dirs` holds the fds opened in this walk that no `DirEntry` took.
         scopeguard::defer! {
             let n = open_dir_count.get();
             let open_dirs = &bufs!(open_dirs)[0..n];
@@ -4671,12 +4661,11 @@ impl<'a> Resolver<'a> {
                 new_entry.fd = if !self.store_fd || !open_dir.is_valid() {
                     FD::INVALID
                 } else if !opened_here {
-                    // An in-place refresh: the cache already owns this fd.
+                    // the cache already owns this fd
                     open_dir
                 } else if self.should_store_fd(dir_path) && !self.fs_ref().fs.need_to_close_files()
                 {
-                    // The cache takes the fd, so the exit guard must not close
-                    // it. It is the last one pushed to `open_dirs`.
+                    // pop the fd pushed above: the cache takes it
                     open_dir_count.set(open_dir_count.get() - 1);
                     open_dir
                 } else {

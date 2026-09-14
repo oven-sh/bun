@@ -257,7 +257,7 @@ fn evaluate_phi(phi: &Phi, constants: &Constants) -> Option<Constant> {
                     Constant::LoadGlobal { binding: b, .. },
                 ) => {
                     // different global values, can't constant propagate
-                    if a.name() != b.name() {
+                    if !a.loads_same_value(b) {
                         return None;
                     }
                 }

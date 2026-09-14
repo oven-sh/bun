@@ -1,4 +1,4 @@
-import { expect, jest, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import "harness";
 import crypto from "node:crypto";
 
@@ -72,16 +72,14 @@ test("crypto.hkdf only accepts a secret KeyObject as ikm", () => {
 
 // Node.js documents `keylen` as "Must be greater than 0". The argument validation accepts 0 and
 // the derivation step then fails, so hkdfSync() throws and hkdf() reports the error to the callback.
-const zeroLengthIkm = {
-  "string": () => "key",
-  "empty string": () => "",
-  "Buffer": () => Buffer.from("key"),
-  "ArrayBuffer": () => new Uint8Array([1, 2, 3]).buffer,
-  "secret KeyObject": () => crypto.createSecretKey(Buffer.from("key")),
-};
-
-for (const [name, ikm] of Object.entries(zeroLengthIkm)) {
-  test(`crypto.hkdfSync throws when length is 0 (${name} ikm)`, () => {
+describe.each([
+  ["string", () => "key"],
+  ["empty string", () => ""],
+  ["Buffer", () => Buffer.from("key")],
+  ["ArrayBuffer", () => new Uint8Array([1, 2, 3]).buffer],
+  ["secret KeyObject", () => crypto.createSecretKey(Buffer.from("key"))],
+] as const)("length 0 with %s ikm", (_name, ikm) => {
+  test("crypto.hkdfSync throws", () => {
     for (const [salt, info] of [
       ["", ""],
       ["salt", "info"],
@@ -101,7 +99,7 @@ for (const [name, ikm] of Object.entries(zeroLengthIkm)) {
     }
   });
 
-  test(`crypto.hkdf passes an error to the callback when length is 0 (${name} ikm)`, async () => {
+  test("crypto.hkdf passes an error to the callback", async () => {
     const { promise, resolve } = Promise.withResolvers<{ args: unknown[] }>();
     // Node.js does not throw here: the failure comes from the derivation, not from validation.
     const returned = crypto.hkdf("sha256", ikm(), "salt", "info", 0, (...args) => resolve({ args }));
@@ -117,7 +115,7 @@ for (const [name, ikm] of Object.entries(zeroLengthIkm)) {
       code: undefined,
     });
   });
-}
+});
 
 test("crypto.hkdfSync and crypto.hkdf still derive a key when length is 1", async () => {
   // The first byte of the 32-byte output. Node.js v26.3.0 returns the same value.

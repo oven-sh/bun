@@ -4146,9 +4146,6 @@ pub enum ViewTransitionPartName {
     /// <custom-ident>
     Name(CustomIdent),
     /// .<custom-ident>
-    ///
-    /// A class is a local identifier in CSS modules, so it is hashed and
-    /// exported like a plain `.class` selector.
     Class(<impl_::Selectors as SelectorImpl>::LocalIdentifier),
 }
 

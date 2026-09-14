@@ -1,5 +1,5 @@
 // Run by heap.test.ts: the transpiler parses into an arena that is freed whole
-// (mi_heap_destroy) when the call returns, which the allocator's free hook does not see.
+// (mi_heap_destroy) when the call returns, without a free of each block.
 import { decode } from "./pprof-decode";
 
 let source = "";

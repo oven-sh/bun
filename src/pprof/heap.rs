@@ -16,18 +16,9 @@ use crate::encode;
 /// What Go (`runtime.MemProfileRate`), tcmalloc and V8 (`--heap-prof-interval`) use.
 pub const DEFAULT_SAMPLE_INTERVAL: usize = 512 * 1024;
 
-/// Whether the pinned mimalloc has oven-sh/mimalloc `claude/profile-followups`. Until then:
-/// `on_heap_destroy` stands in for `mi_heap_destroy` reporting frees, the interval is fixed
-/// (a raised rate inflates `bytes_since_last_sample`), and intervals below 128 KiB misattribute
-/// small allocations by 2x and more. Then: `true`, delete what it turns off, tests and
-/// `bun.d.ts` spell 131072.
-const MIMALLOC_HAS_PROFILE_FOLLOWUPS: bool = false;
-
-pub const MIN_SAMPLE_INTERVAL: usize = if MIMALLOC_HAS_PROFILE_FOLLOWUPS {
-    64 * 1024
-} else {
-    128 * 1024
-};
+/// Below this, mimalloc's coarse countdown (it counts the blocks of a page when the page is
+/// refilled) misattributes small allocations.
+pub const MIN_SAMPLE_INTERVAL: usize = 64 * 1024;
 
 /// Frames read from the frame-pointer chain of one sample.
 const MAX_CHAIN: usize = 128;
@@ -268,13 +259,20 @@ impl Strings {
     }
 }
 
+const _: () = assert!(
+    core::mem::align_of::<SampleData>() <= core::mem::align_of::<*mut c_void>()
+        && core::mem::size_of::<SampleData>() <= 1024
+);
+
 /// What [`on_alloc`] leaves in the sampled block for [`on_free`].
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct SampleData {
     /// 0: not recorded (no session, no memory, re-entered).
     generation: u32,
-    live: u32,
+    bucket: u32,
+    bytes: u64,
+    objects: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -332,17 +330,6 @@ impl JsLocation {
     }
 }
 
-/// A sampled block that has not been freed.
-#[derive(Clone, Copy)]
-struct Live {
-    /// When free: the next free entry of `Session::live`.
-    bucket_or_next: u32,
-    in_use: bool,
-    heap: usize,
-    bytes: u64,
-    objects: u64,
-}
-
 pub(crate) struct Session {
     generation: u32,
     pub(crate) sample_interval: usize,
@@ -354,8 +341,6 @@ pub(crate) struct Session {
     pub(crate) strings: Strings,
     pub(crate) js_locations: MetaVec<JsLocation>,
     js_index: Index,
-    live: MetaVec<Live>,
-    free_live: u32,
     pub(crate) samples: u64,
     pub(crate) dropped: u64,
 }
@@ -374,8 +359,6 @@ impl Session {
             strings: Strings::new(),
             js_locations: Vec::new_in(Meta),
             js_index: Index::new(),
-            live: Vec::new_in(Meta),
-            free_live: EMPTY_SLOT,
             samples: 0,
             dropped: 0,
         }
@@ -481,38 +464,8 @@ impl Session {
         }
     }
 
-    fn add_live(&mut self, live: Live) -> Option<u32> {
-        if self.free_live != EMPTY_SLOT {
-            let index = self.free_live;
-            self.free_live = self.live[index as usize].bucket_or_next;
-            self.live[index as usize] = live;
-            return Some(index);
-        }
-        let index = u32::try_from(self.live.len()).ok()?;
-        try_push(&mut self.live, live).then_some(index)
-    }
-
-    fn release_live(&mut self, index: u32) {
-        let Some(live) = self.live.get_mut(index as usize) else {
-            return;
-        };
-        if !live.in_use {
-            return;
-        }
-        if let Some(b) = self.buckets.get_mut(live.bucket_or_next as usize) {
-            b.free_bytes += live.bytes;
-            b.free_objects += live.objects;
-        }
-        live.in_use = false;
-        live.bucket_or_next = self.free_live;
-        self.free_live = index;
-    }
-
     /// Exponentially distributed, so a periodic pattern is not always sampled at the same point.
     fn next_interval(&mut self) -> usize {
-        if !MIMALLOC_HAS_PROFILE_FOLLOWUPS {
-            return self.sample_interval;
-        }
         // xorshift64*
         self.rng ^= self.rng >> 12;
         self.rng ^= self.rng << 25;
@@ -793,7 +746,7 @@ unsafe impl Sync for ProfilerCell {}
 static PROFILER: ProfilerCell = ProfilerCell(UnsafeCell::new(mi_profiler_t {
     reserved: core::ptr::null_mut(),
     sample_data_size: core::mem::size_of::<SampleData>(),
-    // 0: a thread's first allocation is a sample, and `on_alloc` returns the session's interval.
+    // 0: a thread's first allocation is a sample, and `on_alloc` returns an interval drawn around the session's.
     initial_sample_rate: 0,
     on_alloc: Some(on_alloc),
     on_free: Some(on_free),
@@ -836,7 +789,6 @@ pub fn start(sample_interval: usize) -> Result<(), Error> {
         return Err(Error::OutOfMemory);
     }
     register_fork_handler();
-    bun_alloc::mimalloc_arena::heap_destroy_hook::register(on_heap_destroy);
     {
         let Some(mut guard) = SHARED.lock() else {
             return Err(Error::AlreadyRunning);
@@ -850,14 +802,10 @@ pub fn start(sample_interval: usize) -> Result<(), Error> {
             .max(1);
         *guard.slot() = Some(Session::new(generation, sample_interval));
     }
-    if !MIMALLOC_HAS_PROFILE_FOLLOWUPS {
-        bun_alloc::mimalloc_arena::heap_destroy_hook::set_enabled(true);
-    }
     // SAFETY: `PROFILER` is a static; mimalloc keeps the pointer for the life of the process.
     unsafe {
         if !ATTACHED.swap(true, Ordering::AcqRel) && !mimalloc::mi_profile(PROFILER.0.get()) {
             ATTACHED.store(false, Ordering::Release);
-            bun_alloc::mimalloc_arena::heap_destroy_hook::set_enabled(false);
             if let Some(mut guard) = SHARED.lock() {
                 *guard.slot() = None;
             }
@@ -874,7 +822,6 @@ pub fn stop() -> Result<Vec<u8>, Error> {
     if !RUNNING.swap(false, Ordering::AcqRel) {
         return Err(Error::NotRunning);
     }
-    bun_alloc::mimalloc_arena::heap_destroy_hook::set_enabled(false);
     // SAFETY: see `start`.
     unsafe { mimalloc::mi_profiler_stop(PROFILER.0.get()) };
     // A hook already past mimalloc's enabled check waits for the lock, then finds no session.
@@ -920,19 +867,16 @@ unsafe extern "C" fn on_alloc(
     requested_size: usize,
     bytes_sample_rate: usize,
     bytes_since_last_sample: u64,
-    heap: *const mimalloc::Heap,
+    _heap: *const mimalloc::Heap,
 ) -> usize {
     let sample = sample_data(data);
     let mut recorded = SampleData {
         generation: 0,
-        live: 0,
+        bucket: 0,
+        bytes: 0,
+        objects: 0,
     };
-    let next = record_allocation(
-        requested_size,
-        bytes_since_last_sample,
-        heap as usize,
-        &mut recorded,
-    );
+    let next = record_allocation(requested_size, bytes_since_last_sample, &mut recorded);
     if !sample.is_null() {
         // SAFETY: see `sample_data`.
         unsafe { sample.write(recorded) };
@@ -945,7 +889,6 @@ unsafe extern "C" fn on_alloc(
 fn record_allocation(
     requested_size: usize,
     bytes_since_last_sample: u64,
-    heap: usize,
     recorded: &mut SampleData,
 ) -> Option<usize> {
     if SHARED.owner.load(Ordering::Relaxed) == bun_threading::current_thread_id() {
@@ -1030,26 +973,16 @@ fn record_allocation(
 
     let thread = session.strings.intern(thread_name);
     let objects = (bytes_since_last_sample / (requested_size.max(1) as u64)).max(1);
-    let recorded_live = session
-        .bucket_for(&stack[..depth], thread, js.worker)
-        .and_then(|bucket| {
-            session.add_live(Live {
-                bucket_or_next: bucket,
-                in_use: true,
-                heap,
-                bytes: bytes_since_last_sample,
-                objects,
-            })
-        });
-    match recorded_live {
-        Some(live) => {
-            let bucket = session.live[live as usize].bucket_or_next;
+    match session.bucket_for(&stack[..depth], thread, js.worker) {
+        Some(bucket) => {
             let b = &mut session.buckets[bucket as usize];
             b.alloc_bytes += bytes_since_last_sample;
             b.alloc_objects += objects;
             *recorded = SampleData {
                 generation: session.generation,
-                live,
+                bucket,
+                bytes: bytes_since_last_sample,
+                objects,
             };
         }
         None => session.dropped += 1,
@@ -1078,24 +1011,12 @@ unsafe extern "C" fn on_free(
     let Some(session) = guard.session() else {
         return;
     };
-    if sample.generation == session.generation {
-        session.release_live(sample.live);
+    if sample.generation != session.generation {
+        return;
     }
-}
-
-/// `mi_heap_destroy(heap)` is about to free every block of `heap` without calling `on_free`.
-fn on_heap_destroy(heap: *const mimalloc::Heap) {
-    let Some(mut guard) = SHARED.lock() else {
-        return;
-    };
-    let Some(session) = guard.session() else {
-        return;
-    };
-    for index in 0..session.live.len() {
-        let live = session.live[index];
-        if live.in_use && live.heap == heap as usize {
-            session.release_live(index as u32);
-        }
+    if let Some(b) = session.buckets.get_mut(sample.bucket as usize) {
+        b.free_bytes += sample.bytes;
+        b.free_objects += sample.objects;
     }
 }
 
@@ -1131,7 +1052,6 @@ fn register_fork_handler() {
         static REGISTERED: AtomicBool = AtomicBool::new(false);
         extern "C" fn child() {
             RUNNING.store(false, Ordering::Release);
-            bun_alloc::mimalloc_arena::heap_destroy_hook::set_enabled(false);
             SHARED.owner.store(0, Ordering::Relaxed);
             // SAFETY: the child has no other thread yet. Not dropped: a hook may have been mid-update.
             unsafe {

@@ -99,7 +99,7 @@ describe.concurrent("Bun.pprof.heap", () => {
   test("start rejects options it cannot honor and leaves no session behind", async () => {
     const { stdout, stderr, exitCode } = await runScript(`
       const out = [];
-      for (const options of [{ sampleInterval: 0 }, { sampleInterval: 131071 }, { sampleInterval: -1 }, { sampleInterval: 1.5 },
+      for (const options of [{ sampleInterval: 0 }, { sampleInterval: 65535 }, { sampleInterval: -1 }, { sampleInterval: 1.5 },
                              { sampleInterval: NaN }, { sampleInterval: Infinity }, { sampleInterval: "524288" }, "524288", null, 1]) {
         try {
           Bun.pprof.heap.start(options);
@@ -109,7 +109,7 @@ describe.concurrent("Bun.pprof.heap", () => {
         }
         out.push(Bun.pprof.heap.isRunning);
       }
-      Bun.pprof.heap.start({ sampleInterval: 131072 });
+      Bun.pprof.heap.start({ sampleInterval: 65536 });
       out.push(Bun.pprof.heap.isRunning);
       console.log(JSON.stringify(out));
     `);

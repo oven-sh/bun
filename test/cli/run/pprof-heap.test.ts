@@ -222,14 +222,14 @@ describe.concurrent("--pprof-heap", () => {
     });
   });
 
-  test.each(["0", "131071", "-1", "abc", "1e6", ""])(
+  test.each(["0", "65535", "-1", "abc", "1e6", ""])(
     "--pprof-heap-interval=%s is rejected before the script runs",
     async value => {
       using dir = tempDir("pprof-heap-bad", { "script.js": "console.log('ran')" });
       const result = await run(String(dir), ["--pprof-heap", `--pprof-heap-interval=${value}`, "script.js"]);
       expect(result).toEqual({
         stdout: "",
-        stderr: `error: --pprof-heap-interval must be a number of bytes, at least 131072 (got "${value}")\n`,
+        stderr: `error: --pprof-heap-interval must be a number of bytes, at least 65536 (got "${value}")\n`,
         exitCode: 1,
       });
       expect(readdirSync(String(dir)).filter(f => f.endsWith(".pb.gz"))).toEqual([]);

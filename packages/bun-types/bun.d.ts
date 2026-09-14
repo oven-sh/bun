@@ -5443,7 +5443,7 @@ declare module "bun" {
          * Average number of bytes allocated between two samples. A smaller interval gives a more
          * detailed profile and costs more time.
          *
-         * At least 131072 (128 KiB).
+         * At least 65536 (64 KiB).
          *
          * @default 524288 (512 KiB)
          */

@@ -30,6 +30,7 @@
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
 #include "KeyObject.h"
+#include <wtf/SetForScope.h>
 
 namespace WTF {
 template<> class StringTypeAdapter<GCOwnedDataScope<StringView>> {
@@ -320,6 +321,15 @@ static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, cha
     }
 }
 
+// True while an error message renders an object through the inspector. The
+// inspector reads native accessors, and an accessor that builds its own error
+// message from the same receiver lands back here. Each nested level then reads
+// every accessor again, so the work grows as (accessor count)^(nesting depth)
+// and the process never finishes. `vm.Script.prototype` has four such
+// accessors, so `console.log(require("node:vm").Script.prototype)` spins
+// forever.
+static thread_local bool s_isRenderingValueForErrorMessage = false;
+
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg, bool quotesLikeInspect = false)
 {
     ASSERT(!arg.isEmpty());
@@ -381,7 +391,18 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     }
     }
 
+    // A nested render names the class instead of walking the object again.
+    // `className()` comes from the static ClassInfo, so it runs no user code.
+    if (s_isRenderingValueForErrorMessage) {
+        const char* name = cell->className();
+        builder.append('[');
+        builder.append(WTF::StringView(std::span { name, strlen(name) }));
+        builder.append(']');
+        return;
+    }
+
     // Node renders objects inline in error messages ("Received { abc: 123 }").
+    WTF::SetForScope renderingValue(s_isRenderingValueForErrorMessage, true);
     builder.append(Bun__inspect_singleline(globalObject, arg).transferToWTFString());
 }
 

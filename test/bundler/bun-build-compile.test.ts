@@ -364,6 +364,112 @@ describe("compiled binary validity", () => {
   });
 });
 
+// A separate `-baseline` package is only published for x64 darwin, windows and glibc/musl linux
+// (packages/bun-release/src/platform.ts). Everything else ships one binary, so `-baseline` has to
+// resolve to it; asking npm for bun-linux-x64-android-baseline or bun-freebsd-x64-baseline 404s.
+//
+// The tarball URL is pointed at a local server that always 404s, so the binary a target resolved to
+// shows up in the "not available for download" message without touching the network. The pinned
+// -v1.2.3 keeps the target from ever being the running bun (which is used as-is, nothing to download)
+// and keeps the expected names independent of the version under test.
+describe("compile target -baseline resolution", () => {
+  const downloadError = /Target platform '([^']+)' is not available for download/;
+
+  function serve404() {
+    return Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("not found", { status: 404 }),
+    });
+  }
+
+  function envFor(server: Bun.Server, dir: string) {
+    return {
+      ...bunEnv,
+      BUN_COMPILE_TARGET_TARBALL_URL: server.url.href,
+      BUN_INSTALL_CACHE_DIR: join(dir, "cache"),
+    };
+  }
+
+  test.concurrent.each([
+    // [--target, binary it resolves to]
+    ["bun-linux-x64-android-baseline-v1.2.3", "bun-linux-x64-android-v1.2.3"],
+    ["bun-linux-x64-baseline-android-v1.2.3", "bun-linux-x64-android-v1.2.3"],
+    ["bun-freebsd-x64-baseline-v1.2.3", "bun-freebsd-x64-v1.2.3"],
+    ["bun-freebsd-baseline-v1.2.3", "bun-freebsd-x64-v1.2.3"],
+    ["bun-linux-arm64-musl-baseline-v1.2.3", "bun-linux-aarch64-musl-v1.2.3"],
+    // These do publish a -baseline package, so the suffix is kept. A linux target without a libc
+    // segment inherits the libc of the bun running the build, and CI runs this file on alpine too.
+    ["bun-linux-x64-baseline-v1.2.3", isMusl ? "bun-linux-x64-musl-baseline-v1.2.3" : "bun-linux-x64-baseline-v1.2.3"],
+    ["bun-linux-x64-musl-baseline-v1.2.3", "bun-linux-x64-musl-baseline-v1.2.3"],
+    ["bun-darwin-x64-baseline-v1.2.3", "bun-darwin-x64-baseline-v1.2.3"],
+    ["bun-windows-x64-baseline-v1.2.3", "bun-windows-x64-baseline-v1.2.3"],
+  ])("bun build --compile --target=%s downloads %s", async (target, resolved) => {
+    using dir = tempDir("build-compile-baseline-cli", {
+      "app.js": `console.log("unreachable");`,
+    });
+    using server = serve404();
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=${target}`, "app.js", "--outfile", "app"],
+      env: envFor(server, String(dir)),
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toMatch(downloadError);
+    expect({ resolved: stderr.match(downloadError)![1], exitCode }).toEqual({ resolved, exitCode: 1 });
+  });
+
+  test.concurrent("Bun.build resolves the same way", async () => {
+    using dir = tempDir("build-compile-baseline-api", {
+      "app.js": `console.log("unreachable");`,
+      "build.js": `
+        const targets = ["bun-linux-x64-android-baseline-v1.2.3", "bun-freebsd-x64-baseline-v1.2.3"];
+        const resolved = {};
+        for (const target of targets) {
+          const result = await Bun.build({
+            entrypoints: ["./app.js"],
+            compile: { target, outfile: "./app" },
+            throw: false,
+          });
+          resolved[target] = { success: result.success, logs: result.logs.map(log => log.message) };
+        }
+        console.log(JSON.stringify(resolved));
+      `,
+    });
+    using server = serve404();
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      env: envFor(server, String(dir)),
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "bun-linux-x64-android-baseline-v1.2.3": {
+        success: false,
+        logs: [
+          "Target platform 'bun-linux-x64-android-v1.2.3' is not available for download. Check if this version of Bun supports this target.",
+        ],
+      },
+      "bun-freebsd-x64-baseline-v1.2.3": {
+        success: false,
+        logs: [
+          "Target platform 'bun-freebsd-x64-v1.2.3' is not available for download. Check if this version of Bun supports this target.",
+        ],
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 if (isLinux) {
   describe("ELF section", () => {
     test("compiled binary runs with execute-only permissions", async () => {

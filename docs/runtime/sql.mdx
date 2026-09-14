@@ -18,14 +18,14 @@ const users = await sql`
 // With MySQL
 const mysql = new SQL("mysql://user:pass@localhost:3306/mydb");
 const mysqlResults = await mysql`
-  SELECT * FROM users 
+  SELECT * FROM users
   WHERE active = ${true}
 `;
 
 // With SQLite
 const sqlite = new SQL("sqlite://myapp.db");
 const sqliteResults = await sqlite`
-  SELECT * FROM users 
+  SELECT * FROM users
   WHERE active = ${1}
 `;
 ```
@@ -257,7 +257,7 @@ import { sql } from "bun";
 
 // Basic insert with direct values
 const [user] = await sql`
-  INSERT INTO users (name, email) 
+  INSERT INTO users (name, email)
   VALUES (${name}, ${email})
   RETURNING *
 `;

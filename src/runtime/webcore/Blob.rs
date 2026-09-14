@@ -4363,6 +4363,7 @@ pub(crate) fn write_file_with_source_destination(
                 source_blob.borrowed_view(),
                 write_file_promise,
                 WriteFilePromise::run,
+                WriteFilePromise::abandon,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
                 Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
@@ -4379,6 +4380,7 @@ pub(crate) fn write_file_with_source_destination(
                 source_blob.borrowed_view(),
                 write_file_promise,
                 WriteFilePromise::run,
+                WriteFilePromise::abandon,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");

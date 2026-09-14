@@ -943,6 +943,8 @@ pub struct ReadFileUV<'a> {
     /// `Some` until the read completes; a `ReadFileUV` dropped before that cancels it.
     pub(crate) completion: Option<ReadFileCompletionFns>,
     pub(crate) is_regular_file: bool,
+    /// The context of the script that asked for the read.
+    pub(crate) context: jsc::ContextId,
 
     pub(crate) req: libuv::fs_t,
     /// Stash for the open completion callback across the libuv async hop.
@@ -1075,6 +1077,9 @@ impl<'a> ReadFileUV<'a> {
             errno: None,
             completion: Some(completion),
             is_regular_file: false,
+            context: jsc::virtual_machine::VirtualMachine::get()
+                .current_context()
+                .id(),
             req: bun_core::ffi::zeroed(),
             open_callback: Self::on_file_open,
         });
@@ -1097,6 +1102,16 @@ impl<'a> ReadFileUV<'a> {
             .completion
             .take()
             .expect("a ReadFileUV completes once");
+        // A read of a context that has stopped is not reported (dropping the completion cancels it).
+        let Some(_context) =
+            jsc::virtual_machine::VirtualMachine::get().enter_context_if_live(this_box.context)
+        else {
+            drop(completion);
+            this_box.req.deinit();
+            drop(this_box);
+            event_loop.unref_keep_alive();
+            return;
+        };
 
         let result = if let Some(err) = this_box.system_error.take() {
             ReadFileResultType::Err(err)

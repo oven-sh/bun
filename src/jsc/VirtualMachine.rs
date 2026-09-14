@@ -1191,6 +1191,13 @@ impl VirtualMachine {
         scope
     }
 
+    /// For a completion the event loop delivers: `None` when it is not to be reported (its
+    /// context has stopped or is gone, or script may no longer run), else the context, entered.
+    pub fn enter_context_if_live(&self, context: crate::ContextId) -> Option<ContextScope<'_>> {
+        (self.script_allowed() && self.is_context_live(context))
+            .then(|| self.enter_context(context))
+    }
+
     /// Whether the running script may name by number (a timer id) something `owner`'s script
     /// made: the host may name anything; a graph's script its own and the host's (whose
     /// `globalThis` it shares anyway), never another graph's.

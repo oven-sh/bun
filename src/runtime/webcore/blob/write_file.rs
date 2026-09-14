@@ -44,6 +44,9 @@ pub enum WriteFileResultType {
 pub type WriteFileOnWriteFileCallback =
     fn(ctx: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()>;
 
+/// Frees a completion context whose write is dropped without being reported (its context stopped).
+pub type WriteFileOnAbandon = fn(ctx: *mut c_void);
+
 /// The completion token a `WriteFile` keeps across its async I/O.
 pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
@@ -78,6 +81,15 @@ impl bun_jsc::JobContext for WriteFile {
     }
 }
 
+/// A write released without `then` (its context stopped, or the VM is going).
+impl Drop for WriteFile {
+    fn drop(&mut self) {
+        if !self.on_complete_ctx.is_null() {
+            (self.on_abandon)(self.on_complete_ctx);
+        }
+    }
+}
+
 impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
@@ -103,8 +115,10 @@ pub struct WriteFile {
     pub(crate) io_parking: super::IoParking,
     pub(crate) state: AtomicU8, // ClosingState
 
+    /// Null once handed to `on_complete_callback`.
     pub(crate) on_complete_ctx: *mut c_void,
     pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
+    pub(crate) on_abandon: WriteFileOnAbandon,
     pub(crate) total_written: usize,
 
     #[cfg(not(windows))]
@@ -281,6 +295,7 @@ impl WriteFile {
         bytes_blob: Blob,
         on_write_file_context: *mut c_void,
         on_complete_callback: WriteFileOnWriteFileCallback,
+        on_abandon: WriteFileOnAbandon,
         mkdirp_if_not_exists: bool,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
@@ -301,6 +316,7 @@ impl WriteFile {
             state: AtomicU8::new(ClosingState::Running as u8),
             on_complete_ctx: on_write_file_context,
             on_complete_callback,
+            on_abandon,
             total_written: 0,
             could_block: false,
             close_after_io: false,
@@ -315,6 +331,7 @@ impl WriteFile {
         bytes_blob: Blob,
         context: *mut C,
         callback: WriteFileOnWriteFileCallback,
+        on_abandon: WriteFileOnAbandon,
         mkdirp_if_not_exists: bool,
     ) -> Result<WriteFile, Error> {
         // The caller supplies a
@@ -325,6 +342,7 @@ impl WriteFile {
             bytes_blob,
             context.cast::<c_void>(),
             callback,
+            on_abandon,
             mkdirp_if_not_exists,
         )
     }
@@ -362,7 +380,7 @@ impl WriteFile {
 
     pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> jsc::JsResult<()> {
         let cb = this.on_complete_callback;
-        let cb_ctx = this.on_complete_ctx;
+        let cb_ctx = core::mem::replace(&mut this.on_complete_ctx, core::ptr::null_mut());
         let system_error = this.system_error.take();
         let total_written = this.total_written;
         drop(this);
@@ -579,6 +597,9 @@ mod windows_impl {
         pub(crate) bytes_blob: Blob,
         pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
         pub(crate) on_complete_ctx: *mut c_void,
+        pub(crate) on_abandon: WriteFileOnAbandon,
+        /// The context of the script that asked for the write.
+        pub(crate) context: bun_jsc::ContextId,
         pub(crate) mkdirp_if_not_exists: bool,
         pub(crate) uv_bufs: [uv::uv_buf_t; 1],
 
@@ -615,6 +636,7 @@ mod windows_impl {
             event_loop: *mut EventLoop,
             on_write_file_context: *mut c_void,
             on_complete_callback: WriteFileOnWriteFileCallback,
+            on_abandon: WriteFileOnAbandon,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             let mkdirp = mkdirp_if_not_exists
@@ -632,6 +654,10 @@ mod windows_impl {
                 bytes_blob,
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
+                on_abandon,
+                context: bun_jsc::virtual_machine::VirtualMachine::get()
+                    .current_context()
+                    .id(),
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t {
@@ -1020,7 +1046,23 @@ mod windows_impl {
         pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> WriteFileWindowsError {
             // SAFETY: caller contract — `this` is live; copy out everything we
             // need before `deinit` frees the allocation.
-            let (cb, cb_ctx) = unsafe { ((*this).on_complete_callback, (*this).on_complete_ctx) };
+            let (cb, cb_ctx, on_abandon, context) = unsafe {
+                (
+                    (*this).on_complete_callback,
+                    (*this).on_complete_ctx,
+                    (*this).on_abandon,
+                    (*this).context,
+                )
+            };
+            // A write of a context that has stopped is not reported.
+            let Some(_context) =
+                bun_jsc::virtual_machine::VirtualMachine::get().enter_context_if_live(context)
+            else {
+                // SAFETY: caller contract — `this` is live; consumed here.
+                unsafe { Self::deinit(this) };
+                on_abandon(cb_ctx);
+                return WriteFileWindowsError::WriteFileWindowsDeinitialized;
+            };
 
             // SAFETY: caller contract — `this` is live.
             if let Some(err) = unsafe { (*this).to_system_error() } {
@@ -1174,6 +1216,7 @@ mod windows_impl {
             bytes_blob: Blob,
             context: *mut C,
             callback: WriteFileOnWriteFileCallback,
+            on_abandon: WriteFileOnAbandon,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             // see `WriteFile::create` — caller supplies an erased
@@ -1184,6 +1227,7 @@ mod windows_impl {
                 event_loop,
                 context.cast::<c_void>(),
                 callback,
+                on_abandon,
                 mkdirp_if_not_exists,
             )
         }
@@ -1198,6 +1242,12 @@ pub struct WriteFilePromise {
 }
 
 impl WriteFilePromise {
+    /// The write was dropped without being reported: the promise stays pending.
+    pub(crate) fn abandon(handler: *mut c_void) {
+        // SAFETY: as `run`; consumed here.
+        drop(unsafe { bun_core::heap::take(handler.cast::<Self>()) });
+    }
+
     pub(crate) fn run(handler: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()> {
         let handler = handler.cast::<Self>();
         // SAFETY: handler is the Box-allocated WriteFilePromise created in

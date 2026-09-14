@@ -305,7 +305,8 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
     await (async () => {
       const graph = lifetimes.track("graph", new ModuleGraph());
       const inGraph = (await graph.import(file("uses-cjs.mjs"))).default;
-      expect(inGraph).not.toBe(before);
+      // (Compared here, so no matcher object ever holds the graph's exports.)
+      expect(inGraph !== before).toBe(true);
       expect(inGraph.n).toBe(0);
     })();
     expect(await lifetimes.stillAlive("graph")).toEqual([]);

@@ -1,5 +1,7 @@
-import { describe, expect } from "bun:test";
-import { readdirSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
 const fakeReactNodeModules = {
@@ -485,8 +487,8 @@ describe("bundler", () => {
       stdout: "checkDCE\nproduction root",
     },
   });
-  // A default import of the converted file binds to its namespace, which
-  // holds the re-exported names (the export star resolves at link time).
+  // A default import of the converted file binds to its `module.exports` object,
+  // which holds the re-exported names (the export star resolves at link time).
   itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectDefaultImport", {
     files: {
       "/entry.js": /* js */ `
@@ -505,14 +507,15 @@ describe("bundler", () => {
     cjs2esm: true,
     minifySyntax: true,
     run: {
-      stdout: "side effect\nrendered rendered 19.0.0 object",
+      // `impl.js` exports no `default`, so `module.exports.default` is undefined
+      stdout: "side effect\nrendered rendered 19.0.0 undefined",
     },
   });
   itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectNamespaceImport", {
     files: {
       "/entry.js": /* js */ `
         import * as ReactDOM from "react-dom";
-        console.log(ReactDOM.render(), Object.keys(ReactDOM).sort().join(","), typeof ReactDOM.default);
+        console.log(ReactDOM.render(), Object.keys(ReactDOM).sort().join(","), typeof ReactDOM.default, ReactDOM.default.render === ReactDOM.render);
       `,
       "/node_modules/react-dom/index.js": /* js */ `
         console.log('side effect');
@@ -526,18 +529,21 @@ describe("bundler", () => {
     cjs2esm: true,
     minifySyntax: true,
     run: {
-      stdout: "side effect\nrendered render,version object",
+      // the namespace lists `default` (the `module.exports` object) and the names
+      stdout: "side effect\nrendered default,render,version object true",
     },
   });
   // `module.exports = ns` re-exports the whole namespace, so `default` of an
-  // ES module target comes through too (a plain `export *` would drop it).
+  // ES module target comes through too (a plain `export *` would drop it):
+  // it is `module.exports.default`, which the default import, `ns.default`
+  // and `require()` all reach.
   itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefault", {
     files: {
       "/entry.js": /* js */ `
         import ReactDOM, { version } from "react-dom";
         import * as ns from "react-dom";
         const m = require("react-dom");
-        console.log(version, typeof ReactDOM.default, ReactDOM.default(), typeof ns.default, ns.default(), m.default(), Object.keys(ns).sort().join(","));
+        console.log(version, typeof ReactDOM.default, ReactDOM.default(), ns.default === ReactDOM, ns.default.default(), m === ReactDOM, m.default(), Object.keys(ns).sort().join(","));
       `,
       "/node_modules/react-dom/index.js": /* js */ `
         console.log('side effect');
@@ -551,7 +557,7 @@ describe("bundler", () => {
     cjs2esm: true,
     minifySyntax: true,
     run: {
-      stdout: "side effect\n19.0.0 function rendered function rendered rendered default,version",
+      stdout: "side effect\n19.0.0 function rendered true rendered true rendered default,version",
     },
   });
   itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefaultRequireOnly", {
@@ -1152,7 +1158,9 @@ describe("bundler", () => {
     },
     cjs2esm: true,
     run: {
-      stdout: "true true true true true",
+      // `R` is the namespace and `React` its `default`, the `module.exports`
+      // object: two objects over the same bindings, as in Node
+      stdout: "true true true true false",
     },
   });
   itBundled("cjs2esm/DefaultImportComputedMemberKeepsNamespace", {
@@ -1191,20 +1199,20 @@ describe("bundler", () => {
       stdout: '{"zeta":1,"alpha":2} object 1',
     },
   });
-  itBundled("cjs2esm/DefaultImportDotDefaultIsNamespace", {
+  itBundled("cjs2esm/StarImportDotDefaultIsModuleExports", {
     files: {
       "/entry.js": /* js */ `
         import React from "react";
         import * as R from "react";
-        console.log(React.default === React, R.default === React, React.default.useState === React.useState);
+        console.log(React.default, R.default === React, R.default.useState === React.useState, "default" in R, "default" in React);
       `,
       ...liftedReact,
     },
     cjs2esm: true,
     run: {
-      // the module has no `default` export, so `.default` is `module.exports`
-      // through both import forms
-      stdout: "true true true",
+      // the module has no `default` export: `module.exports.default` is
+      // undefined and `ns.default` is `module.exports`, as in Node
+      stdout: "undefined true true true false",
     },
   });
   itBundled("cjs2esm/DefaultImportDotDefaultOfExportsDefault", {
@@ -1212,7 +1220,7 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import lib from "./lib.js";
         import * as ns from "./lib.js";
-        console.log(lib.default(), ns.default(), ns.default === lib.default, lib.foo, Object.keys(lib).join(","));
+        console.log(lib.default(), ns.default === lib, ns.default.default === lib.default, lib.foo, Object.keys(lib).join(","));
       `,
       "/lib.js": /* js */ `
         exports.default = function def() { return "def"; };
@@ -1221,14 +1229,16 @@ describe("bundler", () => {
     },
     cjs2esm: true,
     onAfterBundle(api) {
-      // `lib.default` and `ns.default` bind to the lifted export; only
-      // `Object.keys(lib)` materializes the namespace object
-      api.expectFile("/out.js").toContain("$default()");
+      // `lib.default` binds to the lifted export and `ns.default` to the
+      // `module.exports` object; the namespace object of `ns` is never made
+      const out = api.readFile("/out.js");
+      expect(out).toContain("$default()");
+      expect(out).not.toContain("__toESM");
     },
     run: {
       // without `__esModule`, the default import is the whole `module.exports`,
-      // and `ns.default` is its own `default` key
-      stdout: "def def true 1 default,foo",
+      // and so is `ns.default`
+      stdout: "def true true 1 default,foo",
     },
   });
   itBundled("cjs2esm/DefaultImportWithEsModuleKeepsWrapper", {
@@ -1269,9 +1279,9 @@ describe("bundler", () => {
       stdout: "d 1 true 1",
     },
   });
-  // `.default` of a lifted module that sets `__esModule` but exports no
-  // `default` is the namespace for every importer, as `__toESM` and `bun run`
-  // give `module.exports`. Both routes to the namespace, `import * as ns` and
+  // `ns.default` of a lifted module that sets `__esModule` but exports no
+  // `default` is `module.exports` for every importer, as `__toESM` and `bun run`
+  // give it. Both routes to the namespace, `import * as ns` and
   // `export * as Lib`, must agree.
   const esModuleNoDefault = {
     "/lib.js": /* js */ `
@@ -1287,28 +1297,28 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import * as ns from "./lib.js";
         import { Lib } from "./mid.js";
-        console.log(Lib === ns, Lib.default === ns, ns.default === ns, Lib.foo);
+        console.log(Lib === ns, Lib.default === ns.default, ns.default === ns, ns.default.foo, Lib.foo, Lib.default.__esModule);
       `,
       ...esModuleNoDefault,
     },
     cjs2esm: true,
     run: {
-      stdout: "true true true 1",
+      stdout: "true true false 1 1 true",
     },
   });
-  // The default import of that module is the namespace too, so the module
+  // The default import of that module is `module.exports`, so the module
   // stays lifted for a `.js` importer
   itBundled("cjs2esm/DefaultImportWithEsModuleNoDefaultFromCjsImporter", {
     files: {
       "/entry.js": /* js */ `
         import lib, * as ns from "./lib.js";
-        console.log(lib === ns, lib.default === ns, lib.__esModule, lib.foo);
+        console.log(lib === ns.default, lib === ns, lib.default, lib.__esModule, lib.foo);
       `,
       ...esModuleNoDefault,
     },
     cjs2esm: true,
     run: {
-      stdout: "true true true 1",
+      stdout: "true false undefined true 1",
     },
   });
   itBundled("cjs2esm/DotDefaultWithEsModuleNoDefaultFromEsmImporter", {
@@ -1316,13 +1326,13 @@ describe("bundler", () => {
       "/entry.mjs": /* js */ `
         import * as ns from "./lib.js";
         import { Lib } from "./mid.js";
-        console.log(Lib === ns, Lib.default === ns, ns.default === ns, Lib.foo);
+        console.log(Lib === ns, Lib.default === ns.default, ns.default === ns, ns.default.foo, Lib.foo, Lib.default.__esModule);
       `,
       ...esModuleNoDefault,
     },
     cjs2esm: true,
     run: {
-      stdout: "true true true 1",
+      stdout: "true true false 1 1 true",
     },
   });
   itBundled("cjs2esm/ReExportDefaultAsNameFromLiftedCommonJS", {
@@ -1698,7 +1708,7 @@ describe("bundler", () => {
       "/b.js": /* js */ `
         import React from "react";
         import * as R from "react";
-        console.log("b", React.useState(2)[0], React === R, Object.keys(R).length);
+        console.log("b", React.useState(2)[0], React === R.default, Object.keys(R).join(","));
       `,
       ...liftedReact,
     },
@@ -1707,7 +1717,7 @@ describe("bundler", () => {
     splitting: true,
     run: [
       { file: "/out/a.js", stdout: "a a id" },
-      { file: "/out/b.js", stdout: "b 2 true 4" },
+      { file: "/out/b.js", stdout: "b 2 true default,createElement,useState,useId,version" },
     ],
   });
   // The chunk a split `import()` of a lifted CommonJS module loads exports the
@@ -1727,7 +1737,7 @@ describe("bundler", () => {
         const m = await import("./lib.cjs");
         lib.expando = 1;
         m.default.version = "patched";
-        console.log(m.default === lib, m.default === ns, m.default.expando, lib.version, m.version, Object.keys(m.default).join(","));
+        console.log(m.default === lib, m.default === ns.default, m.default.expando, lib.version, m.version, ns.version, Object.keys(m.default).join(","));
       `,
       "/lib.cjs": liftedLib,
     },
@@ -1738,7 +1748,7 @@ describe("bundler", () => {
       expect(splitChunk(api, "lib")).toContain("export default exports_lib;");
       expect(splitChunk(api, "lib")).not.toContain("get createElement()");
     },
-    run: { file: "/out/entry.js", stdout: "true true 1 patched patched createElement,version,expando" },
+    run: { file: "/out/entry.js", stdout: "true true 1 patched patched patched createElement,version,expando" },
   });
   itBundled("cjs2esm/SplitDynamicImportOnlyOfLiftedCommonJS", {
     files: {
@@ -1827,22 +1837,77 @@ describe("bundler", () => {
     },
     run: { file: "/out/entry.js", stdout: "true d d 1" },
   });
+  // With `exports.__esModule` set, the chunk still exports `module.exports` as
+  // `default`. An importer that is an ES module by type reads it as is, as Node
+  // does. Any other importer unwraps `exports.default` from it through `__toESM`,
+  // as `bun run` does. Both match the build without `--splitting`.
+  const esModuleLiftedLib = {
+    "/lib.cjs": /* js */ `
+      exports.__esModule = true;
+      exports.default = "d";
+      exports.x = 1;
+    `,
+  };
   itBundled("cjs2esm/SplitDynamicImportOfLiftedCommonJSWithEsModuleAndDefault", {
     files: {
       "/entry.mjs": /* js */ `
+        import lib from "./lib.cjs";
         const m = await import("./lib.cjs");
-        console.log(m.default, m.x);
+        console.log(typeof m.default, m.default === lib, m.default.default, m.x, m.__esModule, Object.keys(m).join(","));
       `,
-      "/lib.cjs": /* js */ `
-        exports.__esModule = true;
-        exports.default = "d";
-        exports.x = 1;
-      `,
+      ...esModuleLiftedLib,
     },
     outdir: "/out",
     outputPaths: ["/out/entry.js"],
     splitting: true,
-    run: { file: "/out/entry.js", stdout: "d 1" },
+    onAfterBundle(api) {
+      expect(splitChunk(api, "lib")).toContain("export default exports_lib;");
+      api.expectFile("/out/entry.js").not.toContain("__toESM");
+    },
+    run: { file: "/out/entry.js", stdout: "object true d 1 true __esModule,default,x" },
+  });
+  itBundled("cjs2esm/SplitDynamicImportOfLiftedCommonJSWithEsModuleAndDefaultFromCjsImporter", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from "./lib.cjs";
+        const m = await import("./lib.cjs");
+        console.log(m.default, m.x, x, m.__esModule, Object.keys(m).join(","));
+      `,
+      ...esModuleLiftedLib,
+    },
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    splitting: true,
+    onAfterBundle(api) {
+      expect(splitChunk(api, "lib")).toContain("export default exports_lib;");
+      api.expectFile("/out/entry.js").toContain(".then((m)=>__toESM(m.default))");
+    },
+    run: { file: "/out/entry.js", stdout: "d 1 1 true __esModule,default,x" },
+  });
+  // A lifted CommonJS file that is itself an entry point of the build keeps its
+  // own export list: `default` is its `exports.default`, for the output file and
+  // so for a split `import()` of it too. Node would give `module.exports`; that
+  // shape is #12463's to change, so this pins today's output.
+  itBundled("cjs2esm/SplitDynamicImportOfLiftedCommonJSUserEntryPoint", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import lib from "./lib.cjs";
+        const m = await import("./lib.cjs");
+        console.log(typeof m.default, m.default === lib, lib.default, m.x, Object.keys(m).join(","));
+      `,
+      "/lib.cjs": /* js */ `
+        exports.default = "d";
+        exports.x = 1;
+      `,
+    },
+    entryPoints: ["/entry.mjs", "/lib.cjs"],
+    outdir: "/out",
+    outputPaths: ["/out/entry.js", "/out/lib.js"],
+    splitting: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/lib.js").toContain("$default as default");
+    },
+    run: { file: "/out/entry.js", stdout: "string false d 1 default,x" },
   });
   // Static imports of a lifted module bind its exports directly, whether or
   // not a split `import()` of the module reads `default`. Only a read of
@@ -2118,12 +2183,12 @@ describe("bundler", () => {
     },
   });
   // A lone `import * as ns` of a lifted CommonJS module: `ns.default` is
-  // `module.exports`, which is the namespace itself.
+  // `module.exports`, and the namespace is a separate object that lists it.
   itBundled("cjs2esm/ImportStarOfLiftedCommonJSHasDefault", {
     files: {
       "/entry.mjs": /* js */ `
         import * as ns from "./c.cjs";
-        console.log(typeof ns.default, ns.default.n, ns.default === ns, Object.keys(ns).join(","));
+        console.log(typeof ns.default, ns.default.n, ns.default === ns, Object.keys(ns).join(","), Object.keys(ns.default).join(","));
       `,
       "/c.cjs": /* js */ `
         exports.n = 7;
@@ -2131,8 +2196,156 @@ describe("bundler", () => {
     },
     cjs2esm: true,
     run: {
-      stdout: "object 7 true n",
+      stdout: "object 7 false default,n n",
     },
+  });
+
+  // `ns.default` on `import * as ns` of a lifted CommonJS module is the same
+  // object a default import of that module binds, `module.exports`, even when
+  // the module assigns `exports.default`. The namespace is a separate object,
+  // so a computed `ns["default"]` agrees with the static read. Node, `bun run`
+  // and esbuild print the same.
+  const liftedWithDefault = {
+    "/dep.cjs": /* js */ `
+      exports.default = { m: "exports.default" };
+      exports.zz = 1;
+    `,
+  };
+  const starAndDefaultImport = /* js */ `
+    import * as ns from "./dep.cjs";
+    import d, { default as d2 } from "./dep.cjs";
+    const key = "def" + "ault";
+    console.log(JSON.stringify([
+      d === ns.default,
+      d2 === d,
+      ns === d,
+      ns[key] === d,
+      ns.default.default === d.default,
+      d.default.m,
+      ns.zz,
+      Object.keys(ns),
+      Object.keys(d),
+      JSON.stringify(ns),
+    ]));
+  `;
+  const starAndDefaultImportStdout =
+    '[true,true,false,true,true,"exports.default",1,["default","zz"],["default","zz"],"{\\"default\\":{\\"default\\":{\\"m\\":\\"exports.default\\"},\\"zz\\":1},\\"zz\\":1}"]';
+  itBundled("cjs2esm/StarImportDefaultIsTheDefaultImport", {
+    files: {
+      "/entry.mjs": starAndDefaultImport,
+      ...liftedWithDefault,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("import_dep = __toESM(exports_dep, 1)");
+    },
+    run: { stdout: starAndDefaultImportStdout },
+  });
+  itBundled("cjs2esm/StarImportDefaultIsTheDefaultImportMinified", {
+    files: {
+      "/entry.mjs": starAndDefaultImport,
+      ...liftedWithDefault,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    run: { stdout: starAndDefaultImportStdout },
+  });
+  // The lifted module ends up in a lazy ESM wrapper here (a wrapped file imports
+  // it). Its namespace object is made next to `exports_dep`, outside `init_dep`.
+  itBundled("cjs2esm/StarImportDefaultIsTheDefaultImportEsmWrapper", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const { run } = await import("./mid.mjs");
+        run();
+      `,
+      "/mid.mjs": /* js */ `
+        ${starAndDefaultImport}
+        export function run() {}
+      `,
+      ...liftedWithDefault,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("init_dep = __esm(");
+      expect(out).toContain("import_dep = __toESM(exports_dep, 1)");
+    },
+    run: { stdout: starAndDefaultImportStdout },
+  });
+  // The namespace reached through another module is that same object.
+  itBundled("cjs2esm/StarReExportDefaultIsTheDefaultImport", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import d from "./dep.cjs";
+        import * as ns from "./dep.cjs";
+        import lib, { inner, outer, zz } from "./mid.mjs";
+        console.log(inner === ns, outer === ns, lib === ns, inner.default === d, outer.default === d, lib.default === d, inner.zz, zz, typeof lib.default.default.m);
+      `,
+      "/mid.mjs": /* js */ `
+        export * from "./dep.cjs";
+        import * as inner from "./dep.cjs";
+        export { inner };
+        export * as outer from "./dep.cjs";
+        export default inner;
+      `,
+      ...liftedWithDefault,
+    },
+    cjs2esm: true,
+    run: { stdout: "true true true true true true 1 1 string" },
+  });
+  // `exports.__esModule = true` by assignment is lifted too. An importer that is
+  // an ES module by type ignores the flag, as Node does: the default import and
+  // `ns.default` are both the whole `module.exports`.
+  itBundled("cjs2esm/StarImportDefaultWithEsModuleFromEsmImporter", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import d from "./p.cjs";
+        import * as ns from "./p.cjs";
+        console.log(d === ns.default, ns === d, JSON.stringify(ns["def" + "ault"]), JSON.stringify(ns.default.default), Object.keys(ns).join(","));
+      `,
+      "/p.cjs": /* js */ `
+        exports.__esModule = true; exports.default = { m: "D" }; exports.a = "a";
+      `,
+    },
+    cjs2esm: true,
+    run: { stdout: 'true false {"__esModule":true,"default":{"m":"D"},"a":"a"} {"m":"D"} default,__esModule,a' },
+  });
+  // A `require()` that the parser turned into an import (the module is in the
+  // `react` family) returns `module.exports` whatever `__esModule` says, so it
+  // keeps the module lifted; `.default` on it is `exports.default`.
+  itBundled("cjs2esm/UnwrappedRequireWithEsModuleStaysLifted", {
+    files: {
+      "/entry.js": /* js */ `
+        const React = require("react");
+        console.log(React.default.tag, React.a, React.__esModule, React === require("react"), Object.keys(React).join(","));
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = { tag: "D" };
+        exports.a = "a";
+      `,
+    },
+    cjs2esm: true,
+    run: { stdout: "D a true true __esModule,default,a" },
+  });
+  // For any other importer `ns.default` depends on the flag at run time, like a
+  // default import does, so a star import keeps the CommonJS wrapper too.
+  itBundled("cjs2esm/StarImportWithEsModuleFromCjsImporterKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./p.cjs";
+        import { a } from "./p.cjs";
+        console.log(JSON.stringify(ns.default), ns["def" + "ault"] === ns.default, a, Object.keys(ns).join(","));
+      `,
+      "/p.cjs": /* js */ `
+        exports.__esModule = true; exports.default = { m: "D" }; exports.a = "a";
+      `,
+    },
+    cjs2esm: { unhandled: ["/p.cjs"] },
+    run: { stdout: '{"m":"D"} true a __esModule,default,a' },
   });
 
   // A write through the namespace of a lifted CommonJS module assigns the
@@ -2404,4 +2617,109 @@ describe("bundler", () => {
       stdout: "var\nmain",
     },
   });
+});
+
+// Every way an ES module reaches a lifted CommonJS module must print what
+// `bun run` prints for the unbundled sources (which is also what Node prints,
+// `exports.__esModule` aside). Each cell bundles one module shape, one importer
+// and one set of flags and compares the two runs, so no expectation here is
+// hand-written. `lifted` says whether that cell keeps the module lifted; an
+// unsplit `import()` puts it back into a CommonJS wrapper.
+describe("cjs2esm/LiftedNamespaceMatchesBunRun", () => {
+  const fn = `function () { return typeof this + ":" + (this && this.named); }`;
+  const libs: Record<string, string> = {
+    ExportsDefault: `exports.default = { tag: "D" };\nexports.named = "n";\nexports.fn = ${fn};\n`,
+    NoDefault: `exports.named = "n";\nexports.fn = ${fn};\n`,
+    ModuleExportsProps: `module.exports.named = "n";\nmodule.exports.default = "d";\nmodule.exports.fn = ${fn};\n`,
+  };
+  const mid =
+    `import * as inner from "./lib.cjs";\nexport { inner };\n` +
+    `export * as outer from "./lib.cjs";\nexport { default as viaMid } from "./lib.cjs";\n`;
+  const probe = (dynamic: boolean) => /* js */ `
+    import d, { default as d2, named } from "./lib.cjs";
+    import * as ns from "./lib.cjs";
+    import { inner, outer, viaMid } from "./mid.mjs";
+    const dyn = ${dynamic ? `await import("./lib.cjs")` : `null`};
+    const key = "def" + "ault";
+    const stable = (v) =>
+      JSON.stringify(v, (k, val) =>
+        val && typeof val === "object" && !Array.isArray(val)
+          ? Object.fromEntries(Object.keys(val).sort().map(k2 => [k2, val[k2]]))
+          : val,
+      );
+    console.log(
+      stable({
+        dIsNsDefault: d === ns.default,
+        d2IsD: d2 === d,
+        viaMidIsD: viaMid === d,
+        nsIsD: ns === d,
+        computedIsD: ns[key] === d,
+        innerIsNs: inner === ns,
+        outerIsNs: outer === ns,
+        innerDefaultIsD: inner.default === d,
+        typeofDDefault: typeof d.default,
+        typeofNsDefault: typeof ns.default,
+        nsDefaultDefaultIsDDefault: ns.default.default === d.default,
+        nsKeys: Object.keys(ns).sort(),
+        dKeys: Object.keys(d),
+        ns: stable(ns),
+        d: JSON.stringify(d),
+        named,
+        nsNamed: ns.named,
+        outerNamed: outer.named,
+        nsFn: ns.fn(),
+        dFn: d.fn(),
+        hasDefault: "default" in ns,
+        dyn: dyn && {
+          defaultIsD: dyn.default === d,
+          keys: Object.keys(dyn).sort(),
+          json: stable(dyn),
+          named: dyn.named,
+        },
+      }),
+    );
+  `;
+  const run = async (cwd: string, ...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const cells: { dynamic: boolean; flags: string[]; lifted: boolean }[] = [
+    { dynamic: false, flags: [], lifted: true },
+    { dynamic: false, flags: ["--minify"], lifted: true },
+    { dynamic: false, flags: ["--splitting"], lifted: true },
+    { dynamic: true, flags: ["--splitting"], lifted: true },
+    { dynamic: true, flags: [], lifted: false },
+  ];
+  for (const [libName, lib] of Object.entries(libs)) {
+    for (const { dynamic, flags, lifted } of cells) {
+      const name = `${libName} ${dynamic ? "static+dynamic" : "static"} ${flags.join(" ")}`.trim();
+      test.concurrent(name, async () => {
+        using dir = tempDir("cjs2esm-oracle", { "lib.cjs": lib, "mid.mjs": mid, "entry.mjs": probe(dynamic) });
+        const cwd = String(dir);
+        const [expected, build] = await Promise.all([
+          run(cwd, "entry.mjs"),
+          run(cwd, "build", "./entry.mjs", "--outdir=out", "--entry-naming=[name].mjs", ...flags),
+        ]);
+        expect(expected.stderr).toBe("");
+        expect(expected.exitCode).toBe(0);
+        expect(build.stderr).not.toContain("error");
+        expect(build.exitCode).toBe(0);
+        const out = readdirSync(join(cwd, "out"))
+          .map(f => readFileSync(join(cwd, "out", f), "utf8"))
+          .join("\n");
+        expect(out.includes("__commonJS(")).toBe(!lifted);
+        const actual = await run(cwd, join("out", "entry.mjs"));
+        expect(actual.stderr).toBe("");
+        expect(JSON.parse(actual.stdout)).toEqual(JSON.parse(expected.stdout));
+        expect(actual.exitCode).toBe(0);
+      });
+    }
+  }
 });

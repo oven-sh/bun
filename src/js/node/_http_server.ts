@@ -1641,6 +1641,14 @@ function getNodeHTTPServerSocket() {
       const message = this._httpMessage ?? (pending?.destroyed ? pending : undefined);
       const req = message?.req;
 
+      // Node emits the response close from its first socket close listener.
+      // Snapshot the still-attached response before request destruction can
+      // detach it, and preserve EventEmitter's current-emission semantics when
+      // a response close listener removes a later socket close listener.
+      if (message && !message._closed) {
+        this.prependOnceListener("close", emitCloseNT.bind(undefined, message));
+      }
+
       if (req && !req.destroyed && !req[kHandle]?.upgraded) {
         // At this point the socket is already destroyed; let's avoid UAF
         req[kHandle] = undefined;
@@ -1649,13 +1657,6 @@ function getNodeHTTPServerSocket() {
         } else {
           req.destroy();
         }
-      }
-
-      // A response that was still attached to this socket (it had not finished
-      // when the connection died) must emit 'close' too, exactly like Node.js's
-      // onServerResponseClose socket listener does.
-      if (message && !message._closed) {
-        process.nextTick(emitCloseNT, message);
       }
 
       // Pipelined responses (and their requests) that were still queued behind

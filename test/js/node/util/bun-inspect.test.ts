@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import stripAnsi from "strip-ansi";
 
 describe("Bun.inspect", () => {
@@ -137,6 +138,36 @@ describe("Bun.inspect", () => {
     expect(() => Bun.inspect(object, { depth: Infinity })).toThrowErrorMatchingInlineSnapshot(
       `"Maximum call stack size exceeded."`,
     );
+  });
+
+  // React elements are not tracked for circular references, and the stack check used to be
+  // skipped together with that tracking, so unlike the object and Error chains above this chain
+  // overflowed the native stack and killed the process (at any `depth`: element props are not
+  // depth limited). Nesting through a prop rather than `children` keeps the rendering one line, so
+  // the levels that do get rendered before the limit stay small. Run in a subprocess so a
+  // regression fails this test instead of taking the test runner down.
+  it("stack overflow is thrown when it should be for React element chains", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let v = "leaf";
+         for (let i = 0; i < 100_000; i++) {
+           v = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { x: v } };
+         }
+         try {
+           Bun.inspect(v);
+           console.log("returned");
+         } catch (e) {
+           console.log(e.name + ": " + e.message);
+         }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("RangeError: Maximum call stack size exceeded.\n");
+    expect(exitCode).toBe(0);
   });
 
   it("depth = 0", () => {

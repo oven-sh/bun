@@ -344,7 +344,7 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
     auto minLength_num = minLength.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (length_num < minLength_num) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, makeString("must be longer than "_s, minLength_num));
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, makeString("must have a length of at least "_s, minLength_num));
     }
     return JSValue::encode(jsUndefined());
 }
@@ -365,7 +365,7 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
     auto minLength_num = minLength.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (length_num < minLength_num) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, makeString("must be longer than "_s, minLength_num));
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, makeString("must have a length of at least "_s, minLength_num));
     }
     return JSValue::encode(jsUndefined());
 }

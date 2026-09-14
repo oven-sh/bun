@@ -2355,9 +2355,10 @@ describe("Bun.ModuleGraph — template sharing and file changes", () => {
 });
 
 describe("Bun.ModuleGraph — scale", () => {
-  test("a 300-module graph instantiates into 5 graphs; each graph's cost is a small fraction of the template", async () => {
+  test("a graph of hundreds of modules instantiates into 5 graphs; each graph's cost is a small fraction of the template", async () => {
     const files: Record<string, string> = {};
-    const N = 300;
+    // Every load is tens of times slower on a debug or ASAN build.
+    const N = stressMode ? 60 : 300;
     for (let i = 0; i < N; i++)
       files[`m${i}.mjs`] =
         `${i > 0 ? `import { v as prev } from "./m${i - 1}.mjs";` : "const prev = 0;"} export const v = prev + 1; export function f${i}() { return v + ${i} } export const who = process.env.T;`;
@@ -3123,7 +3124,9 @@ describe("Bun.ModuleGraph — memory per instance vs module count", () => {
   test("per-instance heap cost grows with module count but stays far below the template cost", async () => {
     // Measured in a fresh process so other tests' garbage does not move the baseline.
     const results: Record<string, number[]> = {};
-    for (const modules of [20, 200]) {
+    // Every load is tens of times slower on a debug or ASAN build, where the ratios below are not asserted either.
+    const [few, many] = stressMode ? [10, 40] : [20, 200];
+    for (const modules of [few, many]) {
       const files: Record<string, string> = {};
       for (let i = 0; i < modules; i++)
         files[`m${i}.mjs`] =
@@ -3150,7 +3153,7 @@ describe("Bun.ModuleGraph — memory per instance vs module count", () => {
       }
     }
     // more modules → more per-instance cost, roughly proportionally (not, e.g., quadratic)
-    if (!stressMode) expect(results[200][1] / Math.max(1, results[20][1])).toBeLessThan(20);
+    if (!stressMode) expect(results[many][1] / Math.max(1, results[few][1])).toBeLessThan(20);
   });
 });
 

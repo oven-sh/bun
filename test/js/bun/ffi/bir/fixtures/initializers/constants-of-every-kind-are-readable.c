@@ -1,6 +1,8 @@
 // Constants live apart from what the program writes: string literals, const objects of every shape, tables whose
 // elements are addresses of other constants, of writable objects and of functions (filled in when the program is
 // loaded), and const objects local to a function. All of them read back, and what sits next to them can be written.
+// (The constants end at a multiple of 16384 bytes, so that no page holds both kinds; that padding is not in the module,
+// which is 1,080 bytes for this program on x86-64 Linux and was 17 KB when it was.)
 #include <stdio.h>
 #include <string.h>
 

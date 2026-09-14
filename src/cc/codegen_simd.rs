@@ -355,6 +355,8 @@ impl FnGen<'_, '_> {
             ReduceOp::Mul => VLaneOp::Mul,
             ReduceOp::Min => VLaneOp::Min,
             ReduceOp::Max => VLaneOp::Max,
+            ReduceOp::Minimum => VLaneOp::FMin,
+            ReduceOp::Maximum => VLaneOp::FMax,
             ReduceOp::And => return self.b.vbits(VBitsOp::And, vec![a, b]),
             ReduceOp::Or => return self.b.vbits(VBitsOp::Or, vec![a, b]),
             ReduceOp::Xor => return self.b.vbits(VBitsOp::Xor, vec![a, b]),
@@ -515,6 +517,8 @@ impl FnGen<'_, '_> {
             VecBuiltin::Sqrt => self.b.vlane(VLaneOp::Sqrt, lane, false, vec![v(0)?]),
             VecBuiltin::Min => self.b.vlane(VLaneOp::Min, lane, signed, vec![v(0)?, v(1)?]),
             VecBuiltin::Max => self.b.vlane(VLaneOp::Max, lane, signed, vec![v(0)?, v(1)?]),
+            VecBuiltin::Minimum => self.b.vlane(VLaneOp::FMin, lane, false, vec![v(0)?, v(1)?]),
+            VecBuiltin::Maximum => self.b.vlane(VLaneOp::FMax, lane, false, vec![v(0)?, v(1)?]),
             VecBuiltin::Reduce(reduce) => {
                 // Fold the upper half onto the lower half until one lane is left.
                 let mut acc = v(0)?;

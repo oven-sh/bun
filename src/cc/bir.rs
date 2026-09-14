@@ -13,11 +13,15 @@
 //!                   param:   u8 kind, then Value: type | ByValStack: varuint size (the object's, exactly), varuint align (8 or 16), u8 exhausts
 //!                            | IndirectResult: nothing
 //! varuint nexterns; extern*: { str name; u8 kind (ExternKind, | 0x80 weak); varuint sig }   (sig is 0 for Data)
-//! data:             { varuint size; varuint align; varuint readOnly; varuint ninit; u8[ninit];
+//! data:             { varuint size; varuint align; varuint readOnly;
+//!                     varuint constantBytes; u8[constantBytes]; varuint writableBytes; u8[writableBytes];
 //!                     varuint nrelocs; reloc*: { varuint offset; u8 kind; varuint index; varint addend } }
-//!                   (readOnly: how many leading bytes the program never writes: the constants. The loader
-//!                   protects the whole pages among them once the relocations are applied.)
-//! tls:              { varuint size; varuint align; varuint ninit; u8[ninit]; varuint nrelocs; reloc* }
+//!                   (readOnly: how many leading bytes the program never writes: the constants, which end at a
+//!                   multiple of 16384 when anything follows them. The loader protects the whole pages among
+//!                   them once the relocations are applied. The two runs are what data[0..] and
+//!                   data[readOnly..] start as, as far as that is not zero: the padding between the parts is
+//!                   in neither.)
+//! tls:              { varuint size; varuint align; varuint imageBytes; u8[imageBytes]; varuint nrelocs; reloc* }
 //!                   (applied to each thread's copy; kind Tls: the address of that copy + index)
 //! varuint nfuncs;   decl*:   { str name; varuint sig; u8 flags (bit0 = exported, bit1 = calls setjmp,
 //!                             bit2 = always_inline, bit3 = noinline, bit4 = declared `inline`) }
@@ -55,9 +59,6 @@ pub(crate) const MAX_FRAME_SIZE: u64 = 1 << 30;
 /// this much) and of the thread-local one:
 pub(crate) const MAX_SEGMENT_SIZE: u64 = 1 << 30;
 pub(crate) const MAX_TLS_SIZE: u64 = 1 << 28;
-/// The bytes of a segment that are written out (the rest, up to its size, is zero): a count like
-/// any other in the format.
-pub(crate) const MAX_INITIALIZED: u64 = 1 << 24;
 /// Or'ed into an extern's kind byte: `__attribute__((weak))`. Null when nothing defines it.
 pub(crate) const WEAK_EXTERN: u8 = 0x80;
 /// Function declaration flags that steer the backend's inliner.
@@ -253,6 +254,10 @@ op_enum!(BinOp {
     ULe = 0x27,
     UGt = 0x28,
     UGe = 0x29,
+    // IEEE 754-2019 minimum and maximum of two `f32` or two `f64`: a NaN if either is one, and
+    // -0 below +0 (AArch64's FMIN and FMAX).
+    FMin = 0x3c,
+    FMax = 0x3d,
 });
 
 impl BinOp {
@@ -343,6 +348,11 @@ op_enum!(VLaneOp {
     SubSat = 0x91,
     AvgU = 0x92,
     Narrow = 0x94,
+    // `BinOp::FMin` and `FMax` of each lane, floating lanes only. (`Min` and `Max` of floating
+    // lanes are `b < a ? b : a` and `a < b ? b : a`: `a`'s lane, bit for bit, when either is a NaN
+    // or they compare equal, which is what x86's MINPS(b, a) and MAXPS(b, a) give.)
+    FMin = 0x97,
+    FMax = 0x98,
 });
 
 impl VLaneOp {
@@ -705,8 +715,34 @@ pub(crate) struct Data {
     pub(crate) align: u64,
     /// The constants come first; this is where they end.
     pub(crate) read_only: u64,
+    /// What the segment starts as, from its first byte to the last one anything was said about
+    /// (the rest, up to `size`, is zero). It is written out as two runs: see `runs`.
     pub(crate) init: Vec<u8>,
     pub(crate) relocs: Vec<Reloc>,
+}
+
+/// `bytes` as far as its last byte that is not zero.
+fn without_trailing_zeros(bytes: &[u8]) -> &[u8] {
+    let end = bytes
+        .iter()
+        .rposition(|&byte| byte != 0)
+        .map_or(0, |last| last + 1);
+    &bytes[..end]
+}
+
+impl Data {
+    /// What the constant part and the writable part start as: `init` on either side of
+    /// `read_only`, each as far as it is not zero. (The loader starts from zeroed pages.)
+    pub(crate) fn runs(&self) -> (&[u8], &[u8]) {
+        let boundary = usize::try_from(self.read_only)
+            .unwrap_or(usize::MAX)
+            .min(self.init.len());
+        let (constants, writable) = self.init.split_at(boundary);
+        (
+            without_trailing_zeros(constants),
+            without_trailing_zeros(writable),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1149,14 +1185,18 @@ impl Module {
         w.varuint(self.data.size);
         w.varuint(self.data.align);
         w.varuint(self.data.read_only);
-        w.varuint(self.data.init.len() as u64);
-        w.out.extend_from_slice(&self.data.init);
+        let (constants, writable) = self.data.runs();
+        w.varuint(constants.len() as u64);
+        w.out.extend_from_slice(constants);
+        w.varuint(writable.len() as u64);
+        w.out.extend_from_slice(writable);
         w.relocs(&self.data.relocs);
 
         w.varuint(self.tls.size);
         w.varuint(self.tls.align.max(1));
-        w.varuint(self.tls.init.len() as u64);
-        w.out.extend_from_slice(&self.tls.init);
+        let image = without_trailing_zeros(&self.tls.init);
+        w.varuint(image.len() as u64);
+        w.out.extend_from_slice(image);
         w.relocs(&self.tls.relocs);
 
         w.varuint(self.funcs.len() as u64);
@@ -1416,7 +1456,8 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                         ));
                     }
                     if (integer_only && lane.is_float())
-                        || (*op == VLaneOp::Sqrt && !lane.is_float())
+                        || (matches!(op, VLaneOp::Sqrt | VLaneOp::FMin | VLaneOp::FMax)
+                            && !lane.is_float())
                     {
                         return Err(fail(
                             bi,
@@ -1648,6 +1689,13 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                             bi,
                             ii,
                             format!("{} needs integer operands", op.name()),
+                        ));
+                    }
+                    if matches!(op, BinOp::FMin | BinOp::FMax) && !ta.is_float() {
+                        return Err(fail(
+                            bi,
+                            ii,
+                            format!("{} needs floating-point operands", op.name()),
                         ));
                     }
                     if op.is_shift() {
@@ -1960,11 +2008,13 @@ pub(crate) fn validate(module: &Module) -> Result<(), String> {
     if data.init.len() as u64 > data.size {
         return Err("data ninit exceeds size".to_string());
     }
-    if data.init.len() as u64 > MAX_INITIALIZED || module.tls.init.len() as u64 > MAX_INITIALIZED {
-        return Err("too many initialized bytes".to_string());
-    }
     if data.read_only > data.size {
         return Err("data readOnly exceeds size".to_string());
+    }
+    if data.read_only < data.size && !data.read_only.is_multiple_of(DATA_PAGE) {
+        return Err(format!(
+            "the writable part of the data does not start at a multiple of {DATA_PAGE}"
+        ));
     }
     let tls = &module.tls;
     for (segment, size, relocs) in [
@@ -2167,11 +2217,12 @@ pub(crate) fn disassemble(module: &Module) -> Result<String, String> {
     let d = &module.data;
     let _ = writeln!(
         out,
-        "data: size {} align {} read-only {} init {} bytes",
+        "data: size {} align {} read-only {} constants {} bytes, written {} bytes",
         d.size,
         d.align,
         d.read_only,
-        d.init.len()
+        d.runs().0.len(),
+        d.runs().1.len()
     );
     for chunk_start in (0..d.init.len()).step_by(16) {
         let chunk = &d.init[chunk_start..(chunk_start + 16).min(d.init.len())];

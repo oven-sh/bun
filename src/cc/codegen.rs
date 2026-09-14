@@ -2799,6 +2799,21 @@ impl<'a> FnGen<'a, '_> {
                 };
                 return Ok(Some(self.b.bin(op, value, amount)));
             }
+            Intrinsic::FMinimum | Intrinsic::FMaximum => {
+                let [x, y] = args else {
+                    return internal(e.loc, "a minimum needs two operands");
+                };
+                let first = self.gen_value(x)?;
+                let held = self.hold(first, y.has_control_flow);
+                let second = self.gen_value(y)?;
+                let first = self.release(held);
+                let op = if op == Intrinsic::FMinimum {
+                    CBin::FMin
+                } else {
+                    CBin::FMax
+                };
+                return Ok(Some(self.b.bin(op, first, second)));
+            }
             Intrinsic::FullBarrier => {
                 self.b.effect(Inst::Fence(bir::order::SEQ_CST));
                 return Ok(None);

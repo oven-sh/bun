@@ -190,6 +190,9 @@ pub(crate) enum ReduceOp {
     Mul,
     Min,
     Max,
+    /// Of floating lanes, by IEEE 754-2019: a NaN if any lane is one.
+    Minimum,
+    Maximum,
     And,
     Or,
     Xor,
@@ -213,6 +216,10 @@ pub(crate) enum VecBuiltin {
     Abs,
     Min,
     Max,
+    /// Of floating lanes, by IEEE 754-2019 (`bir::VLaneOp::FMin`): a NaN where either lane is one,
+    /// -0 below +0.
+    Minimum,
+    Maximum,
     Sqrt,
     Reduce(ReduceOp),
     /// The top bit of every lane, lane 0 in bit 0, as an `int`.
@@ -356,6 +363,9 @@ pub(crate) enum Intrinsic {
     /// `x` (32 or 64 bits) rotated by `n` (an `int`, taken modulo the width).
     RotL,
     RotR,
+    /// The IEEE 754-2019 minimum and maximum of two `float`s or two `double`s.
+    FMinimum,
+    FMaximum,
     /// `atomic_thread_fence(memory_order_seq_cst)`: `mfence`, `lock; orl $0, (%rsp)`, `dmb ish`.
     FullBarrier,
     /// `memcpy`/`memmove(dst, src, n)`: the operands, as `void *`, `const void *` and

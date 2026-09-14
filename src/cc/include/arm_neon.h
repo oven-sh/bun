@@ -285,8 +285,12 @@ __BUN_CC_INTRIN float32x4_t vsubq_f32(float32x4_t __a, float32x4_t __b) { return
 __BUN_CC_INTRIN float32x4_t vmulq_f32(float32x4_t __a, float32x4_t __b) { return __a * __b; }
 __BUN_CC_INTRIN float32x4_t vmlaq_f32(float32x4_t __a, float32x4_t __b, float32x4_t __c) { return __a + __b * __c; }
 __BUN_CC_INTRIN float32x4_t vmlsq_f32(float32x4_t __a, float32x4_t __b, float32x4_t __c) { return __a - __b * __c; }
-__BUN_CC_INTRIN float32x4_t vminq_f32(float32x4_t __a, float32x4_t __b) { return __builtin_elementwise_min(__a, __b); }
-__BUN_CC_INTRIN float32x4_t vmaxq_f32(float32x4_t __a, float32x4_t __b) { return __builtin_elementwise_max(__a, __b); }
+__BUN_CC_INTRIN float32x4_t vminq_f32(float32x4_t __a, float32x4_t __b) { return __builtin_elementwise_minimum(__a, __b); }
+__BUN_CC_INTRIN float32x4_t vmaxq_f32(float32x4_t __a, float32x4_t __b) { return __builtin_elementwise_maximum(__a, __b); }
+/* FMINNM and FMAXNM: a number rather than a quiet NaN when one operand is one. (The operand that is a NaN is replaced by
+   the other before the minimum is taken, which also puts -0 below +0 as the instructions do.) */
+__BUN_CC_INTRIN float32x4_t vminnmq_f32(float32x4_t __a, float32x4_t __b) { uint32x4_t __an = (uint32x4_t)(__a != __a), __bn = (uint32x4_t)(__b != __b); return __builtin_elementwise_minimum((float32x4_t)(((uint32x4_t)__b & __an) | ((uint32x4_t)__a & ~__an)), (float32x4_t)(((uint32x4_t)__a & __bn) | ((uint32x4_t)__b & ~__bn))); }
+__BUN_CC_INTRIN float32x4_t vmaxnmq_f32(float32x4_t __a, float32x4_t __b) { uint32x4_t __an = (uint32x4_t)(__a != __a), __bn = (uint32x4_t)(__b != __b); return __builtin_elementwise_maximum((float32x4_t)(((uint32x4_t)__b & __an) | ((uint32x4_t)__a & ~__an)), (float32x4_t)(((uint32x4_t)__a & __bn) | ((uint32x4_t)__b & ~__bn))); }
 __BUN_CC_INTRIN float32x4_t vnegq_f32(float32x4_t __a) { return -__a; }
 __BUN_CC_INTRIN float32x4_t vabsq_f32(float32x4_t __a) { return __builtin_elementwise_abs(__a); }
 __BUN_CC_INTRIN float32x4_t vdivq_f32(float32x4_t __a, float32x4_t __b) { return __a / __b; }
@@ -298,8 +302,8 @@ __BUN_CC_INTRIN uint32x4_t vcgeq_f32(float32x4_t __a, float32x4_t __b) { return 
 __BUN_CC_INTRIN uint32x4_t vcleq_f32(float32x4_t __a, float32x4_t __b) { return (uint32x4_t)(__a <= __b); }
 __BUN_CC_INTRIN float32x4_t vbslq_f32(uint32x4_t __m, float32x4_t __a, float32x4_t __b) { return (float32x4_t)((__m & (uint32x4_t)__a) | (~__m & (uint32x4_t)__b)); }
 __BUN_CC_INTRIN float32_t vaddvq_f32(float32x4_t __a) { return __builtin_reduce_add(__a); }
-__BUN_CC_INTRIN float32_t vmaxvq_f32(float32x4_t __a) { return __builtin_reduce_max(__a); }
-__BUN_CC_INTRIN float32_t vminvq_f32(float32x4_t __a) { return __builtin_reduce_min(__a); }
+__BUN_CC_INTRIN float32_t vmaxvq_f32(float32x4_t __a) { return __builtin_reduce_maximum(__a); }
+__BUN_CC_INTRIN float32_t vminvq_f32(float32x4_t __a) { return __builtin_reduce_minimum(__a); }
 
 /* float64x2_t */
 __BUN_CC_INTRIN float64x2_t vdupq_n_f64(float64_t __x) { return (float64x2_t){__x, __x}; }
@@ -314,8 +318,10 @@ __BUN_CC_INTRIN float64x2_t vsubq_f64(float64x2_t __a, float64x2_t __b) { return
 __BUN_CC_INTRIN float64x2_t vmulq_f64(float64x2_t __a, float64x2_t __b) { return __a * __b; }
 __BUN_CC_INTRIN float64x2_t vmlaq_f64(float64x2_t __a, float64x2_t __b, float64x2_t __c) { return __a + __b * __c; }
 __BUN_CC_INTRIN float64x2_t vmlsq_f64(float64x2_t __a, float64x2_t __b, float64x2_t __c) { return __a - __b * __c; }
-__BUN_CC_INTRIN float64x2_t vminq_f64(float64x2_t __a, float64x2_t __b) { return __builtin_elementwise_min(__a, __b); }
-__BUN_CC_INTRIN float64x2_t vmaxq_f64(float64x2_t __a, float64x2_t __b) { return __builtin_elementwise_max(__a, __b); }
+__BUN_CC_INTRIN float64x2_t vminq_f64(float64x2_t __a, float64x2_t __b) { return __builtin_elementwise_minimum(__a, __b); }
+__BUN_CC_INTRIN float64x2_t vmaxq_f64(float64x2_t __a, float64x2_t __b) { return __builtin_elementwise_maximum(__a, __b); }
+__BUN_CC_INTRIN float64x2_t vminnmq_f64(float64x2_t __a, float64x2_t __b) { uint64x2_t __an = (uint64x2_t)(__a != __a), __bn = (uint64x2_t)(__b != __b); return __builtin_elementwise_minimum((float64x2_t)(((uint64x2_t)__b & __an) | ((uint64x2_t)__a & ~__an)), (float64x2_t)(((uint64x2_t)__a & __bn) | ((uint64x2_t)__b & ~__bn))); }
+__BUN_CC_INTRIN float64x2_t vmaxnmq_f64(float64x2_t __a, float64x2_t __b) { uint64x2_t __an = (uint64x2_t)(__a != __a), __bn = (uint64x2_t)(__b != __b); return __builtin_elementwise_maximum((float64x2_t)(((uint64x2_t)__b & __an) | ((uint64x2_t)__a & ~__an)), (float64x2_t)(((uint64x2_t)__a & __bn) | ((uint64x2_t)__b & ~__bn))); }
 __BUN_CC_INTRIN float64x2_t vnegq_f64(float64x2_t __a) { return -__a; }
 __BUN_CC_INTRIN float64x2_t vabsq_f64(float64x2_t __a) { return __builtin_elementwise_abs(__a); }
 __BUN_CC_INTRIN float64x2_t vdivq_f64(float64x2_t __a, float64x2_t __b) { return __a / __b; }
@@ -327,8 +333,8 @@ __BUN_CC_INTRIN uint64x2_t vcgeq_f64(float64x2_t __a, float64x2_t __b) { return 
 __BUN_CC_INTRIN uint64x2_t vcleq_f64(float64x2_t __a, float64x2_t __b) { return (uint64x2_t)(__a <= __b); }
 __BUN_CC_INTRIN float64x2_t vbslq_f64(uint64x2_t __m, float64x2_t __a, float64x2_t __b) { return (float64x2_t)((__m & (uint64x2_t)__a) | (~__m & (uint64x2_t)__b)); }
 __BUN_CC_INTRIN float64_t vaddvq_f64(float64x2_t __a) { return __builtin_reduce_add(__a); }
-__BUN_CC_INTRIN float64_t vmaxvq_f64(float64x2_t __a) { return __builtin_reduce_max(__a); }
-__BUN_CC_INTRIN float64_t vminvq_f64(float64x2_t __a) { return __builtin_reduce_min(__a); }
+__BUN_CC_INTRIN float64_t vmaxvq_f64(float64x2_t __a) { return __builtin_reduce_maximum(__a); }
+__BUN_CC_INTRIN float64_t vminvq_f64(float64x2_t __a) { return __builtin_reduce_minimum(__a); }
 
 /* Saturating arithmetic, rounding averages, table lookup, widening multiplies, pairwise sums. */
 __BUN_CC_INTRIN int8x16_t vqaddq_s8(int8x16_t __a, int8x16_t __b) { return __builtin_elementwise_add_sat(__a, __b); }
@@ -1147,8 +1153,10 @@ __BUN_CC_INTRIN float32x2_t vmul_n_f32(float32x2_t __a, float32_t __b) { return 
 __BUN_CC_INTRIN float32x4_t vmulq_n_f32(float32x4_t __a, float32_t __b) { return __a * vdupq_n_f32(__b); }
 __BUN_CC_INTRIN float32x2_t vmla_n_f32(float32x2_t __a, float32x2_t __b, float32_t __c) { return __a + __b * vdup_n_f32(__c); }
 __BUN_CC_INTRIN float32x4_t vmlaq_n_f32(float32x4_t __a, float32x4_t __b, float32_t __c) { return __a + __b * vdupq_n_f32(__c); }
-__BUN_CC_INTRIN float32x2_t vmin_f32(float32x2_t __a, float32x2_t __b) { return __builtin_elementwise_min(__a, __b); }
-__BUN_CC_INTRIN float32x2_t vmax_f32(float32x2_t __a, float32x2_t __b) { return __builtin_elementwise_max(__a, __b); }
+__BUN_CC_INTRIN float32x2_t vmin_f32(float32x2_t __a, float32x2_t __b) { return __builtin_elementwise_minimum(__a, __b); }
+__BUN_CC_INTRIN float32x2_t vmax_f32(float32x2_t __a, float32x2_t __b) { return __builtin_elementwise_maximum(__a, __b); }
+__BUN_CC_INTRIN float32x2_t vminnm_f32(float32x2_t __a, float32x2_t __b) { uint32x2_t __an = (uint32x2_t)(__a != __a), __bn = (uint32x2_t)(__b != __b); return __builtin_elementwise_minimum((float32x2_t)(((uint32x2_t)__b & __an) | ((uint32x2_t)__a & ~__an)), (float32x2_t)(((uint32x2_t)__a & __bn) | ((uint32x2_t)__b & ~__bn))); }
+__BUN_CC_INTRIN float32x2_t vmaxnm_f32(float32x2_t __a, float32x2_t __b) { uint32x2_t __an = (uint32x2_t)(__a != __a), __bn = (uint32x2_t)(__b != __b); return __builtin_elementwise_maximum((float32x2_t)(((uint32x2_t)__b & __an) | ((uint32x2_t)__a & ~__an)), (float32x2_t)(((uint32x2_t)__a & __bn) | ((uint32x2_t)__b & ~__bn))); }
 __BUN_CC_INTRIN float32x2_t vneg_f32(float32x2_t __a) { return -__a; }
 __BUN_CC_INTRIN float32x2_t vabs_f32(float32x2_t __a) { return __builtin_elementwise_abs(__a); }
 __BUN_CC_INTRIN float32x2_t vdiv_f32(float32x2_t __a, float32x2_t __b) { return __a / __b; }
@@ -1162,11 +1170,11 @@ __BUN_CC_INTRIN uint32x2_t vceqz_f32(float32x2_t __a) { return (uint32x2_t)(__a 
 __BUN_CC_INTRIN uint32x4_t vceqzq_f32(float32x4_t __a) { return (uint32x4_t)(__a == 0); }
 __BUN_CC_INTRIN float32x2_t vbsl_f32(uint32x2_t __m, float32x2_t __a, float32x2_t __b) { return (float32x2_t)((__m & (uint32x2_t)__a) | (~__m & (uint32x2_t)__b)); }
 __BUN_CC_INTRIN float32_t vaddv_f32(float32x2_t __a) { return __builtin_reduce_add(__a); }
-__BUN_CC_INTRIN float32_t vmaxv_f32(float32x2_t __a) { return __builtin_reduce_max(__a); }
-__BUN_CC_INTRIN float32_t vminv_f32(float32x2_t __a) { return __builtin_reduce_min(__a); }
+__BUN_CC_INTRIN float32_t vmaxv_f32(float32x2_t __a) { return __builtin_reduce_maximum(__a); }
+__BUN_CC_INTRIN float32_t vminv_f32(float32x2_t __a) { return __builtin_reduce_minimum(__a); }
 __BUN_CC_INTRIN float32x2_t vpadd_f32(float32x2_t __a, float32x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2) + __builtin_shufflevector(__a, __b, 1, 3); }
-__BUN_CC_INTRIN float32x2_t vpmax_f32(float32x2_t __a, float32x2_t __b) { return __builtin_elementwise_max(__builtin_shufflevector(__a, __b, 0, 2), __builtin_shufflevector(__a, __b, 1, 3)); }
-__BUN_CC_INTRIN float32x2_t vpmin_f32(float32x2_t __a, float32x2_t __b) { return __builtin_elementwise_min(__builtin_shufflevector(__a, __b, 0, 2), __builtin_shufflevector(__a, __b, 1, 3)); }
+__BUN_CC_INTRIN float32x2_t vpmax_f32(float32x2_t __a, float32x2_t __b) { return __builtin_elementwise_maximum(__builtin_shufflevector(__a, __b, 0, 2), __builtin_shufflevector(__a, __b, 1, 3)); }
+__BUN_CC_INTRIN float32x2_t vpmin_f32(float32x2_t __a, float32x2_t __b) { return __builtin_elementwise_minimum(__builtin_shufflevector(__a, __b, 0, 2), __builtin_shufflevector(__a, __b, 1, 3)); }
 __BUN_CC_INTRIN float32x2_t vabd_f32(float32x2_t __a, float32x2_t __b) { return __builtin_elementwise_abs(__a - __b); }
 __BUN_CC_INTRIN float32x4_t vabdq_f32(float32x4_t __a, float32x4_t __b) { return __builtin_elementwise_abs(__a - __b); }
 
@@ -1178,8 +1186,10 @@ __BUN_CC_INTRIN float64x1_t vmla_f64(float64x1_t __a, float64x1_t __b, float64x1
 __BUN_CC_INTRIN float64x1_t vmls_f64(float64x1_t __a, float64x1_t __b, float64x1_t __c) { return __a - __b * __c; }
 __BUN_CC_INTRIN float64x1_t vmul_n_f64(float64x1_t __a, float64_t __b) { return __a * vdup_n_f64(__b); }
 __BUN_CC_INTRIN float64x2_t vmulq_n_f64(float64x2_t __a, float64_t __b) { return __a * vdupq_n_f64(__b); }
-__BUN_CC_INTRIN float64x1_t vmin_f64(float64x1_t __a, float64x1_t __b) { return __builtin_elementwise_min(__a, __b); }
-__BUN_CC_INTRIN float64x1_t vmax_f64(float64x1_t __a, float64x1_t __b) { return __builtin_elementwise_max(__a, __b); }
+__BUN_CC_INTRIN float64x1_t vmin_f64(float64x1_t __a, float64x1_t __b) { return __builtin_elementwise_minimum(__a, __b); }
+__BUN_CC_INTRIN float64x1_t vmax_f64(float64x1_t __a, float64x1_t __b) { return __builtin_elementwise_maximum(__a, __b); }
+__BUN_CC_INTRIN float64x1_t vminnm_f64(float64x1_t __a, float64x1_t __b) { uint64x1_t __an = (uint64x1_t)(__a != __a), __bn = (uint64x1_t)(__b != __b); return __builtin_elementwise_minimum((float64x1_t)(((uint64x1_t)__b & __an) | ((uint64x1_t)__a & ~__an)), (float64x1_t)(((uint64x1_t)__a & __bn) | ((uint64x1_t)__b & ~__bn))); }
+__BUN_CC_INTRIN float64x1_t vmaxnm_f64(float64x1_t __a, float64x1_t __b) { uint64x1_t __an = (uint64x1_t)(__a != __a), __bn = (uint64x1_t)(__b != __b); return __builtin_elementwise_maximum((float64x1_t)(((uint64x1_t)__b & __an) | ((uint64x1_t)__a & ~__an)), (float64x1_t)(((uint64x1_t)__a & __bn) | ((uint64x1_t)__b & ~__bn))); }
 __BUN_CC_INTRIN float64x1_t vneg_f64(float64x1_t __a) { return -__a; }
 __BUN_CC_INTRIN float64x1_t vabs_f64(float64x1_t __a) { return __builtin_elementwise_abs(__a); }
 __BUN_CC_INTRIN float64x1_t vdiv_f64(float64x1_t __a, float64x1_t __b) { return __a / __b; }

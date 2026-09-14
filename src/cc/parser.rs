@@ -5870,6 +5870,8 @@ impl<S: TokenSource> Parser<S> {
             "elementwise_abs" => Some(VecBuiltin::Abs),
             "elementwise_min" => Some(VecBuiltin::Min),
             "elementwise_max" => Some(VecBuiltin::Max),
+            "elementwise_minimum" => Some(VecBuiltin::Minimum),
+            "elementwise_maximum" => Some(VecBuiltin::Maximum),
             "elementwise_sqrt" => Some(VecBuiltin::Sqrt),
             _ => None,
         };
@@ -5878,6 +5880,8 @@ impl<S: TokenSource> Parser<S> {
             "reduce_mul" => Some(ReduceOp::Mul),
             "reduce_min" => Some(ReduceOp::Min),
             "reduce_max" => Some(ReduceOp::Max),
+            "reduce_minimum" => Some(ReduceOp::Minimum),
+            "reduce_maximum" => Some(ReduceOp::Maximum),
             "reduce_and" => Some(ReduceOp::And),
             "reduce_or" => Some(ReduceOp::Or),
             "reduce_xor" => Some(ReduceOp::Xor),

@@ -566,7 +566,8 @@ impl Sema {
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
-        let arity = if matches!(op, VecBuiltin::Min | VecBuiltin::Max) {
+        let ieee = matches!(op, VecBuiltin::Minimum | VecBuiltin::Maximum);
+        let arity = if ieee || matches!(op, VecBuiltin::Min | VecBuiltin::Max) {
             2
         } else {
             1
@@ -574,8 +575,29 @@ impl Sema {
         if args.len() != arity {
             return err(loc, format!("{name} takes {arity} argument(s)"));
         }
+        // Of two `float`s or two `double`s as well (Clang takes scalars everywhere here; these
+        // two are the ones there is an instruction for).
+        if ieee && !args.iter().any(|arg| arg.ty.is_vector()) {
+            let b = self.rvalue(args.swap_remove(1))?;
+            let a = self.rvalue(args.swap_remove(0))?;
+            if !a.ty.is_float() || a.ty != b.ty {
+                return err(
+                    loc,
+                    format!("{name} needs two operands of one floating-point type"),
+                );
+            }
+            let (ty, which) = (
+                a.ty.clone(),
+                if op == VecBuiltin::Minimum {
+                    Intrinsic::FMinimum
+                } else {
+                    Intrinsic::FMaximum
+                },
+            );
+            return self.mk(ExprKind::Intrinsic(which, vec![a, b]), ty, loc);
+        }
         let a = self.vector_arg(args.swap_remove(0), name)?;
-        if op == VecBuiltin::Sqrt && self.is_int_vector(&a.ty) {
+        if (ieee || op == VecBuiltin::Sqrt) && self.is_int_vector(&a.ty) {
             return err(loc, format!("{name} needs a floating-point vector"));
         }
         let ty = a.ty.clone();
@@ -605,6 +627,9 @@ impl Sema {
         let bitwise = matches!(op, ReduceOp::And | ReduceOp::Or | ReduceOp::Xor);
         if bitwise && !self.is_int_vector(&v.ty) {
             return err(loc, format!("{name} needs an integer vector"));
+        }
+        if matches!(op, ReduceOp::Minimum | ReduceOp::Maximum) && self.is_int_vector(&v.ty) {
+            return err(loc, format!("{name} needs a floating-point vector"));
         }
         let Some(elem) = v.ty.vector_elem().cloned() else {
             return err(loc, "internal error: reduction of a non-vector");

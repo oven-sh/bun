@@ -590,7 +590,7 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
         }
     }
     size = size.max(image.len() as u64);
-    if let Some(text) = past_the_loader(size, image.len(), tls.size, tls_image.len()) {
+    if let Some(text) = past_the_loader(size, tls.size) {
         return fail(0, text);
     }
 
@@ -780,14 +780,9 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
     })
 }
 
-/// What is wrong with segments of these sizes (all of the data, how much of it is written out, and
-/// the same of the thread-local data) for the loader, if anything is.
-pub(crate) fn past_the_loader(
-    data: u64,
-    data_written: usize,
-    thread_local: u64,
-    thread_local_written: usize,
-) -> Option<String> {
+/// What is wrong with a data segment and a thread-local one of these sizes for the loader, if
+/// anything is.
+pub(crate) fn past_the_loader(data: u64, thread_local: u64) -> Option<String> {
     if data > bir::MAX_SEGMENT_SIZE {
         return Some(format!(
             "the program's data is larger than {} bytes",
@@ -798,12 +793,6 @@ pub(crate) fn past_the_loader(
         return Some(format!(
             "the program's thread-local data is larger than {} bytes",
             bir::MAX_TLS_SIZE
-        ));
-    }
-    if data_written.max(thread_local_written) as u64 > bir::MAX_INITIALIZED {
-        return Some(format!(
-            "the program's initialized data (the constants, and the objects with initializers up to the last byte that is not zero) is larger than {} bytes",
-            bir::MAX_INITIALIZED
         ));
     }
     None

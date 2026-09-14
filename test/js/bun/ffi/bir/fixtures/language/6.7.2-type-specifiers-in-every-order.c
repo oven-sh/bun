@@ -5,7 +5,9 @@
   unsigned short: "ushort", int: "int", unsigned: "uint", long: "long", unsigned long: "ulong", long long: "llong", \
   unsigned long long: "ullong", float: "float", double: "double", long double: "ldouble", float _Complex: "cfloat", \
   double _Complex: "cdouble", default: "other")
-#define IS(specifiers, name) do { specifiers object = 0; checks++; if (KIND(object)[0] != name[0] || KIND(object)[1] != name[1] || KIND(object)[2] != name[2]) { wrong++; printf("WRONG: %s is %s, not %s\n", #specifiers, KIND(object), name); } } while (0)
+// Every check says which specifiers it is about and whether they name the type expected; the test compares that,
+// line by line, with values.json.
+#define IS(specifiers, name) do { specifiers object = 0; int holds = KIND(object)[0] == name[0] && KIND(object)[1] == name[1] && KIND(object)[2] == name[2]; checks++; wrong += !holds; printf("%s is %s => %d\n", #specifiers, name, holds); } while (0)
 
 int main(void) {
   int checks = 0, wrong = 0;

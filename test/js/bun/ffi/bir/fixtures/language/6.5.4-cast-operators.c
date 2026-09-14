@@ -3,14 +3,8 @@
 #include <stdio.h>
 
 static int checks, wrong;
-#define CHECK(condition) \
-  do { \
-    checks++; \
-    if (!(condition)) { \
-      wrong++; \
-      printf("WRONG (line %d): %s\n", __LINE__, #condition); \
-    } \
-  } while (0)
+// Every check says what it checked and whether it held; the test compares that, line by line, with values.json.
+#define CHECK(c) do { int holds = (c) ? 1 : 0; checks++; wrong += !holds; printf("%s => %d\n", #c, holds); } while (0)
 
 // Every arithmetic type from every arithmetic type, for a value both can represent and one that must be reduced.
 #define FROM(S) \

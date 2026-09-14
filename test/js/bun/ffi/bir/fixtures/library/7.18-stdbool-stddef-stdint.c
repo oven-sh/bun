@@ -11,7 +11,8 @@ static const char *in_the_preprocessor = "true and false work in #if";
 
 struct record { char tag; double value; char text[5]; struct { short a, b; } inner; };
 static int checks, wrong;
-#define CHECK(c) do { checks++; if (!(c)) { wrong++; printf("WRONG: %s\n", #c); } } while (0)
+// Every check says what it checked and whether it held; the test compares that, line by line, with values.json.
+#define CHECK(c) do { int holds = (c) ? 1 : 0; checks++; wrong += !holds; printf("%s => %d\n", #c, holds); } while (0)
 #define IS(x, T) _Generic((x), T: 1, default: 0)
 #define SIGNED(T) ((T)-1 < 0)
 #define EXACT(bits) \

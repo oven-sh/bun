@@ -3,7 +3,8 @@
 #include <string.h>
 
 static int checks, wrong;
-#define CHECK(c) do { checks++; if (!(c)) { wrong++; printf("WRONG (line %d): %s\n", __LINE__, #c); } } while (0)
+// Every check says what it checked and whether it held; the test compares that, line by line, with values.json.
+#define CHECK(c) do { int holds = (c) ? 1 : 0; checks++; wrong += !holds; printf("%s => %d\n", #c, holds); } while (0)
 static int sign(int v) { return (v > 0) - (v < 0); }
 
 int main(void) {

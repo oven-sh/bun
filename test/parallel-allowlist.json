@@ -8,8 +8,8 @@
     "rule": "a bun test file qualifies when its slowest lane median in expected-durations.json is <= 15000ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds and is not in test/parallel-denylist.txt; docker-service (prestart-map prefixes or describeWithContainer callers), stress-named and cli/install tests (shared bin/cache dirs; hosted-git-info and migration exempt) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles",
     "stats": {
       "dirs": 250,
-      "files": 1513,
-      "excluded": 366
+      "files": 1512,
+      "excluded": 367
     }
   },
   "dirs": [
@@ -356,6 +356,7 @@
     "js/bun/crypto/wpt-webcrypto.generateKey.test.ts",
     "js/bun/dns/resolve-dns.test.ts",
     "js/bun/ffi/ffi.test.js",
+    "js/bun/gc/gc-controller-cadence.test.ts",
     "js/bun/glob/leak.test.ts",
     "js/bun/glob/stress.test.ts",
     "js/bun/http/bun-serve-date.test.ts",

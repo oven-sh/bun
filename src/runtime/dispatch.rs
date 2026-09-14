@@ -983,7 +983,7 @@ pub(crate) unsafe fn __bun_fire_timer(
             timer_arm!(
                 GarbageCollectionController,
                 gc_repeating_timer,
-                |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
+                |c, now, vm| GarbageCollectionController::on_gc_repeating_timer(c, &*now, vm)
             )
         }
         EventLoopTimerTag::DateHeaderTimer => {

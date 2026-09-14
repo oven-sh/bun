@@ -220,6 +220,8 @@ pub(crate) fn build_store(
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
     timings: Timings,
+    // `Some` only for a store about to be installed: where its out-of-range peers are reported.
+    mut peer_warnings: Option<&mut bun_ast::Log>,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
     let pkgs = lockfile.packages.slice();
@@ -397,6 +399,9 @@ pub(crate) fn build_store(
     let mut peer_dep_ids: Vec<DependencyID> = Vec::new();
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
+
+    // A package is visited once per peer context; each `(peer edge, resolution)` is checked once.
+    let mut reported_peers: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
 
     // First pass: create full dependency tree with resolved peers
     'next_node: while let Some(entry) = node_queue.pop() {
@@ -745,24 +750,7 @@ pub(crate) fn build_store(
                             continue;
                         }
 
-                        let res = &pkg_resolutions[ids.pkg_id as usize];
-
-                        if peer_dep.version.tag != VersionTag::Npm || res.tag != ResolutionTag::Npm
-                        {
-                            // TODO: print warning for this? we don't have a version
-                            // to compare to say if this satisfies or not.
-                            break 'resolved_pkg_id (ids.pkg_id, false);
-                        }
-
-                        // SAFETY: tag was checked == .Npm directly above for both
-                        // `peer_dep.version` and `res`.
-                        let peer_dep_version = &peer_dep.version.npm().version;
-                        let res_version = &res.npm().version;
-
-                        if !peer_dep_version.satisfies(*res_version, string_buf, string_buf) {
-                            // TODO: add warning!
-                        }
-
+                        // The nearest provider wins even out of range; the range is checked below.
                         break 'resolved_pkg_id (ids.pkg_id, false);
                     }
 
@@ -780,8 +768,6 @@ pub(crate) fn build_store(
                         if !ids.auto_installed {
                             // The resolution was found here or above. Choose the same
                             // peer resolution. No need to mark this node or above.
-
-                            // TODO: add warning if not satisfies()!
                             break 'resolved_pkg_id (ids.pkg_id, false);
                         }
 
@@ -825,6 +811,17 @@ pub(crate) fn build_store(
                 // these are optional peers that failed to find any dependency with a matching
                 // name. they are completely excluded
                 continue;
+            }
+
+            if let Some(log) = peer_warnings.as_deref_mut()
+                && !dependencies[peer_dep_id as usize]
+                    .behavior
+                    .is_optional_peer()
+                && reported_peers
+                    .insert((peer_dep_id, resolved_pkg_id), ())
+                    .is_none()
+            {
+                lockfile.warn_if_peer_out_of_range(log, entry.pkg_id, peer_dep_id, resolved_pkg_id);
             }
 
             for &visited_parent_id in &visited_parent_node_ids {
@@ -1154,6 +1151,8 @@ pub(crate) fn install_isolated_packages(
     } else {
         Timings::Quiet
     };
+    // The partial store that installs a security scanner ahead of the real install stays quiet.
+    let peer_warnings = packages_to_install.is_none().then(|| manager.log_mut());
     let store: Store = build_store(
         &*manager,
         &*lockfile,
@@ -1161,6 +1160,7 @@ pub(crate) fn install_isolated_packages(
         workspace_filters,
         packages_to_install,
         timings,
+        peer_warnings,
     )?;
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {

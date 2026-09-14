@@ -700,12 +700,21 @@ impl ErrorDeferred {
         self.promise.reject(global_this, Ok(instance))
     }
 
-    pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
+    /// `context` is the context of the script that asked. Once it has stopped the
+    /// error is not reported: closing a resolver's channel fails every pending
+    /// query with `ARES_EDESTRUCTION`, and that is how a `Bun.ModuleGraph`'s
+    /// resolver goes when the graph is disposed.
+    pub(crate) fn reject_later(
+        self: Box<Self>,
+        global_this: &JSGlobalObject,
+        context: bun_jsc::ContextId,
+    ) {
         struct Context {
             deferred: Box<ErrorDeferred>,
             // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
             // enqueued task (VM-owned), so a `BackRef` captures the invariant.
             global_this: bun_ptr::BackRef<JSGlobalObject>,
+            context: bun_jsc::ContextId,
         }
         impl Context {
             // `bun_event_loop::ManagedTask::new` expects
@@ -715,6 +724,10 @@ impl ErrorDeferred {
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { bun_core::heap::take(this) };
                 let global = this.global_this.get();
+                // The context may have stopped since the task was queued.
+                if !global.bun_vm().is_context_live(this.context) {
+                    return Ok(());
+                }
                 this.deferred.reject(global)
             }
         }
@@ -725,13 +738,14 @@ impl ErrorDeferred {
         // drained-without-run and ManagedTask has no cleanup here, so enqueuing
         // would leak the `Context` and its `JSPromiseStrong` box. Drop now while
         // JSC is still live so the Strong handle releases cleanly.
-        if vm.is_shutting_down() {
+        if vm.is_shutting_down() || !vm.is_context_live(context) {
             return;
         }
 
         let context = bun_core::heap::into_raw(Box::new(Context {
             deferred: self,
             global_this: bun_ptr::BackRef::new(global_this),
+            context,
         }));
         // TODO(@heimskr): new custom Task type
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of

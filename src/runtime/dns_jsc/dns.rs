@@ -456,6 +456,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
+                context: global_this.bun_vm().current_context().id(),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -590,6 +591,7 @@ impl GetHostByAddrInfoRequest {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
+                context: global_this.bun_vm().current_context().id(),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -667,6 +669,8 @@ pub(crate) struct CAresNameInfo {
     pub allocated: bool,
     pub next: Option<NonNull<CAresNameInfo>>, // INTRUSIVE
     pub name: Box<[u8]>,
+    /// The context whose script asked: an answer for a stopped one settles nothing.
+    pub context: bun_jsc::ContextId,
 }
 
 impl CAresNameInfo {
@@ -684,6 +688,7 @@ impl CAresNameInfo {
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
             global_this: bun_ptr::BackRef::new(global_this),
+            context: global_this.bun_vm().current_context().id(),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
@@ -712,7 +717,7 @@ impl CAresNameInfo {
                     Some((*this).name.as_ref()),
                     &mut (*this).promise,
                 )
-                .reject_later(global_this);
+                .reject_later(global_this, (*this).context);
                 Self::destroy(this);
             }
             return;
@@ -726,7 +731,7 @@ impl CAresNameInfo {
                     Some((*this).name.as_ref()),
                     &mut (*this).promise,
                 )
-                .reject_later(global_this);
+                .reject_later(global_this, (*this).context);
                 Self::destroy(this);
             }
             return;
@@ -744,8 +749,10 @@ impl CAresNameInfo {
         // SAFETY: see fn contract — `this` is a live node.
         let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
         // SAFETY: see fn contract — `this` is a live node.
-        let global_this = unsafe { (*this).global_this() };
-        result.settle(&mut promise, global_this);
+        let (global_this, context) = unsafe { ((*this).global_this(), (*this).context) };
+        if global_this.bun_vm().is_context_live(context) {
+            result.settle(&mut promise, global_this);
+        }
         // SAFETY: see fn contract.
         unsafe { Self::destroy(this) };
     }
@@ -833,6 +840,7 @@ impl GetNameInfoRequest {
             pending_slot: None,
             head: CAresNameInfo {
                 global_this: bun_ptr::BackRef::new(global_this),
+                context: global_this.bun_vm().current_context().id(),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -1444,6 +1452,8 @@ pub(crate) struct CAresReverse {
     pub allocated: bool,
     pub next: Option<NonNull<CAresReverse>>, // INTRUSIVE
     pub name: Box<[u8]>,
+    /// The context whose script asked: an answer for a stopped one settles nothing.
+    pub context: bun_jsc::ContextId,
 }
 
 impl CAresReverse {
@@ -1469,6 +1479,7 @@ impl CAresReverse {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
+            context: global_this.bun_vm().current_context().id(),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
@@ -1496,7 +1507,7 @@ impl CAresReverse {
                     Some(&(*this).name),
                     &mut (*this).promise,
                 )
-                .reject_later(global_this);
+                .reject_later(global_this, (*this).context);
                 Self::destroy(this);
                 return;
             }
@@ -1507,7 +1518,7 @@ impl CAresReverse {
                     Some(&(*this).name),
                     &mut (*this).promise,
                 )
-                .reject_later(global_this);
+                .reject_later(global_this, (*this).context);
                 Self::destroy(this);
                 return;
             };
@@ -1526,7 +1537,9 @@ impl CAresReverse {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            result.settle(&mut promise, global_this);
+            if global_this.bun_vm().is_context_live((*this).context) {
+                result.settle(&mut promise, global_this);
+            }
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1569,6 +1582,8 @@ pub(crate) struct CAresLookup<T: CAresRecordType> {
     pub allocated: bool,
     pub next: Option<NonNull<CAresLookup<T>>>, // INTRUSIVE
     pub name: Box<[u8]>,
+    /// The context whose script asked: an answer for a stopped one settles nothing.
+    pub context: bun_jsc::ContextId,
     _marker: core::marker::PhantomData<T>,
 }
 
@@ -1589,6 +1604,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
+            context: global_this.bun_vm().current_context().id(),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
@@ -1632,7 +1648,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
                     Some(&(*this).name),
                     &mut (*this).promise,
                 )
-                .reject_later(global_this);
+                .reject_later(global_this, (*this).context);
                 Self::destroy(this);
                 return;
             }
@@ -1643,7 +1659,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
                     Some(&(*this).name),
                     &mut (*this).promise,
                 )
-                .reject_later(global_this);
+                .reject_later(global_this, (*this).context);
                 Self::destroy(this);
                 return;
             };
@@ -1659,7 +1675,9 @@ impl<T: CAresRecordType> CAresLookup<T> {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            result.settle(&mut promise, global_this);
+            if global_this.bun_vm().is_context_live((*this).context) {
+                result.settle(&mut promise, global_this);
+            }
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1760,7 +1778,7 @@ impl DNSLookup {
         unsafe {
             if let Some(err) = c_ares::Error::init_eai(status) {
                 error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
-                    .reject_later((*this).global_this());
+                    .reject_later((*this).global_this(), (*this).context);
                 Self::destroy(this);
                 return;
             }
@@ -1791,7 +1809,7 @@ impl DNSLookup {
             let global_this = (*this).global_this();
             if let Some(err) = err_ {
                 error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
-                    .reject_later(global_this);
+                    .reject_later(global_this, (*this).context);
                 Self::destroy(this);
                 return;
             }
@@ -1804,7 +1822,7 @@ impl DNSLookup {
                     None,
                     &mut (*this).promise,
                 )
-                .reject_later(global_this);
+                .reject_later(global_this, (*this).context);
                 Self::destroy(this);
                 return;
             };
@@ -5238,7 +5256,7 @@ impl Resolver {
                 Some(name),
                 &mut promise,
             )
-            .reject_later(global_this);
+            .reject_later(global_this, global_this.bun_vm().current_context().id());
             return Ok(promise_value);
         }
 

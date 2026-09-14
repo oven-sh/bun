@@ -3,9 +3,10 @@
 // happened to be running when it was opened.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunExe, tempDir } from "harness";
+import { bunExe, isWindows, tempDir, tls as tlsCertificate } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
+import http2 from "node:http2";
 import { join } from "path";
 
 const ModuleGraph = Bun.ModuleGraph;
@@ -37,6 +38,8 @@ const dir = String(
     "app.mjs": `
       import net from "node:net";
       import http from "node:http";
+      import http2 from "node:http2";
+      import dgram from "node:dgram";
       import fs from "node:fs";
       import zlib from "node:zlib";
       import crypto from "node:crypto";
@@ -160,7 +163,57 @@ const dir = String(
           channel.onmessage = () => state.ticks++;
           state.close = () => channel.close();
         },
+        unixListen(state) {
+          const server = Bun.listen({ unix: import.meta.dir + "/" + state.tag + ".sock", socket: { open(socket) { socket.write(state.tag); }, data() {} } });
+          state.close = () => server.stop(true);
+        },
+        netUnixServer(state) {
+          const server = net.createServer(socket => { socket.on("error", () => {}); socket.write(state.tag); });
+          return new Promise(resolve => server.listen(import.meta.dir + "/" + state.tag + ".sock", () => {
+            state.close = () => server.close();
+            resolve();
+          }));
+        },
+        tlsListen(state, tls) {
+          const server = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { open(socket) { socket.write(state.tag); }, data() {} } });
+          state.port = server.port;
+          state.close = () => server.stop(true);
+        },
+        http2Server(state) {
+          const server = http2.createServer();
+          server.on("stream", stream => { stream.respond({ ":status": 200 }); stream.end(state.tag); });
+          return new Promise(resolve => server.listen(0, "127.0.0.1", () => {
+            state.port = server.address().port;
+            state.close = () => server.close();
+            resolve();
+          }));
+        },
+        dgram(state) {
+          const socket = dgram.createSocket("udp4");
+          socket.on("message", () => state.ticks++);
+          return new Promise(resolve => socket.bind(0, "127.0.0.1", () => {
+            state.port = socket.address().port;
+            state.close = () => socket.close();
+            resolve();
+          }));
+        },
+        httpRequest(state, hostPort) {
+          const request = http.get({ host: "127.0.0.1", port: hostPort, path: "/hang?tag=" + state.tag });
+          request.on("error", () => {});
+          state.close = () => request.destroy();
+        },
+        watchFile(state) {
+          fs.watchFile(state.file, { interval: 1 }, () => state.ticks++);
+          state.close = () => fs.unwatchFile(state.file);
+        },
       };
+
+      // A c-ares query to a server of the host's that answers when the host says so.
+      export function resolveThrough(state, dnsPort) {
+        const resolver = new dns.Resolver();
+        resolver.setServers(["127.0.0.1:" + dnsPort]);
+        resolver.resolve4(state.tag + ".test", error => { state.settled = String(error?.code ?? "fulfilled"); });
+      }
 
       // For the tests of whose context a call runs in.
       export const call = (fn, ...args) => fn(...args);
@@ -401,6 +454,50 @@ async function greets(port: number, tag: string): Promise<boolean> {
   }
   return promise;
 }
+/** `greets`, for a server on a Unix domain socket or one that speaks TLS. */
+async function greetsThrough(options: object, tag: string): Promise<boolean> {
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  try {
+    await Bun.connect({
+      ...options,
+      socket: {
+        data(socket, data) {
+          resolve(data.toString() === tag);
+          socket.end();
+        },
+        close: () => resolve(false),
+        error: () => resolve(false),
+      },
+    } as Parameters<typeof Bun.connect>[0]);
+  } catch {
+    return false;
+  }
+  return promise;
+}
+const unixPath = (state: State) => join(dir, state.tag + ".sock");
+/** Whether the HTTP/2 (cleartext) server on the state's port answers with its tag. */
+function servesTagOverHttp2(state: State): Promise<boolean> {
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const session = http2.connect("http://127.0.0.1:" + state.port);
+  session.on("error", () => resolve(false));
+  const request = session.request({ ":path": "/" });
+  let body = "";
+  request.on("data", chunk => (body += chunk));
+  request.on("end", () => resolve(body === state.tag));
+  request.on("error", () => resolve(false));
+  request.end();
+  return promise.finally(() => session.destroy());
+}
+/** Whether the UDP socket on the state's port counts the datagrams it is sent. */
+async function countsDatagrams(state: State): Promise<boolean> {
+  // (A datagram to a closed port comes back as an error on the sender.)
+  const sender = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { error() {} } });
+  try {
+    return await ticks(state, () => void sender.send("x", state.port, "127.0.0.1"));
+  } finally {
+    sender.close();
+  }
+}
 const servesTag = async (state: State) =>
   (await fetch(`http://127.0.0.1:${state.port}/`).then(
     r => r.text(),
@@ -480,17 +577,7 @@ const kinds: Record<string, Kind> = {
   listen: { alive: state => greets(state.port, state.tag) },
   netServer: { alive: state => greets(state.port, state.tag) },
   httpServer: { alive: servesTag },
-  udp: {
-    alive: async state => {
-      // (A datagram to a closed port comes back as an error on the sender.)
-      const sender = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { error() {} } });
-      try {
-        return await ticks(state, () => void sender.send("x", state.port, "127.0.0.1"));
-      } finally {
-        sender.close();
-      }
-    },
-  },
+  udp: { alive: countsDatagrams },
   connect: { args: () => [hostTcp.port], alive: async state => connected.has("tcp:" + state.tag) },
   netConnect: { args: () => [hostTcp.port], alive: async state => connected.has("tcp:" + state.tag) },
   webSocket: { args: () => [hostHttp.port], alive: async state => connected.has("ws:" + state.tag) },
@@ -537,6 +624,22 @@ const kinds: Record<string, Kind> = {
       }
     },
   },
+  // (On Windows these two are named pipes, which Bun.listen and node:net name differently.)
+  ...(isWindows
+    ? {}
+    : {
+        unixListen: { alive: state => greetsThrough({ unix: unixPath(state) }, state.tag) },
+        netUnixServer: { alive: state => greetsThrough({ unix: unixPath(state) }, state.tag) },
+      }),
+  tlsListen: {
+    args: () => [tlsCertificate],
+    alive: state =>
+      greetsThrough({ hostname: "127.0.0.1", port: state.port, tls: { rejectUnauthorized: false } }, state.tag),
+  },
+  http2Server: { alive: servesTagOverHttp2 },
+  dgram: { alive: countsDatagrams },
+  httpRequest: { args: () => [hostHttp.port], alive: async state => connected.has("http:" + state.tag) },
+  watchFile: { alive: state => ticks(state, () => writeFileSync(state.file, String(Math.random()))) },
 };
 
 const hostApp = await import(appPath);
@@ -1349,6 +1452,61 @@ test("ModuleGraph isolation: a Bun.$ script of a disposed graph stops: the runni
 
 // What a disposed graph started in the background never reports back: the promise its code is
 // waiting on stays pending, so none of its code runs again.
+test("ModuleGraph isolation: a DNS query (c-ares) of a disposed graph is never answered to it", async () => {
+  // A DNS server of the host's that holds every query until told to answer (with NXDOMAIN).
+  const held: { query: Buffer; port: number; address: string }[] = [];
+  const server = await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(_socket, query, port, address) {
+        held.push({ query: Buffer.from(query), port, address });
+      },
+      // The disposed graph's resolver has closed its socket: the answer to it is refused.
+      error() {},
+    },
+  });
+  const asked = (state: State) => held.some(({ query }) => query.toString("latin1").toLowerCase().includes(state.tag));
+  const answerAll = () => {
+    for (const { query, port, address } of held.splice(0)) {
+      const reply = Buffer.from(query);
+      reply[2] |= 0x80; // a response
+      reply[3] = (reply[3] & 0xf0) | 3; // NXDOMAIN
+      try {
+        server.send(reply, port, address);
+      } catch {
+        // The refusal of the answer before this one, reported here: this one has not been sent yet.
+        server.send(reply, port, address);
+      }
+    }
+  };
+  try {
+    using disposed = await newGraph();
+    using live = await newGraph();
+    const states = {
+      disposed: newState("resolve-disposed"),
+      live: newState("resolve-live"),
+      host: newState("resolve-host"),
+    };
+    disposed.graph.run(() => disposed.app.resolveThrough(states.disposed, server.port));
+    live.graph.run(() => live.app.resolveThrough(states.live, server.port));
+    hostApp.resolveThrough(states.host, server.port);
+    await until(() => Object.values(states).every(asked));
+
+    disposed.graph.dispose();
+    answerAll();
+    await until(() => states.live.settled !== undefined && states.host.settled !== undefined);
+    await hostTimerTurns();
+    expect({
+      disposed: states.disposed.settled,
+      live: states.live.settled,
+      host: states.host.settled,
+    }).toEqual({ disposed: undefined, live: "ENOTFOUND", host: "ENOTFOUND" });
+  } finally {
+    server.close();
+  }
+});
+
 test("ModuleGraph isolation: background work of a disposed graph does not settle into it", async () => {
   // Completions that do not know which graph started them still resolve their promise, so the graph's
   // continuation runs (in its stopped context: what it opens is closed at once). Which of these a

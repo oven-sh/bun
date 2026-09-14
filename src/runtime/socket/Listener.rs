@@ -1304,7 +1304,13 @@ impl Listener {
                     };
                     let named_pipe = match named_pipe_result {
                         Ok(p) => p,
-                        Err(_) => return Ok(promise_value),
+                        Err(_) => {
+                            // The context's guard already ran `handle_connect_error`
+                            // on the still-detached socket, which releases nothing.
+                            // Balance the attempt `tls_ref.ref_()` above.
+                            TLSSocket::deref(&tls_ref);
+                            return Ok(promise_value);
+                        }
                     };
                     tls_ref.socket.set(uws::NewSocketHandler {
                         socket: uws::InternalSocket::Pipe(named_pipe.cast()),
@@ -1383,7 +1389,11 @@ impl Listener {
                     };
                     let named_pipe = match named_pipe_result {
                         Ok(p) => p,
-                        Err(_) => return Ok(promise_value),
+                        Err(_) => {
+                            // Balance the attempt `tcp_ref.ref_()` above; see the TLS arm.
+                            TCPSocket::deref(&tcp_ref);
+                            return Ok(promise_value);
+                        }
                     };
                     tcp_ref.socket.set(uws::NewSocketHandler {
                         socket: uws::InternalSocket::Pipe(named_pipe.cast()),

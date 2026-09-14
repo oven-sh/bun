@@ -244,6 +244,7 @@ export function createRequireCache() {
   // $requireMap.
   const isBuiltinKey = (key: string | symbol) =>
     typeof key === "string" && (key.startsWith("node:") || key.startsWith("bun:"));
+  const hasKey = (key: string) => $requireMap.$has(key) || (!isBuiltinKey(key) && $esmRegistryHasEvaluated(key));
   var proxy = new Proxy(inner, {
     get(_target, key: string) {
       const entry = $requireMap.$get(key);
@@ -266,7 +267,7 @@ export function createRequireCache() {
     },
 
     has(_target, key: string) {
-      return $requireMap.$has(key) || (!isBuiltinKey(key) && $esmNamespaceForCjs(key) !== undefined);
+      return hasKey(key);
     },
 
     deleteProperty(_target, key: string) {
@@ -280,7 +281,7 @@ export function createRequireCache() {
     ownKeys(_target) {
       var array = [...$requireMap.$keys()];
       for (const key of $esmRegistryEvaluatedKeys()) {
-        if (!isBuiltinKey(key) && !array.includes(key)) {
+        if (!isBuiltinKey(key) && !$requireMap.$has(key)) {
           $arrayPush(array, key);
         }
       }
@@ -293,7 +294,7 @@ export function createRequireCache() {
     },
 
     getOwnPropertyDescriptor(_target, key: string) {
-      if ($requireMap.$has(key) || (!isBuiltinKey(key) && $esmNamespaceForCjs(key) !== undefined)) {
+      if (hasKey(key)) {
         return {
           configurable: true,
           enumerable: true,

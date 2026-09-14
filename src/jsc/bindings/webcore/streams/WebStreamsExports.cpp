@@ -195,8 +195,7 @@ extern "C" void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleR
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
-    stream->m_disturbed = true;
-    stream->m_consumedAsBody = true;
+    stream->markConsumedAsBody();
 }
 
 // markConsumedAsBody for Rust `to_any_blob`, which took the payload of a stream nothing started: no reader exists to close it.
@@ -205,8 +204,7 @@ extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possible
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
-    stream->m_disturbed = true;
-    stream->m_consumedAsBody = true;
+    stream->markConsumedAsBody();
     ASSERT(!stream->m_reader);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     readableStreamCloseIfPossible(globalObject, stream);

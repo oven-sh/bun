@@ -473,23 +473,25 @@ impl Terminal {
             }
         }
 
-        // Start reader with the read fd - adds a ref
+        // Start reader with the read fd. The reader's ref is taken first: when
+        // the poll registration fails, POSIX `start()` calls `on_reader_error`,
+        // which releases that ref, and still returns Ok.
+        terminal.ref_();
         match terminal
             .reader
             .with_mut(|r| r.start(pty_result.read_fd, true))
         {
             sys::Result::Err(_) => {
-                // Reader never started: closeInternal skips reader.close() but
-                // runs writer.close() → onWriterClose → deref (2→1). Then drop
-                // the initial ref (1→0).
+                // No callback ran: the reader took neither read_fd nor its ref.
                 terminal.read_fd.get().close();
                 terminal.read_fd.set(Fd::INVALID);
-                terminal.close_internal();
                 terminal.deref_();
-                return Err(InitError::ReaderStartFailed);
+                return Err(terminal.fail_reader_start());
+            }
+            sys::Result::Ok(()) if terminal.flags.get().contains(Flags::READER_DONE) => {
+                return Err(terminal.fail_reader_start());
             }
             sys::Result::Ok(()) => {
-                terminal.ref_();
                 #[cfg(unix)]
                 {
                     terminal.reader.with_mut(|r| {
@@ -509,6 +511,10 @@ impl Terminal {
         // SAFETY: the reader cell is live for the terminal's lifetime; `read`
         // is the raw re-entrancy-safe entry (its dispatch runs user JS).
         unsafe { IOReader::read(terminal.reader.as_ptr()) };
+        // The first read can end the reader too: EOF, a read error, or a failed re-arm.
+        if terminal.flags.get().contains(Flags::READER_DONE) {
+            return Err(terminal.fail_reader_start());
+        }
 
         // Get or create the JS wrapper
         let this_value = existing_js_value.unwrap_or_else(|| js::to_js(parent_ptr, global_object));
@@ -537,6 +543,17 @@ impl Terminal {
             terminal: unsafe { bun_ptr::BackRef::from_raw_mut(parent_ptr) },
             js_value: this_value,
         })
+    }
+
+    /// `init_terminal` error path for a reader that finished before the
+    /// terminal reached JS, with the reader's ref already released.
+    /// `close_internal` closes what is still open (a writer that is still
+    /// open releases its ref through `on_writer_close`), then the initial ref
+    /// is dropped, which may free `self`.
+    fn fail_reader_start(&self) -> InitError {
+        self.close_internal();
+        self.deref_();
+        InitError::ReaderStartFailed
     }
 
     /// Constructor for Terminal - called from JavaScript

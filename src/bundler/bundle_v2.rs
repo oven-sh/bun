@@ -3046,6 +3046,7 @@ pub mod bv2_impl {
                 this.transpiler.options.min_chunk_size.unwrap_or_else(|| {
                     crate::options::default_min_chunk_size(this.transpiler.options.target)
                 });
+            this.linker.options.fold_chunks = this.transpiler.options.fold_chunks;
             this.linker.options.module_preload = this.transpiler.options.module_preload;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
@@ -5249,7 +5250,7 @@ pub mod bv2_impl {
                         // SAFETY: worker ptrs are live until `deinit_soon`.
                         unsafe { (**worker).deinit_soon() };
                     }
-                    pool.worker_pool().wake_for_idle_events();
+                    pool.wake_for_idle_events();
                 }
                 // `ThreadPool` is arena-allocated; the arena bulk-free won't
                 // run its `Drop`, so release the map's backing storage here.

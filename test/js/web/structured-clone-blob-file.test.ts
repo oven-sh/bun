@@ -778,4 +778,43 @@ describe("structuredClone with Blob and File", () => {
       expect(deltaMiB).toBeLessThan(isASAN ? 128 : 32);
     }, 30_000);
   });
+
+  describe("file-backed payloads written before serialization v5", () => {
+    // Before v5, Bun.file() serialized is_jsdom_file as 0 because the flag was
+    // only set by `new File()`; a 0 on a file-backed store therefore meant
+    // "Bun.file()" and must still come back as a File. From v5 on the byte is
+    // authoritative, so a slice() of a Bun.file() stays a Blob.
+    //
+    // The version byte immediately precedes the u64 offset field; locate the
+    // offset field the same way the crafted-payload tests above do.
+    const baseline = new Uint8Array(serialize(new Blob(["x"])));
+    const current = new Uint8Array(serialize(Bun.file(import.meta.path).slice(4)));
+    let versionIndex = -1;
+    for (let i = 1; i + 8 <= current.length; i++) {
+      if (current[i] === 4 && current.subarray(i + 1, i + 8).every(b => b === 0) && baseline[i] === 0) {
+        versionIndex = i - 1;
+        break;
+      }
+    }
+    if (versionIndex < 0) throw new Error("could not locate version byte in serialized blob");
+    if (current[versionIndex] !== 5) throw new Error(`expected serialization v5, found v${current[versionIndex]}`);
+
+    test("current payload of a Bun.file() slice stays a Blob", () => {
+      const blob = deserialize(current);
+      expect({ proto: Object.getPrototypeOf(blob), hasName: "name" in blob }).toEqual({
+        proto: Blob.prototype,
+        hasName: false,
+      });
+    });
+
+    test("v4 file-backed payload is promoted to a File", () => {
+      const legacy = current.slice();
+      legacy[versionIndex] = 4;
+      const file = deserialize(legacy);
+      expect({ proto: Object.getPrototypeOf(file), name: file.name }).toEqual({
+        proto: File.prototype,
+        name: import.meta.path,
+      });
+    });
+  });
 });

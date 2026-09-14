@@ -131,7 +131,7 @@ JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
 
-    JSC::JSObject* superPrototype = defaultGlobalObject(globalObject)->JSBlobPrototype();
+    JSC::JSObject* superPrototype = defaultGlobalObject(globalObject)->JSDOMFileStructure()->storedPrototypeObject();
     auto* protoStructure = JSS3FilePrototype::createStructure(vm, globalObject, superPrototype);
     auto* prototype = JSS3FilePrototype::create(vm, globalObject, protoStructure);
     return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info(), NonArray);

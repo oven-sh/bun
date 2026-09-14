@@ -485,3 +485,29 @@ test("css-module/NoBundleHashesClassSymbols", async () => {
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// The hash comes from the path relative to the project root, as in a bundled
+// build, so two module files with the same basename get different names.
+test("css-module/NoBundleHashesByRelativePath", async () => {
+  using dir = tempDir("css-module-no-bundle-nested", {
+    "a/styles.module.css": `.card { color: red }`,
+    "b/styles.module.css": `.card { color: blue }`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "a/styles.module.css", "b/styles.module.css", "--outdir", "out"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  const a = await Bun.file(`${dir}/out/a/styles.module.css`).text();
+  const b = await Bun.file(`${dir}/out/b/styles.module.css`).text();
+  const hashA = a.match(/\.card_([A-Za-z0-9_-]+)\s*\{/)?.[1];
+  const hashB = b.match(/\.card_([A-Za-z0-9_-]+)\s*\{/)?.[1];
+  expect(hashA).toBeDefined();
+  expect(hashB).toBeDefined();
+  expect(hashA).not.toBe(hashB);
+});

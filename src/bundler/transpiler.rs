@@ -3128,7 +3128,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         file_path_text: &'static [u8],
         dirname_fd: FD,
-        file_path_pretty: &[u8],
+        file_path_pretty: &'static [u8],
     ) -> Option<crate::output_file::Value> {
         use crate::bun_css;
 
@@ -3167,7 +3167,7 @@ impl<'a> Transpiler<'a> {
                 CSS_MODULE_SUFFIX,
             );
         if enable_css_modules {
-            opts.filename = bun_paths::basename(file_path_text);
+            opts.filename = file_path_pretty;
             opts.css_modules = Some(bun_css::CssModuleConfig::default());
         }
 

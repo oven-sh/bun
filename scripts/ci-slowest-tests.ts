@@ -133,7 +133,7 @@ export function createLogFetcher({
       if (!retryable || attempt === maxAttempts) {
         throw new Error(`${res.status} ${job.raw_log_url}` + (attempt > 1 ? ` (${attempt} attempts)` : ""));
       }
-      const wait = await retryDelayMs(res, attempt, maxWaitMs);
+      const wait = retryDelayMs(res.headers, await res.json().catch(() => null), attempt, maxWaitMs);
       pause ??= sleep(wait).finally(() => (pause = null));
     }
   };

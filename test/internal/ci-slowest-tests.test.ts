@@ -252,13 +252,9 @@ const rateLimited = (reset: number) =>
 describe("scripts/buildkite-retry.mjs retryDelayMs", () => {
   // createLogFetcher below covers the waits that a response asks for.
   // update-parallel-allowlist.mjs allows 8 retries. Uncapped, its last backoff is 128 s.
-  test("caps the exponential backoff at maxWaitMs", async () => {
-    expect([
-      await retryDelayMs(refuse(500), 6),
-      await retryDelayMs(refuse(500), 7),
-      await retryDelayMs(refuse(500), 8),
-      await retryDelayMs(refuse(429), 4, 5000),
-    ]).toEqual([32_000, 60_000, 60_000, 5000]);
+  test("caps the exponential backoff at maxWaitMs", () => {
+    const noHint = (attempt: number, maxWaitMs?: number) => retryDelayMs(new Headers(), null, attempt, maxWaitMs);
+    expect([noHint(6), noHint(7), noHint(8), noHint(4, 5000)]).toEqual([32_000, 60_000, 60_000, 5000]);
   });
 });
 

@@ -41,7 +41,7 @@ const api = async path => {
     });
     if (r.ok) return r;
     if ((r.status === 429 || r.status >= 500) && attempt < 8) {
-      const backoff = await retryDelayMs(r, attempt + 1);
+      const backoff = retryDelayMs(r.headers, await r.json().catch(() => null), attempt + 1);
       await new Promise(resolve => setTimeout(resolve, backoff));
       continue;
     }

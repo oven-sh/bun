@@ -12,14 +12,14 @@
 // https://buildkite.com/docs/apis/rest-api/limits
 
 /**
- * @param {Response} response a 429 or a 5xx. This reads its body.
+ * @param {Headers} headers the headers of the 429 or 5xx response
+ * @param {{ reset?: unknown } | null} body its body, parsed as JSON by the caller, or null if it is not JSON
  * @param {number} attempt how many requests were made so far, 1 after the first
  * @param {number} [maxWaitMs] upper bound for one wait, before the extra second
- * @returns {Promise<number>} milliseconds to wait before the next request
+ * @returns {number} milliseconds to wait before the next request
  */
-export async function retryDelayMs(response, attempt, maxWaitMs = 60_000) {
-  const body = await response.json().catch(() => null);
-  const seconds = Number(response.headers.get("retry-after") ?? body?.reset);
+export function retryDelayMs(headers, body, attempt, maxWaitMs = 60_000) {
+  const seconds = Number(headers.get("retry-after") ?? body?.reset);
   // `reset` counts whole seconds. One second on top puts the retry after the
   // reset and not just before it. Without a hint, back off exponentially.
   if (seconds >= 0) return Math.min(seconds * 1000, maxWaitMs) + 1000;

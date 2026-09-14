@@ -1593,7 +1593,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
         RETURN_IF_EXCEPTION(scope, {});
         targetContext->setSpecialSandbox(specialSandbox);
-        return JSValue::encode(targetContext->specialSandbox());
+        return JSValue::encode(specialSandbox);
     }
 
     return JSValue::encode(sandbox);
@@ -1968,17 +1968,8 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!parsingContextValue.isEmpty() && !parsingContextValue.isUndefined()) {
-            if (parsingContextValue.isNull() || !parsingContextValue.isObject())
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
-
-            JSObject* context = asObject(parsingContextValue);
-            auto* zigGlobalObject = defaultGlobalObject(globalObject);
-            JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
-
-            if (scopeValue.isUndefined())
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
-
-            parsingContext = dynamicDowncast<NodeVMGlobalObject>(scopeValue);
+            parsingContext = getGlobalObjectFromContext(globalObject, parsingContextValue, false);
+            RETURN_IF_EXCEPTION(scope, false);
             if (!parsingContext)
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 

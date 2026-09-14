@@ -9,10 +9,10 @@ use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, Ref, StoreRef, symbol};
 
 use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
-    AssignmentStyle, MemberProperty, build_temporary_place, expression_type_name, lower_arguments,
-    lower_assignment, lower_expression_to_temporary, lower_identifier, lower_member_expression,
-    lower_object_property_key, lower_optional_call_expression, lower_optional_member_expression,
-    lower_value_to_temporary,
+    AssignmentStyle, MemberProperty, build_temporary_place, can_lower_member_update,
+    expression_type_name, lower_arguments, lower_assignment, lower_expression_to_temporary,
+    lower_identifier, lower_member_expression, lower_object_property_key,
+    lower_optional_call_expression, lower_optional_member_expression, lower_value_to_temporary,
 };
 use super::jsx::lower_jsx_call;
 use crate::lowering::FunctionNode;
@@ -856,6 +856,9 @@ fn lower_compound_assignment(
             lower_compound_assignment_identifier(builder, ident.ref_, bin, binary_op, loc)
         }
         Data::EDot(_) | Data::EIndex(_) => {
+            if !can_lower_member_update(builder, &bin.left)? {
+                return Ok(unsupported_node("AssignmentExpression", loc));
+            }
             let member_loc = convert_loc(bin.left.loc);
             let lowered = lower_member_expression(builder, &bin.left, None)?;
             let object = lowered.object;
@@ -1056,6 +1059,9 @@ fn lower_update(
                 UpdateOperator::Increment => BinaryOperator::Add,
                 UpdateOperator::Decrement => BinaryOperator::Subtract,
             };
+            if !can_lower_member_update(builder, &unary.value)? {
+                return Ok(unsupported_node("UpdateExpression", loc));
+            }
             let member_loc = convert_loc(unary.value.loc);
             let lowered = lower_member_expression(builder, &unary.value, None)?;
             let object = lowered.object;

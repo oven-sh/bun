@@ -39,6 +39,7 @@ const dir = String(
       import net from "node:net";
       import http from "node:http";
       import http2 from "node:http2";
+      import nodeTls from "node:tls";
       import dgram from "node:dgram";
       import fs from "node:fs";
       import zlib from "node:zlib";
@@ -205,6 +206,74 @@ const dir = String(
         watchFile(state) {
           fs.watchFile(state.file, { interval: 1 }, () => state.ticks++);
           state.close = () => fs.unwatchFile(state.file);
+        },
+        async tlsConnect(state, hostPort) {
+          const socket = await Bun.connect({ hostname: "127.0.0.1", port: hostPort, tls: { rejectUnauthorized: false }, socket: {
+            open(socket) { socket.write("tag:" + state.tag + "\\n"); },
+            data() {},
+            close() { state.heard.push("close"); },
+          } });
+          state.close = () => socket.end();
+        },
+        nodeTlsConnect(state, hostPort) {
+          const socket = nodeTls.connect({ host: "127.0.0.1", port: hostPort, rejectUnauthorized: false });
+          socket.on("error", () => {});
+          socket.on("close", () => state.heard.push("close"));
+          state.close = () => socket.destroy();
+          return new Promise(resolve => socket.on("secureConnect", () => { socket.write("tag:" + state.tag + "\\n"); resolve(); }));
+        },
+        tlsServer(state, tls) {
+          const server = nodeTls.createServer(tls, socket => { socket.on("error", () => {}); socket.write(state.tag); });
+          return new Promise(resolve => server.listen(0, "127.0.0.1", () => {
+            state.port = server.address().port;
+            state.close = () => server.close();
+            resolve();
+          }));
+        },
+        async unixConnect(state, hostPath) {
+          const socket = await Bun.connect({ unix: hostPath, socket: {
+            open(socket) { socket.write("tag:" + state.tag + "\\n"); },
+            data() {},
+            close() { state.heard.push("close"); },
+          } });
+          state.close = () => socket.end();
+        },
+        netUnixConnect(state, hostPath) {
+          const socket = net.connect(hostPath);
+          socket.on("error", () => {});
+          socket.on("close", () => state.heard.push("close"));
+          state.close = () => socket.destroy();
+          return new Promise(resolve => socket.on("connect", () => { socket.write("tag:" + state.tag + "\\n"); resolve(); }));
+        },
+        http2Session(state, hostPort) {
+          const session = http2.connect("http://127.0.0.1:" + hostPort);
+          session.on("error", () => {});
+          session.on("close", () => state.heard.push("close"));
+          const request = session.request({ ":path": "/hang?tag=" + state.tag });
+          request.on("error", () => {});
+          request.end();
+          state.close = () => session.destroy();
+        },
+        postgres(state, hostPort) {
+          // The host's server never answers the startup message, which names the user: the tag.
+          const sql = new Bun.SQL("postgres://tag%3A" + state.tag + "@127.0.0.1:" + hostPort + "/db?sslmode=disable", { max: 1, connectionTimeout: 60 });
+          sql\`select 1\`.then(() => { state.settled = "fulfilled"; }, error => { state.settled = String(error?.code ?? error); });
+          // (close() does not drop a connection that is still in its handshake: the host's end does.)
+          state.close = () => {
+            sql.close({ timeout: 0 }).catch(() => {});
+            Bun.connect({ hostname: "127.0.0.1", port: hostPort, socket: { open(socket) { socket.write("drop:" + state.tag + "\\n"); }, data() {} } }).catch(() => {});
+          };
+        },
+        timersPromisesInterval(state) {
+          const controller = new AbortController();
+          (async () => { for await (const tick of timersPromises.setInterval(1, undefined, { signal: controller.signal })) state.ticks++; })().catch(() => {});
+          state.close = () => controller.abort();
+        },
+        childProcessSpawn(state, bun) {
+          const child = childProcess.spawn(bun, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+          child.on("error", () => {});
+          state.pid = child.pid;
+          state.close = () => child.kill();
         },
       };
 
@@ -507,25 +576,60 @@ const servesTag = async (state: State) =>
 // The host's side of the client kinds: which tags have a connection / request open right now.
 const connected = new Set<string>();
 const held = new Map<string, (response: Response) => void>();
+/** Socket handlers of a listener of the host's that records, as `prefix + tag`, who is connected to it.
+ *  "drop:<tag>" closes that one's connection from this end. */
+const tracksTags = (prefix: string) => {
+  const sockets = new Map<string, Bun.Socket<{ tag?: string }>>();
+  return {
+    open(socket: Bun.Socket<{ tag?: string }>) {
+      socket.data = {};
+    },
+    data(socket: Bun.Socket<{ tag?: string }>, data: Buffer) {
+      const text = data.toString("latin1");
+      const drop = /drop:([^\r\n]*)\r?\n/.exec(text);
+      if (drop) {
+        sockets.get(prefix + drop[1])?.end();
+        socket.end();
+        return;
+      }
+      // (A PostgreSQL startup message ends the user's name with a NUL.)
+      const match = /tag:([^\r\n\0]*)[\r\n\0]/.exec(text);
+      if (match) {
+        connected.add((socket.data.tag = prefix + match[1]));
+        sockets.set(socket.data.tag, socket);
+      }
+    },
+    close(socket: Bun.Socket<{ tag?: string }>) {
+      if (!socket.data.tag) return;
+      connected.delete(socket.data.tag);
+      sockets.delete(socket.data.tag);
+    },
+  };
+};
+const hostUnixPath = join(dir, "host.sock");
 let hostTcp: Bun.TCPSocketListener<{ tag?: string }>;
+let hostTls: Bun.TCPSocketListener<{ tag?: string }>;
+let hostUnix: Bun.UnixSocketListener<{ tag?: string }> | undefined;
+let hostHttp2: http2.Http2Server;
 let hostHttp: Bun.Server;
-beforeAll(() => {
-  hostTcp = Bun.listen<{ tag?: string }>({
+beforeAll(async () => {
+  hostTcp = Bun.listen<{ tag?: string }>({ hostname: "127.0.0.1", port: 0, socket: tracksTags("tcp:") });
+  hostTls = Bun.listen<{ tag?: string }>({
     hostname: "127.0.0.1",
     port: 0,
-    socket: {
-      open(socket) {
-        socket.data = {};
-      },
-      data(socket, data) {
-        const match = /tag:([^\r\n]*)\r?\n/.exec(data.toString());
-        if (match) connected.add((socket.data.tag = "tcp:" + match[1]));
-      },
-      close(socket) {
-        if (socket.data.tag) connected.delete(socket.data.tag);
-      },
-    },
+    tls: tlsCertificate,
+    socket: tracksTags("tls:"),
   });
+  if (!isWindows) hostUnix = Bun.listen<{ tag?: string }>({ unix: hostUnixPath, socket: tracksTags("unix:") });
+  // A stream is never answered: it is open until the client goes away.
+  hostHttp2 = http2.createServer();
+  hostHttp2.on("stream", (stream, headers) => {
+    const tag = "h2:" + new URL(String(headers[":path"]), "http://host").searchParams.get("tag");
+    connected.add(tag);
+    stream.on("error", () => {});
+    stream.on("close", () => connected.delete(tag));
+  });
+  await new Promise<void>(resolve => hostHttp2.listen(0, "127.0.0.1", resolve));
   hostHttp = Bun.serve({
     port: 0,
     fetch(req, server) {
@@ -561,6 +665,9 @@ beforeAll(() => {
 });
 afterAll(() => {
   hostTcp.stop(true);
+  hostTls.stop(true);
+  hostUnix?.stop(true);
+  hostHttp2.close();
   hostHttp.stop(true);
 });
 
@@ -624,13 +731,39 @@ const kinds: Record<string, Kind> = {
       }
     },
   },
-  // (On Windows these two are named pipes, which Bun.listen and node:net name differently.)
+  // (On Windows these are named pipes, which Bun.listen and node:net name differently.)
   ...(isWindows
     ? {}
     : {
         unixListen: { alive: state => greetsThrough({ unix: unixPath(state) }, state.tag) },
         netUnixServer: { alive: state => greetsThrough({ unix: unixPath(state) }, state.tag) },
+        unixConnect: { args: () => [hostUnixPath], alive: async state => connected.has("unix:" + state.tag) },
+        netUnixConnect: { args: () => [hostUnixPath], alive: async state => connected.has("unix:" + state.tag) },
       }),
+  tlsConnect: { args: () => [hostTls.port], alive: async state => connected.has("tls:" + state.tag) },
+  nodeTlsConnect: { args: () => [hostTls.port], alive: async state => connected.has("tls:" + state.tag) },
+  tlsServer: {
+    args: () => [tlsCertificate],
+    alive: state =>
+      greetsThrough({ hostname: "127.0.0.1", port: state.port, tls: { rejectUnauthorized: false } }, state.tag),
+  },
+  http2Session: {
+    args: () => [(hostHttp2.address() as { port: number }).port],
+    alive: async state => connected.has("h2:" + state.tag),
+  },
+  postgres: { args: () => [hostTcp.port], alive: async state => connected.has("tcp:" + state.tag) },
+  timersPromisesInterval: { alive: state => ticks(state) },
+  childProcessSpawn: {
+    args: () => [bunExe()],
+    alive: async state => {
+      try {
+        process.kill(state.pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  },
   tlsListen: {
     args: () => [tlsCertificate],
     alive: state =>

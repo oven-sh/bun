@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { basename } from "node:path";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -1411,6 +1412,163 @@ describe("bun build --metafile-md", () => {
     // Should have node_modules marker in raw data
     expect(content).toContain("[NODE_MODULES:");
     expect(content).toContain("node_modules/lodash");
+  });
+
+  test("markdown names every output file of a split build", async () => {
+    // The chunk that holds c3.cjs is imported by the chunks of m1.ts and m2.ts, and by no entry point's output file.
+    using dir = tempDir("metafile-md-every-output", {
+      "src/m0.ts": `import { v1 } from "./m1.ts";\nimport { v2 } from "./m2.ts";\nconsole.log(v1 + v2);\n`,
+      "src/m1.ts": `import c from "./c3.cjs";\nexport const v1 = "V1" + c.v3;\nconsole.log(v1);\n`,
+      "src/m2.ts": `import c from "./c3.cjs";\nexport const v2 = "V2" + c.v3;\nconsole.log(v2);\n`,
+      "src/c3.cjs": `module.exports = { v3: "V3" };\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--splitting",
+        "--target=bun",
+        "--outdir=out",
+        "--metafile=meta.json",
+        "--metafile-md=meta.md",
+        "src/m0.ts",
+        "src/m1.ts",
+        "src/m2.ts",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const { outputs } = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+    const markdown = await Bun.file(`${dir}/meta.md`).text();
+
+    expect(Object.keys(outputs)).toHaveLength(6);
+    expect(Object.keys(outputs).filter(path => !markdown.includes("`" + path + "`"))).toEqual([]);
+  });
+});
+
+describe("metafile markdown: chunks an entry point loads", () => {
+  // Builds `files` with code splitting. Returns the lines under "Loads these chunks" for each
+  // section of the report's "Entry Point Analysis", as "chunk (kind)" or "chunk (kind, via chunk)".
+  // A chunk file name carries a content hash, so each output is named after what it holds:
+  // `./lazy.js` is the output file of the entry point lazy.js, and `chunk(a.js)` is the shared
+  // chunk that holds a.js. A line that has no size stays as it is, and fails the expectation.
+  async function loadedChunks(files: Record<string, string>, entrypoints: string[]) {
+    using dir = tempDir("metafile-md-loaded-chunks", files);
+    const result = await Bun.build({
+      entrypoints: entrypoints.map(entry => `${dir}/${entry}`),
+      outdir: `${dir}/dist`,
+      splitting: true,
+      target: "bun",
+      metafile: { markdown: "meta.md" },
+    });
+    expect(result.success).toBe(true);
+
+    const { outputs } = result.metafile as Metafile;
+    const name = (path: string) => {
+      const { entryPoint, inputs } = outputs[path];
+      if (entryPoint) return `./${basename(entryPoint)}`;
+      return `chunk(${Object.keys(inputs)
+        .map(input => basename(input))
+        .join(", ")})`;
+    };
+
+    const loaded: Record<string, string[]> = {};
+    let section: string[] | undefined;
+    for (const line of (await Bun.file(`${dir}/dist/meta.md`).text()).split("\n")) {
+      const entry = line.match(/^### Entry: `(.+)`$/);
+      if (entry) {
+        section = loaded[basename(entry[1])] = [];
+      } else if (line.startsWith("#")) {
+        section = undefined;
+      } else if (section && line.startsWith("- `")) {
+        const chunk = line.match(/^- `([^`]+)` \([\d.]+ \w+, ([a-z-]+)(?:, via `([^`]+)`)?\)$/);
+        section.push(chunk ? `${name(chunk[1])} (${chunk[2]}${chunk[3] ? `, via ${name(chunk[3])}` : ""})` : line);
+      }
+    }
+    return loaded;
+  }
+
+  test("lists a chunk that is loaded through another chunk", async () => {
+    // m0.js imports the entry points m1.js and m2.js, so each of the two is a chunk of its own.
+    // shared.js is a third chunk. Only those two chunks import it.
+    const loaded = await loadedChunks(
+      {
+        "m0.js": `import { v1 } from "./m1.js"; import { v2 } from "./m2.js"; console.log(v1 + v2);`,
+        "m1.js": `import { v3 } from "./shared.js"; export const v1 = "V1" + v3; console.log(v1);`,
+        "m2.js": `import { v3 } from "./shared.js"; export const v2 = "V2" + v3; console.log(v2);`,
+        "shared.js": `export const v3 = "V3";`,
+      },
+      ["m0.js", "m1.js", "m2.js"],
+    );
+
+    expect(loaded).toEqual({
+      "m0.js": [
+        "chunk(m1.js) (import-statement)",
+        "chunk(m2.js) (import-statement)",
+        "chunk(shared.js) (import-statement, via chunk(m1.js))",
+      ],
+      "m1.js": ["chunk(m1.js) (import-statement)", "chunk(shared.js) (import-statement, via chunk(m1.js))"],
+      "m2.js": ["chunk(m2.js) (import-statement)", "chunk(shared.js) (import-statement, via chunk(m2.js))"],
+    });
+  });
+
+  test.each([
+    { kind: "dynamic-import", load: `import("./lazy.js")` },
+    { kind: "require-call", load: `require("./lazy.js")` },
+  ])("lists the chunk behind a $kind last, and not the chunks that it loads", async ({ kind, load }) => {
+    // common.js is a chunk that the chunks of static.js and of lazy.js import.
+    // It loads with e1.js and e2.js through static.js. It does not load with e3.js.
+    const loaded = await loadedChunks(
+      {
+        "e1.js": `import { s } from "./static.js"; console.log(s); export const lazy = () => ${load};`,
+        "e2.js": `import { s } from "./static.js"; console.log(s, 2);`,
+        "e3.js": `export const lazy = () => ${load};`,
+        "static.js": `import { c } from "./common.js"; export const s = "S" + c;`,
+        "lazy.js": `import { c } from "./common.js"; export const l = "L" + c;`,
+        "common.js": `export const c = "C";`,
+      },
+      ["e1.js", "e2.js", "e3.js"],
+    );
+
+    expect(loaded).toEqual({
+      "e1.js": [
+        "chunk(static.js) (import-statement)",
+        "chunk(common.js) (import-statement, via chunk(static.js))",
+        `./lazy.js (${kind})`,
+      ],
+      "e2.js": ["chunk(static.js) (import-statement)", "chunk(common.js) (import-statement, via chunk(static.js))"],
+      "e3.js": [`./lazy.js (${kind})`],
+      "lazy.js": ["chunk(common.js) (import-statement)"],
+    });
+  });
+
+  test("does not list what an imported entry point loads on demand", async () => {
+    // shared.js is part of entry.js. So the chunks of a.js and b.js import entry.js, and entry.js import()s both.
+    // To load a.js does not load b.js.
+    const loaded = await loadedChunks(
+      {
+        "entry.js": `import { s } from "./shared.js"; console.log(s); import("./a.js"); import("./b.js");`,
+        "a.js": `import { s } from "./shared.js"; export const a = s + "a";`,
+        "b.js": `import { s } from "./shared.js"; export const b = s + "b";`,
+        "shared.js": `export const s = "S";`,
+      },
+      ["entry.js"],
+    );
+
+    expect(loaded).toEqual({
+      "entry.js": ["./a.js (dynamic-import)", "./b.js (dynamic-import)"],
+      "a.js": ["./entry.js (import-statement)"],
+      "b.js": ["./entry.js (import-statement)"],
+    });
   });
 });
 

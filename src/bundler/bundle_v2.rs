@@ -6116,6 +6116,16 @@ pub mod bv2_impl {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
 
+                // A failed file's imports are not followed: the queue is cleared
+                // above. That includes the records barrel optimization deferred, so
+                // a later request must not un-defer them. (The graph row keeps only
+                // the records: it has no `target` to resolve them against.)
+                for record in result.ast.import_records.iter_mut() {
+                    record
+                        .flags
+                        .remove(bun_ast::ImportRecordFlags::IS_BARREL_DEFERRED);
+                }
+
                 // Preserve the parsed import_records on the graph so any plugin
                 // onResolve tasks already dispatched for *other* records in this
                 // same file can still dereference

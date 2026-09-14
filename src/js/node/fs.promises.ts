@@ -240,6 +240,15 @@ const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
+// Node's promises API validates `flush` for a FileHandle but never syncs one; the binding would.
+function dropFlushForDescriptor(args: any[]) {
+  const options = args[1];
+  const flush = typeof options === "object" && options !== null ? options.flush : undefined;
+  if (flush == null) return;
+  validateBoolean(flush, "options.flush");
+  if (flush) args[1] = { ...options, flush: false };
+}
+
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
 async function* glob(pattern, options) {
@@ -250,6 +259,7 @@ const exports = {
   access: asyncWrap(fs.access, "access"),
   appendFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    if (typeof fileHandleOrFdOrPath === "number") dropFlushForDescriptor(args);
     return _appendFile(fileHandleOrFdOrPath, ...args);
   },
   close: asyncWrap(fs.close, "close"),
@@ -320,6 +330,7 @@ const exports = {
       // @ts-expect-error
       return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
     }
+    if (typeof fileHandleOrFdOrPath === "number") dropFlushForDescriptor(args);
     return _writeFile(fileHandleOrFdOrPath, ...args);
   },
   readlink: asyncWrap(fs.readlink, "readlink"),
@@ -681,6 +692,7 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
       let encoding: string = "utf8";
+      let flush = false;
       let signal: AbortSignal | undefined = undefined;
 
       if (options == null || typeof options === "function") {
@@ -688,6 +700,7 @@ function asyncWrap(fn: any, name: string) {
         encoding = options;
       } else {
         encoding = options?.encoding ?? encoding;
+        flush = options?.flush ?? flush;
         signal = options?.signal ?? undefined;
       }
 
@@ -695,6 +708,7 @@ function asyncWrap(fn: any, name: string) {
         this[kRef]();
         return await writeFile(fd, data, {
           encoding,
+          flush,
           flag: this[kFlag],
           signal,
         });
@@ -1606,10 +1620,13 @@ function flagTruncates(flag): boolean {
 async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
   let encoding;
   let signal: AbortSignal | null = null;
+  let flush = false;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
     flag = optionsOrEncoding?.flag ?? (flag || "w");
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
+    flush = optionsOrEncoding?.flush ?? false;
+    validateBoolean(flush, "options.flush");
     signal = optionsOrEncoding?.signal ?? null;
     if (signal?.aborted) {
       throw $makeAbortError(undefined, { cause: signal.reason });
@@ -1625,9 +1642,9 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     throw new TypeError(`Unknown encoding: ${encoding}`);
   }
 
-  let mustClose = typeof fdOrPath === "string";
+  // Callers already unwrapped a FileHandle to its fd; fs.open validates everything else.
+  const mustClose = typeof fdOrPath !== "number";
   if (mustClose) {
-    // Rely on fs.open for further argument validaiton.
     fdOrPath = await fs.open(fdOrPath, flag, mode);
   }
 
@@ -1638,12 +1655,15 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   let totalBytesWritten = 0;
 
-  let error: Error | undefined;
+  // Tracked separately from `error`: an iterable may throw a falsy value.
+  let failed = false;
+  let error: unknown;
 
   try {
     totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding, signal);
   } catch (err) {
-    error = err as Error;
+    failed = true;
+    error = err;
   }
 
   // Handle cleanup outside of try-catch
@@ -1654,15 +1674,26 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
       } catch {}
     }
 
+    // Node syncs only a file it opened itself, and only after a successful write.
+    if (flush && !failed) {
+      try {
+        await fs.fsync(fdOrPath);
+      } catch (err) {
+        failed = true;
+        error = err;
+      }
+    }
+
     await fs.close(fdOrPath);
   }
 
   // Abort signal shadows other errors
   if (signal?.aborted) {
+    failed = true;
     error = $makeAbortError(undefined, { cause: signal.reason });
   }
 
-  if (error) {
+  if (failed) {
     throw error;
   }
 }

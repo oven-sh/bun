@@ -506,6 +506,32 @@ describe("bundler", () => {
       expect(file).toContain('import * as React from "react"');
     },
   });
+  // A factory reached through a namespace import only uses the factory export,
+  // the same as writing `H.h(...)` by hand. Counting it as a use of `H` itself
+  // would make the bundle build the namespace object and keep every sibling.
+  itBundled("jsx/FactoryThroughNamespaceImportOnlyUsesFactory", {
+    files: {
+      "/index.jsx": /* jsx */ `
+        import * as H from "hyper";
+        console.log(JSON.stringify([<div id="x">hi</div>, <>frag</>]));
+      `,
+      "/node_modules/hyper/index.js": /* js */ `
+        export function h(tag, props, ...children) { return [tag, props, children]; }
+        export function Fragment() {}
+        export const unusedSibling = "REMOVE";
+      `,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "H.h",
+      fragment: "H.Fragment",
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toContain("__export(");
+    },
+    run: { stdout: '[["div",{"id":"x"},["hi"]],[null,null,["frag"]]]' },
+  });
   itBundled("jsx/jsxImportSource pragma works", {
     files: {
       "/index.jsx": /* jsx */ `

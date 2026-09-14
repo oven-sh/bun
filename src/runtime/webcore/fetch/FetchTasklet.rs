@@ -118,6 +118,8 @@ pub struct FetchTasklet {
     /// `Content-Length` framing a streaming body; `write_request_data` counts against it.
     pub(crate) declared_request_body_len: Option<u64>,
     pub(crate) request_body_len_written: u64,
+    /// The count missed and the HTTP thread was told; it fails the request unless it dropped the body.
+    pub(crate) request_body_mismatched: bool,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
     /// `JsCell`: the ByteStream's drain signal reaches `on_stream_drained` through a shared ref.
@@ -1294,6 +1296,22 @@ impl FetchTasklet {
             ));
         }
 
+        if fail == http::Error::RequestBodyLengthMismatch
+            && let Some(declared) = self.declared_request_body_len
+        {
+            let written = self.request_body_len_written;
+            let err = self
+                .global_this
+                .err(
+                    jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+                    format_args!(
+                        "Request body of {written} bytes does not match the Content-Length of {declared}"
+                    ),
+                )
+                .to_js();
+            return BodyValueError::JSValue(StrongOptional::create(err, &self.global_this));
+        }
+
         // some times we don't have metadata so we also check http.url
         let path = if let Some(metadata) = &self.metadata {
             BunString::clone_utf8(metadata.url.slice())
@@ -1868,6 +1886,7 @@ impl FetchTasklet {
             request_headers: fetch_options.headers,
             declared_request_body_len: None,
             request_body_len_written: 0,
+            request_body_mismatched: false,
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: JsCell::new(KeepAlive::default()),
@@ -2135,21 +2154,15 @@ impl FetchTasklet {
         self.upgraded_connection || self.result.is_http2 || self.declared_request_body_len.is_some()
     }
 
-    /// Does not touch the sink (it can be mid-write): the caller stops the body stream.
-    fn fail_content_length_mismatch(&mut self, written: u64, declared: u64) {
-        if !self.abort_reason.has() {
-            let global_this = self.global_this;
-            let err = global_this
-                .err(
-                    jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                    format_args!(
-                        "Request body of {written} bytes does not match the Content-Length of {declared}"
-                    ),
-                )
-                .to_js();
-            self.abort_reason.set(&global_this, err);
+    /// Only the HTTP thread knows whether a followed redirect already dropped this body, so it
+    /// decides. Does not touch the sink (it can be mid-write): the caller stops the body stream.
+    fn report_content_length_mismatch(&mut self, written: u64) {
+        self.request_body_len_written = written;
+        self.request_body_mismatched = true;
+        if let Some(http_) = self.http.as_mut() {
+            http::http_thread()
+                .schedule_request_write(http_, http::http_thread::WriteMessageType::LengthMismatch);
         }
-        self.abort_task();
     }
 
     /// Called from `FetchRequestBodySink::write_*`; `high_water_mark` is the
@@ -2160,7 +2173,7 @@ impl FetchTasklet {
         data: RequestBodyChunk<'_>,
         high_water_mark: usize,
     ) -> Writable {
-        if self.signal_aborted() {
+        if self.signal_aborted() || self.request_body_mismatched {
             return Writable::Done;
         }
         // An empty chunk is a no-op on every framing path. It must not reach
@@ -2180,7 +2193,7 @@ impl FetchTasklet {
                 .request_body_len_written
                 .saturating_add(utf8_len as u64);
             if written > declared {
-                self.fail_content_length_mismatch(written, declared);
+                self.report_content_length_mismatch(written);
                 return Writable::Err(bun_sys::Error::from_code(
                     bun_sys::E::ECANCELED,
                     bun_sys::Tag::write,
@@ -2238,6 +2251,12 @@ impl FetchTasklet {
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(FetchTasklet, "writeEndRequest hasError? {}", err.is_some());
         let this_ptr = std::ptr::from_mut(self);
+        if self.request_body_mismatched {
+            // The pump ending on the `Writable::Err` the mismatch gave it; already reported.
+            // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
+            FetchTasklet::deref(this_ptr);
+            return;
+        }
         if let Some(js_error) = err {
             if self.signal_store.aborted.load(Ordering::Relaxed) || self.abort_reason.has() {
                 // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
@@ -2259,7 +2278,7 @@ impl FetchTasklet {
             if let Some(declared) = self.declared_request_body_len
                 && written < declared
             {
-                self.fail_content_length_mismatch(written, declared);
+                self.report_content_length_mismatch(written);
                 // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
                 FetchTasklet::deref(this_ptr);
                 return;

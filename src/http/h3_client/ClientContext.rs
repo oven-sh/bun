@@ -227,6 +227,20 @@ impl ClientContext {
         }
     }
 
+    pub(crate) fn fail_request_body_by_http_id(async_http_id: u32) {
+        let Some(this) = Self::get() else {
+            return;
+        };
+        // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
+        let ctx = bun_ptr::BackRef::from(this);
+        for &s in ctx.sessions.iter() {
+            // Registry only holds live sessions — `session_mut` upgrade.
+            if session_mut(s).fail_request_body_by_http_id(async_http_id) {
+                return;
+            }
+        }
+    }
+
     pub(crate) fn resume_receive_by_http_id(async_http_id: u32) {
         let Some(this) = Self::get() else {
             return;

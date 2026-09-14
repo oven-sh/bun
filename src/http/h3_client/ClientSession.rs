@@ -263,11 +263,10 @@ impl ClientSession {
         // `host` drops here (was `defer bun.default_allocator.free(host)`).
     }
 
-    pub(crate) fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
-        // `fail` mutates `pending`, so it cannot be called while the iterator
-        // holds `&self.pending`, and only one entry can match — so locate
-        // first via raw-ptr reads, then act.
-        let mut found: *mut Stream = core::ptr::null_mut();
+    /// `fail` mutates `pending`, so it cannot be called while the iterator
+    /// holds `&self.pending`, and only one entry can match — so locate
+    /// first via raw-ptr reads, then act.
+    fn pending_stream_by_http_id(&self, async_http_id: u32) -> Option<*mut Stream> {
         for &stream_ptr in self.pending.iter() {
             // pending entries are live until detach(); `stream_ref` reads the
             // Copy `client` field — no `&mut Stream` materialized.
@@ -277,15 +276,35 @@ impl ClientSession {
             // `Stream.client` is a live backref while attached; `ParentRef`
             // reads the Copy `async_http_id` field via shared deref.
             if bun_ptr::ParentRef::from(cl).async_http_id == async_http_id {
-                found = stream_ptr;
-                break;
+                return Some(stream_ptr);
             }
         }
-        if !found.is_null() {
-            self.fail(found, crate::Error::Aborted);
-            return true;
+        None
+    }
+
+    pub(crate) fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
+        let Some(found) = self.pending_stream_by_http_id(async_http_id) else {
+            return false;
+        };
+        self.fail(found, crate::Error::Aborted);
+        true
+    }
+
+    /// Fails the request only while its stream body is still the one being sent.
+    pub(crate) fn fail_request_body_by_http_id(&mut self, async_http_id: u32) -> bool {
+        let Some(found) = self.pending_stream_by_http_id(async_http_id) else {
+            return false;
+        };
+        let sending_stream_body = stream_ref(found).client.is_some_and(|cl| {
+            matches!(
+                bun_ptr::ParentRef::from(cl).state.original_request_body,
+                crate::HTTPRequestBody::Stream(_)
+            )
+        });
+        if sending_stream_body {
+            self.fail(found, crate::Error::RequestBodyLengthMismatch);
         }
-        false
+        true
     }
 
     /// Runs from inside lsquic's process_conns via on_stream_{headers,data,close}.

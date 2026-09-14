@@ -3047,6 +3047,22 @@ impl<'a> HTTPClient<'a> {
         self.write_to_stream::<IS_SSL>(socket, b"");
     }
 
+    /// From the producer of this request's stream body; a no-op once that body was dropped.
+    pub(crate) fn on_request_stream_message<const IS_SSL: bool>(
+        &mut self,
+        message: http_thread::WriteMessageType,
+        socket: HttpSocket<IS_SSL>,
+    ) {
+        let HTTPRequestBody::Stream(stream) = &mut self.state.original_request_body else {
+            return;
+        };
+        if message == http_thread::WriteMessageType::LengthMismatch {
+            return self.close_and_fail::<IS_SSL>(crate::Error::RequestBodyLengthMismatch, socket);
+        }
+        stream.ended = message == http_thread::WriteMessageType::End;
+        self.flush_stream::<IS_SSL>(socket);
+    }
+
     /// Write buffered data to the socket returning true if there is backpressure
     fn write_to_stream_using_buffer<const IS_SSL: bool>(
         &mut self,

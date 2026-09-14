@@ -325,6 +325,64 @@ describe("css", () => {
     },
   });
 
+  // A module file in a nested directory: the `view-transition-class`
+  // declaration, the `::view-transition-*(.class)` selector and the exported
+  // value must all carry the same hash.
+  itBundled("css-module/ViewTransitionClassNestedDirectory", {
+    files: {
+      "/entry.js": `
+        import styles from './src/deep/styles.module.css';
+        console.log(styles);
+      `,
+      "/src/deep/styles.module.css": `
+        .card {
+          view-transition-class: slide;
+          animation-name: spin;
+        }
+        @keyframes spin { to { opacity: 0 } }
+        ::view-transition-old(.slide) { opacity: 0 }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const card = css.match(/\.card_([A-Za-z0-9_-]+)\s*\{/);
+      expect(card, ".card should be scoped").not.toBeNull();
+      const hash = card![1];
+
+      expect(css).toEqualIgnoringWhitespace(`
+        /* src/deep/styles.module.css */
+        .card_${hash} {
+          view-transition-class: slide_${hash};
+          animation-name: spin_${hash};
+        }
+
+        @keyframes spin_${hash} {
+          to {
+            opacity: 0;
+          }
+        }
+
+        ::view-transition-old(.slide_${hash}) {
+          opacity: 0;
+        }
+      `);
+
+      const js = api.readFile("/out/entry.js");
+      expect(js).toEqualIgnoringWhitespace(`
+        // src/deep/styles.module.css
+        var styles_module_default = {
+          card: "card_${hash}",
+          slide: "slide_${hash}"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+      `);
+    },
+  });
+
   // Values the grammar rejects stay untouched, so a future keyword or a
   // var() reference is not hashed as if it were a name.
   itBundled("css-module/ViewTransitionUnparsedValuesNotScoped", {

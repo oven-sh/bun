@@ -726,7 +726,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 return Some(pooled);
             };
             bun_core::scoped_log!(HTTPContext, "Keep-Alive pool full, evicting oldest");
-            Self::terminate_socket(pooled_socket_mut(oldest).http_socket);
+            // The evicted connection is healthy: retire it with a FIN
+            // (`close_socket`), not the RST `terminate_socket` sends.
+            Self::close_socket(pooled_socket_mut(oldest).http_socket);
         }
         let Some(slot) = pool.claim() else {
             return Some(pooled);
@@ -872,6 +874,27 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if http_socket.is_shutdown() || http_socket.get_error() != 0 {
                     Self::terminate_socket(http_socket);
                     continue;
+                }
+
+                // `HTTPThread::drain_events` hands a socket out before the loop
+                // polls it, so input the origin already wrote is unread in the
+                // kernel and invisible to the checks above; reuse answers this
+                // request with it. Same verdicts the idle handlers reach after
+                // a poll: `Handler::on_data` terminates, `Handler::on_end`
+                // closes. HTTP/2 idle frames are healthy, so `on_idle_data`
+                // keeps deciding for those.
+                if socket.h2_session.is_none() {
+                    match http_socket.queued_input() {
+                        uws::QueuedInput::None => {}
+                        uws::QueuedInput::Eof => {
+                            Self::close_socket(http_socket);
+                            continue;
+                        }
+                        uws::QueuedInput::Data | uws::QueuedInput::Error => {
+                            Self::terminate_socket(http_socket);
+                            continue;
+                        }
+                    }
                 }
 
                 // Transfer tunnel ownership (the parked strong ref) to the caller.

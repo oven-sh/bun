@@ -333,7 +333,8 @@ void JSReadableStreamDefaultController::pullSteps(JSGlobalObject* globalObject, 
         RETURN_IF_EXCEPTION(scope, void());
         RELEASE_AND_RETURN(scope, readRequest->chunkSteps(globalObject, chunk));
     }
-    readableStreamAddReadRequest(vm, stream, readRequest);
+    readableStreamAddReadRequest(globalObject, stream, readRequest);
+    RETURN_IF_EXCEPTION(scope, void());
     RELEASE_AND_RETURN(scope, readableStreamDefaultControllerCallPullIfNeeded(globalObject, this));
 }
 

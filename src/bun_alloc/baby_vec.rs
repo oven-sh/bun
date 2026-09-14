@@ -153,25 +153,6 @@ impl<'a, T> BabyVec<'a, T> {
         self.len += 1;
     }
 
-    pub fn swap_remove(&mut self, index: usize) -> T {
-        let len = self.len as usize;
-        assert!(
-            index < len,
-            "BabyVec::swap_remove index {index} >= len {len}"
-        );
-        // SAFETY: `index < len`; reading the hole then overwriting with the
-        // last element (possibly itself) is the standard swap-remove. Len is
-        // decremented before the read of `last` so the moved-from tail slot
-        // is no longer considered initialized.
-        unsafe {
-            let p = self.ptr.as_ptr();
-            let v = p.add(index).read();
-            self.len -= 1;
-            ptr::copy(p.add(self.len as usize), p.add(index), 1);
-            v
-        }
-    }
-
     /// `Vec::remove` parity — order-preserving removal.
     pub fn remove(&mut self, index: usize) -> T {
         let len = self.len as usize;

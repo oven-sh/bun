@@ -728,12 +728,6 @@ pub mod fs {
             // singleton deref + `'static` widening) instead of open-coding it.
             FilenameStore::append(self, s)
         }
-        fn append_lower_case(
-            &mut self,
-            s: &[u8],
-        ) -> core::result::Result<&[u8], bun_alloc::AllocError> {
-            FilenameStore::append_lower_case(self, s)
-        }
     }
 
     // Port of `threadlocal var temp_entries_option: EntriesOption = undefined` —

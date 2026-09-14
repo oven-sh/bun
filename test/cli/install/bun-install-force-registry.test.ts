@@ -316,6 +316,27 @@ describe.concurrent("install.forceRegistry", () => {
     });
   });
 
+  test("a BUN_CONFIG_FORCE_REGISTRY value that is not an http(s) URL fails the install", async () => {
+    const other = makeRegistry();
+    await using _o = other.server;
+
+    using dir = tempDir("force-registry-env-invalid", {
+      "home/.keep": "",
+      "project/bunfig.toml": `[install]\ncache = false\nregistry = "${other.url}"\n`,
+      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+    });
+
+    // The value has no scheme. Bun must not skip it and use the project registry.
+    const { stderr, exitCode } = await runInstall(
+      String(dir),
+      makeEnv(String(dir), { BUN_CONFIG_FORCE_REGISTRY: `localhost:${other.server.port}/` }),
+    );
+
+    expect(stderr).toContain("BUN_CONFIG_FORCE_REGISTRY is set, but its value is not an http:// or https:// URL");
+    expect(other.hits).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
   test("BUN_CONFIG_FORCE_REGISTRY preserves BUN_CONFIG_TOKEN", async () => {
     const forced = makeRegistry();
     await using _f = forced.server;

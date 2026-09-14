@@ -1,6 +1,6 @@
 use crate::bun_schema::api as Api;
 use bun_core::ZStr;
-use bun_core::{Output, env_var, fmt as bun_fmt};
+use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
@@ -936,16 +936,26 @@ impl Options {
         // `install.forceRegistry` / `BUN_CONFIG_FORCE_REGISTRY`, applied last so that it wins over every registry source above.
         {
             // Not `env.get()`: that also reads the project's `.env` files, which must not be able to set this.
-            let forced = env_var::BUN_CONFIG_FORCE_REGISTRY
+            let forced = match env_var::BUN_CONFIG_FORCE_REGISTRY
                 .get()
-                .filter(|url| url.starts_with(b"https://") || url.starts_with(b"http://"))
-                .map(Api::NpmRegistry::from_url)
-                .or_else(|| {
-                    bun_install_ref
-                        .and_then(|config| config.force_registry.as_ref())
-                        .filter(|registry| !registry.url.is_empty())
-                        .cloned()
-                });
+                .filter(|url| !url.is_empty())
+            {
+                Some(url) if url.starts_with(b"https://") || url.starts_with(b"http://") => {
+                    Some(Api::NpmRegistry::from_url(url))
+                }
+                Some(_) => {
+                    // Fail closed, and do not print the value: it can hold credentials.
+                    Output::err_generic(
+                        "BUN_CONFIG_FORCE_REGISTRY is set, but its value is not an http:// or https:// URL",
+                        (),
+                    );
+                    Global::exit(1);
+                }
+                None => bun_install_ref
+                    .and_then(|config| config.force_registry.as_ref())
+                    .filter(|registry| !registry.url.is_empty())
+                    .cloned(),
+            };
 
             if let Some(mut force_registry) = forced {
                 // The credential precedence is listed under `install.forceRegistry` in docs/runtime/bunfig.mdx.

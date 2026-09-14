@@ -605,6 +605,8 @@ Bun never sends a token that is configured for a different host to the forced re
 
 For device-wide enforcement, **prefer the `BUN_CONFIG_FORCE_REGISTRY` environment variable** over the global bunfig. `bun run` and `bun <file>` do not read the global `~/.bunfig.toml` (see [`bun run`](#bun-run) below). The runtime auto-installer, which runs when a script imports a package that is not on disk, therefore sees only the project bunfig. The package manager itself reads the environment variable, so it covers every code path, auto-install included.
 
+The value of `BUN_CONFIG_FORCE_REGISTRY` must start with `http://` or `https://`. If it does not, Bun exits with an error. It does not fall back to the project configuration.
+
 `forceRegistry` controls where Bun resolves package manifests and tarballs. It does not rewrite dependency specifiers that name no registry (`git:`, `github:`, direct URLs). It also does not rewrite a full tarball URL that an existing `bun.lock` records for a package from a non-default registry. Delete the lockfile to resolve those packages again through the forced registry.
 
 ### `install.linkWorkspacePackages`

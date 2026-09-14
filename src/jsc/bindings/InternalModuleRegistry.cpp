@@ -210,7 +210,7 @@ void InternalModuleRegistry::finishCreation(VM& vm)
 
 Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, jsNull(), TypeInfo(InternalFieldTupleType, StructureFlags), info(), 0, 0);
+    return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info(), 0, 0);
 }
 
 JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)

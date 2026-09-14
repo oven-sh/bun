@@ -163,7 +163,7 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, ErrorCodeCache);
 
 Structure* ErrorCodeCache::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, jsNull(), TypeInfo(InternalFieldTupleType, StructureFlags), info(), 0, 0);
+    return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info(), 0, 0);
 }
 
 ErrorCodeCache* ErrorCodeCache::create(VM& vm, Structure* structure)

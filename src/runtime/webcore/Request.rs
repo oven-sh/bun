@@ -1079,9 +1079,9 @@ impl Request {
 
         for &value in values_to_try {
             let value_type = value.js_type();
-            let explicit_check = values_to_try.len() == 2
-                && value_type == bun_jsc::JSType::FinalObject
-                && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
+            // `init` only claims `method` and `headers` when it has the property.
+            // Otherwise the loop falls through to `input`, native or not.
+            let explicit_check = values_to_try.len() == 2 && value == values_to_try[0];
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)

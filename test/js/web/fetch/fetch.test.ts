@@ -1739,6 +1739,46 @@ it("#874", () => {
   expect(new Request({ url: "https://example.com" }).url).toBe("https://example.com/");
 });
 
+// https://github.com/oven-sh/bun/issues/42759
+describe("new Request(input, init) with a non-native input", () => {
+  // Not a native Request, but every getter forwards to one. Passes `instanceof Request`.
+  function requestLike() {
+    const backing = new Request("http://localhost/a", { method: "POST", body: "{}", headers: { "x-b": "2" } });
+    class RequestLike {}
+    for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(Request.prototype))) {
+      if (key === "constructor") continue;
+      Object.defineProperty(
+        RequestLike.prototype,
+        key,
+        desc.get ? { get: () => backing[key] } : { value: (...args) => backing[key](...args) },
+      );
+    }
+    Object.setPrototypeOf(RequestLike.prototype, Request.prototype);
+    return new RequestLike();
+  }
+
+  it("keeps the input method when init does not set one", async () => {
+    expect(new Request(requestLike()).method).toBe("POST");
+    expect(new Request(requestLike(), {}).method).toBe("POST");
+    expect(new Request(requestLike(), { headers: { "x-a": "1" } }).method).toBe("POST");
+    expect(new Request(requestLike(), { method: "PUT" }).method).toBe("PUT");
+
+    const copy = new Request(requestLike(), { headers: { "x-a": "1" } });
+    expect(copy.headers.get("x-a")).toBe("1");
+    expect(copy.headers.get("x-b")).toBeNull();
+    expect(await copy.text()).toBe("{}");
+  });
+
+  it("keeps the method of a plain object input when init does not set one", () => {
+    const input = { url: "http://localhost/a", method: "POST", body: "{}", headers: { "x-b": "2" } };
+    expect(new Request(input, {}).method).toBe("POST");
+    expect(new Request(input, { headers: { "x-a": "1" } }).method).toBe("POST");
+    expect(new Request(input, { method: "PUT" }).method).toBe("PUT");
+    expect(new Request(input, {}).headers.get("x-b")).toBe("2");
+    expect(new Request(input, { headers: { "x-a": "1" } }).headers.get("x-b")).toBeNull();
+  });
+});
+
 it("#2794", () => {
   expect(typeof globalThis.fetch.bind).toBe("function");
   expect(typeof Bun.fetch.bind).toBe("function");

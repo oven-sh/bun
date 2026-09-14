@@ -1323,7 +1323,10 @@ unsafe fn timer_remove(
 unsafe fn timer_min_delay_ms(vm: *mut VirtualMachine) -> u32 {
     // SAFETY: per fn contract.
     let state = unsafe { runtime_state_of(vm) };
-    debug_assert!(!state.is_null(), "timer_min_delay_ms before init_runtime_state");
+    debug_assert!(
+        !state.is_null(),
+        "timer_min_delay_ms before init_runtime_state"
+    );
     // SAFETY: see `timer_insert` — leaf hook, field read only.
     unsafe { (*state).timer.fake_timers.min_delay_ms() }
 }

@@ -48,6 +48,14 @@ int main(void) {
   printf("%d %d %d %d %d %d\n", classify(1.0L), classify(-1 / 0.0L), classify(__builtin_nanl("")), classify(0.0L), classify(-1e-4940L), classify(-0.0L));
   printf("%d %d %d\n", __builtin_isgreater(2.0L, 1.0L), __builtin_isunordered(1.0L, __builtin_nanl("")), __builtin_islessequal(1.0L, 1.0L));
   printf("%d %d\n", __builtin_isinf_sign(-__builtin_infl()), (int)sizeof(1.0L + 1));
+  {
+    // The number in the string is what the NaN carries.
+    long double carries = __builtin_nanl("0x123"), plain = __builtin_nanl("");
+    unsigned long long low[2];
+    __builtin_memcpy(&low[0], &carries, 8);
+    __builtin_memcpy(&low[1], &plain, 8);
+    printf("%llx %llx\n", low[0], low[1]);
+  }
   return 0;
 }
 static long double unproto(long double a, int b) { return a + b; }

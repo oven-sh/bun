@@ -3046,18 +3046,16 @@ impl<'a> FnGen<'a, '_> {
         if size == 0 {
             return Ok(self.temp_object(ty));
         }
-        let classify = |g: &Self| {
-            abi::sysv_classify(g.tcx, ty).map_err(|msg| crate::token::Error {
-                loc,
-                msg,
-                note: None,
-            })
+        let located = |msg: String| crate::token::Error {
+            loc,
+            msg,
+            note: None,
         };
         let windows = target.os == Os::Windows;
         let apple_arm = target.arch == Arch::Aarch64 && target.os == Os::MacOs;
         if windows || apple_arm {
             // `char *`: small aggregates sit in the argument slots, large ones are pointed to.
-            classify(self)?;
+            abi::check_members(self.tcx, ty).map_err(located)?;
             let inline = if windows {
                 matches!(size, 1 | 2 | 4 | 8)
             } else {
@@ -3081,7 +3079,7 @@ impl<'a> FnGen<'a, '_> {
             });
         }
         // x86-64 System V (psABI 3.5.7).
-        let pieces = classify(self)?;
+        let pieces = abi::sysv_classify(self.tcx, ty).map_err(located)?;
         let from_overflow = |g: &mut Self, ap: V| -> V {
             let mut area = g.b.load(MemKind::I64, ap, 8);
             if align > 8 {

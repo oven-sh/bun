@@ -130,6 +130,9 @@ struct Param {
     /// The type the parameter's variable has: `ty`, plus `volatile` if it was declared so.
     local_ty: Type,
     is_register: bool,
+    /// `int a[n++]`: the bound the parameter lost when it became a pointer, which is still
+    /// evaluated when the function is entered.
+    outer_bound: Option<u32>,
 }
 
 enum DeclOp {
@@ -1258,7 +1261,9 @@ impl<S: TokenSource> Parser<S> {
         self.deepest_nesting = self.nesting;
         self.sema.deepest_expr.set(0);
         let mut params = Vec::new();
+        let mut outer_bounds = Vec::new();
         for p in decl.params.unwrap_or_default() {
+            outer_bounds.push(p.outer_bound);
             let id = match p.name {
                 Some(pname) => self.sema.declare_local(pname, p.local_ty, p.loc)?,
                 None => self.sema.new_local(p.local_ty),
@@ -1270,7 +1275,13 @@ impl<S: TokenSource> Parser<S> {
         }
         // `int m[n][n]` parameters: their bounds are evaluated on entry.
         let mut stmts = Vec::new();
-        for param in &fty.params {
+        for (index, param) in fty.params.iter().enumerate() {
+            // (The outermost one decides nothing, and is evaluated for what it does.)
+            if let Some(&Some(id)) = outer_bounds.get(index) {
+                if let Some(evaluated) = self.sema.evaluate_vla_bound(id, loc)? {
+                    stmts.push(Stmt::Expr(evaluated));
+                }
+            }
             self.sema.bind_param_vlas(param, &mut stmts, loc)?;
         }
         self.expect(Punct::LBrace)?;
@@ -2949,6 +2960,7 @@ impl<S: TokenSource> Parser<S> {
                     loc: nloc,
                     local_ty: Type::Int,
                     is_register: false,
+                    outer_bound: None,
                 });
                 if !self.eat(Punct::Comma)? {
                     break;
@@ -3004,6 +3016,10 @@ impl<S: TokenSource> Parser<S> {
             }
             let decl = self.parse_declarator(spec.ty)?;
             let quals = decl.ty.quals();
+            let outer_bound = match &decl.ty {
+                Type::Vla(_, id) => Some(*id),
+                _ => None,
+            };
             // Parameters of array and function type are adjusted to pointers.
             let ty = match decl.ty {
                 Type::Array(elem, _) | Type::Vla(elem, _) => Type::Ptr(elem),
@@ -3031,6 +3047,7 @@ impl<S: TokenSource> Parser<S> {
                 loc: decl.loc,
                 local_ty,
                 is_register,
+                outer_bound,
             });
             if !self.eat(Punct::Comma)? {
                 break;
@@ -4936,6 +4953,7 @@ impl<S: TokenSource> Parser<S> {
         // `__alignof__(variable)`: what its declaration asked for, if more than its type does.
         let mut declared_align = None;
         let first_new_vla = self.sema.vlas.len();
+        let pending_before = self.pending_vla.len();
         let ty = if self.at(Punct::LParen) && self.next_is_type_start()? {
             self.bump()?;
             let ty = self.parse_type_name()?;
@@ -4971,6 +4989,11 @@ impl<S: TokenSource> Parser<S> {
             operand.ty.clone()
         };
         self.leave();
+        // The operand is not evaluated, the bounds in it included, unless its own size is one of
+        // them (`sizeof(int (*)[f()])` and `_Alignof(int[f()])` do not call `f`).
+        if is_alignof || !self.sema.tcx.is_variably_sized(&ty) {
+            self.pending_vla.truncate(pending_before);
+        }
         if is_alignof {
             let natural = self.sema.tcx.align_of(&ty).unwrap_or(1);
             if let Some(declared) = declared_align.filter(|&a| a > natural) {
@@ -5286,6 +5309,11 @@ impl<S: TokenSource> Parser<S> {
         let mut chosen: Option<Expr> = None;
         let mut fallback: Option<Expr> = None;
         let mut named: Vec<Type> = Vec::new();
+        // The types named so far by what compatible types have in common, and the ones that are
+        // compatible with types of another such key (an array of no stated length, a function
+        // without a prototype): a type is looked for among its likes and those, not among all.
+        let mut alike: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut open_ended: Vec<usize> = Vec::new();
         while self.eat(Punct::Comma)? {
             let is_default = self.eat_kw(Kw::Default)?;
             let at = self.loc();
@@ -5300,21 +5328,31 @@ impl<S: TokenSource> Parser<S> {
                 None if fallback.is_some() => return err(loc, "duplicate default in _Generic"),
                 None => fallback = Some(value),
                 Some(ty) => {
-                    if ty.is_func()
-                        || !self.sema.tcx.is_complete(&ty)
-                        || self.sema.tcx.is_variably_sized(&ty)
-                    {
+                    // (An incomplete type can be named, as GCC and Clang have it: it matches
+                    // nothing. A function type and a variably modified one GCC takes and Clang
+                    // refuses; refused here.)
+                    if ty.is_func() || self.sema.tcx.is_variably_sized(&ty) {
                         return err(
                             at,
                             format!(
-                                "_Generic names type '{}', which is not a complete object type of known constant size",
+                                "_Generic names type '{}', which is not an object type of known constant size",
                                 self.sema.tcx.display(&ty)
                             ),
                         );
                     }
-                    if let Some(earlier) =
+                    let (key, is_open_ended) = likeness(&ty);
+                    let earlier = if is_open_ended {
                         named.iter().find(|earlier| Sema::compatible(earlier, &ty))
-                    {
+                    } else {
+                        alike
+                            .get(&key)
+                            .into_iter()
+                            .flatten()
+                            .chain(&open_ended)
+                            .map(|&at| &named[at])
+                            .find(|earlier| Sema::compatible(earlier, &ty))
+                    };
+                    if let Some(earlier) = earlier {
                         return err(
                             at,
                             format!(
@@ -5326,6 +5364,11 @@ impl<S: TokenSource> Parser<S> {
                     }
                     if chosen.is_none() && Sema::compatible(&ty, &control_ty) {
                         chosen = Some(value);
+                    }
+                    if is_open_ended {
+                        open_ended.push(named.len());
+                    } else {
+                        alike.entry(key).or_default().push(named.len());
                     }
                     named.push(ty);
                 }
@@ -5503,7 +5546,26 @@ impl<S: TokenSource> Parser<S> {
             }
             "huge_val" | "inf" | "huge_valf" | "inff" | "nan" | "nanf" | "nans" | "nansf"
             | "huge_vall" | "infl" | "nanl" | "nansl" => {
-                self.parse_builtin_args()?;
+                let args = self.parse_builtin_args()?;
+                // `__builtin_nan("0x123")`: the number the string spells, as C spells numbers, is
+                // what the NaN carries in the bits that are free for it.
+                let payload = match args.as_slice() {
+                    [text] => {
+                        let literal = match &text.kind {
+                            ExprKind::Decay(inner) => &inner.kind,
+                            other => other,
+                        };
+                        match literal {
+                            ExprKind::StrLit(id) => {
+                                let bytes = &self.sema.strings[*id as usize].bytes;
+                                let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+                                number_in(&bytes[..end])
+                            }
+                            _ => 0,
+                        }
+                    }
+                    _ => 0,
+                };
                 let single = matches!(short, "huge_valf" | "inff" | "nanf");
                 let long = matches!(short, "huge_vall" | "infl" | "nanl");
                 if matches!(short, "nans" | "nansf" | "nansl") {
@@ -5517,14 +5579,24 @@ impl<S: TokenSource> Parser<S> {
                         );
                     }
                     let value = if short == "nanl" {
-                        Extended::NAN
+                        Extended {
+                            significand: Extended::NAN.significand
+                                | (payload & 0x3fff_ffff_ffff_ffff),
+                            ..Extended::NAN
+                        }
                     } else {
                         Extended::INFINITY
                     };
                     return Ok(Some(self.sema.long_double_lit(value, loc)?));
                 }
                 let value = if short.starts_with("nan") {
-                    f64::NAN
+                    // (A `float`'s 22 free bits are the top ones of a `double`'s 51.)
+                    let carried = if single {
+                        (payload & 0x3f_ffff) << 29
+                    } else {
+                        payload & 0x7_ffff_ffff_ffff
+                    };
+                    f64::from_bits(f64::NAN.to_bits() | carried)
                 } else {
                     f64::INFINITY
                 };
@@ -5669,6 +5741,11 @@ impl<S: TokenSource> Parser<S> {
                 }
                 let address = self.sema.rvalue(args.swap_remove(0))?;
                 Ok(Some(self.sema.cast(address, &Type::Void.ptr_to(), loc)?))
+            }
+            "add_overflow_p" | "sub_overflow_p" | "mul_overflow_p" => {
+                let op = overflow_op(&short[..short.len() - 2]);
+                let args = self.parse_builtin_args()?;
+                Ok(Some(self.sema.overflow_predicate(op, name, args, loc)?))
             }
             "add_overflow" | "sub_overflow" | "mul_overflow" => {
                 let op = overflow_op(short);
@@ -6526,6 +6603,66 @@ fn step_of(p: Punct) -> crate::sema::Step {
 
 fn has_suffix(name: &str, suffix: &str) -> bool {
     name.ends_with(suffix)
+}
+
+/// What every type that is compatible with `ty` has in common with it, as a key, and whether
+/// `ty` is compatible with types of another key (it has an array of no stated length or a function
+/// without a prototype in it).
+fn likeness(ty: &Type) -> (String, bool) {
+    fn walk(ty: &Type, key: &mut String, open_ended: &mut bool) {
+        use std::fmt::Write;
+        match ty {
+            Type::Qualified(quals, inner) => {
+                if !quals.qualifiers().is_empty() {
+                    let _ = write!(key, "q{:?}", quals.qualifiers());
+                }
+                walk(inner, key, open_ended);
+            }
+            Type::Ptr(to) => {
+                key.push('*');
+                walk(to, key, open_ended);
+            }
+            Type::Array(of, Some(length)) => {
+                let _ = write!(key, "[{length}]");
+                walk(of, key, open_ended);
+            }
+            Type::Array(of, None) | Type::Vla(of, _) => {
+                *open_ended = true;
+                walk(of, key, open_ended);
+            }
+            Type::Func(f) => {
+                *open_ended |= f.unprototyped;
+                let _ = write!(key, "({}{})", f.params.len(), u8::from(f.variadic));
+                walk(&f.ret, key, open_ended);
+            }
+            other => {
+                let _ = write!(key, "{other:?}");
+            }
+        }
+    }
+    let (mut key, mut open_ended) = (String::new(), false);
+    walk(ty, &mut key, &mut open_ended);
+    (key, open_ended)
+}
+
+/// The value of `text` as `strtoull(text, 0, 0)` has it when all of `text` is the number; 0 when
+/// it is not one.
+fn number_in(text: &[u8]) -> u64 {
+    let (digits, radix) = match text {
+        [b'0', b'x' | b'X', rest @ ..] => (rest, 16),
+        [b'0', rest @ ..] if !rest.is_empty() => (rest, 8),
+        all => (all, 10),
+    };
+    let mut value: u64 = 0;
+    for &byte in digits {
+        let Some(digit) = (byte as char).to_digit(radix) else {
+            return 0;
+        };
+        value = value
+            .wrapping_mul(u64::from(radix))
+            .wrapping_add(u64::from(digit));
+    }
+    value
 }
 
 fn overflow_op(name: &str) -> crate::sema::builtin::OverflowOp {

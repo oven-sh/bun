@@ -616,44 +616,22 @@ impl FnGen<'_, '_> {
         }
         let x = self.load_pair(a, ty);
         let y = self.load_pair(b, ty);
-        let (low, high) = match op {
-            BinOp::Add => {
-                let low = self.b.bin(CBin::Add, x.low, y.low);
-                let carry = self.b.bin(CBin::ULt, low, x.low);
-                let carry = self.i32_to_i64(carry);
-                let high = self.b.bin(CBin::Add, x.high, y.high);
-                (low, self.b.bin(CBin::Add, high, carry))
-            }
-            BinOp::Sub => {
-                let low = self.b.bin(CBin::Sub, x.low, y.low);
-                let borrow = self.b.bin(CBin::ULt, x.low, y.low);
-                let borrow = self.i32_to_i64(borrow);
-                let high = self.b.bin(CBin::Sub, x.high, y.high);
-                (low, self.b.bin(CBin::Sub, high, borrow))
-            }
-            BinOp::Mul => {
-                let low = self.b.bin(CBin::Mul, x.low, y.low);
-                let high = self.b.bin(CBin::UMulHigh, x.low, y.low);
-                let cross1 = self.b.bin(CBin::Mul, x.low, y.high);
-                let cross2 = self.b.bin(CBin::Mul, x.high, y.low);
-                let high = self.b.bin(CBin::Add, high, cross1);
-                (low, self.b.bin(CBin::Add, high, cross2))
-            }
-            BinOp::And | BinOp::Or | BinOp::Xor => {
-                let bit_op = bitwise(op);
-                (
-                    self.b.bin(bit_op, x.low, y.low),
-                    self.b.bin(bit_op, x.high, y.high),
-                )
-            }
-            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-                return Ok(self.int128_compare(op, x, y, signed));
-            }
-            BinOp::Shl | BinOp::Shr | BinOp::Div | BinOp::Rem => {
-                return internal(loc, "128-bit operation handled above");
-            }
+        if op.is_compare() {
+            return Ok(self.int128_compare(op, x, y, signed));
+        }
+        if !matches!(
+            op,
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::And | BinOp::Or | BinOp::Xor
+        ) {
+            return internal(loc, "a 128-bit operation that is no operation on halves");
+        }
+        let whole = |halves: Halves| Wide {
+            low: halves.low,
+            high: High::Value(halves.high),
         };
-        Ok(self.make_pair(ty, low, high))
+        let result = self.wide_binary(op, whole(x), whole(y));
+        let high = self.high_value(result);
+        Ok(self.make_pair(ty, result.low, high))
     }
 
     fn gen_complex_binary(&mut self, op: BinOp, ty: &Type, a: V, b: V, loc: Loc) -> Res<V> {

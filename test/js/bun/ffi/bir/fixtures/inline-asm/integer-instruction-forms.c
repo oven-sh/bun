@@ -245,6 +245,20 @@ int main(void) {
     __asm__("movzwl %1, %0" : "=r"(got32) : "r"((uint16_t)0x9000)); CHECK(got32 == 0x9000);
     __asm__("movsbq %1, %0" : "=r"(got) : "r"((int8_t)-2)); CHECK(got == ~1ull);
     __asm__("movslq %1, %0" : "=r"(got) : "r"(-2)); CHECK(got == ~1ull);
+    /* `movsxd` to 32 bits is a plain move (no REX.W), and `test` takes its operands in either order. */
+#ifndef __clang__ /* (whose assembler has the name in Intel's syntax only) */
+    uint32_t narrow = 0;
+    __asm__("movsxd %1, %0" : "=r"(narrow) : "m"(*(int32_t *)(base + 4))); CHECK(narrow == 0x87868584u);
+    __asm__("movsxd %1, %0" : "=r"(got) : "m"(*(int32_t *)(base + 4))); CHECK(got == 0xffffffff87868584ull);
+#else
+    checks += 2;
+#endif
+    uint8_t zero_flag = 9;
+    uint32_t in_memory = 0x0f0, in_register = 0xf00;
+    __asm__("testl %1, %2\n setz %0" : "=q"(zero_flag) : "m"(in_memory), "r"(in_register) : "cc"); CHECK(zero_flag == 1);
+    in_register = 0x010;
+    __asm__("testl %1, %2\n setz %0" : "=q"(zero_flag) : "m"(in_memory), "r"(in_register) : "cc"); CHECK(zero_flag == 0);
+    __asm__("testl %2, %1\n setz %0" : "=q"(zero_flag) : "m"(in_memory), "r"(in_register) : "cc"); CHECK(zero_flag == 0);
 
     __asm__("movl $5, %0" : "=r"(got32)); CHECK(got32 == 5);
     __asm__("movq $-1, %0" : "=r"(got)); CHECK(got == ~0ull);
@@ -315,6 +329,6 @@ int main(void) {
     CHECK(swapped == 0 && low == 10 && high == 20);
   }
 
-  printf("%s, %d wrong\n", checks == 2516 ? "every check made" : "checks are missing", wrong);
+  printf("%s, %d wrong\n", checks == 2521 ? "every check made" : "checks are missing", wrong);
   return wrong != 0;
 }

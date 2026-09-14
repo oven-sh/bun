@@ -738,6 +738,16 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
             if size == Size::B {
                 return Err("cmov has no 8-bit form".to_string());
             }
+            let of_the_size = |operand: &Operand| match operand {
+                Operand::Gpr(register) => register.size == size,
+                _ => true,
+            };
+            if !of_the_size(source) || destination.size != size {
+                return Err(format!(
+                    "'{mnemonic}' moves {} bytes and one of its registers is of another size",
+                    size.bytes()
+                ));
+            }
             let rm = rm_of(source)
                 .filter(|_| !matches!(source, Operand::Xmm(_)))
                 .ok_or_else(wrong)?;
@@ -792,7 +802,9 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
         "movsbq" => Some((&[0x0f, 0xbe], Some(Size::B), Some(Size::Q))),
         "movswl" => Some((&[0x0f, 0xbf], Some(Size::W), Some(Size::L))),
         "movswq" => Some((&[0x0f, 0xbf], Some(Size::W), Some(Size::Q))),
-        "movslq" | "movsxd" => Some((&[0x63], Some(Size::L), Some(Size::Q))),
+        "movslq" => Some((&[0x63], Some(Size::L), Some(Size::Q))),
+        // (To 32 bits too, where it is a plain move.)
+        "movsxd" => Some((&[0x63], Some(Size::L), None)),
         "movzx" | "movzb" | "movzw" | "movsx" | "movsb" | "movsw" => Some((&[], None, None)),
         _ => None,
     };
@@ -825,8 +837,21 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
                 _ => return Err(wrong()),
             }
         };
-        if source_size.bytes() >= destination_size.bytes() {
+        let widens = source_size.bytes() < destination_size.bytes()
+            || (mnemonic == "movsxd" && destination_size == Size::L);
+        if !widens {
             return Err(format!("'{mnemonic}' must widen"));
+        }
+        let fits = |operand: &Operand, size: Size| match operand {
+            Operand::Gpr(register) => register.size == size,
+            _ => true,
+        };
+        if !fits(source, source_size) || destination.size != destination_size {
+            return Err(format!(
+                "'{mnemonic}' widens {} bytes to {}, and its registers are of other sizes",
+                source_size.bytes(),
+                destination_size.bytes()
+            ));
         }
         let rm = match source {
             Operand::Gpr(register) => Rm::Register(register.number),
@@ -942,6 +967,44 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
         }
     };
 
+    // The registers named have the size the instruction works on: what the suffix says, or what
+    // they say together. (An assembler refuses `movl %rax, %ebx`; encoding the register's number
+    // in the other size would be another instruction than the one written.) The count of a shift is
+    // `%cl` whatever is shifted, and `crc32` adds a value of any size to a sum of 32 or 64 bits.
+    let shifts = matches!(
+        base,
+        "rol" | "ror" | "rcl" | "rcr" | "shl" | "sal" | "shr" | "sar" | "shld" | "shrd"
+    );
+    let sized: Vec<Gpr> = operands
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operand)| match operand {
+            Operand::Gpr(register) if !(shifts && index == 0 && operands.len() > 1) => {
+                Some(*register)
+            }
+            _ => None,
+        })
+        .collect();
+    if base != "crc32" {
+        let expected = suffix.or_else(|| sized.first().map(|register| register.size));
+        if let Some(odd) = sized
+            .iter()
+            .find(|register| Some(register.size) != expected)
+        {
+            let name = |size: Size| match size {
+                Size::B => "8",
+                Size::W => "16",
+                Size::L => "32",
+                Size::Q => "64",
+            };
+            return Err(format!(
+                "'{mnemonic}' works on {} bits and one of its registers has {}",
+                expected.map_or("?", name),
+                name(odd.size)
+            ));
+        }
+    }
+
     let alu_index = ["add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"]
         .iter()
         .position(|name| *name == base);
@@ -1043,7 +1106,9 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
                 Some((*value, width)),
             )?;
         }
-        ("test", [Operand::Gpr(source), destination]) => {
+        // (`test` does not care which is which, and an assembler takes either order.)
+        ("test", [destination @ Operand::Mem(_), Operand::Gpr(source)])
+        | ("test", [Operand::Gpr(source), destination]) => {
             let size = operation_size(suffix, operands, mnemonic)?;
             simple(
                 &mut out,
@@ -1151,6 +1216,15 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
         }
         ("xchg", [first, second]) => {
             let size = operation_size(suffix, operands, mnemonic)?;
+            // With the accumulator there is a one-byte form, which is what an assembler writes.
+            if let (Operand::Gpr(a), Operand::Gpr(b)) = (first, second) {
+                if size != Size::B && (a.number == 0) != (b.number == 0) {
+                    let other = if a.number == 0 { *b } else { *a };
+                    out.emit_plus_register(size_prefix(size), size == Size::Q, &[], 0x90, other)?;
+                    items.push(Item::Bytes(out.bytes));
+                    return Ok(());
+                }
+            }
             let (register, other) = match (first, second) {
                 (Operand::Gpr(register), other) | (other, Operand::Gpr(register)) => {
                     (register, other)
@@ -1316,15 +1390,20 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
                     rm,
                     None,
                 )?,
-                Some(Operand::Imm(value)) => simple(
-                    &mut out,
-                    &[],
-                    size,
-                    &[sized_opcode(0xc1, size)],
-                    extension,
-                    rm,
-                    Some((*value, 1)),
-                )?,
+                Some(Operand::Imm(value)) => {
+                    if !(0..=255).contains(value) {
+                        return Err(format!("the count of '{mnemonic}' is a byte"));
+                    }
+                    simple(
+                        &mut out,
+                        &[],
+                        size,
+                        &[sized_opcode(0xc1, size)],
+                        extension,
+                        rm,
+                        Some((*value, 1)),
+                    )?
+                }
                 Some(Operand::Gpr(Gpr {
                     number: 1,
                     size: Size::B,
@@ -1346,15 +1425,20 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
             let opcode = if base == "shld" { 0xa4 } else { 0xac };
             let rm = rm_of(destination).ok_or_else(wrong)?;
             match count {
-                Operand::Imm(value) => simple(
-                    &mut out,
-                    &[],
-                    size,
-                    &[0x0f, opcode],
-                    source.number,
-                    rm,
-                    Some((*value, 1)),
-                )?,
+                Operand::Imm(value) => {
+                    if !(0..=255).contains(value) {
+                        return Err(format!("the count of '{mnemonic}' is a byte"));
+                    }
+                    simple(
+                        &mut out,
+                        &[],
+                        size,
+                        &[0x0f, opcode],
+                        source.number,
+                        rm,
+                        Some((*value, 1)),
+                    )?
+                }
                 Operand::Gpr(Gpr {
                     number: 1,
                     size: Size::B,
@@ -1499,6 +1583,21 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
                 (None, Operand::Gpr(register)) => register.size,
                 _ => return Err("crc32 from memory needs a size suffix".to_string()),
             };
+            // A value of any size goes into a sum of 32 bits; 64 bits of sum take a byte or 64.
+            let source_fits = match source {
+                Operand::Gpr(register) => register.size == size,
+                _ => true,
+            };
+            let sum_fits = matches!(
+                (size, destination.size),
+                (Size::B | Size::W | Size::L, Size::L) | (Size::B | Size::Q, Size::Q)
+            );
+            if !source_fits || !sum_fits {
+                return Err(format!(
+                    "'{mnemonic}' adds {} bytes, and its registers are of other sizes",
+                    size.bytes()
+                ));
+            }
             let mut prefixes = size_prefix(size).to_vec();
             prefixes.push(0xf2);
             out.emit(&Parts {

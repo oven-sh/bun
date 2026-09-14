@@ -146,6 +146,9 @@ struct Context {
     macro_name: Option<Rc<str>>,
     /// Ends in an end-of-file token that is returned forever (an isolated list).
     sticky_eof: bool,
+    /// What the expansion ended in came to nothing and had white space in front of it (`S n
+    /// __VA_OPT__(...)`, or all of an empty macro): that space is what comes next's.
+    ends_in_space: bool,
 }
 
 /// The spelling of a token as source text.
@@ -280,6 +283,12 @@ pub(crate) struct Preprocessor {
     pub(crate) frames: Vec<Frame>,
     /// Macro expansions in progress, innermost last.
     contexts: Vec<Context>,
+    /// Something that had white space in front of it came to nothing (a macro with nothing in it,
+    /// an empty argument, a `__VA_OPT__` without arguments): the next token has that space, which
+    /// `#` makes a space of.
+    space_of_what_vanished: bool,
+    /// Likewise at the end of the replacement list `substitute` made last.
+    substituted_ends_in_space: bool,
     /// Macros whose expansion is on `contexts`.
     disabled: BTreeSet<Rc<str>>,
     depth: u32,
@@ -329,6 +338,8 @@ impl Preprocessor {
             search,
             pragma_once: BTreeSet::new(),
             pushed_macros: BTreeMap::new(),
+            space_of_what_vanished: false,
+            substituted_ends_in_space: false,
             pending_pragma: None,
             file_cache: BTreeMap::new(),
             base_file: Rc::from(base_file),
@@ -380,11 +391,13 @@ impl Preprocessor {
             pos: 0,
             macro_name: None,
             sticky_eof: false,
+            ends_in_space: false,
         });
     }
 
     fn pop_context(&mut self) {
         if let Some(context) = self.contexts.pop() {
+            self.space_of_what_vanished |= context.ends_in_space;
             if let Some(name) = context.macro_name {
                 self.disabled.remove(&name);
             }
@@ -434,6 +447,7 @@ impl Preprocessor {
             pos: 0,
             macro_name: None,
             sticky_eof: true,
+            ends_in_space: false,
         });
         let result = f(self);
         while self.contexts.len() > depth {
@@ -470,6 +484,15 @@ impl Preprocessor {
 
     /// The next token after macro expansion.
     pub(crate) fn next_expanded(&mut self) -> Res<PTok> {
+        let mut t = self.next_expanded_as_spaced()?;
+        if std::mem::take(&mut self.space_of_what_vanished) && !t.is_eof() {
+            t.tok.has_leading_space = true;
+            t.inherited_space = true;
+        }
+        Ok(t)
+    }
+
+    fn next_expanded_as_spaced(&mut self) -> Res<PTok> {
         loop {
             let t = self.next_raw()?;
             let Some(name) = t.ident() else { return Ok(t) };
@@ -545,6 +568,7 @@ impl Preprocessor {
             pos: 0,
             macro_name: Some(Rc::clone(&mac.name)),
             sticky_eof: false,
+            ends_in_space: std::mem::take(&mut self.substituted_ends_in_space),
         });
         Ok(())
     }
@@ -729,6 +753,7 @@ impl Preprocessor {
         invocation: &PTok,
     ) -> Res<Vec<PTok>> {
         let mut expanded: Vec<Option<Vec<PTok>>> = vec![None; args.len()];
+        self.substituted_ends_in_space = false;
         let args = Arguments {
             list: args,
             variadic_given,
@@ -736,10 +761,13 @@ impl Preprocessor {
         let mut out =
             self.substitute_tokens(mac, &mac.body, args, &mut expanded, invocation.tok.loc)?;
         // The expansion takes the place of the macro name.
-        if let Some(first) = out.first_mut() {
-            first.tok.at_start_of_line = invocation.tok.at_start_of_line;
-            first.tok.has_leading_space = invocation.tok.has_leading_space;
-            first.inherited_space = true;
+        match out.first_mut() {
+            Some(first) => {
+                first.tok.at_start_of_line = invocation.tok.at_start_of_line;
+                first.tok.has_leading_space = invocation.tok.has_leading_space;
+                first.inherited_space = true;
+            }
+            None => self.substituted_ends_in_space |= invocation.tok.has_leading_space,
         }
         Ok(out)
     }
@@ -805,6 +833,8 @@ impl Preprocessor {
             None
         };
         let mut out: Vec<PTok> = Vec::with_capacity(body.len());
+        // Where in `out` something that had white space in front of it came to nothing.
+        let mut vanished_at: Vec<usize> = Vec::new();
         // The left operand of the next `##` was an empty argument (a placemarker).
         let mut lhs_placemarker = false;
         let from_body = |tok: &PpToken| -> PTok {
@@ -902,6 +932,9 @@ impl Preprocessor {
                     .get(close + 1)
                     .is_some_and(|n| n.kind == PpKind::Punct(Punct::HashHash));
                 lhs_placemarker = followed_by_paste && group.is_empty();
+                if group.is_empty() && !followed_by_paste && t.has_leading_space {
+                    vanished_at.push(out.len());
+                }
                 inherit_spacing(&mut group, t);
                 out.extend(group);
                 i = close + 1;
@@ -926,6 +959,9 @@ impl Preprocessor {
                     if let Some(tokens) = &expanded[p] {
                         out.extend(tokens.iter().cloned());
                     }
+                    if out.len() == start && t.has_leading_space {
+                        vanished_at.push(start);
+                    }
                     inherit_spacing(&mut out[start..], t);
                     lhs_placemarker = false;
                 }
@@ -935,6 +971,15 @@ impl Preprocessor {
             out.push(from_body(t));
             lhs_placemarker = false;
             i += 1;
+        }
+        for at in vanished_at {
+            match out.get_mut(at) {
+                Some(next) => {
+                    next.tok.has_leading_space = true;
+                    next.inherited_space = true;
+                }
+                None => self.substituted_ends_in_space = true,
+            }
         }
         Ok(out)
     }

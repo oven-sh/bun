@@ -178,6 +178,10 @@ pub(crate) struct Sema {
     pub(crate) tentative_incomplete: Vec<(GlobalId, Loc)>,
     /// A complex number was multiplied or divided: the unit needs the functions for C11 G.5.1.
     pub(crate) complex_recovery_needed: std::cell::Cell<bool>,
+    /// The objects and functions that have been declared only inside blocks so far (`extern int
+    /// y;` in a function): the same entities as any later declaration of the name with linkage,
+    /// and not in scope at file scope.
+    pub(crate) declared_in_blocks: BTreeMap<Rc<str>, Symbol>,
     /// For `elaborate_init`: where the items so far write.
     pub(crate) init_index: std::cell::RefCell<crate::init::InitIndex>,
     /// Other external names of functions this unit defines: (name, function).
@@ -274,6 +278,7 @@ impl Sema {
             deepest_expr: std::cell::Cell::new(0),
             tentative_incomplete: Vec::new(),
             complex_recovery_needed: std::cell::Cell::new(false),
+            declared_in_blocks: BTreeMap::new(),
             init_index: std::cell::RefCell::default(),
             function_aliases: Vec::new(),
             asm_blocks: Vec::new(),
@@ -770,7 +775,9 @@ impl Sema {
             Type::ULong
         } else if i32::try_from(value).is_ok() {
             Type::Int
-        } else if u32::try_from(value).is_ok() {
+        } else if unsigned && u32::try_from(value).is_ok() {
+            // (Of an unsigned value, written or counted up from one; one past INT_MAX counted
+            // up from a signed one is a `long`.)
             Type::UInt
         } else {
             Type::Long
@@ -884,7 +891,7 @@ impl Sema {
         is_definition: bool,
         loc: Loc,
     ) -> Res<GlobalId> {
-        let existing = self.scopes[0].get(&name).cloned();
+        let existing = self.with_linkage(&name);
         let id = match existing {
             Some(Symbol::Global(id)) => {
                 let g = &mut self.globals[id as usize];
@@ -919,20 +926,40 @@ impl Sema {
                     weak: false,
                     linkonce: false,
                 });
-                let id = (self.globals.len() - 1) as GlobalId;
-                self.scopes[0].insert(Rc::clone(&name), Symbol::Global(id));
-                id
+                (self.globals.len() - 1) as GlobalId
             }
         };
-        if !self.at_file_scope() {
-            // A block-scope `extern` declaration makes the file-scope entity visible here.
-            self.bind(name, Symbol::Global(id));
-        }
+        self.bind_with_linkage(name, Symbol::Global(id));
         Ok(id)
     }
 
+    /// What `name` names with linkage, declared at file scope or only inside blocks so far.
+    fn with_linkage(&self, name: &str) -> Option<Symbol> {
+        self.scopes[0]
+            .get(name)
+            .or_else(|| self.declared_in_blocks.get(name))
+            .cloned()
+    }
+
+    /// `name` is declared, here, as the object or function with linkage that `symbol` is. At file
+    /// scope it is in scope from here on; inside a block it is in scope in the block, and the
+    /// entity is kept for the declarations of the name that follow.
+    fn bind_with_linkage(&mut self, name: Rc<str>, symbol: Symbol) {
+        if self.at_file_scope() {
+            self.declared_in_blocks.remove(&name);
+            self.scopes[0].insert(name, symbol);
+            return;
+        }
+        if !self.scopes[0].contains_key(&name) {
+            self.declared_in_blocks
+                .insert(Rc::clone(&name), symbol.clone());
+        }
+        self.bind(name, symbol);
+    }
+
+    /// Whether `name` has been declared as an object with linkage.
     pub(crate) fn is_file_scope_object(&self, name: &str) -> bool {
-        matches!(self.scopes[0].get(name), Some(Symbol::Global(_)))
+        matches!(self.with_linkage(name), Some(Symbol::Global(_)))
     }
 
     /// Records whether a declaration of global `id` said `_Thread_local`; every declaration
@@ -1017,7 +1044,7 @@ impl Sema {
         is_static: bool,
         loc: Loc,
     ) -> Res<FuncId> {
-        let existing = self.scopes[0].get(&name).cloned();
+        let existing = self.with_linkage(&name);
         let id = match existing {
             Some(Symbol::Func(id)) => {
                 let f = &mut self.funcs[id as usize];
@@ -1070,14 +1097,10 @@ impl Sema {
                     first_use: None,
                     loc,
                 });
-                let id = (self.funcs.len() - 1) as FuncId;
-                self.scopes[0].insert(Rc::clone(&name), Symbol::Func(id));
-                id
+                (self.funcs.len() - 1) as FuncId
             }
         };
-        if !self.at_file_scope() {
-            self.bind(name, Symbol::Func(id));
-        }
+        self.bind_with_linkage(name, Symbol::Func(id));
         Ok(id)
     }
 
@@ -1753,6 +1776,11 @@ impl Sema {
         let (Some(x), Some(y)) = (a.pointee(), b.pointee()) else {
             return true;
         };
+        // (The atomic version of a type is another type, of another size and alignment for all
+        // the language says.)
+        if x.unqualified().is_atomic() != y.unqualified().is_atomic() {
+            return false;
+        }
         let (x, y) = (x.unqualified().unatomic(), y.unqualified().unatomic());
         Self::compatible(x, y)
             || (lenient

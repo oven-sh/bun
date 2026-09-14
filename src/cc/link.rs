@@ -601,7 +601,18 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
     }
     size = size.max(image.len() as u64);
     if let Some(text) = past_the_loader(size, tls.size, relocs.len().max(tls_relocs.len())) {
-        return fail(0, text);
+        // (Said of the file that has the most of what there is too much of.)
+        let most = |of: fn(&Unit) -> u64| {
+            (0..units.len())
+                .max_by_key(|&unit| of(&units[unit]))
+                .unwrap_or(0)
+        };
+        let unit = if tls.size > bir::MAX_TLS_SIZE {
+            most(|unit| unit.module.tls.size)
+        } else {
+            most(|unit| unit.module.data.size)
+        };
+        return fail(unit, text);
     }
 
     // ── Function bodies ──
@@ -794,7 +805,7 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
 /// anything is.
 /// What the loader would refuse of a program's data (its size, its thread-local size, the most
 /// relocations either has), in the front end's words.
-pub(crate) fn past_the_loader(data: u64, thread_local: u64, relocations: usize) -> Option<String> {
+fn past_the_loader(data: u64, thread_local: u64, relocations: usize) -> Option<String> {
     if relocations > bir::MAX_COUNT {
         return Some(format!(
             "the program's data has more than {} addresses in its initializers",

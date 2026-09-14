@@ -264,6 +264,12 @@ fn int_pieces(size: u64) -> Vec<Piece> {
         .collect()
 }
 
+/// What cannot be passed at all, whatever the convention: a member of a type there is no
+/// arithmetic for, a vector of a size no register has.
+pub(crate) fn check_members(tcx: &TypeCtx, ty: &Type) -> Result<(), String> {
+    flatten(tcx, ty, 0, &mut Vec::new())
+}
+
 /// x86-64 System V classification of an aggregate (psABI 3.2.3): `None` is class MEMORY.
 pub(crate) fn sysv_classify(tcx: &TypeCtx, ty: &Type) -> Result<Option<Vec<Piece>>, String> {
     let size = tcx.size_of(ty).unwrap_or(0);
@@ -521,7 +527,7 @@ pub(crate) fn lower_call(
         RetPass::Void
     } else if windows {
         if matches!(ret_size, 1 | 2 | 4 | 8) {
-            flatten(tcx, ret, 0, &mut Vec::new())?;
+            check_members(tcx, ret)?;
             RetPass::Pieces(vec![int_piece(0, ret_size)])
         } else {
             RetPass::HiddenPointer
@@ -606,7 +612,7 @@ pub(crate) fn lower_call(
         } else if size == 0 {
             ArgPass::Ignore
         } else if windows {
-            flatten(tcx, arg, 0, &mut Vec::new())?;
+            check_members(tcx, arg)?;
             if matches!(size, 1 | 2 | 4 | 8) {
                 ArgPass::Pieces(vec![int_piece(0, size)])
             } else {
@@ -628,7 +634,7 @@ pub(crate) fn lower_call(
                 // also where the backend puts anonymous values: integer pieces give the same bytes.
                 // (What is larger than 16 bytes here is a homogeneous aggregate of three or four
                 // doubles, which Clang passes by value like the rest.)
-                flatten(tcx, arg, 0, &mut Vec::new())?;
+                check_members(tcx, arg)?;
                 {
                     let mut pieces = int_pieces(size);
                     let slot = apple_named_stack_bytes.div_ceil(8) + apple_anonymous_slots;

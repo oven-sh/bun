@@ -1211,5 +1211,39 @@
     ],
     "output": "7\n",
     "status": 0
+  },
+  {
+    "name": "a generic selection of 50000 types",
+    "source": [
+      "#include <stdio.h>\n",
+      {
+        "each": "struct S{i};\n",
+        "count": 50000,
+        "from": 0
+      },
+      "int main(void) { printf(\"%d\\n\", _Generic(1",
+      {
+        "each": ", struct S{i} *: {i}",
+        "count": 50000,
+        "from": 0
+      },
+      ", int: 7)); return 0; }\n"
+    ],
+    "output": "7\n",
+    "status": 0
+  },
+  {
+    "name": "a generic selection of 20000 arrays of one type",
+    "source": [
+      "#include <stdio.h>\nint main(void) { printf(\"%d\\n\", _Generic((int (*)[20000])0",
+      {
+        "each": ", int (*)[{i+1}]: {i+1}",
+        "count": 20000,
+        "from": 0
+      },
+      ")); return 0; }\n"
+    ],
+    "output": "20000\n",
+    "status": 0
   }
 ]

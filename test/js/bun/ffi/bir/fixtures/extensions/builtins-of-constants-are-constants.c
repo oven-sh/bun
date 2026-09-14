@@ -36,6 +36,23 @@ int main(void) {
   printf("%d %d %d %d %d\n", CLASS, CLASS_OF_ZERO, GREATER, UNORDERED, LESS_OR_GREATER_OF_A_NAN);
   printf("%d %d %d %d %d %d\n", MAGNITUDE, WIDE_MAGNITUDE, LENGTH, LENGTH_TO_THE_FIRST_NUL, LEADING, POPULATION);
   printf("%g %g %g %d\n", magnitude, with_the_sign_of, (double)of_a_float, (int)sizeof sized_by_a_length);
+  // `__builtin_nan("n")` carries n where a NaN has room for it; an element of a string literal is a constant.
+  double carries = __builtin_nan("0x123");
+  float carries_less = __builtin_nanf("0x45");
+  double in_octal = __builtin_nan("017"), in_decimal = __builtin_nan("19"), of_nothing = __builtin_nan("");
+  unsigned long long bits;
+  unsigned word;
+  __builtin_memcpy(&bits, &carries, 8);
+  __builtin_memcpy(&word, &carries_less, 4);
+  printf("%llx %x", bits, word);
+  __builtin_memcpy(&bits, &in_octal, 8);
+  printf(" %llx", bits);
+  __builtin_memcpy(&bits, &in_decimal, 8);
+  printf(" %llx", bits);
+  __builtin_memcpy(&bits, &of_nothing, 8);
+  printf(" %llx\n", bits);
+  volatile int not_one = 1;
+  printf("%d %d %d\n", __builtin_constant_p("abc"[1]), __builtin_constant_p("abc"), __builtin_constant_p(not_one));
   // And of what is not a constant they are what they were.
   volatile double x = -1.5, nan = __builtin_nan("");
   volatile int n = -3;

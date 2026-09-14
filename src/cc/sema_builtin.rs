@@ -183,16 +183,17 @@ impl Sema {
             None => return err(loc, format!("the last operand of {name} must be a pointer")),
         };
         for ty in [&a.ty, &b.ty, &result_ty] {
-            if !ty.is_integer() || ty.is_int128() || *ty == Type::Bool {
+            if !ty.is_integer() || *ty == Type::Bool {
                 return err(
                     loc,
                     format!(
-                        "{name} needs integer operands of at most 64 bits, not '{}'",
+                        "{name} needs integer operands, not '{}'",
                         self.tcx.display(ty)
                     ),
                 );
             }
         }
+        let of_128_bits = [&a.ty, &b.ty, &result_ty].iter().any(|ty| ty.is_int128());
         let (a, b) = (self.promote(a)?, self.promote(b)?);
         let (a_signed, b_signed) = (self.tcx.is_signed(&a.ty), self.tcx.is_signed(&b.ty));
         let result_signed = self.tcx.is_signed(&result_ty);
@@ -201,7 +202,9 @@ impl Sema {
         let (tb, store_b) = self.temp(b, loc)?;
         let (tout, store_out) = self.temp(out, loc)?;
 
-        let (compute, overflowed) = if same_wide {
+        let (compute, overflowed) = if of_128_bits {
+            self.overflow_by_magnitudes(op, &ta, &tb, &tout, &result_ty, loc)?
+        } else if same_wide {
             self.overflow_same_type(op, &ta, &tb, &tout, result_signed, loc)?
         } else {
             // A type that holds the exact result and every value of the result type.
@@ -239,6 +242,198 @@ impl Sema {
             e = self.comma(store, e, loc)?;
         }
         Ok(e)
+    }
+
+    /// `__builtin_{add,sub,mul}_overflow_p(a, b, (T)0)` (GCC's): whether the operation overflows
+    /// the type of the last operand, which is evaluated for what it does and not for its value.
+    pub(crate) fn overflow_predicate(
+        &mut self,
+        op: OverflowOp,
+        name: &str,
+        mut args: Vec<Expr>,
+        loc: Loc,
+    ) -> Res<Expr> {
+        self.needs_function(name, loc)?;
+        if args.len() != 3 {
+            return err(loc, format!("{name} takes three arguments"));
+        }
+        let of_the_type = self.rvalue(args.swap_remove(2))?;
+        let ty = of_the_type.ty.unqualified().unatomic().clone();
+        let local = self.new_local(ty.clone());
+        let place = self.mk(ExprKind::Local(local), ty, loc)?;
+        let address = self.addr_of(place, loc)?;
+        args.push(address);
+        let overflowed = self.overflow_builtin(op, None, name, args, loc)?;
+        let evaluated = self.cast(of_the_type, &Type::Void, loc)?;
+        self.comma(evaluated, overflowed, loc)
+    }
+
+    /// Where an operand or the result has 128 bits there is no wider type to do the operation in:
+    /// it is done on signs and magnitudes, which are 128 bits and a bit, and what comes out is
+    /// looked at for whether the result's type holds it. Returns the expression that stores the
+    /// result and the overflow test (to be evaluated after it).
+    fn overflow_by_magnitudes(
+        &mut self,
+        op: OverflowOp,
+        ta: &Temp,
+        tb: &Temp,
+        tout: &Temp,
+        result_ty: &Type,
+        loc: Loc,
+    ) -> Res<(Expr, Expr)> {
+        let wide = Type::UInt128;
+        let int = |sema: &Sema, v: i64| sema.int_lit(v, Type::Int, loc);
+        let zero = |sema: &Sema| -> Res<Expr> {
+            let zero = sema.int_lit(0, Type::Int, loc)?;
+            sema.convert(zero, &Type::UInt128, loc)
+        };
+        // (is it negative, how large is it)
+        let split = |sema: &mut Sema, t: &Temp| -> Res<(Temp, Temp, Expr)> {
+            let negative = if sema.tcx.is_signed(&t.ty) {
+                let v = sema.read(t, loc)?;
+                let nothing = sema.int_lit(0, t.ty.clone(), loc)?;
+                sema.binary(BinOp::Lt, v, nothing, loc)?
+            } else {
+                int(sema, 0)?
+            };
+            let (tnegative, store_negative) = sema.temp(negative, loc)?;
+            let v = sema.read(t, loc)?;
+            let v = sema.convert(v, &wide, loc)?;
+            let again = sema.read(t, loc)?;
+            let again = sema.convert(again, &wide, loc)?;
+            let from = zero(sema)?;
+            let negated = sema.binary(BinOp::Sub, from, again, loc)?;
+            let is_negative = sema.read(&tnegative, loc)?;
+            let magnitude = sema.conditional(is_negative, negated, v, loc)?;
+            let (tmagnitude, store_magnitude) = sema.temp(magnitude, loc)?;
+            let stores = sema.comma(store_negative, store_magnitude, loc)?;
+            Ok((tnegative, tmagnitude, stores))
+        };
+        let (na, ma, split_a) = split(self, ta)?;
+        let (nb, mb, split_b) = split(self, tb)?;
+        let mut before = self.comma(split_a, split_b, loc)?;
+        // `a - b` is `a + -b`.
+        let nb_value = {
+            let n = self.read(&nb, loc)?;
+            if op == OverflowOp::Sub {
+                let one = int(self, 1)?;
+                self.binary(BinOp::Xor, n, one, loc)?
+            } else {
+                n
+            }
+        };
+        let (nb, store_nb) = self.temp(nb_value, loc)?;
+        before = self.comma(before, store_nb, loc)?;
+        // (magnitude mod 2^128, does it go past 2^128, is it negative)
+        let (magnitude, carry, negative) = if op == OverflowOp::Mul {
+            let (x, y) = (self.read(&ma, loc)?, self.read(&mb, loc)?);
+            let product = self.binary(BinOp::Mul, x, y, loc)?;
+            let (tproduct, store_product) = self.temp(product, loc)?;
+            before = self.comma(before, store_product, loc)?;
+            // It went past where dividing it by one factor does not give the other back.
+            let (x, nothing) = (self.read(&ma, loc)?, zero(self)?);
+            let not_zero = self.binary(BinOp::Ne, x, nothing, loc)?;
+            let (p, x, y) = (
+                self.read(&tproduct, loc)?,
+                self.read(&ma, loc)?,
+                self.read(&mb, loc)?,
+            );
+            let back = self.binary(BinOp::Div, p, x, loc)?;
+            let differs = self.binary(BinOp::Ne, back, y, loc)?;
+            let carry = self.logical(true, not_zero, differs, loc)?;
+            let (x, y) = (self.read(&na, loc)?, self.read(&nb, loc)?);
+            let negative = self.binary(BinOp::Xor, x, y, loc)?;
+            (self.read(&tproduct, loc)?, carry, negative)
+        } else {
+            let (x, y) = (self.read(&na, loc)?, self.read(&nb, loc)?);
+            let same_sign = self.binary(BinOp::Eq, x, y, loc)?;
+            let (tsame, store_same) = self.temp(same_sign, loc)?;
+            let (x, y) = (self.read(&ma, loc)?, self.read(&mb, loc)?);
+            let sum = self.binary(BinOp::Add, x, y, loc)?;
+            let (tsum, store_sum) = self.temp(sum, loc)?;
+            let (x, y) = (self.read(&ma, loc)?, self.read(&mb, loc)?);
+            let a_is_larger = self.binary(BinOp::Ge, x, y, loc)?;
+            let (tlarger, store_larger) = self.temp(a_is_larger, loc)?;
+            for store in [store_same, store_sum, store_larger] {
+                before = self.comma(before, store, loc)?;
+            }
+            let (x, y) = (self.read(&ma, loc)?, self.read(&mb, loc)?);
+            let a_less_b = self.binary(BinOp::Sub, x, y, loc)?;
+            let (x, y) = (self.read(&mb, loc)?, self.read(&ma, loc)?);
+            let b_less_a = self.binary(BinOp::Sub, x, y, loc)?;
+            let larger = self.read(&tlarger, loc)?;
+            let difference = self.conditional(larger, a_less_b, b_less_a, loc)?;
+            let (same, sum) = (self.read(&tsame, loc)?, self.read(&tsum, loc)?);
+            let magnitude = self.conditional(same, sum, difference, loc)?;
+            let (sum, x) = (self.read(&tsum, loc)?, self.read(&ma, loc)?);
+            let wrapped = self.binary(BinOp::Lt, sum, x, loc)?;
+            let same = self.read(&tsame, loc)?;
+            let carry = self.logical(true, same, wrapped, loc)?;
+            let (larger, x, y) = (
+                self.read(&tlarger, loc)?,
+                self.read(&na, loc)?,
+                self.read(&nb, loc)?,
+            );
+            let of_the_larger = self.conditional(larger, x, y, loc)?;
+            let (same, x) = (self.read(&tsame, loc)?, self.read(&na, loc)?);
+            let negative = self.conditional(same, x, of_the_larger, loc)?;
+            (magnitude, carry, negative)
+        };
+        let (tmagnitude, store_magnitude) = self.temp(magnitude, loc)?;
+        let carry = self.convert(carry, &Type::Int, loc)?;
+        let (tcarry, store_carry) = self.temp(carry, loc)?;
+        let negative = self.convert(negative, &Type::Int, loc)?;
+        let (tnegative, store_negative) = self.temp(negative, loc)?;
+        for store in [store_magnitude, store_carry, store_negative] {
+            before = self.comma(before, store, loc)?;
+        }
+        // What is stored is the value modulo 2^128, brought to the result's type.
+        let (m, again, from) = (
+            self.read(&tmagnitude, loc)?,
+            self.read(&tmagnitude, loc)?,
+            zero(self)?,
+        );
+        let negated = self.binary(BinOp::Sub, from, again, loc)?;
+        let is_negative = self.read(&tnegative, loc)?;
+        let value = self.conditional(is_negative, negated, m, loc)?;
+        let value = self.convert(value, result_ty, loc)?;
+        let pointer = self.read(tout, loc)?;
+        let target = self.deref(pointer, loc)?;
+        let stored = self.assign(target, value, loc)?;
+        let compute = self.comma(before, stored, loc)?;
+        // Whether the type holds it: nothing past 2^128, and the magnitude within what the sign
+        // allows.
+        let bits = self.bits_of(result_ty);
+        let power = |sema: &mut Sema, exponent: u64| -> Res<Expr> {
+            let one = sema.int_lit(1, Type::Int, loc)?;
+            let one = sema.convert(one, &Type::UInt128, loc)?;
+            let by = sema.int_lit(exponent as i64, Type::Int, loc)?;
+            sema.binary(BinOp::Shl, one, by, loc)
+        };
+        let too_large = if self.tcx.is_signed(result_ty) {
+            // Negative: at most 2^(bits-1). Otherwise: less than that.
+            let (m, limit) = (self.read(&tmagnitude, loc)?, power(self, bits - 1)?);
+            let past_negative = self.binary(BinOp::Gt, m, limit, loc)?;
+            let (m, limit) = (self.read(&tmagnitude, loc)?, power(self, bits - 1)?);
+            let past_positive = self.binary(BinOp::Ge, m, limit, loc)?;
+            let is_negative = self.read(&tnegative, loc)?;
+            self.conditional(is_negative, past_negative, past_positive, loc)?
+        } else {
+            let (m, nothing) = (self.read(&tmagnitude, loc)?, zero(self)?);
+            let something = self.binary(BinOp::Ne, m, nothing, loc)?;
+            let is_negative = self.read(&tnegative, loc)?;
+            let below_zero = self.logical(true, is_negative, something, loc)?;
+            if bits < 128 {
+                let (m, limit) = (self.read(&tmagnitude, loc)?, power(self, bits)?);
+                let past = self.binary(BinOp::Ge, m, limit, loc)?;
+                self.logical(false, below_zero, past, loc)?
+            } else {
+                below_zero
+            }
+        };
+        let carried = self.read(&tcarry, loc)?;
+        let overflowed = self.logical(false, carried, too_large, loc)?;
+        Ok((compute, overflowed))
     }
 
     fn overflow_binop(op: OverflowOp) -> BinOp {
@@ -1231,7 +1426,7 @@ impl Sema {
     /// not one for GCC, and neither is it here. (GCC also says yes to `x && 0` and `x * 0`;
     /// like Clang, this says no: only "no" is always a safe answer.)
     pub(crate) fn constant_p(&self, e: &Expr) -> bool {
-        if matches!(e.kind, ExprKind::StrLit(_)) {
+        if matches!(e.kind, ExprKind::StrLit(_)) || self.string_element(e).is_some() {
             return true;
         }
         match crate::constexpr::eval(e, &self.tcx) {

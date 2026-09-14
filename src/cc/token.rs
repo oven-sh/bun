@@ -28,6 +28,15 @@ pub(crate) struct Loc {
     pub(crate) offset: u32,
 }
 
+impl Loc {
+    /// Whether this is a place in a file, and not the location nobody set. (`line` alone does not
+    /// say: the line after `#line 0` is line 0. Nothing can come before offset 0 of a file to
+    /// give it another line than 1.)
+    pub(crate) fn is_set(self) -> bool {
+        self != Loc::default()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Error {
     pub(crate) loc: Loc,

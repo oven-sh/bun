@@ -82,6 +82,14 @@ int main(void) { if (f(3) == 0 && f(5) == 0 && f(1) == 0 && f(2) == 2) puts("ran
       ["warn: empty case range\n   at test.c:2:29\n"],
     ],
     [
+      "more elements than a vector has lanes",
+      `int puts(const char *);
+typedef int v4 __attribute__((vector_size(16)));
+int main(void) { v4 a = { 0, 1, 2, 3, 4 }; if (a[3] == 3) puts("ran"); return 0; }
+`,
+      ["warn: excess elements in vector initializer\n   at test.c:3:25\n"],
+    ],
+    [
       "a __declspec nobody has heard of",
       `__declspec(something_new(1, 2)) int f(void);
 int puts(const char *);

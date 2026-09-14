@@ -1,0 +1,10 @@
+the parameter after its bound: 3
+calls on entry: 1
+both: 3 5, a row of 4
+a pointer to an array of as many: 0 calls, 8 bytes
+what it points to: 1 calls, 12 bytes
+the array itself: 1 calls, 12 bytes
+its alignment: 0 calls, 4
+a cast to the pointer: 0 calls, 8 bytes
+the cast evaluated: 1 calls, 1
+a call as the operand: 0 calls, 4 bytes

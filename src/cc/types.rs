@@ -364,6 +364,8 @@ impl Type {
     pub(crate) fn quals(&self) -> Quals {
         match self {
             Type::Qualified(quals, _) => quals.qualifiers(),
+            // (`const _Atomic int` keeps its `const` on the inside: see `qualified`.)
+            Type::Atomic(inner) => inner.quals(),
             _ => Quals::NONE,
         }
     }
@@ -410,10 +412,21 @@ impl Type {
             }
             Type::Array(elem, len) => Type::Array(Rc::new((*elem).clone().qualified(quals)), len),
             Type::Vla(elem, id) => Type::Vla(Rc::new((*elem).clone().qualified(quals)), id),
-            Type::Func(_) | Type::Atomic(_) => self,
+            Type::Func(_) => self,
+            // An atomic type stays one to every test of its outermost form; its qualifiers are
+            // kept on what it is the atomic version of.
+            Type::Atomic(inner) => {
+                Type::Atomic(Rc::new((*inner).clone().qualified(quals.qualifiers())))
+            }
             Type::Qualified(already, inner) => Type::Qualified(already.with(quals), inner),
             other => Type::Qualified(quals, Rc::new(other)),
         }
+    }
+
+    /// `quals` written in front of this type, for showing it: not `qualified`, which puts the
+    /// qualifiers of an atomic type where they are kept.
+    fn with_quals_outside(self, quals: Quals) -> Type {
+        Type::Qualified(quals.qualifiers(), Rc::new(self))
     }
 
     pub(crate) fn is_const(&self) -> bool {
@@ -577,7 +590,7 @@ impl Type {
     /// The type of the value an lvalue of this type holds: without qualifiers and `_Atomic`.
     pub(crate) fn unatomic(&self) -> &Type {
         match self {
-            Type::Atomic(inner) => inner,
+            Type::Atomic(inner) => inner.unqualified(),
             Type::Qualified(_, inner) => inner.unatomic(),
             other => other,
         }
@@ -1001,7 +1014,14 @@ impl TypeCtx {
                     self.size_of(ty).unwrap_or(0).max(u64::from(*count))
                 )
             }
-            Type::Atomic(inner) => format!("_Atomic({})", self.display(inner)),
+            // (`const _Atomic(int)`, as it is written, for what is kept as the atomic version of
+            // `const int`.)
+            Type::Atomic(inner) => match &**inner {
+                Type::Qualified(quals, of) => {
+                    self.display(&Type::Atomic(Rc::clone(of)).with_quals_outside(*quals))
+                }
+                _ => format!("_Atomic({})", self.display(inner)),
+            },
             Type::Qualified(quals, inner) => {
                 let mut text = String::new();
                 for (flag, name) in [

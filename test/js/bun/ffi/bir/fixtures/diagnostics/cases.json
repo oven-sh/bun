@@ -613,13 +613,6 @@
     "message": "shuffle index must be a constant integer"
   },
   {
-    "about": "vector diagnostics",
-    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(V a) { V v = {1, 2, 3, 4, 5}; return v; }",
-    "line": 1,
-    "column": 116,
-    "message": "excess elements in vector initializer"
-  },
-  {
     "about": "6.5.2.2p4: an argument is an expression of an object type",
     "source": "int printf(const char *, ...); void g(void); void f(void) { printf(\"%d\", g()); }\nint main(void) { return 0; }\n",
     "line": 1,
@@ -944,13 +937,6 @@
     "line": 1,
     "column": 19,
     "message": "nested functions (a GNU C extension) are not supported: calling one through a pointer needs code on an executable stack"
-  },
-  {
-    "about": "builtins the libraries use",
-    "source": "int f(int a, _Bool *r) { return __builtin_add_overflow(a, a, r); }",
-    "line": 1,
-    "column": 33,
-    "message": "__builtin_add_overflow needs integer operands of at most 64 bits, not '_Bool'"
   },
   {
     "about": "const is a real qualifier",
@@ -1505,25 +1491,18 @@
     "message": "_Generic selector of type 'float' is not compatible with any association"
   },
   {
-    "about": "6.5.1.1p2: an association names a complete object type",
-    "source": "struct s;\nint main(void) { return _Generic(1, struct s: 1, default: 2); }",
-    "line": 2,
-    "column": 37,
-    "message": "_Generic names type 'struct s', which is not a complete object type of known constant size"
-  },
-  {
     "about": "6.5.1.1p2: an association does not name a function type",
     "source": "int main(void) { return _Generic(1, int(void): 1, default: 2); }",
     "line": 1,
     "column": 37,
-    "message": "_Generic names type 'int ()', which is not a complete object type of known constant size"
+    "message": "_Generic names type 'int ()', which is not an object type of known constant size"
   },
   {
     "about": "6.5.1.1p2: an association does not name a variably modified type",
     "source": "int main(void) { int n = 2; return _Generic(1, int[n]: 1, default: 2); }",
     "line": 1,
     "column": 48,
-    "message": "_Generic names type 'int [*]', which is not a complete object type of known constant size"
+    "message": "_Generic names type 'int [*]', which is not an object type of known constant size"
   },
   {
     "about": "6.5.2.1p1: one operand of a subscript is a pointer to a complete object type, the other an integer",
@@ -4406,5 +4385,134 @@
     "column": 16,
     "message": "inline assembly: 'xmm6' is kept across calls on Windows, and the statement would have to save it: xmm0 to xmm5 are there to be used",
     "requires": "windows x64"
+  },
+  {
+    "about": "builtins the libraries use",
+    "source": "int f(int a, _Bool *r) { return __builtin_add_overflow(a, a, r); }",
+    "line": 1,
+    "column": 33,
+    "message": "__builtin_add_overflow needs integer operands, not '_Bool'"
+  },
+  {
+    "about": "6.7.3p6: an atomic object that is const is not assigned to",
+    "source": "int main(void) { const _Atomic int x = 1; x = 2; return 0; }",
+    "line": 1,
+    "column": 45,
+    "message": "cannot assign to an lvalue of const-qualified type 'const _Atomic(int)'"
+  },
+  {
+    "about": "6.5.16.1: the atomic version of a type is another type to point to",
+    "source": "_Atomic int a;\nint *p = &a;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 10,
+    "message": "incompatible pointer types when initializing: '_Atomic(int) *' to 'int *'"
+  },
+  {
+    "about": "6.5.16.1: the atomic version of a type is another type to point to",
+    "source": "int b;\n_Atomic int *q = &b;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 18,
+    "message": "incompatible pointer types when initializing: 'int *' to '_Atomic(int) *'"
+  },
+  {
+    "about": "6.2.1p4: what is declared extern in a block is not in scope after it",
+    "source": "void f(void) { extern int y; y = 1; }\nint g(void) { return y; }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 22,
+    "message": "use of undeclared identifier 'y'"
+  },
+  {
+    "about": "6.2.1p4: what is declared extern in a block is not in scope after it",
+    "source": "void f(void) { int h(void); h(); }\nint g(void) { return h(); }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 22,
+    "message": "call to undeclared function 'h'; implicit function declarations are not allowed"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "long f(long a) { __asm__(\"movl %0, %%ebx\" : : \"r\"(a) : \"ebx\"); return a; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: 'movl' works on 32 bits and one of its registers has 64",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "int f(int a) { __asm__(\"addq %1, %0\" : \"+r\"(a) : \"r\"(a)); return a; }",
+    "line": 1,
+    "column": 16,
+    "message": "inline assembly: 'addq' works on 64 bits and one of its registers has 32",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "int f(int a) { long b = 1; __asm__(\"add %1, %0\" : \"+r\"(a) : \"r\"(b)); return a; }",
+    "line": 1,
+    "column": 28,
+    "message": "inline assembly: 'add' works on 64 bits and one of its registers has 32",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "int f(short a) { int r; __asm__(\"movzbl %1, %0\" : \"=r\"(r) : \"r\"(a)); return r; }",
+    "line": 1,
+    "column": 25,
+    "message": "inline assembly: 'movzbl' widens 1 bytes to 4, and its registers are of other sizes",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "long f(char a) { long r; __asm__(\"movslq %1, %0\" : \"=r\"(r) : \"q\"(a)); return r; }",
+    "line": 1,
+    "column": 26,
+    "message": "inline assembly: 'movslq' widens 4 bytes to 8, and its registers are of other sizes",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "int f(long a) { int r; __asm__(\"popcntl %1, %0\" : \"=r\"(r) : \"r\"(a)); return r; }",
+    "line": 1,
+    "column": 24,
+    "message": "inline assembly: 'popcntl' works on 32 bits and one of its registers has 64",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the count of a shift is a byte",
+    "source": "int f(int a) { __asm__(\"shll $256, %0\" : \"+r\"(a)); return a; }",
+    "line": 1,
+    "column": 16,
+    "message": "inline assembly: the count of 'shll' is a byte",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the count of a shift is a byte",
+    "source": "int f(int a, int b) { __asm__(\"shldl $300, %1, %0\" : \"+r\"(a) : \"r\"(b)); return a; }",
+    "line": 1,
+    "column": 23,
+    "message": "inline assembly: the count of 'shldl' is a byte",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "int f(long a) { int r = 0; __asm__(\"cmovzl %1, %0\" : \"+r\"(r) : \"r\"(a)); return r; }",
+    "line": 1,
+    "column": 28,
+    "message": "inline assembly: 'cmovzl' moves 4 bytes and one of its registers is of another size",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "long f(int a) { long r = 0; __asm__(\"crc32l %1, %0\" : \"+r\"(r) : \"r\"(a)); return r; }",
+    "line": 1,
+    "column": 29,
+    "message": "inline assembly: 'crc32l' adds 4 bytes, and its registers are of other sizes",
+    "requires": "x64"
+  },
+  {
+    "about": "6.10.4: the line after #line 0 is line 0 and a place like any other",
+    "source": "#line 0\nint x = ;\nint main(void) { return 0; }\n",
+    "line": 2,
+    "column": 9,
+    "message": "expected an expression before ';'"
   }
 ]

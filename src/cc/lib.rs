@@ -140,7 +140,7 @@ fn compile_and_link(
         }
     };
     if let Err(text) = bir::validate(&linked.module) {
-        let text = format!("internal compiler error: the linker produced invalid BIR: {text}");
+        let text = format!("internal compiler error: generated invalid BIR: {text}");
         let msg = diagnostics::message_in_file(Kind::Err, name_of(0), text);
         diagnostics::add(log, msg);
         return None;
@@ -206,23 +206,9 @@ fn compile_unit_with(
             return None;
         }
     };
+    // (What is written is what the units are linked into: that is what is checked, once, against
+    // what the loader takes and against the rules of the format.)
     unit.module.libraries.clone_from(&files.libraries);
-    let module = &unit.module;
-    if let Some(text) = link::past_the_loader(
-        module.data.size,
-        module.tls.size,
-        module.data.relocs.len().max(module.tls.relocs.len()),
-    ) {
-        let msg = diagnostics::message_in_file(Kind::Err, filename, text);
-        diagnostics::add(log, msg);
-        return None;
-    }
-    if let Err(text) = bir::validate(&unit.module) {
-        let text = format!("internal compiler error: generated invalid BIR: {text}");
-        let msg = diagnostics::message_in_file(Kind::Err, filename, text);
-        diagnostics::add(log, msg);
-        return None;
-    }
     let undefined_tls = unit
         .tls_externs
         .iter()

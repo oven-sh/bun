@@ -44,11 +44,11 @@ fn range_at(contents: &Rc<[u8]>, loc: Loc) -> Range {
 }
 
 fn data_at(files: &FileTable, loc: Loc, text: String) -> Data {
-    // `line` 0 is a location nobody set: the message is about the unit as a whole.
-    let located = if loc.line == 0 {
-        None
-    } else {
+    // Of a location nobody set the message is about the unit as a whole.
+    let located = if loc.is_set() {
         file_at(files, loc)
+    } else {
+        None
     };
     match located {
         Some((name, contents)) => data_in(&name, &contents, range_at(&contents, loc), text),
@@ -74,7 +74,7 @@ pub(crate) fn message(
         notes.push(data_at(files, note_loc, note));
     }
     let mut file = loc.file;
-    while loc.line != 0
+    while loc.is_set()
         && let Some(included_at) = files.files.get(file as usize).and_then(|f| f.included_at)
         && notes.len() <= crate::pp::MAX_INCLUDE_DEPTH
     {

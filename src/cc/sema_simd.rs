@@ -458,12 +458,16 @@ impl Sema {
     }
 
     /// `{ a, b, ... }` for a vector: missing lanes are zero.
-    pub(crate) fn vec_from_list(&self, ty: &Type, items: Vec<Expr>, loc: Loc) -> Res<Expr> {
+    pub(crate) fn vec_from_list(&self, ty: &Type, mut items: Vec<Expr>, loc: Loc) -> Res<Expr> {
         let Type::Vector(elem, count) = ty else {
             return err(loc, "internal error: vector initializer for a non-vector");
         };
+        // (What GCC and Clang say too, and go on without the ones too many.)
         if items.len() > *count as usize {
-            return err(loc, "excess elements in vector initializer");
+            self.warnings
+                .borrow_mut()
+                .push((loc, "excess elements in vector initializer".to_string()));
+            items.truncate(*count as usize);
         }
         let mut lanes = Vec::with_capacity(*count as usize);
         for item in items {

@@ -53,6 +53,14 @@ impl Sema {
         )
     }
 
+    /// The bound of variable length array type `id` as an expression evaluated for what it does.
+    pub(crate) fn evaluate_vla_bound(&mut self, id: u32, loc: Loc) -> Res<Option<Expr>> {
+        let Some(len) = self.vlas.get(id as usize).and_then(|info| info.len.clone()) else {
+            return Ok(None);
+        };
+        Ok(Some(self.cast(len, &Type::Void, loc)?))
+    }
+
     /// `count = len` for every variable length array type made since there were `first` of them
     /// that has a count variable: what evaluating the type names of an expression comes to.
     pub(crate) fn vla_bounds_since(&mut self, first: usize, loc: Loc) -> Res<Vec<Expr>> {

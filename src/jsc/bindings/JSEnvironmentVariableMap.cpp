@@ -127,9 +127,7 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // `Object.create(process.env).TZ = v` and `Reflect.set(process.env, k, v, receiver)` land here with
-    // another receiver. Node's interceptors only see a write whose receiver is process.env: any other
-    // receiver gets an ordinary own property, and the environment stays as it is.
+    // Like Node's interceptors, only take a write whose receiver is process.env: `Object.create(process.env).TZ = v` defines TZ on the child.
     if (isThisValueAltered(slot, asObject(cell))) [[unlikely]]
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 
@@ -202,20 +200,14 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
     RELEASE_AND_RETURN(scope, put(object, globalObject, propertyName, descriptor.value(), slot));
 }
 
-// The getters and setters below are CustomValue properties, so JSC calls them with the env object that
-// holds the property as `this`. One case passes another object: for a Proxy with no getOwnPropertyDescriptor
-// trap over process.env, JSObject::definePropertyOnReceiver reads the slot of the target and calls the
-// setter with the Proxy (as for onmessage, see globalObjectForEventHandler in ZigGlobalObject.cpp). A body
-// that writes on `this` or changes native state checks this first.
+// JSC calls a CustomValue setter with a `this` that does not hold it for a Proxy with no getOwnPropertyDescriptor trap (see globalObjectForEventHandler in ZigGlobalObject.cpp).
 static bool holdsEnvAccessor(VM& vm, JSObject* object, PropertyName propertyName, CustomGetterSetter::CustomGetter getter)
 {
     JSValue accessor = object->getDirect(vm, propertyName);
     return accessor && accessor.isCustomGetterSetter() && uncheckedDowncast<CustomGetterSetter>(accessor.asCell())->getter() == getter;
 }
 
-// For a setter whose `this` is not the env object: define the property on `this`, like CreateDataProperty.
-// A Proxy sees its defineProperty trap. With no trap it forwards to process.env's defineOwnProperty, which
-// is a real write with process.env as the receiver.
+// Like CreateDataProperty: a Proxy with no defineProperty trap forwards this to process.env's defineOwnProperty, which is a real write.
 static bool defineEnvValueOnForeignThis(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -1012,11 +1004,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
-// TZ, NODE_TLS_REJECT_UNAUTHORIZED, BUN_CONFIG_VERBOSE_FETCH and the proxy keys. CustomValue, not
-// CustomAccessor: the descriptor of a CustomValue property is a data descriptor, like the other keys and
-// like Node, and a write with another receiver defines the property on that receiver. A CustomAccessor
-// gets every receiver as `this`, and getOwnPropertyDescriptor hands its native functions to JS to call on
-// any object. holdsEnvAccessor covers the one receiver that still reaches a CustomValue setter.
+// CustomValue, not CustomAccessor: a data descriptor like Node, and JS never gets the native functions to call on another object.
 static constexpr unsigned nativeBackedEnvKeyAttributes = static_cast<unsigned>(JSC::PropertyAttribute::CustomValue);
 
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)

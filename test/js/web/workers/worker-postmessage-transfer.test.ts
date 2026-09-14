@@ -136,4 +136,61 @@ describe("self.postMessage transfer list", () => {
       URL.revokeObjectURL(url);
     }
   });
+
+  // Transferring a port closes the sender's object (node fires 'close' on it, asynchronously)
+  // and nothing else: the peer stays open and the receiver's port talks to it. Worker#postMessage
+  // and the worker-side self.postMessage each disentangle the port themselves, so both
+  // directions are checked. The event is a task, which runs before the first setImmediate;
+  // both sides record for two of them rather than awaiting the event so that the recorded
+  // lists also show anything that fired when it should not have.
+  test("a port transferred with postMessage fires 'close' on the sender's object, in both directions", async () => {
+    const url = URL.createObjectURL(
+      new Blob([
+        `
+          const { port1, port2 } = new MessageChannel();
+          port2.postMessage("queued before the transfer"); // travels with port1
+          const events = [];
+          port1.addEventListener("close", () => events.push("close"));
+          port2.addEventListener("close", () => events.push("peer close"));
+          self.postMessage(port1, [port1]);
+          events.push("postMessage returned");
+          setImmediate(() => setImmediate(() => self.postMessage(events)));
+          self.onmessage = e => e.data.postMessage("sent through the received port");
+        `,
+      ]),
+    );
+    const worker = new Worker(url);
+    try {
+      const fromWorker: any[] = [];
+      const workerEvents = new Promise<string[]>((resolve, reject) => {
+        worker.onerror = e => reject(e.error ?? e.message ?? e);
+        worker.onmessage = e => {
+          fromWorker.push(e.data);
+          if (Array.isArray(e.data)) resolve(e.data);
+        };
+      });
+
+      const { port1, port2 } = new MessageChannel();
+      const events: string[] = [];
+      port1.addEventListener("close", () => events.push("close"));
+      port2.addEventListener("close", () => events.push("peer close"));
+      const throughPort2 = new Promise<string>(resolve => (port2.onmessage = e => resolve(e.data)));
+      worker.postMessage(port1, [port1]);
+      events.push("postMessage returned");
+      await new Promise(r => setImmediate(() => setImmediate(r)));
+      expect(events).toEqual(["postMessage returned", "close"]);
+      expect(await throughPort2).toBe("sent through the received port");
+
+      expect(await workerEvents).toEqual(["postMessage returned", "close"]);
+      const received = fromWorker[0];
+      expect(received).toBeInstanceOf(MessagePort);
+      const throughReceived = new Promise<string>(resolve => (received.onmessage = e => resolve(e.data)));
+      expect(await throughReceived).toBe("queued before the transfer");
+      received.close();
+      port2.close();
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
 });

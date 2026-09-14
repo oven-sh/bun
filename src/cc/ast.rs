@@ -718,6 +718,8 @@ pub(crate) struct LocalVar {
     pub(crate) punned_count: u32,
     /// Declared `volatile`: it lives in memory and every access is a load or store.
     pub(crate) volatile: bool,
+    /// Declared `register`: its address cannot be taken.
+    pub(crate) register: bool,
 }
 
 #[derive(Debug)]

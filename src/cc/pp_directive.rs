@@ -304,6 +304,9 @@ impl Preprocessor {
             b"undef" => {
                 let line = self.read_line()?;
                 match line.as_slice() {
+                    [t] if t.kind == PpKind::Ident && t.text == b"defined" => {
+                        err(t.loc, "'defined' cannot be used as a macro name")
+                    }
                     [t] if t.kind == PpKind::Ident => {
                         if let Ok(n) = std::str::from_utf8(&t.text) {
                             self.macros.remove(n);

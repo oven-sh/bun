@@ -28,6 +28,9 @@ const MAX_NESTING: u32 = 500;
 #[derive(Default, Clone)]
 struct Attrs {
     aligned: Option<u64>,
+    /// `_Alignas` was written (the keyword, which may appear in fewer places than the attribute),
+    /// asking for this much.
+    alignas: Option<(u64, Loc)>,
     packed: bool,
     /// `__asm__("name")`: the symbol name to link against.
     asm_label: Option<Rc<str>>,
@@ -66,8 +69,11 @@ struct Attrs {
 struct DeclSpec {
     ty: Type,
     storage: Storage,
+    is_register: bool,
+    is_auto: bool,
     is_typedef: bool,
     is_inline: bool,
+    is_noreturn: bool,
     thread_local: bool,
     attrs: Attrs,
     loc: Loc,
@@ -79,6 +85,7 @@ struct Param {
     loc: Loc,
     /// The type the parameter's variable has: `ty`, plus `volatile` if it was declared so.
     local_ty: Type,
+    is_register: bool,
 }
 
 enum DeclOp {
@@ -541,6 +548,15 @@ impl<S: TokenSource> Parser<S> {
             return self.unsupported("inline assembly");
         }
         let spec = self.parse_declspec()?;
+        if spec.is_register || spec.is_auto {
+            return err(
+                spec.loc,
+                format!(
+                    "a declaration outside a function cannot be '{}'",
+                    if spec.is_register { "register" } else { "auto" }
+                ),
+            );
+        }
         if self.eat(Punct::Semi)? {
             return Ok(());
         }
@@ -552,6 +568,7 @@ impl<S: TokenSource> Parser<S> {
                 return err(decl.loc, "expected an identifier in the declaration");
             };
             if spec.is_typedef {
+                self.check_typedef_specifiers(&spec)?;
                 self.mark_transparent_union(&decl, &spec);
                 let align = match (decl.attrs.aligned, spec.attrs.aligned) {
                     (Some(a), Some(b)) => Some(a.max(b)),
@@ -647,6 +664,7 @@ impl<S: TokenSource> Parser<S> {
                 };
                 param.ty = Sema::default_promoted_type(&declared);
                 param.local_ty = declared.qualified(quals);
+                param.is_register = spec.is_register;
                 param.loc = one.loc;
                 declared_names.push(name);
                 if !self.eat(Punct::Comma)? {
@@ -686,6 +704,80 @@ impl<S: TokenSource> Parser<S> {
         Ok((fty, decl))
     }
 
+    /// An object is declared `static` every time or never (`extern` takes what came before).
+    fn check_linkage_agrees(
+        &self,
+        id: GlobalId,
+        name: &str,
+        spec: &DeclSpec,
+        first: bool,
+        loc: Loc,
+    ) -> Res<()> {
+        if first {
+            return Ok(());
+        }
+        let was_static = self.sema.globals[id as usize].is_static;
+        match spec.storage {
+            Storage::Static if !was_static => err(
+                loc,
+                format!("static declaration of '{name}' follows a non-static declaration"),
+            ),
+            Storage::None if was_static => err(
+                loc,
+                format!("non-static declaration of '{name}' follows a static declaration"),
+            ),
+            _ => Ok(()),
+        }
+    }
+
+    fn check_typedef_specifiers(&self, spec: &DeclSpec) -> Res<()> {
+        if let Some((_, at)) = spec.attrs.alignas {
+            return err(at, "'_Alignas' cannot be applied to a typedef");
+        }
+        if spec.is_inline || spec.is_noreturn {
+            return err(
+                spec.loc,
+                "a function specifier in the declaration of a typedef",
+            );
+        }
+        Ok(())
+    }
+
+    /// What the declaration specifiers of an object may not say.
+    fn check_object_specifiers(&self, spec: &DeclSpec, decl: &Declarator) -> Res<()> {
+        if spec.is_inline || spec.is_noreturn {
+            return err(
+                decl.loc,
+                "'inline' and '_Noreturn' can only be used in the declaration of a function",
+            );
+        }
+        if let (Some((_, at)), true) = (spec.attrs.alignas, spec.is_register) {
+            return err(at, "'_Alignas' cannot be applied to a register variable");
+        }
+        self.check_alignas(spec, &decl.ty)
+    }
+
+    /// `_Alignas` cannot ask for less than the type requires.
+    fn check_alignas(&self, spec: &DeclSpec, ty: &Type) -> Res<()> {
+        if let Some((requested, at)) = spec.attrs.alignas {
+            if self
+                .sema
+                .tcx
+                .align_of(ty)
+                .is_some_and(|natural| requested < natural)
+            {
+                return err(
+                    at,
+                    format!(
+                        "'_Alignas({requested})' is less than the alignment of '{}'",
+                        self.sema.tcx.display(ty)
+                    ),
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// `typedef union {...} name __attribute__((transparent_union));`
     fn mark_transparent_union(&mut self, decl: &Declarator, spec: &DeclSpec) {
         if decl.attrs.transparent_union || spec.attrs.transparent_union {
@@ -706,6 +798,18 @@ impl<S: TokenSource> Parser<S> {
         is_definition: bool,
     ) -> Res<FuncId> {
         let is_static = spec.storage == Storage::Static;
+        if spec.thread_local {
+            return err(decl.loc, "a function cannot be thread-local");
+        }
+        if let Some((_, at)) = spec.attrs.alignas {
+            return err(at, "'_Alignas' cannot be applied to a function");
+        }
+        if is_static && !is_definition && self.sema.func.is_some() {
+            return err(
+                decl.loc,
+                "a function declared inside a block can be 'extern' but not 'static'",
+            );
+        }
         // Another name for a function of this unit: `alias("target")`, or an assembler name
         // that a function declared here already has. Uses of the new name are uses of it.
         if !is_definition {
@@ -818,6 +922,7 @@ impl<S: TokenSource> Parser<S> {
         if decl.ty.is_void() {
             return err(decl.loc, format!("variable '{name}' has type void"));
         }
+        self.check_object_specifiers(spec, &decl)?;
         let first = !self.sema.is_file_scope_object(&name);
         let align = match (decl.attrs.aligned, spec.attrs.aligned) {
             (Some(a), Some(b)) => Some(a.max(b)),
@@ -862,12 +967,13 @@ impl<S: TokenSource> Parser<S> {
                 );
             }
             self.check_object_size(&decl.ty, decl.loc)?;
-            let id = self
-                .sema
-                .declare_global(name, decl.ty, is_definition, decl.loc)?;
+            let id =
+                self.sema
+                    .declare_global(Rc::clone(&name), decl.ty, is_definition, decl.loc)?;
             self.sema.set_global_attrs(id, align, link_name);
             self.sema.globals[id as usize].weak |= decl.attrs.weak || spec.attrs.weak;
             self.sema.globals[id as usize].linkonce |= decl.attrs.selectany || spec.attrs.selectany;
+            self.check_linkage_agrees(id, &name, spec, first, decl.loc)?;
             self.sema.globals[id as usize].is_static |= spec.storage == Storage::Static;
             self.sema
                 .set_thread_local(id, spec.thread_local, first, decl.loc)?;
@@ -879,6 +985,7 @@ impl<S: TokenSource> Parser<S> {
         self.sema.set_global_attrs(id, align, link_name);
         self.sema.globals[id as usize].weak |= decl.attrs.weak || spec.attrs.weak;
         self.sema.globals[id as usize].linkonce |= decl.attrs.selectany || spec.attrs.selectany;
+        self.check_linkage_agrees(id, &name, spec, first, decl.loc)?;
         self.sema.globals[id as usize].is_static |= spec.storage == Storage::Static;
         self.sema
             .set_thread_local(id, spec.thread_local, first, decl.loc)?;
@@ -922,6 +1029,12 @@ impl<S: TokenSource> Parser<S> {
         spec: &DeclSpec,
     ) -> Res<()> {
         let loc = decl.loc;
+        if decl.params.is_none() {
+            return err(
+                loc,
+                "the declarator of a function definition must have a parameter list of its own",
+            );
+        }
         if let Some(star) = self.star_bound.take() {
             return err(
                 star,
@@ -989,6 +1102,9 @@ impl<S: TokenSource> Parser<S> {
                 Some(pname) => self.sema.declare_local(pname, p.local_ty, p.loc)?,
                 None => self.sema.new_local(p.local_ty),
             };
+            if p.is_register {
+                self.sema.set_local_register(id);
+            }
             params.push(id);
         }
         // `int m[n][n]` parameters: their bounds are evaluated on entry.
@@ -1371,6 +1487,10 @@ impl<S: TokenSource> Parser<S> {
         let mut storage = Storage::None;
         let mut is_typedef = false;
         let mut is_inline = false;
+        let mut is_register = false;
+        let mut is_auto = false;
+        let mut is_noreturn = false;
+        let mut restrict: Option<Loc> = None;
         let mut thread_local = false;
         let mut quals = Quals::NONE;
         let mut attrs = self.leading_attrs.take().unwrap_or_default();
@@ -1384,8 +1504,9 @@ impl<S: TokenSource> Parser<S> {
         let mut atomic: Option<Loc> = None;
         loop {
             let tloc = self.loc();
+            let other_storage_class = is_register || is_auto;
             let set_storage = |storage: &mut Storage, is_typedef: bool, new: Storage| -> Res<()> {
-                if *storage != Storage::None || is_typedef {
+                if *storage != Storage::None || is_typedef || other_storage_class {
                     return err(tloc, "multiple storage classes in declaration specifiers");
                 }
                 *storage = new;
@@ -1408,7 +1529,7 @@ impl<S: TokenSource> Parser<S> {
             match &self.cur.tok {
                 Tok::Kw(k) => match k {
                     Kw::Typedef => {
-                        if storage != Storage::None || is_typedef {
+                        if storage != Storage::None || is_typedef || is_register || is_auto {
                             return err(tloc, "multiple storage classes in declaration specifiers");
                         }
                         is_typedef = true;
@@ -1421,10 +1542,21 @@ impl<S: TokenSource> Parser<S> {
                         attrs.inlining |= crate::bir::INLINE_ALWAYS;
                     }
                     Kw::ThreadLocal => thread_local = true,
-                    Kw::Auto | Kw::Register | Kw::Noreturn | Kw::Extension => {}
+                    Kw::Register | Kw::Auto => {
+                        if storage != Storage::None || is_typedef || is_register || is_auto {
+                            return err(tloc, "multiple storage classes in declaration specifiers");
+                        }
+                        if *k == Kw::Register {
+                            is_register = true;
+                        } else {
+                            is_auto = true;
+                        }
+                    }
+                    Kw::Noreturn => is_noreturn = true,
+                    Kw::Extension => {}
                     Kw::Volatile => quals = quals.with(Quals::VOLATILE),
                     Kw::Const => quals = quals.with(Quals::CONST),
-                    Kw::Restrict => {}
+                    Kw::Restrict => restrict = Some(tloc),
                     Kw::Void => void += 1,
                     Kw::Bool => bool_ += 1,
                     Kw::Char => char_ += 1,
@@ -1502,6 +1634,8 @@ impl<S: TokenSource> Parser<S> {
                         }
                         if value > 0 {
                             attrs.aligned = Some(attrs.aligned.unwrap_or(1).max(value as u64));
+                            let most = attrs.alignas.map_or(0, |(most, _)| most).max(value as u64);
+                            attrs.alignas = Some((most, tloc));
                         }
                         any = true;
                         continue;
@@ -1525,6 +1659,15 @@ impl<S: TokenSource> Parser<S> {
                             self.bump()?;
                             let ty = self.parse_type_name()?;
                             self.expect(Punct::RParen)?;
+                            if ty.is_atomic() || !ty.quals().is_empty() {
+                                return err(
+                                    tloc,
+                                    format!(
+                                        "_Atomic( ) cannot name the atomic or qualified type '{}'",
+                                        self.sema.tcx.display(&ty)
+                                    ),
+                                );
+                            }
                             other = Some(self.sema.atomic_of(ty, tloc)?);
                             any = true;
                             continue;
@@ -1700,13 +1843,21 @@ impl<S: TokenSource> Parser<S> {
             Some(aloc) => self.sema.atomic_of(ty, aloc)?,
             None => ty,
         };
+        if let Some(at) = restrict {
+            if !ty.pointee().is_some_and(|pointee| !pointee.is_func()) {
+                return err(at, "'restrict' qualifies only pointers to object types");
+            }
+        }
         let ty = ty.qualified(quals);
         self.leave();
         Ok(DeclSpec {
             ty,
             storage,
+            is_register,
+            is_auto,
             is_typedef,
             is_inline,
+            is_noreturn,
             thread_local: thread_local || attrs.thread,
             attrs,
             loc,
@@ -1854,6 +2005,15 @@ impl<S: TokenSource> Parser<S> {
                     if !(0..=64).contains(&width) {
                         return err(e.loc, "invalid bit-field width");
                     }
+                    if matches!(field_ty.unqualified(), Type::Bool) && width > 1 {
+                        return err(e.loc, "width of bit-field exceeds its type");
+                    }
+                    if decl.ty.is_atomic() {
+                        return err(decl.loc, "a bit-field cannot have an atomic type");
+                    }
+                    if let Some((_, at)) = spec.attrs.alignas {
+                        return err(at, "'_Alignas' cannot be applied to a bit-field");
+                    }
                     if width == 0 && decl.name.is_some() {
                         return err(e.loc, "a named bit-field cannot have zero width");
                     }
@@ -1866,6 +2026,7 @@ impl<S: TokenSource> Parser<S> {
                 if decl.ty.is_func() {
                     return err(decl.loc, "member declared as a function");
                 }
+                self.check_alignas(&spec, &decl.ty)?;
                 fields.push(FieldDecl {
                     name: decl.name,
                     ty: decl.ty,
@@ -1961,6 +2122,19 @@ impl<S: TokenSource> Parser<S> {
                     Ok(Type::Int)
                 }
             };
+        }
+        if let Some(tag) = &tag {
+            if self
+                .sema
+                .defined_enums
+                .iter()
+                .any(|(scope, name)| *scope == self.sema.scope_depth() && name == tag)
+            {
+                return err(kw_loc, format!("redefinition of 'enum {tag}'"));
+            }
+            self.sema
+                .defined_enums
+                .push((self.sema.scope_depth(), Rc::clone(tag)));
         }
         // `enum e;` before the definition (GNU C): what already uses it took it for an int.
         let forward_declared = tag.as_ref().is_some_and(|tag| {
@@ -2207,6 +2381,9 @@ impl<S: TokenSource> Parser<S> {
             params = None;
             match op {
                 DeclOp::Ptr { atomic, quals } => {
+                    if quals.has(Quals::RESTRICT) && ty.is_func() {
+                        return err(loc, "'restrict' qualifies only pointers to object types");
+                    }
                     ty = ty.ptr_to();
                     if atomic {
                         ty = self.sema.atomic_of(ty, loc)?;
@@ -2344,12 +2521,22 @@ impl<S: TokenSource> Parser<S> {
                     break;
                 }
                 let aloc = self.bump()?.loc;
-                // `static` and qualifiers are allowed inside a parameter's array brackets.
+                // `static` and qualifiers are allowed inside a parameter's array brackets, in the
+                // outermost array derivation.
+                let mut adorned = false;
                 while self.eat_kw(Kw::Static)?
                     || self.eat_kw(Kw::Const)?
                     || self.eat_kw(Kw::Volatile)?
                     || self.eat_kw(Kw::Restrict)?
-                {}
+                {
+                    adorned = true;
+                }
+                if adorned && (self.param_depth == 0 || !suffixes.is_empty()) {
+                    return err(
+                        aloc,
+                        "'static' and type qualifiers in array brackets are only allowed in the outermost array type of a parameter",
+                    );
+                }
                 let len = if self.at(Punct::RBracket) {
                     ArrayLen::Unspecified
                 } else if self.at(Punct::Star)
@@ -2440,6 +2627,7 @@ impl<S: TokenSource> Parser<S> {
                     name: Some(name),
                     loc: nloc,
                     local_ty: Type::Int,
+                    is_register: false,
                 });
                 if !self.eat(Punct::Comma)? {
                     break;
@@ -2479,6 +2667,13 @@ impl<S: TokenSource> Parser<S> {
             if spec.is_typedef || matches!(spec.storage, Storage::Static | Storage::Extern) {
                 return err(spec.loc, "invalid storage class for a parameter");
             }
+            let is_register = spec.is_register;
+            if let Some((_, at)) = spec.attrs.alignas {
+                return err(at, "'_Alignas' cannot be applied to a parameter");
+            }
+            if spec.is_inline || spec.is_noreturn {
+                return err(spec.loc, "a function specifier on a parameter");
+            }
             let decl = self.parse_declarator(spec.ty)?;
             let quals = decl.ty.quals();
             // Parameters of array and function type are adjusted to pointers.
@@ -2499,6 +2694,7 @@ impl<S: TokenSource> Parser<S> {
                 name: decl.name,
                 loc: decl.loc,
                 local_ty,
+                is_register,
             });
             if !self.eat(Punct::Comma)? {
                 break;
@@ -2755,6 +2951,7 @@ impl<S: TokenSource> Parser<S> {
                 (a, b) => a.or(b),
             };
             if spec.is_typedef {
+                self.check_typedef_specifiers(&spec)?;
                 self.mark_transparent_union(&decl, &spec);
                 // On a typedef `aligned` sets the alignment, up or down.
                 let ty = match align {
@@ -2772,6 +2969,8 @@ impl<S: TokenSource> Parser<S> {
                 self.declare_function(name, Rc::clone(fty), &decl, &spec, false)?;
             } else if decl.ty.is_void() {
                 return err(decl.loc, format!("variable '{name}' has type void"));
+            } else if let Err(error) = self.check_object_specifiers(&spec, &decl) {
+                return Err(error);
             } else if spec.storage == Storage::Extern {
                 if self.at(Punct::Assign) {
                     return err(
@@ -2795,6 +2994,9 @@ impl<S: TokenSource> Parser<S> {
                 );
             } else {
                 let local = self.parse_auto_local(Rc::clone(&name), &decl, align, out)?;
+                if spec.is_register {
+                    self.sema.set_local_register(local);
+                }
                 if let Some(a) = align {
                     self.sema.set_local_align(local, a);
                 }
@@ -3223,6 +3425,9 @@ impl<S: TokenSource> Parser<S> {
             Tok::Kw(Kw::Return) => {
                 self.bump()?;
                 if self.eat(Punct::Semi)? {
+                    if self.sema.func.as_ref().is_some_and(|f| !f.ret.is_void()) {
+                        return err(loc, "a function that returns a value needs one in 'return'");
+                    }
                     return Ok(Stmt::Return(None));
                 }
                 let e = self.parse_expr()?;
@@ -4208,6 +4413,15 @@ impl<S: TokenSource> Parser<S> {
         } else {
             // The operand is not evaluated and does not decay.
             let operand = self.parse_unary()?;
+            if matches!(operand.kind, ExprKind::BitField { .. }) {
+                return err(
+                    loc,
+                    format!(
+                        "invalid application of '{}' to a bit-field",
+                        if is_alignof { "_Alignof" } else { "sizeof" }
+                    ),
+                );
+            }
             declared_align = match operand.kind {
                 ExprKind::Global(id) => self.sema.globals.get(id as usize).and_then(|g| g.align),
                 ExprKind::Local(id) => self
@@ -4492,6 +4706,18 @@ impl<S: TokenSource> Parser<S> {
                 None if fallback.is_some() => return err(loc, "duplicate default in _Generic"),
                 None => fallback = Some(value),
                 Some(ty) => {
+                    if ty.is_func()
+                        || !self.sema.tcx.is_complete(&ty)
+                        || self.sema.tcx.is_variably_sized(&ty)
+                    {
+                        return err(
+                            at,
+                            format!(
+                                "_Generic names type '{}', which is not a complete object type of known constant size",
+                                self.sema.tcx.display(&ty)
+                            ),
+                        );
+                    }
                     if let Some(earlier) =
                         named.iter().find(|earlier| Sema::compatible(earlier, &ty))
                     {

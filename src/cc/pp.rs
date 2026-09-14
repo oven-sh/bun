@@ -517,10 +517,16 @@ impl Preprocessor {
             return Ok(true);
         }
         let [literal] = operand.as_slice() else {
-            return Ok(true);
+            return err(
+                open.tok.loc,
+                "_Pragma takes one string literal in parentheses",
+            );
         };
         if literal.kind != PpKind::StrLit {
-            return Ok(true);
+            return err(
+                literal.loc,
+                "_Pragma takes one string literal in parentheses",
+            );
         }
         // Drop an encoding prefix and the quotes; `\"` and `\\` lose their backslash.
         let text = &literal.text;

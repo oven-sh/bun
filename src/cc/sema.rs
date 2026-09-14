@@ -113,6 +113,8 @@ pub(crate) struct Sema {
     /// Indexed by the second field of `Type::Vla`.
     pub(crate) vlas: Vec<VlaInfo>,
     pub(crate) warnings: std::cell::RefCell<Vec<(Loc, String)>>,
+    /// The enumeration tags that have their enumerator list, with the depth of their scope.
+    pub(crate) defined_enums: Vec<(usize, Rc<str>)>,
     /// Set by `elaborate_init`: where an initialized flexible array member ends, as an
     /// offset into the object (0 if there is none).
     pub(crate) flexible_end: std::cell::Cell<u64>,
@@ -216,6 +218,7 @@ impl Sema {
             func: None,
             vlas: Vec::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
+            defined_enums: Vec::new(),
             flexible_end: std::cell::Cell::new(0),
             function_aliases: Vec::new(),
             asm_blocks: Vec::new(),
@@ -232,8 +235,14 @@ impl Sema {
         self.tags.push(BTreeMap::new());
     }
 
+    pub(crate) fn scope_depth(&self) -> usize {
+        self.scopes.len()
+    }
+
     pub(crate) fn pop_scope(&mut self) {
         if self.scopes.len() > 1 {
+            let leaving = self.scopes.len();
+            self.defined_enums.retain(|(depth, _)| *depth < leaving);
             self.scopes.pop();
             self.tags.pop();
         }
@@ -683,10 +692,37 @@ impl Sema {
                     addr_count: u32::from(addr_taken),
                     punned_count: 0,
                     volatile,
+                    register: false,
                 });
                 (f.locals.len() - 1) as LocalId
             }
             None => 0,
+        }
+    }
+
+    pub(crate) fn set_local_register(&mut self, id: LocalId) {
+        if let Some(local) = self
+            .func
+            .as_mut()
+            .and_then(|f| f.locals.get_mut(id as usize))
+        {
+            local.register = true;
+        }
+    }
+
+    /// Whether the object `e` designates (or is a part of) was declared `register`.
+    fn is_register_object(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Local(id) => self
+                .func
+                .as_ref()
+                .and_then(|f| f.locals.get(*id as usize))
+                .is_some_and(|local| local.register),
+            ExprKind::Member(base, _)
+            | ExprKind::BitField { base, .. }
+            | ExprKind::ComplexPart(base, _)
+            | ExprKind::VecElem(base, _) => self.is_register_object(base),
+            _ => false,
         }
     }
 
@@ -881,7 +917,14 @@ impl Sema {
                         f.ty = fty;
                     }
                 }
-                f.is_static |= is_static;
+                if is_static && !f.is_static {
+                    return err_with_note(
+                        loc,
+                        format!("static declaration of '{name}' follows a non-static declaration"),
+                        f.loc,
+                        "the previous declaration is here",
+                    );
+                }
                 id
             }
             Some(_) => {
@@ -1509,7 +1552,32 @@ impl Sema {
         if (e.ty.is_real_floating() && to.is_ptr()) || (e.ty.is_ptr() && to.is_real_floating()) {
             return err(loc, "cannot cast between pointer and floating types");
         }
-        self.convert(e, to, loc)
+        let converted = self.convert(e, to, loc)?;
+        self.not_an_lvalue(converted)
+    }
+
+    /// The value of `e`, where `e` might still be the node of the object it was read from: the
+    /// result of a cast or of a conditional operator is never an lvalue.
+    fn not_an_lvalue(&self, e: Expr) -> Res<Expr> {
+        if e.is_lvalue() && e.ty.is_scalar() {
+            let (ty, loc) = (e.ty.clone(), e.loc);
+            return self.mk(ExprKind::Cast(Box::new(e)), ty, loc);
+        }
+        Ok(e)
+    }
+
+    /// Whether pointer types `a` and `b` point to compatible types, qualifiers aside; with
+    /// `lenient`, also to integer types that differ in signedness only, which nobody refuses.
+    fn pointees_agree(&self, a: &Type, b: &Type, lenient: bool) -> bool {
+        let (Some(x), Some(y)) = (a.pointee(), b.pointee()) else {
+            return true;
+        };
+        let (x, y) = (x.unqualified().unatomic(), y.unqualified().unatomic());
+        Self::compatible(x, y)
+            || (lenient
+                && x.is_integer()
+                && y.is_integer()
+                && self.tcx.size_of(x) == self.tcx.size_of(y))
     }
 
     pub(crate) fn is_null_constant(&self, e: &Expr) -> bool {
@@ -1580,6 +1648,19 @@ impl Sema {
         }
         if to.is_struct() {
             return Ok(e);
+        }
+        if let (Some(target), Some(source)) = (to.pointee(), from.pointee()) {
+            let either_is_void = target.unqualified().is_void() || source.unqualified().is_void();
+            if !either_is_void && !self.pointees_agree(to, from, true) {
+                return err(
+                    loc,
+                    format!(
+                        "incompatible pointer types when {what}: '{}' to '{}'",
+                        self.tcx.display(from),
+                        self.tcx.display(to)
+                    ),
+                );
+            }
         }
         // `char *p = const_char_pointer;`: a constraint violation everyone only warns about.
         if let (Some(target), Some(source)) = (to.pointee(), from.pointee()) {
@@ -1748,6 +1829,16 @@ impl Sema {
                 return self.ptr_add(b, a, false, loc);
             }
             BinOp::Sub if a.ty.is_ptr() && b.ty.is_ptr() => {
+                if !self.pointees_agree(&a.ty, &b.ty, false) {
+                    return err(
+                        loc,
+                        format!(
+                            "'{}' and '{}' are not pointers to compatible types",
+                            self.tcx.display(&a.ty),
+                            self.tcx.display(&b.ty)
+                        ),
+                    );
+                }
                 let ty = self.ptrdiff_type();
                 let (scale, divisor) = match self.pointee_scale(&a.ty, loc)? {
                     Scale::Const(0) => {
@@ -1945,7 +2036,9 @@ impl Sema {
         // type-generic header macros never reach code generation.
         match typed.kind {
             ExprKind::Cond(c, a, b) => match c.kind {
-                ExprKind::IntLit(v) if c.ty.is_integer() => Ok(if v != 0 { *a } else { *b }),
+                ExprKind::IntLit(v) if c.ty.is_integer() => {
+                    self.not_an_lvalue(if v != 0 { *a } else { *b })
+                }
                 _ => Ok(Expr {
                     kind: ExprKind::Cond(c, a, b),
                     ..typed
@@ -2073,6 +2166,15 @@ impl Sema {
                 loc,
                 format!(
                     "cannot assign to an lvalue of const-qualified type '{}'",
+                    self.tcx.display(&e.ty)
+                ),
+            );
+        }
+        if self.tcx.has_const_member(&e.ty) {
+            return err(
+                loc,
+                format!(
+                    "cannot assign to an lvalue of type '{}', which has a const-qualified member",
                     self.tcx.display(&e.ty)
                 ),
             );
@@ -2276,6 +2378,9 @@ impl Sema {
         }
         if !e.is_lvalue() {
             return err(loc, "cannot take the address of an rvalue");
+        }
+        if self.is_register_object(&e) {
+            return err(loc, "cannot take the address of a register variable");
         }
         self.mark_addr_taken(&e);
         let ty = e.ty.clone().ptr_to();

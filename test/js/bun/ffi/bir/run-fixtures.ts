@@ -22,10 +22,14 @@ function microsoftHeaders() {
  * and choice of enumeration types, which Windows does not share), `c99-inline` (C99's and GNU C's rules for which
  * `inline` definitions other files see: Microsoft C has its own), `windows` (where `supported` means Visual
  * Studio's and the Windows SDK's headers are installed), or `uchar` (a C library with `<uchar.h>`: not Apple's).
+ * Several of them, separated by white space, must all hold.
  */
-export function meets(requirement: string | undefined) {
-  switch (requirement?.trim()) {
+export function meets(requirement: string | undefined): boolean {
+  const all = requirement?.trim().split(/\s+/) ?? [];
+  if (all.length > 1) return all.every(meets);
+  switch (all[0]) {
     case undefined:
+    case "":
       return true;
     case "x64":
       return !isArm64;

@@ -483,18 +483,27 @@ x
 
 **Mode:** `--minify-syntax`
 
-Removes side-effect-free expressions from comma sequences. An anonymous function or class keeps one `0`, because `y = () => {}` names the function `"y"` and `y = (0, () => {})` does not. Every fold that returns one operand (`true && x`, `null ?? x`, `true ? x : z`, `[x][0]`) leaves the same `(0, x)` for such a value.
+Removes side-effect-free expressions from comma sequences. Two kinds of value keep one `0`:
+
+- An anonymous function or class that is not called directly. `y = () => {}` names the function `"y"`, and `y = (0, () => {})` does not.
+- A member access that is called directly. `(0, obj.fn)()` passes no `this`, and `obj.fn()` does.
+
+A function that is called directly is never named, so `(0, () => {})()` loses the `0`. The folds that return one operand (`true && x`, `null ?? x`, `true ? x : z`, `[x][0]`) follow the same rules.
 
 ```ts Input
 (0, x)
 (123, "str", x)
 y = (0, () => {})
+(0, obj.fn)()
+(0, () => {})()
 ```
 
 ```js Output
 x
 x
 y = (0, () => {})
+(0, obj.fn)()
+(() => {})()
 ```
 
 ### Ternary conditional folding

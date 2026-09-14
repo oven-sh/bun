@@ -1,0 +1,26 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+
+    "clang.clangd",
+    "ms-vscode.cmake-tools",
+    "xaver.clang-format",
+    "vadimcn.vscode-lldb",
+
+    "oven.bun-vscode",
+    "esbenp.prettier-vscode",
+
+    "better-ts-errors.better-ts-errors",
+    "MylesMurphy.prettify-ts",
+
+    "bierner.markdown-preview-github-styles",
+    "bierner.markdown-emoji",
+    "bierner.emojisense",
+    "bierner.markdown-checkbox",
+    "bierner.jsdoc-markdown-highlighting",
+
+    "tamasfe.even-better-toml",
+
+    "bierner.comment-tagged-templates"
+  ]
+}

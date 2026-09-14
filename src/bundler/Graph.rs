@@ -111,6 +111,10 @@ pub struct InputFile {
     pub additional_files: AstVec<AdditionalFile>,
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
+    /// Length of `source.contents` before `process_files_to_copy` moved the
+    /// bytes into this file's asset `OutputFile`, which leaves `source.contents`
+    /// empty. `None` for files that are not copied.
+    pub copied_contents_len: Option<usize>,
     pub flags: InputFileFlags,
 }
 
@@ -124,6 +128,7 @@ impl Default for InputFile {
             additional_files: AstAlloc::vec(),
             unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
+            copied_contents_len: None,
             flags: InputFileFlags::default(),
         }
     }
@@ -141,6 +146,7 @@ bun_collections::multi_array_columns! {
         additional_files: AstVec<AdditionalFile>,
         unique_key_for_additional_file: Box<[u8], AstAlloc>,
         content_hash_for_additional_file: u64,
+        copied_contents_len: Option<usize>,
         flags: InputFileFlags,
     }
 }

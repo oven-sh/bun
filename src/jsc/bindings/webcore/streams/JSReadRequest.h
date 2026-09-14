@@ -55,9 +55,9 @@ public:
     // "chunk steps, given chunk"
     void chunkSteps(JSC::JSGlobalObject*, JSC::JSValue chunk);
     // "close steps"
-    void closeSteps(JSC::JSGlobalObject*);
+    void closeSteps(JSC::JSGlobalObject*, Bun::WebStreams::MayDefer = Bun::WebStreams::MayDefer::Yes);
     // "error steps, given e"
-    void errorSteps(JSC::JSGlobalObject*, JSC::JSValue error);
+    void errorSteps(JSC::JSGlobalObject*, JSC::JSValue error, Bun::WebStreams::MayDefer = Bun::WebStreams::MayDefer::Yes);
 
     const JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
     JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
@@ -112,7 +112,7 @@ public:
     // "chunk steps, given chunk"
     void chunkSteps(JSC::JSGlobalObject*, JSC::JSArrayBufferView* chunk);
     // "close steps, given chunk" — chunk may be null (the spec's `undefined`).
-    void closeSteps(JSC::JSGlobalObject*, JSC::JSArrayBufferView* chunkOrNull);
+    void closeSteps(JSC::JSGlobalObject*, JSC::JSArrayBufferView* chunkOrNull, Bun::WebStreams::MayDefer = Bun::WebStreams::MayDefer::Yes);
     // "error steps, given e"
     void errorSteps(JSC::JSGlobalObject*, JSC::JSValue error);
 

@@ -473,7 +473,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onRSByteControllerPullFulfilled, (J
     controller->m_pulling = false;
     if (controller->m_pullAgain) {
         controller->m_pullAgain = false;
-        readableByteStreamControllerCallPullIfNeeded(globalObject, controller);
+        readableByteStreamControllerCallPullIfNeeded(globalObject, controller, MayDefer::No);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsUndefined());
@@ -596,7 +596,7 @@ namespace WebStreams {
 using namespace JSC;
 using namespace WebCore;
 
-void readableByteStreamControllerCallPullIfNeeded(JSGlobalObject* globalObject, JSReadableByteStreamController* controller)
+void readableByteStreamControllerCallPullIfNeeded(JSGlobalObject* globalObject, JSReadableByteStreamController* controller, MayDefer mayDefer)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -608,10 +608,14 @@ void readableByteStreamControllerCallPullIfNeeded(JSGlobalObject* globalObject, 
     }
     ASSERT(!controller->m_pullAgain);
     controller->m_pulling = true;
+    auto* runtime = JSStreamsRuntime::from(globalObject);
+    // See readableStreamDefaultControllerCallPullIfNeeded, for both this and the one below.
+    if (mayDefer == MayDefer::Yes && controller->m_algorithms.linksAnotherStream() && streamLinkMustDefer(vm)) [[unlikely]] {
+        controller->m_pullAgain = true;
+        return queueStreamsMicrotask(globalObject, runtime->onRSByteControllerPullFulfilled(), jsUndefined(), controller);
+    }
     JSPromise* pullPromise = performByteControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
-    auto* runtime = JSStreamsRuntime::from(globalObject);
-    // See readableStreamDefaultControllerCallPullIfNeeded.
     if (!pullPromise || pullPromise->status() == JSPromise::Status::Fulfilled)
         return queueStreamsMicrotask(globalObject, runtime->onRSByteControllerPullFulfilled(), jsUndefined(), controller);
     pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);

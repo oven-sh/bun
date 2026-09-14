@@ -326,8 +326,11 @@ fn export_aliases_beside_entry_exports(
         }
         if !dropped.is_empty() {
             let mut kept = 0;
+            let mut next_dropped = 0;
             for i in 0..items.len() {
-                if !dropped.contains(&i) {
+                if dropped.get(next_dropped) == Some(&i) {
+                    next_dropped += 1;
+                } else {
                     items.swap(kept, i);
                     kept += 1;
                 }

@@ -189,16 +189,6 @@ bool HTTPHeaderMap::contains(const StringView name) const
     }) != notFound;
 }
 
-bool HTTPHeaderMap::remove(const StringView name)
-{
-
-    HTTPHeaderName headerName;
-    if (findHTTPHeaderName(name, headerName))
-        return remove(headerName);
-
-    return removeUncommonHeader(name);
-}
-
 bool HTTPHeaderMap::removeUncommonHeader(const StringView name)
 {
 #if ASSERT_ENABLED

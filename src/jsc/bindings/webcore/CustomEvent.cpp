@@ -34,11 +34,6 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CustomEvent);
 
-inline CustomEvent::CustomEvent(IsTrusted isTrusted)
-    : Event(CustomEventInterfaceType, isTrusted)
-{
-}
-
 inline CustomEvent::CustomEvent(const AtomString& type, const Init& initializer, IsTrusted isTrusted)
     : Event(CustomEventInterfaceType, type, initializer, isTrusted)
     , m_detail(initializer.detail)
@@ -46,11 +41,6 @@ inline CustomEvent::CustomEvent(const AtomString& type, const Init& initializer,
 }
 
 CustomEvent::~CustomEvent() = default;
-
-Ref<CustomEvent> CustomEvent::create(IsTrusted isTrusted)
-{
-    return adoptRef(*new CustomEvent(isTrusted));
-}
 
 Ref<CustomEvent> CustomEvent::create(const AtomString& type, const Init& initializer, IsTrusted isTrusted)
 {

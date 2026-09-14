@@ -113,9 +113,6 @@ public:
     void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTF::move(headers); }
     const HTTPHeaderMap& internalHeaders() const { return m_headers; }
 
-    void setGuard(Guard);
-    Guard guard() const { return m_guard; }
-
     FetchHeaders(Guard, HTTPHeaderMap&&);
     explicit FetchHeaders(const FetchHeaders&);
 
@@ -139,24 +136,4 @@ inline FetchHeaders::FetchHeaders(const FetchHeaders& other)
 {
 }
 
-inline void FetchHeaders::setGuard(Guard guard)
-{
-    ASSERT(!m_headers.size());
-    m_guard = guard;
-}
-
 } // namespace WebCore
-
-namespace WTF {
-
-template<> struct EnumTraits<WebCore::FetchHeaders::Guard> {
-    using values = EnumValues<
-        WebCore::FetchHeaders::Guard,
-        WebCore::FetchHeaders::Guard::None,
-        WebCore::FetchHeaders::Guard::Immutable,
-        WebCore::FetchHeaders::Guard::Request,
-        WebCore::FetchHeaders::Guard::RequestNoCors,
-        WebCore::FetchHeaders::Guard::Response>;
-};
-
-}

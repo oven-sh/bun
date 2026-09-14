@@ -266,12 +266,6 @@ JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const S
     return createError(globalObject->vm(), globalObject, code, message);
 }
 
-JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message)
-{
-    auto& vm = JSC::getVM(globalObject);
-    return createError(vm, globalObject, code, message);
-}
-
 // `Bun.inspect` with `single_line` + `quote_strings` — the same renderer
 // JSBuffer uses to inline a value into an error message; it renders objects
 // on one line ("Received { abc: 123 }") the way Node does.

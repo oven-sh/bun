@@ -622,11 +622,4 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 
-PerformanceTiming* JSPerformanceTiming::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSPerformanceTiming>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
-
 }

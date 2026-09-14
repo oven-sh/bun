@@ -322,16 +322,4 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 {
     return createWrapper<TextEncoder>(globalObject, WTF::move(impl));
 }
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, TextEncoder& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-TextEncoder* JSTextEncoder::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSTextEncoder>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
 }

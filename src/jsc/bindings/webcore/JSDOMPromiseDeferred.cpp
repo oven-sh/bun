@@ -40,15 +40,6 @@
 namespace WebCore {
 using namespace JSC;
 
-JSC::JSValue DeferredPromise::promise() const
-{
-    if (isEmpty())
-        return jsUndefined();
-
-    ASSERT(deferred());
-    return deferred();
-}
-
 void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveMode mode, JSValue resolution)
 {
     if (shouldIgnoreRequestToFulfill())
@@ -74,41 +65,6 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
 
     if (m_mode == Mode::ClearPromiseOnResolve)
         clear();
-}
-
-void DeferredPromise::reject(RejectAsHandled rejectAsHandled)
-{
-    if (shouldIgnoreRequestToFulfill())
-        return;
-
-    ASSERT(deferred());
-    ASSERT(m_globalObject);
-    auto& lexicalGlobalObject = *m_globalObject;
-    JSC::JSLockHolder locker(&lexicalGlobalObject);
-    reject(lexicalGlobalObject, JSC::jsUndefined(), rejectAsHandled);
-}
-
-void DeferredPromise::reject(JSC::JSValue value, RejectAsHandled rejectAsHandled)
-{
-    if (shouldIgnoreRequestToFulfill())
-        return;
-    ASSERT(deferred());
-    ASSERT(m_globalObject);
-    auto& lexicalGlobalObject = *m_globalObject;
-    JSC::JSLockHolder locker(&lexicalGlobalObject);
-    reject(lexicalGlobalObject, value, rejectAsHandled);
-}
-
-void DeferredPromise::reject(std::nullptr_t, RejectAsHandled rejectAsHandled)
-{
-    if (shouldIgnoreRequestToFulfill())
-        return;
-
-    ASSERT(deferred());
-    ASSERT(m_globalObject);
-    auto& lexicalGlobalObject = *m_globalObject;
-    JSC::JSLockHolder locker(&lexicalGlobalObject);
-    reject(lexicalGlobalObject, JSC::jsNull(), rejectAsHandled);
 }
 
 void DeferredPromise::reject(Exception exception, RejectAsHandled rejectAsHandled)
@@ -179,18 +135,6 @@ void DeferredPromise::reject(ExceptionCode ec, const String& message, RejectAsHa
     reject(lexicalGlobalObject, error, rejectAsHandled);
     if (scope.exception()) [[unlikely]]
         handleUncaughtException(scope, lexicalGlobalObject);
-}
-
-void DeferredPromise::reject(const JSC::PrivateName& privateName, RejectAsHandled rejectAsHandled)
-{
-    if (shouldIgnoreRequestToFulfill())
-        return;
-
-    ASSERT(deferred());
-    ASSERT(m_globalObject);
-    JSC::JSGlobalObject* lexicalGlobalObject = m_globalObject.get();
-    JSC::JSLockHolder locker(lexicalGlobalObject);
-    reject(*lexicalGlobalObject, JSC::Symbol::create(lexicalGlobalObject->vm(), privateName.uid()), rejectAsHandled);
 }
 
 void rejectPromiseWithExceptionIfAny(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSPromise& promise, JSC::TopExceptionScope& topExceptionScope)

@@ -34,7 +34,6 @@
 #include "Event.h"
 #include "JSValueInWrappedObject.h"
 // #include "SerializedScriptValue.h"
-#include <JavaScriptCore/Strong.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -43,16 +42,6 @@ class ErrorEvent final : public Event {
     WTF_MAKE_TZONE_ALLOCATED(ErrorEvent);
 
 public:
-    static Ref<ErrorEvent> create(const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error)
-    {
-        return adoptRef(*new ErrorEvent(message, fileName, lineNumber, columnNumber, error));
-    }
-
-    static Ref<ErrorEvent> create(const AtomString& type, const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error)
-    {
-        return adoptRef(*new ErrorEvent(type, message, fileName, lineNumber, columnNumber, error));
-    }
-
     struct Init : EventInit {
         String message;
         String filename;
@@ -77,8 +66,6 @@ public:
     const JSValueInWrappedObject& originalError() const { return m_error; }
 
 private:
-    ErrorEvent(const AtomString& type, const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error);
-    ErrorEvent(const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error);
     ErrorEvent(const AtomString&, const Init&, IsTrusted);
 
     String m_message;

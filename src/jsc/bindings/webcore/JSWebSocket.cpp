@@ -1073,13 +1073,6 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 
-WebSocket* JSWebSocket::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSWebSocket>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
-
 // https://github.com/oven-sh/bun/issues/11866
 JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
 {

@@ -821,21 +821,38 @@ impl WatcherAtomics {
         // SAFETY: caller contract — `this` is live; every `(*this)` / `(*ev)`
         // below is a field access on the heap `WatcherAtomics` allocation.
         unsafe {
-            let mut available = [true; 3];
-            if let Some(i) = (*this).current_event {
-                available[i as usize] = false;
-            }
-            if let Some(i) = (*this).pending_event {
-                available[i as usize] = false;
+            // Take the queued event back, so that this batch joins it. A second
+            // queued event would replace it, and the dev server would never see
+            // the files of the first one.
+            let mut withdrawn: Option<u8> = None;
+            if let Some(pending) = (*this).pending_event.take() {
+                if (*this)
+                    .next_event
+                    .compare_exchange(
+                        pending,
+                        NextEvent::WAITING.0,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    withdrawn = Some(pending);
+                } else {
+                    // The dev server took it, which means it is done with `current_event`.
+                    (*this).current_event = Some(pending);
+                }
             }
 
-            let index = 'find: {
-                for (i, &is_available) in available.iter().enumerate() {
-                    if is_available {
-                        break 'find i;
+            let index = match withdrawn {
+                Some(pending) => pending as usize,
+                None => 'find: {
+                    for i in 0..(*this).events.len() {
+                        if (*this).current_event != Some(i as u8) {
+                            break 'find i;
+                        }
                     }
+                    unreachable!()
                 }
-                unreachable!()
             };
             let ev: *mut HotReloadEvent = &raw mut (*this).events[index];
 
@@ -954,23 +971,17 @@ impl WatcherAtomics {
                 }
 
                 NextEvent::WAITING => {
-                    if (*this).pending_event.is_some() {
-                        // `pending_event` is running, which means we're done with `current_event`.
-                        (*this).current_event = (*this).pending_event;
-                    } // else, no pending event yet, but not done with `current_event`.
+                    // The dev server runs an event. `watcher_acquire_event` left nothing queued.
                     (*this).pending_event = Some(ev_index);
                 }
 
                 _ => {
-                    // This is an index into the `events` array.
-                    let old_index: u8 = old_next.0;
+                    // Only this thread queues an event, and `watcher_acquire_event` withdraws it.
                     debug_assert!(
-                        (*this).pending_event == Some(old_index),
-                        "watcher_release_and_submit_event: expected `pending_event` to be {}; got {:?}",
-                        old_index,
-                        (*this).pending_event,
+                        false,
+                        "watcher_release_and_submit_event: event {} was still queued",
+                        old_next.0,
                     );
-                    // The old pending event hadn't been run yet, so we can replace it with `ev`.
                     (*this).pending_event = Some(ev_index);
                 }
             }

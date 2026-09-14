@@ -451,6 +451,17 @@ function copyDir(src, dest, opts) {
   }
 }
 
+// A link that does not resolve (dangling, looping) points at no directory, so
+// neither subdirectory guard in onLink applies and the link is just replaced,
+// as fs.promises.cp already does.
+function linkTargetIsDirectory(link) {
+  try {
+    return statSync(link).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function onLink(destStat, src, dest, opts) {
   let resolvedSrc = readlinkSync(src);
   if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
@@ -474,11 +485,7 @@ function onLink(destStat, src, dest, opts) {
   if (!isAbsolute(resolvedDest)) {
     resolvedDest = resolve(dirname(dest), resolvedDest);
   }
-  let srcIsDir = false;
-  try {
-    srcIsDir = statSync(src).isDirectory();
-  } catch {}
-  if (srcIsDir && isSrcSubdir(resolvedSrc, resolvedDest)) {
+  if (linkTargetIsDirectory(src) && isSrcSubdir(resolvedSrc, resolvedDest)) {
     throw fsCpEinvalError({
       message: `cannot copy ${resolvedSrc} to a subdirectory of self ${resolvedDest}`,
       path: dest,
@@ -490,7 +497,7 @@ function onLink(destStat, src, dest, opts) {
   // Prevent copy if src is a subdir of dest since unlinking
   // dest in this case would result in removing src contents
   // and therefore a broken symlink would be created.
-  if (statSync(dest).isDirectory() && isSrcSubdir(resolvedDest, resolvedSrc)) {
+  if (linkTargetIsDirectory(dest) && isSrcSubdir(resolvedDest, resolvedSrc)) {
     throw fsCpSymlinkToSubdirectoryError({
       message: `cannot overwrite ${resolvedDest} with ${resolvedSrc}`,
       path: dest,

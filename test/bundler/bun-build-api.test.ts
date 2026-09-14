@@ -259,6 +259,52 @@ describe("Bun.build", () => {
     expect(after - base).toBeLessThanOrEqual(limit);
   });
 
+  // A pool thread holds a build's ASTs until it tears its worker down; macOS and Windows read files on a second pool.
+  // The 250ms load outlasts an idle pool thread's first park (100ms, timed), so they are all parked for good at the end.
+  test.concurrent.each([{}, { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }])(
+    "every pool thread a build ran on tears its worker down once the build is done %j",
+    async env => {
+      const files: Record<string, string> = { "entry.js": `export * from "slow";\n` };
+      for (let i = 0; i < 32; i++) {
+        files[`m${i}.js`] =
+          `export function f${i}(a, b) { for (let j = 0; j < b; j++) a += j ^ ${i}; return { a, b }; }\n`;
+        files["entry.js"] += `export * from "./m${i}.js";\n`;
+      }
+      files["worker-teardown-fixture.ts"] = /* ts */ `
+        import { bundlerWorkerLiveCount } from "bun:internal-for-testing";
+        const slow = {
+          name: "slow",
+          setup(build) {
+            build.onResolve({ filter: /^slow$/ }, () => ({ path: "slow", namespace: "slow" }));
+            build.onLoad({ filter: /.*/, namespace: "slow" }, async () => {
+              await Bun.sleep(250);
+              return { contents: "export const slow = 1;", loader: "js" };
+            });
+          },
+        };
+        const counts: number[] = [];
+        for (let i = 0; i < 2; i++) {
+          if (!(await Bun.build({ entrypoints: ["./entry.js"], target: "bun", plugins: [slow] })).success) throw new Error("build failed");
+          const deadline = Date.now() + 2000;
+          while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
+          counts.push(bundlerWorkerLiveCount());
+        }
+        console.log(JSON.stringify(counts));
+      `;
+      using dir = tempDir("bun-build-api-worker-teardown", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "worker-teardown-fixture.ts"],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("[0,0]\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("passing undefined doesnt segfault", () => {
     try {
       // @ts-ignore

@@ -1676,6 +1676,26 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         if !self.bundled_files.values()[index].is_hmr_root {
                             self.append_client_entry_point(entry_points, index)?;
                         }
+                        // A failure resets the content of a `CssChild` to `Unknown`. The roots
+                        // that inline the file keep their edge to it: build them again too.
+                        if self.bundled_files.values()[index].failed {
+                            let mut it = self.edge_lists[index].first_dep;
+                            while let Some(edge_index) = it {
+                                let entry = self.edges[edge_index.get() as usize];
+                                let dep = entry.dependency;
+                                it = entry.next_dependency;
+                                if matches!(
+                                    self.bundled_files.values()[dep.get() as usize].content,
+                                    Content::CssRoot(_),
+                                ) {
+                                    self.stale_files.set(dep.get() as usize);
+                                    let k = bun_ptr::RawSlice::new(
+                                        &*self.bundled_files.keys()[dep.get() as usize],
+                                    );
+                                    entry_points.append_css(k.slice())?;
+                                }
+                            }
+                        }
                     }
                 },
                 Side::Server => {

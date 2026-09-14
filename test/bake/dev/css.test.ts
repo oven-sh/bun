@@ -164,6 +164,91 @@ devTest("css import another css file", {
     await c.style("body").color.expect.toBe("red");
   },
 });
+devTest("fixing a broken @import brings its rules back into the stylesheet", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      @import "./second.css";
+      body {
+        color: red;
+      }
+    `,
+    "second.css": `
+      @import "./third.css";
+      h1 {
+        color: blue;
+      }
+    `,
+    "third.css": `
+      h2 {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("#00f");
+    await c.style("h2").color.expect.toBe("#00f");
+
+    // A syntax error in a file the root imports through another file.
+    await dev.write(
+      "third.css",
+      `
+        h2 {
+          color: green;
+        }}
+      `,
+      {
+        errors: ["third.css:3:3: error: Unexpected end of input"],
+      },
+    );
+    await dev.write(
+      "third.css",
+      `
+        h2 {
+          color: green;
+        }
+      `,
+    );
+    await c.style("h2").color.expect.toBe("green");
+    await c.style("h1").color.expect.toBe("#00f");
+
+    // An @import that does not resolve in a file the root imports directly.
+    await dev.write(
+      "second.css",
+      `
+        @import "./third.css";
+        @import "./missing.css";
+        h1 {
+          color: green;
+        }
+      `,
+      {
+        errors: ['second.css:2:1: error: Could not resolve: "./missing.css"'],
+      },
+    );
+    await dev.write(
+      "second.css",
+      `
+        @import "./third.css";
+        h1 {
+          color: green;
+        }
+      `,
+    );
+    await c.style("h1").color.expect.toBe("green");
+    await c.style("h2").color.expect.toBe("green");
+    await c.style("body").color.expect.toBe("red");
+
+    // A new page load gets the same stylesheet.
+    await c.hardReload();
+    await c.style("h1").color.expect.toBe("green");
+    await c.style("h2").color.expect.toBe("green");
+    await c.style("body").color.expect.toBe("red");
+  },
+});
 devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({

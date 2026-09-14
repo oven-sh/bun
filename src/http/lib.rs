@@ -2288,7 +2288,14 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::DNSResolveFailed);
             return;
         }
-        self.state.connect_errno = connect_errno;
+        // Windows: WSAENOTCONN is uSockets' recv() probe finding the socket
+        // unconnected after SO_ERROR was already consumed; it names no cause.
+        const WSAENOTCONN: i32 = 10057;
+        self.state.connect_errno = if cfg!(windows) && connect_errno == WSAENOTCONN {
+            0
+        } else {
+            connect_errno
+        };
         self.fail(crate::Error::ConnectionRefused);
     }
 

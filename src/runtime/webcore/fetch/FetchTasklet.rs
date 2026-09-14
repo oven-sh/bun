@@ -1078,7 +1078,7 @@ impl FetchTasklet {
         }
 
         if let Some(request) = self.result.lookup_request.take() {
-            self.run_lookup(request);
+            self.run_lookup(&request);
         }
 
         if self.metadata.is_none() && self.result.is_success() {
@@ -1344,7 +1344,7 @@ impl FetchTasklet {
 
     /// The HTTP thread parked a connection attempt until the `lookup`
     /// callback names the address to dial.
-    fn run_lookup(&mut self, request: http::LookupRequest) {
+    fn run_lookup(&mut self, request: &http::LookupRequest) {
         let global_object = self.global_this;
         let Some(lookup) = self.lookup.get() else {
             return;
@@ -1565,7 +1565,9 @@ impl FetchTasklet {
             http::Error::ConnectionClosed => "ECONNRESET",
             http::Error::Timeout => "ETIMEDOUT",
             http::Error::ConnectionRefused => self.connect_errno_name().unwrap_or("ECONNREFUSED"),
-            http::Error::FailedToOpenSocket => self.connect_errno_name().unwrap_or(fail.name()),
+            http::Error::FailedToOpenSocket => {
+                self.connect_errno_name().unwrap_or_else(|| fail.name())
+            }
             http::Error::TLSHandshakeFailed => "EPROTO",
             _ => fail.name(),
         };
@@ -2200,9 +2202,9 @@ impl FetchTasklet {
         let proxy_settings: Option<Box<http::ProxySettings>> = match &fetch_options.proxy {
             ProxyPolicy::Direct => None,
             ProxyPolicy::Explicit {
-                url,
+                href,
                 respect_no_proxy,
-            } => http::ProxySettings::from_explicit(url.href, env, *respect_no_proxy),
+            } => http::ProxySettings::from_explicit(href, env, *respect_no_proxy),
             // A unix socket is the whole route; the proxy env never applies to it.
             ProxyPolicy::Env if !fetch_tasklet.unix_socket_path.is_empty() => None,
             ProxyPolicy::Env => http::ProxySettings::from_env(env),
@@ -2975,10 +2977,10 @@ pub(crate) enum ProxyPolicy {
     Env,
     /// `proxy: false`.
     Direct,
-    /// `url` (borrowing `url_proxy_buffer`), for every hop `NO_PROXY` does not
+    /// `href` (borrowing `url_proxy_buffer`), for every hop `NO_PROXY` does not
     /// exempt when it is respected.
     Explicit {
-        url: ZigURL<'static>,
+        href: &'static [u8],
         respect_no_proxy: bool,
     },
 }

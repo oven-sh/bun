@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import http from "node:http";
@@ -2208,7 +2208,8 @@ describe.concurrent("proxy environment", () => {
     expect(results).toEqual(["origin", "proxy", "origin", "proxy", "origin", "proxy"]);
   });
 
-  test("both no_proxy and NO_PROXY are honoured", async () => {
+  // On Windows the two names are one variable.
+  test.skipIf(isWindows)("both no_proxy and NO_PROXY are honoured", async () => {
     const results = await run(
       () => ({ no_proxy: "lower.test", NO_PROXY: "upper.test" }),
       `
@@ -2228,8 +2229,9 @@ describe.concurrent("proxy environment", () => {
       out.allProxy = await via("a.test");
       process.env.ALL_PROXY = "socks5://127.0.0.1:1";
       out.socks = await via("a.test");
-      process.env.all_proxy = PROXY;
+      // In this order: on Windows both names are one variable.
       delete process.env.ALL_PROXY;
+      process.env.all_proxy = PROXY;
       out.lowercase = await via("a.test");
       process.env.HTTP_PROXY = DEAD_PROXY;
       out.schemeSpecificWins = await via("a.test");
@@ -2242,6 +2244,30 @@ describe.concurrent("proxy environment", () => {
       lowercase: "proxy",
       schemeSpecificWins: "ECONNREFUSED",
     });
+  });
+
+  test("Bun.s3 resolves the environment proxy like fetch: by scheme, unless NO_PROXY exempts the endpoint", async () => {
+    const results = await run(
+      () => ({}),
+      `
+      const s3 = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        bucket: "bucket",
+        endpoint: "http://127.0.0.1:" + ORIGIN_PORT,
+      });
+      const read = () => s3.file("key").text();
+      const out = {};
+      process.env.HTTPS_PROXY = PROXY;
+      out.otherScheme = await read();
+      process.env.HTTP_PROXY = PROXY;
+      out.proxied = await read();
+      process.env.NO_PROXY = "127.0.0.1";
+      out.exempt = await read();
+      console.log(JSON.stringify(out));
+      `,
+    );
+    expect(results).toEqual({ otherScheme: "origin", proxied: "proxy", exempt: "origin" });
   });
 
   test("assigning and deleting process.env proxy variables takes effect on the next fetch", async () => {

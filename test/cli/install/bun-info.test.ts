@@ -460,7 +460,7 @@ test("a proxy that refuses CONNECT is reported with its status", async () => {
     stderr: "pipe",
     stdin: "ignore",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("note: the proxy answered CONNECT with 407 Proxy Authentication Required");
   expect(stderr).toContain("ProxyConnectFailed");
   expect(exitCode).toBe(1);

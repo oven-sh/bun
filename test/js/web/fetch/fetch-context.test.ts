@@ -581,7 +581,8 @@ describe("onStats", () => {
       expect(stats).toBeDefined();
       expect(stats!.responseStarted).toBe(false);
       expect(stats!.socketReused).toBe(false);
-      expect(stats!.requestBodyBytesSent).toBeLessThan(body.length);
+      // Windows' send() accepts the whole buffer at once.
+      expect(stats!.requestBodyBytesSent)[isWindows ? "toBeLessThanOrEqual" : "toBeLessThan"](body.length);
       expect(stats!.bytesWritten).toBeGreaterThanOrEqual(stats!.requestBodyBytesSent);
       expect(stats!.remoteAddress).toBe("127.0.0.1");
     } finally {

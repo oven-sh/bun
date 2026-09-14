@@ -313,6 +313,10 @@ impl FetchContext {
         }
     }
 
+    #[allow(
+        clippy::boxed_local,
+        reason = "reclaim point for the generated finalizer"
+    )]
     pub fn finalize(self: Box<Self>) {
         // Requests keep their context alive, so nothing is left to use these sockets.
         self.close_idle_sockets();

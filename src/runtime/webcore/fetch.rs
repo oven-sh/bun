@@ -1700,6 +1700,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let proxy_url: Option<&[u8]> = if proxy.is_some() {
                 // SAFETY: see `url_static` SAFETY note above.
                 Some(unsafe { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
+            } else if proxy_direct {
+                Some(b"")
             } else {
                 None
             };
@@ -1834,8 +1836,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
     let buf: &'static [u8] = unsafe { &*buf_ptr };
     let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
-    let proxy_static: Option<ZigURL<'static>> = if has_proxy {
-        Some(ZigURL::parse(&buf[url_len..]))
+    let proxy_static: Option<&'static [u8]> = if has_proxy {
+        Some(&buf[url_len..])
     } else {
         None
     };
@@ -1853,8 +1855,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         redirect_type,
         verbose,
         proxy: match proxy_static {
-            Some(url) => fetch_tasklet::ProxyPolicy::Explicit {
-                url,
+            Some(href) => fetch_tasklet::ProxyPolicy::Explicit {
+                href,
                 respect_no_proxy: proxy_respects_no_proxy,
             },
             None if proxy_direct => fetch_tasklet::ProxyPolicy::Direct,

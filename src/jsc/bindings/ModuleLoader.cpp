@@ -28,6 +28,7 @@
 #include "JSEventEmitter.h"
 
 #include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/MicrotaskQueueInlines.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -1233,6 +1234,43 @@ JSValue fetchESMSourceCodeAsync(
 }
 
 using namespace Bun;
+
+// The queue a macro puts in front of the one a require() of an ES module is
+// draining; see `MacroModuleQueue` in VirtualMachine.rs. Null when no
+// synchronous load is in progress, or when the VM's queue is already
+// `innermost`, the macro queue the caller is nested in.
+extern "C" JSC::VM::SynchronousModuleQueue* Bun__MacroModuleQueue__push(JSC::VM* vm, JSC::VM::SynchronousModuleQueue* innermost)
+{
+    auto* current = vm->m_synchronousModuleQueue;
+    if (!current || current == innermost)
+        return nullptr;
+    auto* queue = new JSC::VM::SynchronousModuleQueue;
+    queue->prev = current;
+    vm->m_synchronousModuleQueue = queue;
+    return queue;
+}
+
+// Hands the reactions parked in `queue` to the microtask queue, where they go when nothing diverts them.
+extern "C" bool Bun__MacroModuleQueue__flush(Zig::GlobalObject* globalObject, JSC::VM::SynchronousModuleQueue* queue)
+{
+    auto& tasks = queue->tasks;
+    if (tasks.isEmpty())
+        return false;
+    auto& vm = JSC::getVM(globalObject);
+    for (auto& task : tasks)
+        globalObject->queueMicrotask(vm, task.task, task.payload, task.arg0, task.arg1, task.arg2, task.arg3);
+    tasks.shrink(0);
+    return true;
+}
+
+// What the macro leaves parked goes to the require()'s queue, where it would have gone without `queue`.
+extern "C" void Bun__MacroModuleQueue__pop(JSC::VM* vm, JSC::VM::SynchronousModuleQueue* queue)
+{
+    ASSERT(vm->m_synchronousModuleQueue == queue);
+    queue->prev->tasks.appendVector(queue->tasks);
+    vm->m_synchronousModuleQueue = queue->prev;
+    delete queue;
+}
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

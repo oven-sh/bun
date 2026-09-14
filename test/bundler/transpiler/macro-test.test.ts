@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -309,6 +309,26 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
   expect(exitCode).toBe(0);
 });
 
+// Runs index.ts from `files` with `bun run`: its own macros, and those of any module it require()s,
+// run in the main VM.
+async function run(files: Record<string, string>, env: Record<string, string> = {}) {
+  using dir = tempDir("macro-loops", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds also print "[macro] call <name>" to stdout.
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .filter(line => !line.startsWith("[macro]"));
+  return { lines, stderr, exitCode };
+}
+
 // A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which
 // loop was current when their work started: what the macro started goes to the macro loop (or the wait
 // hangs), what the program started stays on the regular loop (or program callbacks run mid-transpile),
@@ -316,24 +336,6 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
 // (or it is stranded and its keep-alive holds the process open). These run the macro in the main VM:
 // the entry file's macros, or a module require()d so it transpiles on the main thread.
 describe("event loop routing around macros", () => {
-  async function run(files: Record<string, string>, env: Record<string, string> = {}) {
-    using dir = tempDir("macro-loops", files);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "index.ts"],
-      env: { ...bunEnv, ...env },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Debug builds also print "[macro] call <name>" to stdout.
-    const lines = stdout
-      .trim()
-      .split("\n")
-      .filter(line => !line.startsWith("[macro]"));
-    return { lines, stderr, exitCode };
-  }
-
   const unawaited: [name: string, macroSource: string][] = [
     [
       "an fs.promises call inside the macro",
@@ -449,6 +451,112 @@ describe("event loop routing around macros", () => {
       ].join("\n"),
     });
     expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// require() of an ES module loads the whole graph without yielding: the module loader's promise
+// reactions go to a queue that only that require() drains. A macro that runs before the require()
+// returns (a dependency is transpiled, or the module calls the transpiler while it evaluates) loads
+// its own module with the asynchronous loader and waits for it. Its reactions must still reach the
+// microtask queue that the wait drains, or the wait spins forever. These are not concurrent: the
+// runner only kills a timed-out test's child, here one that spins, when the test runs alone.
+describe("a macro that runs beneath require() of an ES module", () => {
+  const macro = `export function value() {\n  return "from-macro";\n}\n`;
+  const withMacro = `import { value } from "./m.ts" with { type: "macro" };\nexport const inlined = value();\n`;
+  const index = `const { seen } = require("./importer.ts");\nconsole.log(seen);\n`;
+
+  test("in a static dependency of the module", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": macro,
+      "with-macro.ts": withMacro,
+      "importer.ts": `import { inlined } from "./with-macro.ts";\nexport const seen = inlined + "!";\n`,
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["from-macro!"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("in a module that the module require()s while it evaluates", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": macro,
+      "with-macro.ts": withMacro,
+      "importer.ts": `export const seen = import.meta.require("./with-macro.ts").inlined + "!";\n`,
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["from-macro!"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("in source that the module gives to Bun.Transpiler while it evaluates", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": macro,
+      "importer.ts": [
+        `const source = ${JSON.stringify(withMacro)};`,
+        `export const seen = new Bun.Transpiler({ loader: "ts" }).transformSync(source).trim();`,
+      ].join("\n"),
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: [`export const inlined = "from-macro";`], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The macro's wait has to poll for the timer, and the reactions of the import() and of the
+  // top-level await arrive between polls.
+  test("an async macro that awaits import() and a timer, in a module with top-level await", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "suffix.ts": `export const suffix = "macro";\n`,
+      "m.ts": [
+        `const prefix = await Promise.resolve("from");`,
+        `export async function value() {`,
+        `  const { suffix } = await import("./suffix.ts");`,
+        `  await Bun.sleep(1);`,
+        `  return prefix + "-" + suffix;`,
+        `}`,
+      ].join("\n"),
+      "with-macro.ts": withMacro,
+      "importer.ts": `import { inlined } from "./with-macro.ts";\nexport const seen = inlined + "!";\n`,
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["from-macro!"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a macro module that throws while it loads fails the require()", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": `throw new Error("macro module threw");\nexport function value() {\n  return 1;\n}\n`,
+      "with-macro.ts": withMacro,
+      "importer.ts": `import { inlined } from "./with-macro.ts";\nexport const seen = inlined + "!";\n`,
+      "index.ts": index,
+    });
+    expect(stderr).toContain("error: macro module threw");
+    expect({ lines, exitCode }).toEqual({ lines: [""], exitCode: 1 });
+  });
+
+  // importer.ts has started to load shared.ts and node:path when the macro's module asks for them, so
+  // the macro's load completes them, and importer.ts's own continuation for each runs inside the
+  // macro's wait, while JSModuleLoader::innerModuleLoading still iterates importer.ts's requests up
+  // the stack. A debug-only assertion in that loop's bookkeeping does not expect that.
+  test.todoIf(isDebug || isASAN)("with modules that the require() already started to load", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "shared.ts": `globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;\nexport const shared = "shared";\n`,
+      "m.ts": [
+        `import { shared } from "./shared.ts";`,
+        `import { sep } from "node:path";`,
+        `export function value() {`,
+        `  return [shared, typeof sep].join("-");`,
+        `}`,
+      ].join("\n"),
+      "with-macro.ts": withMacro,
+      "importer.ts": [
+        `import { shared } from "./shared.ts";`,
+        `import { sep } from "node:path";`,
+        `import { inlined } from "./with-macro.ts";`,
+        `export const seen = [inlined, shared, typeof sep, globalThis.evaluations].join(" ");`,
+      ].join("\n"),
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["shared-string shared string 1"], stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

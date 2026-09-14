@@ -258,6 +258,8 @@ pub struct VirtualMachine {
     /// on the 0↔1 transition so the guard is reentrant; this is the signal
     /// [`drop_source_code_printer_if_macro_owned`] uses.
     pub(crate) macro_guard_depth: u32,
+    /// The innermost [`MacroModuleQueue`] a live [`MacroModeGuard`] pushed, or null.
+    pub(crate) macro_module_queue: core::cell::Cell<*mut MacroModuleQueue>,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
     pub has_any_macro_remappings: bool,
@@ -798,7 +800,43 @@ impl Drop for AutoGcOnDrop<'_> {
 #[must_use = "macro mode is disabled on drop; bind to a named local"]
 pub struct MacroModeGuard {
     vm: bun_ptr::BackRef<VirtualMachine>,
+    /// The queue this guard pushed, and the `macro_module_queue` it replaced.
+    module_queue: Option<(NonNull<MacroModuleQueue>, *mut MacroModuleQueue)>,
 }
+
+bun_opaque::opaque_ffi! {
+    /// A `JSC::VM::SynchronousModuleQueue` that a [`MacroModeGuard`] owns.
+    ///
+    /// `require()` of an ES module loads the whole graph without yielding:
+    /// while it runs, `VM::m_synchronousModuleQueue` is set and JSC diverts
+    /// every module loader reaction to that queue, which only the `require()`
+    /// drains. A dependency's macro runs inside that drain (the loader's fetch
+    /// hook transpiles the file). The macro loads its own module with the
+    /// asynchronous loader and waits in [`EventLoop::wait_for_promise`], so its
+    /// reactions would sit in a queue that cannot drain until the macro returns.
+    ///
+    /// The guard puts a queue of its own in front of the `require()`'s, and
+    /// `wait_for_promise` moves what lands there to the microtask queue. The
+    /// queue stays on the VM's chain so that the GC visits the `require()`'s
+    /// parked reactions and `hostLoadImportedModule` still forces a module the
+    /// `require()` has in flight through synchronously.
+    pub(crate) struct MacroModuleQueue;
+}
+
+unsafe extern "C" {
+    // safe: `VM` is an opaque ZST handle; `innermost` is only compared, never
+    // dereferenced. Null when no synchronous load is in progress, or when
+    // `innermost` is already the VM's current queue.
+    safe fn Bun__MacroModuleQueue__push(
+        vm: &VM,
+        innermost: *mut MacroModuleQueue,
+    ) -> *mut MacroModuleQueue;
+    safe fn Bun__MacroModuleQueue__flush(global: &JSGlobalObject, queue: &MacroModuleQueue)
+    -> bool;
+    /// Frees `queue`, which must be the VM's current queue.
+    fn Bun__MacroModuleQueue__pop(vm: &VM, queue: *mut MacroModuleQueue);
+}
+
 impl MacroModeGuard {
     /// `vm` must be the live per-thread `VirtualMachine` (the [`BackRef`]
     /// invariant: the VM outlives any guard it hands out). Mutation routes
@@ -821,7 +859,15 @@ impl MacroModeGuard {
         if vm_mut.macro_guard_depth == 1 {
             vm_mut.enable_macro_mode();
         }
-        Self { vm }
+        let outer = vm_mut.macro_module_queue.get();
+        let module_queue = NonNull::new(Bun__MacroModuleQueue__push(vm_mut.jsc_vm(), outer));
+        if let Some(queue) = module_queue {
+            vm_mut.macro_module_queue.set(queue.as_ptr());
+        }
+        Self {
+            vm,
+            module_queue: module_queue.map(|queue| (queue, outer)),
+        }
     }
 }
 impl Drop for MacroModeGuard {
@@ -829,6 +875,12 @@ impl Drop for MacroModeGuard {
     fn drop(&mut self) {
         // Per `new` contract — `vm` outlives the guard (BackRef invariant).
         let vm_mut = self.vm.get().as_mut();
+        if let Some((queue, outer)) = self.module_queue {
+            // SAFETY: `queue` came from `Bun__MacroModuleQueue__push` in `new`. Every queue
+            // pushed after it (a nested guard's, a nested `require()`'s) is popped by now.
+            unsafe { Bun__MacroModuleQueue__pop(vm_mut.jsc_vm(), queue.as_ptr()) };
+            vm_mut.macro_module_queue.set(outer);
+        }
         vm_mut.macro_guard_depth = vm_mut.macro_guard_depth.saturating_sub(1);
         if vm_mut.macro_guard_depth == 0 {
             vm_mut.disable_macro_mode();
@@ -1526,6 +1578,14 @@ impl VirtualMachine {
         self.macro_mode = false;
         self.event_loop = &raw mut self.regular_event_loop;
         self.transpiler_store.enabled = true;
+    }
+
+    /// Moves the module loader reactions parked in the innermost
+    /// [`MacroModuleQueue`] to the microtask queue. `true` when there were any.
+    pub(crate) fn flush_macro_module_queue(&self) -> bool {
+        let queue = self.macro_module_queue.get();
+        !queue.is_null()
+            && Bun__MacroModuleQueue__flush(self.global(), MacroModuleQueue::opaque_ref(queue))
     }
 
     pub fn enqueue_task(&mut self, task: bun_event_loop::Task) {

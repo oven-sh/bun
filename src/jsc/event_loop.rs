@@ -1121,7 +1121,10 @@ impl EventLoop {
                 return Err(jsc::Stopped);
             }
             self.tick();
-            if promise.status() == PromiseStatus::Pending {
+            // What a macro's module load parked is work for the next tick, not something to poll for.
+            if promise.status() == PromiseStatus::Pending
+                && !self.vm_ref().flush_macro_module_queue()
+            {
                 self.auto_tick();
             }
         }

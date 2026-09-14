@@ -122,11 +122,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
                         continue;
                     }
 
-                    // Intentional deviation: `lower_update` keeps a postfix member
-                    // update of a nested function in place among the other
-                    // operands. In the component, PromoteInterposedTemporaries
-                    // would name only some of those operands and reorder them,
-                    // so such a function stays nested.
+                    // Intentional deviation: an in-place member update stays nested.
                     if has_in_place_member_update(inner_func, env) {
                         continue;
                     }
@@ -324,8 +320,7 @@ fn is_statement_block_kind(kind: BlockKind) -> bool {
     matches!(kind, BlockKind::Block | BlockKind::Catch)
 }
 
-/// `HirBuilder::build` starts the entry block with the `let` of each temporary
-/// that an in-place member update assigns.
+/// `HirBuilder::build` puts the `let` of an in-place member update first in the entry block.
 fn has_in_place_member_update(func: &HirFunction, env: &Environment) -> bool {
     let Some(first) = func.body.blocks[&func.body.entry].instructions.first() else {
         return false;

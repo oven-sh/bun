@@ -628,8 +628,7 @@ fn lower_sequence(
     })
 }
 
-/// Runs `lower` in a new sequence block. The place it returns is the value of
-/// the sequence.
+/// Runs `lower` in a new sequence block. Its result is the value of the sequence.
 fn lower_in_sequence_block(
     builder: &mut HirBuilder,
     loc: Option<SourceLocation>,
@@ -966,11 +965,7 @@ fn lower_compound_assignment_identifier(
                 }
             };
             let temp = lower_value_to_temporary(builder, store)?;
-            // Intentional deviation: upstream drops the temporary of the store
-            // and returns a load of `x`. The store is then a statement, and in
-            // a nested function no pass names the operands that come before
-            // it: `[x, x += 1]` gave `[1, 1]`. The value of the store keeps the
-            // assignment in place, as for `x = y`.
+            // Intentional deviation: the value of the store, as for `x = y` (facebook/react#35205).
             if builder.is_nested_function() {
                 Ok(InstructionValue::LoadLocal {
                     loc: temp.loc,
@@ -1065,10 +1060,7 @@ fn lower_unary(
     }
 }
 
-/// Intentional deviation: upstream has no such entry point. Lowers an expression
-/// whose value nothing reads: an expression statement, the update of a `for`, or
-/// an operand of a comma that is not the last one (`minify.syntax` joins
-/// `o.p++; o.q++;` into `o.p++, o.q++;`). `lower_update` needs to know.
+/// Intentional deviation: lowers an expression whose value nothing reads (facebook/react#35205).
 pub(super) fn lower_expression_for_effect(
     builder: &mut HirBuilder,
     expr: &Expr,
@@ -1106,13 +1098,7 @@ fn lower_update(
             };
             let member_loc = convert_loc(unary.value.loc);
 
-            // Intentional deviation: upstream returns the temporary that holds
-            // the load of `o.p`. In a nested function no pass names it, so
-            // codegen prints `o.p` again after the store: `const id = o.p++`
-            // gets the new value (facebook/react#35205).
-            // `(o.p = (old = o.p) + 1, old)` keeps the update in place among the
-            // other operands. Remove this when upstream fixes nested functions
-            // (facebook/react#36737 covers the outlined ones only).
+            // Intentional deviation: `(o.p = (old = o.p) + 1, old)` (facebook/react#35205).
             if !prefix && value_is_used && builder.is_nested_function() {
                 let old_value = builder.declare_temporary_at_entry(member_loc);
                 return lower_in_sequence_block(builder, loc, |builder| {
@@ -1160,9 +1146,7 @@ fn lower_update(
     }
 }
 
-/// Lowers `o.p = o.p + 1` (or `- 1`) and returns the value loaded and the
-/// value stored. With `old_value`, the sum reads the value loaded through an
-/// assignment to that local: `o.p = (old = o.p) + 1`.
+/// `o.p = o.p + 1`, or `o.p = (old_value = o.p) + 1`. Returns the values loaded and stored.
 fn lower_member_update(
     builder: &mut HirBuilder,
     member: &Expr,

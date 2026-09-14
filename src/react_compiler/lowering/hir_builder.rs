@@ -758,9 +758,7 @@ impl<'h> HirBuilder<'h> {
         self.is_nested_function
     }
 
-    /// Intentional deviation, for `lower_update`: a promoted temporary that
-    /// `build` declares with `let` at the top of the function. A value block
-    /// cannot hold a declaration, but it can assign this.
+    /// Intentional deviation: a promoted temporary that `build` declares with `let` at the entry.
     pub(crate) fn declare_temporary_at_entry(&mut self, loc: Option<SourceLocation>) -> Place {
         let identifier = self.make_temporary(loc);
         self.env.promote_temporary(identifier);
@@ -774,8 +772,7 @@ impl<'h> HirBuilder<'h> {
         place
     }
 
-    /// Puts `let <temporary>` for each `declare_temporary_at_entry` at the
-    /// start of the entry block. `inline_iifes` looks for it there.
+    /// `inline_iifes` looks for these declarations at the start of the entry block.
     fn push_entry_declarations(&mut self) -> Result<(), CompilerError> {
         if self.entry_declarations.is_empty() {
             return Ok(());

@@ -502,6 +502,59 @@ describe("@types/bun integration test", () => {
   });
 
   // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("TextEncoder", () => {
+    async function checkEncodeInto(name: string, lib: string[]) {
+      const checkDir = join(TEMP_DIR, name);
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["encode-into.ts"];
+      tsconfig.compilerOptions.lib = lib;
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "encode-into.ts": `const encoder = new TextEncoder();
+           encoder.encodeInto("hello", new Uint8Array(8)) satisfies { read: number; written: number };
+           // @ts-expect-error - the runtime throws ERR_MISSING_ARGS without a destination
+           encoder.encodeInto("hello");
+           // @ts-expect-error - the runtime throws ERR_MISSING_ARGS without arguments
+           encoder.encodeInto();`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    }
+
+    test("encodeInto requires src and dest without lib.dom", async () => {
+      await checkEncodeInto("text-encoder-no-lib-dom-check", ["ESNext"]);
+    });
+
+    // lib.dom's TextEncoder interface merges with the one in globals.d.ts.
+    test("encodeInto requires src and dest with lib.dom", async () => {
+      await checkEncodeInto("text-encoder-lib-dom-check", ["ESNext", "DOM"]);
+    });
+
+    // Ties the two @ts-expect-error calls above to the running binary.
+    test("encodeInto throws without src or dest at runtime", () => {
+      const encodeInto = TextEncoder.prototype.encodeInto as (...args: unknown[]) => unknown;
+      const encoder = new TextEncoder();
+      expect(() => encodeInto.call(encoder, "hello")).toThrow(expect.objectContaining({ code: "ERR_MISSING_ARGS" }));
+      expect(() => encodeInto.call(encoder)).toThrow(expect.objectContaining({ code: "ERR_MISSING_ARGS" }));
+      expect(encodeInto.call(encoder, "hello", new Uint8Array(8))).toEqual({ read: 5, written: 5 });
+    });
+  });
+
+  // Runs on debug builds too, same as the Bun.mmap block above.
   describe("Event and EventTarget", () => {
     async function checkEventFixture(name: string, lib: string[], source: string) {
       const checkDir = join(TEMP_DIR, name);

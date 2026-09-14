@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
@@ -328,10 +326,11 @@ impl Binding {
 pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     let module = Binding::new(Binding::default());
 
-    let vm = global.bun_vm_ptr();
     // R-2: init-time write before the JS wrapper exists; `with_mut` here is
     // trivially un-aliased (sole owner of the fresh `Box`).
-    module.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
+    module
+        .node_fs
+        .with_mut(|nfs| nfs.vm = Some(bun_ptr::BackRef::new(global.bun_vm())));
 
     // `module` was `Box::new`-allocated; ownership transfers to the GC
     // wrapper, which calls `Binding::finalize` to reclaim it.

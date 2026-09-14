@@ -333,3 +333,91 @@ impl<T: Node> UnboundedQueue<T> {
         self.back.0.load(Ordering::Acquire).is_null()
     }
 }
+
+/// A lock-free MPSC queue of owned values: [`UnboundedQueue`] over heap nodes
+/// this type allocates on [`push`](Self::push) and frees on
+/// [`drain`](Self::drain), so callers never see a raw node.
+pub struct BoxQueue<V> {
+    inner: UnboundedQueue<BoxNode<V>>,
+    /// Owns the queued `V`s: auto-`Send` only if `V: Send`.
+    _values: core::marker::PhantomData<Box<V>>,
+}
+
+// SAFETY: channel semantics — `push`/`drain` are the internally synchronized
+// MPSC operations and only ever move a `V` from the pushing thread to the
+// draining one; no `&V` is shared, so `V: Send` suffices.
+unsafe impl<V: Send> Sync for BoxQueue<V> {}
+
+/// The heap node behind [`BoxQueue`].
+pub struct BoxNode<V> {
+    next: Link<BoxNode<V>>,
+    value: V,
+}
+
+// SAFETY: `link` projects to the embedded `next` field of a live node.
+unsafe impl<V> Linked for BoxNode<V> {
+    #[inline]
+    unsafe fn link(item: *mut Self) -> *const Link<Self> {
+        // SAFETY: `item` is valid per the `UnboundedQueue` contract; no
+        // intermediate reference is formed.
+        unsafe { ptr::addr_of!((*item).next) }
+    }
+}
+
+impl<V> Default for BoxQueue<V> {
+    fn default() -> Self {
+        Self {
+            inner: UnboundedQueue::default(),
+            _values: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<V> BoxQueue<V> {
+    /// Any thread.
+    pub fn push(&self, value: V) {
+        let node = Box::new(BoxNode {
+            next: Link::new(),
+            value,
+        });
+        self.inner.push(NonNull::from(Box::leak(node)));
+    }
+
+    /// The consumer: take everything pushed so far, in push order.
+    pub fn drain(&self) -> BoxQueueDrain<V> {
+        BoxQueueDrain {
+            iter: self.inner.pop_batch().iterator(),
+        }
+    }
+}
+
+impl<V> Drop for BoxQueue<V> {
+    fn drop(&mut self) {
+        self.drain().for_each(drop);
+    }
+}
+
+/// Owned values out of a [`BoxQueue`]; dropping it frees what was not yielded.
+pub struct BoxQueueDrain<V> {
+    iter: BatchIterator<BoxNode<V>>,
+}
+
+impl<V> Iterator for BoxQueueDrain<V> {
+    type Item = V;
+    fn next(&mut self) -> Option<V> {
+        let node = self.iter.next();
+        if node.is_null() {
+            return None;
+        }
+        // SAFETY: every node in the queue was leaked from a `Box` by `push`,
+        // and the iterator has already advanced past it.
+        let node = unsafe { Box::from_raw(node) };
+        Some(node.value)
+    }
+}
+
+impl<V> Drop for BoxQueueDrain<V> {
+    fn drop(&mut self) {
+        self.for_each(drop);
+    }
+}

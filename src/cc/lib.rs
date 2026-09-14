@@ -9,6 +9,7 @@ mod abi;
 mod asm_stmt;
 mod ast;
 mod bir;
+pub use bir::MAGIC as BIR_MAGIC;
 mod codegen;
 mod constexpr;
 mod diagnostics;

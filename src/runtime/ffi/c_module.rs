@@ -298,7 +298,7 @@ fn glibc_static_stub(_name: &[u8]) -> Option<*mut c_void> {
 
 /// `bun build` compiles C ahead of time and embeds the BIR under the original file name.
 fn is_bir(bytes: &[u8]) -> bool {
-    bytes.len() >= 4 && &bytes[..3] == b"BIR" && bytes[3].is_ascii_digit()
+    bytes.starts_with(&bun_cc::BIR_MAGIC)
 }
 
 /// C source -> BIR. `#include "…"` resolves next to `path`; `<…>` searches the compiler's own

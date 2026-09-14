@@ -23,6 +23,7 @@ import { $, spawn } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { retryDelayMs } from "./buildkite-retry.mjs";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
@@ -101,14 +102,14 @@ function announceAndSleep(ms: number) {
   return Bun.sleep(ms);
 }
 
-// Do NOT use `bk job log` — it hangs indefinitely on some Windows/alpine jobs.
+// Do NOT use `bk job log`: it hangs indefinitely on some Windows/alpine jobs.
 // Fetching raw_log_url directly with the token works for all of them.
 //
-// Buildkite limits the REST requests per minute twice: for the organization
-// and for the user of the token (200 each here). Each limit has its own window.
-// One build has about 160 test-bun jobs, so a 429 is routine. On a 429 or a
-// 5xx, wait and ask again. The wait is shared: one 429 holds back every
-// download, not only the one that received it.
+// One build has about 160 test-bun jobs and Buildkite allows 200 requests per
+// minute, shared by every user of the token, so a 429 is routine. On a 429 or a
+// 5xx, wait (scripts/buildkite-retry.mjs says how long) and ask again. The wait
+// is shared: one 429 holds back every download, not only the one that received
+// it.
 export function createLogFetcher({
   token,
   cacheDir,
@@ -132,13 +133,7 @@ export function createLogFetcher({
       if (!retryable || attempt === maxAttempts) {
         throw new Error(`${res.status} ${job.raw_log_url}` + (attempt > 1 ? ` (${attempt} attempts)` : ""));
       }
-      // A Buildkite 429 has no Retry-After. Its body is for the limit that was
-      // exceeded: `{ message, scope, limit, current, reset }`. `reset` counts
-      // whole seconds, so one second on top puts the retry after the reset and
-      // not just before it. Without either hint, back off exponentially.
-      const body = await res.json().catch(() => null);
-      const seconds = Number(res.headers.get("retry-after") ?? body?.reset);
-      const wait = seconds >= 0 ? Math.min(seconds * 1000, maxWaitMs) + 1000 : 1000 * 2 ** (attempt - 1);
+      const wait = await retryDelayMs(res, attempt, maxWaitMs);
       pause ??= sleep(wait).finally(() => (pause = null));
     }
   };

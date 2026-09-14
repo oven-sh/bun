@@ -15,6 +15,7 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { retryDelayMs } from "./buildkite-retry.mjs";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -55,7 +56,7 @@ const api = async path => {
     });
     if (r.ok) return r;
     if ((r.status === 429 || r.status >= 500) && attempt < 5) {
-      const backoff = Number(r.headers.get("retry-after")) * 1000 || 1000 * 2 ** attempt;
+      const backoff = await retryDelayMs(r, attempt + 1);
       await new Promise(resolve => setTimeout(resolve, backoff));
       continue;
     }

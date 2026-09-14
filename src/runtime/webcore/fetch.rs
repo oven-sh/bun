@@ -1755,6 +1755,48 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
+    // A streaming body goes out under the framing its headers describe, or not at
+    // all. Decide that here, once, while a caller value no stream body can be sent
+    // under can still reject before anything is queued or a byte is written.
+    let mut stream_framing = http::http_request_body::StreamFraming::default();
+    if matches!(body, HTTPRequestBody::ReadableStream(_))
+        && let Some(request_headers) = &headers
+    {
+        use http::http_request_body::{InvalidStreamFraming, StreamFraming};
+        if upgraded_connection {
+            stream_framing = StreamFraming::for_upgrade(request_headers);
+        } else {
+            match StreamFraming::for_body(request_headers) {
+                Ok(framing) => stream_framing = framing,
+                Err(invalid) => {
+                    let err = match invalid {
+                        InvalidStreamFraming::ContentLength(value) => global_this.to_type_error(
+                            jsc::ErrorCode::HTTP_INVALID_HEADER_VALUE,
+                            format_args!(
+                                "Invalid value \"{}\" for header \"Content-Length\": a request with a streaming body needs a count of bytes",
+                                bstr::BStr::new(value)
+                            ),
+                        ),
+                        InvalidStreamFraming::TransferEncoding(value) => global_this.to_type_error(
+                            jsc::ErrorCode::HTTP_INVALID_HEADER_VALUE,
+                            format_args!(
+                                "Invalid value \"{}\" for header \"Transfer-Encoding\": fetch() chunk-encodes a streaming body, so the final coding must be \"chunked\"",
+                                bstr::BStr::new(value)
+                            ),
+                        ),
+                    };
+                    if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
+                        if let Some(stream) = stream_ref.get() {
+                            stream.cancel_with_reason(global_this, err)?;
+                        }
+                    }
+                    body.detach();
+                    return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+                }
+            }
+        }
+    }
+
     // Only create this after we have validated all the input.
     // or else we will leak it
     let promise = jsc::JSPromiseStrong::init(global_this);
@@ -1791,6 +1833,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         url: url_static,
         headers: headers.take().unwrap_or_default(),
         body,
+        stream_framing,
         disable_keepalive,
         disable_timeout,
         idle_timeout_seconds,

@@ -2385,7 +2385,11 @@ impl<'a> HTTPClient<'a> {
             match hash {
                 h if h == hash_header_const(b"Content-Length") => {
                     // Content-Length is always consumed (never written to the buffer).
-                    original_content_length = Some(self.header_str(header_values[i]));
+                    // A streaming body's framing comes from its `Stream`, never
+                    // from this row.
+                    if !self.flags.is_streaming_request_body {
+                        original_content_length = Some(self.header_str(header_values[i]));
+                    }
                     continue;
                 }
                 h if h == hash_header_const(b"Connection") => {
@@ -2440,8 +2444,9 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    // This client frames every body itself (below), so a caller
-                    // Transfer-Encoding can only contradict that framing.
+                    // Never forwarded from here. A fixed-size body is framed by its
+                    // computed Content-Length. A streaming body's `Stream` carries
+                    // the Transfer-Encoding to announce, the caller's own included.
                     continue;
                 }
                 _ => {}
@@ -2486,16 +2491,16 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                // The producer decided the framing when it created the stream and
-                // fills the buffer to match: exactly `content_length` raw bytes, or
-                // chunk-encoded bytes when it declared none. Announce that decision,
-                // not the raw caller value consumed above. An upgrade request
-                // tunnels the bytes instead, unframed.
-                let declared = match &self.state.original_request_body {
-                    HTTPRequestBody::Stream(stream) => stream.content_length,
-                    _ => None,
+                // Print the framing the producer decided (`StreamFraming`); it
+                // fills the stream buffer to match. Nothing here parses a caller
+                // framing header. An upgrade request tunnels the bytes unframed.
+                let (content_length, transfer_encoding) = match &self.state.original_request_body {
+                    HTTPRequestBody::Stream(stream) => {
+                        (stream.content_length, stream.transfer_encoding)
+                    }
+                    _ => (None, None),
                 };
-                if let Some(content_length) = declared {
+                if let Some(content_length) = content_length {
                     let value: &[u8] = bun_core::fmt::int_as_bytes(
                         &mut self.request_content_len_buf,
                         content_length,
@@ -2506,7 +2511,13 @@ impl<'a> HTTPClient<'a> {
                         picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                     header_count += 1;
                 } else if self.flags.upgrade_state == HTTPUpgradeState::None {
-                    request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
+                    request_headers_buf[header_count] = match transfer_encoding {
+                        Some(value) => picohttp::Header::new(
+                            CHUNKED_ENCODED_HEADER.name(),
+                            self.header_str(value),
+                        ),
+                        None => CHUNKED_ENCODED_HEADER,
+                    };
                     header_count += 1;
                 }
             } else {

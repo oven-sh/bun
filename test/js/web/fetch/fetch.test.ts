@@ -3158,156 +3158,222 @@ it("fetch() does not forward a caller-supplied Content-Length on a request witho
   expect(withBodyHeaders.filter(line => line.startsWith("content-length:"))).toEqual(["content-length: 2"]);
 });
 
-it("fetch() frames a streaming body itself: a caller Content-Length only when it can honor it, never a caller Transfer-Encoding", async () => {
+describe("fetch() with a streaming request body and caller framing headers", () => {
   // fetch() cannot measure a ReadableStream, an async generator or a node
-  // stream.Readable body, so a caller-supplied Content-Length for one of those
-  // describes bytes fetch() has not seen yet, and fetch() sends the body unframed
-  // behind that count. Two things follow. A value fetch() can never honor (a
-  // non-digit, a sign, two caller rows joined into "5, 7", a count wider than
-  // u64) must not reach the wire: the request goes out chunked instead. A value
-  // fetch() does honor must match the body, otherwise the request fails: a
-  // surplus byte lands on the connection after the declared end, where a
-  // keep-alive peer reads it as the start of the next request, and a missing byte
-  // leaves the peer waiting for a body that never completes. A caller
-  // Transfer-Encoding never reaches the wire either: fetch() writes the one
-  // framing header that describes the bytes it produces.
-  type RawRequest = { head: string[]; body: string };
-  const queue: RawRequest[] = [];
-  const waiting: ((request: RawRequest) => void)[] = [];
-  const record = (raw: string) => {
-    const headerEnd = raw.indexOf("\r\n\r\n");
-    const request: RawRequest = {
-      head: raw
-        .slice(0, headerEnd === -1 ? raw.length : headerEnd)
-        .split("\r\n")
-        .slice(1)
-        .map(line => line.toLowerCase()),
-      body: headerEnd === -1 ? "" : raw.slice(headerEnd + 4),
-    };
-    const resolve = waiting.shift();
-    if (resolve) resolve(request);
-    else queue.push(request);
-  };
-  const nextRequest = () =>
-    queue.length > 0 ? Promise.resolve(queue.shift()!) : new Promise<RawRequest>(resolve => waiting.push(resolve));
+  // stream.Readable body. It sends such a body in one of two ways: raw bytes
+  // behind a Content-Length the caller declared, or chunk-encoded bytes behind a
+  // Transfer-Encoding that ends in "chunked". A caller header that asks for
+  // anything else describes framing fetch() does not produce, so the fetch
+  // rejects before a byte is written. A declared Content-Length must match the
+  // body: a surplus byte would land on the connection after the declared end,
+  // where a keep-alive peer reads it as the start of the next request, and a
+  // missing byte leaves the peer waiting for a body that never completes.
+  type RawRequest = { framing: string[]; body: string };
 
-  await using server = net.createServer(socket => {
-    let raw = "";
-    let replied = false;
-    socket.on("error", () => {});
-    // The client aborts a request it cannot frame, so the close is the only
-    // signal that the request is over. Record whatever arrived.
-    socket.on("close", () => {
-      if (!replied) record(raw);
-    });
-    socket.on("data", data => {
-      raw += data.toString("latin1");
+  // A raw origin that records, per connection, the framing header lines exactly
+  // as written and the body bytes exactly as received.
+  async function rawOrigin() {
+    const queue: RawRequest[] = [];
+    const waiting: ((request: RawRequest) => void)[] = [];
+    let connections = 0;
+    const record = (raw: string) => {
       const headerEnd = raw.indexOf("\r\n\r\n");
-      if (headerEnd === -1 || replied) return;
-      const head = raw.slice(0, headerEnd).toLowerCase();
-      const body = raw.slice(headerEnd + 4);
-      if (head.includes("transfer-encoding: chunked")) {
-        if (!body.endsWith("0\r\n\r\n")) return;
-      } else {
-        const declared = Number(/^content-length:\s*(\d+)\s*$/im.exec(head)?.[1] ?? 0);
-        if (body.length < declared) return;
-      }
-      replied = true;
-      record(raw);
-      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+      const request: RawRequest = {
+        framing: raw
+          .slice(0, headerEnd === -1 ? raw.length : headerEnd)
+          .split("\r\n")
+          .filter(line => /^(content-length|transfer-encoding):/i.test(line)),
+        body: headerEnd === -1 ? "" : raw.slice(headerEnd + 4),
+      };
+      const resolve = waiting.shift();
+      if (resolve) resolve(request);
+      else queue.push(request);
+    };
+    const server = net.createServer(socket => {
+      connections++;
+      let raw = "";
+      let replied = false;
+      socket.on("error", () => {});
+      // The client resets a connection whose body does not match its
+      // Content-Length, so the close is the only signal that the request is
+      // over. Record whatever arrived.
+      socket.on("close", () => {
+        if (!replied) record(raw);
+      });
+      socket.on("data", data => {
+        raw += data.toString("latin1");
+        const headerEnd = raw.indexOf("\r\n\r\n");
+        if (headerEnd === -1 || replied) return;
+        const head = raw.slice(0, headerEnd);
+        const received = raw.slice(headerEnd + 4);
+        if (/^transfer-encoding:.*chunked\s*$/im.test(head)) {
+          if (!received.endsWith("0\r\n\r\n")) return;
+        } else {
+          const declared = Number(/^content-length:\s*(\d+)\s*$/im.exec(head)?.[1] ?? 0);
+          if (received.length < declared) return;
+        }
+        replied = true;
+        record(raw);
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+      });
     });
-  });
-  await once(server.listen(0, "localhost"), "listening");
-  const url = `http://localhost:${(server.address() as AddressInfo).port}/`;
+    await once(server.listen(0, "localhost"), "listening");
+    return {
+      url: `http://localhost:${(server.address() as AddressInfo).port}/`,
+      nextRequest: () =>
+        queue.length > 0 ? Promise.resolve(queue.shift()!) : new Promise<RawRequest>(resolve => waiting.push(resolve)),
+      get connections() {
+        return connections;
+      },
+      [Symbol.asyncDispose]: () => server[Symbol.asyncDispose](),
+    };
+  }
 
   const body = "nr1-nr2"; // 7 bytes
-  const streamBody = () =>
-    new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(body));
-        controller.close();
+  const chunked = `${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n`;
+  const bodyKinds: [string, () => unknown][] = [
+    [
+      "ReadableStream",
+      () =>
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(body));
+            controller.close();
+          },
+        }),
+    ],
+    [
+      "async generator",
+      async function* () {
+        yield body;
       },
-    });
-  const post = (headers: HeadersInit, makeBody: () => unknown) =>
+    ],
+    ["stream.Readable", () => Readable.from([body])],
+  ];
+  const post = (url: string, headers: HeadersInit, makeBody: () => unknown) =>
     fetch(url, { method: "POST", headers, body: makeBody(), duplex: "half" } as RequestInit);
-  const framingOf = (request: RawRequest) =>
-    request.head.filter(line => line.startsWith("content-length:") || line.startsWith("transfer-encoding:"));
+  // The response text, or what the fetch rejected with.
+  const outcome = (response: Promise<Response>) =>
+    response.then(
+      r => r.text(),
+      e => ({ name: e?.name, code: e?.code }),
+    );
+  const invalidHeader = { name: "TypeError", code: "ERR_HTTP_INVALID_HEADER_VALUE" };
+  const mismatch = { name: "Error", code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH" };
 
-  // A count fetch() can honor, and a body that matches it: the value frames the
-  // body, exactly as it did before, and the bytes go out unframed.
-  expect(await (await post({ "Content-Length": String(body.length) }, streamBody)).text()).toBe("OK");
-  const honored = await nextRequest();
-  expect(framingOf(honored)).toEqual(["content-length: 7"]);
-  expect(honored.body).toBe(body);
-
-  // A body longer than the count: the request fails and no byte of it is sent,
-  // so nothing can be read as the start of the next request.
-  await expect(post({ "Content-Length": "2" }, streamBody)).rejects.toMatchObject({
-    code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
-  });
-  expect(await nextRequest()).toMatchObject({ body: "" });
-
-  // A body shorter than the count: the request fails instead of leaving the peer
-  // waiting for the 43 bytes that never come. The peer sees the connection
-  // reset mid-message (how much of the 7 bytes it read before the reset is up
-  // to its TCP stack, so only the close is asserted).
-  await expect(post({ "Content-Length": "50" }, streamBody)).rejects.toMatchObject({
-    code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
-  });
-  expect((await nextRequest()).body.length).toBeLessThanOrEqual(body.length);
-
-  // An async generator body and a node stream.Readable body take the same path.
-  for (const makeBody of [
-    async function* () {
-      yield body;
-    },
-    () => Readable.from([body]),
-  ]) {
-    await expect(post({ "Content-Length": "2" }, makeBody)).rejects.toMatchObject({
-      code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+  describe.each(bodyKinds)("%s body", (_, makeBody) => {
+    it("sends the raw bytes behind a Content-Length that matches them", async () => {
+      await using origin = await rawOrigin();
+      expect(await outcome(post(origin.url, { "Content-Length": String(body.length) }, makeBody))).toBe("OK");
+      expect(await origin.nextRequest()).toEqual({ framing: ["Content-Length: 7"], body });
     });
-    expect(await nextRequest()).toMatchObject({ body: "" });
-  }
 
-  // A count fetch() can never honor: the value is dropped and the request goes
-  // out chunked, which frames the body correctly whatever its length turns out
-  // to be.
-  for (const value of ["abc", "+5", "0x5", "5.0", "-1", "99999999999999999999"]) {
-    expect(await (await post({ "Content-Length": value }, streamBody)).text()).toBe("OK");
-    const request = await nextRequest();
-    expect(framingOf(request)).toEqual(["transfer-encoding: chunked"]);
-    expect(request.body).toBe(`${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n`);
-  }
+    it("fails the request when the body does not match its Content-Length", async () => {
+      await using origin = await rawOrigin();
+      // Longer than declared: no byte of the surplus chunk is written, so
+      // nothing can be read as the start of the next request.
+      expect(await outcome(post(origin.url, { "Content-Length": "2" }, makeBody))).toEqual(mismatch);
+      expect((await origin.nextRequest()).body).toBe("");
+      // Shorter than declared: the request fails instead of leaving the peer
+      // waiting for 43 bytes that never come. The peer sees the connection reset
+      // mid-message. How much it read before the reset is up to its TCP stack.
+      expect(await outcome(post(origin.url, { "Content-Length": "50" }, makeBody))).toEqual(mismatch);
+      expect((await origin.nextRequest()).body.length).toBeLessThanOrEqual(body.length);
+      // The next request gets a connection of its own.
+      expect(await outcome(post(origin.url, {}, makeBody))).toBe("OK");
+      expect(await origin.nextRequest()).toEqual({ framing: ["Transfer-Encoding: chunked"], body: chunked });
+    });
 
-  // Two caller rows reach the client as one "5, 7" value (FetchHeaders joins
-  // them), which is a count no body can match.
-  const joined = new Headers();
-  joined.append("Content-Length", "5");
-  joined.append("Content-Length", "7");
-  expect(await (await post(joined, streamBody)).text()).toBe("OK");
-  expect(framingOf(await nextRequest())).toEqual(["transfer-encoding: chunked"]);
+    it("forwards a Transfer-Encoding whose final coding is chunked, as written", async () => {
+      await using origin = await rawOrigin();
+      for (const value of ["chunked", "Chunked", "gzip, chunked"]) {
+        expect(await outcome(post(origin.url, { "Transfer-Encoding": value }, makeBody))).toBe("OK");
+        expect(await origin.nextRequest()).toEqual({ framing: [`Transfer-Encoding: ${value}`], body: chunked });
+      }
+      // Two caller rows reach the client joined, like any list header.
+      const joined = new Headers();
+      joined.append("Transfer-Encoding", "gzip");
+      joined.append("Transfer-Encoding", "chunked");
+      expect(await outcome(post(origin.url, joined, makeBody))).toBe("OK");
+      expect(await origin.nextRequest()).toEqual({ framing: ["Transfer-Encoding: gzip, chunked"], body: chunked });
+      // A Content-Length next to it is neither sent nor counted.
+      for (const contentLength of [String(body.length), "2"]) {
+        const headers = { "Transfer-Encoding": "chunked", "Content-Length": contentLength };
+        expect(await outcome(post(origin.url, headers, makeBody))).toBe("OK");
+        expect(await origin.nextRequest()).toEqual({ framing: ["Transfer-Encoding: chunked"], body: chunked });
+      }
+    });
 
-  // A caller Transfer-Encoding is never forwarded: fetch() produces chunked
-  // bytes and says so itself, whatever coding the caller named. Next to one, a
-  // caller Content-Length is not honored either (chunked wins, as before).
-  for (const headers of [
-    { "Transfer-Encoding": "identity" },
-    { "Transfer-Encoding": "gzip" },
-    { "Transfer-Encoding": "Chunked" },
-    { "Transfer-Encoding": "gzip, chunked" },
-    { "Transfer-Encoding": "chunked", "Content-Length": String(body.length) },
-    { "Transfer-Encoding": "chunked", "Content-Length": "2" },
-  ]) {
-    expect(await (await post(headers, streamBody)).text()).toBe("OK");
-    const request = await nextRequest();
-    expect(framingOf(request)).toEqual(["transfer-encoding: chunked"]);
-    expect(request.body).toBe(`${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n`);
-  }
+    it("rejects a Content-Length that is not a count of bytes, before anything is sent", async () => {
+      await using origin = await rawOrigin();
+      const twoRows = new Headers();
+      twoRows.append("Content-Length", "5");
+      twoRows.append("Content-Length", "7");
+      const rows: HeadersInit[] = [
+        ...["abc", "+5", "0x5", "5.0", "-1", "", "99999999999999999999"].map(value => ({ "Content-Length": value })),
+        // FetchHeaders joins two caller rows into "5, 7".
+        twoRows,
+        { "content-length": "7", "Content-Length": "7" },
+        // Not a count even when a usable Transfer-Encoding makes it moot.
+        { "Content-Length": "abc", "Transfer-Encoding": "chunked" },
+      ];
+      for (const headers of rows) {
+        expect(await outcome(post(origin.url, headers, makeBody))).toEqual(invalidHeader);
+        // The next fetch to the origin works, and is the only request it sees.
+        expect(await outcome(post(origin.url, {}, makeBody))).toBe("OK");
+        expect(await origin.nextRequest()).toEqual({ framing: ["Transfer-Encoding: chunked"], body: chunked });
+      }
+      expect(origin.connections).toBe(rows.length);
+    });
 
-  // A blob-backed stream still reports the size fetch() computes, not the
-  // caller's value.
-  expect(await (await post({ "Content-Length": "2" }, () => new Response(body).body)).text()).toBe("OK");
-  expect(framingOf(await nextRequest())).toEqual([`content-length: ${body.length}`]);
+    it("rejects a Transfer-Encoding that does not end in chunked, before anything is sent", async () => {
+      await using origin = await rawOrigin();
+      const rows: HeadersInit[] = [
+        ...[
+          "identity",
+          "gzip",
+          "chunked, gzip",
+          "chunked, chunked",
+          "gzip,, chunked",
+          "chunked,",
+          "gzip; q=1, chunked",
+          "",
+        ].map(value => ({ "Transfer-Encoding": value })),
+        // A usable Content-Length does not rescue it.
+        { "Transfer-Encoding": "gzip", "Content-Length": String(body.length) },
+      ];
+      for (const headers of rows) {
+        expect(await outcome(post(origin.url, headers, makeBody))).toEqual(invalidHeader);
+        expect(await outcome(post(origin.url, {}, makeBody))).toBe("OK");
+        expect(await origin.nextRequest()).toEqual({ framing: ["Transfer-Encoding: chunked"], body: chunked });
+      }
+      expect(origin.connections).toBe(rows.length);
+    });
+  });
+
+  it("treats fetch(new Request(url, init)) and fetch(request, { headers }) like fetch(url, init)", async () => {
+    await using origin = await rawOrigin();
+    const [, makeBody] = bodyKinds[0];
+    const init = (headers: HeadersInit) =>
+      ({ method: "POST", headers, body: makeBody(), duplex: "half" }) as RequestInit;
+    expect(await outcome(fetch(new Request(origin.url, init({ "Content-Length": "abc" }))))).toEqual(invalidHeader);
+    expect(
+      await outcome(fetch(new Request(origin.url, init({})), { headers: { "Transfer-Encoding": "gzip" } })),
+    ).toEqual(invalidHeader);
+    expect(await outcome(fetch(new Request(origin.url, init({ "Content-Length": "2" }))))).toEqual(mismatch);
+    expect((await origin.nextRequest()).body).toBe("");
+    expect(origin.connections).toBe(1);
+  });
+
+  it("keeps the computed Content-Length for a body it can measure", async () => {
+    await using origin = await rawOrigin();
+    // A blob-backed stream has a known size. The caller's framing headers are
+    // dropped and the computed Content-Length wins, as for a string or a Blob.
+    for (const headers of [{ "Content-Length": "2" }, { "Content-Length": "abc" }, { "Transfer-Encoding": "gzip" }]) {
+      expect(await outcome(post(origin.url, headers, () => new Response(body).body))).toBe("OK");
+      expect(await origin.nextRequest()).toEqual({ framing: [`Content-Length: ${body.length}`], body });
+    }
+  });
 });
 
 it("releases interim 1xx response bytes as they are parsed while waiting for the final response", async () => {

@@ -242,12 +242,18 @@ impl Headers {
     }
 
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
+        self.get_pointer(name).map(|value| self.as_str(value))
+    }
+
+    /// [`get`](Self::get), as the value's position in `buf`: a `Copy` handle for
+    /// a reader that holds the same `buf` but cannot borrow from `self`.
+    pub fn get_pointer(&self, name: &[u8]) -> Option<StringPointer> {
         let entries = self.entries.slice();
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
         for (i, name_ptr) in names.iter().enumerate() {
             if strings::eql_case_insensitive_ascii(self.as_str(*name_ptr), name, true) {
-                return Some(self.as_str(values[i]));
+                return Some(values[i]);
             }
         }
         None

@@ -2022,27 +2022,13 @@ impl FetchTasklet {
         http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
-            // The one framing decision for this body, handed to the HTTP thread
-            // through the `Stream` below: a caller Content-Length it can honor
-            // frames the raw bytes, anything else goes out chunked. A caller
-            // Transfer-Encoding (never forwarded itself) asks for chunked too, so
-            // a Content-Length next to it is not honored. An upgraded connection
-            // keeps the header but tunnels its "body", so those bytes are not
-            // counted.
-            let content_length = if fetch_tasklet
-                .request_headers
-                .get(b"transfer-encoding")
-                .is_none()
-            {
-                fetch_tasklet
-                    .request_headers
-                    .get(b"content-length")
-                    .and_then(http::http_request_body::content_length_for_framing)
-            } else {
-                None
-            };
+            // `fetch_impl` decided the framing before it queued the request. The
+            // HTTP thread gets it in the `Stream` below and prints it; this side
+            // writes the bytes to match. An upgraded connection tunnels its
+            // "body", so those bytes are not counted.
+            let framing = fetch_options.stream_framing;
             if !fetch_tasklet.upgraded_connection {
-                fetch_tasklet.declared_request_body_len = content_length;
+                fetch_tasklet.declared_request_body_len = framing.content_length;
             }
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
             // thread), so the same raw pointer can be handed to both sides.
@@ -2061,7 +2047,8 @@ impl FetchTasklet {
                 http::HTTPRequestBody::Stream(http::http_request_body::Stream {
                     buffer: core::ptr::NonNull::new(buffer),
                     ended: false,
-                    content_length,
+                    content_length: framing.content_length,
+                    transfer_encoding: framing.transfer_encoding,
                 });
         }
         // TODO is this necessary? the http client already sets the redirect type,
@@ -2662,6 +2649,9 @@ pub struct FetchOptions {
     pub method: Method,
     pub(crate) headers: Headers,
     pub(crate) body: HTTPRequestBody,
+    /// How a `ReadableStream` `body` is framed, decided from `headers` (its
+    /// `transfer_encoding` points into `headers.buf`). Unused for other bodies.
+    pub(crate) stream_framing: http::http_request_body::StreamFraming,
     pub(crate) disable_timeout: bool,
     /// Per-request idle-timeout override, from `fetch(url, { timeout: <ms> })`.
     pub(crate) idle_timeout_seconds: Option<core::ffi::c_uint>,

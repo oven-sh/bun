@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { LIBUV_COMMIT } from "./deps/libuv.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
@@ -40,6 +41,14 @@ function lockedCrateVersion(cfg: Config, name: string): string | undefined {
   const lock = readFileSync(join(cfg.cwd, "Cargo.lock"), "utf8");
   const m = lock.match(new RegExp(`\\nname = "${name}"\\nversion = "([^"]+)"`));
   return m?.[1];
+}
+
+// The upstream merge commit is not known yet. Treat the next libuv bump as
+// the point to remove the patch or deliberately advance this baseline.
+const LIBUV_COMMIT_WITHOUT_CLOSE_CRT_ASSERT_FIX = "8023581113b276e7c1aee3f82da57ca0893faab1";
+
+export function isLibuvCloseCrtAssertPatchObsolete(commit: string): boolean {
+  return commit !== LIBUV_COMMIT_WITHOUT_CLOSE_CRT_ASSERT_FIX;
 }
 
 export interface Workaround {
@@ -65,6 +74,17 @@ export interface Workaround {
 }
 
 export const workarounds: Workaround[] = [
+  {
+    id: "libuv-win-close-crt-assert",
+    issue: "https://github.com/libuv/libuv/pull/5237",
+    description:
+      "libuv's Windows close path does not suppress debug CRT assertion dialogs for invalid file descriptors",
+    applies: cfg => cfg.windows,
+    expectedToBeFixed: _cfg => isLibuvCloseCrtAssertPatchObsolete(LIBUV_COMMIT),
+    cleanup:
+      `Delete patches/libuv/win-close-disable-crt-assert.patch, remove it from the patches array in ` +
+      `scripts/build/deps/libuv.ts, and delete this entry.`,
+  },
   {
     id: "asan-dyld-shim",
     issue: "https://github.com/llvm/llvm-project/issues/182943",

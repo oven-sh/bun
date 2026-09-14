@@ -232,6 +232,48 @@ it("retries a tarball whose redirect target 500s once", async () => {
   });
 });
 
+// The retry notice is added to the log as a warning, and the log printer
+// prefixes it with `warn: ` when it prints it. The message itself used to carry
+// a second `warn: `, so every retry printed as `warn: warn: ...`.
+it("prints each verbose tarball retry as a single warn: line", async () => {
+  setHandler(async request => {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/BaR") {
+      return Response.json({
+        name: "BaR",
+        "dist-tags": { latest: "0.0.2" },
+        versions: {
+          "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${root_url}/BaR-0.0.2.tgz` } },
+        },
+      });
+    }
+    if (pathname === "/BaR-0.0.2.tgz") {
+      return new Response("no", { status: 500 });
+    }
+    return new Response("unexpected", { status: 404 });
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { BaR: "0.0.2" } }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--verbose", "--no-progress", "--ignore-scripts"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: { ...env, BUN_CONFIG_HTTP_RETRY_COUNT: "2" },
+  });
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  expect(err.split(/\r?\n/).filter(line => line.includes("downloading tarball"))).toEqual([
+    "warn: TarballFailedToDownload downloading tarball BaR@0.0.2. Retrying 1/2...",
+    "warn: TarballFailedToDownload downloading tarball BaR@0.0.2. Retrying 2/2...",
+  ]);
+  expect(err).toContain(`error: GET ${root_url}/BaR-0.0.2.tgz - 500`);
+  expect(out).not.toContain("installed");
+  expect(exitCode).toBe(1);
+});
+
 it("retries on 500", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, undefined, 4));

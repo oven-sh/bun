@@ -336,6 +336,8 @@ Once the CommonJS module is successfully evaluated, Bun creates a Synthetic Modu
 
 Bun's bundler works differently: it wraps the CommonJS module in a `require_${moduleName}` function which returns the `module.exports` object.
 
+Synchronous `require()` of an ES module is also supported: Bun evaluates the ESM graph and returns the module namespace object. If the graph contains top-level await, `require()` throws `ERR_REQUIRE_ASYNC_MODULE` — use `import()` for async modules instead.
+
 </Accordion>
 
 ---

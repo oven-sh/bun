@@ -1058,20 +1058,27 @@ it("process.nextTick drains the queue when Array.prototype has an index setter",
 });
 
 it("child_process.exec does not hang when Array.prototype has an index setter", async () => {
-  // The spawn schedules several nextTicks. The callback must run and the process must exit.
+  // A spawn schedules several nextTicks. The setter also corrupts the argv
+  // that child_process builds with unshift, as it does in Node. So the exec
+  // call either throws at once (Windows) or the callback gets an error
+  // (POSIX). Either way the process must exit.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `const { exec } = require("child_process");
        Object.defineProperty(Array.prototype, "2", { set() {} });
-       exec("pwd", () => console.log("callback fired"));`,
+       try {
+         exec("pwd", () => console.log("exec callback fired"));
+       } catch {
+         console.log("exec threw");
+       }`,
     ],
     env: bunEnv,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("callback fired\n");
+  expect(["exec callback fired\n", "exec threw\n"]).toContain(stdout);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

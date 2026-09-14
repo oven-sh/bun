@@ -36,6 +36,7 @@
 #include "JavaScriptCore/Synchronousness.h"
 #include "JavaScriptCore/JSCast.h"
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSPromise.h>
 #include "root.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "headers-handwritten.h"
@@ -1376,6 +1377,45 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (isBunTest && globalObject->onLoadPlugins.hasVirtualModules()) {
+        bool wasModuleMock = false;
+        BunString specifierStr = Bun::toString(specifier);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifierStr, wasModuleMock);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (virtualModuleResult) {
+            if (auto* promise = dynamicDowncast<JSPromise>(virtualModuleResult)) {
+                switch (promise->status()) {
+                case JSPromise::Status::Rejected: {
+                    promise->markAsHandled();
+                    JSC::throwException(globalObject, throwScope, promise->result());
+                    return {};
+                }
+                case JSPromise::Status::Pending: {
+                    throwTypeError(globalObject, throwScope, makeString("require() async module \""_s, specifier, "\" is unsupported. use \"await import()\" instead."_s));
+                    return {};
+                }
+                case JSPromise::Status::Fulfilled: {
+                    virtualModuleResult = promise->result();
+                    break;
+                }
+                }
+            }
+            if (auto* obj = virtualModuleResult.getObject()) {
+                auto esModuleValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->__esModule);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
+                    auto defaultValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    if (defaultValue && !defaultValue.isUndefined()) {
+                        return JSC::JSValue::encode(defaultValue);
+                    }
+                }
+            }
+            return JSC::JSValue::encode(virtualModuleResult);
+        }
+    }
+
     ErrorableResolvedSource res;
     BunString specifierStr = Bun::toString(specifier);
     auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res);

@@ -1194,6 +1194,98 @@ describe("the options argument", () => {
   });
 });
 
+describe("a run option rejected with a vm context's global", () => {
+  // Script#runInContext and Script#runInNewContext validate displayErrors,
+  // timeout and breakOnSigint with the context's global object, which is not a
+  // Bun global. The message renders the rejected value through the console
+  // formatter, and the formatter needs a Bun global, so it read past the end of
+  // the context's cell: ASAN reports a heap-buffer-overflow and a release build
+  // segfaults. Each case gets its own process.
+  //
+  // The vm.* wrappers build the Script first, and that rejects a bad timeout
+  // with the main global, so only the Script methods reach the bug with it.
+  const types = { displayErrors: "boolean", timeout: "number", breakOnSigint: "boolean" } as const;
+  type Option = keyof typeof types;
+  const entryPoints: [name: string, call: string, options: Option[]][] = [
+    ["vm.runInContext()", `vm.runInContext("1", vm.createContext({}), options)`, ["displayErrors", "breakOnSigint"]],
+    ["vm.runInNewContext()", `vm.runInNewContext("1", {}, options)`, ["displayErrors", "breakOnSigint"]],
+    [
+      "Script#runInContext()",
+      `new vm.Script("1").runInContext(vm.createContext({}), options)`,
+      ["displayErrors", "timeout", "breakOnSigint"],
+    ],
+    [
+      "Script#runInNewContext()",
+      `new vm.Script("1").runInNewContext({}, options)`,
+      ["displayErrors", "timeout", "breakOnSigint"],
+    ],
+  ];
+
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A custom inspect function reaches the Bun global's inspect builtins. The
+  // function reports what it was handed, so a wrong global is visible in the
+  // output instead of only as a crash. It sits on the null-prototype object
+  // itself because Node renders the value with `depth: -1`, which runs no
+  // nested inspect function, so this message is Node's byte for byte.
+  test.concurrent.each(
+    entryPoints.flatMap(([name, call, options]) => options.map(option => [name, option, call] as const)),
+  )("%s renders a bad %s through a custom inspect function", async (_, option, call) => {
+    const { stdout, stderr, exitCode } = await run(`
+      const vm = require("node:vm");
+      const util = require("node:util");
+      const seen = [];
+      const bad = Object.create(null);
+      bad[util.inspect.custom] = function (depth, opts, inspect) {
+        seen.push(typeof opts, typeof opts.stylize, typeof inspect, opts.colors);
+        return "CUSTOM";
+      };
+      const options = { ${option}: bad };
+      try {
+        ${call};
+      } catch (e) {
+        console.log([e.code, e.message, seen.join(",")].join(" | "));
+      }
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      `ERR_INVALID_ARG_TYPE | The "options.${option}" property must be of type ${types[option]}. ` +
+        `Received CUSTOM | object,function,function,false\n`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // A value that owns a DOM wrapper reaches a second Bun-global-only read:
+  // printing one builds its wrapper, which needs the global's DOM world. These
+  // need no user hook. The rendering of the value itself is not asserted, only
+  // that the message is produced and the process lives.
+  test.concurrent.each([
+    ["a Response", `new Response("body")`],
+    ["a Request", `new Request("http://127.0.0.1:9/")`],
+    ["a Response.json", `Response.json({ a: 1 })`],
+  ])("renders a bad displayErrors holding %s", async (_, valueExpression) => {
+    const { stdout, stderr, exitCode } = await run(`
+      const vm = require("node:vm");
+      const bad = Object.create(null);
+      bad.value = ${valueExpression};
+      try {
+        vm.runInContext("1", vm.createContext({}), { displayErrors: bad });
+      } catch (e) {
+        console.log([e.code, e.message].join(" | "));
+      }
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith(
+      `ERR_INVALID_ARG_TYPE | The "options.displayErrors" property must be of type boolean. Received `,
+    );
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("context options with throwing getters", () => {
   // Without the fix, reading these options with a pending exception aborted
   // the process, so run the matrix in a subprocess.

@@ -17,6 +17,7 @@ unsafe extern "C" {
         js_value: JSValue,
         global: &JSGlobalObject,
         exception: &mut ZigException,
+        frame_index: u8,
     );
 }
 
@@ -49,8 +50,14 @@ pub struct ZigException {
 }
 
 impl ZigException {
-    pub(crate) fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
-        ZigException__collectSourceLines(value, global, self);
+    /// Fills `stack.source_lines_*` from the JSC source provider of `stack.frames()[frame_index]`.
+    pub(crate) fn collect_source_lines(
+        &mut self,
+        value: JSValue,
+        global: &JSGlobalObject,
+        frame_index: u8,
+    ) {
+        ZigException__collectSourceLines(value, global, self, frame_index);
     }
 
     // `ZigException__fromException` is declared in headers.h but has no C++

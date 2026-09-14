@@ -88,6 +88,8 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
     frame.source_url = Bun::toStringRef(sourceURL);
     auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
+        // Also true inside bun's bundled modules (createBuiltinExecutable); nested functions inherit it.
+        frame.is_builtin = m_codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
         switch (m_codeBlock->codeType()) {
         case JSC::EvalCode: {
             frame.code_type = ZigStackFrameCodeEval;
@@ -225,7 +227,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
 }
 
 static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::StackFrame& stackFrame,
-    ZigStackFrame& frame, bool is_top, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety)
+    ZigStackFrame& frame, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety)
 {
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
         populateStackFrameMetadata(vm, globalObject, stackFrame, frame, finalizerSafety);
@@ -233,9 +235,9 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::Sta
             nullptr,
             0, frame.position, referenced_source_provider, flags);
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
-        populateStackFramePosition(stackFrame, is_top ? trace.source_lines_ptr : nullptr,
-            is_top ? trace.source_lines_numbers : nullptr,
-            is_top ? trace.source_lines_to_collect : 0, frame.position, referenced_source_provider, flags);
+        populateStackFramePosition(stackFrame, trace.source_lines_ptr,
+            trace.source_lines_numbers,
+            trace.source_lines_to_collect, frame.position, referenced_source_provider, flags);
     }
 }
 
@@ -421,7 +423,8 @@ public:
     }
 };
 
-static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety = FinalizerSafety::NotInFinalizer)
+// OnlySourceLines runs after Rust picked `trace.frames_ptr[source_lines_frame_index]` (remap_zig_exception).
+static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety = FinalizerSafety::NotInFinalizer, uint8_t source_lines_frame_index = 0)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
@@ -440,20 +443,21 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
 
             ZigStackFrame& frame = trace.frames_ptr[frame_i];
             frame.jsc_stack_frame_index = static_cast<int32_t>(stack_frame_i);
-            populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
+            populateStackFrame(vm, trace, frames[stack_frame_i], frame, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
             RETURN_IF_EXCEPTION(scope, );
             stack_frame_i++;
             frame_i++;
         }
         trace.frames_len = frame_i;
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
-        for (uint8_t i = 0; i < trace.frames_len; i++) {
-            ZigStackFrame& frame = trace.frames_ptr[i];
-            if (frame.jsc_stack_frame_index < 0 || static_cast<size_t>(frame.jsc_stack_frame_index) >= frames.size())
-                continue;
-            populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
-            RETURN_IF_EXCEPTION(scope, );
-        }
+        if (source_lines_frame_index >= trace.frames_len)
+            return;
+        ZigStackFrame& frame = trace.frames_ptr[source_lines_frame_index];
+        // -1 when the frames were parsed out of an `error.stack` string.
+        if (frame.jsc_stack_frame_index < 0 || static_cast<size_t>(frame.jsc_stack_frame_index) >= frames.size())
+            return;
+        populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
+        RETURN_IF_EXCEPTION(scope, );
     }
 }
 
@@ -873,7 +877,8 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
     exceptionFromString(*exception, value, global);
 }
 
-extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+// `frame_index` indexes `exception->stack.frames_ptr` (after Rust's frame filtering).
+extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception, uint8_t frame_index)
 {
     JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
@@ -885,7 +890,7 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         JSValue unwrapped = jscException->value();
 
         if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
+            populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::NotInFinalizer, frame_index);
         }
 
         exceptionFromString(*exception, unwrapped, global);
@@ -894,7 +899,7 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
 
     if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
         if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
-            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC);
+            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC, frame_index);
         }
         return;
     }

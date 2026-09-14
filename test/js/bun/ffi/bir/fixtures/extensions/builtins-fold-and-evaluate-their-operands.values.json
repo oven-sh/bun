@@ -10,6 +10,7 @@
 ["1", 1],
 ["__builtin_popcount(v) == POP && __builtin_clz(one) == CLZ_1 && __builtin_bswap64(wide) == s_swap64 && __builtin_ctz(v) == 4", 1],
 ["_Generic(__builtin_bswap64(1), uint64_t: 1, default: 0) && _Generic(__builtin_bswap32(1), uint32_t: 1, default: 0) && _Generic(__builtin_bswap16(1), uint16_t: 1, default: 0)", 1],
+["_Generic(__builtin_clzll(1), int: 1, default: 0) && _Generic(__builtin_ctzl(1), int: 1, default: 0) && _Generic(__builtin_popcountll(1), int: 1, default: 0) && _Generic(__builtin_ffsll(1), int: 1, default: 0) && _Generic(__builtin_parityl(1), int: 1, default: 0)", 1],
 ["a == 5 && calls == 2", 1],
 ["b == 6 && calls == 2", 1],
 ["c == 7 && calls == 2", 1],

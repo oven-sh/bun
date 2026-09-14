@@ -110,6 +110,10 @@ __BUN_CC_INTRIN int _mm_ucomige_ss(__m128 __a, __m128 __b) { return __a[0] >= __
 __BUN_CC_INTRIN int _mm_ucomineq_ss(__m128 __a, __m128 __b) { return __a[0] != __b[0]; }
 
 __BUN_CC_INTRIN __m128 _mm_cvtsi32_ss(__m128 __a, int __b) { __a[0] = (float)__b; return __a; }
+/* CVTTSS2SI gives the "integer indefinite" value for a NaN and for what does not fit. */
+__BUN_CC_INTRIN int _mm_cvttss_si32(__m128 __a) { return __a[0] >= -2147483648.0f && __a[0] < 2147483648.0f ? (int)__a[0] : -2147483647 - 1; }
+__BUN_CC_INTRIN long long _mm_cvttss_si64(__m128 __a) { return __a[0] >= -9223372036854775808.0f && __a[0] < 9223372036854775808.0f ? (long long)__a[0] : -9223372036854775807LL - 1; }
+#define _mm_cvtt_ss2si _mm_cvttss_si32
 __BUN_CC_INTRIN __m128 _mm_cvt_si2ss(__m128 __a, int __b) { __a[0] = (float)__b; return __a; }
 __BUN_CC_INTRIN __m128 _mm_cvtsi64_ss(__m128 __a, long long __b) { __a[0] = (float)__b; return __a; }
 

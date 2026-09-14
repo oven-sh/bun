@@ -523,7 +523,6 @@ pub(crate) fn lower_call(
         let size = tcx.size_of(arg).unwrap_or(0);
         let align = tcx.align_of(arg).unwrap_or(1);
         let pass = if windows && !arm && arg.is_vector() && !tcx.is_half_vector(arg) {
-            regs.scalar(Ty::I64);
             ArgPass::Reference
         } else if !is_aggregate(arg) {
             let ty = tcx.machine_ty(arg);
@@ -594,7 +593,7 @@ pub(crate) fn lower_call(
                         .next_multiple_of(align.max(8))
                         + size.next_multiple_of(8);
                     ArgPass::Stack {
-                        size: size.next_multiple_of(8),
+                        size,
                         align: align.max(8),
                         exhausts: Exhausts::FloatRegisters,
                     }
@@ -620,7 +619,7 @@ pub(crate) fn lower_call(
                     apple_named_stack_bytes =
                         apple_named_stack_bytes.next_multiple_of(align) + size.next_multiple_of(8);
                     ArgPass::Stack {
-                        size: size.next_multiple_of(8),
+                        size,
                         align,
                         exhausts: Exhausts::IntegerRegisters,
                     }
@@ -628,7 +627,7 @@ pub(crate) fn lower_call(
             }
         } else {
             let in_memory = ArgPass::Stack {
-                size: size.next_multiple_of(8),
+                size,
                 align: align.max(8),
                 exhausts: Exhausts::Nothing,
             };
@@ -684,6 +683,14 @@ pub(crate) fn lower_call(
             ArgPass::Ignore => {}
         }
         passes.push(pass);
+    }
+    if bir::by_value_size(&named_params).saturating_add(bir::by_value_size(&anonymous_params))
+        > bir::MAX_FRAME_SIZE
+    {
+        return Err(format!(
+            "passing more than {} bytes of structures by value in one call is not supported",
+            bir::MAX_FRAME_SIZE
+        ));
     }
     Ok(CallAbi {
         ret: ret_pass,

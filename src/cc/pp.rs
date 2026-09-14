@@ -492,7 +492,7 @@ impl Preprocessor {
                 return Ok(PTok::plain(replacement));
             }
             if mac.params.is_none() {
-                let body = self.substitute(&mac, &[], &t)?;
+                let body = self.substitute(&mac, &[], false, &t)?;
                 self.push_expansion(&mac, body, t.tok.loc)?;
                 continue;
             }
@@ -502,8 +502,8 @@ impl Preprocessor {
                 self.unread(next);
                 return Ok(t);
             }
-            let args = self.collect_args(&mac, &t)?;
-            let body = self.substitute(&mac, &args, &t)?;
+            let (args, variadic_given) = self.collect_args(&mac, &t)?;
+            let body = self.substitute(&mac, &args, variadic_given, &t)?;
             self.push_expansion(&mac, body, t.tok.loc)?;
         }
     }
@@ -625,7 +625,10 @@ impl Preprocessor {
 
     /// Collects the arguments of an invocation of `mac`, up to its closing parenthesis; the
     /// opening one has been read.
-    fn collect_args(&mut self, mac: &Macro, name: &PTok) -> Res<Vec<Vec<PTok>>> {
+    /// The arguments of an invocation of `mac`, one list for each parameter, and whether there was
+    /// one for `...` (`F(a,)` gives an empty one; `F(a)` gives none, and neither does `F()` when `...`
+    /// is all `F` takes).
+    fn collect_args(&mut self, mac: &Macro, name: &PTok) -> Res<(Vec<Vec<PTok>>, bool)> {
         let params = mac.params.as_deref().unwrap_or(&[]);
         let mut args: Vec<Vec<PTok>> = vec![Vec::new()];
         let mut depth = 0u32;
@@ -675,8 +678,12 @@ impl Preprocessor {
             args.clear();
         }
         // The variable arguments may be omitted entirely.
+        let mut variadic_given = mac.variadic;
         if mac.variadic && args.len() + 1 == params.len() {
             args.push(Vec::new());
+            variadic_given = false;
+        } else if mac.variadic && params.len() == 1 && args[0].is_empty() {
+            variadic_given = false;
         }
         if args.len() != params.len() {
             return err(
@@ -689,12 +696,22 @@ impl Preprocessor {
                 ),
             );
         }
-        Ok(args)
+        Ok((args, variadic_given))
     }
 
     /// Builds the replacement of `mac` invoked by `invocation` with `args`.
-    fn substitute(&mut self, mac: &Macro, args: &[Vec<PTok>], invocation: &PTok) -> Res<Vec<PTok>> {
+    fn substitute(
+        &mut self,
+        mac: &Macro,
+        args: &[Vec<PTok>],
+        variadic_given: bool,
+        invocation: &PTok,
+    ) -> Res<Vec<PTok>> {
         let mut expanded: Vec<Option<Vec<PTok>>> = vec![None; args.len()];
+        let args = Arguments {
+            list: args,
+            variadic_given,
+        };
         let mut out =
             self.substitute_tokens(mac, &mac.body, args, &mut expanded, invocation.tok.loc)?;
         // The expansion takes the place of the macro name.
@@ -737,7 +754,7 @@ impl Preprocessor {
         &mut self,
         mac: &Macro,
         contents: &[PpToken],
-        args: &[Vec<PTok>],
+        args: Arguments,
         expanded: &mut Vec<Option<Vec<PTok>>>,
         loc: Loc,
     ) -> Res<Vec<PTok>> {
@@ -745,7 +762,7 @@ impl Preprocessor {
             return Ok(Vec::new());
         };
         if expanded[p].is_none() {
-            expanded[p] = Some(self.expand_list(args[p].clone(), loc)?);
+            expanded[p] = Some(self.expand_list(args.list[p].clone(), loc)?);
         }
         if expanded[p].as_ref().is_none_or(Vec::is_empty) {
             return Ok(Vec::new());
@@ -757,7 +774,7 @@ impl Preprocessor {
         &mut self,
         mac: &Macro,
         body: &[PpToken],
-        args: &[Vec<PTok>],
+        args: Arguments,
         expanded: &mut Vec<Option<Vec<PTok>>>,
         loc: Loc,
     ) -> Res<Vec<PTok>> {
@@ -796,7 +813,7 @@ impl Preprocessor {
             // # parameter
             if mac.params.is_some() && t.kind == PpKind::Punct(Punct::Hash) {
                 if let Some(p) = body.get(i + 1).and_then(|n| mac.param_index(n)) {
-                    let mut s = stringify(&args[p], loc);
+                    let mut s = stringify(&args.list[p], loc);
                     s.has_leading_space = t.has_leading_space;
                     out.push(PTok::plain(s));
                     lhs_placemarker = false;
@@ -829,15 +846,16 @@ impl Preprocessor {
                             && out.last().is_some_and(|l| l.is_punct(Punct::Comma))
                             && !lhs_placemarker
                         {
-                            if args[p].is_empty() {
+                            // (An argument that is there and empty leaves the comma: GCC and Clang.)
+                            if !args.variadic_given {
                                 out.pop();
                             } else {
-                                out.extend(args[p].iter().cloned());
+                                out.extend(args.list[p].iter().cloned());
                             }
                             i += 2;
                             continue;
                         }
-                        args[p].clone()
+                        args.list[p].clone()
                     }
                     None => vec![from_body(rhs)],
                 };
@@ -871,17 +889,17 @@ impl Preprocessor {
             if let Some(p) = mac.param_index(t) {
                 if next_is_paste {
                     // Operands of ## are not macro-expanded first.
-                    if args[p].is_empty() {
+                    if args.list[p].is_empty() {
                         lhs_placemarker = true;
                     } else {
                         lhs_placemarker = false;
                         let start = out.len();
-                        out.extend(args[p].iter().cloned());
+                        out.extend(args.list[p].iter().cloned());
                         inherit_spacing(&mut out[start..], t);
                     }
                 } else {
                     if expanded[p].is_none() {
-                        expanded[p] = Some(self.expand_list(args[p].clone(), loc)?);
+                        expanded[p] = Some(self.expand_list(args.list[p].clone(), loc)?);
                     }
                     let start = out.len();
                     if let Some(tokens) = &expanded[p] {
@@ -961,6 +979,14 @@ pub(crate) fn is_pp_operator(name: &[u8]) -> bool {
             | b"__has_cpp_attribute"
             | b"__has_c_attribute"
     )
+}
+
+/// What a function-like macro was invoked with.
+#[derive(Clone, Copy)]
+struct Arguments<'a> {
+    list: &'a [Vec<PTok>],
+    /// See `collect_args`.
+    variadic_given: bool,
 }
 
 pub(crate) fn eof_token(loc: Loc) -> PpToken {

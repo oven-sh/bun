@@ -93,6 +93,15 @@ impl Target {
         if self.os == Os::Windows { 4 } else { 8 }
     }
 
+    /// The target's `uint64_t`, as its `<stdint.h>` has it (`__UINT64_TYPE__` says the same): the
+    /// type of what the builtins with 64 in their names take and give.
+    pub(crate) fn uint64_type(self) -> Type {
+        match self.os {
+            Os::MacOs | Os::Windows => Type::ULLong,
+            _ => Type::ULong,
+        }
+    }
+
     pub(crate) fn bir_arch(self) -> u8 {
         match self.arch {
             Arch::X86_64 => 0,

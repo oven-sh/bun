@@ -597,10 +597,7 @@ impl<S: TokenSource> Parser<S> {
             if spec.is_typedef {
                 self.check_typedef_specifiers(&spec)?;
                 self.mark_transparent_union(&decl, &spec);
-                let align = match (decl.attrs.aligned, spec.attrs.aligned) {
-                    (Some(a), Some(b)) => Some(a.max(b)),
-                    (a, b) => a.or(b),
-                };
+                let align = stricter_alignment(decl.attrs.aligned, spec.attrs.aligned);
                 // On a typedef `aligned` sets the alignment, up or down.
                 let ty = match align {
                     Some(a) if !decl.ty.is_func() => decl.ty.clone().with_alignment(a),
@@ -978,10 +975,7 @@ impl<S: TokenSource> Parser<S> {
         }
         self.check_object_specifiers(spec, &decl)?;
         let first = !self.sema.is_file_scope_object(&name);
-        let align = match (decl.attrs.aligned, spec.attrs.aligned) {
-            (Some(a), Some(b)) => Some(a.max(b)),
-            (a, b) => a.or(b),
-        };
+        let align = stricter_alignment(decl.attrs.aligned, spec.attrs.aligned);
         let link_name = decl.attrs.asm_label.clone();
         if !has_init {
             let alias = decl
@@ -2147,10 +2141,7 @@ impl<S: TokenSource> Parser<S> {
                     ty: decl.ty,
                     loc: decl.loc,
                     bit_width,
-                    align: match (attrs.aligned, spec.attrs.aligned) {
-                        (Some(a), Some(b)) => Some(a.max(b)),
-                        (a, b) => a.or(b),
-                    },
+                    align: stricter_alignment(attrs.aligned, spec.attrs.aligned),
                     packed: attrs.packed || spec.attrs.packed,
                 });
                 if !self.eat(Punct::Comma)? {
@@ -3202,10 +3193,7 @@ impl<S: TokenSource> Parser<S> {
                     "a variable length array must have automatic storage duration",
                 );
             }
-            let align = match (decl.attrs.aligned, spec.attrs.aligned) {
-                (Some(a), Some(b)) => Some(a.max(b)),
-                (a, b) => a.or(b),
-            };
+            let align = stricter_alignment(decl.attrs.aligned, spec.attrs.aligned);
             if spec.is_typedef {
                 self.check_typedef_specifiers(&spec)?;
                 self.mark_transparent_union(&decl, &spec);
@@ -5285,11 +5273,10 @@ impl<S: TokenSource> Parser<S> {
                 let (op, arg_ty, ret) = match short {
                     "bswap16" => (Intrinsic::Bswap, Type::UShort, Type::UShort),
                     "bswap32" => (Intrinsic::Bswap, uint.clone(), uint),
-                    // `uint64_t`, which is `unsigned long` where that has 64 bits.
-                    "bswap64" if self.sema.tcx.size_of(&ulong) == Some(8) => {
-                        (Intrinsic::Bswap, ulong.clone(), ulong)
+                    "bswap64" => {
+                        let uint64 = self.sema.tcx.target.uint64_type();
+                        (Intrinsic::Bswap, uint64.clone(), uint64)
                     }
-                    "bswap64" => (Intrinsic::Bswap, ullong.clone(), ullong),
                     "clz" => (Intrinsic::Clz, uint, Type::Int),
                     "clzl" => (Intrinsic::Clz, ulong, Type::Int),
                     "clzll" => (Intrinsic::Clz, ullong, Type::Int),
@@ -6231,6 +6218,14 @@ fn overflow_op(name: &str) -> crate::sema::builtin::OverflowOp {
         OverflowOp::Sub
     } else {
         OverflowOp::Mul
+    }
+}
+
+/// The stricter of an alignment written on a declarator and one written among the specifiers.
+fn stricter_alignment(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
     }
 }
 

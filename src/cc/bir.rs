@@ -10,7 +10,7 @@
 //! magic "BIR0"
 //! u8 arch, u8 os, u8 pointerBytes (8), u8 reserved (0)
 //! varuint nsigs;    sig*:    { varuint nrets (0..4); type*; u8 flags (bit0 = variadic); varuint nparams; param* }
-//!                   param:   u8 kind, then Value: type | ByValStack: varuint size, varuint align, u8 exhausts
+//!                   param:   u8 kind, then Value: type | ByValStack: varuint size (the object's, exactly), varuint align (8 or 16), u8 exhausts
 //!                            | IndirectResult: nothing
 //! varuint nexterns; extern*: { str name; u8 kind (ExternKind, | 0x80 weak); varuint sig }   (sig is 0 for Data)
 //! data:             { varuint size; varuint align; varuint readOnly; varuint ninit; u8[ninit];
@@ -26,7 +26,7 @@
 //! varuint nexports; export*: { str name; varuint func; u8 ffiRet; varuint nargs; u8 ffiArg* }
 //! varuint nlibraries; str*
 //! varuint nconstructors; varuint func*     (`void f(void)`; the loader calls them in this order)
-//! varuint ndestructors; varuint func*      (`void f(void)`; recorded, never called)
+//! varuint ndestructors; varuint func*      (`void f(void)`; handed to whoever owns the process's exit)
 //! ```
 //!
 //! Instruction operands are documented in BIR.h; the writer's `inst` method is the
@@ -48,8 +48,16 @@ pub(crate) const MAX_BY_VALUE_ALIGN: u64 = 16;
 /// The alignment of a stack slot, of `StackAlloc` and of the data and thread-local segments:
 pub(crate) const MAX_ALIGN: u64 = 4096;
 pub(crate) const MAX_SLOT_SIZE: u64 = 1 << 28;
-/// The size of the data segment and of the thread-local one:
+/// The slots of one function together, each rounded up to 16 plus its alignment; and the by-value
+/// arguments of one signature together, each plus its alignment:
+pub(crate) const MAX_FRAME_SIZE: u64 = 1 << 30;
+/// The size of the data segment (the loader takes 4 GiB; the offsets of the front end are made for
+/// this much) and of the thread-local one:
 pub(crate) const MAX_SEGMENT_SIZE: u64 = 1 << 30;
+pub(crate) const MAX_TLS_SIZE: u64 = 1 << 28;
+/// The bytes of a segment that are written out (the rest, up to its size, is zero): a count like
+/// any other in the format.
+pub(crate) const MAX_INITIALIZED: u64 = 1 << 24;
 /// Or'ed into an extern's kind byte: `__attribute__((weak))`. Null when nothing defines it.
 pub(crate) const WEAK_EXTERN: u8 = 0x80;
 /// Function declaration flags that steer the backend's inliner.
@@ -744,8 +752,8 @@ pub(crate) struct Module {
     /// `__attribute__((constructor))` functions, in the order the loader calls them once the
     /// module is ready to run.
     pub(crate) constructors: Vec<u32>,
-    /// `__attribute__((destructor))` functions, in the order they would run. A module is
-    /// never unloaded in an orderly way, so nothing calls them.
+    /// `__attribute__((destructor))` functions, in the order they run: at the process's exit, since
+    /// a loaded module is never unloaded.
     pub(crate) destructors: Vec<u32>,
 }
 
@@ -1246,6 +1254,9 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
             return Err(format!("function '{}': slot {} is too large", func.name, i));
         }
     }
+    if frame_size(&func.slots) > MAX_FRAME_SIZE {
+        return Err(format!("function '{}': the slots are too large", func.name));
+    }
     if func.blocks.is_empty() {
         return Err(format!("function '{}': no blocks", func.name));
     }
@@ -1260,8 +1271,7 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
             Param::ByValStack { size, align, .. }
                 if !matches!(align, 8 | MAX_BY_VALUE_ALIGN)
                     || size == 0
-                    || size > MAX_BY_VALUE_SIZE
-                    || size % 8 != 0 =>
+                    || size > MAX_BY_VALUE_SIZE =>
             {
                 return Err(format!(
                     "function '{}': ByValStack of {size} bytes aligned to {align}",
@@ -1270,6 +1280,12 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
             }
             _ => {}
         }
+    }
+    if by_value_size(&sig.params) > MAX_FRAME_SIZE {
+        return Err(format!(
+            "function '{}': the by-value parameters are too large",
+            func.name
+        ));
     }
     if sig.rets.len() > 4 || sig.rets.contains(&Ty::Void) {
         return Err(format!("function '{}': invalid results", func.name));
@@ -1904,6 +1920,21 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
     Ok(FuncInfo { value_types, defs })
 }
 
+/// What the loader counts a function's stack slots as (`MAX_FRAME_SIZE`).
+pub(crate) fn frame_size(slots: &[Slot]) -> u64 {
+    slots.iter().fold(0u64, |total, slot| {
+        total.saturating_add(slot.size.next_multiple_of(16).saturating_add(slot.align))
+    })
+}
+
+/// What the loader counts a signature's by-value parameters as (`MAX_FRAME_SIZE`).
+pub(crate) fn by_value_size(params: &[Param]) -> u64 {
+    params.iter().fold(0u64, |total, param| match param {
+        Param::ByValStack { size, align, .. } => total.saturating_add(size.saturating_add(*align)),
+        _ => total,
+    })
+}
+
 /// Checks the module-level tables, then every function.
 pub(crate) fn validate(module: &Module) -> Result<(), String> {
     for (i, e) in module.externs.iter().enumerate() {
@@ -1928,6 +1959,9 @@ pub(crate) fn validate(module: &Module) -> Result<(), String> {
     }
     if data.init.len() as u64 > data.size {
         return Err("data ninit exceeds size".to_string());
+    }
+    if data.init.len() as u64 > MAX_INITIALIZED || module.tls.init.len() as u64 > MAX_INITIALIZED {
+        return Err("too many initialized bytes".to_string());
     }
     if data.read_only > data.size {
         return Err("data readOnly exceeds size".to_string());
@@ -1969,7 +2003,7 @@ pub(crate) fn validate(module: &Module) -> Result<(), String> {
             "tls alignment is not a power of two up to {MAX_ALIGN}"
         ));
     }
-    if tls.size > MAX_SEGMENT_SIZE {
+    if tls.size > MAX_TLS_SIZE {
         return Err("tls is too large".to_string());
     }
     if tls.init.len() as u64 > tls.size {

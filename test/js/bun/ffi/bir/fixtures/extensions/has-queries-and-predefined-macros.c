@@ -8,6 +8,9 @@
 
 static int checks, wrong;
 #define CHECK(c) do { checks++; if (!(c)) { wrong++; printf("WRONG (line %d): %s\n", __LINE__, #c); } } while (0)
+// A check that only some targets make: it is left out of the count, which is the same everywhere.
+static int only_here;
+#define CHECK_HERE(c) do { only_here++; CHECK(c); } while (0)
 
 #if !defined __has_include || !defined __has_builtin || !defined __has_attribute
 #error the __has_ queries are macros that are defined
@@ -77,10 +80,10 @@ int main(void) {
   CHECK(second == first + 1 && __INCLUDE_LEVEL__ == 0 && sizeof(__BASE_FILE__) > 1 && sizeof(__TIMESTAMP__) > 1);
   CHECK(__STDC_HOSTED__ == 1 && __STDC_VERSION__ >= 201112L);
 #ifndef _MSC_VER
-  CHECK(__STDC__ == 1);             // (Microsoft C leaves it undefined unless its extensions are turned off.)
+  CHECK_HERE(__STDC__ == 1);        // (Microsoft C leaves it undefined unless its extensions are turned off.)
 #endif
 #ifdef __BUN_CC__
-  printf("%d checks\n", checks); // (GCC and Clang skip what they have not got, so their count is another.)
+  printf("%d checks\n", checks - only_here); // (GCC and Clang skip what they have not got, so their count is another.)
 #endif
   printf("%d wrong\n", wrong);
   return wrong != 0;

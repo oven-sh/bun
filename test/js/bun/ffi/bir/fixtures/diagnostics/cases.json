@@ -3849,21 +3849,24 @@
     "source": "typedef struct { int x; } __attribute__((aligned(32))) A;\nint f(A a) { return a.x; }\nint main(void) { A a = { 5 }; return f(a); }",
     "line": 2,
     "column": 5,
-    "message": "passing a 'struct <anonymous>' by value is not supported: it is aligned to more than 16 bytes"
+    "message": "passing a 'struct <anonymous>' by value is not supported: it is aligned to more than 16 bytes",
+    "requires": "x64-sysv"
   },
   {
     "about": "what the loader takes by value: up to 1 MiB, aligned to at most 16",
     "source": "struct B { char a[3000000]; };\nint f(struct B b) { return b.a[0]; }\nint main(void) { static struct B b; return f(b); }",
     "line": 2,
     "column": 5,
-    "message": "passing a 'struct B' by value is not supported: it is larger than 1048576 bytes"
+    "message": "passing a 'struct B' by value is not supported: it is larger than 1048576 bytes",
+    "requires": "x64-sysv"
   },
   {
     "about": "what the loader takes by value: up to 1 MiB, aligned to at most 16",
     "source": "typedef struct { long v[8]; } __attribute__((aligned(64))) V;\nint sum(int n, ...);\nint main(void) { V v = { { 1 } }; return sum(1, v); }",
     "line": 3,
     "column": 42,
-    "message": "passing a 'struct <anonymous>' by value is not supported: it is aligned to more than 16 bytes"
+    "message": "passing a 'struct <anonymous>' by value is not supported: it is aligned to more than 16 bytes",
+    "requires": "x64-sysv"
   },
   {
     "about": "no object is aligned to more than 4096 bytes",
@@ -3905,14 +3908,16 @@
     "source": "int main(void) { __asm__(\"call *%rax\"); return 0; }",
     "line": 1,
     "column": 18,
-    "message": "inline assembly: 'call' would disturb the stack frame or leave the statement, which the surrounding code cannot account for"
+    "message": "inline assembly: 'call' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
   },
   {
     "about": "what the assembler refuses",
     "source": "int main(void) { __asm__(\"jmp *8(%rdi)\"); return 0; }",
     "line": 1,
     "column": 18,
-    "message": "inline assembly: 'jmp *8(%rdi)' would leave the statement, which the surrounding code cannot account for"
+    "message": "inline assembly: 'jmp *8(%rdi)' would leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
   },
   {
     "about": "unsupported constructs are diagnosed",
@@ -3927,7 +3932,8 @@
     "source": "typedef float V __attribute__((vector_size(16)));\nstruct S { V v; };\nint f(int n, ...) { __builtin_va_list ap; __builtin_va_start(ap, n); struct S s = __builtin_va_arg(ap, struct S); __builtin_va_end(ap); return (int)s.v[0]; }\nint main(void) { return 0; }",
     "line": 3,
     "column": 83,
-    "message": "va_arg of a struct that contains a vector is not supported yet"
+    "message": "va_arg of a struct that contains a vector is not supported yet",
+    "requires": "x64-sysv"
   },
   {
     "about": "unsupported constructs are diagnosed",
@@ -3948,14 +3954,16 @@
     "source": "int main(void) { __asm__(\".section .text\"); return 0; }",
     "line": 1,
     "column": 18,
-    "message": "inline assembly: unsupported directive '.section'"
+    "message": "inline assembly: unsupported directive '.section'",
+    "requires": "x64"
   },
   {
     "about": "what the assembler refuses",
     "source": "int main(void) { int x = 1; __asm__(\"mov %z0, %0\" : \"+r\"(x)); return x; }",
     "line": 1,
     "column": 29,
-    "message": "inline assembly: the operand modifier 'z' is not supported here"
+    "message": "inline assembly: the operand modifier 'z' is not supported here",
+    "requires": "x64"
   },
   {
     "about": "6.5.2.2: the called function is declared",
@@ -4138,5 +4146,26 @@
     "line": 1,
     "column": 33,
     "message": "the value of 'B' is outside the range of 'signed char'"
+  },
+  {
+    "about": "what the loader takes of stack and data",
+    "source": "void use(char *);\nvoid f(void) { char a[200 << 20], b[200 << 20], c[200 << 20], d[200 << 20], e[200 << 20], g[200 << 20]; use(a); use(b); use(c); use(d); use(e); use(g); }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 6,
+    "message": "the stack frame of 'f' is too large"
+  },
+  {
+    "about": "6.4.4.4: a character constant ends on its line",
+    "source": "int c = L'a;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 9,
+    "message": "unterminated character constant"
+  },
+  {
+    "about": "6.4.5: a string literal ends on its line",
+    "source": "const void *s = u8\"abc;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "unterminated string literal"
   }
 ]

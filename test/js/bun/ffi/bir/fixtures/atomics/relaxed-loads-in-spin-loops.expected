@@ -1,0 +1,16 @@
+bool 1
+8 bits 1
+16 bits 1
+32 bits 1
+64 bits 1
+pointer 1
+acquire 1
+sequentially consistent 1
+plain use of an atomic object 1
+atomic_flag 1
+volatile 1
+__atomic_load_n 1
+do while 1
+for with break 1
+with a compiler barrier 1
+counting in memory 1

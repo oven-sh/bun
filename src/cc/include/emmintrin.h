@@ -292,6 +292,10 @@ __BUN_CC_INTRIN __m128i _mm_cvttpd_epi32(__m128d __a) {
   __v4si __fits = __builtin_shufflevector((__v4si)__fits64, (__v4si){-1, -1, -1, -1}, 0, 2, 4, 5);
   return (__m128i)(((__v4si)__builtin_ia32_cvttpd2dq(__a) & __fits) | (~__fits & (__v4si){-2147483647 - 1, -2147483647 - 1, 0, 0}));
 }
+/* The scalar forms (CVTTSD2SI) likewise: the indefinite value for a NaN and for what does not fit. */
+__BUN_CC_INTRIN int _mm_cvttsd_si32(__m128d __a) { return __a[0] >= -2147483648.0 && __a[0] < 2147483648.0 ? (int)__a[0] : -2147483647 - 1; }
+__BUN_CC_INTRIN long long _mm_cvttsd_si64(__m128d __a) { return __a[0] >= -9223372036854775808.0 && __a[0] < 9223372036854775808.0 ? (long long)__a[0] : -9223372036854775807LL - 1; }
+#define _mm_cvttsd_si64x _mm_cvttsd_si64
 __BUN_CC_INTRIN __m128d _mm_cvtps_pd(__m128 __a) { return __builtin_ia32_cvtps2pd(__a); }
 __BUN_CC_INTRIN __m128 _mm_cvtpd_ps(__m128d __a) { return __builtin_ia32_cvtpd2ps(__a); }
 
@@ -388,7 +392,7 @@ __BUN_CC_INTRIN void _mm_stream_si32(int *__p, int __a) { *__p = __a; }
 __BUN_CC_INTRIN void _mm_stream_si64(long long *__p, long long __a) { *__p = __a; }
 __BUN_CC_INTRIN void _mm_lfence(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
 __BUN_CC_INTRIN void _mm_mfence(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
-__BUN_CC_INTRIN void _mm_pause(void) {}
+__BUN_CC_INTRIN void _mm_pause(void) { __asm__ volatile("pause"); }
 
 __BUN_CC_INTRIN __m128i _mm_move_epi64(__m128i __a) { return (__m128i){__a[0], 0LL}; }
 

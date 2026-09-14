@@ -79,6 +79,13 @@ pub(crate) fn float_to_int(v: f64, to: &Type, tcx: &TypeCtx) -> Option<i64> {
     })
 }
 
+/// The two 64-bit halves of a 128-bit value, high and low. Taking them apart is what is meant:
+/// a 64-bit constant holds the low half, whatever the high one was.
+pub(crate) fn halves_of_i128(value: i128) -> (u64, u64) {
+    let bits = value as u128;
+    ((bits >> 64) as u64, (bits & u128::from(u64::MAX)) as u64)
+}
+
 /// A `long double` constant truncated to the integer type `to`, when it fits.
 pub(crate) fn long_double_to_int(v: Extended, to: &Type, tcx: &TypeCtx) -> Option<i64> {
     if matches!(to, Type::Bool) {
@@ -93,7 +100,10 @@ pub(crate) fn long_double_to_int(v: Extended, to: &Type, tcx: &TypeCtx) -> Optio
         (true, _) => (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1),
         (false, _) => (0, (1i128 << bits) - 1),
     };
-    (min..=max).contains(&value).then_some(value as i64)
+    let (_, low_bits) = halves_of_i128(value);
+    (min..=max)
+        .contains(&value)
+        .then_some(low_bits.cast_signed())
 }
 
 pub(crate) fn long_double_compare(op: BinOp, x: Extended, y: Extended) -> bool {
@@ -204,7 +214,7 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
             },
             // `eval_int128` reduced it to the width of `ty`, 64 bits at most: a constant is
             // those bits.
-            Some(v) => Ok(Const::Int(v as u64 as i64)),
+            Some(v) => Ok(Const::Int(halves_of_i128(v).1.cast_signed())),
             None => not_constant(e.loc),
         };
     }

@@ -1612,9 +1612,10 @@ impl Sema {
             }
         }
         let unsigned = Type::UInt128;
-        let high = self.int_lit((value >> 64) as i64, Type::ULLong, loc)?;
+        let (high_bits, low_bits) = constexpr::halves_of_i128(value);
+        let high = self.int_lit(high_bits.cast_signed(), Type::ULLong, loc)?;
         let high = self.convert(high, &unsigned, loc)?;
-        let low = self.int_lit(value as i64, Type::ULLong, loc)?;
+        let low = self.int_lit(low_bits.cast_signed(), Type::ULLong, loc)?;
         let low = self.convert(low, &unsigned, loc)?;
         let by = self.int_lit(64, Type::Int, loc)?;
         let shifted = self.binary(BinOp::Shl, high, by, loc)?;

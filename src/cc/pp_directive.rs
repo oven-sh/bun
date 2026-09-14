@@ -915,6 +915,10 @@ impl Preprocessor {
         form: HeaderForm,
         search: SearchFrom,
     ) -> Option<(String, Option<usize>)> {
+        // No file has such a name, and the system would take the part before it for one.
+        if strings::contains_char(name.as_bytes(), 0) {
+            return None;
+        }
         let (current_path, current_at) = match self.frames.last() {
             Some(f) => (Rc::clone(&f.path), f.found_at),
             None => (Rc::from(""), None),

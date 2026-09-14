@@ -62,5 +62,14 @@ int main(void) {
   show_epi32("cvttpd(-2.5, 2147483647.5)", _mm_cvttpd_epi32(_mm_setr_pd(-2.5, 2147483647.5)));
   show_epi32("cvttpd(2^31, -2^31 - 0.5)", _mm_cvttpd_epi32(_mm_setr_pd(2147483648.0, -2147483648.5)));
   show_epi32("cvttpd(-inf, -2^31 - 1)", _mm_cvttpd_epi32(_mm_setr_pd(-dinf, -2147483649.0)));
+
+  // The scalar forms. (Through volatile objects: of constants GCC and Clang make what they like.)
+  volatile float singles[] = { 1.99f, -1.99f, 3e9f, -3e9f, nan, inf, -inf, 2147483520.0f, -2147483648.0f, 9.3e18f, -9.3e18f, 9223371487098961920.0f };
+  for (unsigned i = 0; i < sizeof singles / sizeof singles[0]; i++)
+    printf("cvttss(%g): %d %lld\n", (double)singles[i], _mm_cvttss_si32(_mm_set_ss(singles[i])), _mm_cvttss_si64(_mm_set_ss(singles[i])));
+  volatile double doubles[] = { 1.99, -1.99, 3e9, -3e9, dnan, dinf, -dinf, 2147483647.5, -2147483648.5, -2147483649.0, 9.3e18, -9.3e18, 9223372036854774784.0 };
+  for (unsigned i = 0; i < sizeof doubles / sizeof doubles[0]; i++)
+    printf("cvttsd(%g): %d %lld\n", doubles[i], _mm_cvttsd_si32(_mm_set_sd(doubles[i])), _mm_cvttsd_si64(_mm_set_sd(doubles[i])));
+  _mm_pause();
   return 0;
 }

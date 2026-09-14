@@ -516,7 +516,8 @@ pub(crate) fn classify(
         PpKind::Other => {
             return err(
                 loc,
-                match pp.text.first() {
+                // (With its prefix, if it has one: `L'`, `u8"`.)
+                match literal_without_prefix(&pp.text).first() {
                     Some(b'"') => "unterminated string literal".to_string(),
                     Some(b'\'') => "unterminated character constant".to_string(),
                     Some(&b) if (0x20..0x7f).contains(&b) => {
@@ -572,6 +573,18 @@ pub(crate) fn classify(
         }
     };
     Ok(Token { tok, loc })
+}
+
+/// `text` after the `L`, `u`, `U` or `u8` that a quote follows, or all of it.
+fn literal_without_prefix(text: &[u8]) -> &[u8] {
+    for prefix in [&b"u8"[..], b"L", b"u", b"U"] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            if matches!(rest.first(), Some(b'"' | b'\'')) {
+                return rest;
+            }
+        }
+    }
+    text
 }
 
 fn wide_kind(text: &[u8]) -> Option<WideKind> {

@@ -2,6 +2,7 @@
 // called and checked. Where GCC or Clang lacks one, they skip it; this compiler must have them all.
 #include <limits.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -15,6 +16,9 @@
 
 static int checks, wrong;
 #define CHECK(c) do { checks++; if (!(c)) { wrong++; printf("WRONG (line %d): %s\n", __LINE__, #c); } } while (0)
+// A check that only some targets make: it is left out of the count, which is the same everywhere.
+static int only_here;
+#define CHECK_HERE(c) do { only_here++; CHECK(c); } while (0)
 
 static int sum(int count, ...) {
   __builtin_va_list ap, copy;
@@ -48,6 +52,11 @@ int main(void) {
 #if HAVE(__builtin_rotateleft32)
   CHECK(__builtin_rotateleft8(0x81, 1) == 0x03 && __builtin_rotateleft16(0x8001, 4) == 0x0018 && __builtin_rotateleft32(v32, 12) == 0x0000000fu && __builtin_rotateleft64(v64, 32) == 1);
   CHECK(__builtin_rotateright8(0x81, 1) == 0xc0 && __builtin_rotateright16(0x8001, 4) == 0x1800 && __builtin_rotateright32(v32, 20) == 0x0000000fu && __builtin_rotateright64(v64, 32) == 1);
+#endif
+#if HAVE(__builtin_rotateleft64) && HAVE(__builtin_bitreverse64)
+  // Their types are <stdint.h>'s on every target: `uint64_t` is `unsigned long` here and `unsigned long long` there.
+  CHECK(_Generic(__builtin_rotateleft64(1, 1), uint64_t: 1, default: 0) && _Generic(__builtin_rotateright64(1, 1), uint64_t: 1, default: 0) && _Generic(__builtin_rotateleft32(1, 1), uint32_t: 1, default: 0) && _Generic(__builtin_rotateleft16(1, 1), uint16_t: 1, default: 0) && _Generic(__builtin_rotateleft8(1, 1), uint8_t: 1, default: 0));
+  CHECK(_Generic(__builtin_bitreverse64(1), uint64_t: 1, default: 0) && _Generic(__builtin_bitreverse32(1), uint32_t: 1, default: 0) && _Generic(__builtin_bitreverse16(1), uint16_t: 1, default: 0) && _Generic(__builtin_bitreverse8(1), uint8_t: 1, default: 0));
 #endif
   // Arithmetic that says whether it overflowed.
   int si; long sl; long long sll; unsigned ui; unsigned long ul; unsigned long long ull; short narrow;
@@ -116,7 +125,7 @@ int main(void) {
   __builtin___clear_cache(aligned, aligned + 64);
 #if defined __x86_64__
   __builtin_cpu_init();
-  CHECK(__builtin_cpu_supports("sse2") != 0 && (__builtin_cpu_is("intel") != 0) + (__builtin_cpu_is("amd") != 0) <= 1);
+  CHECK_HERE(__builtin_cpu_supports("sse2") != 0 && (__builtin_cpu_is("intel") != 0) + (__builtin_cpu_is("amd") != 0) <= 1);
 #endif
   char *stack = __builtin_alloca(32);
   memset(stack, 7, 32);
@@ -130,7 +139,7 @@ int main(void) {
   CHECK(__builtin_abs(negative) == 1 && __builtin_labs(-2L) == 2 && __builtin_llabs(-3LL) == 3);
   CHECK(__builtin_sqrt(16.0) == 4.0 && __builtin_floor(d) == -3.0 && __builtin_ceil(d) == -2.0 && __builtin_trunc(d) == -2.0 && __builtin_fmax(1.0, 2.0) == 2.0 && __builtin_fmin(1.0f, 2.0f) == 1.0f && __builtin_sqrtf(4.0f) == 2.0f);
 #ifdef __BUN_CC__
-  printf("%d checks\n", checks); // (GCC and Clang skip what they have not got, so their count is another.)
+  printf("%d checks\n", checks - only_here); // (GCC and Clang skip what they have not got, so their count is another.)
 #endif
   printf("%d wrong\n", wrong);
   return wrong != 0;

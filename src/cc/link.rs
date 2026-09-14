@@ -590,14 +590,8 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
         }
     }
     size = size.max(image.len() as u64);
-    if size > bir::MAX_SEGMENT_SIZE || tls.size > bir::MAX_SEGMENT_SIZE {
-        return fail(
-            0,
-            format!(
-                "the program's data is larger than {} bytes",
-                bir::MAX_SEGMENT_SIZE
-            ),
-        );
+    if let Some(text) = past_the_loader(size, image.len(), tls.size, tls_image.len()) {
+        return fail(0, text);
     }
 
     // ── Function bodies ──
@@ -784,4 +778,33 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
         },
         warnings,
     })
+}
+
+/// What is wrong with segments of these sizes (all of the data, how much of it is written out, and
+/// the same of the thread-local data) for the loader, if anything is.
+pub(crate) fn past_the_loader(
+    data: u64,
+    data_written: usize,
+    thread_local: u64,
+    thread_local_written: usize,
+) -> Option<String> {
+    if data > bir::MAX_SEGMENT_SIZE {
+        return Some(format!(
+            "the program's data is larger than {} bytes",
+            bir::MAX_SEGMENT_SIZE
+        ));
+    }
+    if thread_local > bir::MAX_TLS_SIZE {
+        return Some(format!(
+            "the program's thread-local data is larger than {} bytes",
+            bir::MAX_TLS_SIZE
+        ));
+    }
+    if data_written.max(thread_local_written) as u64 > bir::MAX_INITIALIZED {
+        return Some(format!(
+            "the program's initialized data (the constants, and the objects with initializers up to the last byte that is not zero) is larger than {} bytes",
+            bir::MAX_INITIALIZED
+        ));
+    }
+    None
 }

@@ -1,0 +1,8 @@
+first destructor: counter 101, text Initial, value returned
+second destructor, round 1: counter 111
+second destructor, round 2: counter 121
+second destructor, round 3: counter 131
+first destructor: counter 201, text initial, value exited
+late destructor: counter 300
+first destructor: counter 42, text initial, value untouched
+main thread: counter 41, text initial

@@ -1,0 +1,4 @@
+the constructor ran
+signals counted: 2
+javascript is done
+the exit handler ran, after 2 signals

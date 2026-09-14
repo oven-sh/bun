@@ -46,6 +46,9 @@ int main(void) {
   CHECK(__builtin_popcount(v) == POP && __builtin_clz(one) == CLZ_1 && __builtin_bswap64(wide) == s_swap64 && __builtin_ctz(v) == 4);
   // The result of __builtin_bswap64 is a uint64_t.
   CHECK(_Generic(__builtin_bswap64(1), uint64_t: 1, default: 0) && _Generic(__builtin_bswap32(1), uint32_t: 1, default: 0) && _Generic(__builtin_bswap16(1), uint16_t: 1, default: 0));
+  // The types are <stdint.h>'s on every target (`uint64_t` is `unsigned long` here and `unsigned long long` there), and
+  // what counts bits gives an `int` whatever it counts them in.
+  CHECK(_Generic(__builtin_clzll(1), int: 1, default: 0) && _Generic(__builtin_ctzl(1), int: 1, default: 0) && _Generic(__builtin_popcountll(1), int: 1, default: 0) && _Generic(__builtin_ffsll(1), int: 1, default: 0) && _Generic(__builtin_parityl(1), int: 1, default: 0));
 
   // Every operand is evaluated, once.
   calls = 0;

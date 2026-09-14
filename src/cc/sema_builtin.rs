@@ -287,7 +287,7 @@ impl Sema {
             8 => Type::UChar,
             16 => Type::UShort,
             32 => Type::UInt,
-            _ => Type::ULLong,
+            _ => self.tcx.target.uint64_type(),
         };
         let n = args.swap_remove(1);
         let x = args.swap_remove(0);
@@ -947,7 +947,7 @@ impl Sema {
             8 => (Type::UChar, Type::UInt),
             16 => (Type::UShort, Type::UInt),
             32 => (Type::UInt, Type::UInt),
-            _ => (Type::ULLong, Type::ULLong),
+            _ => (self.tcx.target.uint64_type(), Type::ULLong),
         };
         let x = self.assign_convert(args.swap_remove(0), &ty, loc, "passing an argument")?;
         let mut x = self.convert(x, &work, loc)?;

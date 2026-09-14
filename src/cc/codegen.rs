@@ -3866,6 +3866,12 @@ fn gen_function<'a>(m: &mut ModuleGen<'a>, f: &'a Function, body: &'a FuncBody) 
     // A definition is known to the loader and the linker by its assembler name, if it has one.
     let symbol = f.link_name.as_ref().unwrap_or(&f.name).to_string();
     let mut func = g.b.finish(symbol, sig, is_exported(f));
+    if bir::frame_size(&func.slots) > bir::MAX_FRAME_SIZE {
+        return err(
+            f.loc,
+            format!("the stack frame of '{}' is too large", f.name),
+        );
+    }
     func.returns_twice = returns_twice;
     // Code that must see its own frame or come back from setjmp stays where it is.
     let inlining = f.inlining & (bir::INLINE_ALWAYS | bir::INLINE_NEVER | bir::INLINE_HINT);

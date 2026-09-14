@@ -74,6 +74,66 @@ extern void uv__winsock_ensure(void);
 #endif
 
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+/* A seccomp filter can refuse recvmmsg(2) and sendmmsg(2) with ENOSYS or EPERM
+ * and still allow recvmsg(2) and sendmsg(2). Node keeps working under such a
+ * filter: libuv receives with recvmsg and sends one datagram with sendmsg.
+ * EPERM alone is ambiguous (netfilter rejects a datagram with it), so a flag
+ * is set only after the per-datagram syscall gave a different answer than the
+ * batched one. */
+static int bsd_recvmmsg_unavailable;
+static int bsd_sendmmsg_unavailable;
+
+static int bsd_mmsg_maybe_unavailable(int err) {
+    return err == ENOSYS || err == EPERM;
+}
+
+/* recvmmsg(2)'s return contract on top of recvmsg(2): the number of datagrams
+ * received, or -1 with errno set when the first one fails. */
+static int bsd_recvmsg_each(LIBUS_SOCKET_DESCRIPTOR fd, struct mmsghdr *msgvec, int vlen, int flags) {
+    for (int i = 0; i < vlen; i++) {
+        ssize_t ret;
+        do {
+            ret = recvmsg(fd, &msgvec[i].msg_hdr, flags);
+        } while (ret < 0 && errno == EINTR);
+        if (ret < 0) return i > 0 ? i : -1;
+        msgvec[i].msg_len = (unsigned int) ret;
+    }
+    return vlen;
+}
+
+/* The same for sendmmsg(2) on top of sendmsg(2). */
+static int bsd_sendmsg_each(LIBUS_SOCKET_DESCRIPTOR fd, struct mmsghdr *msgvec, unsigned int vlen, int flags) {
+    for (unsigned int i = 0; i < vlen; i++) {
+        ssize_t ret;
+        do {
+            ret = sendmsg(fd, &msgvec[i].msg_hdr, flags);
+        } while (ret < 0 && errno == EINTR);
+        if (ret < 0) return i > 0 ? (int) i : -1;
+        msgvec[i].msg_len = (unsigned int) ret;
+    }
+    return (int) vlen;
+}
+
+int bsd_sendmmsg_msgvec(LIBUS_SOCKET_DESCRIPTOR fd, struct mmsghdr *msgvec, unsigned int vlen, int flags) {
+    if (!__atomic_load_n(&bsd_sendmmsg_unavailable, __ATOMIC_RELAXED)) {
+        int ret;
+        do {
+            ret = sendmmsg(fd, msgvec, vlen, flags);
+        } while (ret < 0 && errno == EINTR);
+        if (ret >= 0 || !bsd_mmsg_maybe_unavailable(errno)) return ret;
+
+        int mmsg_errno = errno;
+        ret = bsd_sendmsg_each(fd, msgvec, vlen, flags);
+        if (ret >= 0 || errno != mmsg_errno) {
+            __atomic_store_n(&bsd_sendmmsg_unavailable, 1, __ATOMIC_RELAXED);
+        }
+        return ret;
+    }
+    return bsd_sendmsg_each(fd, msgvec, vlen, flags);
+}
+#endif
+
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
 #if defined(_WIN32)// || defined(__APPLE__)
@@ -137,10 +197,7 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 
     return sendbuf->num;
 #else
-    while (1) {
-        int ret = sendmmsg(fd, sendbuf->msgvec, sendbuf->num, flags | MSG_NOSIGNAL);
-        if (ret >= 0 || errno != EINTR) return ret;
-    }
+    return bsd_sendmmsg_msgvec(fd, sendbuf->msgvec, sendbuf->num, flags | MSG_NOSIGNAL);
 #endif
 }
 
@@ -191,10 +248,21 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
     }
     return max_packets;
 #else
-    while (1) {
-        int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, max_packets, flags, 0);
-        if (ret >= 0 || errno != EINTR) return ret;
+    if (!__atomic_load_n(&bsd_recvmmsg_unavailable, __ATOMIC_RELAXED)) {
+        int ret;
+        do {
+            ret = recvmmsg(fd, recvbuf->msgvec, max_packets, flags, 0);
+        } while (ret < 0 && errno == EINTR);
+        if (ret >= 0 || !bsd_mmsg_maybe_unavailable(errno)) return ret;
+
+        int mmsg_errno = errno;
+        ret = bsd_recvmsg_each(fd, recvbuf->msgvec, max_packets, flags);
+        if (ret >= 0 || errno != mmsg_errno) {
+            __atomic_store_n(&bsd_recvmmsg_unavailable, 1, __ATOMIC_RELAXED);
+        }
+        return ret;
     }
+    return bsd_recvmsg_each(fd, recvbuf->msgvec, max_packets, flags);
 #endif
 }
 

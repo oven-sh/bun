@@ -39,35 +39,54 @@ afterAll(() => {
 // CONNECT failure status codes.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * What the proxy itself answered. A refused CONNECT rejects with
+ * `ERR_PROXY_TUNNEL` carrying the proxy's status and headers (its reply is not
+ * the https origin's response); an absolute-form request to an http origin
+ * resolves with the proxy's reply like any other response.
+ */
+async function proxyReply(url: string, init: BunFetchRequestInit) {
+  try {
+    const res = await fetch(url, init);
+    return { via: "response" as const, status: res.status, headers: res.headers };
+  } catch (e: any) {
+    if (e?.code !== "ERR_PROXY_TUNNEL") throw e;
+    return { via: "ERR_PROXY_TUNNEL" as const, status: e.status as number, headers: e.headers as Headers };
+  }
+}
+
 describe("CONNECT failure status", () => {
   const STATUSES = [400, 403, 407, 500, 502, 503, 504] as const;
   for (const { proxyTls, status } of cartesian({
     proxyTls: [false, true] as const,
     status: STATUSES,
   })) {
-    test.concurrent(`${proxyTls ? "https" : "http"}-proxy CONNECT → ${status} is surfaced as-is`, async () => {
-      await using origin = await createAdversarialOrigin({ tls: true, body: "unreachable" });
-      await using proxy = await createAdversarialProxy({
-        tls: proxyTls,
-        connectStatus: status,
-        connectStatusBody: `proxy-said-${status}`,
-      });
+    test.concurrent(
+      `${proxyTls ? "https" : "http"}-proxy CONNECT → ${status} rejects with the proxy's status`,
+      async () => {
+        await using origin = await createAdversarialOrigin({ tls: true, body: "unreachable" });
+        await using proxy = await createAdversarialProxy({
+          tls: proxyTls,
+          connectStatus: status,
+          connectStatusBody: `proxy-said-${status}`,
+        });
 
-      const res = await fetch(origin.url, {
-        proxy: proxy.url,
-        keepalive: false,
-        tls: laxTls,
-        signal: AbortSignal.timeout(15_000),
-      });
-      // The client surfaces the proxy's reply; it does NOT tunnel through.
-      expect(res.status).toBe(status);
-      expect(await res.text()).toBe(`proxy-said-${status}`);
-      // The origin must never have been reached.
-      expect(origin.requests.length).toBe(0);
-    });
+        const reply = await proxyReply(origin.url, {
+          proxy: proxy.url,
+          keepalive: false,
+          tls: laxTls,
+          signal: AbortSignal.timeout(15_000),
+        });
+        // The proxy's reply never resolves as the origin's response, and the
+        // client does NOT tunnel through.
+        expect({ via: reply.via, status: reply.status }).toEqual({ via: "ERR_PROXY_TUNNEL", status });
+        // The origin must never have been reached.
+        expect(origin.requests.length).toBe(0);
+      },
+    );
   }
 
-  // A 3xx CONNECT reply is surfaced, not followed (already covered for 307
+  // A 3xx CONNECT reply rejects and is not followed (already covered for 307
   // in proxy.test.ts; here we add 301/302 and assert the Location is not
   // interpreted).
   for (const status of [301, 302] as const) {
@@ -79,9 +98,12 @@ describe("CONNECT failure status", () => {
         connectReplyHeaders: { Location: bait.url },
       });
 
-      const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
-      expect(res.status).toBe(status);
-      expect(res.headers.get("location")).toBe(bait.url);
+      const reply = await proxyReply(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
+      expect({ via: reply.via, status: reply.status, location: reply.headers.get("location") }).toEqual({
+        via: "ERR_PROXY_TUNNEL",
+        status,
+        location: bait.url,
+      });
       expect(bait.requests.length).toBe(0);
       expect(origin.requests.length).toBe(0);
     });
@@ -153,13 +175,13 @@ describe("upstream unreachable via proxy", () => {
 
       // Point at a refused port directly — the client will CONNECT to it,
       // the proxy will fail to dial, and return 502.
-      const res = await fetch(`https://127.0.0.1:${dead.port}/`, {
+      const reply = await proxyReply(`https://127.0.0.1:${dead.port}/`, {
         proxy: proxy.url,
         keepalive: false,
         tls: laxTls,
         signal: AbortSignal.timeout(15_000),
       });
-      expect(res.status).toBe(502);
+      expect({ via: reply.via, status: reply.status }).toEqual({ via: "ERR_PROXY_TUNNEL", status: 502 });
     });
 
     test.concurrent(`${proxyTls ? "https" : "http"}-proxy, absolute-form upstream refused → 502`, async () => {
@@ -193,9 +215,12 @@ describe("proxy authentication", () => {
         tls: proxyTls,
         auth: { user: "alice", pass: "s3cret" },
       });
-      const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
-      expect(res.status).toBe(407);
-      expect(res.headers.get("proxy-authenticate")).toContain("Basic");
+      const reply = await proxyReply(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
+      expect({ via: reply.via, status: reply.status }).toEqual({
+        via: originTls ? "ERR_PROXY_TUNNEL" : "response",
+        status: 407,
+      });
+      expect(reply.headers.get("proxy-authenticate")).toContain("Basic");
       expect(origin.requests.length).toBe(0);
     });
 
@@ -205,12 +230,15 @@ describe("proxy authentication", () => {
         tls: proxyTls,
         auth: { user: "alice", pass: "s3cret" },
       });
-      const res = await fetch(origin.url, {
+      const reply = await proxyReply(origin.url, {
         proxy: `${proxyTls ? "https" : "http"}://alice:wrong@127.0.0.1:${proxy.port}`,
         keepalive: false,
         tls: laxTls,
       });
-      expect(res.status).toBe(403);
+      expect({ via: reply.via, status: reply.status }).toEqual({
+        via: originTls ? "ERR_PROXY_TUNNEL" : "response",
+        status: 403,
+      });
       expect(origin.requests.length).toBe(0);
     });
 

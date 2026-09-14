@@ -348,3 +348,29 @@ if (typeof process !== "undefined") {
   // @ts-expect-error - Not a protocol the runtime accepts
   fetch("https://example.com", { protocol: "spdy" });
 }
+
+{
+  const context = new Bun.FetchContext({
+    tls: { ca: "ca", rejectUnauthorized: true, checkServerIdentity: () => undefined },
+    proxy: { url: "http://proxy:8080", headers: { "x-proxy": "1" }, respectNoProxy: false },
+    lookup: async (hostname, { port }) => ({ address: hostname.length > port ? "127.0.0.1" : "::1", family: 4 }),
+    keepAlive: { idleTimeout: 30, maxIdleSockets: 4 },
+    onStats(stats) {
+      const sent: number = stats.requestBodyBytesSent + stats.bytesWritten;
+      const flags: boolean = stats.responseStarted && stats.socketReused;
+      const where: string | null = stats.remoteAddress;
+      (void sent, flags, where);
+    },
+  });
+  fetch("https://example.com", { context });
+  fetch("https://example.com", { context, proxy: false });
+  fetch("https://example.com", { proxy: false, lookup: () => "127.0.0.1", onStats: () => {} });
+  fetch("https://example.com", { proxy: new URL("http://proxy:8080") });
+  new Bun.FetchContext({ proxy: false, keepAlive: false, unix: "/tmp/sock" });
+  context.close();
+  context[Symbol.dispose]();
+  // @ts-expect-error not a context
+  fetch("https://example.com", { context: {} });
+  // @ts-expect-error `true` does not name a proxy
+  fetch("https://example.com", { proxy: true });
+}

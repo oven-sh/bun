@@ -406,6 +406,8 @@ public:
         Bun__HTTPRequestContextDebugMuxTLS__onResolveStream,
         Bun__FetchTasklet__onResolveRequestStream,
         Bun__FetchTasklet__onRejectRequestStream,
+        Bun__FetchTasklet__onResolveLookup,
+        Bun__FetchTasklet__onRejectLookup,
         Bun__S3UploadStream__onResolveStream,
         Bun__S3UploadStream__onRejectStream,
         Bun__HTMLRewriter__onResolveInputStream,

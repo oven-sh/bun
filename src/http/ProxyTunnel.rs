@@ -354,16 +354,15 @@ fn on_handshake(
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake success");
         // handshake completed but we may have ssl errors
         this.flags.did_have_handshaking_error = handshake_error.error_no != 0;
-        if this.flags.reject_unauthorized {
-            // only reject the connection if reject_unauthorized == true
-            if this.flags.did_have_handshaking_error {
-                let err = crate::get_cert_error_from_no(handshake_error.error_no);
-                // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
-                // fresh `&mut *ctx` does not alias us.
-                ProxyTunnel::close_from_callback(proxy_nn, err);
-                return;
-            }
-
+        // only reject the connection if reject_unauthorized == true
+        if this.flags.reject_unauthorized && this.flags.did_have_handshaking_error {
+            let err = crate::get_cert_error_from_no(handshake_error.error_no);
+            // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
+            // fresh `&mut *ctx` does not alias us.
+            ProxyTunnel::close_from_callback(proxy_nn, err);
+            return;
+        }
+        if this.wants_server_identity_check() {
             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
             // Assert the wrapper is Some, then silently return
             // (no debug_assert) on the ssl-None sub-case.
@@ -427,9 +426,8 @@ fn on_handshake(
             ProxyTunnel::close_from_callback(proxy_nn, err);
             return;
         }
-        // if handshake_success it self is false, this means that the connection was rejected
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::ConnectionRefused);
+        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::TLSHandshakeFailed);
         return;
     }
 }

@@ -33,6 +33,8 @@ pub struct ClientSession {
     pub(crate) hostname: Vec<u8>,
     pub(crate) port: u16,
     pub(crate) reject_unauthorized: bool,
+    /// The fetch context whose requests may share this connection.
+    pub(crate) pool_id: u64,
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,
     pub(crate) registry_index: u32,
@@ -50,6 +52,7 @@ impl ClientSession {
         hostname: Vec<u8>,
         port: u16,
         reject_unauthorized: bool,
+        pool_id: u64,
     ) -> *mut ClientSession {
         bun_core::heap::into_raw(Box::new(ClientSession {
             ref_count: Cell::new(1),
@@ -57,6 +60,7 @@ impl ClientSession {
             hostname,
             port,
             reject_unauthorized,
+            pool_id,
             handshake_done: false,
             closed: false,
             registry_index: u32::MAX,
@@ -64,9 +68,16 @@ impl ClientSession {
         }))
     }
 
-    pub(crate) fn matches(&self, hostname: &[u8], port: u16, reject_unauthorized: bool) -> bool {
+    pub(crate) fn matches(
+        &self,
+        hostname: &[u8],
+        port: u16,
+        reject_unauthorized: bool,
+        pool_id: u64,
+    ) -> bool {
         !self.closed
             && self.port == port
+            && self.pool_id == pool_id
             && self.reject_unauthorized == reject_unauthorized
             && strings::eql_long(&self.hostname, hostname, true)
     }
@@ -82,6 +93,19 @@ impl ClientSession {
     fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
         // Route through the shared [`quic_socket_mut`] accessor; see INVARIANT.
         self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
+    }
+
+    /// `on_conn_close` runs from a later engine tick, so the registry is not
+    /// touched from here.
+    pub(crate) fn close_if_idle(&mut self, pool_id: u64) {
+        if self.pool_id != pool_id || self.closed || !self.pending.is_empty() {
+            return;
+        }
+        if let Some(qs) = self.qsocket_mut() {
+            // No later request may pick a connection that is going away.
+            self.closed = true;
+            qs.close();
+        }
     }
 
     pub(crate) fn has_headroom(&self) -> bool {

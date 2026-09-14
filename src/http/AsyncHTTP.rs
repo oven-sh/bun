@@ -106,25 +106,26 @@ fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 
-/// Build the `Proxy-Authorization: Basic <b64(user:pass)>` header value.
-/// Returns `None` (and logs) if percent-decoding fails.
-pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
-    if proxy.username.is_empty() && proxy.password.is_empty() {
+/// The `Basic <b64(user:pass)>` credentials for a URL's userinfo, as sent in
+/// `Authorization` / `Proxy-Authorization`. `None` when the URL has no
+/// userinfo, or (logged) when it does not percent-decode.
+pub fn basic_authorization(url: &URL<'_>) -> Option<Vec<u8>> {
+    if url.username.is_empty() && url.password.is_empty() {
         return None;
     }
 
-    let username = match PercentEncoding::decode_alloc(proxy.username) {
+    let username = match PercentEncoding::decode_alloc(url.username) {
         Ok(u) => u,
         Err(err) => {
-            bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy username: {:?}", err);
+            bun_core::scoped_log!(AsyncHTTP, "failed to decode URL username: {:?}", err);
             return None;
         }
     };
 
-    let password = match PercentEncoding::decode_alloc(proxy.password) {
+    let password = match PercentEncoding::decode_alloc(url.password) {
         Ok(p) => p,
         Err(err) => {
-            bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
+            bun_core::scoped_log!(AsyncHTTP, "failed to decode URL password: {:?}", err);
             return None;
         }
     };
@@ -193,6 +194,9 @@ fn make_client<'a>(
         compress: None,
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
+        pool: crate::PoolOptions::default(),
+        lookup: crate::LookupState::Off,
+        stats: crate::ConnectionStats::default(),
     }
 }
 
@@ -254,6 +258,11 @@ pub struct Options<'a> {
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
     pub compress: Option<crate::compress_body::CompressOption>,
+    pub pool: crate::PoolOptions,
+    /// The owner resolves the host of every connection this request opens.
+    pub lookup: bool,
+    pub bypass_pool: bool,
+    pub collect_stats: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -485,6 +494,12 @@ impl<'a> AsyncHTTP<'a> {
         }
         this.client.compress = options.compress;
         this.client.proxy_settings = options.proxy_settings;
+        this.client.pool = options.pool;
+        this.client.flags.bypass_pool = options.bypass_pool;
+        this.client.flags.collect_stats = options.collect_stats;
+        if options.lookup {
+            this.client.lookup = crate::LookupState::Needed;
+        }
 
         // `client.proxy_authorization` stays `None` on the JS-thread original;
         // `on_start` derives it on the HTTP-thread clone so redirects can
@@ -630,6 +645,14 @@ impl<'a> AsyncHTTP<'a> {
         // SAFETY: see above — sole owner, callback completed.
         drop(unsafe { bun_core::heap::take(ctx.as_ptr()) });
         if let Some(err) = result.fail {
+            // The blocking callers are CLI commands that print only the error's name.
+            if let Some(reply) = &result.proxy_connect_response {
+                bun_core::pretty_errorln!(
+                    "<r><yellow>note<r>: the proxy answered CONNECT with {} {}",
+                    reply.response.status_code,
+                    bstr::BStr::new(reply.response.status),
+                );
+            }
             return Err(err);
         }
         let Some(metadata) = result.metadata else {
@@ -825,7 +848,7 @@ impl<'a> AsyncHTTP<'a> {
         // original's copy stays `None`.
         debug_assert!(self.client.proxy_authorization.is_none());
         if let Some(proxy) = &self.client.http_proxy {
-            self.client.proxy_authorization = build_proxy_authorization(proxy);
+            self.client.proxy_authorization = basic_authorization(proxy);
         }
 
         self.elapsed = http_thread_timer_read();

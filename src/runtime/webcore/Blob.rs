@@ -41,7 +41,7 @@ fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
         .as_mut()
         .transpiler
         .env_mut()
-        .get_http_proxy(true, None, None)
+        .get_http_proxy()
         .map(|p| p.href.to_vec())
 }
 
@@ -1395,9 +1395,7 @@ impl BlobExt for Blob {
             let path = s3.path();
             // SAFETY: bun_vm() never returns null for a Bun-owned global; `env`
             // is a live `*mut Loader` owned by the transpiler.
-            let proxy = unsafe {
-                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
-            };
+            let proxy = unsafe { (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy() };
             let proxy_url = proxy.map(|p| p.href);
 
             // When no JS overrides were supplied, hand the store's *base*
@@ -1596,9 +1594,8 @@ impl BlobExt for Blob {
             let path = s3.path();
             // SAFETY: `bun_vm()` returns the live per-global VM; `transpiler.env`
             // is the process-singleton dotenv loader, never null once init'd.
-            let proxy_url: Option<bun_url::URL<'_>> = unsafe {
-                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
-            };
+            let proxy_url: Option<bun_url::URL<'_>> =
+                unsafe { (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy() };
             // Copy the href out of the env map before any reentrant JS (the
             // `get_truthy`/credential getters below) can mutate `process.env`
             // and free the backing allocation.

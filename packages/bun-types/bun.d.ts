@@ -8773,6 +8773,187 @@ declare module "bun" {
   // ): number;
 
   /**
+   * What the last connection attempt of a `fetch()` did, as reported to
+   * {@link FetchContextOptions.onStats | onStats}. The counters restart on every
+   * redirect hop and on the automatic retry of a request whose reused
+   * keep-alive socket turned out to be closed.
+   */
+  interface FetchConnectionStats {
+    /**
+     * Request bytes handed to the socket: the request head plus
+     * {@link requestBodyBytesSent}. Counted before TLS encryption. For an `https:`
+     * request through a proxy this counts the tunneled request, not the `CONNECT`
+     * exchange. Over HTTP/3 the head is counted before header compression.
+     */
+    bytesWritten: number;
+    /**
+     * Request body bytes handed to the socket, as framed on the wire: after
+     * `compress`, and including chunked-encoding framing for a streamed body.
+     * Less than the length of the body means the upload did not completely
+     * leave this process.
+     */
+    requestBodyBytesSent: number;
+    /**
+     * Whether any byte of a response arrived on this connection.
+     */
+    responseStarted: boolean;
+    /**
+     * Whether the request went out on a keep-alive connection an earlier request
+     * opened, rather than on a new one.
+     */
+    socketReused: boolean;
+    /**
+     * IP address of the peer the socket connected to (the proxy's, when there is
+     * one). `null` for a Unix socket, or when no connection was established.
+     */
+    remoteAddress: string | null;
+    /** Port of the peer the socket connected to, or `null`. */
+    remotePort: number | null;
+    /** Address family of {@link remoteAddress}, or `null`. */
+    remoteFamily: "IPv4" | "IPv6" | null;
+  }
+
+  /**
+   * Resolves the host of a connection `fetch()` is about to open. Return the IP
+   * address to dial: a string, an object with an `address` (what
+   * `dns.promises.lookup` resolves to), or an array of those, of which the first
+   * entry is used. The function may be `async`.
+   *
+   * The URL is not rewritten. The `Host` header, TLS server name, certificate
+   * verification and `NO_PROXY` matching keep using the original hostname. When
+   * the request goes through a proxy, the host being dialed is the proxy's.
+   *
+   * @param hostname The host about to be dialed, which can be an IP literal (an IPv6 one without its brackets)
+   * @param options The port about to be dialed
+   */
+  type FetchLookupFunction = (
+    hostname: string,
+    options: { port: number },
+  ) =>
+    | string
+    | { address: string; family?: number | undefined }
+    | Array<string | { address: string; family?: number | undefined }>
+    | Promise<
+        | string
+        | { address: string; family?: number | undefined }
+        | Array<string | { address: string; family?: number | undefined }>
+      >;
+
+  /**
+   * The proxy a `fetch()` uses.
+   *
+   * - A URL string, a `URL`, or `{ url, headers, respectNoProxy }` selects that proxy.
+   * - `false` connects directly, even when `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` are set.
+   * - `undefined` uses the proxy environment variables.
+   */
+  type FetchProxyOption =
+    | string
+    | URL
+    | false
+    | {
+        /**
+         * The proxy URL, as a string or a `URL`.
+         */
+        url: string | URL;
+        /**
+         * Custom headers to send to the proxy server.
+         * These headers are sent in the CONNECT request (for HTTPS targets)
+         * or in the proxy request (for HTTP targets).
+         */
+        headers?: HeadersInit | undefined;
+        /**
+         * Whether hosts listed in `NO_PROXY` / `no_proxy` bypass this proxy.
+         * Set to `false` to send every request through the proxy.
+         *
+         * @default true
+         */
+        respectNoProxy?: boolean | undefined;
+      };
+
+  interface FetchContextOptions {
+    /**
+     * TLS options for the connections of this context. A request that passes
+     * its own `tls` uses that instead, as a whole.
+     *
+     * A `checkServerIdentity` given here runs once per connection, and the
+     * connection is then shared by the requests of this context.
+     */
+    tls?: BunFetchRequestInitTLS | undefined;
+    /**
+     * The proxy for the requests of this context.
+     */
+    proxy?: FetchProxyOption | undefined;
+    /**
+     * Resolves the host of every connection this context opens, including the
+     * connections of redirects. It runs for each request, before a pooled
+     * connection is considered: a request only reuses a connection that was
+     * dialed to the address `lookup` returned for it.
+     *
+     * Not supported together with `protocol: "http2"` or `"http3"`.
+     */
+    lookup?: FetchLookupFunction | undefined;
+    /**
+     * Connection reuse. `false` closes every connection after its response.
+     * The limits do not apply to HTTP/3 connections.
+     *
+     * @default true
+     */
+    keepAlive?:
+      | boolean
+      | {
+          /**
+           * Seconds an idle connection stays in the pool before it is closed.
+           *
+           * @default 300
+           */
+          idleTimeout?: number | undefined;
+          /**
+           * Most idle connections this context keeps per kind of connection
+           * (plain, TLS, each distinct `tls` configuration, Unix socket). When
+           * one more is released, the longest-idle one is closed.
+           */
+          maxIdleSockets?: number | undefined;
+        }
+      | undefined;
+    /**
+     * Send the requests of this context over a Unix socket.
+     */
+    unix?: string | undefined;
+    /**
+     * Called once per request that reached the HTTP client, when the
+     * connection is done with it: the response body ended, or the request failed
+     * or was aborted. For a rejected `fetch()` it runs before the rejection is
+     * delivered.
+     */
+    onStats?: ((stats: FetchConnectionStats) => void) | undefined;
+  }
+
+  /**
+   * Connection settings shared by the `fetch()` calls that name it, and the
+   * keep-alive connection pool they share. Connections are never shared between
+   * two contexts, or between a context and plain `fetch()`.
+   *
+   * @example
+   * ```ts
+   * const context = new Bun.FetchContext({
+   *   proxy: { url: "http://proxy.internal:8080", respectNoProxy: false },
+   *   tls: { ca: await Bun.file("corp-ca.pem").text() },
+   * });
+   *
+   * const response = await fetch("https://example.com", { context });
+   * ```
+   */
+  class FetchContext {
+    constructor(options?: FetchContextOptions);
+    /**
+     * Close the idle connections in this context's pool. Requests in flight
+     * finish, and the context stays usable.
+     */
+    close(): void;
+    [Symbol.dispose](): void;
+  }
+
+  /**
    * Resolve routes against a directory of files using Next.js-style (`pages`
    * directory) conventions.
    */

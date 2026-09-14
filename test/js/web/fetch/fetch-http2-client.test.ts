@@ -1737,6 +1737,37 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test("protocol:'http2' with rejectUnauthorized: false goes ahead without an advisory checkServerIdentity", async () => {
+    await withH2Server(
+      (req, res) => {
+        res.writeHead(200);
+        res.end(req.httpVersion);
+      },
+      async url => {
+        await using proc = await spawnCapped({
+          cmd: [
+            bunExe(),
+            "--no-warnings",
+            "-e",
+            `let calls = 0;
+             const tls = { rejectUnauthorized: false, checkServerIdentity: () => void calls++ };
+             const r = await fetch("${url}", { protocol: "http2", tls });
+             console.log(r.status, await r.text(), calls);
+             // Enforced, it cannot run over h2, so the request is refused.
+             console.log(await fetch("${url}", { protocol: "http2", tls: { ...tls, rejectUnauthorized: true } }).then(r => r.status, e => e.code));`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim().split("\n")).toEqual(["200 2.0 0", "HTTP2Unsupported"]);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test.each([
     ["small (shared-buffer fast path)", 32 * 1024],
     ["large (zlib-streaming spill path)", 600 * 1024],

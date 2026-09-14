@@ -655,21 +655,18 @@ impl<'a> URL<'a> {
                 let is_relative_path = !is_protocol_relative && base[0] == b'/';
 
                 if !is_relative_path {
-                    // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
+                    // Without a protocol it's ambiguous whether a colon is a port or a username,
+                    // see https://github.com/oven-sh/bun/issues/1390. With one, the userinfo is
+                    // what precedes the last `@` of the authority.
                     if offset > 0 {
-                        // see https://github.com/oven-sh/bun/issues/1390
-                        let first_at =
-                            strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);
-                        let first_colon =
-                            strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);
-
-                        if first_at > first_colon
-                            && first_at
-                                < strings::index_of_char(&base[offset as usize..], b'/')
-                                    .unwrap_or(u32::MAX)
-                        {
-                            offset += url.parse_username(&base[offset as usize..]).unwrap_or(0);
-                            offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                        let rest = &base[offset as usize..];
+                        let authority =
+                            &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+                        if let Some(at) = strings::last_index_of_char(authority, b'@') {
+                            let userinfo = &authority[..at];
+                            (url.username, url.password) =
+                                strings::split_once_char(userinfo, b':').unwrap_or((userinfo, b""));
+                            offset += u32::try_from(at + 1).expect("int cast");
                         }
                     }
 
@@ -786,30 +783,6 @@ impl<'a> URL<'a> {
         None
     }
 
-    pub(crate) fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
-        // reset it
-        self.username = b"";
-
-        if str.len() < b"@".len() {
-            return None;
-        }
-        for i in 0..str.len() {
-            match str[i] {
-                b':' | b'@' => {
-                    // we found a username, everything before this point in the slice is a username
-                    self.username = &str[0..i];
-                    return Some(u32::try_from(i + 1).expect("int cast"));
-                }
-                // if we reach a slash or "?", there's no username
-                b'?' | b'/' => {
-                    return None;
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
     pub(crate) fn parse_password(&mut self, str: &'a [u8]) -> Option<u32> {
         // reset it
         self.password = b"";
@@ -919,6 +892,18 @@ impl<'a> URL<'a> {
 
         Some(i)
     }
+}
+
+/// `URL::hostname` keeps an IPv6 literal's brackets; resolvers, certificates
+/// and SNI name the bare address. "[::1]" -> "::1"; anything else, such as
+/// "[example.com]", passes through verbatim, as in Node.
+pub fn strip_ipv6_brackets(hostname: &[u8]) -> &[u8] {
+    if let [b'[', inner @ .., b']'] = hostname {
+        if bun_core::ip_address::is_ipv6_address(inner) {
+            return inner;
+        }
+    }
+    hostname
 }
 
 // ══════════════════════════════════════════════════════════════════════════

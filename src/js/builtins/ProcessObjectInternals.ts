@@ -491,8 +491,8 @@ export function windowsEnv(
     // name-matching TZ here survives a prior `delete process.env.TZ`.
     const coerced = coerceForWrite(k, value);
     // Track the key for enumeration if it isn't already there. Don't gate on
-    // `k in internalEnv`: the proxy accessors (HTTP_PROXY, ...) always exist
-    // as DontEnum CustomAccessors even when the variable was never set.
+    // `k in internalEnv`: the TZ and NODE_TLS_REJECT_UNAUTHORIZED accessors
+    // always exist as DontEnum CustomAccessors even when the variable was never set.
     if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
       envMapList.push(p);
     }

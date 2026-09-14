@@ -480,7 +480,7 @@ impl S3BlobStatTask {
             path,
             S3BlobStatTask::on_s3_exists_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
+            env.get_http_proxy().map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
@@ -507,7 +507,7 @@ impl S3BlobStatTask {
             path,
             S3BlobStatTask::on_s3_stat_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
+            env.get_http_proxy().map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
@@ -534,7 +534,7 @@ impl S3BlobStatTask {
             path,
             S3BlobStatTask::on_s3_size_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
+            env.get_http_proxy().map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)

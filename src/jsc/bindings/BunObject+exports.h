@@ -7,6 +7,7 @@
     macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
+    macro(FetchContext) \
     macro(FileSystemRouter) \
     macro(Glob) \
     macro(Image) \

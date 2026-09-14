@@ -311,4 +311,87 @@ describe("css", () => {
       expect(css).toContain(`.${betaOwn}`);
     },
   });
+
+  // Composing two classes from different files that both declare a property is
+  // undefined, so the bundler reports it. A class's properties are collected one
+  // style rule at a time, so a class written as several rules has to keep the
+  // custom properties of all of them, not only of the rule parsed last.
+  const composesConflictCases = [
+    {
+      name: "EveryRuleOfTheComposingClass",
+      styles: /* css */ `
+        .button { --x: 2; composes: other from "./other.module.css" }
+        .button { --y: 3 }
+      `,
+      other: /* css */ `.other { --x: 1; --y: 1 }`,
+      errors: [
+        "The value of --x in the class button is undefined.",
+        "The value of --y in the class button is undefined.",
+      ],
+    },
+    {
+      name: "RuleInsideAtMedia",
+      styles: /* css */ `
+        .button { --x: 2; composes: other from "./other.module.css" }
+        @media (min-width: 1px) {
+          .button { --y: 3 }
+        }
+      `,
+      other: /* css */ `.other { --x: 1; --y: 1 }`,
+      errors: [
+        "The value of --x in the class button is undefined.",
+        "The value of --y in the class button is undefined.",
+      ],
+    },
+    {
+      name: "LaterRuleWithoutCustomProperties",
+      styles: /* css */ `
+        .button { --x: 2; composes: other from "./other.module.css" }
+        .button { margin: 0 }
+      `,
+      other: /* css */ `.other { --x: 1; margin: 1px }`,
+      errors: [
+        "The value of --x in the class button is undefined.",
+        "The value of margin in the class button is undefined.",
+      ],
+    },
+    {
+      name: "EveryRuleOfTheComposedClass",
+      styles: /* css */ `.button { --x: 2; composes: other from "./other.module.css" }`,
+      other: /* css */ `
+        .other { --x: 1 }
+        .other { color: red }
+      `,
+      errors: ["The value of --x in the class button is undefined."],
+    },
+    {
+      name: "DisjointPropertiesAcrossRules",
+      styles: /* css */ `
+        .button { --x: 2; composes: other from "./other.module.css" }
+        .button { --y: 3 }
+      `,
+      other: /* css */ `
+        .other { --z: 1 }
+        .other { --w: 1 }
+      `,
+      errors: [],
+    },
+  ];
+
+  for (const { name, styles, other, errors } of composesConflictCases) {
+    itBundled(`css-module/ComposesConflict${name}`, {
+      files: {
+        "/entry.js": `
+          import styles from "./styles.module.css";
+          console.log(styles);
+        `,
+        "/styles.module.css": styles,
+        "/other.module.css": other,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      // Without bundleErrors, any error-level log fails the test.
+      bundleErrors: errors.length ? { "/styles.module.css": errors } : undefined,
+    });
+  }
 });

@@ -471,7 +471,15 @@ it.skipIf(isWindows)(
 function openPaths(pid: number): string[] {
   if (isLinux) {
     const fdDir = `/proc/${pid}/fd`;
-    return readdirSync(fdDir).map(fd => readlinkSync(join(fdDir, fd)));
+    return readdirSync(fdDir).flatMap(fd => {
+      // The process is live, so an fd listed a moment ago can be closed by
+      // the time it is read. A closed fd is not a held path.
+      try {
+        return [readlinkSync(join(fdDir, fd))];
+      } catch {
+        return [];
+      }
+    });
   }
   const out = Bun.spawnSync({ cmd: ["lsof", "-Fn", "-p", String(pid)], stdout: "pipe", stderr: "ignore" });
   return out.stdout

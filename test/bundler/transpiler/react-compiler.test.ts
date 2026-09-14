@@ -843,6 +843,191 @@ describe("bundler", () => {
     },
   });
 
+  // Stub react packages for the two tests below. A compiled function calls `c`
+  // once per render, so the second number of each pair is 1 for a compiled
+  // function and 0 for a function the compiler left as written.
+  const countingReact = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": /* js */ `
+      exports.useMemo = fn => fn();
+      exports.useCallback = fn => fn;
+    `,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      let count = 0;
+      exports.c = size => {
+        count++;
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+      exports.calls = () => count;
+    `,
+  };
+  const renderWithCallCount = /* js */ `
+    function render(fn, props) {
+      const before = calls();
+      const result = fn(props);
+      return [result.props, calls() - before];
+    }
+  `;
+
+  // Dead code elimination removes a load whose value is unused. When that
+  // empties a try body, PruneMaybeThrows drops the edge to the catch block, and
+  // the phi that joins a local the catch block assigns keeps an operand for a
+  // block that is gone. Babel raises `Invariant: Found a block with a single
+  // predecessor but where a phi has multiple (2) operands` and skips that one
+  // function. `window` is not defined here, so a function left as written
+  // takes its catch path. The last two functions are the controls.
+  itBundled("react-compiler/DeadTryBodyWithCatchAssignmentSkipsOnlyThatFunction", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useMemo } from "react";
+        import { calls } from "react/compiler-runtime";
+
+        function DeadLoad() {
+          let supported = true;
+          try {
+            window.localStorage;
+          } catch {
+            supported = false;
+          }
+          return <span>{supported ? "on" : "off"}</span>;
+        }
+        function DeadLoadWithCatchBinding() {
+          let message = "none";
+          try {
+            const { localStorage } = window;
+          } catch (e) {
+            message = e.name;
+          }
+          return <span>{message}</span>;
+        }
+        function DeadLoadInUseMemo() {
+          const supported = useMemo(() => {
+            let ok = true;
+            try {
+              typeof window.localStorage;
+            } catch {
+              ok = false;
+            }
+            return ok;
+          }, []);
+          return <span>{supported ? "on" : "off"}</span>;
+        }
+        function DeadOnlyInProduction(props) {
+          let ok = true;
+          try {
+            if (process.env.NODE_ENV !== "production") {
+              validate(props);
+            }
+            const label = props.label;
+          } catch {
+            ok = false;
+          }
+          return <span>{ok ? "on" : "off"}</span>;
+        }
+        function CallInTryBody() {
+          let supported = true;
+          try {
+            window.localStorage.getItem("key");
+          } catch {
+            supported = false;
+          }
+          return <span>{supported ? "on" : "off"}</span>;
+        }
+        function Plain({ name }) {
+          return <div>Hello {name}</div>;
+        }
+
+        ${renderWithCallCount}
+        console.log(JSON.stringify({
+          DeadLoad: render(DeadLoad),
+          DeadLoadWithCatchBinding: render(DeadLoadWithCatchBinding),
+          DeadLoadInUseMemo: render(DeadLoadInUseMemo),
+          DeadOnlyInProduction: render(DeadOnlyInProduction, { label: "x" }),
+          CallInTryBody: render(CallInTryBody),
+          Plain: render(Plain, { name: "bun" }),
+        }));
+      `,
+      ...countingReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    define: { "process.env.NODE_ENV": '"production"' },
+    run: {
+      stdout: JSON.stringify({
+        DeadLoad: [{ children: "off" }, 0],
+        DeadLoadWithCatchBinding: [{ children: "ReferenceError" }, 0],
+        DeadLoadInUseMemo: [{ children: "off" }, 0],
+        DeadOnlyInProduction: [{ children: "on" }, 0],
+        CallInTryBody: [{ children: "off" }, 1],
+        Plain: [{ children: ["Hello ", "bun"] }, 1],
+      }),
+    },
+  });
+
+  // DropManualMemoization puts a StartMemoize marker after the load of
+  // `useMemo` / `useCallback` and a FinishMemoize marker after the call. A
+  // manual memo call in the arguments of another one nests the two pairs, and
+  // ValidateNoSetStateInRender has the invariant `Unexpected nested StartMemoize
+  // instructions`. Babel leaves each of these functions as written: 1.0.0
+  // raises that invariant for the third-argument form and rejects a call in a
+  // dependency list one pass earlier. The last function is the control.
+  itBundled("react-compiler/NestedManualMemoCallSkipsOnlyThatFunction", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useCallback, useMemo } from "react";
+        import * as React from "react";
+        import { calls } from "react/compiler-runtime";
+
+        function MemoInDependencyList({ a, b }) {
+          const x = useMemo(() => a + b, [a, useMemo(() => b * 2, [b])]);
+          return <div>{x}</div>;
+        }
+        function MemoInCallbackDependencyList(props) {
+          const f = useCallback(() => props.a, [useMemo(() => props.a, [props.a])]);
+          return <div>{f()}</div>;
+        }
+        function NamespaceMemoInDependencyList({ a, b }) {
+          const x = React.useMemo(() => a + b, [a, React.useMemo(() => b * 2, [b])]);
+          return <div>{x}</div>;
+        }
+        function MemoAsThirdArgument({ a, b }) {
+          const x = useMemo(() => a, [a], useMemo(() => b, [b]));
+          return <div>{x}</div>;
+        }
+        function SequentialMemos({ a, b }) {
+          const twice = useMemo(() => b * 2, [b]);
+          const x = useMemo(() => a + twice, [a, twice]);
+          return <div>{x}</div>;
+        }
+
+        ${renderWithCallCount}
+        console.log(JSON.stringify({
+          MemoInDependencyList: render(MemoInDependencyList, { a: 1, b: 2 }),
+          MemoInCallbackDependencyList: render(MemoInCallbackDependencyList, { a: 5 }),
+          NamespaceMemoInDependencyList: render(NamespaceMemoInDependencyList, { a: 1, b: 2 }),
+          MemoAsThirdArgument: render(MemoAsThirdArgument, { a: 1, b: 2 }),
+          SequentialMemos: render(SequentialMemos, { a: 1, b: 2 }),
+        }));
+      `,
+      ...countingReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        MemoInDependencyList: [{ children: 3 }, 0],
+        MemoInCallbackDependencyList: [{ children: 5 }, 0],
+        NamespaceMemoInDependencyList: [{ children: 3 }, 0],
+        MemoAsThirdArgument: [{ children: 1 }, 0],
+        SequentialMemos: [{ children: 5 }, 1],
+      }),
+    },
+  });
+
   // A compiled component that needs zero memo slots must not import the
   // runtime. The import is registered from codegen next to the `_c(N)` call,
   // so a body with nothing to memoize leaves `react/compiler-runtime` out.

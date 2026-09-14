@@ -9,7 +9,9 @@
 
 use std::collections::HashSet;
 
-use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
+use crate::diagnostics::{
+    CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, cold_invariant,
+};
 use crate::hir::dominator::compute_unconditional_blocks;
 use crate::hir::environment::Environment;
 use crate::hir::{
@@ -92,18 +94,34 @@ fn validate_impl(
                         }
                     }
                 }
-                InstructionValue::StartMemoize { manual_memo_id, .. } => {
-                    assert!(
-                        active_manual_memo_id.is_none(),
-                        "Unexpected nested StartMemoize instructions"
-                    );
+                InstructionValue::StartMemoize {
+                    manual_memo_id,
+                    loc,
+                    ..
+                } => {
+                    if active_manual_memo_id.is_some() {
+                        return Err(cold_invariant(
+                            "Unexpected nested StartMemoize instructions",
+                            None,
+                            *loc,
+                        )
+                        .into());
+                    }
                     active_manual_memo_id = Some(*manual_memo_id);
                 }
-                InstructionValue::FinishMemoize { manual_memo_id, .. } => {
-                    assert!(
-                        active_manual_memo_id == Some(*manual_memo_id),
-                        "Expected FinishMemoize to align with previous StartMemoize instruction"
-                    );
+                InstructionValue::FinishMemoize {
+                    manual_memo_id,
+                    loc,
+                    ..
+                } => {
+                    if active_manual_memo_id != Some(*manual_memo_id) {
+                        return Err(cold_invariant(
+                            "Expected FinishMemoize to align with previous StartMemoize instruction",
+                            None,
+                            *loc,
+                        )
+                        .into());
+                    }
                     active_manual_memo_id = None;
                 }
                 InstructionValue::CallExpression { callee, .. } => {

@@ -275,6 +275,7 @@ function CFunction(options) {
   const fn = nativeCFunction(options, identifier);
   if (Error.isError(fn)) throw fn;
   fn.close = closeJSCFFICFunction;
+  fn[Symbol.dispose] = closeJSCFFICFunction;
   return fn;
 }
 

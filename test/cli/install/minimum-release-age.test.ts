@@ -15,6 +15,9 @@ setDefaultTimeout(1000 * 60 * 5);
 describe("minimum-release-age", () => {
   let mockRegistryServer: Server;
   let mockRegistryUrl: string;
+  // Every request the mock registry served, so tests can assert which manifests
+  // were fetched and whether the abbreviated or the full document was requested.
+  const registryRequests: { pathname: string; accept: string | null }[] = [];
   const currentTime = Date.now();
   const SECONDS_PER_DAY = 24 * 60 * 60;
   const MS_PER_SECOND = 1000;
@@ -85,6 +88,7 @@ describe("minimum-release-age", () => {
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
+        registryRequests.push({ pathname: url.pathname, accept: req.headers.get("accept") });
 
         // Special timestamp helpers for edge case packages
         const futureTime = new Date(currentTime + 7 * DAY_MS).toISOString();
@@ -936,6 +940,124 @@ describe("minimum-release-age", () => {
       expect(stderr.toLowerCase()).toMatch(
         /blocked.*npm.*minimal.*age.*gate|blocked.*minimum.*release.*age|too.*recent/,
       );
+    });
+  });
+
+  describe("exact version with a cached manifest", () => {
+    // An exact version can be resolved from a cached manifest without asking the
+    // registry again. An install without an age gate caches the abbreviated
+    // manifest, which (from the real registry as well as from this mock) has no
+    // publish times, so an age-gated install must not resolve from it. Each test
+    // uses its own cache directory and reads which manifest flavor was requested
+    // off the Accept header.
+    const minAgeArgs = ["--minimum-release-age", `${5 * SECONDS_PER_DAY}`];
+    const blockedMessage = /blocked by minimum-release-age|minimum release age/;
+
+    const project = (dependencies: Record<string, string>) => ({
+      "package.json": JSON.stringify({ name: "app", dependencies }),
+      ".npmrc": `registry=${mockRegistryUrl}`,
+    });
+
+    async function runWithCache(cwd: string, cacheDir: string, args: string[], { stale = false } = {}) {
+      const firstRequest = registryRequests.length;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args, "--no-verify"],
+        cwd,
+        env: {
+          ...bunEnv,
+          BUN_INSTALL_CACHE_DIR: cacheDir,
+          // BUN_MANIFEST_CACHE=1 treats every cached manifest as past its
+          // freshness window, which is the state the exact-version shortcut
+          // exists for.
+          ...(stale && { BUN_MANIFEST_CACHE: "1" }),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const manifestRequests = registryRequests
+        .slice(firstRequest)
+        .filter(({ pathname }) => pathname === "/regular-package")
+        .map(({ accept }) => (accept?.includes("application/vnd.npm.install-v1+json") ? "abbreviated" : "full"));
+      return { stdout, stderr, exitCode, manifestRequests };
+    }
+
+    test("too-recent exact version is blocked when only the abbreviated manifest is cached", async () => {
+      using cache = tempDir("abbreviated-cache", {});
+      using ungated = tempDir("abbreviated-ungated", project({ "regular-package": "3.0.0" }));
+      using gated = tempDir("abbreviated-gated", project({ "regular-package": "3.0.0" }));
+
+      const first = await runWithCache(String(ungated), String(cache), ["install"]);
+      expect(first.manifestRequests).toEqual(["abbreviated"]);
+      expect(first.exitCode).toBe(0);
+
+      const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs]);
+      expect(second.stderr).toMatch(blockedMessage);
+      expect(second.manifestRequests).toEqual(["full"]);
+      expect(await Bun.file(`${gated}/node_modules/regular-package/package.json`).exists()).toBe(false);
+      expect(second.exitCode).toBe(1);
+    });
+
+    test("old enough exact version installs after the full manifest is fetched", async () => {
+      using cache = tempDir("abbreviated-cache-old", {});
+      using ungated = tempDir("abbreviated-ungated-old", project({ "regular-package": "1.0.0" }));
+      using gated = tempDir("abbreviated-gated-old", project({ "regular-package": "1.0.0" }));
+
+      const first = await runWithCache(String(ungated), String(cache), ["install"]);
+      expect(first.manifestRequests).toEqual(["abbreviated"]);
+      expect(first.exitCode).toBe(0);
+
+      const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs]);
+      expect(second.manifestRequests).toEqual(["full"]);
+      expect(await Bun.file(`${gated}/bun.lock`).text()).toContain("regular-package@1.0.0");
+      expect(second.exitCode).toBe(0);
+    });
+
+    test("bun add of a too-recent exact version is blocked when only the abbreviated manifest is cached", async () => {
+      using cache = tempDir("abbreviated-cache-add", {});
+      using ungated = tempDir("abbreviated-ungated-add", project({ "regular-package": "3.0.0" }));
+      using gated = tempDir("abbreviated-gated-add", project({}));
+
+      const first = await runWithCache(String(ungated), String(cache), ["install"]);
+      expect(first.manifestRequests).toEqual(["abbreviated"]);
+      expect(first.exitCode).toBe(0);
+
+      const second = await runWithCache(String(gated), String(cache), ["add", "regular-package@3.0.0", ...minAgeArgs]);
+      expect(second.stderr).toMatch(blockedMessage);
+      expect(second.manifestRequests).toEqual(["full"]);
+      expect(await Bun.file(`${gated}/package.json`).json()).toEqual({ name: "app", dependencies: {} });
+      expect(second.exitCode).toBe(1);
+    });
+
+    test("old enough exact version still resolves from a stale full manifest without a request", async () => {
+      using cache = tempDir("full-cache", {});
+      using first = tempDir("full-first", project({ "regular-package": "1.0.0" }));
+      using second = tempDir("full-second", project({ "regular-package": "1.0.0" }));
+
+      const populate = await runWithCache(String(first), String(cache), ["install", ...minAgeArgs]);
+      expect(populate.manifestRequests).toEqual(["full"]);
+      expect(populate.exitCode).toBe(0);
+
+      const fromCache = await runWithCache(String(second), String(cache), ["install", ...minAgeArgs], { stale: true });
+      expect(fromCache.manifestRequests).toEqual([]);
+      expect(await Bun.file(`${second}/bun.lock`).text()).toContain("regular-package@1.0.0");
+      expect(fromCache.exitCode).toBe(0);
+    });
+
+    test("too-recent exact version is still blocked by a stale full manifest without a request", async () => {
+      using cache = tempDir("full-cache-blocked", {});
+      using first = tempDir("full-first-blocked", project({ "regular-package": "1.0.0" }));
+      using second = tempDir("full-second-blocked", project({ "regular-package": "3.0.0" }));
+
+      const populate = await runWithCache(String(first), String(cache), ["install", ...minAgeArgs]);
+      expect(populate.manifestRequests).toEqual(["full"]);
+      expect(populate.exitCode).toBe(0);
+
+      const fromCache = await runWithCache(String(second), String(cache), ["install", ...minAgeArgs], { stale: true });
+      expect(fromCache.stderr).toMatch(blockedMessage);
+      expect(fromCache.manifestRequests).toEqual([]);
+      expect(await Bun.file(`${second}/node_modules/regular-package/package.json`).exists()).toBe(false);
+      expect(fromCache.exitCode).toBe(1);
     });
   });
 

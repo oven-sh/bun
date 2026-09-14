@@ -3785,5 +3785,12 @@
   "line": 1,
   "column": 36,
   "message": "invalid floating constant '10.13.4'"
+ },
+ {
+  "about": "unsupported constructs are diagnosed",
+  "source": "double x(void) { return __builtin_nans(\"\"); }\nint main(void) { return 0; }",
+  "line": 1,
+  "column": 25,
+  "message": "__builtin_nans: signalling NaNs are not supported"
  }
 ]

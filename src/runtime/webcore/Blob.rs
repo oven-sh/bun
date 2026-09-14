@@ -194,7 +194,7 @@ pub trait BlobExt {
     fn from_url_search_params(
         global_this: &JSGlobalObject,
         search_params: &mut jsc::URLSearchParams,
-    ) -> Blob
+    ) -> JsResult<Blob>
     where
         Self: Sized;
     fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob
@@ -839,9 +839,11 @@ impl BlobExt for Blob {
     fn from_url_search_params(
         global_this: &JSGlobalObject,
         search_params: &mut jsc::URLSearchParams,
-    ) -> Blob {
+    ) -> JsResult<Blob> {
         let mut converter = URLSearchParamsConverter { buf: Vec::new() };
-        search_params.to_string(&mut converter, URLSearchParamsConverter::convert);
+        if !search_params.to_string(&mut converter, URLSearchParamsConverter::convert) {
+            return Err(global_this.throw_out_of_memory());
+        }
         let store = Store::init(converter.buf);
         // SAFETY: `store` is the sole +1 on this freshly-allocated Store.
         unsafe {
@@ -859,7 +861,7 @@ impl BlobExt for Blob {
         let blob = Blob::init_with_store(store, global_this);
         blob.content_type.set(content_type);
         blob.content_type_was_set.set(true);
-        blob
+        Ok(blob)
     }
 
     fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {

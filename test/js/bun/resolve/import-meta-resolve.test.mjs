@@ -97,6 +97,19 @@ exact(() => import.meta.resolve("node:doesnotexist"), "node:doesnotexist");
 if (process?.versions?.bun) {
   exact(() => import.meta.resolve("bun:sqlite"), "bun:sqlite");
   exact(() => import.meta.resolve("bun:doesnotexist"), "bun:doesnotexist");
+
+  // A relative specifier is percent-encoded into a URL, which can be longer than a string can be (2 ** 31 - 1
+  // characters). That returned "". U+00E9 is one character and "%C3%A9" is six, and 1 MiB stands in for 2 ** 31 - 1.
+  const { setSyntheticAllocationLimitForTesting } = await import("bun:internal-for-testing");
+  wrapped("a specifier whose URL does not fit in a string", () => {
+    const specifier = "./" + Buffer.alloc(176_000, 0xe9).toString("latin1");
+    const previous = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    try {
+      assert.throws(() => import.meta.resolve(specifier), { name: "RangeError", message: "Out of memory" });
+    } finally {
+      setSyntheticAllocationLimitForTesting(previous);
+    }
+  });
 }
 
 fileUrlRelTo(() => import.meta.resolve("./something.node"), "./something.node");

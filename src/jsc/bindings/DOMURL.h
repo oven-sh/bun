@@ -57,7 +57,10 @@ public:
     ExceptionOr<void> setHref(const String&);
 
     URLSearchParams& searchParams();
-    void markSearchParamsDirty() { m_searchParamsDirty = true; }
+    // For a change of the searchParams that adds at most addedLength characters. True: the URL takes the pairs at its next read.
+    bool deferSearchParamsUpdate(uint64_t addedLength);
+    // Takes the pairs now. False if the URL does not fit in a String with them. It is then as it was.
+    bool updateFromSearchParams();
 
     size_t memoryCost() const
     {
@@ -77,11 +80,13 @@ private:
         flushPendingSearchParamsUpdate();
         return m_url;
     }
-    void setFullURL(const URL& fullURL) final { setHref(fullURL.string()); }
-    void flushPendingSearchParamsUpdate() const;
+    ExceptionOr<void> setFullURL(const URL&) final;
+    bool flushPendingSearchParamsUpdate() const;
 
     URL m_url;
     RefPtr<URLSearchParams> m_searchParams;
+    // At least what the changes since the last flush add to the query. deferSearchParamsUpdate() keeps it under 2^30.
+    mutable uint32_t m_pendingSearchParamsLength { 0 };
     uint16_t m_initialURLCostForGC { 0 };
     mutable bool m_searchParamsDirty { false };
 };

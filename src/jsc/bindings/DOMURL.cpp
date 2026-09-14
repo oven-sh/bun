@@ -28,9 +28,24 @@
 
 #include "NodeURLHelpers.h"
 #include "URLSearchParams.h"
+#include <wtf/URLParser.h>
 #include <wtf/text/StringCommon.h>
 
+extern "C" size_t Bun__stringSyntheticAllocationLimit;
+
+// WTF's URL parser keeps its own copy of the limit that setSyntheticAllocationLimitForTesting lowers.
+extern "C" void Bun__setURLMaximumLengthForTesting(size_t limit)
+{
+    WTF::URLParser::setMaximumLengthForTesting(static_cast<unsigned>(std::min<size_t>(limit, String::MaxLength)));
+}
+
 namespace WebCore {
+
+// A null input parses to the null URL too. Input that is not a URL gives an invalid URL that keeps the input.
+static bool isTooLong(const URL& parsed, const String& input)
+{
+    return doesNotFitInString(parsed) && !input.isNull();
+}
 
 // The WHATWG parser (WebKit) fast-paths all-ASCII hosts without validating
 // xn-- labels; Node's ada rejects invalid punycode in special-scheme hosts.
@@ -94,6 +109,8 @@ inline DOMURL::DOMURL(URL&& completeURL)
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 {
     URL completeURL { url };
+    if (isTooLong(completeURL, url)) [[unlikely]]
+        return Exception { OutOfMemoryError };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
         return Exception { InvalidURLError, url };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
@@ -103,17 +120,20 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base, cons
 {
     ASSERT(base.isValid() || base.isNull());
     URL completeURL { base, url };
+    if (isTooLong(completeURL, url)) [[unlikely]]
+        return Exception { OutOfMemoryError };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
         return Exception { InvalidURLError, url, baseInput };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
-// A null URL means the base did not parse or has an invalid host.
-static URL parseBase(const String& base, DOMURL::BaseURLCache* cache)
+// A null URL means the base did not parse or has an invalid host. tooLong tells a base that does not fit in a String from those.
+static URL parseBase(const String& base, DOMURL::BaseURLCache* cache, bool& tooLong)
 {
     if (cache && cache->input == base) [[likely]]
         return cache->url;
     URL baseURL { base };
+    tooLong = isTooLong(baseURL, base);
     if (!baseURL.isValid() || !hasValidParsedHost(baseURL, base))
         return {};
     if (cache) {
@@ -125,7 +145,10 @@ static URL parseBase(const String& base, DOMURL::BaseURLCache* cache)
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base, BaseURLCache* cache)
 {
-    URL baseURL = base.isNull() ? URL {} : parseBase(base, cache);
+    bool baseIsTooLong = false;
+    URL baseURL = base.isNull() ? URL {} : parseBase(base, cache, baseIsTooLong);
+    if (baseIsTooLong) [[unlikely]]
+        return Exception { OutOfMemoryError };
     if (!base.isNull() && !baseURL.isValid())
         return Exception { InvalidURLError, url, base };
     return create(url, baseURL, base);
@@ -135,7 +158,8 @@ DOMURL::~DOMURL() = default;
 
 static URL parseInternal(const String& url, const String& base, DOMURL::BaseURLCache* cache)
 {
-    URL baseURL = base.isNull() ? URL {} : parseBase(base, cache);
+    bool baseIsTooLong = false;
+    URL baseURL = base.isNull() ? URL {} : parseBase(base, cache, baseIsTooLong);
     if (!base.isNull() && !baseURL.isValid())
         return {};
     URL result { baseURL, url };
@@ -160,32 +184,82 @@ bool DOMURL::canParse(const String& url, const String& base, BaseURLCache* cache
 ExceptionOr<void> DOMURL::setHref(const String& url)
 {
     URL completeURL { URL {}, url };
+    if (isTooLong(completeURL, url)) [[unlikely]]
+        return Exception { OutOfMemoryError };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
         return Exception { InvalidURLError, url };
     m_url = WTF::move(completeURL);
     m_searchParamsDirty = false;
+    m_pendingSearchParamsLength = 0;
     if (m_searchParams)
         m_searchParams->updateFromAssociatedURL();
     return {};
+}
+
+// Per the URL spec the setters ignore a value that is not valid. They only report a URL that does not fit in a String.
+ExceptionOr<void> DOMURL::setFullURL(const URL& fullURL)
+{
+    if (doesNotFitInString(fullURL)) [[unlikely]]
+        return Exception { OutOfMemoryError };
+    auto result = setHref(fullURL.string());
+    if (result.hasException() && result.exception().code() != OutOfMemoryError)
+        return {};
+    return result;
+}
+
+static size_t maximumURLLength()
+{
+    return std::min<size_t>(String::MaxLength, Bun__stringSyntheticAllocationLimit);
+}
+
+// "(" in the query of the URL is "%28=" when the params serialize it.
+static constexpr uint64_t maximumGrowthOfSerializedQuery = 4;
+
+bool DOMURL::deferSearchParamsUpdate(uint64_t addedLength)
+{
+    uint64_t lengthBound = maximumGrowthOfSerializedQuery * m_url.string().length() + m_pendingSearchParamsLength + addedLength;
+    // Half of the limit leaves WTF::URLParser the room it reserves. Past it the URL takes the pairs at once, which is exact.
+    if (lengthBound > maximumURLLength() / 2) [[unlikely]]
+        return false;
+    m_pendingSearchParamsLength += static_cast<uint32_t>(addedLength);
+    m_searchParamsDirty = true;
+    return true;
+}
+
+bool DOMURL::updateFromSearchParams()
+{
+    bool wasDirty = std::exchange(m_searchParamsDirty, true);
+    if (flushPendingSearchParamsUpdate())
+        return true;
+    // URLSearchParams puts its pairs back, so the URL is as much behind them as it was.
+    m_searchParamsDirty = wasDirty;
+    return false;
 }
 
 // The update steps invoked on URLSearchParams::{append,set,delete,sort} set
 // m_searchParamsDirty instead of eagerly re-serializing m_url on every call so
 // that N appends through url.searchParams stay O(N) instead of O(N^2). All
 // reads of m_url (href/fullURL) call this first to reconcile.
-void DOMURL::flushPendingSearchParamsUpdate() const
+// False when the URL does not fit in a String with the new query. It then keeps the query it has.
+bool DOMURL::flushPendingSearchParamsUpdate() const
 {
     if (!m_searchParamsDirty) [[likely]]
-        return;
-    m_searchParamsDirty = false;
+        return true;
     auto* self = const_cast<DOMURL*>(this);
-    if (!self->m_searchParams)
-        return;
-    auto serialized = self->m_searchParams->toString();
-    if (serialized.isEmpty())
-        self->m_url.setQuery({});
-    else
-        self->m_url.setQuery(WTF::move(serialized));
+    if (self->m_searchParams) {
+        auto serialized = self->m_searchParams->toString();
+        if (serialized.hasException()) [[unlikely]]
+            return false;
+        String query = serialized.releaseReturnValue();
+        URL url = m_url;
+        url.setQuery(query.isEmpty() ? StringView() : StringView(query));
+        if (!url.isValid()) [[unlikely]]
+            return false;
+        self->m_url = WTF::move(url);
+    }
+    m_searchParamsDirty = false;
+    m_pendingSearchParamsLength = 0;
+    return true;
 }
 
 URLSearchParams& DOMURL::searchParams()

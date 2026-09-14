@@ -410,6 +410,11 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         }
 
         WTF::URL url(fromURL, specifier);
+        // The null URL is a URL that does not fit in a String.
+        if (url.isNull()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
     }
 

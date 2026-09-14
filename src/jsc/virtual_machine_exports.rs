@@ -316,9 +316,6 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
 
     let limit: usize =
         usize::try_from(arg.coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
-    let prev = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT
-        .swap(limit, core::sync::atomic::Ordering::Relaxed);
-    crate::virtual_machine::STRING_ALLOCATION_LIMIT
-        .store(limit, core::sync::atomic::Ordering::Relaxed);
+    let prev = crate::virtual_machine::set_synthetic_allocation_limit(limit);
     Ok(JSValue::js_number(prev as f64))
 }

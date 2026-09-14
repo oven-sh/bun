@@ -1,0 +1,9 @@
+[
+["guard_before == 0x1122334455667788LL && guard_after == 0x0fedcba987654321LL && !drifted", 1],
+["sums[0] == expected[0]", 1],
+["sums[1] == expected[1]", 1],
+["wide == expected_wide", 1],
+["sums[2] == expected[2]", 1],
+["sums[3] == expected[3]", 1],
+["round_and_round(1000, 100000) == (unsigned)(100000ull + 99999ull * 100000ull / 2)", 1]
+]

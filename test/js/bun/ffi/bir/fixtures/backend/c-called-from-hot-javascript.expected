@@ -1,0 +1,12 @@
+add_wrapping 0 -51481888
+above_two_to_the_31 0 1561748880
+real_arithmetic 0 -144295742672207780
+single_precision 0 3386143596843.5
+is_a_multiple 0 4779
+narrowing 0 1288078256
+wide 0 6839594826217486389
+memory 0 431665456
+loop_and_branch 0 1551468
+state 0 1
+calls_another 0 392163040
+too_big_to_inline 0 2675947571

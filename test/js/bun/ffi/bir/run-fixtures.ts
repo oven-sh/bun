@@ -142,6 +142,7 @@ function expectOutput(expectedPath: string, statusPath: string, result: Result) 
  * there is a `<name>.values.json` instead, report exactly the values that file lists (see `expectValues`).
  * A `<name>.ts` next to it is run (and built) instead when the C file is easier to check by calling into it.
  * A fixture whose `<name>.requires` names something this machine is not is reported as skipped.
+ * One with a `<name>.switches` is run once more for every setting that file lists, and must do the same.
  * `failing` names the fixtures the real backend gets wrong today, with the reason.
  */
 export function runFixtures(area: string, failing: Record<string, string> = {}) {
@@ -162,6 +163,16 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
           ? expectValues(valuesPath, result)
           : expectOutput(expectedPath, join(dir, `${name}.status`), result);
       declare.skipIf(!applies)(title, async () => check(await run(dir, [entry])));
+      // `<name>.switches`: settings of the backend (`BUN_JSC_useFFIInlineC=0`), one a line, none of which may
+      // change what the program does.
+      for (const setting of requirementIn(join(dir, `${name}.switches`))
+        ?.split("\n")
+        .filter(Boolean) ?? []) {
+        const at = setting.indexOf("=");
+        declare.skipIf(!applies)(`${title} (${setting})`, async () =>
+          check(await run(dir, [entry], { ...bunEnv, [setting.slice(0, at)]: setting.slice(at + 1) })),
+        );
+      }
       declare.skipIf(!applies)(`${title} (compiled)`, async () => {
         using out = tempDir(`bir-${name}`, {});
         const exe = join(String(out), isWindows ? "program.exe" : "program");

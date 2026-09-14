@@ -5007,7 +5007,7 @@ declare module "bun" {
 
   interface WebSocketEventMap {
     close: CloseEvent;
-    error: Event;
+    error: ErrorEvent;
     message: MessageEvent;
     open: Event;
   }
@@ -5089,7 +5089,7 @@ declare module "bun" {
     /**
      * Event handler for error event
      */
-    onerror: ((this: WebSocket, ev: Event) => any) | null;
+    onerror: ((this: WebSocket, ev: ErrorEvent) => any) | null;
 
     /**
      * Event handler for close event

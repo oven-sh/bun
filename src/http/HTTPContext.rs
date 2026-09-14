@@ -25,12 +25,14 @@ pub(crate) const MAX_KEEPALIVE_HOSTNAME: usize = 128;
 /// The const-generic `SSL` is load-bearing for monomorphization (gates hot
 /// inner-loop branches); do not demote to a runtime bool.
 #[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::destroy_between_ticks)]
 pub struct HTTPContext<const SSL: bool> {
     /// Heap-allocated custom-SSL contexts only. The cache entry in
     /// custom_ssl_context_map holds 1; each in-flight HTTPClient that set
     /// `client.custom_ssl_ctx = this` holds 1. Eviction drops the cache
     /// ref but the context survives until the last client releases it,
-    /// so deinit() never runs while a request is mid-flight. The global
+    /// so deinit() never runs while a request is mid-flight. The last deref
+    /// does not run it in place either, see `destroy_between_ticks`. The global
     /// http_context/https_context start at 1 and are never deref'd.
     pub(crate) ref_count: Cell<u32>,
     pub(crate) pending_sockets: LazyPool<SSL, POOL_SIZE>,
@@ -1190,6 +1192,19 @@ impl<const SSL: bool> HTTPContext<SSL> {
             pooled.release_parked_refs();
             pooled.http_socket.close(uws::CloseKind::Failure);
         }
+    }
+
+    /// The last ref is gone. A request gives its ref up in its result
+    /// callback, which runs inside callbacks of this context's own sockets,
+    /// and uSockets reads `s->group` (the `group` field here) again when such
+    /// a callback returns. So the HTTP thread frees the context between two
+    /// loop ticks, whoever held the last ref.
+    fn destroy_between_ticks(this: *mut Self) {
+        // The two global contexts are never deref'd.
+        debug_assert!(SSL);
+        let this =
+            NonNull::new(this.cast::<HTTPContext<true>>()).expect("deref passes a live context");
+        crate::http_thread().dead_ssl_contexts.push(this);
     }
 }
 

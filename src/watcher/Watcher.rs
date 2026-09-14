@@ -345,7 +345,9 @@ impl Watcher {
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
-                        let _ = bun_sys::close(fd);
+                        if fd.is_valid() {
+                            let _ = bun_sys::close(fd);
+                        }
                     }
                 }
                 true
@@ -424,7 +426,9 @@ impl Watcher {
         if self.close_descriptors.load() {
             let fds = self.watchlist.items_fd();
             for &fd in fds {
-                let _ = bun_sys::close(fd);
+                if fd.is_valid() {
+                    let _ = bun_sys::close(fd);
+                }
             }
         }
         owner_still_alive
@@ -671,7 +675,8 @@ impl Watcher {
             }
         }
 
-        let fd = if stored_fd.is_valid() {
+        // Polling stats the path and needs no descriptor.
+        let fd = if stored_fd.is_valid() || matches!(self.platform, Backend::Polling(_)) {
             stored_fd
         } else {
             bun_sys::open_a(file_path, 0, 0)?
@@ -695,6 +700,9 @@ impl Watcher {
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let watchlist_id = self.watchlist.len();
 
+        if let Backend::Polling(p) = &mut self.platform {
+            p.register(hash, file_path);
+        }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         #[cfg(any(target_os = "linux", target_os = "android"))]

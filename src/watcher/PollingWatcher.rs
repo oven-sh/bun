@@ -9,8 +9,7 @@ use bun_core::{Timespec, ZStr};
 use bun_sys::{self as sys, PosixStat};
 
 use crate::watcher_impl::{
-    Backend, HashType, MAX_COUNT, Op, WatchEvent, WatchItemColumns, WatchItemIndex, WatchItemKind,
-    Watcher,
+    Backend, HashType, MAX_COUNT, Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher,
 };
 
 pub(crate) const DEFAULT_INTERVAL_MS: u64 = 100;
@@ -68,7 +67,7 @@ struct Snapshot {
 #[derive(Clone, Copy, Default)]
 struct Tracked {
     last: Snapshot,
-    /// The previous poll did not find the file. Only the second miss in a row
+    /// The previous poll did not find the path. Only the second miss in a row
     /// is a DELETE, so an editor that saves in two steps (unlink or rename
     /// away, then create) produces one WRITE.
     missing_once: bool,
@@ -103,24 +102,32 @@ impl PollingWatcher {
         }
     }
 
-    /// Takes the baseline when the file joins the watchlist, so a write that
+    /// Takes the baseline when the path joins the watchlist, so a write that
     /// lands before the first poll is a change. Caller holds `Watcher.mutex`.
     pub(crate) fn register(&mut self, hash: HashType, path: &[u8]) {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let last = if path.len() < buf.len() {
+        let snapshot = if path.len() < buf.len() {
             buf[..path.len()].copy_from_slice(path);
             buf[path.len()] = 0;
-            stat_path(ZStr::from_buf(&buf[..], path.len())).unwrap_or_default()
+            stat_path(ZStr::from_buf(&buf[..], path.len()))
         } else {
-            Snapshot::default()
+            None
         };
-        self.tracked.insert(
-            hash,
-            Tracked {
-                last,
-                missing_once: false,
-            },
-        );
+        match snapshot {
+            Some(last) => {
+                self.tracked.insert(
+                    hash,
+                    Tracked {
+                        last,
+                        missing_once: false,
+                    },
+                );
+            }
+            // Unknown for now. The first poll that can stat it sets the baseline.
+            None => {
+                self.tracked.remove(&hash);
+            }
+        }
     }
 
     /// Caller holds `Watcher.mutex`.
@@ -150,8 +157,8 @@ fn stat_path(path: &ZStr) -> Option<Snapshot> {
     }
 }
 
-/// One cycle: sleep, copy the watched file paths out under the mutex, `stat`
-/// them with the mutex released, then diff and dispatch under the mutex.
+/// One cycle: sleep, copy the watched paths out under the mutex, `stat` them
+/// with the mutex released, then diff and dispatch under the mutex.
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> sys::Result<()> {
     let _flush = bun_core::output::flush_guard();
 
@@ -183,15 +190,14 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> sys::Result<()> {
     // Other threads only append to the watchlist. Entries move only in
     // `flush_evictions`, which runs on this thread inside the dispatch below,
     // so an index read here names the same entry until then.
+    //
+    // Directories are polled too. Their mtime moves when an entry is added,
+    // removed or renamed, which is what consumers use a directory event for.
     {
         let _guard = this.mutex.lock_guard();
         let file_paths = this.watchlist.items_file_path();
         let hashes = this.watchlist.items_hash();
-        let kinds = this.watchlist.items_kind();
         for (i, path) in file_paths.iter().enumerate() {
-            if kinds[i] != WatchItemKind::File {
-                continue;
-            }
             candidates.push(Candidate {
                 index: i as WatchItemIndex,
                 hash: hashes[i],

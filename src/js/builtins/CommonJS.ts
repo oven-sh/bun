@@ -17,8 +17,9 @@ $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
   const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
-  // The cache this module reads and writes: its Bun.unsafe.ModuleGraph's, or the global one.
-  const requireMap = (this && this.$requireMap) || $requireMap;
+  // The global require cache, or the one of the Bun.unsafe.ModuleGraph this module belongs to.
+  // (`this` need not be a module: Module.prototype.require.call({ filename }, id).)
+  const requireMap: RequireMap = this.$requireMap || $requireMap;
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -66,19 +67,19 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // match the native-addon extension against the path portion only.
   const queryIndex = id.indexOf("?");
   if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
-    return $internalRequire(id, this);
+    return $internalRequire(id, this, requireMap);
   }
 
   if (id === "bun:test") {
     return Bun.jest(this.filename);
   }
 
-  var out: LoaderModule | -1;
-
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
   const mod = $createCommonJSModule(id, {}, false, this);
   requireMap.$set(id, mod);
+
+  var out: LoaderModule | -1;
 
   // This is where we load the module. We will see if Module._load and
   // Module._compile are actually important for compatibility.
@@ -139,7 +140,6 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       }
     }
 
-    mod.$esModule = true;
     return (mod.exports = moduleExports ?? namespace);
   }
 
@@ -159,13 +159,13 @@ export function requireResolve(this: JSCommonJSModule, id: string, options: { pa
 }
 
 $visibility = "Private";
-export function internalRequire(id: string, parent: JSCommonJSModule) {
-  // Native addons are per-process: one module object, in the global cache, which
-  // every Bun.unsafe.ModuleGraph's cache also points at.
-  const requireMap = (parent && parent.$requireMap) || $requireMap;
+export function internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap) {
+  // A native addon is loaded once per process: its one module object is the global cache's,
+  // which a Bun.unsafe.ModuleGraph's cache then also points at.
   const loaded = $requireMap.$get(id);
   if (loaded) {
-    if (requireMap !== $requireMap) requireMap.$set(id, loaded);
+    $assert(requireMap !== $requireMap, "Module " + JSON.stringify(id) + " should not be in the map");
+    requireMap.$set(id, loaded);
     return loaded.exports;
   }
   // `id` keys the module cache and may carry a `?query` suffix;
@@ -174,7 +174,6 @@ export function internalRequire(id: string, parent: JSCommonJSModule) {
   const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
   $assert(filename.endsWith(".node"));
 
-  // The one module object belongs to no graph (a graph's requirer is not its parent).
   const module = $createCommonJSModule(id, {}, true, requireMap === $requireMap ? parent : undefined);
   process.dlopen(module, filename);
   $requireMap.$set(id, module);
@@ -193,8 +192,8 @@ export function loadEsmIntoCjs(resolvedSpecifier: string, requirer?: JSCommonJSM
   return $esmLoadSync(resolvedSpecifier, requirer);
 }
 
-// `requirer`: the module whose require() this is; the ES module comes from the loader
-// that require() binds to (a Bun.unsafe.ModuleGraph's, or the global object's).
+// `requirer`: the module whose require() this is. The ES module is loaded by the loader of the
+// Bun.unsafe.ModuleGraph that module belongs to, or the global object's.
 $visibility = "Private";
 export function requireESM(this, resolved: string, requirer?: JSCommonJSModule) {
   // `$esmLoadSync` answers from the registry for a record that is already
@@ -214,10 +213,9 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
     namespace = $requireESM(id, this);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.
-    ((this && this.$requireMap) || $requireMap).$delete(id);
+    (this.$requireMap || $requireMap).$delete(id);
     throw exception;
   }
-  this.$esModule = true;
 
   // See `overridableRequire`: TDZ-safe reads for the require-cycle case.
   let esModule, moduleExports;
@@ -244,10 +242,9 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
 }
 
 $visibility = "Private";
-export function createRequireCache(owner?: JSCommonJSModule) {
-  // `owner` is set for a Bun.unsafe.ModuleGraph's cache: reads and writes go to that
-  // graph's require map and its instances of ES modules instead of the global ones.
-  const requireMap = owner ? owner.$requireMap : $requireMap;
+// `requireMap`: the global require cache, or a Bun.unsafe.ModuleGraph's together with one of
+// the graph's modules (`owner`, which names the loader whose ES modules it also lists).
+export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSModule) {
   var moduleMap = new Map();
   var inner = {
     [Symbol.for("nodejs.util.inspect.custom")]() {

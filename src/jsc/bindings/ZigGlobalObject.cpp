@@ -768,7 +768,7 @@ static JSC::JSModuleLoader* moduleLoaderOfRequirer(JSC::JSGlobalObject* globalOb
 {
     auto* module = dynamicDowncast<Bun::JSCommonJSModule>(requirer);
     if (auto* graph = module ? module->moduleGraph() : nullptr)
-        return graph->loader();
+        return graph->disposed() ? nullptr : graph->loader();
     return globalObject->moduleLoader();
 }
 
@@ -861,7 +861,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
 
     // The loader the requirer's require() binds ES modules to (CommonJS.ts requireESM).
     auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1));
-    JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequire(globalObject, scope, requirer ? requirer->moduleGraph() : nullptr);
+    JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, requirer ? requirer->moduleGraph() : nullptr);
     RETURN_IF_EXCEPTION(scope, {});
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
@@ -1146,8 +1146,8 @@ WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
 
 WebCore::ScriptExecutionContext* GlobalObject::currentScriptExecutionContext()
 {
-    if (m_hasModuleGraphContexts) [[unlikely]] {
-        if (auto* graph = Bun::currentModuleGraph(this))
+    if (m_moduleGraphs && m_moduleGraphs->hasIsolatedGraphs) [[unlikely]] {
+        if (auto* graph = Bun::currentIsolatedModuleGraph(this))
             return &graph->context();
     }
     return m_scriptExecutionContext;
@@ -2716,10 +2716,6 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
-    m_moduleGraphRegistry.initLater(
-        [](const Initializer<JSWeakMap>& init) {
-            init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
-        });
     m_JSIsolatedModuleGraphStructure.initLater(
         [](const Initializer<Structure>& init) {
             auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.owner);
@@ -3812,10 +3808,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     // pool; route to the synchronous fetch instead so the returned promise is
     // already fulfilled and the loader keeps draining its private queue (see
     // JSModuleLoader::loadModuleSync / VM::m_synchronousModuleQueue).
+    Bun::JSModuleGraph* graph = Bun::moduleGraphOfLoader(globalObject, loader);
     if (vm.m_synchronousModuleQueue) {
         JSValue result = Bun::fetchESMSourceCodeSync(
             static_cast<Zig::GlobalObject*>(globalObject),
-            loader,
+            graph,
             moduleKeyJS,
             &res,
             &moduleKeyBun,
@@ -3831,7 +3828,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
 
     JSValue result = Bun::fetchESMSourceCodeAsync(
         static_cast<Zig::GlobalObject*>(globalObject),
-        loader,
+        graph,
         moduleKeyJS,
         &res,
         &moduleKeyBun,
@@ -3858,7 +3855,7 @@ static JSSourceCode* fetchSourceSync(Zig::GlobalObject* globalObject, JSModuleLo
     ErrorableResolvedSource res;
     auto keyBun = Bun::toString(key.string());
     auto source = Bun::toString(vm.propertyNames->undefinedKeyword.string());
-    JSValue result = Bun::fetchESMSourceCodeSync(globalObject, loader, jsString(vm, key.string()), &res, &keyBun, &source, nullptr);
+    JSValue result = Bun::fetchESMSourceCodeSync(globalObject, Bun::moduleGraphOfLoader(globalObject, loader), jsString(vm, key.string()), &res, &keyBun, &source, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result ? dynamicDowncast<JSSourceCode>(result) : nullptr;
 }
@@ -4294,7 +4291,10 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
-    return Zig::ImportMetaObject::create(globalObject, key, Bun::moduleGraphForLoader(globalObject, loader));
+    auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
+    if (importMeta)
+        importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
+    return importMeta;
 }
 
 extern "C" bool Bun__VM__entryEvaluationStarted(void*);
@@ -4328,10 +4328,10 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
 {
     // Nothing evaluates in a disposed Bun.unsafe.ModuleGraph (a late top-level-await
     // completion, a deferred namespace touched later): its modules throw instead.
-    if (Bun::isDisposedModuleGraphLoader(lexicalGlobalObject, moduleLoader)) {
+    if (moduleLoader != lexicalGlobalObject->moduleLoader()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
-        Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader);
-        return {};
+        if (Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader))
+            return {};
     }
     noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
     return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,

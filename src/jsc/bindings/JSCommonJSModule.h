@@ -18,7 +18,6 @@ class AbstractModuleRecord;
 }
 
 namespace Bun {
-
 class JSModuleGraph;
 
 using namespace JSC;
@@ -76,19 +75,12 @@ public:
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
-    // The Bun.unsafe.ModuleGraph this module belongs to (inherited from the requiring
-    // module; the requirer behind a graph module's import.meta.require); null: the global
-    // object's. Selects the require cache (`@requireMap`), the scope its wrapper closes
-    // over, and whose instances of ES modules its require() returns.
+    // The Bun.unsafe.ModuleGraph the module belongs to (what loaded it, or the module that
+    // required it, did): its require cache, its loader for require(esm), and the scope its
+    // wrapper closes over are the graph's. Null: the global object's.
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
-    // A graph module's wrapper executable, shared by every graph's copy of the file
-    // (moduleGraphCommonJSTemplates finds it while a module made from it is alive).
-    JSC::WriteBarrier<JSC::FunctionExecutable> m_moduleGraphWrapperExecutable;
 
     bool ignoreESModuleAnnotation { false };
-    // require() resolved this entry of the require cache to an ES module: `exports` is
-    // (from) its namespace in the global object's loader.
-    bool esModule { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -123,8 +115,7 @@ public:
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
-    // `moduleGraph`: see m_moduleGraph.
-    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* moduleGraph = nullptr);
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr);
     JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, JSModuleGraph*);
 
@@ -157,12 +148,11 @@ public:
 
     bool hasEvaluated = false;
 
-    JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname, JSModuleGraph* moduleGraph)
+    JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)
         , m_id(id, JSC::WriteBarrierEarlyInit)
         , m_filename(filename, JSC::WriteBarrierEarlyInit)
         , m_dirname(dirname, JSC::WriteBarrierEarlyInit)
-        , m_moduleGraph(moduleGraph, JSC::WriteBarrierEarlyInit)
     {
     }
 };
@@ -170,8 +160,12 @@ public:
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
 
-// `graph`: the Bun.unsafe.ModuleGraph whose loader is importing the CommonJS
-// file (its require cache gets the module), or null for the global loader.
+// A `require.cache` object over `requireMap`: the global one, or a Bun.unsafe.ModuleGraph's
+// together with one of the graph's modules (whose loader's ES modules it also lists).
+JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireMap, JSCommonJSModule* owner = nullptr);
+
+// `graph`: the Bun.unsafe.ModuleGraph whose loader is importing the file (the module goes in
+// its require cache), or null for the global object's loader.
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* graph,

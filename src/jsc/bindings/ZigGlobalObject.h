@@ -38,8 +38,9 @@ class NapiHandleScopeImpl;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
-struct ModuleGraphState;
 class GCProfilerObserver;
+
+struct ModuleGraphState;
 } // namespace Bun
 
 namespace v8 {
@@ -305,8 +306,8 @@ public:
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
     // Bun.unsafe.ModuleGraph (ModuleGraph.cpp)
-    bool hasModuleGraphs() const { return m_moduleGraphRegistry.isInitialized(); }
-    JSWeakMap* moduleGraphRegistry() const { return m_moduleGraphRegistry.getInitializedOnMainThread(this); } // overlay -> graph
+    // Made with the first Bun.unsafe.ModuleGraph (ModuleGraph.cpp).
+    bool hasModuleGraphs() const { return !!m_moduleGraphs; }
     JSC::Structure* JSIsolatedModuleGraphStructure() const { return m_JSIsolatedModuleGraphStructure.getInitializedOnMainThread(this); }
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
@@ -537,7 +538,6 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
-    V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleGraphRegistry)                                 \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSIsolatedModuleGraphStructure)                      \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
@@ -815,8 +815,6 @@ public:
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
 
     std::unique_ptr<Bun::ModuleGraphState> m_moduleGraphs;
-    // Some Bun.unsafe.ModuleGraph of this global has (had) a context of its own (`isolateIO`).
-    bool m_hasModuleGraphContexts { false };
 
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile

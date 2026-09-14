@@ -59,6 +59,9 @@ pub struct ScriptExecutionContext {
     /// WebSocket, SQL, Valkey). A VM's own contexts use `RareData`'s.
     socket_groups: JsCell<Option<Box<crate::rare_data::SocketGroups>>>,
     stop_again_queued: JsCell<bool>,
+    /// A graph's context: its `WebCore::ScriptExecutionContext`, which owns this
+    /// one and the ActiveDOMObjects (workers, WebSockets) the graph's script made.
+    dom_context: core::cell::Cell<*mut core::ffi::c_void>,
     /// The last event-loop iteration in which an immediate this (disposed
     /// graph's) stopped context sets still runs; 0: none does. Its close
     /// handlers run as `dispose()` stops it, and node:net emits 'close' from an
@@ -75,23 +78,32 @@ pub struct ScriptExecutionContext {
 /// is called even if it was handed over inside the context of a
 /// `Bun.unsafe.ModuleGraph` that has since been disposed. Any other callback
 /// of such a graph is dropped where it would be called.
-pub struct TeardownNotification<'a>(&'a crate::JSGlobalObject);
+pub struct TeardownNotification<'a> {
+    global: &'a crate::JSGlobalObject,
+    /// Whether entering counted: a graph with a context may first exist only once inside.
+    counted: bool,
+}
 
 impl<'a> TeardownNotification<'a> {
     pub fn enter(global: &'a crate::JSGlobalObject) -> Self {
-        Bun__ModuleGraph__teardownNotification(global, true);
-        Self(global)
+        Self {
+            global,
+            counted: Bun__ModuleGraph__enterTeardownNotification(global),
+        }
     }
 }
 
 impl Drop for TeardownNotification<'_> {
     fn drop(&mut self) {
-        Bun__ModuleGraph__teardownNotification(self.0, false);
+        if self.counted {
+            Bun__ModuleGraph__leaveTeardownNotification(self.global);
+        }
     }
 }
 
 unsafe extern "C" {
-    safe fn Bun__ModuleGraph__teardownNotification(global: &crate::JSGlobalObject, enter: bool);
+    safe fn Bun__ModuleGraph__enterTeardownNotification(global: &crate::JSGlobalObject) -> bool;
+    safe fn Bun__ModuleGraph__leaveTeardownNotification(global: &crate::JSGlobalObject);
 }
 
 /// What a pointer in a graph context's timer set points at.
@@ -112,6 +124,7 @@ impl Default for ScriptExecutionContext {
             stopped: JsCell::new(None),
             socket_groups: JsCell::new(None),
             stop_again_queued: JsCell::new(false),
+            dom_context: core::cell::Cell::new(ptr::null_mut()),
             closing_until: core::cell::Cell::new(0),
             timers: JsCell::new(Default::default()),
         }
@@ -131,10 +144,32 @@ impl ScriptExecutionContext {
         self.id.set(id);
     }
 
-    pub(crate) fn with_id(id: ContextId) -> Self {
+    pub(crate) fn for_graph(id: ContextId, dom_context: *mut core::ffi::c_void) -> Self {
         let context = Self::default();
         context.id.set(id);
+        context.dom_context.set(dom_context);
         context
+    }
+
+    /// The realm or the VM is going: what `dispose()` would have stopped through the
+    /// graph's `WebCore::ScriptExecutionContext` is stopped from here.
+    pub(crate) fn stop_dom_objects(&self) {
+        unsafe extern "C" {
+            fn WebCore__ScriptExecutionContext__stopActiveDOMObjects(
+                context: *mut core::ffi::c_void,
+            );
+        }
+        let dom_context = self.dom_context.get();
+        if !dom_context.is_null() {
+            // SAFETY: non-null until its destructor releases this one (`dom_context_released`).
+            unsafe { WebCore__ScriptExecutionContext__stopActiveDOMObjects(dom_context) }
+        }
+    }
+
+    /// The `WebCore::ScriptExecutionContext` is being destroyed. This one outlives it
+    /// until what it still owns is closed.
+    pub(crate) fn dom_context_released(&self) {
+        self.dom_context.set(ptr::null_mut());
     }
 
     #[inline]
@@ -503,9 +538,10 @@ impl ContextIdAllocator {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__ScriptExecutionContext__create(
     vm: *mut crate::VirtualMachineRef,
+    dom_context: *mut core::ffi::c_void,
 ) -> *mut ScriptExecutionContext {
     // SAFETY: fn contract.
-    unsafe { (*vm).create_graph_context() }.as_ptr()
+    unsafe { (*vm).create_graph_context(dom_context) }.as_ptr()
 }
 
 /// # Safety

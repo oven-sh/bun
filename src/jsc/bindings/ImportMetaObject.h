@@ -36,15 +36,13 @@ public:
     }
 
     /// Must be called with a valid url string (for `import.meta.url`)
-    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url, Bun::JSModuleGraph* = nullptr);
+    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url);
 
     /// Creates an ImportMetaObject from a specifier or URL JSValue
     /// - URL object -> use that url
     /// - string -> see the below method for how the string is processed
     /// - other -> assertion failure
-    /// `moduleGraph`: the Bun.unsafe.ModuleGraph the module belongs to (import.meta.main is
-    /// the graph's first import), or null.
-    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, Bun::JSModuleGraph* = nullptr);
+    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL);
 
     /// TODO:
     /// The rules for this function's input is a bit weird. `specifier` is an import path specifier aka a file path.
@@ -60,7 +58,7 @@ public:
     ///
     /// The above rules get a best estimate bandage to solve the problems
     /// stated in https://github.com/oven-sh/bun/pull/9399
-    static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier, Bun::JSModuleGraph* = nullptr);
+    static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -84,14 +82,21 @@ public:
     LazyProperty<JSObject, JSString> fileProperty;
     LazyProperty<JSObject, JSString> pathProperty;
 
+    // The Bun.unsafe.ModuleGraph the module belongs to: import.meta.main is whether it is the
+    // graph's first import, and import.meta.require requires into the graph. Null otherwise.
     Bun::JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
+    void setModuleGraph(JSC::VM&, Bun::JSModuleGraph*);
 
 private:
-    static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url, Bun::JSModuleGraph*);
-
-    ImportMetaObject(JSC::VM& vm, JSC::Structure* structure, const WTF::String& url, Bun::JSModuleGraph* moduleGraph);
+    static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);
 
     JSC::WriteBarrier<Bun::JSModuleGraph> m_moduleGraph;
+
+    ImportMetaObject(JSC::VM& vm, JSC::Structure* structure, const WTF::String& url)
+        : Base(vm, structure)
+        , url(url)
+    {
+    }
 
     void finishCreation(JSC::VM&);
 };

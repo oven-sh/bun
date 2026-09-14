@@ -16,10 +16,11 @@ class GlobalObject;
 
 namespace JSC {
 class JSPromise;
-class JSModuleLoader;
 }
 
 namespace Bun {
+class JSModuleGraph;
+
 using namespace JSC;
 
 class JSCommonJSModule;
@@ -77,9 +78,11 @@ public:
     bool wasModuleMock = false;
 };
 
+// `graph`: the Bun.unsafe.ModuleGraph whose loader is fetching, or null. A CommonJS file
+// becomes a module of that graph's require cache.
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
+    Bun::JSModuleGraph* graph,
     JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -88,17 +91,15 @@ JSValue fetchESMSourceCodeSync(
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
+    Bun::JSModuleGraph* graph,
     JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute);
 
-// `loader`: where an ES module found instead is fetched into (-1 is returned then).
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
     JSCommonJSModule* moduleObject,
     JSValue specifierValue,
     String specifier,
@@ -110,7 +111,6 @@ JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,

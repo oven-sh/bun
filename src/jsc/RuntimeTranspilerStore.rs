@@ -246,6 +246,7 @@ impl RuntimeTranspilerStore {
             // SAFETY: a live job popped from the intrusive queue; see fn doc.
             unsafe {
                 (*job).promise.deinit();
+                (*job).module_loader.deinit();
                 (*job).reset_for_pool();
                 self.store.put(job);
             }
@@ -319,6 +320,7 @@ impl RuntimeTranspilerStore {
         referrer: String,
         loader: Loader,
         package_json: Option<&PackageJSON>,
+        module_loader: JSValue,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
@@ -361,6 +363,11 @@ impl RuntimeTranspilerStore {
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
+                module_loader: if module_loader.is_empty() {
+                    StrongOptional::empty()
+                } else {
+                    StrongOptional::create(module_loader, global_object)
+                },
                 poll_ref: KeepAlive::default(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
@@ -407,6 +414,9 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
     pub(crate) promise: StrongOptional,
+    /// The `JSModuleLoader` that is fetching, when it is not the global object's (a
+    /// `Bun.unsafe.ModuleGraph`'s): handed back with the result. Empty otherwise.
+    pub(crate) module_loader: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
@@ -515,6 +525,7 @@ impl TranspilerJob {
     fn run_from_js_thread(&mut self) -> JsResult<()> {
         let vm = self.vm;
         let promise = self.promise.swap();
+        let module_loader = self.module_loader.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
         // before `reset_for_pool`/`put` need `&mut *self` below; deref at the
         // `fulfill` call site instead.
@@ -537,6 +548,7 @@ impl TranspilerJob {
         };
 
         self.promise.deinit();
+        self.module_loader.deinit();
         self.reset_for_pool();
 
         // SAFETY: vm outlives the job; transpiler_store.store.put recycles the slot.
@@ -550,6 +562,7 @@ impl TranspilerJob {
         AsyncModule::fulfill(
             &global_this,
             promise,
+            module_loader,
             result,
             &specifier,
             &referrer,

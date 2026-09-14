@@ -1,5 +1,5 @@
 // Bun.unsafe.ModuleGraph — further instantiations of an ES module graph in THIS
-// global, sharing every executable/CodeBlock (and so JIT code) with the first
+// global, sharing every ES module's executable/CodeBlock (and so JIT code) with the first
 // load while giving each graph its own module environments and its own values
 // for the names the host passes as `globals`.
 import { heapStats } from "bun:jsc";
@@ -376,18 +376,6 @@ describe("Bun.unsafe.ModuleGraph", () => {
     const host = (await import("node:module")).createRequire(import.meta.url)(join(dir, "counter.cjs"));
     expect(host).not.toBe(a.counter);
     expect(host.app()).toBeUndefined();
-    // CJS wrapper executables are shared across graphs
-    Bun.gc(true);
-    const before = heapStats().objectTypeCounts.FunctionExecutable;
-    const more = [];
-    for (let i = 0; i < 4; i++) {
-      const g = mk("x" + i);
-      const m = await g.import(join(dir, "entry.mjs"));
-      m.report();
-      more.push([g, m]);
-    }
-    Bun.gc(true);
-    expect(heapStats().objectTypeCounts.FunctionExecutable - before).toBeLessThan(4);
     rmSync(dir, { recursive: true, force: true });
   });
 

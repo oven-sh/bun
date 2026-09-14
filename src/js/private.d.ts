@@ -66,14 +66,14 @@ declare interface Error {
   code?: string;
 }
 
+/** A CommonJS require cache: resolved path -> module. */
+type RequireMap = Map<string, JSCommonJSModule>;
+
 interface JSCommonJSModule {
+  /** The require cache the module reads and writes: the global one, or its Bun.unsafe.ModuleGraph's. */
+  readonly $requireMap: RequireMap;
   $require(id: string, mod: any, args_count: number, args: Array): any;
-  $requireMap: Map<string, JSCommonJSModule>;
   $requireNativeModule(id: string): any;
-  /** require() resolved this cache entry to an ES module (of the global object's loader). */
-  $esModule: boolean;
-  /** The Bun.unsafe.ModuleGraph this module's require() binds ES modules to, if any. */
-  readonly $moduleGraph: object | undefined;
   children: JSCommonJSModule[];
   exports: any;
   id: string;

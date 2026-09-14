@@ -5448,7 +5448,8 @@ declare module "bun" {
       /**
        * Values for free identifiers in all of the graph's module code
        * (e.g. `{ process: myProcess, fetch: myFetch }`). Graphs constructed
-       * with the same set of names share compiled code with each other.
+       * with the same set of names share their ES modules' compiled code with
+       * each other.
        */
       globals?: Record<string, unknown> | undefined;
       /**
@@ -5492,9 +5493,9 @@ declare module "bun" {
     /**
      * A further instantiation of ES module graphs in **this** global object.
      *
-     * Every graph that loads a file — an ES module or a CommonJS module —
-     * shares that file's parsed code, bytecode and JIT-compiled code with every
-     * other graph and with the host; each graph gets its own module-level state
+     * Every graph that loads a file shares that file's parsed code and
+     * bytecode with every other graph and with the host, and for ES modules
+     * the JIT-compiled code too; each graph gets its own module-level state
      * (top-level bindings, classes, closures), its own module registry for
      * `import` / `import()`, its own `require.cache` (`require()`,
      * `import.meta.require()` and `createRequire()` called from the graph's

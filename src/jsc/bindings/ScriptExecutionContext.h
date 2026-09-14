@@ -55,6 +55,8 @@ class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, pu
 public:
     ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject);
     ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
+    // A graph's context in `parent`'s realm.
+    explicit ScriptExecutionContext(ScriptExecutionContext& parent);
     // A further context in `parent`'s global, for a Bun.unsafe.ModuleGraph: what the graph's
     // script opens (ActiveDOMObjects here; native handles, timers and sockets in its Rust half)
     // belongs to it and goes when it stops.
@@ -77,7 +79,7 @@ public:
     {
         return m_url;
     }
-    bool isMainThread() const { return m_identifier == 1 || m_isInMainThreadRealm; }
+    bool isMainThread() const { return realm().m_identifier == 1; }
     // The Rust `bun_jsc::ScriptExecutionContext` of a graph's context (null for a global's own,
     // whose Rust half is the VM's root context).
     void* bunContext() const { return m_bunContext; }
@@ -144,7 +146,7 @@ public:
     void postTask(EventLoopTask* task);
     void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
-    JSC::VM& vm() { return *m_vm; }
+    JSC::VM& vm() { return *realm().m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
     // This thread only: the loop the VM is running now. What an object that will later be posted to
     // from another thread records alongside identifier() when script here sets it up.
@@ -185,12 +187,13 @@ private:
     // Snapshot of the creating thread's UID; used by isContextThread() so the
     // check stays valid after VM clientData / VMHolder are torn down on exit.
     uint32_t m_contextThreadUID;
-    // A graph's context in the main thread's realm.
-    bool m_isInMainThreadRealm { false };
+    // A graph's context: the context of the global the graph was made in, whose VM and global
+    // object are this one's.
+    RefPtr<ScriptExecutionContext> m_parent;
+    ScriptExecutionContext& realm() { return m_parent ? *m_parent : *this; }
+    const ScriptExecutionContext& realm() const { return m_parent ? *m_parent : *this; }
     void* m_bunContext { nullptr };
     JSC::Weak<JSC::JSObject> m_moduleGraph;
-    // A global's own context: the contexts of the graphs made in it.
-    WeakHashSet<ScriptExecutionContext> m_moduleGraphContexts;
 
     WeakHashSet<ActiveDOMObject> m_activeDOMObjects;
     // Registered in the observer's constructor, removed in its destructor, both

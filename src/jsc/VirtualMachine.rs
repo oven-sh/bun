@@ -1188,7 +1188,10 @@ impl VirtualMachine {
 
     /// `WebCore::ScriptExecutionContext` for a `Bun.unsafe.ModuleGraph`: the
     /// context that owns what the graph's script opens.
-    pub fn create_graph_context(&mut self) -> NonNull<crate::ScriptExecutionContext> {
+    pub fn create_graph_context(
+        &mut self,
+        dom_context: *mut c_void,
+    ) -> NonNull<crate::ScriptExecutionContext> {
         let id = loop {
             let id = self.context_ids.next();
             if id != self.root_context.id()
@@ -1198,9 +1201,9 @@ impl VirtualMachine {
                 break id;
             }
         };
-        let context = NonNull::from(Box::leak(Box::new(crate::ScriptExecutionContext::with_id(
-            id,
-        ))));
+        let context = NonNull::from(Box::leak(Box::new(
+            crate::ScriptExecutionContext::for_graph(id, dom_context),
+        )));
         bun_core::handle_oom(self.graph_contexts.put(id, context));
         context
     }
@@ -1223,6 +1226,9 @@ impl VirtualMachine {
             context.begin_closing(self.loop_iteration());
         }
         let result = context.stop(reason);
+        if reason != crate::StopReason::Disposed {
+            context.stop_dom_objects();
+        }
         self.jobs.get().cancel_of_context(context.id());
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: live per-thread VM on the JS thread.
@@ -1242,6 +1248,8 @@ impl VirtualMachine {
         &mut self,
         context: NonNull<crate::ScriptExecutionContext>,
     ) {
+        // SAFETY: fn contract.
+        unsafe { context.as_ref() }.dom_context_released();
         // SAFETY: fn contract.
         if unsafe { context.as_ref() }.owns_nothing() {
             // SAFETY: fn contract.

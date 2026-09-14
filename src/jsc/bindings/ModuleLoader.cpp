@@ -37,6 +37,7 @@
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
 #include "IsolatedModuleCache.h"
+#include "ModuleGraph.h"
 #include "../modules/_NativeModule.h"
 
 #include "JSCommonJSExtensions.h"
@@ -463,6 +464,7 @@ static JSValue handleVirtualModuleResult(
 extern "C" void Bun__onFulfillAsyncModule(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedPromiseValue,
+    JSC::EncodedJSValue encodedModuleLoader,
     ErrorableResolvedSource* res,
     const BunString* specifier,
     const BunString* referrer)
@@ -470,6 +472,9 @@ extern "C" void Bun__onFulfillAsyncModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(JSC::JSValue::decode(encodedPromiseValue));
+    // The loader that fetched: a Bun.unsafe.ModuleGraph's, or (empty) the global object's.
+    JSValue moduleLoader = JSC::JSValue::decode(encodedModuleLoader);
+    Bun::JSModuleGraph* graph = moduleLoader ? Bun::moduleGraphOfLoader(globalObject, uncheckedDowncast<JSC::JSModuleLoader>(moduleLoader)) : nullptr;
 
     if (!res->success) {
         RELEASE_AND_RETURN(scope, promise->reject(vm, JSValue::decode(res->result.err)));
@@ -494,11 +499,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     // instead of each round-tripping through the embedder.
 
     if (res->result.value.isCommonJSModule) {
-        // fetchESMSourceCode left the graph whose loader is fetching on the pending promise.
-        JSValue graphValue = promise->getDirect(vm, WebCore::clientData(vm)->builtinNames().moduleGraphPrivateName());
-        auto* graph = graphValue ? dynamicDowncast<Bun::JSModuleGraph>(graphValue) : nullptr;
-        // Disposed while the file was being transpiled: nothing of it is loaded.
-        if (graph && graph->disposed())
+        if (graph && graph->disposed()) [[unlikely]]
             RELEASE_AND_RETURN(scope, promise->reject(vm, Bun::createModuleGraphDisposedError(globalObject)));
         auto created = Bun::createCommonJSModule(globalObject, graph, specifierValue, res->result.value);
         EXCEPTION_ASSERT(created.has_value() == !scope.exception());
@@ -645,7 +646,6 @@ void evaluateCommonJSCustomExtension(
 
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
     JSCommonJSModule* target,
     JSValue specifierValue,
     String specifierWtfString,
@@ -657,6 +657,9 @@ JSValue fetchCommonJSModule(
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
     ErrorableResolvedSource* res = &resValue;
+    // An ES module reached from here is loaded by the requiring module's loader.
+    JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
+    RETURN_IF_EXCEPTION(scope, {});
 
     BunString specifier = Bun::toString(specifierWtfString);
 
@@ -808,7 +811,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, loader, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
+    return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
 }
 
 template<bool isExtension>
@@ -816,7 +819,6 @@ JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,
@@ -827,6 +829,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
     BunLoaderType forceLoaderType,
     JSC::ThrowScope& scope)
 {
+    JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
+    RETURN_IF_EXCEPTION(scope, {});
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {
@@ -911,7 +915,6 @@ template JSValue fetchCommonJSModuleNonBuiltin<true>(
     void* bunVM,
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,
@@ -925,7 +928,6 @@ template JSValue fetchCommonJSModuleNonBuiltin<false>(
     void* bunVM,
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,
@@ -1019,7 +1021,7 @@ static JSValue fetchESMSourceCode(
         // bun:wrap and a few other builtins return real JS source (not a
         // synthetic generator). Their providers are identical across globals,
         // so check the isolation cache before re-creating one.
-        const bool useIsolationCacheForBuiltin = !graph && Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
+        const bool useIsolationCacheForBuiltin = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
         if (useIsolationCacheForBuiltin) {
             if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, moduleKey)) {
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
@@ -1090,7 +1092,7 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    const bool useIsolationCache = !graph && Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
+    const bool useIsolationCache = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
     if (useIsolationCache) {
         if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString(BunString::ZeroCopy))) {
             if (cached->sourceType() != JSC::SourceProviderSourceType::Program) {
@@ -1118,11 +1120,8 @@ static JSValue fetchESMSourceCode(
     }
 
     if constexpr (allowPromise) {
-        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone);
+        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone, graph ? JSValue::encode(graph->loader()) : JSC::EncodedJSValue {});
         if (pendingCtx) {
-            // Bun__onFulfillAsyncModule needs the graph for a CommonJS result.
-            if (graph)
-                pendingCtx->putDirect(vm, WebCore::clientData(vm)->builtinNames().moduleGraphPrivateName(), graph);
             return pendingCtx;
         }
     } else {
@@ -1225,26 +1224,26 @@ static JSValue fetchESMSourceCode(
 
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
+    Bun::JSModuleGraph* graph,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute)
 {
-    return fetchESMSourceCode<false>(globalObject, Bun::moduleGraphForLoader(globalObject, loader), specifierJS, res, specifier, referrer, typeAttribute);
+    return fetchESMSourceCode<false>(globalObject, graph, specifierJS, res, specifier, referrer, typeAttribute);
 }
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
+    Bun::JSModuleGraph* graph,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute)
 {
-    return fetchESMSourceCode<true>(globalObject, Bun::moduleGraphForLoader(globalObject, loader), specifierJS, res, specifier, referrer, typeAttribute);
+    return fetchESMSourceCode<true>(globalObject, graph, specifierJS, res, specifier, referrer, typeAttribute);
 }
 }
 

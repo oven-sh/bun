@@ -62,8 +62,20 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     addToContextsMap();
 }
 
+ScriptExecutionContext::ScriptExecutionContext(ScriptExecutionContext& parent)
+    : m_bunVM(parent.m_bunVM)
+    , m_vmHandle(parent.m_vmHandle)
+    , m_identifier(++lastUniqueIdentifier)
+    , m_contextThreadUID(parent.m_contextThreadUID)
+    , m_parent(&parent)
+{
+    ASSERT(parent.isContextThread());
+    ASSERT(!parent.m_parent);
+    addToContextsMap();
+}
+
 extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
-extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM);
+extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM, ScriptExecutionContext*);
 extern "C" void Bun__ScriptExecutionContext__stop(void* bunVM, void* bunContext);
 extern "C" void Bun__ScriptExecutionContext__release(void* bunVM, void* bunContext);
 
@@ -74,13 +86,15 @@ void ScriptExecutionContext::setModuleGraph(JSC::JSObject* moduleGraph)
 
 Ref<ScriptExecutionContext> ScriptExecutionContext::createForModuleGraph(ScriptExecutionContext& parent)
 {
-    ASSERT(parent.isContextThread());
-    ASSERT(!parent.m_bunContext);
-    auto context = adoptRef(*new ScriptExecutionContext(parent.m_vm, parent.m_globalObject, std::numeric_limits<int32_t>::max()));
-    context->m_isInMainThreadRealm = parent.isMainThread();
-    context->m_bunContext = Bun__ScriptExecutionContext__create(context->m_bunVM);
-    parent.m_moduleGraphContexts.add(context.get());
+    auto context = adoptRef(*new ScriptExecutionContext(parent));
+    context->m_bunContext = Bun__ScriptExecutionContext__create(context->m_bunVM, context.ptr());
     return context;
+}
+
+// VirtualMachine::stop_graph_context, when the realm or the VM goes (dispose() goes through stop()).
+extern "C" void WebCore__ScriptExecutionContext__stopActiveDOMObjects(ScriptExecutionContext* context)
+{
+    context->stopActiveDOMObjects();
 }
 
 void ScriptExecutionContext::stop()
@@ -124,12 +138,12 @@ ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(Script
 
 JSGlobalObject* ScriptExecutionContext::globalObject()
 {
-    return m_globalObject;
+    return realm().m_globalObject;
 }
 
 JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
 {
-    return m_globalObject;
+    return realm().m_globalObject;
 }
 
 extern "C" void Bun__VM__queueTaskAfterYield(void* bunVM, EventLoopTask*);
@@ -260,7 +274,8 @@ void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionOb
 
 bool ScriptExecutionContext::isJSExecutionForbidden()
 {
-    return !m_vm || WebCore::clientData(*m_vm)->isStoppingOrStopped(*m_vm);
+    JSC::VM* vm = realm().m_vm;
+    return !vm || WebCore::clientData(*vm)->isStoppingOrStopped(*vm);
 }
 
 void ScriptExecutionContext::prepareForDestruction()
@@ -269,8 +284,6 @@ void ScriptExecutionContext::prepareForDestruction()
     ASSERT(m_globalObject);
 
     stopActiveDOMObjects();
-    for (Ref moduleGraphContext : copyToVectorOf<Ref<ScriptExecutionContext>>(m_moduleGraphContexts))
-        moduleGraphContext->stopActiveDOMObjects();
 
     // Event listeners would keep DOMWrapperWorld objects alive for too long. Also, they have references to JS objects,
     // which become dangling once Heap is destroyed.
@@ -296,11 +309,6 @@ void ScriptExecutionContext::globalObjectDestroyed()
     removeFromContextsMap();
     m_globalObject = nullptr;
     m_vm = nullptr;
-    for (auto& moduleGraphContext : m_moduleGraphContexts) {
-        moduleGraphContext.m_globalObject = nullptr;
-        moduleGraphContext.m_vm = nullptr;
-        moduleGraphContext.m_moduleGraph.clear();
-    }
 }
 
 bool ScriptExecutionContext::isContextThread()

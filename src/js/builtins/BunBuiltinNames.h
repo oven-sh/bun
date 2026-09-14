@@ -75,7 +75,6 @@ using namespace JSC;
     macro(encoding) \
     macro(end) \
     macro(errno) \
-    macro(esModule) \
     macro(esmLoadSync) \
     macro(esmNamespaceForCjs) \
     macro(esmRegistryDelete) \

@@ -152,9 +152,11 @@ impl AsyncModule {
     /// result back into JSC via `Bun__onFulfillAsyncModule`. Called from
     /// `RuntimeTranspilerStore::run_from_js_thread` and `on_done` when a
     /// concurrent transpile job finishes.
+    /// `module_loader`: the `JSModuleLoader` that fetched, or empty for the global object's.
     pub(crate) fn fulfill(
         global_this: &JSGlobalObject,
         promise: JSValue,
+        module_loader: JSValue,
         result: Result<ResolvedSource, crate::CrateError>,
         specifier: &BunString,
         referrer: &BunString,
@@ -177,7 +179,14 @@ impl AsyncModule {
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
         jsc::from_js_host_call_generic(global_this, || {
-            Bun__onFulfillAsyncModule(global_this, promise, &mut errorable, specifier, referrer)
+            Bun__onFulfillAsyncModule(
+                global_this,
+                promise,
+                module_loader,
+                &mut errorable,
+                specifier,
+                referrer,
+            )
         })
     }
 }
@@ -196,6 +205,7 @@ unsafe extern "C" {
     safe fn Bun__onFulfillAsyncModule(
         global_object: &JSGlobalObject,
         promise_value: JSValue,
+        module_loader: JSValue,
         res: &mut ErrorableResolvedSource,
         specifier: &BunString,
         referrer: &BunString,
@@ -648,6 +658,8 @@ impl AsyncModule {
         Self::fulfill(
             global_this,
             this.promise.get().unwrap(),
+            // Only the global object's loader resolves packages asynchronously (`Bun__transpileFile`).
+            JSValue::ZERO,
             result,
             &spec,
             &referrer,

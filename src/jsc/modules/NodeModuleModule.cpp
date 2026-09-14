@@ -269,10 +269,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         val = Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1).transferToWTFString();
     }
 
-    // From code running in a Bun.unsafe.ModuleGraph: that graph's require.
-    Bun::JSModuleGraph* moduleGraph = Bun::ambientModuleGraph(globalObject);
+    // Called from a Bun.unsafe.ModuleGraph's code: that graph's require().
     RELEASE_AND_RETURN(
-        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, moduleGraph)));
+        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::moduleGraphOfRunningCode(globalObject))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
@@ -1172,11 +1171,9 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSC::VM& vm = init.vm;
             JSC::JSGlobalObject* globalObject = init.owner;
 
-            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
-
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
-            ASSERT(!returnedException);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            JSValue result = Bun::createRequireCacheObject(globalObject, uncheckedDowncast<Zig::GlobalObject>(globalObject)->requireMap());
+            ASSERT_UNUSED(scope, !scope.exception());
             init.set(result.toObject(globalObject));
         });
 

@@ -9,17 +9,19 @@
 
 use core::net::IpAddr;
 
-use bun_core::ip_address::to_ip_address;
 use bun_core::strings;
 
 fn strip_trailing_dot(host: &[u8]) -> &[u8] {
     host.strip_suffix(b".").unwrap_or(host)
 }
 
-/// An address in the forms the resolver accepts for a numeric host (so
-/// `127.1` names 127.0.0.1), with `::ffff:a.b.c.d` folded into `a.b.c.d`.
+/// A dotted-quad or IPv6 address, parsed the same way on every platform, with
+/// `::ffff:a.b.c.d` folded into `a.b.c.d`. The resolver's shorthand (`127.1`,
+/// `0x7f.1`) is not an address here: `fetch()` and `WebSocket` hosts arrive
+/// normalized to the dotted quad, and a host the other callers took from
+/// configuration is compared as written, like curl does.
 fn parse_ip(text: &[u8]) -> Option<IpAddr> {
-    to_ip_address(text).map(|ip| ip.to_canonical())
+    bun_core::fmt::parse_ascii::<IpAddr>(text).map(|ip| ip.to_canonical())
 }
 
 /// Splits `host[:port]`, where `host` may be a bracketed or bare IPv6 literal.
@@ -39,7 +41,9 @@ fn split_port(entry: &[u8]) -> (&[u8], Option<&[u8]>) {
 }
 
 fn cidr_contains(entry: &[u8], slash: usize, host: IpAddr) -> bool {
-    let Some(written) = to_ip_address(bun_url::strip_ipv6_brackets(&entry[..slash])) else {
+    let Some(written) =
+        bun_core::fmt::parse_ascii::<IpAddr>(bun_url::strip_ipv6_brackets(&entry[..slash]))
+    else {
         return false;
     };
     let Ok(mut bits) = bun_core::fmt::parse_int::<u8>(&entry[slash + 1..], 10) else {

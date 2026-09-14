@@ -2305,11 +2305,14 @@ describe("proxy resolution", () => {
       ["*.0.0.1", "127.0.0.1", 80, false],
       ["127.0.0.1:8080", "127.0.0.1", 8080, true],
       ["127.0.0.1:8080", "127.0.0.1", 80, false],
-      // the resolver's short and numeric forms name the same address
-      ["127.1", "127.0.0.1", 80, true],
-      ["2130706433", "127.0.0.1", 80, true],
-      ["0x7f.0.0.1", "127.0.0.1", 80, true],
-      ["127.0.0.1", "127.1", 80, true],
+      // the resolver's short and numeric forms are not addresses here: a URL's
+      // host arrives normalized to the dotted quad
+      ["127.1", "127.0.0.1", 80, false],
+      ["2130706433", "127.0.0.1", 80, false],
+      ["0x7f.0.0.1", "127.0.0.1", 80, false],
+      ["0177.0.0.1", "127.0.0.1", 80, false],
+      ["127.0.0.1", "127.1", 80, false],
+      ["127.0.0.01", "127.0.0.1", 80, false],
       // a domain entry never exempts an address, nor the other way round
       ["example.test", "127.0.0.1", 80, false],
       ["127.0.0.1", "example.test", 80, false],
@@ -2698,7 +2701,8 @@ describe.concurrent("proxy environment", () => {
       `,
     );
     expect(results).toEqual(["proxy", "origin", "origin"]);
-  });
+    // Two worker boots in a subprocess: seconds on a debug or ASAN build.
+  }, 30_000);
 
   test("assigning and deleting process.env proxy variables takes effect on the next fetch", async () => {
     const script = `

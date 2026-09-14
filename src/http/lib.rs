@@ -478,7 +478,9 @@ pub struct HTTPClientResult<'a> {
     pub lookup_request: Option<LookupRequest>,
     /// The proxy's reply to CONNECT when `fail` is `ProxyConnectFailed`. Kept
     /// apart from `metadata`, which is only ever the origin's response head.
-    pub proxy_connect_response: Option<HTTPResponseMetadata>,
+    /// Boxed: it is large and rare, and every result is moved and dropped
+    /// several times per request.
+    pub proxy_connect_response: Option<Box<HTTPResponseMetadata>>,
     pub stats: ConnectionStats,
 }
 
@@ -4605,7 +4607,7 @@ impl<'a> HTTPClient<'a> {
 
         let stats = self.connection_stats();
         let proxy_connect_response = if self.state.fail == Some(crate::Error::ProxyConnectFailed) {
-            self.state.cloned_metadata.take()
+            self.state.cloned_metadata.take().map(Box::new)
         } else {
             None
         };

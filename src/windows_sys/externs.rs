@@ -1639,7 +1639,7 @@ pub struct PEB {
     pub ProcessParameters: *const RTL_USER_PROCESS_PARAMETERS,
 }
 
-/// `TEB` (`winternl.h`) — minimal view; only `ProcessEnvironmentBlock` is read.
+/// `TEB` (`winternl.h`) — minimal view; `ProcessEnvironmentBlock` and the stack bounds are read.
 #[repr(C)]
 pub struct TEB {
     /// `NT_TIB` is 7 pointers on x64 (`ExceptionList`, `StackBase`,
@@ -1656,6 +1656,14 @@ pub struct TEB {
 }
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::offset_of!(TEB, ProcessEnvironmentBlock) == 0x60);
+
+/// `(StackLimit, StackBase)` of the calling thread from its `NT_TIB`: the committed part of
+/// its stack, lowest address first.
+pub fn current_thread_stack_bounds() -> (usize, usize) {
+    // SAFETY: the TEB of the calling thread is live for as long as the thread runs.
+    let tib = unsafe { (*teb())._nt_tib };
+    (tib[2] as usize, tib[1] as usize)
+}
 
 /// Reads the TEB pointer — `gs:[0x30]` (x64) / `x18` (ARM64).
 ///

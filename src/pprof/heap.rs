@@ -961,7 +961,28 @@ fn record_allocation(
 
     let mut js_frames = [RawJsFrame::EMPTY; MAX_JS_FRAMES];
     let js = match CAPTURE_JS_FRAMES.get() {
+        #[cfg(not(windows))]
         Some(capture) => capture(&frame_pointers[..chain], &pcs[..chain], &mut js_frames),
+        // `RtlCaptureStackBackTrace` gives no frame pointers to find `vm.topCallFrame` among:
+        // walk them too, as far as the code keeps them.
+        #[cfg(all(windows, target_arch = "aarch64"))]
+        Some(capture) => {
+            let mut walked_pcs = [0usize; MAX_CHAIN];
+            let walked = bun_core::debug::capture_frame_chain_bounded(
+                bun_core::debug::frame_address(),
+                &mut frame_pointers,
+                &mut walked_pcs,
+            );
+            capture(
+                &frame_pointers[..walked],
+                &walked_pcs[..walked],
+                &mut js_frames,
+            )
+        }
+        // On x64 Windows rbp does not point at a frame record, so there is nothing to check
+        // `vm.topCallFrame` against: no JavaScript frames, only the Worker's label.
+        #[cfg(all(windows, not(target_arch = "aarch64")))]
+        Some(capture) => capture(&[], &[], &mut js_frames),
         None => JsThread::default(),
     };
     let js_frames = &js_frames[..js.frames.min(MAX_JS_FRAMES)];
@@ -984,7 +1005,11 @@ fn record_allocation(
     let mut next_js = 0usize;
     for (k, &pc) in pcs[..chain].iter().enumerate().skip(1) {
         let mut replaced = false;
-        while next_js < js_frames.len() && js_frames[next_js].chain_index as usize <= k {
+        // On Windows the frames' indices are into another walk: they go after the native ones.
+        while cfg!(not(windows))
+            && next_js < js_frames.len()
+            && js_frames[next_js].chain_index as usize <= k
+        {
             if let Some(index) = session.js_location_for(&js_frames[next_js], js.vm) {
                 push(JS_TAG | index);
             }
@@ -995,7 +1020,6 @@ fn record_allocation(
             push(pc);
         }
     }
-    // Windows reports JavaScript frames without a place in the chain.
     for frame in &js_frames[next_js..] {
         if let Some(index) = session.js_location_for(frame, js.vm) {
             push(JS_TAG | index);

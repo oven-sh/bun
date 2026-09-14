@@ -282,7 +282,8 @@ pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
 
 /// [`StackIterator`] for a sampling profiler: `fps[i]` and the return address saved in it,
 /// `pcs[i]`, for each frame from `fp` up, with one syscall per window of stack (Linux), bounded
-/// by the thread's stack (Apple) or from `RtlCaptureStackBackTrace` (Windows, `fps` zeroed).
+/// by the thread's stack (Apple) or from `RtlCaptureStackBackTrace` (Windows, `fps` zeroed;
+/// [`capture_frame_chain_bounded`] has the frame pointers there).
 #[inline(never)]
 pub fn capture_frame_chain(fp: usize, fps: &mut [usize], pcs: &mut [usize]) -> usize {
     let cap = fps.len().min(pcs.len());
@@ -407,18 +408,28 @@ fn capture_frame_chain_windowed(
     Some(n)
 }
 
-#[cfg(target_vendor = "apple")]
-fn capture_frame_chain_bounded(mut fp: usize, fps: &mut [usize], pcs: &mut [usize]) -> usize {
+/// The frame-pointer chain from `fp` as far as it stays inside the calling thread's stack:
+/// every hop is checked against the stack's bounds before it is read. Not for x64 Windows,
+/// where rbp points into the frame and not at a saved rbp.
+#[cfg(any(target_vendor = "apple", all(windows, target_arch = "aarch64")))]
+pub fn capture_frame_chain_bounded(mut fp: usize, fps: &mut [usize], pcs: &mut [usize]) -> usize {
     const WORD: usize = core::mem::size_of::<usize>();
-    // SAFETY: no preconditions; `pthread_self()` is the calling thread.
-    let (top, size) = unsafe {
-        let this = libc::pthread_self();
-        (
-            libc::pthread_get_stackaddr_np(this) as usize,
-            libc::pthread_get_stacksize_np(this),
-        )
+    let cap = fps.len().min(pcs.len());
+    let (fps, pcs) = (&mut fps[..cap], &mut pcs[..cap]);
+    #[cfg(target_vendor = "apple")]
+    let (bottom, top) = {
+        // SAFETY: no preconditions; `pthread_self()` is the calling thread.
+        let (top, size) = unsafe {
+            let this = libc::pthread_self();
+            (
+                libc::pthread_get_stackaddr_np(this) as usize,
+                libc::pthread_get_stacksize_np(this),
+            )
+        };
+        (top.saturating_sub(size), top)
     };
-    let bottom = top.saturating_sub(size);
+    #[cfg(windows)]
+    let (bottom, top) = bun_windows_sys::current_thread_stack_bounds();
     let mut n = 0usize;
     while n < fps.len() {
         let Some(frame) = fp.checked_sub(StackIterator::FP_OFFSET) else {

@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // An ASAN build gives malloc to the sanitizer: only Bun's arenas reach the allocator that is
 // being profiled, so there is nothing to measure for an ArrayBuffer.
-const quantitative = !isASAN;
+// TODO: on x64 Windows rbp does not point at a frame record, so a sample has nothing to check
+// JavaScriptCore's record of the top frame against and leaves the JavaScript frames out; the
+// cases below find their samples by function name.
+const quantitative = !isASAN && !(isWindows && process.arch === "x64");
 const MiB = 1024 * 1024;
 
 async function runFixture(name: string, ...args: string[]) {
@@ -176,7 +179,8 @@ describe.concurrent("Bun.pprof.heap", () => {
         expect(result.hasNativeFramesBelow).toBe(true);
         expect(result.hasNativeFramesAbove).toBe(true);
         expect(result.nativeFramesHaveMappings).toBe(true);
-        expect(result.labels.thread).toBeString();
+        // macOS gives the main thread no name.
+        if (isLinux) expect(result.labels.thread).toBeString();
       }
     },
   );
@@ -298,7 +302,7 @@ describe.concurrent("Bun.pprof.heap", () => {
     const { stdout, stderr, exitCode } = await runFixture("heap-fixture-leak.ts");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const { growthMiB, profileBytes } = JSON.parse(stdout);
-    expect(profileBytes).toBeGreaterThan(200 * 1500);
+    if (quantitative) expect(profileBytes).toBeGreaterThan(200 * 1500);
     // 200 sessions of about a quarter MiB of tables each: 50 MiB if they were kept.
     expect(growthMiB).toBeLessThan(isASAN || isDebug ? 32 : 16);
   });

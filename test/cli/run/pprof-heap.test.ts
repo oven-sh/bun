@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { decode } from "../../js/bun/pprof/pprof-decode";
 
@@ -35,7 +35,8 @@ function expectHeapProfile(path: string, period: number) {
   ]);
   expect(profile.period).toBe(period);
   // An ASAN build gives malloc to the sanitizer, so an ArrayBuffer is not in the profile.
-  if (!isASAN) {
+  // TODO: samples have no JavaScript frames on x64 Windows (see heap.test.ts).
+  if (!isASAN && !(isWindows && process.arch === "x64")) {
     const allocate = profile.samples.filter(s => s.stack.some(f => f.function === "allocate"));
     // 16 MiB in blocks twice the interval: nearly every block is a sample.
     const inuse = allocate.reduce((sum, s) => sum + s.values.inuse_space, 0);

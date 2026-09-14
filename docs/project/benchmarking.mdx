@@ -353,3 +353,4 @@ Notes:
 - Native frames are addresses in a release build of Bun. To see function names, download the `bun-profile` build of the same version and pass it first: `go tool pprof -http=: ./bun-profile heap.pb.gz`.
 - In an executable built with `bun build --compile`, and in code loaded from `--bytecode` output, a JavaScript frame has the line where its function starts, and a function that has not been named yet is `(anonymous)`.
 - On macOS, memory that system frameworks allocate is not part of the profile.
+- On Windows x64, samples have native frames only.

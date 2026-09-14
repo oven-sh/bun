@@ -1,17 +1,16 @@
-// Runs inside malloc (src/pprof/heap.rs): nothing here may allocate, take a lock or touch the GC.
+// Runs inside malloc (src/pprof/heap.rs): nothing here may allocate, wait for a lock or touch the GC.
 
 #include "root.h"
 
 #include <JavaScriptCore/CallFrame.h>
 #include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/CodeBlockSet.h>
 #include <JavaScriptCore/ExecutableAllocator.h>
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/NativeExecutable.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/VM.h>
-#include <wtf/StackPointer.h>
-#include <wtf/Threading.h>
 
 // llint/LLIntPCRanges.h is not an installed header.
 extern "C" void llintPCRangeStart();
@@ -60,6 +59,39 @@ static bool isJavaScriptPC(uintptr_t pc)
     return pc >= std::bit_cast<uintptr_t>(&llintPCRangeStart) && pc <= std::bit_cast<uintptr_t>(&llintPCRangeEnd);
 }
 
+// Whether StackVisitor can read `top` itself, or only the frames that called it. While a call is
+// being linked `vm.topCallFrame` is the callee's frame under construction: its code block slot is
+// null, or the code block that is being prepared (no entrypoint yet), or what an earlier frame
+// left there.
+enum class TopFrame { Unusable,
+    Skip,
+    Read };
+static TopFrame classifyTopFrame(JSC::VM& vm, JSC::CallFrame* top)
+{
+    using namespace JSC;
+    // StackVisitor reads a wasm frame on top through `vm.maybeReturnPC`, which may be stale.
+    if (top->callee().isNativeCallee())
+        return TopFrame::Unusable;
+    CodeBlock* codeBlock = top->codeBlock();
+    if (!codeBlock) {
+        JSCell* callee = top->callee().isCell() ? top->callee().asCell() : nullptr;
+        auto* function = callee ? dynamicDowncast<JSFunction>(callee) : nullptr;
+        return function && !function->isHostFunction() ? TopFrame::Skip : TopFrame::Read;
+    }
+    // The caller of malloc may hold the lock: then go without JavaScript frames.
+    Lock& lock = vm.heap.codeBlockSet().getLock();
+    if (!lock.tryLock())
+        return TopFrame::Unusable;
+    Locker locker { AdoptLock, lock };
+    if (!vm.heap.codeBlockSet().contains(locker, codeBlock))
+        return TopFrame::Unusable;
+    if (codeBlock->jitType() == JITType::None)
+        return TopFrame::Skip;
+    if (JITCode::isOptimizingJIT(codeBlock->jitType()) && !codeBlock->canGetCodeOrigin(top->callSiteIndex()))
+        return TopFrame::Skip;
+    return TopFrame::Read;
+}
+
 } // namespace Bun
 
 // `vm.topCallFrame` is stale after a JIT operation that does not record its frame: it is used
@@ -72,20 +104,13 @@ extern "C" size_t Bun__pprof__captureJSFrames(JSC::VM* vm, const uintptr_t* fram
         return 0;
 
     size_t chainIndex = 0;
-    if (framePointers) {
-        while (chainIndex < chainLength && framePointers[chainIndex] != std::bit_cast<uintptr_t>(top))
-            chainIndex++;
-        // The pc that runs in frame `i` is the return address saved in frame `i - 1`.
-        if (chainIndex == 0 || chainIndex == chainLength || !Bun::isJavaScriptPC(returnAddresses[chainIndex - 1]))
-            return 0;
-    } else {
-        auto& stack = WTF::Thread::currentSingleton().stack();
-        if (!stack.contains(top) || std::bit_cast<uintptr_t>(top) < std::bit_cast<uintptr_t>(currentStackPointer()))
-            return 0;
-        chainIndex = chainLength;
-    }
-    // StackVisitor reads a wasm frame on top through `vm.maybeReturnPC`, which may be stale too.
-    if (top->callee().isNativeCallee())
+    while (chainIndex < chainLength && framePointers[chainIndex] != std::bit_cast<uintptr_t>(top))
+        chainIndex++;
+    // The pc that runs in frame `i` is the return address saved in frame `i - 1`.
+    if (chainIndex == 0 || chainIndex == chainLength || !Bun::isJavaScriptPC(returnAddresses[chainIndex - 1]))
+        return 0;
+    const Bun::TopFrame topFrame = Bun::classifyTopFrame(*vm, top);
+    if (topFrame == Bun::TopFrame::Unusable)
         return 0;
 
     // Code from a bytecode cache decodes its positions on first use, under a lock that the caller
@@ -93,20 +118,18 @@ extern "C" size_t Bun__pprof__captureJSFrames(JSC::VM* vm, const uintptr_t* fram
     const bool positionsMayBeLazy = Bun__hasStandaloneModuleGraph();
 
     size_t count = 0;
-    StackVisitor::visit(top, *vm, [&](StackVisitor& visitor) -> IterationStatus {
+    auto visit = [&](StackVisitor& visitor) -> IterationStatus {
         if (count == capacity)
             return IterationStatus::Done;
-        if (framePointers) {
-            auto frame = std::bit_cast<uintptr_t>(visitor->callFrame());
-            while (chainIndex < chainLength && framePointers[chainIndex] != frame)
-                chainIndex++;
-            if (chainIndex == chainLength)
-                return IterationStatus::Done;
-        }
+        auto callFrame = std::bit_cast<uintptr_t>(visitor->callFrame());
+        while (chainIndex < chainLength && framePointers[chainIndex] != callFrame)
+            chainIndex++;
+        if (chainIndex == chainLength)
+            return IterationStatus::Done;
 
         Bun::PprofJSFrame& frame = out[count++];
         frame = {};
-        frame.chainIndex = static_cast<uint32_t>(framePointers ? chainIndex - 1 : chainIndex);
+        frame.chainIndex = static_cast<uint32_t>(chainIndex - 1);
 
         if (visitor->isNativeCalleeFrame()) {
             Bun::setLiteral(frame.name, frame.nameLength, visitor->isWasmFrame() ? "(wasm)"_s : "(native)"_s);
@@ -133,7 +156,8 @@ extern "C" size_t Bun__pprof__captureJSFrames(JSC::VM* vm, const uintptr_t* fram
             // The call site index can be stale: tiering up before the frame's first call.
             auto bytecodeIndex = visitor->bytecodeIndex();
             if (bytecodeIndex.offset() < codeBlock->instructions().size() && !positionsMayBeLazy && !executable->source().provider()->cachedBytecode()) {
-                auto lineColumn = codeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+                // Not `lineColumnForBytecodeIndex()`: that fills a cache, which allocates.
+                auto lineColumn = codeBlock->expressionInfoForBytecodeIndex(bytecodeIndex).lineColumn;
                 frame.line = lineColumn.line;
                 frame.column = lineColumn.column;
             } else {
@@ -151,6 +175,7 @@ extern "C" size_t Bun__pprof__captureJSFrames(JSC::VM* vm, const uintptr_t* fram
         if (!frame.nameLength)
             Bun::setLiteral(frame.name, frame.nameLength, "(native)"_s);
         return IterationStatus::Continue;
-    });
+    };
+    StackVisitor::visit(top, *vm, visit, topFrame == Bun::TopFrame::Skip);
     return count;
 }

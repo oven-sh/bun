@@ -5423,7 +5423,8 @@ declare module "bun" {
      * objects, the buffers of Bun's APIs. The JavaScript heap shows up as the blocks the garbage
      * collector takes from the allocator, attributed to the allocation that made it need
      * another block, not as individual objects; for those, use {@link generateHeapSnapshot}.
-     * On macOS, memory that system frameworks allocate is not included.
+     * On macOS, memory that system frameworks allocate is not included. On Windows x64, samples
+     * have native frames only.
      *
      * The same profile can be written when the process exits, without a change to the code:
      * `bun --pprof-heap[=<path>] [--pprof-heap-interval=<bytes>]`.

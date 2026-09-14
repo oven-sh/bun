@@ -50,17 +50,12 @@ fn capture_js_frames(
         };
     }
     debug_assert_eq!(frame_pointers.len(), return_addresses.len());
-    let chain = if cfg!(windows) {
-        core::ptr::null()
-    } else {
-        frame_pointers.as_ptr()
-    };
-    // SAFETY: `jsc_vm` is this thread's live VM; `chain` is null or, like
-    // `return_addresses`, `frame_pointers.len()` words; `out` is writable for `out.len()` frames.
+    // SAFETY: `jsc_vm` is this thread's live VM; both slices are `frame_pointers.len()` words;
+    // `out` is writable for `out.len()` frames.
     let frames = unsafe {
         Bun__pprof__captureJSFrames(
             jsc_vm,
-            chain,
+            frame_pointers.as_ptr(),
             return_addresses.as_ptr(),
             frame_pointers.len(),
             out.as_mut_ptr(),

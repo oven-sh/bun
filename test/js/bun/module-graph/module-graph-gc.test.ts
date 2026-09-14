@@ -69,6 +69,59 @@ function collect(): Promise<void> {
   );
 }
 
+/** For a failure message: from the debugging heap snapshot, what keeps each live `ModuleGraph` cell
+ *  (shortest path from a root), or that nothing in the heap does. */
+function whatRetainsGraphs(): string[] {
+  const snapshot = require("bun:jsc").generateHeapSnapshotForDebugging() as any;
+  const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } = snapshot;
+  const className = new Map<number, string>();
+  for (let i = 0; i < nodes.length; i += 7)
+    className.set(
+      nodes[i],
+      nodeClassNames[nodes[i + 2]] + (labels[nodes[i + 4]] ? "(" + labels[nodes[i + 4]] + ")" : ""),
+    );
+  const incoming = new Map<number, [number, string][]>();
+  for (let i = 0; i < edges.length; i += 4) {
+    const type = edgeTypes[edges[i + 2]];
+    const name = type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : edges[i + 3];
+    let list = incoming.get(edges[i + 1]);
+    if (!list) incoming.set(edges[i + 1], (list = []));
+    list.push([edges[i], type + ":" + name]);
+  }
+  const rootReason = new Map<number, string>();
+  for (let i = 0; i < roots.length; i += 3) rootReason.set(roots[i], String(labels[roots[i + 1]] ?? roots[i + 1]));
+  const report: string[] = [];
+  for (const [id, name] of className) {
+    // A graph (not the constructor or the prototype) is what an overlay's `moduleGraph` variable holds.
+    if (
+      !name.startsWith("ModuleGraph") ||
+      !(incoming.get(id) ?? []).some(([, edge]) => edge === "Variable:moduleGraph")
+    )
+      continue;
+    const from = new Map<number, [number, string] | undefined>([[id, undefined]]);
+    const queue = [id];
+    let root: number | undefined;
+    while (queue.length && root === undefined) {
+      const at = queue.shift()!;
+      if (rootReason.has(at)) root = at;
+      else
+        for (const [parent, edge] of incoming.get(at) ?? [])
+          if (!from.has(parent)) (from.set(parent, [at, edge]), queue.push(parent));
+    }
+    if (root === undefined) {
+      report.push(
+        `${name}#${id}: no root reaches it; held from ${[...(incoming.get(id) ?? [])].map(([parent, edge]) => className.get(parent) + " " + edge).join(", ") || "nothing"}`,
+      );
+      continue;
+    }
+    const path = [`root(${rootReason.get(root)}) ${className.get(root)}`];
+    for (let at = root, step = from.get(at); step; at = step[0], step = from.get(at))
+      path.push(`-${step[1]}-> ${className.get(step[0])}`);
+    report.push(`${name}#${id}: ${path.join(" ")}`);
+  }
+  return report;
+}
+
 /** Lifetimes by name: `track` an object, then ask which are `gone` or still `alive`. */
 class Lifetimes {
   #finalized = new Set<string>();
@@ -83,7 +136,8 @@ class Lifetimes {
     for (let i = 0; i < 100 && remaining().length; i++) {
       await collect();
     }
-    return remaining();
+    // Say what keeps them, not just that something does.
+    return remaining().length ? [...remaining(), ...whatRetainsGraphs()] : [];
   }
   /** Collects a few times; whether `name` survived all of them. */
   async survives(name: string): Promise<boolean> {

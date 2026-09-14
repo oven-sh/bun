@@ -34,7 +34,7 @@ export const lolhtml: Dependency = {
   versionMacro: "LOLHTML",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "oven-sh/lol-html",
     commit: LOLHTML_COMMIT,
   }),

@@ -1318,6 +1318,82 @@ describe("DONT_CONTEXTIFY", () => {
   });
 });
 
+describe("defineProperty errors use vm-realm global", () => {
+  test("data descriptor on sandbox-only property", () => {
+    const sandbox = {};
+    Object.defineProperty(sandbox, "locked", { value: 1, writable: false, configurable: false });
+    createContext(sandbox);
+
+    const result = runInContext(
+      `
+        let err;
+        try {
+          Object.defineProperty(this, "locked", { value: 2, configurable: true });
+        } catch (e) { err = e; }
+        ({
+          isVmRealmTypeError: err instanceof TypeError,
+          hostFunction: err && err.constructor && err.constructor.constructor,
+        });
+      `,
+      sandbox,
+    );
+
+    expect(result.isVmRealmTypeError).toBe(true);
+    expect(result.hostFunction === Function).toBe(false);
+    expect(typeof result.hostFunction).toBe("function");
+    expect(result.hostFunction("return typeof process")()).toBe("undefined");
+  });
+
+  test("accessor descriptor", () => {
+    const sandbox = {};
+    Object.defineProperty(sandbox, "locked", { value: 1, writable: false, configurable: false });
+    createContext(sandbox);
+
+    const result = runInContext(
+      `
+        let err;
+        try {
+          Object.defineProperty(this, "locked", { get() { return 2; }, configurable: true });
+        } catch (e) { err = e; }
+        ({
+          isVmRealmTypeError: err instanceof TypeError,
+          hostFunction: err && err.constructor && err.constructor.constructor,
+        });
+      `,
+      sandbox,
+    );
+
+    expect(result.isVmRealmTypeError).toBe(true);
+    expect(result.hostFunction === Function).toBe(false);
+    expect(result.hostFunction("return typeof process")()).toBe("undefined");
+  });
+
+  test("data descriptor on a property not on the sandbox (non-extensible sandbox)", () => {
+    // preventExtensions makes the define of a new key throw from the sandbox itself.
+    const sandbox = {};
+    Object.preventExtensions(sandbox);
+    createContext(sandbox);
+
+    const result = runInContext(
+      `
+        let err;
+        try {
+          Object.defineProperty(this, "newKey", { value: 1 });
+        } catch (e) { err = e; }
+        ({
+          isVmRealmTypeError: err instanceof TypeError,
+          hostFunction: err && err.constructor && err.constructor.constructor,
+        });
+      `,
+      sandbox,
+    );
+
+    expect(result.isVmRealmTypeError).toBe(true);
+    expect(result.hostFunction === Function).toBe(false);
+    expect(result.hostFunction("return typeof process")()).toBe("undefined");
+  });
+});
+
 test("Loader is not defined in vm context", () => {
   // Test with empty context - internal Loader should not leak through
   const emptyContext = createContext({});

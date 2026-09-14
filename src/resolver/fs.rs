@@ -71,13 +71,6 @@ impl strings::Appender for FilenameStoreAppender {
         // (never freed); `Interned` is the canonical proof type for this widen.
         Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
     }
-    #[inline]
-    fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-        // SAFETY: see `append`.
-        let r = unsafe { FilenameStoreBacking::append_lower_case(self.backing, s)? };
-        // SAFETY: see `append`.
-        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
-    }
 }
 
 // dirname_store/filename_store are &'static singletons —

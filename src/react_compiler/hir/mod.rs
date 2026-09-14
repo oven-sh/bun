@@ -1247,11 +1247,6 @@ pub struct SpreadPattern {
     pub place: Place,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Hole {
-    Hole,
-}
-
 #[derive(Debug, Clone)]
 pub struct ArrayPattern {
     pub items: HirVec<ArrayPatternElement>,

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "root.h"
-#include "BunClientData.h"
 
 #include <JavaScriptCore/InternalFunction.h>
 

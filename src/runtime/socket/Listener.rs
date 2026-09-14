@@ -1778,6 +1778,8 @@ impl WindowsNamedPipeListeningContext {
         // `BackRef` deref — owner `Listener` outlives this context (see field doc).
         let listener_ref = this_ref.listener.unwrap();
         let listener: &Listener = listener_ref.get();
+        // An accepted pipe is the listening script's.
+        let _context = this_ref.vm.enter_context(listener.context);
         use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
         let socket: PipeSocketType = if this_ref.ctx.is_some() {
             PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))
@@ -1785,11 +1787,6 @@ impl WindowsNamedPipeListeningContext {
             PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
         };
 
-        // An accepted pipe is the listening script's.
-        let _context = this_ref
-            .global_this
-            .bun_vm()
-            .enter_context(listener.context);
         let client = WindowsNamedPipeContext::create(&this_ref.global_this, socket);
 
         // SAFETY: `client` was just heap-allocated by `create()`; exclusive

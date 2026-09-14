@@ -275,6 +275,13 @@ const dir = String(
         "child_process.exec": () => promisify(childProcess.exec)("echo hi"),
       };
 
+      // One compressed chunk that expands to many times the stream's step size: decoded on the
+      // thread pool in many steps, each scheduled by the completion of the one before.
+      export function decompressALot(state, gzipped) {
+        const counted = new TransformStream({ transform(part) { state.ticks++; } });
+        return new Response(new Blob([gzipped]).stream().pipeThrough(new DecompressionStream("gzip")).pipeThrough(counted)).arrayBuffer();
+      }
+
       export function queueEverything(log) {
         process.nextTick(() => log.push("nextTick"));
         queueMicrotask(() => log.push("microtask"));
@@ -1359,4 +1366,24 @@ test("ModuleGraph isolation: background work of a disposed graph does not settle
   await hostTimerTurns();
   const settled = pending.filter(name => Bun.peek.status(started[name]) !== "pending");
   expect(settled.filter(name => !mayStillSettle.includes(name))).toEqual(mustSettle);
+});
+
+test("ModuleGraph isolation: work that continues from one thread-pool step to the next stays the graph's: disposing it mid-way ends the chain", async () => {
+  // 48 MB of a repeated block: a few hundred KB compressed, well over a hundred steps to decode.
+  const gzipped = Bun.gzipSync(Buffer.alloc(48 << 20, crypto.getRandomValues(new Uint8Array(1024))));
+  using made = await newGraph();
+  const [ofGraph, ofHost] = [newState("decompress-graph"), newState("decompress-host")];
+  const inGraph: Promise<ArrayBuffer> = made.graph.run(() => made.app.decompressALot(ofGraph, gzipped));
+  // Some steps in, not all.
+  await until(() => ofGraph.ticks > 2);
+  made.graph.dispose();
+  const stoppedAt = ofGraph.ticks;
+  // The host's, started afterwards, runs to the end.
+  await hostApp.decompressALot(ofHost, gzipped);
+  await hostTimerTurns();
+  expect({ status: Bun.peek.status(inGraph), steps: ofGraph.ticks, hostSteps: ofHost.ticks > stoppedAt }).toEqual({
+    status: "pending",
+    steps: stoppedAt,
+    hostSteps: true,
+  });
 });

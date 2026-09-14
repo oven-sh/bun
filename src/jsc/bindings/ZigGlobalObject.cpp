@@ -3119,7 +3119,7 @@ uint8_t GlobalObject::drainMicrotasks()
     // AsyncLocalStorage frame it installed with enterWith() must not leak into
     // the next one (everything queued runs under the frame it captured).
     if (!vm.entryScope)
-        m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+        m_asyncContextData.get()->putInternalField(vm, 0, m_moduleGraphs ? Bun::moduleGraphAsyncContextAtEventLoop(this) : jsUndefined());
 
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         nextTickQueue->drain(vm, this);

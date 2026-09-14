@@ -1015,8 +1015,14 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
     };
     let (input, pin) = AsyncInput::new(global, chunk, fallback);
     let cx = global.js_thread();
-    // SAFETY: `this` is the live coder owned by the calling JS cell.
-    let _context = cx.vm().enter_context(unsafe { (*this).context });
+    // Called by script, the step is that script's; asked for by a native sink, it is the
+    // stream's maker's.
+    let _context = if cx.vm().jsc_vm().is_entered() {
+        None
+    } else {
+        // SAFETY: `this` is the live coder owned by the calling JS cell.
+        Some(cx.vm().enter_context(unsafe { (*this).context }))
+    };
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
         CompressionAsyncCtx {

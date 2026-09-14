@@ -304,6 +304,7 @@ pub(crate) fn list_objects(
         poll_ref: bun_io::KeepAlive::init(),
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
+        context: Default::default(),
     }));
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
@@ -369,6 +370,7 @@ pub(crate) fn list_objects(
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
+    task.context = VirtualMachine::get().current_context().id();
     // SAFETY: the task is heap-allocated and drops its handle with itself.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, VirtualMachine::get().current_context()) };
     bun_http::HTTPThread::schedule(batch);

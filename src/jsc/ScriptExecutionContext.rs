@@ -144,6 +144,14 @@ impl ScriptExecutionContext {
         self.id.set(id);
     }
 
+    /// `VirtualMachine::dead_context`: stopped from the start.
+    pub(crate) fn dead(id: ContextId) -> Self {
+        let context = Self::default();
+        context.id.set(id);
+        context.stopped.set(Some(StopReason::Disposed));
+        context
+    }
+
     pub(crate) fn for_graph(id: ContextId, dom_context: *mut core::ffi::c_void) -> Self {
         let context = Self::default();
         context.id.set(id);
@@ -363,12 +371,6 @@ impl AbortHandle {
         // SAFETY: a context outlives the handles linked into it (it unlinks
         // them all when it stops).
         unsafe { self.context.get().as_ref() }
-    }
-
-    /// The context the handle is armed in.
-    #[inline]
-    pub fn context_id(&self) -> Option<ContextId> {
-        self.context().map(ScriptExecutionContext::id)
     }
 
     #[inline]

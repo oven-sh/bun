@@ -122,6 +122,9 @@ public:
     bool rejectingImport { false };
     // Native code is telling a graph that something of its own closed.
     unsigned teardownNotificationDepth { 0 };
+    // The async context native code entered from the top of the event loop
+    // (VirtualMachine::enter_context): what a microtask checkpoint there goes back to.
+    JSC::Strong<JSC::Unknown> enteredFromEventLoop;
 };
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
@@ -168,5 +171,9 @@ private:
 // be called: it was handed over inside the context of a graph that has since been disposed,
 // and what is calling is not a close notification (bun_jsc::TeardownNotification).
 bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject*, JSC::JSValue asyncContext);
+
+// What GlobalObject::drainMicrotasks resets the async context to when no script is on the stack:
+// undefined, or what native code entered with VirtualMachine::enter_context.
+JSC::JSValue moduleGraphAsyncContextAtEventLoop(Zig::GlobalObject*);
 
 } // namespace Bun

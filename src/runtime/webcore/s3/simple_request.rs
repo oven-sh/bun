@@ -138,6 +138,8 @@ pub struct S3HttpSimpleTask {
     /// request still queued or in flight fails promptly and comes back.
     pub(crate) signal_store: bun_http::signals::Store,
     pub(crate) abort_handle: bun_jsc::AbortHandle,
+    /// The context of the script that asked (the handle forgets it when the context stops).
+    pub(crate) context: bun_jsc::ContextId,
 }
 
 bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause| {
@@ -297,10 +299,10 @@ impl S3HttpSimpleTask {
     pub(crate) fn on_response(this: *mut Self) -> bun_jsc::JsResult<()> {
         // The next request of a multipart upload, a retry, and the script this calls continue
         // what the requesting script started.
-        // SAFETY: fn contract — `this` is live.
-        let context = unsafe { (*this).abort_handle.context_id() };
+        // (In a stopped context, whatever a retry arms is aborted at once.)
         let vm = VirtualMachine::get();
-        let _context = context.map(|context| vm.enter_context(context));
+        // SAFETY: fn contract — `this` is live.
+        let _context = vm.enter_context(unsafe { (*this).context });
         // SAFETY: fn contract — `this` is live.
         unsafe { (*this).abort_handle.leave() };
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
@@ -644,6 +646,7 @@ pub(crate) fn execute_simple_s3_request(
         poll_ref,
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
+        context: Default::default(),
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
     // the scoped exclusive `http` writes below.
@@ -709,8 +712,10 @@ pub(crate) fn execute_simple_s3_request(
     // when it stops, and the VM waits for it (the ticket).
     // SAFETY: as above; the task is heap-allocated and drops its handle with itself.
     unsafe {
-        (*task_ptr).http_ticket = Some(VirtualMachine::get().ticket());
-        bun_jsc::AbortHandle::arm_owner(task_ptr, VirtualMachine::get().current_context());
+        let vm = VirtualMachine::get();
+        (*task_ptr).http_ticket = Some(vm.ticket());
+        (*task_ptr).context = vm.current_context().id();
+        bun_jsc::AbortHandle::arm_owner(task_ptr, vm.current_context());
     }
     bun_http::HTTPThread::schedule(batch);
     Ok(())

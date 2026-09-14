@@ -371,15 +371,49 @@ static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSIsola
     return frame;
 }
 
-ModuleGraphContextScope::ModuleGraphContextScope(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
+// With no script on the stack, a microtask checkpoint resets the async context
+// (GlobalObject::drainMicrotasks): inside a scope native code entered, to what it entered.
+static void noteEnteredFromEventLoop(Zig::GlobalObject* globalObject, JSValue asyncContext)
+{
+    VM& vm = globalObject->vm();
+    if (vm.entryScope || !globalObject->m_moduleGraphs)
+        return;
+    auto& entered = globalObject->m_moduleGraphs->enteredFromEventLoop;
+    if (asyncContext.isObject())
+        entered.set(vm, asyncContext);
+    else
+        entered.clear();
+}
+
+JSValue moduleGraphAsyncContextAtEventLoop(Zig::GlobalObject* globalObject)
+{
+    auto* state = globalObject->m_moduleGraphs.get();
+    return state && state->enteredFromEventLoop ? state->enteredFromEventLoop.get() : jsUndefined();
+}
+
+// Makes `graph`'s context current. Returns the async context to restore, or the empty value when
+// there was nothing to do (no context of its own, or already inside it).
+static JSValue enterModuleGraphContext(Zig::GlobalObject* globalObject, JSObject* graph)
 {
     auto* isolated = graph ? dynamicDowncast<JSIsolatedModuleGraph>(graph) : nullptr;
     if (!isolated || currentIsolatedModuleGraph(globalObject) == isolated)
-        return;
+        return {};
     auto* asyncContextData = globalObject->m_asyncContextData.get();
-    m_globalObject = globalObject;
-    m_previous = asyncContextData->getInternalField(0);
-    asyncContextData->putInternalField(globalObject->vm(), 0, createModuleGraphFrame(globalObject, isolated, m_previous));
+    JSValue previous = asyncContextData->getInternalField(0);
+    // From the top of the event loop: the frame the graph's loader runs its modules in.
+    JSValue frame = previous.isUndefinedOrNull() ? isolated->loader()->asyncContext() : JSValue();
+    if (!frame || !frame.isObject())
+        frame = createModuleGraphFrame(globalObject, isolated, previous);
+    asyncContextData->putInternalField(globalObject->vm(), 0, frame);
+    noteEnteredFromEventLoop(globalObject, frame);
+    return previous;
+}
+
+ModuleGraphContextScope::ModuleGraphContextScope(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
+{
+    m_previous = enterModuleGraphContext(globalObject, graph);
+    if (m_previous)
+        m_globalObject = globalObject;
 }
 
 ModuleGraphContextScope::ModuleGraphContextScope(WebCore::ScriptExecutionContext& context)
@@ -387,29 +421,47 @@ ModuleGraphContextScope::ModuleGraphContextScope(WebCore::ScriptExecutionContext
 {
 }
 
+static void leaveModuleGraphContext(Zig::GlobalObject* globalObject, JSValue previous)
+{
+    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, previous);
+    noteEnteredFromEventLoop(globalObject, previous);
+}
+
 ModuleGraphContextScope::~ModuleGraphContextScope()
 {
     if (m_globalObject)
-        m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous);
+        leaveModuleGraphContext(m_globalObject, m_previous);
 }
 
 // VirtualMachine::enter_context: native code about to run a completion of something a graph's script
 // started. Returns the async context to restore.
-extern "C" EncodedJSValue Bun__ModuleGraph__enterContext(JSGlobalObject* lexicalGlobalObject, WebCore::ScriptExecutionContext* context)
+// `gone`: the graph was collected (its context is about to stop). Empty: nothing to do.
+extern "C" EncodedJSValue Bun__ModuleGraph__enterContext(WebCore::ScriptExecutionContext* context, bool* gone)
+{
+    JSObject* graph = context->moduleGraph();
+    *gone = !graph;
+    if (!graph)
+        return JSValue::encode(JSValue());
+    return JSValue::encode(enterModuleGraphContext(uncheckedDowncast<Zig::GlobalObject>(context->jsGlobalObject()), graph));
+}
+
+// The realm's own context: out of whatever graph's context is current (a completion of the
+// host's run from an event-loop tick nested under a graph's script). Empty: nothing to do.
+extern "C" EncodedJSValue Bun__ModuleGraph__enterRootContext(JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (!currentIsolatedModuleGraph(globalObject))
+        return JSValue::encode(JSValue());
     auto* asyncContextData = globalObject->m_asyncContextData.get();
     JSValue previous = asyncContextData->getInternalField(0);
-    auto* graph = context->moduleGraph() ? dynamicDowncast<JSIsolatedModuleGraph>(context->moduleGraph()) : nullptr;
-    if (graph && currentIsolatedModuleGraph(globalObject) != graph)
-        asyncContextData->putInternalField(globalObject->vm(), 0, createModuleGraphFrame(globalObject, graph, previous));
+    asyncContextData->putInternalField(globalObject->vm(), 0, jsUndefined());
+    noteEnteredFromEventLoop(globalObject, jsUndefined());
     return JSValue::encode(previous);
 }
 
 extern "C" void Bun__ModuleGraph__leaveContext(JSGlobalObject* lexicalGlobalObject, EncodedJSValue previous)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, JSValue::decode(previous));
+    leaveModuleGraphContext(defaultGlobalObject(lexicalGlobalObject), JSValue::decode(previous));
 }
 
 bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject* globalObject, JSValue asyncContext)

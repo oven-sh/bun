@@ -465,15 +465,16 @@ pub unsafe fn complete_erased(ptr: *mut (), cx: &JsThread<'_>) -> JsResult<()> {
     // the swap was that file's exit, and a `then` that calls back directly
     // (node:crypto's callback forms) would run its script under the next file.
     // SAFETY: `ptr` is a live posted `Job<C>`, header first (fn contract).
+    //
+    // `then` continues what the scheduling script started: the next job it schedules, and the
+    // script it calls, are that context's.
+    // SAFETY: `ptr` is a live posted `Job<C>`, header first (fn contract).
     let context = unsafe { (*header).context };
-    let stale = !cx.vm().is_context_live(context);
-    if !cx.vm().script_allowed() || stale {
+    if !cx.vm().script_allowed() || !cx.vm().is_context_live(context) {
         // SAFETY: as below; released exactly once, here.
         unsafe { ((*header).release_unrun)(header) };
         return Ok(());
     }
-    // `then` continues what the scheduling script started: the next job it schedules, and the
-    // script it calls, are that context's.
     let _context = cx.vm().enter_context(context);
     // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
     unsafe { ((*header).complete)(header, cx) }

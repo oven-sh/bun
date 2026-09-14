@@ -1360,9 +1360,7 @@ pub mod js_bundler {
             next_plugin: 0,
             plugin_count,
         };
-        if let Some(setup_promise) = build.advance(global_this, JSValue::UNDEFINED)? {
-            build.park(global_this, setup_promise)?;
-        }
+        build.run(global_this, JSValue::UNDEFINED)?;
         Ok(build.promise)
     }
 
@@ -1382,6 +1380,14 @@ pub mod js_bundler {
     }
 
     impl PendingBuild {
+        /// Goes on from `setup_result` until the bundle is scheduled or the build is parked. The caller reports an error.
+        fn run(&mut self, global_this: &JSGlobalObject, setup_result: JSValue) -> JsResult<()> {
+            match self.advance(global_this, setup_result)? {
+                Some(setup_promise) => self.park(global_this, setup_promise),
+                None => Ok(()),
+            }
+        }
+
         /// Runs each `setup()` that is left, then schedules the bundle. `Some` is a promise from `runSetupFunction` to park on.
         fn advance(
             &mut self,
@@ -1532,10 +1538,8 @@ pub mod js_bundler {
     ) -> JsResult<JSValue> {
         let [setup_result, context] = callframe.arguments_as_array::<2>();
         let mut build = PendingBuild::unpark(global_this, context)?;
-        match build.advance(global_this, setup_result) {
-            Ok(None) => {}
-            Ok(Some(setup_promise)) => build.park(global_this, setup_promise)?,
-            Err(err) => build.reject(global_this, Err(err))?,
+        if let Err(err) = build.run(global_this, setup_result) {
+            build.reject(global_this, Err(err))?;
         }
         Ok(JSValue::UNDEFINED)
     }

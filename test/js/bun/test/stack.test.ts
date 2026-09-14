@@ -85,6 +85,38 @@ test("err.line and err.column are set", async () => {
   );
 });
 
+const supplementaryCharacter = String.fromCodePoint(0x10000);
+
+test.concurrent.each([
+  ["\t123 + error()", "1 | \t123 + error()", "    \t      ^"],
+  [
+    `"${supplementaryCharacter}"\t+ error()`,
+    `1 | "${supplementaryCharacter}"\t+ error()`,
+    "        \t  ^",
+  ],
+])("runtime error caret preserves source padding (#10857)", async (script, expectedSource, expectedCaret) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stderr.split(/\r?\n/);
+
+  expect({
+    stdout,
+    source: lines.find(line => line.startsWith("1 | ")),
+    caret: lines.find(line => line.trimEnd().endsWith("^")),
+  }).toEqual({
+    stdout: "",
+    source: expectedSource,
+    caret: expectedCaret,
+  });
+  expect(exitCode).toBe(1);
+});
+
 test("throwing inside an error suppresses the error and prints the stack", async () => {
   $.throws(false);
   $.env(bunEnv);

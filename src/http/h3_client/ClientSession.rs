@@ -263,9 +263,7 @@ impl ClientSession {
         // `host` drops here (was `defer bun.default_allocator.free(host)`).
     }
 
-    /// `fail` mutates `pending`, so it cannot be called while the iterator
-    /// holds `&self.pending`, and only one entry can match — so locate
-    /// first via raw-ptr reads, then act.
+    /// Locate first, then act: `fail` mutates `pending`, so it cannot run inside this loop.
     fn pending_stream_by_http_id(&self, async_http_id: u32) -> Option<*mut Stream> {
         for &stream_ptr in self.pending.iter() {
             // pending entries are live until detach(); `stream_ref` reads the

@@ -198,8 +198,7 @@ pub struct WriteMessage {
 pub enum WriteMessageType {
     Data = 0,
     End = 1,
-    /// The stream body broke its declared Content-Length. Fails the request only while that
-    /// body is still the one being sent; after a followed redirect dropped it, nothing happens.
+    /// The stream body broke its declared Content-Length; a no-op once that body was dropped.
     LengthMismatch = 2,
 }
 

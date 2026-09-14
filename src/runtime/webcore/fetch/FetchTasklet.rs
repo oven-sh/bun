@@ -118,7 +118,7 @@ pub struct FetchTasklet {
     /// `Content-Length` framing a streaming body; `write_request_data` counts against it.
     pub(crate) declared_request_body_len: Option<u64>,
     pub(crate) request_body_len_written: u64,
-    /// The count missed and the HTTP thread was told; it fails the request unless it dropped the body.
+    /// The count missed and `WriteMessageType::LengthMismatch` was sent.
     pub(crate) request_body_mismatched: bool,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
@@ -2154,8 +2154,7 @@ impl FetchTasklet {
         self.upgraded_connection || self.result.is_http2 || self.declared_request_body_len.is_some()
     }
 
-    /// Only the HTTP thread knows whether a followed redirect already dropped this body, so it
-    /// decides. Does not touch the sink (it can be mid-write): the caller stops the body stream.
+    /// The HTTP thread decides: only it knows whether a followed redirect already dropped the body.
     fn report_content_length_mismatch(&mut self, written: u64) {
         self.request_body_len_written = written;
         self.request_body_mismatched = true;

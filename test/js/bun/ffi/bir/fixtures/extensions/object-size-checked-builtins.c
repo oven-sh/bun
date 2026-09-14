@@ -70,13 +70,8 @@ int main(void) {
   calls = 0;
   CHECK(__builtin___memcpy_chk(buffer, "count", counted(6), counted(64)) == buffer && calls == 2);
   CHECK(__builtin___memcpy_chk(buffer, "count", counted(6), UNKNOWN) == buffer && calls == 3);
-#ifndef _WIN32
   CHECK(__builtin___printf_chk(0, "%s printed\n", "checked") == 16);
   CHECK(__builtin___fprintf_chk(stdout, 0, "%d to a stream\n", 1) == 14);
-#else
-  CHECK(printf("%s printed\n", "checked") == 16);
-  CHECK(fprintf(stdout, "%d to a stream\n", 1) == 14);
-#endif
 
   // What is known of an object's size. (Type 0: to the end of the whole object; 1: of the member it is in; 2 and 3:
   // the least it could be, which is 0 when nothing is known.)

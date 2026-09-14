@@ -25,6 +25,8 @@
 //!   * Each type parameter `T` gets a `T: DeepClone<'bump>` where-bound so
 //!     generic containers like `CssRule<R>` constrain their payload.
 
+#![forbid(unsafe_code)]
+
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};

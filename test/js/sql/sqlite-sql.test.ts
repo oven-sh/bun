@@ -872,6 +872,38 @@ describe("Query Execution", () => {
     expect(result.command).toBe("DELETE");
   });
 
+  test("result metadata properties are not enumerable", async () => {
+    await sql`CREATE TABLE result_metadata (id INTEGER PRIMARY KEY, name TEXT)`;
+    const inserted = await sql`INSERT INTO result_metadata (name) VALUES (${"a"}), (${"b"})`;
+    const selected = await sql`SELECT * FROM result_metadata ORDER BY id`;
+
+    // Like postgres.js, the metadata hangs off the array without showing up
+    // when the rows are enumerated.
+    expect(Object.keys(selected)).toEqual(["0", "1"]);
+    expect(Object.keys(inserted)).toEqual([]);
+    const forIn: string[] = [];
+    for (const key in selected) forIn.push(key);
+    expect(forIn).toEqual(["0", "1"]);
+    expect({ ...selected }).toEqual({
+      "0": { id: 1, name: "a" },
+      "1": { id: 2, name: "b" },
+    });
+
+    const metadata = ["count", "command", "lastInsertRowid", "affectedRows"];
+    expect(metadata.map(key => Object.getOwnPropertyDescriptor(selected, key))).toEqual([
+      { value: 2, writable: true, enumerable: false, configurable: true },
+      { value: "SELECT", writable: true, enumerable: false, configurable: true },
+      { value: null, writable: true, enumerable: false, configurable: true },
+      { value: null, writable: true, enumerable: false, configurable: true },
+    ]);
+    expect(metadata.map(key => Object.getOwnPropertyDescriptor(inserted, key))).toEqual([
+      { value: 2, writable: true, enumerable: false, configurable: true },
+      { value: "INSERT", writable: true, enumerable: false, configurable: true },
+      { value: 2, writable: true, enumerable: false, configurable: true },
+      { value: null, writable: true, enumerable: false, configurable: true },
+    ]);
+  });
+
   test("SELECT with various clauses", async () => {
     await sql`CREATE TABLE scores (id INTEGER, player TEXT, score INTEGER, team TEXT)`;
     await sql`INSERT INTO scores VALUES

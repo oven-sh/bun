@@ -234,6 +234,8 @@ function test_rsa(padding, encryptOaepHash, decryptOaepHash) {
 
   if (padding === constants.RSA_PKCS1_PADDING) {
     if (!process.config.variables.node_shared_openssl) {
+      // TODO(richardlau) remove check and else branch after deps/openssl
+      // is upgraded.
       if (hasOpenSSL(3, 2)) {
         let decryptedBuffer = crypto.privateDecrypt({
           key: rsaKeyPem,

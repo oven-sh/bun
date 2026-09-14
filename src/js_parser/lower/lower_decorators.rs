@@ -101,9 +101,8 @@ fn initializer_group(prop: &Property) -> Option<usize> {
     }
 }
 
-/// Puts `inserted` in `constructor` where the last instance field is defined:
-/// at the top of a base class, after the `super()` statement of a derived one.
-/// Returns false when a derived constructor has no such statement.
+/// Puts `inserted` after the last instance field: at the top of a base
+/// constructor, after the `super();` statement of a derived one, if it has one.
 fn insert_after_fields<'a>(
     constructor: &mut Property,
     is_derived: bool,
@@ -819,9 +818,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// native behavior; what the runtime helpers need is added around them.
     /// Decorator lists are evaluated in the key of their member and applied by
     /// a leading `static {}`. What has to run between two instance fields rides
-    /// in the initializer of the next one. After the last one it goes in the
-    /// constructor, or in one more `#private` field where a derived
-    /// constructor has no `super()` statement to put it after.
+    /// in the initializer of the next one, or the constructor after the last.
     /// A `#private` name with a decorated member becomes a WeakMap or WeakSet,
     /// which is how the helpers reach it; its methods become function expressions.
     #[allow(clippy::too_many_lines)]
@@ -1302,8 +1299,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let stmts = p.effect_stmts(&constructor_effects, loc);
                     if !insert_after_fields(&mut members[constructor], is_derived, &stmts, p.arena)
                     {
-                        // `super()` is inside an expression or a block, or missing:
-                        // one more field runs where it returns.
+                        // No `super();` statement: a last field runs where `super()` returns.
                         let host = p.new_private_name(
                             class_body,
                             b"#_",

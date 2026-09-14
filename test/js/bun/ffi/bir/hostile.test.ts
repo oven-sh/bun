@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, linkSync, mkdirSync, symlinkSync, writeFileSync } from "fs";
+import { chmodSync, linkSync, mkdirSync, symlinkSync, truncateSync, writeFileSync } from "fs";
 import { bunExe, isPosix, tempDir } from "harness";
 import { dirname, join, sep } from "path";
 import cases from "./fixtures/hostile/cases.json";
-import { cEnv, lines, meets, run, supported } from "./run-fixtures";
+import { cEnv, lines, meets, repeated, run, supported } from "./run-fixtures";
 
 // Input no program looks like: nested, repeated or grown far past what a person writes, and files that are not
 // files. Each ends in what `cases.json` says: the program's output, or one diagnostic and status 1. Never a crash,
@@ -17,15 +17,14 @@ type Case = {
   name: string;
   source: Part[];
   files?: Record<string, Part[]>;
+  /** Files of so many bytes, all zeros, that take no room on the disk. */
+  sparse?: Record<string, number>;
   symlinks?: Record<string, string>;
   hardlinks?: Record<string, string>;
   fifos?: string[];
   unreadable?: string[];
   requires?: string;
 } & Expected;
-
-// `text`, `count` times over.
-const repeated = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
 
 function textOf(parts: Part[]) {
   return parts
@@ -47,6 +46,10 @@ function treeOf(entry: Case) {
   for (const [name, parts] of Object.entries(entry.files ?? {})) {
     mkdirSync(dirname(join(root, name)), { recursive: true });
     writeFileSync(join(root, name), textOf(parts));
+  }
+  for (const [name, size] of Object.entries(entry.sparse ?? {})) {
+    writeFileSync(join(root, name), "");
+    truncateSync(join(root, name), size);
   }
   for (const [name, target] of Object.entries(entry.symlinks ?? {})) symlinkSync(target, join(root, name));
   for (const [name, target] of Object.entries(entry.hardlinks ?? {})) linkSync(join(root, target), join(root, name));

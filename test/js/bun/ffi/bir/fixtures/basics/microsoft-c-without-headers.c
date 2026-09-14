@@ -191,6 +191,6 @@ int main(void) {
   CHECK(sizeof(struct packed_to_2) == 10 && sizeof(struct bits) == 12 && _Alignof(struct bits) == 4);
   struct three t = {100, 200, 300};
   CHECK(sum(3, 1, 2, 3, 40.5, t, 1i64 << 40) == 6 + 40 + 600 + (1i64 << 40));
-  printf("%s, %d wrong\n", checks >= 38 ? "every check made" : "checks are missing", wrong);
+  printf("%s, %d wrong\n", checks == 42 ? "every check made" : "checks are missing", wrong);
   return wrong != 0;
 }

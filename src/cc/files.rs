@@ -22,7 +22,7 @@ pub(crate) enum Unreadable {
 }
 
 /// The largest source file there can be: positions in one are 32 bits.
-const MAX_SOURCE_BYTES: u64 = 1 << 30;
+pub(crate) const MAX_SOURCE_BYTES: u64 = 1 << 30;
 
 /// Opens, checks and reads: only a regular file of a sane size is source text. (A FIFO would
 /// block, `/dev/zero` never ends, a directory is not text.)

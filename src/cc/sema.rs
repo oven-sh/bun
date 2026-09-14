@@ -2009,7 +2009,7 @@ impl Sema {
                 }
                 let (a, b) = self.usual_arith(a, b)?;
                 if op == BinOp::Add {
-                    if let Some(rotated) = self.rotation(&a, &b, loc) {
+                    if let Some(rotated) = self.rotation(op, &a, &b, loc) {
                         return Ok(rotated);
                     }
                 }
@@ -2022,7 +2022,7 @@ impl Sema {
                 }
                 let (a, b) = self.usual_arith(a, b)?;
                 if matches!(op, BinOp::Or | BinOp::Xor) {
-                    if let Some(rotated) = self.rotation(&a, &b, loc) {
+                    if let Some(rotated) = self.rotation(op, &a, &b, loc) {
                         return Ok(rotated);
                     }
                 }

@@ -747,5 +747,98 @@
     ],
     "output": "1 5000 -1\n",
     "status": 0
+  },
+  {
+    "name": "#include of a file larger than a gibibyte",
+    "sparse": {
+      "big.h": 1073741825
+    },
+    "source": ["#include \"big.h\"\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "'big.h' cannot be read: larger than 1073741824 bytes",
+      "line": 1,
+      "column": 2
+    }
+  },
+  {
+    "name": "__has_include of a file larger than a gibibyte, and an #include of it that is skipped",
+    "sparse": {
+      "big.h": 1073741825
+    },
+    "source": [
+      "#if __has_include(\"big.h\")\n#error found\n#endif\n#if 0\n#include \"big.h\"\n#endif\n#include <stdio.h>\nint main(void) { puts(\"not a header\"); return 0; }\n"
+    ],
+    "output": "not a header\n",
+    "status": 0
+  },
+  {
+    "name": "a hundred thousand #if without #endif",
+    "source": [["#if 1\n", 100000]],
+    "error": {
+      "contains": "unterminated conditional directive"
+    }
+  },
+  {
+    "name": "a chain of thirty thousand macros",
+    "source": [
+      {
+        "each": "#define C{i} C{i+1}\n",
+        "count": 30000,
+        "from": 0
+      },
+      "C0\n"
+    ],
+    "error": {
+      "contains": "nested too deeply"
+    }
+  },
+  {
+    "name": "a gibibyte of data and one byte",
+    "source": [
+      "static char a[256 << 20], b[256 << 20], c[256 << 20], d[256 << 20], e;\nint main(void) { return a[0] + b[0] + c[0] + d[0] + e; }\n"
+    ],
+    "error": {
+      "contains": "the program's data is larger than 1073741824 bytes"
+    }
+  },
+  {
+    "name": "a gibibyte of data exactly",
+    "source": [
+      "static char a[256 << 20], b[256 << 20], c[256 << 20], d[256 << 20];\nint main(void) { d[(256 << 20) - 1] = 7; return a[0] + b[1] + c[2] + d[(256 << 20) - 1] - 7; }\n"
+    ],
+    "output": "",
+    "status": 0
+  },
+  {
+    "name": "256 MiB of thread-local data and one byte",
+    "source": [
+      "_Thread_local char one[128 << 20], other[128 << 20], more;\nint main(void) { return one[0] + other[0] + more; }\n"
+    ],
+    "error": {
+      "contains": "the program's thread-local data is larger than 268435456 bytes"
+    }
+  },
+  {
+    "name": "256 MiB of thread-local data exactly",
+    "source": [
+      "_Thread_local char one[128 << 20], other[128 << 20];\nint main(void) { other[(128 << 20) - 1] = 5; return one[0] + other[(128 << 20) - 1] - 5; }\n"
+    ],
+    "output": "",
+    "status": 0
+  },
+  {
+    "name": "an object of 256 MiB and one byte",
+    "source": ["static char a[(256 << 20) + 1];\nint main(void) { return 0; }\n"],
+    "error": {
+      "contains": "array is too large"
+    }
+  },
+  {
+    "name": "an object of 256 MiB exactly",
+    "source": [
+      "static char a[256 << 20];\nint main(void) { a[(256 << 20) - 1] = 3; return a[(256 << 20) - 1] - 3; }\n"
+    ],
+    "output": "",
+    "status": 0
   }
 ]

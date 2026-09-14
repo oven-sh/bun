@@ -5,8 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 
-static int wrong;
-#define CHECK(c) do { if (!(c)) { wrong++; printf("WRONG (line %d): %s\n", __LINE__, #c); } } while (0)
+static int checks, wrong;
+#define CHECK(c) do { checks++; if (!(c)) { wrong++; printf("WRONG (line %d): %s\n", __LINE__, #c); } } while (0)
 
 static __declspec(noinline) void *who_called(void) { return _ReturnAddress(); }
 
@@ -69,6 +69,6 @@ int main(int argc, char **argv) {
   CHECK(after >= before && who_called() != 0 && _AddressOfReturnAddress() != 0 && __readgsqword(0x30) != 0);
   // (__halt and __readeflags are refused when the program is compiled: see the diagnostics.)
   if (argc > 100) { __debugbreak(); __fastfail(7); __ud2(); }
-  printf("%d wrong\n", wrong);
+  printf("%d checks, %d wrong\n", checks, wrong);
   return wrong != 0;
 }

@@ -157,7 +157,13 @@ extern "C" void Bun__CModule__registerDestructors(JSC::FFI::CModule* module, voi
 {
     const auto& destructors = module->bir().destructors;
     for (size_t i = destructors.size(); i--;)
-        add(reinterpret_cast<void (*)()>(module->functionTable()[destructors[i]]));
+        add(reinterpret_cast<void (*)()>(module->entrypoint(destructors[i])));
+}
+
+// Runs the module's `__attribute__((constructor))` functions, the first time it is called for a module.
+extern "C" void Bun__CModule__runConstructors(JSC::FFI::CModule* module)
+{
+    module->runConstructors();
 }
 
 // { name: function } for every non-static function, typed from its C declaration.

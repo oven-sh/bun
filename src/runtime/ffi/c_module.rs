@@ -26,6 +26,7 @@ unsafe extern "C" {
         module: *mut c_void,
         add: unsafe extern "C" fn(unsafe extern "C" fn()),
     );
+    fn Bun__CModule__runConstructors(module: *mut c_void);
     fn Bun__CModule__createExports(global: *const JSGlobalObject, module: *mut c_void) -> JSValue;
 }
 
@@ -649,6 +650,10 @@ fn load_bir(global_this: &JSGlobalObject, path: &[u8], bir: &[u8]) -> JsResult<J
     }
     // SAFETY: `module` is the live module just created.
     unsafe { Bun__CModule__registerDestructors(module, run_at_exit) };
+    // Constructors run once the destructors are on the list, so that what a constructor registers
+    // with atexit runs before them, as it does in a linked program.
+    // SAFETY: `module` is the live module just created; its constructors are `void f(void)`.
+    unsafe { Bun__CModule__runConstructors(module) };
     // SAFETY: `module` holds the reference `Bun__CModule__create` returned, which is never released.
     jsc::call_check_slow(global_this, || unsafe {
         Bun__CModule__createExports(global_this, module)

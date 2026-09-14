@@ -28,6 +28,22 @@ pub(crate) enum OrderUse {
     ReadModifyWrite,
 }
 
+/// What an atomic read-modify-write gives back: what was there before it (`fetch_add`), or what
+/// is there after (`add_fetch`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Yields {
+    Old,
+    New,
+}
+
+/// What adding to an atomic pointer counts in: bytes, as the `__atomic` builtins do, or elements,
+/// as C11's `atomic_fetch_add` does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PointerStep {
+    Bytes,
+    Elements,
+}
+
 impl Sema {
     // ───────────────────────────── vector types ─────────────────────────────
 
@@ -882,7 +898,14 @@ impl Sema {
     }
 
     /// `++`/`--` on an `_Atomic` lvalue.
-    pub(crate) fn atomic_inc_dec(&self, lhs: Expr, inc: bool, post: bool, loc: Loc) -> Res<Expr> {
+    pub(crate) fn atomic_inc_dec(
+        &self,
+        lhs: Expr,
+        step: super::Step,
+        fix: super::Fix,
+        loc: Loc,
+    ) -> Res<Expr> {
+        let (inc, post) = (step == super::Step::Up, fix == super::Fix::Postfix);
         let ty = lhs.ty.unatomic().clone();
         let (op, value, op_ty) = if ty.is_ptr() {
             let scale = self.pointee_size(&ty, loc)?;
@@ -1015,13 +1038,12 @@ impl Sema {
     }
 
     /// `__atomic_exchange_n`, `__atomic_fetch_OP` and `__atomic_OP_fetch`: `(ptr, value, order)`.
-    /// `scaled` is the C11 behaviour of adding to a pointer in units of the pointee.
     pub(crate) fn atomic_rmw(
         &self,
         name: &str,
         op: RmwOp,
-        want_new: bool,
-        scaled: bool,
+        yields: Yields,
+        step: PointerStep,
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
@@ -1032,7 +1054,7 @@ impl Sema {
         let order = self.memory_order(&order_expr, OrderUse::ReadModifyWrite);
         let value = args.swap_remove(1);
         let (addr, object) = self.atomic_pointer(args.swap_remove(0), name)?;
-        let e = self.rmw_node(name, op, want_new, scaled, addr, object, value, order, loc)?;
+        let e = self.rmw_node(name, op, yields, step, addr, object, value, order, loc)?;
         self.after(vec![order_expr], e, loc)
     }
 
@@ -1040,8 +1062,8 @@ impl Sema {
         &self,
         name: &str,
         op: RmwOp,
-        want_new: bool,
-        scaled: bool,
+        yields: Yields,
+        step: PointerStep,
         addr: Expr,
         object: Type,
         value: Expr,
@@ -1059,10 +1081,9 @@ impl Sema {
                 if !value.ty.is_integer() {
                     return err(loc, format!("{name} on a pointer needs an integer operand"));
                 }
-                let scale = if scaled {
-                    self.pointee_size(&object, loc)?
-                } else {
-                    1
+                let scale = match step {
+                    PointerStep::Elements => self.pointee_size(&object, loc)?,
+                    PointerStep::Bytes => 1,
                 };
                 let sub = matches!(op, RmwOp::Arith(BinOp::Sub));
                 let vloc = value.loc;
@@ -1101,7 +1122,7 @@ impl Sema {
             op,
             op_ty,
             order,
-            want_new,
+            want_new: yields == Yields::New,
         };
         self.mk_atomic(atomic, object, loc)
     }
@@ -1203,8 +1224,8 @@ impl Sema {
                 let old = self.rmw_node(
                     name,
                     RmwOp::Exchange,
-                    false,
-                    false,
+                    Yields::Old,
+                    PointerStep::Bytes,
                     addr,
                     object.clone(),
                     value,
@@ -1253,8 +1274,8 @@ impl Sema {
             let old = self.rmw_node(
                 name,
                 RmwOp::Exchange,
-                false,
-                false,
+                Yields::Old,
+                PointerStep::Bytes,
                 addr,
                 Type::UChar,
                 one,
@@ -1316,7 +1337,7 @@ impl Sema {
         &self,
         name: &str,
         op: RmwOp,
-        want_new: bool,
+        yields: Yields,
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
@@ -1329,8 +1350,8 @@ impl Sema {
         self.rmw_node(
             name,
             op,
-            want_new,
-            false,
+            yields,
+            PointerStep::Bytes,
             addr,
             object,
             value,
@@ -1388,8 +1409,8 @@ impl Sema {
         self.rmw_node(
             name,
             RmwOp::Exchange,
-            false,
-            false,
+            Yields::Old,
+            PointerStep::Bytes,
             addr,
             object,
             value,

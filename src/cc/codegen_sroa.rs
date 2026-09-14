@@ -43,10 +43,10 @@ fn flatten(tcx: &TypeCtx, ty: &Type, base: u64, out: &mut Vec<(u64, Type)>) -> b
         }
         Type::Struct(id) => {
             let def = tcx.struct_def(*id);
-            def.complete
+            def.is_complete()
                 && !def.is_union
                 && def
-                    .members
+                    .members()
                     .iter()
                     .all(|m| m.bitfield.is_none() && flatten(tcx, &m.ty, base + m.offset, out))
         }

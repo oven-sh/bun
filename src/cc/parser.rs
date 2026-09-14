@@ -10,6 +10,7 @@ use std::rc::Rc;
 use crate::ast::*;
 use crate::extended::Extended;
 use crate::init::{Designator, Init, InitEntry, MAX_OBJECT_SIZE};
+use crate::sema::builtin::{Precision, SignFrom};
 use crate::sema::{FieldDecl, FnCtx, Sema, Storage, Symbol, Tag};
 use crate::token::{
     Kw, Loc, PackOp, Punct, Res, Tok, Token, TokenSource, classify, err, err_with_note,
@@ -992,8 +993,12 @@ impl<S: TokenSource> Parser<S> {
             self.sema.globals[id as usize].linkonce |= decl.attrs.selectany || spec.attrs.selectany;
             self.check_linkage_agrees(id, &name, spec, first, decl.loc)?;
             self.sema.globals[id as usize].is_static |= spec.storage == Storage::Static;
-            self.sema
-                .set_thread_local(id, spec.thread_local, first, decl.loc)?;
+            self.sema.set_thread_local(
+                id,
+                spec.thread_local,
+                crate::sema::Declared::first_time(first),
+                decl.loc,
+            )?;
             return Ok(());
         }
         let id = self
@@ -1004,8 +1009,12 @@ impl<S: TokenSource> Parser<S> {
         self.sema.globals[id as usize].linkonce |= decl.attrs.selectany || spec.attrs.selectany;
         self.check_linkage_agrees(id, &name, spec, first, decl.loc)?;
         self.sema.globals[id as usize].is_static |= spec.storage == Storage::Static;
-        self.sema
-            .set_thread_local(id, spec.thread_local, first, decl.loc)?;
+        self.sema.set_thread_local(
+            id,
+            spec.thread_local,
+            crate::sema::Declared::first_time(first),
+            decl.loc,
+        )?;
         self.bump()?;
         let init = self.parse_initializer()?;
         let declared_ty = self.sema.globals[id as usize].ty.clone();
@@ -1972,7 +1981,7 @@ impl<S: TokenSource> Parser<S> {
                             format!("'{tag}' was declared as a different kind of tag"),
                         );
                     }
-                    if def.complete {
+                    if def.is_complete() {
                         return err(kw_loc, format!("redefinition of '{kind} {tag}'"));
                     }
                     id
@@ -2017,7 +2026,7 @@ impl<S: TokenSource> Parser<S> {
                 let is_anonymous = match &spec.ty {
                     Type::Struct(sid) => {
                         let def = self.sema.tcx.struct_def(*sid);
-                        def.tag.is_none() || (self.dialect.microsoft && def.complete)
+                        def.tag.is_none() || (self.dialect.microsoft && def.is_complete())
                     }
                     _ => false,
                 };
@@ -2110,10 +2119,16 @@ impl<S: TokenSource> Parser<S> {
         self.sema.complete_struct(
             id,
             fields,
-            struct_attrs.packed,
-            struct_attrs.aligned,
-            pragma_pack,
-            ms_bitfields,
+            crate::sema::LayoutRules {
+                packed: struct_attrs.packed,
+                min_align: struct_attrs.aligned,
+                pragma_pack,
+                bit_fields: if ms_bitfields {
+                    crate::sema::BitFieldRules::Microsoft
+                } else {
+                    crate::sema::BitFieldRules::SystemV
+                },
+            },
             kw_loc,
         )?;
         if struct_attrs.transparent_union {
@@ -3082,8 +3097,12 @@ impl<S: TokenSource> Parser<S> {
                 let id = self.sema.declare_global(name, decl.ty, false, decl.loc)?;
                 self.sema
                     .set_global_attrs(id, align, decl.attrs.asm_label.clone());
-                self.sema
-                    .set_thread_local(id, spec.thread_local, first, decl.loc)?;
+                self.sema.set_thread_local(
+                    id,
+                    spec.thread_local,
+                    crate::sema::Declared::first_time(first),
+                    decl.loc,
+                )?;
             } else if spec.storage == Storage::Static {
                 let id = self.parse_static_local(name, &decl, spec.thread_local)?;
                 self.sema.set_global_attrs(id, align, None);
@@ -4451,7 +4470,7 @@ impl<S: TokenSource> Parser<S> {
         if !def.is_union || from.unqualified() == ty.unqualified() {
             return None;
         }
-        def.members
+        def.members()
             .iter()
             .find(|m| {
                 m.bitfield.is_none() && Sema::compatible(m.ty.unqualified(), from.unqualified())
@@ -4509,7 +4528,8 @@ impl<S: TokenSource> Parser<S> {
         let result = match p {
             Punct::PlusPlus | Punct::MinusMinus => {
                 let operand = self.parse_unary()?;
-                self.sema.inc_dec(operand, p == Punct::PlusPlus, false, loc)
+                self.sema
+                    .inc_dec(operand, step_of(p), crate::sema::Fix::Prefix, loc)
             }
             _ => {
                 let operand = self.parse_cast()?;
@@ -4625,7 +4645,9 @@ impl<S: TokenSource> Parser<S> {
                 }
                 Punct::PlusPlus | Punct::MinusMinus => {
                     let loc = self.bump()?.loc;
-                    e = self.sema.inc_dec(e, p == Punct::PlusPlus, true, loc)?;
+                    e = self
+                        .sema
+                        .inc_dec(e, step_of(p), crate::sema::Fix::Postfix, loc)?;
                 }
                 _ => break,
             }
@@ -5263,7 +5285,7 @@ impl<S: TokenSource> Parser<S> {
             "fabsl" | "copysignl" if self.sema.tcx.target.long_double_is_x87() => {
                 let args = self.parse_builtin_args()?;
                 Ok(Some(self.sema.sign_builtin_long_double(
-                    short == "copysignl",
+                    sign_from(short),
                     name,
                     args,
                     loc,
@@ -5273,7 +5295,7 @@ impl<S: TokenSource> Parser<S> {
                 let args = self.parse_builtin_args()?;
                 let as_double =
                     self.sema
-                        .sign_builtin(false, short == "copysignl", name, args, loc)?;
+                        .sign_builtin(Precision::Double, sign_from(short), name, args, loc)?;
                 Ok(Some(self.sema.convert(
                     as_double,
                     &Type::LongDouble64,
@@ -5283,8 +5305,12 @@ impl<S: TokenSource> Parser<S> {
             "fabs" | "fabsf" | "copysign" | "copysignf" => {
                 let args = self.parse_builtin_args()?;
                 Ok(Some(self.sema.sign_builtin(
-                    short.ends_with('f'),
-                    short.starts_with("copysign"),
+                    if short.ends_with('f') {
+                        Precision::Single
+                    } else {
+                        Precision::Double
+                    },
+                    sign_from(short),
                     name,
                     args,
                     loc,
@@ -5398,32 +5424,37 @@ impl<S: TokenSource> Parser<S> {
             })
         };
         // (operation, evaluates to the new value, C11 pointer scaling)
-        let rmw: Option<(RmwOp, bool, bool)> =
+        use crate::sema::simd::{PointerStep, Yields};
+        let rmw: Option<(RmwOp, Yields, PointerStep)> =
             if let Some(op) = name.strip_prefix("__atomic_fetch_") {
-                arith(op).map(|op| (op, false, false))
+                arith(op).map(|op| (op, Yields::Old, PointerStep::Bytes))
             } else if let Some(op) = name.strip_prefix("__c11_atomic_fetch_") {
                 arith(op).map(|op| {
-                    let scaled = matches!(op, RmwOp::Arith(BinOp::Add | BinOp::Sub));
-                    (op, false, scaled)
+                    let step = if matches!(op, RmwOp::Arith(BinOp::Add | BinOp::Sub)) {
+                        PointerStep::Elements
+                    } else {
+                        PointerStep::Bytes
+                    };
+                    (op, Yields::Old, step)
                 })
             } else if let Some(op) = name
                 .strip_prefix("__atomic_")
                 .and_then(|n| n.strip_suffix("_fetch"))
             {
-                arith(op).map(|op| (op, true, false))
+                arith(op).map(|op| (op, Yields::New, PointerStep::Bytes))
             } else if name == "__atomic_exchange_n" || name == "__c11_atomic_exchange" {
-                Some((RmwOp::Exchange, false, false))
+                Some((RmwOp::Exchange, Yields::Old, PointerStep::Bytes))
             } else {
                 None
             };
-        let sync_rmw: Option<(RmwOp, bool)> =
+        let sync_rmw: Option<(RmwOp, Yields)> =
             if let Some(op) = name.strip_prefix("__sync_fetch_and_") {
-                arith(op).map(|op| (op, false))
+                arith(op).map(|op| (op, Yields::Old))
             } else if let Some(op) = name
                 .strip_prefix("__sync_")
                 .and_then(|n| n.strip_suffix("_and_fetch"))
             {
-                arith(op).map(|op| (op, true))
+                arith(op).map(|op| (op, Yields::New))
             } else {
                 None
             };
@@ -5524,13 +5555,11 @@ impl<S: TokenSource> Parser<S> {
             )?));
         }
         let sema = &self.sema;
-        if let Some((op, want_new, scaled)) = rmw {
-            return Ok(Some(
-                sema.atomic_rmw(name, op, want_new, scaled, args, loc)?,
-            ));
+        if let Some((op, yields, step)) = rmw {
+            return Ok(Some(sema.atomic_rmw(name, op, yields, step, args, loc)?));
         }
-        if let Some((op, want_new)) = sync_rmw {
-            return Ok(Some(sema.sync_rmw(name, op, want_new, args, loc)?));
+        if let Some((op, yields)) = sync_rmw {
+            return Ok(Some(sema.sync_rmw(name, op, yields, args, loc)?));
         }
         Ok(Some(match name {
             "__atomic_load_n" => sema.atomic_load_n(name, args, loc)?,
@@ -5914,6 +5943,24 @@ const IGNORED_ATTRIBUTES: &[&str] = &[
     "carries_dependency",
     "no_unique_address",
 ];
+
+/// `fabs…` or `copysign…`, without the `__builtin_`.
+fn sign_from(short: &str) -> SignFrom {
+    if short.starts_with("copysign") {
+        SignFrom::SecondArgument
+    } else {
+        SignFrom::Nowhere
+    }
+}
+
+/// `++` or `--`.
+fn step_of(p: Punct) -> crate::sema::Step {
+    if p == Punct::PlusPlus {
+        crate::sema::Step::Up
+    } else {
+        crate::sema::Step::Down
+    }
+}
 
 fn has_suffix(name: &str, suffix: &str) -> bool {
     name.ends_with(suffix)

@@ -995,7 +995,14 @@ fn parse_float(text: &[u8], is_hex: bool, loc: Loc) -> Res<Tok> {
         };
         (
             extended::round_to_f64(mantissa, exponent, sticky),
-            long_double.then(|| Extended::from_scaled(false, mantissa, exponent, sticky)),
+            long_double.then(|| {
+                Extended::from_scaled(
+                    extended::Sign::Plus,
+                    mantissa,
+                    exponent,
+                    extended::Below::of(sticky),
+                )
+            }),
         )
     } else {
         let valid = body

@@ -40,6 +40,33 @@ pub(crate) enum Rounded {
     },
 }
 
+/// The sign of a number given by its magnitude.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Sign {
+    Plus,
+    Minus,
+}
+
+impl Sign {
+    pub(crate) fn of(negative: bool) -> Sign {
+        if negative { Sign::Minus } else { Sign::Plus }
+    }
+}
+
+/// What was cut off below a significand before it was handed over to be rounded: nothing but
+/// zeros, or some bit that was not (the "sticky" bit of a rounding).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Below {
+    Zeros,
+    NonZero,
+}
+
+impl Below {
+    pub(crate) fn of(sticky: bool) -> Below {
+        if sticky { Below::NonZero } else { Below::Zeros }
+    }
+}
+
 /// `significand * 2^exponent` rounded to `format`, including into its subnormal range.
 /// `sticky` says that nonzero bits below the significand were dropped.
 pub(crate) fn round(significand: u128, exponent: i64, sticky: bool, format: Format) -> Rounded {
@@ -332,12 +359,12 @@ impl Extended {
 
     /// `±significand * 2^exponent`, rounded.
     pub(crate) fn from_scaled(
-        negative: bool,
+        sign: Sign,
         significand: u128,
         exponent: i64,
-        sticky: bool,
+        below: Below,
     ) -> Extended {
-        let magnitude = match round(significand, exponent, sticky, X87) {
+        let magnitude = match round(significand, exponent, below == Below::NonZero, X87) {
             Rounded::Zero => Extended::ZERO,
             Rounded::Infinite => Extended::INFINITY,
             Rounded::Finite {
@@ -352,7 +379,7 @@ impl Extended {
                 significand,
             },
         };
-        magnitude.with_sign(negative)
+        magnitude.with_sign(sign == Sign::Minus)
     }
 
     /// The decimal constant `digits * 10^exponent` (`digits` are ASCII digits).
@@ -408,7 +435,12 @@ impl Extended {
             sticky |= n.div_small(10u32.pow(((-exponent) % 9) as u32)) != 0;
         }
         let (top, dropped, below) = n.top_bits();
-        Extended::from_scaled(false, top, scale + dropped as i64, sticky | below)
+        Extended::from_scaled(
+            Sign::Plus,
+            top,
+            scale + dropped as i64,
+            Below::of(sticky | below),
+        )
     }
 
     pub(crate) fn from_f64(value: f64) -> Extended {
@@ -423,23 +455,23 @@ impl Extended {
                 // Quiet, with the payload in the top bits.
                 significand: 0xc000_0000_0000_0000 | (fraction << 11),
             },
-            (0, _) => Extended::from_scaled(false, u128::from(fraction), -1074, false),
+            (0, _) => Extended::from_scaled(Sign::Plus, u128::from(fraction), -1074, Below::Zeros),
             _ => Extended::from_scaled(
-                false,
+                Sign::Plus,
                 u128::from(fraction | (1 << 52)),
                 biased as i64 - 1075,
-                false,
+                Below::Zeros,
             ),
         };
         magnitude.with_sign(negative)
     }
 
     pub(crate) fn from_i128(value: i128) -> Extended {
-        Extended::from_scaled(value < 0, value.unsigned_abs(), 0, false)
+        Extended::from_scaled(Sign::of(value < 0), value.unsigned_abs(), 0, Below::Zeros)
     }
 
     pub(crate) fn from_u128(value: u128) -> Extended {
-        Extended::from_scaled(false, value, 0, false)
+        Extended::from_scaled(Sign::Plus, value, 0, Below::Zeros)
     }
 
     pub(crate) fn to_f64(self) -> f64 {
@@ -539,7 +571,7 @@ impl Extended {
             u128::from(shifted) | u128::from(lost)
         };
         if large.is_negative() == small.is_negative() {
-            return Extended::from_scaled(large.is_negative(), a + b, unit, false);
+            return Extended::from_scaled(Sign::of(large.is_negative()), a + b, unit, Below::Zeros);
         }
         if a == b {
             return Extended::ZERO;
@@ -549,7 +581,7 @@ impl Extended {
         } else {
             (small.is_negative(), b - a)
         };
-        Extended::from_scaled(negative, magnitude, unit, false)
+        Extended::from_scaled(Sign::of(negative), magnitude, unit, Below::Zeros)
     }
 
     pub(crate) fn sub(self, other: Extended) -> Extended {
@@ -570,10 +602,10 @@ impl Extended {
             (Class::Infinite, _) | (_, Class::Infinite) => Extended::INFINITY.with_sign(negative),
             (Class::Zero, _) | (_, Class::Zero) => Extended::ZERO.with_sign(negative),
             (Class::Finite, Class::Finite) => Extended::from_scaled(
-                negative,
+                Sign::of(negative),
                 u128::from(self.significand) * u128::from(other.significand),
                 self.unit() + other.unit(),
-                false,
+                Below::Zeros,
             ),
         }
     }
@@ -602,7 +634,7 @@ impl Extended {
         let quotient = (first << 32) | (rest / divisor);
         let sticky = rest % divisor != 0;
         let exponent = (self.unit() - i64::from(up)) - (other.unit() - i64::from(down)) - 64 - 32;
-        Extended::from_scaled(negative, quotient, exponent, sticky)
+        Extended::from_scaled(Sign::of(negative), quotient, exponent, Below::of(sticky))
     }
 
     fn quieted(self) -> Extended {

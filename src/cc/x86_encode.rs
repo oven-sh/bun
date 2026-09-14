@@ -135,8 +135,18 @@ fn xmm_by_name(name: &[u8]) -> Option<u8> {
     (number < 16).then_some(number)
 }
 
-fn parse_integer(text: &[u8]) -> Res<i64> {
-    let text = std::str::from_utf8(text).map_err(|_| "a number is not text".to_string())?;
+/// The text that stood where a number was wanted.
+struct NotANumber(String);
+
+impl From<NotANumber> for String {
+    fn from(error: NotANumber) -> String {
+        format!("'{}' is not a number", error.0)
+    }
+}
+
+fn parse_integer(text: &[u8]) -> Result<i64, NotANumber> {
+    let not_a_number = || NotANumber(crate::token::display_bytes(text));
+    let text = std::str::from_utf8(text).map_err(|_| not_a_number())?;
     let text = text.trim();
     let (negative, digits) = match text.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -153,7 +163,7 @@ fn parse_integer(text: &[u8]) -> Res<i64> {
     } else {
         digits.parse::<u64>()
     }
-    .map_err(|_| format!("'{text}' is not a number"))?;
+    .map_err(|_| NotANumber(text.to_string()))?;
     Ok(if negative {
         (magnitude as i64).wrapping_neg()
     } else {

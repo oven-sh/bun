@@ -34,6 +34,8 @@ mod simd;
 #[path = "codegen_sroa.rs"]
 mod sroa;
 
+use pair::Halves;
+
 /// Where a C local variable lives.
 #[derive(Clone, Copy)]
 enum LocalPlace {
@@ -41,7 +43,7 @@ enum LocalPlace {
     /// A 128-bit integer whose address is never taken: the BIR locals that hold its low
     /// and high halves. Reading it as an object (`gen_place`) gives a copy in memory;
     /// every construct that writes a variable sets the halves instead.
-    Halves(u32, u32),
+    Halves(Halves),
     /// An array or structure only ever used element by element (see `sroa`): its elements
     /// are the BIR locals in that entry of `FnGen::scalar_sets`.
     Scalars(u32),
@@ -261,6 +263,38 @@ impl<'a> ModuleGen<'a> {
     }
 }
 
+/// Whether the signature of a call says that more arguments may follow the named ones.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Arity {
+    Fixed,
+    Variadic,
+}
+
+/// Whose signature a call is made with: the callee's own, or one written for the call (what the
+/// arguments of a call to an unprototyped function turned out to be).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SignatureOf {
+    Callee,
+    CallSite,
+}
+
+/// The two blocks a condition branches to.
+#[derive(Clone, Copy)]
+struct Targets {
+    when_true: u32,
+    when_false: u32,
+}
+
+impl Targets {
+    /// Where the opposite condition branches to.
+    fn negated(self) -> Targets {
+        Targets {
+            when_true: self.when_false,
+            when_false: self.when_true,
+        }
+    }
+}
+
 struct FnGen<'a, 'm> {
     m: &'m mut ModuleGen<'a>,
     tcx: &'a TypeCtx,
@@ -282,10 +316,10 @@ struct FnGen<'a, 'm> {
     /// `gen_wide` is about to make a call and wants the halves of its 128-bit result as
     /// values; `emit_call` leaves them in `wide_result` instead of storing them.
     want_wide_result: bool,
-    wide_result: Option<(V, V)>,
+    wide_result: Option<Halves>,
     /// The halves of the 128-bit arguments of the call about to be emitted, by position,
     /// for those that were computed as values.
-    wide_arguments: Vec<Option<(V, V)>>,
+    wide_arguments: Vec<Option<Halves>>,
     /// The expression about to be generated is a statement: nobody uses its value.
     /// (`gen_expr` takes this, so it only ever describes the outermost expression.)
     result_unused: bool,
@@ -503,7 +537,7 @@ impl<'a> FnGen<'a, '_> {
         match &e.kind {
             ExprKind::Local(id) => Ok(match self.locals[*id as usize] {
                 LocalPlace::Reg(local) => Place::Reg(local),
-                LocalPlace::Halves(low, high) => {
+                LocalPlace::Halves(Halves { low, high }) => {
                     let (low, high) = (self.b.local_get(low), self.b.local_get(high));
                     Place::Mem {
                         base: self.make_pair(&e.ty, low, high),
@@ -703,7 +737,7 @@ impl<'a> FnGen<'a, '_> {
                 let signed = self.tcx.is_signed(ty);
                 let value = if field.bytes() > 8 {
                     // A packed field that starts mid-byte and runs into a ninth one.
-                    let (low, high) = self.load_wide_bits(base, offset, volatile);
+                    let Halves { low, high } = self.load_wide_bits(base, offset, volatile);
                     let down = self.b.const_i32(field.bit_offset as i32);
                     let low = self.b.bin(CBin::ShrU, low, down);
                     let up = self.b.const_i32((64 - field.bit_offset) as i32);
@@ -742,10 +776,13 @@ impl<'a> FnGen<'a, '_> {
     }
 
     /// The eight bytes at `offset` and the ninth, both as I64.
-    fn load_wide_bits(&mut self, base: V, offset: i64, volatile: bool) -> (V, V) {
+    fn load_wide_bits(&mut self, base: V, offset: i64, volatile: bool) -> Halves {
         let low = self.load_memory(MemKind::I64, base, offset, volatile);
         let high = self.load_memory(MemKind::I8U, base, offset + 8, volatile);
-        (low, self.b.un(UnOp::ZExt32, high))
+        Halves {
+            low,
+            high: self.b.un(UnOp::ZExt32, high),
+        }
     }
 
     fn load_memory(&mut self, kind: MemKind, base: V, offset: i64, volatile: bool) -> V {
@@ -834,7 +871,7 @@ impl<'a> FnGen<'a, '_> {
                     (1u64 << field.width) - 1
                 };
                 if field.bytes() > 8 {
-                    let (low, high) = self.load_wide_bits(base, offset, volatile);
+                    let Halves { low, high } = self.load_wide_bits(base, offset, volatile);
                     let shift = field.bit_offset;
                     let keep_low = self.b.const_i64(!(mask << shift) as i64);
                     let kept_low = self.b.bin(CBin::And, low, keep_low);
@@ -1049,30 +1086,45 @@ impl<'a> FnGen<'a, '_> {
         Ok(self.b.bin(CBin::Ne, v, zero))
     }
 
-    /// Branches to `then_block` if scalar `e` is non-zero, else to `else_block`.
-    fn gen_cond(&mut self, e: &Expr, then_block: u32, else_block: u32) -> Res<()> {
+    /// Branches to `to.when_true` if scalar `e` is non-zero, else to `to.when_false`.
+    fn gen_cond(&mut self, e: &Expr, to: Targets) -> Res<()> {
         match &e.kind {
             ExprKind::LogAnd(a, b) => {
                 let mid = self.b.new_block();
-                self.gen_cond(a, mid, else_block)?;
+                self.gen_cond(
+                    a,
+                    Targets {
+                        when_true: mid,
+                        ..to
+                    },
+                )?;
                 self.b.switch_to(mid);
-                self.gen_cond(b, then_block, else_block)
+                self.gen_cond(b, to)
             }
             ExprKind::LogOr(a, b) => {
                 let mid = self.b.new_block();
-                self.gen_cond(a, then_block, mid)?;
+                self.gen_cond(
+                    a,
+                    Targets {
+                        when_false: mid,
+                        ..to
+                    },
+                )?;
                 self.b.switch_to(mid);
-                self.gen_cond(b, then_block, else_block)
+                self.gen_cond(b, to)
             }
-            ExprKind::LogNot(a) => self.gen_cond(a, else_block, then_block),
+            ExprKind::LogNot(a) => self.gen_cond(a, to.negated()),
             ExprKind::IntLit(v) => {
-                self.b
-                    .terminate(Inst::Jump(if *v != 0 { then_block } else { else_block }));
+                self.b.terminate(Inst::Jump(if *v != 0 {
+                    to.when_true
+                } else {
+                    to.when_false
+                }));
                 Ok(())
             }
             _ => {
                 let v = self.gen_condition(e)?;
-                self.b.terminate(Inst::Br(v, then_block, else_block));
+                self.b.terminate(Inst::Br(v, to.when_true, to.when_false));
                 Ok(())
             }
         }
@@ -1423,7 +1475,7 @@ impl<'a> FnGen<'a, '_> {
             _ => None,
         };
         let mut held = Vec::with_capacity(args.len());
-        let mut wide_arguments: Vec<Option<(V, V)>> = vec![None; args.len()];
+        let mut wide_arguments: Vec<Option<Halves>> = vec![None; args.len()];
         for (i, arg) in args.iter().enumerate() {
             // A 128-bit argument that nothing after it can separate from the call.
             if arg.ty.is_int128()
@@ -1433,7 +1485,10 @@ impl<'a> FnGen<'a, '_> {
             {
                 let wide = self.gen_wide(arg)?;
                 let high = self.high_value(wide);
-                wide_arguments[i] = Some((wide.low, high));
+                wide_arguments[i] = Some(Halves {
+                    low: wide.low,
+                    high,
+                });
                 held.push(self.hold(wide.low, false));
                 continue;
             }
@@ -1462,8 +1517,12 @@ impl<'a> FnGen<'a, '_> {
                 &fty.ret,
                 &arg_types,
                 arg_types.len(),
-                target_is_sysv_x64,
-                true,
+                if target_is_sysv_x64 {
+                    Arity::Variadic
+                } else {
+                    Arity::Fixed
+                },
+                SignatureOf::CallSite,
                 &handles,
                 loc,
             );
@@ -1473,8 +1532,12 @@ impl<'a> FnGen<'a, '_> {
             &fty.ret,
             &arg_types,
             fty.params.len(),
-            fty.variadic,
-            false,
+            if fty.variadic {
+                Arity::Variadic
+            } else {
+                Arity::Fixed
+            },
+            SignatureOf::Callee,
             &handles,
             loc,
         )
@@ -1488,8 +1551,8 @@ impl<'a> FnGen<'a, '_> {
         ret: &Type,
         arg_types: &[Type],
         named: usize,
-        variadic: bool,
-        own_signature: bool,
+        arity: Arity,
+        signature: SignatureOf,
         handles: &[V],
         loc: Loc,
     ) -> Res<Option<V>> {
@@ -1520,13 +1583,13 @@ impl<'a> FnGen<'a, '_> {
             // Computed as two values but wanted in memory: put it there.
             let handle = match (wide, pass) {
                 (Some(_), ArgPass::Pieces(pieces)) if halves(pieces) => handle,
-                (Some((low, high)), _) => self.make_pair(arg_ty, low, high),
+                (Some(Halves { low, high }), _) => self.make_pair(arg_ty, low, high),
                 (None, _) => handle,
             };
             match pass {
                 ArgPass::Scalar(_) | ArgPass::Stack { .. } => values.push(handle),
                 ArgPass::Pieces(pieces) if wide.is_some() && halves(pieces) => {
-                    if let Some((low, high)) = wide {
+                    if let Some(Halves { low, high }) = wide {
                         values.push(low);
                         values.push(high);
                     }
@@ -1560,7 +1623,7 @@ impl<'a> FnGen<'a, '_> {
             .anonymous_params
             .iter()
             .any(|p| matches!(p, bir::Param::ByValStack { .. }));
-        let through_pointer = needs_call_site_sig || own_signature;
+        let through_pointer = needs_call_site_sig || signature == SignatureOf::CallSite;
         let pointer = match target {
             Callee::Indirect(v) => Some(v),
             Callee::Func(index) if through_pointer => {
@@ -1579,7 +1642,7 @@ impl<'a> FnGen<'a, '_> {
                 }
                 let sig = self.m.intern_sig(bir::Sig {
                     rets: abi.rets.clone(),
-                    variadic,
+                    variadic: arity == Arity::Variadic,
                     params,
                 });
                 (Inst::CallIndirect(sig, pointer, values), true)
@@ -1600,7 +1663,10 @@ impl<'a> FnGen<'a, '_> {
             }
             (RetPass::Pieces(_), None) if want_wide_result => {
                 let first = self.b.def_many(inst, &abi.rets);
-                self.wide_result = Some((first, first + 1));
+                self.wide_result = Some(Halves {
+                    low: first,
+                    high: first + 1,
+                });
                 Ok(Some(first))
             }
             (RetPass::Pieces(pieces), Some(object)) => {
@@ -1720,8 +1786,14 @@ impl<'a> FnGen<'a, '_> {
                 let signed = self.tcx.is_signed(&a.ty);
                 let x = self.gen_wide(a)?;
                 let y = self.gen_wide(b)?;
-                let x = (x.low, self.high_value(x));
-                let y = (y.low, self.high_value(y));
+                let x = Halves {
+                    low: x.low,
+                    high: self.high_value(x),
+                };
+                let y = Halves {
+                    low: y.low,
+                    high: self.high_value(y),
+                };
                 self.int128_compare(*op, x, y, signed)
             }
             ExprKind::Neg(a) if e.ty.is_long_double() => {
@@ -1830,7 +1902,13 @@ impl<'a> FnGen<'a, '_> {
                 let (then_block, else_block, end) =
                     (self.b.new_block(), self.b.new_block(), self.b.new_block());
                 let temp = self.alloc_temp(Ty::I32);
-                self.gen_cond(e, then_block, else_block)?;
+                self.gen_cond(
+                    e,
+                    Targets {
+                        when_true: then_block,
+                        when_false: else_block,
+                    },
+                )?;
                 for (block, value) in [(then_block, 1), (else_block, 0)] {
                     self.b.switch_to(block);
                     let v = self.b.const_i32(value);
@@ -1844,9 +1922,9 @@ impl<'a> FnGen<'a, '_> {
             }
             ExprKind::Cond(c, a, b) => return self.gen_conditional(e, c, a, b),
             ExprKind::Assign(lhs, rhs) => {
-                if let Some((low, high)) = self.halves_of(lhs) {
+                if let Some(halves) = self.halves_of(lhs) {
                     let wide = self.gen_wide_any(rhs)?;
-                    self.set_halves(low, high, wide);
+                    self.set_halves(halves, wide);
                     if result_unused {
                         return Ok(None);
                     }
@@ -1919,15 +1997,15 @@ impl<'a> FnGen<'a, '_> {
                 op,
                 op_ty,
             } if self.halves_of(lhs).is_some() => {
-                let Some((low, high)) = self.halves_of(lhs) else {
+                let Some(halves) = self.halves_of(lhs) else {
                     return internal(loc, "128-bit variable without its halves");
                 };
                 let CompoundOp::Arith(bop) = op else {
                     return internal(loc, "pointer arithmetic on a 128-bit variable");
                 };
                 let old = pair::Wide {
-                    low: self.b.local_get(low),
-                    high: pair::High::Value(self.b.local_get(high)),
+                    low: self.b.local_get(halves.low),
+                    high: pair::High::Value(self.b.local_get(halves.high)),
                 };
                 let direct = op_ty.is_int128()
                     && !rhs.has_control_flow
@@ -1952,13 +2030,13 @@ impl<'a> FnGen<'a, '_> {
                         self.b.bin(self.arith_op(*bop, op_ty), widened, vr)
                     };
                     let result = self.convert(result, op_ty, &lhs.ty, loc)?;
-                    let (low, high) = self.load_pair(result, lhs.ty.unatomic());
+                    let Halves { low, high } = self.load_pair(result, lhs.ty.unatomic());
                     pair::Wide {
                         low,
                         high: pair::High::Value(high),
                     }
                 };
-                self.set_halves(low, high, new);
+                self.set_halves(halves, new);
                 if result_unused {
                     return Ok(None);
                 }
@@ -1996,12 +2074,12 @@ impl<'a> FnGen<'a, '_> {
                             ) =>
                     {
                         // `old` and `vr` are addresses.
-                        let (low, high) = self.load_pair(old, op_ty);
+                        let Halves { low, high } = self.load_pair(old, op_ty);
                         let x = pair::Wide {
                             low,
                             high: pair::High::Value(high),
                         };
-                        let (low, high) = self.load_pair(vr, op_ty);
+                        let Halves { low, high } = self.load_pair(vr, op_ty);
                         let y = pair::Wide {
                             low,
                             high: pair::High::Value(high),
@@ -2037,12 +2115,12 @@ impl<'a> FnGen<'a, '_> {
                 self.store_place(place, &lhs.ty, new, loc)?
             }
             ExprKind::IncDec { lhs, inc, post, .. } if self.halves_of(lhs).is_some() => {
-                let Some((low, high)) = self.halves_of(lhs) else {
+                let Some(halves) = self.halves_of(lhs) else {
                     return internal(loc, "128-bit variable without its halves");
                 };
                 let old = pair::Wide {
-                    low: self.b.local_get(low),
-                    high: pair::High::Value(self.b.local_get(high)),
+                    low: self.b.local_get(halves.low),
+                    high: pair::High::Value(self.b.local_get(halves.high)),
                 };
                 let one = pair::Wide {
                     low: self.b.const_i64(1),
@@ -2050,7 +2128,7 @@ impl<'a> FnGen<'a, '_> {
                 };
                 let op = if *inc { BinOp::Add } else { BinOp::Sub };
                 let new = self.wide_binary(op, old, one);
-                self.set_halves(low, high, new);
+                self.set_halves(halves, new);
                 if result_unused {
                     return Ok(None);
                 }
@@ -2079,7 +2157,7 @@ impl<'a> FnGen<'a, '_> {
                 if lhs.ty.unatomic().is_pair() {
                     // `old` is the object itself: keep a copy for the postfix result.
                     let pair_ty = lhs.ty.unatomic();
-                    let (low, high) = self.load_pair(old, pair_ty);
+                    let Halves { low, high } = self.load_pair(old, pair_ty);
                     let before = self.make_pair(pair_ty, low, high);
                     let one = self.pair_one(pair_ty);
                     let op = if *inc { BinOp::Add } else { BinOp::Sub };
@@ -2219,7 +2297,13 @@ impl<'a> FnGen<'a, '_> {
         if e.ty.is_void() {
             let (then_block, else_block, end) =
                 (self.b.new_block(), self.b.new_block(), self.b.new_block());
-            self.gen_cond(c, then_block, else_block)?;
+            self.gen_cond(
+                c,
+                Targets {
+                    when_true: then_block,
+                    when_false: else_block,
+                },
+            )?;
             for (block, arm) in [(then_block, a), (else_block, b)] {
                 self.b.switch_to(block);
                 self.gen_discard(arm)?;
@@ -2238,7 +2322,13 @@ impl<'a> FnGen<'a, '_> {
         let (then_block, else_block, end) =
             (self.b.new_block(), self.b.new_block(), self.b.new_block());
         let temp = self.alloc_temp(mty);
-        self.gen_cond(c, then_block, else_block)?;
+        self.gen_cond(
+            c,
+            Targets {
+                when_true: then_block,
+                when_false: else_block,
+            },
+        )?;
         for (block, arm) in [(then_block, a), (else_block, b)] {
             self.b.switch_to(block);
             let v = self.gen_value(arm)?;
@@ -2285,7 +2375,7 @@ impl<'a> FnGen<'a, '_> {
             return self.init_leaves(local, zero_first, items, loc);
         }
         let ty = &self.local_types[local as usize].ty;
-        if let LocalPlace::Halves(low, high) = self.locals[local as usize] {
+        if let LocalPlace::Halves(halves) = self.locals[local as usize] {
             let [
                 InitItem::Copy {
                     offset: 0, expr, ..
@@ -2295,7 +2385,7 @@ impl<'a> FnGen<'a, '_> {
                 return internal(loc, "unexpected initializer for a 128-bit variable");
             };
             let wide = self.gen_wide_any(expr)?;
-            self.set_halves(low, high, wide);
+            self.set_halves(halves, wide);
             return Ok(());
         }
         if let LocalPlace::Reg(reg) = self.locals[local as usize] {
@@ -3087,7 +3177,13 @@ impl<'a> FnGen<'a, '_> {
                 } else {
                     end
                 };
-                self.gen_cond(cond, then_block, else_block)?;
+                self.gen_cond(
+                    cond,
+                    Targets {
+                        when_true: then_block,
+                        when_false: else_block,
+                    },
+                )?;
                 self.b.switch_to(then_block);
                 self.gen_stmt(then, loc)?;
                 self.b.terminate(Inst::Jump(end));
@@ -3104,7 +3200,13 @@ impl<'a> FnGen<'a, '_> {
                     (self.b.new_block(), self.b.new_block(), self.b.new_block());
                 self.b.terminate(Inst::Jump(head));
                 self.b.switch_to(head);
-                self.gen_cond(cond, body_block, end)?;
+                self.gen_cond(
+                    cond,
+                    Targets {
+                        when_true: body_block,
+                        when_false: end,
+                    },
+                )?;
                 self.b.switch_to(body_block);
                 self.gen_loop_body(body, end, head, loc)?;
                 self.b.terminate(Inst::Jump(head));
@@ -3119,7 +3221,13 @@ impl<'a> FnGen<'a, '_> {
                 self.gen_loop_body(body, end, check, loc)?;
                 self.b.terminate(Inst::Jump(check));
                 self.b.switch_to(check);
-                self.gen_cond(cond, body_block, end)?;
+                self.gen_cond(
+                    cond,
+                    Targets {
+                        when_true: body_block,
+                        when_false: end,
+                    },
+                )?;
                 self.b.switch_to(end);
                 Ok(())
             }
@@ -3141,7 +3249,13 @@ impl<'a> FnGen<'a, '_> {
                 self.b.terminate(Inst::Jump(head));
                 self.b.switch_to(head);
                 match cond {
-                    Some(cond) => self.gen_cond(cond, body_block, end)?,
+                    Some(cond) => self.gen_cond(
+                        cond,
+                        Targets {
+                            when_true: body_block,
+                            when_false: end,
+                        },
+                    )?,
                     None => self.b.terminate(Inst::Jump(body_block)),
                 }
                 self.b.switch_to(body_block);
@@ -3598,7 +3712,10 @@ fn gen_function<'a>(m: &mut ModuleGen<'a>, f: &'a Function, body: &'a FuncBody) 
                 Some(_) => false,
             }
         {
-            LocalPlace::Halves(g.b.add_local(Ty::I64), g.b.add_local(Ty::I64))
+            LocalPlace::Halves(Halves {
+                low: g.b.add_local(Ty::I64),
+                high: g.b.add_local(Ty::I64),
+            })
         } else {
             let size = tcx.size_of(&local.ty).unwrap_or(0).max(1);
             let align = tcx
@@ -3646,7 +3763,7 @@ fn gen_function<'a>(m: &mut ModuleGen<'a>, f: &'a Function, body: &'a FuncBody) 
                     for (k, piece) in pieces.iter().enumerate() {
                         g.store_piece(first + k as V, base, piece);
                     }
-                } else if let LocalPlace::Halves(low, high) = g.locals[local as usize] {
+                } else if let LocalPlace::Halves(Halves { low, high }) = g.locals[local as usize] {
                     g.b.effect(Inst::LocalSet(low, first));
                     g.b.effect(Inst::LocalSet(high, first + 1));
                 }
@@ -3837,8 +3954,8 @@ pub(crate) struct Unit {
     pub(crate) tls_externs: Vec<TlsExtern>,
     /// (priority, function) for every constructor and destructor, in source order. The
     /// module's own tables are these sorted; the linker sorts across units.
-    pub(crate) constructors: Vec<(u32, u32)>,
-    pub(crate) destructors: Vec<(u32, u32)>,
+    pub(crate) constructors: Vec<Initializer>,
+    pub(crate) destructors: Vec<Initializer>,
     /// Other names the linker resolves to functions of this unit: (name, function).
     pub(crate) function_aliases: Vec<(String, u32)>,
     /// Functions of this unit that a unit with no definition of that name may call, though
@@ -3850,8 +3967,6 @@ pub(crate) struct Unit {
     pub(crate) runtime_externs: Vec<u32>,
 }
 
-/// The order constructors run in: ascending priority, source order within one. Destructors
-/// run in the reverse of the order built the same way.
 /// Whether an object of type `ty` with static storage is one the program never writes: it is
 /// `const` (every element of it, for an array) and not `volatile`. What a `const` pointer points
 /// to is another object's business.
@@ -3862,13 +3977,22 @@ fn is_constant_object(ty: &Type) -> bool {
     }
 }
 
-pub(crate) fn initializer_order(entries: &[(u32, u32)], reverse: bool) -> Vec<u32> {
+/// A function marked `constructor` or `destructor`, and the priority it was given.
+#[derive(Clone, Copy)]
+pub(crate) struct Initializer {
+    pub(crate) priority: u32,
+    pub(crate) function: u32,
+}
+
+/// The order constructors run in: ascending priority, source order within one. Destructors
+/// run in the reverse of the order built the same way.
+pub(crate) fn initializer_order(entries: &[Initializer], reverse: bool) -> Vec<u32> {
     let mut sorted = entries.to_vec();
-    sorted.sort_by_key(|&(priority, _)| priority);
+    sorted.sort_by_key(|entry| entry.priority);
     if reverse {
         sorted.reverse();
     }
-    sorted.into_iter().map(|(_, func)| func).collect()
+    sorted.into_iter().map(|entry| entry.function).collect()
 }
 
 pub(crate) fn generate(prog: &Program) -> Res<Unit> {
@@ -3917,10 +4041,16 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
         }
         let func = gen_function(&mut m, f, body)?;
         if let Some(priority) = f.constructor {
-            constructors.push((priority, funcs.len() as u32));
+            constructors.push(Initializer {
+                priority,
+                function: funcs.len() as u32,
+            });
         }
         if let Some(priority) = f.destructor {
-            destructors.push((priority, funcs.len() as u32));
+            destructors.push(Initializer {
+                priority,
+                function: funcs.len() as u32,
+            });
         }
         // JS cannot call a variadic function through bun:ffi, so it gets no export entry.
         let plain =
@@ -4180,7 +4310,12 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
     let mut work: Vec<u32> = (0..funcs.len() as u32)
         .filter(|&i| funcs[i as usize].exported)
         .collect();
-    work.extend(constructors.iter().chain(&destructors).map(|&(_, f)| f));
+    work.extend(
+        constructors
+            .iter()
+            .chain(&destructors)
+            .map(|entry| entry.function),
+    );
     work.extend(function_aliases.iter().map(|(_, f)| *f));
     work.extend(
         relocs
@@ -4226,8 +4361,8 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
         for export in &mut exports {
             export.func = renumbered[export.func as usize];
         }
-        for (_, f) in constructors.iter_mut().chain(&mut destructors) {
-            *f = renumbered[*f as usize];
+        for entry in constructors.iter_mut().chain(&mut destructors) {
+            entry.function = renumbered[entry.function as usize];
         }
         for (_, f) in &mut function_aliases {
             *f = renumbered[*f as usize];

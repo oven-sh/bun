@@ -50,6 +50,58 @@ pub(crate) struct FieldDecl {
     pub(crate) packed: bool,
 }
 
+/// Whether a declaration is the first one of its object in the translation unit.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Declared {
+    Now,
+    Before,
+}
+
+impl Declared {
+    pub(crate) fn first_time(first: bool) -> Declared {
+        if first {
+            Declared::Now
+        } else {
+            Declared::Before
+        }
+    }
+}
+
+/// `++` or `--`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Step {
+    Up,
+    Down,
+}
+
+/// Where `++` or `--` stands: before its operand (the value is the new one) or after it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Fix {
+    Prefix,
+    Postfix,
+}
+
+/// Whose rules bit-fields are laid out by.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum BitFieldRules {
+    /// System V / Itanium, as GCC has them on the LP64 targets.
+    #[default]
+    SystemV,
+    Microsoft,
+}
+
+/// What, besides its members, decides the layout of a structure or union.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LayoutRules {
+    /// `__attribute__((packed))` on the whole type.
+    pub(crate) packed: bool,
+    /// `__attribute__((aligned(n)))` on the whole type.
+    pub(crate) min_align: Option<u64>,
+    /// The `#pragma pack` in force.
+    pub(crate) pragma_pack: Option<u64>,
+    pub(crate) bit_fields: BitFieldRules,
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) enum Tag {
     Struct(StructId),
@@ -170,7 +222,7 @@ impl Sema {
                     field("overflow_arg_area", void_ptr.clone()),
                     field("reg_save_area", void_ptr),
                 ];
-                let _ = self.complete_struct(id, fields, false, None, None, false, none);
+                let _ = self.complete_struct(id, fields, LayoutRules::default(), none);
                 Type::Array(Rc::new(Type::Struct(id)), Some(1))
             }
             (Arch::Aarch64, _) => {
@@ -182,7 +234,7 @@ impl Sema {
                     field("__gr_offs", Type::Int),
                     field("__vr_offs", Type::Int),
                 ];
-                let _ = self.complete_struct(id, fields, false, None, None, false, none);
+                let _ = self.complete_struct(id, fields, LayoutRules::default(), none);
                 Type::Struct(id)
             }
         };
@@ -318,10 +370,7 @@ impl Sema {
         self.tcx.structs.push(StructDef {
             tag,
             is_union,
-            complete: false,
-            members: Vec::new(),
-            size: 0,
-            align: 1,
+            layout: None,
             transparent: false,
         });
         (self.tcx.structs.len() - 1) as StructId
@@ -331,17 +380,20 @@ impl Sema {
     /// System V / Itanium rules GCC uses on the LP64 targets, or Microsoft's when
     /// `ms_bitfields`: a bit-field lives in a whole object of its declared type, which it
     /// shares only with neighbours whose types have that size.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn complete_struct(
         &mut self,
         id: StructId,
         fields: Vec<FieldDecl>,
-        packed: bool,
-        min_align: Option<u64>,
-        pragma_pack: Option<u64>,
-        ms_bitfields: bool,
+        rules: LayoutRules,
         loc: Loc,
     ) -> Res<()> {
+        let LayoutRules {
+            packed,
+            min_align,
+            pragma_pack,
+            bit_fields,
+        } = rules;
+        let ms_bitfields = bit_fields == BitFieldRules::Microsoft;
         let is_union = self.tcx.struct_def(id).is_union;
         let mut members: Vec<Member> = Vec::with_capacity(fields.len());
         // Everything is tracked in bits so bit-fields and ordinary members share one cursor.
@@ -605,11 +657,11 @@ impl Sema {
                 }
             }
         }
-        let def = &mut self.tcx.structs[id as usize];
-        def.members = members;
-        def.align = align;
-        def.size = size;
-        def.complete = true;
+        self.tcx.structs[id as usize].layout = Some(crate::types::Layout {
+            members,
+            size,
+            align,
+        });
         Ok(())
     }
 
@@ -822,11 +874,11 @@ impl Sema {
         &mut self,
         id: GlobalId,
         thread_local: bool,
-        first: bool,
+        declared: Declared,
         loc: Loc,
     ) -> Res<()> {
         let g = &mut self.globals[id as usize];
-        if !first && g.thread_local != thread_local {
+        if declared == Declared::Before && g.thread_local != thread_local {
             return err(
                 loc,
                 format!(
@@ -1612,7 +1664,7 @@ impl Sema {
         if let Type::Struct(id) = to {
             let def = self.tcx.struct_def(*id);
             if def.transparent && what == "passing an argument" && *from != *to {
-                let member = def.members.iter().find(|m| {
+                let member = def.members().iter().find(|m| {
                     let ty = m.ty.unatomic();
                     (ty.is_ptr() && (from.is_ptr() || self.is_null_constant(&e)))
                         || (ty.is_arith() && *ty == *from)
@@ -2318,11 +2370,12 @@ impl Sema {
         )
     }
 
-    pub(crate) fn inc_dec(&self, lhs: Expr, inc: bool, post: bool, loc: Loc) -> Res<Expr> {
+    pub(crate) fn inc_dec(&self, lhs: Expr, step: Step, fix: Fix, loc: Loc) -> Res<Expr> {
         self.check_modifiable(&lhs, loc)?;
         if lhs.ty.is_atomic() {
-            return self.atomic_inc_dec(lhs, inc, post, loc);
+            return self.atomic_inc_dec(lhs, step, fix, loc);
         }
+        let (inc, post) = (step == Step::Up, fix == Fix::Postfix);
         let ty = lhs.ty.unatomic().clone();
         let mut dynamic_scale = None;
         let scale = if ty.is_ptr() {
@@ -2461,7 +2514,7 @@ impl Sema {
                 ),
             );
         };
-        if !self.tcx.struct_def(*id).complete {
+        if !self.tcx.struct_def(*id).is_complete() {
             return err(
                 loc,
                 format!(

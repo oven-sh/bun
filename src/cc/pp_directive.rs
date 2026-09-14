@@ -10,6 +10,22 @@ use crate::pp::{
 };
 use crate::token::{Loc, PpKind, PpToken, Punct, Res, TokenSource, display_bytes, err};
 
+/// How an `#include` wrote the name: `"name"` (looked for beside the including file first) or
+/// `<name>`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeaderForm {
+    Quoted,
+    Angled,
+}
+
+/// Where along the search path the looking starts: at its start, or (`#include_next`) after the
+/// directory the including file was found in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SearchFrom {
+    TheStart,
+    AfterThisFile,
+}
+
 /// The compiler's own headers.
 const BUILTIN_HEADERS: &[(&str, &str)] = &[
     ("float.h", include_str!("include/float.h")),
@@ -296,7 +312,12 @@ impl Preprocessor {
                 Ok(())
             }
             b"include" | b"include_next" | b"import" => {
-                self.include(name == b"include_next", name_tok.loc)
+                let search = if name == b"include_next" {
+                    SearchFrom::AfterThisFile
+                } else {
+                    SearchFrom::TheStart
+                };
+                self.include(search, name_tok.loc)
             }
             b"define" => {
                 let line = self.read_line()?;
@@ -800,8 +821,8 @@ impl Preprocessor {
     pub(crate) fn resolve_include(
         &mut self,
         name: &str,
-        angled: bool,
-        next: bool,
+        form: HeaderForm,
+        search: SearchFrom,
     ) -> Option<(String, Option<usize>)> {
         let (current_path, current_at) = match self.frames.last() {
             Some(f) => (Rc::clone(&f.path), f.found_at),
@@ -810,12 +831,12 @@ impl Preprocessor {
         let mut start = 0;
         // In a file that was not found through the search path (the one being compiled and
         // what it includes from beside itself), `#include_next` is `#include`.
-        if let (true, Some(at)) = (next, current_at) {
+        if let (SearchFrom::AfterThisFile, Some(at)) = (search, current_at) {
             // Continue after the directory the current file came from.
             start = at + 1;
         } else if bun_paths::is_absolute_loose(name.as_bytes()) {
             return self.load(name, false).map(|_| (name.to_string(), None));
-        } else if !angled {
+        } else if form == HeaderForm::Quoted {
             let beside = join(directory_of(&current_path), name);
             if self.load(&beside, current_at.is_some()).is_some() {
                 // A header found next to its includer keeps that includer's search position.
@@ -852,13 +873,19 @@ impl Preprocessor {
     }
 
     /// Reconstructs a header name from the tokens between `<` and `>`.
-    pub(crate) fn header_name_from_tokens(tokens: &[PpToken], loc: Loc) -> Res<(String, bool)> {
+    pub(crate) fn header_name_from_tokens(
+        tokens: &[PpToken],
+        loc: Loc,
+    ) -> Res<(String, HeaderForm)> {
         match tokens {
             [t] if t.kind == PpKind::StrLit
                 && t.text.first() == Some(&b'"')
                 && t.text.len() >= 2 =>
             {
-                Ok((display_bytes(&t.text[1..t.text.len() - 1]), false))
+                Ok((
+                    display_bytes(&t.text[1..t.text.len() - 1]),
+                    HeaderForm::Quoted,
+                ))
             }
             [first, middle @ .., last]
                 if first.kind == PpKind::Punct(Punct::Lt)
@@ -871,21 +898,21 @@ impl Preprocessor {
                     }
                     name.extend_from_slice(spelling(t));
                 }
-                Ok((display_bytes(&name), true))
+                Ok((display_bytes(&name), HeaderForm::Angled))
             }
             _ => err(loc, "#include expects \"FILENAME\" or <FILENAME>"),
         }
     }
 
-    fn include(&mut self, next: bool, loc: Loc) -> Res<()> {
+    fn include(&mut self, search: SearchFrom, loc: Loc) -> Res<()> {
         let angled_name = match self.frames.last_mut() {
             Some(frame) if frame.peeked.is_none() => frame.lexer.angled_header_name(),
             _ => None,
         };
-        let (name, angled) = match angled_name {
+        let (name, form) = match angled_name {
             Some(bytes) => {
                 self.read_line()?;
-                (display_bytes(&bytes), true)
+                (display_bytes(&bytes), HeaderForm::Angled)
             }
             None => {
                 let line = self.read_line()?;
@@ -911,7 +938,7 @@ impl Preprocessor {
         if name.is_empty() {
             return err(loc, "empty file name in #include");
         }
-        let Some((path, found_at)) = self.resolve_include(&name, angled, next) else {
+        let Some((path, found_at)) = self.resolve_include(&name, form, search) else {
             return err(loc, format!("'{name}' file not found"));
         };
         if self.pragma_once.contains(same_file_key(&path).as_str()) {

@@ -105,7 +105,7 @@ struct Field {
 fn flatten(tcx: &TypeCtx, ty: &Type, base: u64, out: &mut Vec<Field>) -> Result<(), String> {
     match ty {
         Type::Struct(id) => {
-            for m in &tcx.struct_def(*id).members {
+            for m in tcx.struct_def(*id).members() {
                 match m.bitfield {
                     Some(field) => {
                         let bytes = field.bytes();
@@ -386,12 +386,21 @@ impl Registers {
     }
 }
 
-fn count_classes(pieces: &[Piece]) -> (u32, u32) {
+/// How many registers of each kind a value takes.
+struct RegisterCount {
+    ints: u32,
+    floats: u32,
+}
+
+fn count_classes(pieces: &[Piece]) -> RegisterCount {
     let floats = pieces
         .iter()
         .filter(|p| p.ty.uses_float_registers())
         .count() as u32;
-    (pieces.len() as u32 - floats, floats)
+    RegisterCount {
+        ints: pieces.len() as u32 - floats,
+        floats,
+    }
 }
 
 /// Types passed the way a struct is: `__int128` is two integer eightbytes, a complex number
@@ -607,7 +616,7 @@ pub(crate) fn lower_call(
             match sysv_classify(tcx, arg)? {
                 None => in_memory,
                 Some(pieces) => {
-                    let (ints, floats) = count_classes(&pieces);
+                    let RegisterCount { ints, floats } = count_classes(&pieces);
                     if regs.int_free >= ints && regs.float_free >= floats {
                         regs.take_int(ints);
                         regs.take_float(floats);

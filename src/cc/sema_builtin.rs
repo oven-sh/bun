@@ -43,6 +43,21 @@ pub(crate) fn same_pure(a: &Expr, b: &Expr) -> bool {
     }
 }
 
+/// Which floating type a builtin that has one spelling per type is for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Precision {
+    Single,
+    Double,
+}
+
+/// Where the sign of the result comes from: nowhere (`fabs`: it is cleared) or the second
+/// argument (`copysign`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SignFrom {
+    Nowhere,
+    SecondArgument,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OverflowOp {
     Add,
@@ -733,12 +748,13 @@ impl Sema {
     /// `x` with its sign bit rewritten.
     pub(crate) fn sign_builtin_long_double(
         &mut self,
-        copysign: bool,
+        sign_from: SignFrom,
         name: &str,
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
         self.needs_function(name, loc)?;
+        let copysign = sign_from == SignFrom::SecondArgument;
         let wanted = if copysign { 2 } else { 1 };
         if args.len() != wanted {
             return err(loc, format!("{name} takes {wanted} argument(s)"));
@@ -779,17 +795,18 @@ impl Sema {
     /// `__builtin_fabs{,f}(x)` / `__builtin_copysign{,f}(x, y)`: on the bits.
     pub(crate) fn sign_builtin(
         &mut self,
-        single: bool,
-        copysign: bool,
+        precision: Precision,
+        sign_from: SignFrom,
         name: &str,
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
+        let copysign = sign_from == SignFrom::SecondArgument;
         let wanted = if copysign { 2 } else { 1 };
         if args.len() != wanted {
             return err(loc, format!("{name} takes {wanted} argument(s)"));
         }
-        let (float_ty, bits_ty, sign): (Type, Type, u64) = if single {
+        let (float_ty, bits_ty, sign): (Type, Type, u64) = if precision == Precision::Single {
             (Type::Float, Type::UInt, 0x8000_0000)
         } else {
             (Type::Double, Type::ULLong, 1 << 63)

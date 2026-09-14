@@ -36,6 +36,24 @@ pub(super) struct Wide {
     pub(super) high: High,
 }
 
+/// The two 64-bit parts of something that is two: the lower and upper half of a 128-bit integer
+/// (as values, or as the BIR locals that hold them), or, in the order they have in memory, the
+/// real and imaginary part of a complex number.
+#[derive(Clone, Copy)]
+pub(super) struct Halves {
+    pub(super) low: V,
+    pub(super) high: V,
+}
+
+/// The BIR operation of `&`, `|` or `^`.
+fn bitwise(op: BinOp) -> CBin {
+    match op {
+        BinOp::And => CBin::And,
+        BinOp::Or => CBin::Or,
+        _ => CBin::Xor,
+    }
+}
+
 impl FnGen<'_, '_> {
     /// Whether 128-bit `e` is computed by `gen_wide` without going through memory.
     pub(super) fn is_wide_operation(e: &Expr) -> bool {
@@ -65,20 +83,20 @@ impl FnGen<'_, '_> {
     }
 
     /// The BIR locals of `e` if it names a 128-bit variable kept as two halves.
-    pub(super) fn halves_of(&self, e: &Expr) -> Option<(u32, u32)> {
+    pub(super) fn halves_of(&self, e: &Expr) -> Option<Halves> {
         match e.kind {
             ExprKind::Local(id) => match self.locals[id as usize] {
-                super::LocalPlace::Halves(low, high) => Some((low, high)),
+                super::LocalPlace::Halves(halves) => Some(halves),
                 _ => None,
             },
             _ => None,
         }
     }
 
-    pub(super) fn set_halves(&mut self, low: u32, high: u32, value: Wide) {
+    pub(super) fn set_halves(&mut self, locals: Halves, value: Wide) {
         let high_value = self.high_value(value);
-        self.b.effect(Inst::LocalSet(low, value.low));
-        self.b.effect(Inst::LocalSet(high, high_value));
+        self.b.effect(Inst::LocalSet(locals.low, value.low));
+        self.b.effect(Inst::LocalSet(locals.high, high_value));
     }
 
     /// The halves of 128-bit `e`, whatever it is: computed as values if it creates no
@@ -88,7 +106,7 @@ impl FnGen<'_, '_> {
             return self.gen_wide(e);
         }
         let address = self.gen_value(e)?;
-        let (low, high) = self.load_pair(address, e.ty.unatomic());
+        let Halves { low, high } = self.load_pair(address, e.ty.unatomic());
         Ok(Wide {
             low,
             high: High::Value(high),
@@ -128,7 +146,8 @@ impl FnGen<'_, '_> {
                     }
                     let amount = self.gen_value(b)?;
                     let high = self.high_value(x);
-                    let (low, high) = self.int128_shift(*op, (x.low, high), amount, signed);
+                    let Halves { low, high } =
+                        self.int128_shift(*op, Halves { low: x.low, high }, amount, signed);
                     return Ok(Wide {
                         low,
                         high: High::Value(high),
@@ -166,7 +185,7 @@ impl FnGen<'_, '_> {
             self.wide_result = None;
             let result = self.gen_call(callee, args)?;
             self.want_wide_result = false;
-            if let Some((low, high)) = self.wide_result.take() {
+            if let Some(Halves { low, high }) = self.wide_result.take() {
                 return Ok(Wide {
                     low,
                     high: High::Value(high),
@@ -175,13 +194,13 @@ impl FnGen<'_, '_> {
             let Some(address) = result else {
                 return internal(loc, "a call without a result used as a 128-bit value");
             };
-            let (low, high) = self.load_pair(address, e.ty.unatomic());
+            let Halves { low, high } = self.load_pair(address, e.ty.unatomic());
             return Ok(Wide {
                 low,
                 high: High::Value(high),
             });
         }
-        if let Some((low, high)) = self.halves_of(e) {
+        if let Some(Halves { low, high }) = self.halves_of(e) {
             return Ok(Wide {
                 low: self.b.local_get(low),
                 high: High::Value(self.b.local_get(high)),
@@ -193,7 +212,7 @@ impl FnGen<'_, '_> {
             return Ok(Wide { low, high });
         }
         let address = self.gen_value(e)?;
-        let (low, high) = self.load_pair(address, e.ty.unatomic());
+        let Halves { low, high } = self.load_pair(address, e.ty.unatomic());
         Ok(Wide {
             low,
             high: High::Value(high),
@@ -270,11 +289,7 @@ impl FnGen<'_, '_> {
                 }
             }
             _ => {
-                let bit_op = match op {
-                    BinOp::And => CBin::And,
-                    BinOp::Or => CBin::Or,
-                    _ => CBin::Xor,
-                };
+                let bit_op = bitwise(op);
                 let low = self.b.bin(bit_op, x.low, y.low);
                 let high = match (op, x.high, y.high) {
                     (BinOp::And, High::Zero, _) | (BinOp::And, _, High::Zero) => High::Zero,
@@ -386,12 +401,12 @@ impl FnGen<'_, '_> {
         }
     }
 
-    pub(super) fn load_pair(&mut self, address: V, ty: &Type) -> (V, V) {
+    pub(super) fn load_pair(&mut self, address: V, ty: &Type) -> Halves {
         let (kind, second) = Self::pair_layout(ty);
-        (
-            self.b.load(kind, address, 0),
-            self.b.load(kind, address, second),
-        )
+        Halves {
+            low: self.b.load(kind, address, 0),
+            high: self.b.load(kind, address, second),
+        }
     }
 
     fn store_pair(&mut self, address: V, ty: &Type, first: V, second: V) {
@@ -436,7 +451,7 @@ impl FnGen<'_, '_> {
 
     /// Whether the value at `address` is non-zero, as exactly 0 or 1.
     pub(super) fn pair_truth(&mut self, address: V, ty: &Type) -> V {
-        let (a, b) = self.load_pair(address, ty);
+        let Halves { low: a, high: b } = self.load_pair(address, ty);
         if ty.is_int128() {
             let any = self.b.bin(CBin::Or, a, b);
             let zero = self.b.const_i64(0);
@@ -458,8 +473,8 @@ impl FnGen<'_, '_> {
             ret,
             &types,
             types.len(),
-            false,
-            false,
+            super::Arity::Fixed,
+            super::SignatureOf::Callee,
             &handles,
             loc,
         )? {
@@ -469,22 +484,22 @@ impl FnGen<'_, '_> {
     }
 
     /// `a < b` on 128-bit values, as 0 or 1.
-    fn int128_less(&mut self, a: (V, V), b: (V, V), signed: bool) -> V {
+    fn int128_less(&mut self, a: Halves, b: Halves, signed: bool) -> V {
         let high_less = self
             .b
-            .bin(if signed { CBin::Lt } else { CBin::ULt }, a.1, b.1);
-        let high_equal = self.b.bin(CBin::Eq, a.1, b.1);
-        let low_less = self.b.bin(CBin::ULt, a.0, b.0);
+            .bin(if signed { CBin::Lt } else { CBin::ULt }, a.high, b.high);
+        let high_equal = self.b.bin(CBin::Eq, a.high, b.high);
+        let low_less = self.b.bin(CBin::ULt, a.low, b.low);
         let tie = self.b.bin(CBin::And, high_equal, low_less);
         self.b.bin(CBin::Or, high_less, tie)
     }
 
-    /// `x op y` for a comparison of 128-bit values given as (low, high), as 0 or 1.
-    pub(super) fn int128_compare(&mut self, op: BinOp, x: (V, V), y: (V, V), signed: bool) -> V {
+    /// `x op y` for a comparison of 128-bit values, as 0 or 1.
+    pub(super) fn int128_compare(&mut self, op: BinOp, x: Halves, y: Halves, signed: bool) -> V {
         match op {
             BinOp::Eq | BinOp::Ne => {
-                let low = self.b.bin(CBin::Xor, x.0, y.0);
-                let high = self.b.bin(CBin::Xor, x.1, y.1);
+                let low = self.b.bin(CBin::Xor, x.low, y.low);
+                let high = self.b.bin(CBin::Xor, x.high, y.high);
                 let differ = self.b.bin(CBin::Or, low, high);
                 let zero = self.b.const_i64(0);
                 self.b.bin(
@@ -512,8 +527,8 @@ impl FnGen<'_, '_> {
     }
 
     /// A shift of the 128-bit value `a` by `amount` (an i32, taken modulo 128).
-    fn int128_shift(&mut self, op: BinOp, a: (V, V), amount: V, signed: bool) -> (V, V) {
-        let (low, high) = a;
+    fn int128_shift(&mut self, op: BinOp, a: Halves, amount: V, signed: bool) -> Halves {
+        let Halves { low, high } = a;
         let c127 = self.b.const_i32(127);
         let n = self.b.bin(CBin::And, amount, c127);
         let c63 = self.b.const_i32(63);
@@ -534,7 +549,10 @@ impl FnGen<'_, '_> {
             let new_high = self
                 .b
                 .def(Inst::Select(big, low_small, high_small), Ty::I64);
-            return (new_low, new_high);
+            return Halves {
+                low: new_low,
+                high: new_high,
+            };
         }
         let shift = if signed { CBin::ShrS } else { CBin::ShrU };
         let high_small = self.b.bin(shift, high, m);
@@ -551,7 +569,10 @@ impl FnGen<'_, '_> {
             .b
             .def(Inst::Select(big, high_small, low_small), Ty::I64);
         let new_high = self.b.def(Inst::Select(big, fill, high_small), Ty::I64);
-        (new_low, new_high)
+        Halves {
+            low: new_low,
+            high: new_high,
+        }
     }
 
     /// `a op b` where both operands have pair type `ty` (a shift's `b` is an `int` value).
@@ -563,7 +584,7 @@ impl FnGen<'_, '_> {
         let signed = self.tcx.is_signed(ty);
         if matches!(op, BinOp::Shl | BinOp::Shr) {
             let halves = self.load_pair(a, ty);
-            let (low, high) = self.int128_shift(op, halves, b, signed);
+            let Halves { low, high } = self.int128_shift(op, halves, b, signed);
             return Ok(self.make_pair(ty, low, high));
         }
         if matches!(op, BinOp::Div | BinOp::Rem) {
@@ -579,34 +600,33 @@ impl FnGen<'_, '_> {
         let y = self.load_pair(b, ty);
         let (low, high) = match op {
             BinOp::Add => {
-                let low = self.b.bin(CBin::Add, x.0, y.0);
-                let carry = self.b.bin(CBin::ULt, low, x.0);
+                let low = self.b.bin(CBin::Add, x.low, y.low);
+                let carry = self.b.bin(CBin::ULt, low, x.low);
                 let carry = self.i32_to_i64(carry);
-                let high = self.b.bin(CBin::Add, x.1, y.1);
+                let high = self.b.bin(CBin::Add, x.high, y.high);
                 (low, self.b.bin(CBin::Add, high, carry))
             }
             BinOp::Sub => {
-                let low = self.b.bin(CBin::Sub, x.0, y.0);
-                let borrow = self.b.bin(CBin::ULt, x.0, y.0);
+                let low = self.b.bin(CBin::Sub, x.low, y.low);
+                let borrow = self.b.bin(CBin::ULt, x.low, y.low);
                 let borrow = self.i32_to_i64(borrow);
-                let high = self.b.bin(CBin::Sub, x.1, y.1);
+                let high = self.b.bin(CBin::Sub, x.high, y.high);
                 (low, self.b.bin(CBin::Sub, high, borrow))
             }
             BinOp::Mul => {
-                let low = self.b.bin(CBin::Mul, x.0, y.0);
-                let high = self.b.bin(CBin::UMulHigh, x.0, y.0);
-                let cross1 = self.b.bin(CBin::Mul, x.0, y.1);
-                let cross2 = self.b.bin(CBin::Mul, x.1, y.0);
+                let low = self.b.bin(CBin::Mul, x.low, y.low);
+                let high = self.b.bin(CBin::UMulHigh, x.low, y.low);
+                let cross1 = self.b.bin(CBin::Mul, x.low, y.high);
+                let cross2 = self.b.bin(CBin::Mul, x.high, y.low);
                 let high = self.b.bin(CBin::Add, high, cross1);
                 (low, self.b.bin(CBin::Add, high, cross2))
             }
             BinOp::And | BinOp::Or | BinOp::Xor => {
-                let bit_op = match op {
-                    BinOp::And => CBin::And,
-                    BinOp::Or => CBin::Or,
-                    _ => CBin::Xor,
-                };
-                (self.b.bin(bit_op, x.0, y.0), self.b.bin(bit_op, x.1, y.1))
+                let bit_op = bitwise(op);
+                (
+                    self.b.bin(bit_op, x.low, y.low),
+                    self.b.bin(bit_op, x.high, y.high),
+                )
             }
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
                 return Ok(self.int128_compare(op, x, y, signed));
@@ -619,8 +639,8 @@ impl FnGen<'_, '_> {
     }
 
     fn gen_complex_binary(&mut self, op: BinOp, ty: &Type, a: V, b: V, loc: Loc) -> Res<V> {
-        let (a, b_im) = self.load_pair(a, ty);
-        let (c, d) = self.load_pair(b, ty);
+        let Halves { low: a, high: b_im } = self.load_pair(a, ty);
+        let Halves { low: c, high: d } = self.load_pair(b, ty);
         let (re, im) = match op {
             BinOp::Add => (self.b.bin(CBin::Add, a, c), self.b.bin(CBin::Add, b_im, d)),
             BinOp::Sub => (self.b.bin(CBin::Sub, a, c), self.b.bin(CBin::Sub, b_im, d)),
@@ -669,7 +689,10 @@ impl FnGen<'_, '_> {
         address: V,
         loc: Loc,
     ) -> Res<V> {
-        let (first, second) = self.load_pair(address, ty);
+        let Halves {
+            low: first,
+            high: second,
+        } = self.load_pair(address, ty);
         if ty.is_complex() {
             let im = self.b.un(UnOp::Neg, second);
             let re = if negate {
@@ -697,7 +720,7 @@ impl FnGen<'_, '_> {
         match (from.is_pair(), to.is_pair()) {
             // complex <-> complex precision.
             (true, true) if from.is_complex() && to.is_complex() => {
-                let (re, im) = self.load_pair(v, from);
+                let Halves { low: re, high: im } = self.load_pair(v, from);
                 let op = if matches!(to, Type::ComplexDouble) {
                     UnOp::FPromote
                 } else {

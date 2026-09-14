@@ -182,8 +182,14 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
         // Computed in 128 bits; a result that is not itself 128 bits wide, or fits in 64,
         // is an ordinary integer constant (`(__int128)-1 < 0`, `sizeof(x) * (__int128)2`).
         return match eval_int128(e, tcx) {
-            Some(v) if !ty.is_int128() || i64::try_from(v).is_ok() => Ok(Const::Int(v as i64)),
-            _ => not_constant(e.loc),
+            Some(v) if ty.is_int128() => match i64::try_from(v) {
+                Ok(v) => Ok(Const::Int(v)),
+                Err(_) => not_constant(e.loc),
+            },
+            // `eval_int128` reduced it to the width of `ty`, 64 bits at most: a constant is
+            // those bits.
+            Some(v) => Ok(Const::Int(v as u64 as i64)),
+            None => not_constant(e.loc),
         };
     }
     match &e.kind {
@@ -504,8 +510,15 @@ pub(crate) fn eval_int128(e: &Expr, tcx: &TypeCtx) -> Option<i128> {
     Some(fit(value, &e.ty))
 }
 
+/// A complex number.
+#[derive(Clone, Copy)]
+pub(crate) struct Complex {
+    pub(crate) re: f64,
+    pub(crate) im: f64,
+}
+
 /// The value of a constant complex expression.
-pub(crate) fn eval_complex(e: &Expr, tcx: &TypeCtx) -> Option<(f64, f64)> {
+pub(crate) fn eval_complex(e: &Expr, tcx: &TypeCtx) -> Option<Complex> {
     let real = |e: &Expr| -> Option<f64> {
         match eval(e, tcx).ok()? {
             Const::Float(v) => Some(v),
@@ -515,33 +528,52 @@ pub(crate) fn eval_complex(e: &Expr, tcx: &TypeCtx) -> Option<(f64, f64)> {
     };
     let single = matches!(e.ty, Type::ComplexFloat);
     let round = |v: f64| if single { f64::from(v as f32) } else { v };
-    let (re, im) = match &e.kind {
-        ExprKind::ComplexMake(re, im) => (real(re)?, real(im)?),
+    let Complex { re, im } = match &e.kind {
+        ExprKind::ComplexMake(re, im) => Complex {
+            re: real(re)?,
+            im: real(im)?,
+        },
         ExprKind::Cast(inner) if inner.ty.is_complex() => eval_complex(inner, tcx)?,
         ExprKind::Neg(inner) => {
-            let (re, im) = eval_complex(inner, tcx)?;
-            (-re, -im)
+            let Complex { re, im } = eval_complex(inner, tcx)?;
+            Complex { re: -re, im: -im }
         }
         ExprKind::BitNot(inner) => {
-            let (re, im) = eval_complex(inner, tcx)?;
-            (re, -im)
+            let Complex { re, im } = eval_complex(inner, tcx)?;
+            Complex { re, im: -im }
         }
-        ExprKind::Binary(op, a, b) if e.ty.is_complex() => {
-            let ((a, b), (c, d)) = (eval_complex(a, tcx)?, eval_complex(b, tcx)?);
+        ExprKind::Binary(op, x, y) if e.ty.is_complex() => {
+            let Complex { re: a, im: b } = eval_complex(x, tcx)?;
+            let Complex { re: c, im: d } = eval_complex(y, tcx)?;
             match op {
-                BinOp::Add => (a + c, b + d),
-                BinOp::Sub => (a - c, b - d),
-                BinOp::Mul => (a * c - b * d, a * d + b * c),
+                BinOp::Add => Complex {
+                    re: a + c,
+                    im: b + d,
+                },
+                BinOp::Sub => Complex {
+                    re: a - c,
+                    im: b - d,
+                },
+                BinOp::Mul => Complex {
+                    re: a * c - b * d,
+                    im: a * d + b * c,
+                },
                 BinOp::Div => {
                     let scale = c * c + d * d;
-                    ((a * c + b * d) / scale, (b * c - a * d) / scale)
+                    Complex {
+                        re: (a * c + b * d) / scale,
+                        im: (b * c - a * d) / scale,
+                    }
                 }
                 _ => return None,
             }
         }
         _ => return None,
     };
-    Some((round(re), round(im)))
+    Some(Complex {
+        re: round(re),
+        im: round(im),
+    })
 }
 
 fn truthy(c: Const) -> bool {

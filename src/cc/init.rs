@@ -322,7 +322,7 @@ impl Sema {
     /// The bool is true for a direct match.
     fn member_index(&self, ty: &Type, name: &str) -> Option<(u64, bool)> {
         let Type::Struct(id) = ty else { return None };
-        for (i, m) in self.tcx.struct_def(*id).members.iter().enumerate() {
+        for (i, m) in self.tcx.struct_def(*id).members().iter().enumerate() {
             match &m.name {
                 Some(n) if &**n == name => return Some((i as u64, true)),
                 Some(_) => {}
@@ -359,9 +359,9 @@ impl Sema {
             Type::Struct(id) => {
                 let def = self.tcx.struct_def(*id);
                 Some(if def.is_union {
-                    def.members.len().min(1) as u64
+                    def.members().len().min(1) as u64
                 } else {
-                    def.members.len() as u64
+                    def.members().len() as u64
                 })
             }
             _ => Some(0),
@@ -428,7 +428,7 @@ impl Sema {
 
             // A bit-field member takes one scalar initializer.
             if let Type::Struct(id) = ty {
-                let m = &self.tcx.struct_def(*id).members[cur as usize];
+                let m = &self.tcx.struct_def(*id).members()[cur as usize];
                 if let Some(field) = m.bitfield {
                     if resolved < ndesignators {
                         return err(entry_loc, "designator refers into a non-aggregate");
@@ -473,7 +473,7 @@ impl Sema {
                     }
                 }
                 Type::Struct(id) => {
-                    let m = &self.tcx.struct_def(*id).members[cur as usize];
+                    let m = &self.tcx.struct_def(*id).members()[cur as usize];
                     (m.ty.clone(), base + m.offset)
                 }
                 _ => return err(entry_loc, "invalid initializer"),
@@ -718,7 +718,9 @@ impl Sema {
                         };
                         bytes[start..end].copy_from_slice(&v.to_bytes()[..end - start]);
                     } else {
-                        let Some((re, im)) = constexpr::eval_complex(expr, &self.tcx) else {
+                        let Some(constexpr::Complex { re, im }) =
+                            constexpr::eval_complex(expr, &self.tcx)
+                        else {
                             return not_constant();
                         };
                         if matches!(expr.ty, Type::ComplexFloat) {

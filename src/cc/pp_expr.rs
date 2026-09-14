@@ -365,9 +365,13 @@ impl Preprocessor {
                         }
                     })?
                 };
-                let (header, angled) = Self::header_name_from_tokens(&operand, loc)?;
-                self.resolve_include(&header, angled, name == b"__has_include_next")
-                    .is_some()
+                let (header, form) = Self::header_name_from_tokens(&operand, loc)?;
+                let search = if name == b"__has_include_next" {
+                    crate::pp_directive::SearchFrom::AfterThisFile
+                } else {
+                    crate::pp_directive::SearchFrom::TheStart
+                };
+                self.resolve_include(&header, form, search).is_some()
             }
             b"__has_attribute" => match operand.as_slice() {
                 [t] if t.kind == PpKind::Ident => crate::parser::has_attribute(&t.text),

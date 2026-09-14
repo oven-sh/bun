@@ -689,7 +689,10 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
     let mut constructors = Vec::new();
     let mut destructors = Vec::new();
     for (u, unit) in units.iter().enumerate() {
-        let rebase = |&(priority, func): &(u32, u32)| (priority, func_bases[u] + func);
+        let rebase = |entry: &crate::codegen::Initializer| crate::codegen::Initializer {
+            priority: entry.priority,
+            function: func_bases[u] + entry.function,
+        };
         constructors.extend(unit.constructors.iter().map(rebase));
         destructors.extend(unit.destructors.iter().map(rebase));
     }

@@ -42,20 +42,6 @@ impl Target {
         Target { arch, os }
     }
 
-    /// Parses `x86_64-linux`, `aarch64-macos`, ...
-    pub fn parse(s: &str) -> Option<Target> {
-        let (arch, os) = match s {
-            "x86_64-linux" => (Arch::X86_64, Os::Linux),
-            "aarch64-linux" => (Arch::Aarch64, Os::Linux),
-            "x86_64-macos" => (Arch::X86_64, Os::MacOs),
-            "aarch64-macos" => (Arch::Aarch64, Os::MacOs),
-            "x86_64-windows" => (Arch::X86_64, Os::Windows),
-            "aarch64-windows" => (Arch::Aarch64, Os::Windows),
-            _ => return None,
-        };
-        Some(Target { arch, os })
-    }
-
     pub(crate) fn dialect(self) -> crate::token::Dialect {
         crate::token::Dialect {
             char_is_signed: self.char_is_signed(),
@@ -233,13 +219,30 @@ pub(crate) struct Member {
 pub(crate) struct StructDef {
     pub(crate) tag: Option<Rc<str>>,
     pub(crate) is_union: bool,
-    pub(crate) complete: bool,
-    pub(crate) members: Vec<Member>,
-    pub(crate) size: u64,
-    pub(crate) align: u64,
+    /// What the member list says, once it has been seen: until then the type is incomplete.
+    pub(crate) layout: Option<Layout>,
     /// `__attribute__((transparent_union))`: a parameter of this type takes an argument
     /// of any member's type, passed the way the first member is.
     pub(crate) transparent: bool,
+}
+
+/// The members of a complete structure or union, where each of them is, and what they add up to.
+#[derive(Clone, Debug)]
+pub(crate) struct Layout {
+    pub(crate) members: Vec<Member>,
+    pub(crate) size: u64,
+    pub(crate) align: u64,
+}
+
+impl StructDef {
+    pub(crate) fn is_complete(&self) -> bool {
+        self.layout.is_some()
+    }
+
+    /// The members; none while the type is incomplete.
+    pub(crate) fn members(&self) -> &[Member] {
+        self.layout.as_ref().map_or(&[], |layout| &layout.members)
+    }
 }
 
 pub(crate) struct TypeCtx {
@@ -581,13 +584,7 @@ impl TypeCtx {
             Type::Array(elem, len) => self.size_of(elem)?.checked_mul((*len)?)?,
             // Known only at run time.
             Type::Vla(..) => return None,
-            Type::Struct(id) => {
-                let def = self.struct_def(*id);
-                if !def.complete {
-                    return None;
-                }
-                def.size
-            }
+            Type::Struct(id) => self.struct_def(*id).layout.as_ref()?.size,
             Type::Vector(elem, count) => self.size_of(elem)?.checked_mul(u64::from(*count))?,
             Type::Atomic(inner) | Type::Qualified(_, inner) => self.size_of(inner)?,
             Type::Wide(kind) => {
@@ -606,13 +603,7 @@ impl TypeCtx {
     pub(crate) fn align_of(&self, ty: &Type) -> Option<u64> {
         Some(match ty {
             Type::Array(elem, _) | Type::Vla(elem, _) => self.align_of(elem)?,
-            Type::Struct(id) => {
-                let def = self.struct_def(*id);
-                if !def.complete {
-                    return None;
-                }
-                def.align
-            }
+            Type::Struct(id) => self.struct_def(*id).layout.as_ref()?.align,
             Type::Qualified(quals, inner) => match quals.alignment() {
                 Some(align) => align,
                 None => self.align_of(inner)?,
@@ -639,7 +630,7 @@ impl TypeCtx {
     /// Whether `ty` is a structure or union with a const-qualified member, at any depth.
     pub(crate) fn has_const_member(&self, ty: &Type) -> bool {
         match ty.unqualified().unatomic() {
-            Type::Struct(id) => self.struct_def(*id).members.iter().any(|m| {
+            Type::Struct(id) => self.struct_def(*id).members().iter().any(|m| {
                 let mut member = &m.ty;
                 while let Type::Array(elem, _) = member.unqualified() {
                     member = elem;
@@ -823,7 +814,7 @@ impl TypeCtx {
         name: &str,
     ) -> Option<(Type, u64, Option<BitField>)> {
         let def = self.struct_def(id);
-        for m in &def.members {
+        for m in def.members() {
             match &m.name {
                 Some(n) if &**n == name => return Some((m.ty.clone(), m.offset, m.bitfield)),
                 Some(_) => {}

@@ -873,6 +873,21 @@ impl TranspilerJob {
         let is_watcher_enabled =
             import_watcher.is_some_and(|iw| !matches!(&*iw, ImportWatcher::None));
 
+        // Watch before the read: a save that lands while this module is
+        // parsed must still raise an event.
+        if is_watcher_enabled
+            && !is_node_override
+            && bun_paths::is_absolute(path.text)
+            && !strings::contains(path.text, b"node_modules")
+        {
+            if let Some(iw) = import_watcher {
+                // SAFETY: BACKREF — process-lifetime watcher; no other
+                // `&ImportWatcher` is live here, and the add is thread-safe
+                // via watcher mutex.
+                let _ = unsafe { iw.assume_mut() }.add_file_before_read(path.text);
+            }
+        }
+
         let Some(mut parse_result) = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
         else {

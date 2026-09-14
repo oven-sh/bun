@@ -745,19 +745,17 @@ fn give_stdout_a_buffer() {
         }
         const IOFBF: core::ffi::c_int = 0;
         const IOLBF: core::ffi::c_int = 1;
-        // The stream's for as long as the process runs. (Without a buffer of the caller's, glibc
-        // keeps the one-byte buffer an unbuffered stream has.)
-        struct Buffer(core::cell::UnsafeCell<[c_char; 8192]>);
-        // SAFETY: only libc's stdio touches the bytes, under the stream's lock.
-        unsafe impl Sync for Buffer {}
-        static BUFFER: Buffer = Buffer(core::cell::UnsafeCell::new([0; 8192]));
+        const SIZE: usize = 8192;
         // Once: `--hot` runs the program again, and a stream's buffer is set before it is used.
         static ONCE: std::sync::Once = std::sync::Once::new();
         ONCE.call_once(|| {
+            // The stream's for as long as the process runs, so never freed. (Without a buffer of
+            // the caller's, glibc keeps the one-byte buffer an unbuffered stream has.)
+            let buffer: &'static mut [c_char; SIZE] = Box::leak(Box::new([0; SIZE]));
             // SAFETY: libc's `stdout`, and a buffer that outlives it.
             unsafe {
                 let mode = if isatty(1) != 0 { IOLBF } else { IOFBF };
-                setvbuf(stdout, BUFFER.0.get().cast::<c_char>(), mode, 8192);
+                setvbuf(stdout, buffer.as_mut_ptr(), mode, SIZE);
             }
         });
     }

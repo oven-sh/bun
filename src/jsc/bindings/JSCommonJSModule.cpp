@@ -786,6 +786,29 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_CUSTOM_GETTER(getterRequire, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(globalObject->getDirect(vm, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterRequire, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSValue decodedThis = JSValue::decode(thisValue);
+    JSValue decodedValue = JSValue::decode(value);
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    if (decodedThis == zigGlobal->CommonJSModuleObjectStructure()->storedPrototypeObject()) {
+        globalObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName(), decodedValue, 0);
+        return true;
+    }
+    if (auto* receiver = decodedThis.getObject()) {
+        receiver->putDirect(vm, propertyName, decodedValue, 0);
+        return true;
+    }
+    return false;
+}
+
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "_compile"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterUnderscoreCompile, setterUnderscoreCompile } },
     { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
@@ -841,6 +864,11 @@ public:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
         Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
+
+        this->putDirectCustomAccessor(
+            vm, clientData(vm)->builtinNames().requirePublicName(),
+            JSC::CustomGetterSetter::create(vm, getterRequire, setterRequire),
+            JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | 0);
 
         this->putDirectNativeFunction(
             vm,

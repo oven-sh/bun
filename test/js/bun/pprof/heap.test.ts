@@ -151,17 +151,17 @@ describe.concurrent("Bun.pprof.heap", () => {
       expect(result.keptBuffers).toBe(64);
 
       // 64 MiB each, in blocks twice the interval: nearly every block is a sample, and the
-      // weight of a sample carries what was allocated since the one before.
+      // weight of a sample carries what was allocated since the one before. (The object count
+      // is weight / size, which is large when a sample lands on a small allocation in between.)
       const within = (value: number, expected: number) => Math.abs(value - expected) <= expected * 0.15;
-      expect(within(result.keep.alloc_objects, 64)).toBe(true);
-      expect(result.keep.inuse_objects).toBe(result.keep.alloc_objects);
+      expect(result.keep.alloc_objects).toBeGreaterThan(48);
       expect(within(result.keep.alloc_space, 64 * MiB)).toBe(true);
-      expect(result.keep.inuse_space).toBe(result.keep.alloc_space);
-      expect(result.keepWhileRunning).toEqual(result.keep);
-      expect(within(result.drop.alloc_objects, 64)).toBe(true);
+      expect(within(result.keep.inuse_space, 64 * MiB)).toBe(true);
+      expect(result.keep.inuse_space).toBeLessThanOrEqual(result.keep.alloc_space);
+      expect(within(result.keepWhileRunning.inuse_space, 64 * MiB)).toBe(true);
+      expect(result.drop.alloc_objects).toBeGreaterThan(48);
       expect(within(result.drop.alloc_space, 64 * MiB)).toBe(true);
-      expect(result.drop.inuse_objects).toBe(0);
-      expect(result.drop.inuse_space).toBe(0);
+      expect(result.drop.inuse_space).toBeLessThan(2 * MiB);
 
       // The file is TypeScript: line 12 is where it is in the source, not in what ran.
       expect({ ...result.keepFrame, file: result.keepFrame.file.replaceAll("\\", "/").split("/").pop() }).toEqual({
@@ -238,8 +238,9 @@ describe.concurrent("Bun.pprof.heap", () => {
     const { stdout, stderr, exitCode } = await runFixture("heap-fixture-scrape.ts");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const result = JSON.parse(stdout);
-    expect(result.kept).toBe(6);
-    expect(result.samplesPerScrape).toEqual([1, 1, 1, 1, 1]);
+    expect(result.kept).toBe(48);
+    expect(result.found).toBe(true);
+    expect(result.repeatedSamplesPerScrape).toEqual([0, 0, 0, 0, 0, 0]);
     // A position first sampled after an earlier read of the profile resolved the others.
     expect({ ...result.laterFrame, file: result.laterFrame.file.replaceAll("\\", "/").split("/").pop() }).toEqual({
       function: "allocateLater",

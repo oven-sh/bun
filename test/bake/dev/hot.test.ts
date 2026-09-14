@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { closeSync, openSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -525,6 +525,88 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
       }
       await c.expectMessage(`atomic ${round}`);
     }
+  },
+});
+devTest("every save that lands while a rebuild is in flight reaches the next rebuild", {
+  framework: minimalFramework,
+  // The plugin keeps the rebuild of held.ts in flight until the test releases it.
+  pluginFile: `
+    const release = Promise.withResolvers();
+    process.on("message", message => {
+      if (message.type === "release-rebuild") release.resolve();
+    });
+    export default [
+      {
+        name: "hold-rebuild",
+        setup(build) {
+          build.onLoad({ filter: /held\\.ts$/ }, async args => {
+            const contents = await Bun.file(args.path).text();
+            if (contents.includes("hold")) {
+              console.log("rebuild is held");
+              await release.promise;
+            }
+            return { contents, loader: "ts" };
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    "held.ts": `export const held = 0;`,
+    "a.ts": `export const a = 0;`,
+    "b.ts": `export const b = 0;`,
+    "c.ts": `export const c = 0;`,
+    "d.ts": `export const d = 0;`,
+    "e.ts": `export const e = 0;`,
+    "routes/index.ts": `
+      import { held } from "../held";
+      import { a } from "../a";
+      import { b } from "../b";
+      import { c } from "../c";
+      import { d } from "../d";
+      import { e } from "../e";
+
+      export default function (req, meta) {
+        return Response.json({ held, a, b, c, d, e });
+      }
+    `,
+  },
+  async test(dev) {
+    const version = (n: number) => ({ held: n, a: n, b: n, c: n, d: n, e: n });
+    await dev.fetch("/").equals(version(0));
+
+    // One write(2) with no truncation is one file event, so the watcher
+    // thread reports each save once.
+    const save = (file: string, contents: string) => {
+      const fd = openSync(dev.join(file), "r+");
+      try {
+        writeSync(fd, contents, 0);
+      } finally {
+        closeSync(fd);
+      }
+    };
+
+    const held = dev.output.waitForLine(/rebuild is held/);
+    save("held.ts", `export const held = 1; // hold`);
+    await held;
+
+    // The watcher thread hands the first save to the dev server, which keeps
+    // it for the next rebuild. The later saves wait on the watcher side.
+    for (const name of ["a", "b", "c", "d", "e"]) {
+      save(`${name}.ts`, `export const ${name} = 1;`);
+      // Keep the saves apart so that the watcher thread reports them one at a time.
+      await Bun.sleep(20);
+    }
+    dev.devProcess.send({ type: "release-rebuild" });
+
+    let served: unknown;
+    const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
+    while (true) {
+      served = await dev.fetch("/").json();
+      if (Bun.deepEquals(served, version(1)) || Date.now() > deadline) break;
+      await Bun.sleep(25);
+    }
+    expect(served).toEqual(version(1));
   },
 });
 devTest("hot update frames are not delivered to application websocket topics", {

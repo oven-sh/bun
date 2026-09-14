@@ -330,14 +330,14 @@ impl HmrSocket {
 }
 
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
-// Note: cache-line alignment makes each inline `WatcherAtomics.events: [3]`
+// Note: cache-line alignment makes each inline `WatcherAtomics.events: [2]`
 // element occupy its own cache line, avoiding false sharing on
 // `contention_indicator` between watcher and dev-server threads. 128 matches
 // the cache line on x86_64/aarch64 (Bun's tier-1 targets) and absorbs Intel
 // adjacent-line prefetch.
 #[repr(align(128))]
 pub struct HotReloadEvent {
-    /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events: [3]`.
+    /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events: [2]`.
     /// Nulled by `Drop for DevServer` when an event is still queued; `run`
     /// checks for null before dereferencing.
     pub(crate) owner: *mut DevServer,
@@ -694,19 +694,22 @@ impl HotReloadEvent {
     }
 }
 
-/// `DevServer.WatcherAtomics` — three pre-allocated `HotReloadEvent`s
-/// rotated between the watcher thread and the main thread.
+/// `DevServer.WatcherAtomics` — two pre-allocated `HotReloadEvent`s passed
+/// between the watcher thread and the main thread. The dev server thread
+/// holds at most one. The watcher thread fills the other one, and takes it
+/// back to add more files for as long as the dev server has not started it.
 pub struct WatcherAtomics {
-    pub(crate) events: [HotReloadEvent; 3],
-    /// Atomically encodes a `NextEvent`: values 0..3 are an index into
+    pub(crate) events: [HotReloadEvent; 2],
+    /// Atomically encodes a `NextEvent`: values 0..2 are an index into
     /// `events`, plus the `WAITING`/`DONE` sentinels.
     // Rust cannot align individual fields, so this field is not cache-line
     // aligned. Wrap in a `#[repr(align(128))]` newtype (init site:
     // lifecycle.rs) if false sharing ever shows up in profiles.
     pub(crate) next_event: core::sync::atomic::AtomicU8,
-    /// Watcher-thread-only; index into `events` currently being processed.
+    /// Watcher-thread-only; index into `events` the dev server thread may be using.
     pub(crate) current_event: Option<u8>,
-    /// Watcher-thread-only; index into `events` queued behind `current_event`.
+    /// Watcher-thread-only; index into `events` that was stored in `next_event`
+    /// for the dev server thread to take after `current_event`.
     pub(crate) pending_event: Option<u8>,
     // Debug fields to ensure methods are being called in the right order.
     #[cfg(debug_assertions)]
@@ -821,21 +824,31 @@ impl WatcherAtomics {
         // SAFETY: caller contract — `this` is live; every `(*this)` / `(*ev)`
         // below is a field access on the heap `WatcherAtomics` allocation.
         unsafe {
-            let mut available = [true; 3];
-            if let Some(i) = (*this).current_event {
-                available[i as usize] = false;
-            }
-            if let Some(i) = (*this).pending_event {
-                available[i as usize] = false;
-            }
-
-            let index = 'find: {
-                for (i, &is_available) in available.iter().enumerate() {
-                    if is_available {
-                        break 'find i;
+            let index: usize = 'find: {
+                if let Some(pending) = (*this).pending_event.take() {
+                    // `next_event` holds one event. Take the pending event back and add
+                    // this batch of files to it: a second event in its place would leave
+                    // the files of the first one undelivered. Not the weak variant: a
+                    // spurious failure would hand out the slot the dev server is using.
+                    if (*this)
+                        .next_event
+                        .compare_exchange(
+                            pending,
+                            NextEvent::WAITING.0,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        break 'find pending as usize;
                     }
+                    // The dev server took `pending`, which means it is done with `current_event`.
+                    (*this).current_event = Some(pending);
                 }
-                unreachable!()
+                match (*this).current_event {
+                    Some(0) => 1,
+                    _ => 0,
+                }
             };
             let ev: *mut HotReloadEvent = &raw mut (*this).events[index];
 
@@ -849,10 +862,10 @@ impl WatcherAtomics {
             }
 
             // `ev` points into `(*this).events[index]`, which the watcher thread
-            // has exclusive access to (neither `current_event` nor `pending_event`).
+            // has exclusive access to (not `current_event`, and `next_event` holds no index).
             let ev_ref = &mut *ev;
 
-            // Initialize the timer if it is empty.
+            // Initialize the timer if it is empty. An event that was taken back keeps its timer.
             if ev_ref.is_empty() {
                 // Monotonic start time; elapsed is computed at the read site.
                 ev_ref.timer = std::time::Instant::now();
@@ -924,7 +937,6 @@ impl WatcherAtomics {
                 NextEvent::DONE => {
                     // Dev server is done running events. We need to schedule the event directly.
                     (*this).current_event = Some(ev_index);
-                    (*this).pending_event = None;
                     // Relaxed because the dev server is not running events right now.
                     // (could technically be made non-atomic)
                     (*this)
@@ -954,25 +966,12 @@ impl WatcherAtomics {
                 }
 
                 NextEvent::WAITING => {
-                    if (*this).pending_event.is_some() {
-                        // `pending_event` is running, which means we're done with `current_event`.
-                        (*this).current_event = (*this).pending_event;
-                    } // else, no pending event yet, but not done with `current_event`.
+                    // The dev server takes `ev` when it is done with `current_event`.
                     (*this).pending_event = Some(ev_index);
                 }
 
-                _ => {
-                    // This is an index into the `events` array.
-                    let old_index: u8 = old_next.0;
-                    debug_assert!(
-                        (*this).pending_event == Some(old_index),
-                        "watcher_release_and_submit_event: expected `pending_event` to be {}; got {:?}",
-                        old_index,
-                        (*this).pending_event,
-                    );
-                    // The old pending event hadn't been run yet, so we can replace it with `ev`.
-                    (*this).pending_event = Some(ev_index);
-                }
+                // Only this thread stores an index, and `watcher_acquire_event` took it back.
+                _ => unreachable!(),
             }
         }
     }

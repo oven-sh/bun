@@ -38,7 +38,7 @@ impl WatcherAtomics {
     pub(crate) fn init(owner: *mut DevServer) -> core::ptr::NonNull<Self> {
         let mk_event = || HotReloadEvent::init_empty(owner);
         let atomics: *mut WatcherAtomics = bun_core::heap::into_raw(Box::new(WatcherAtomics {
-            events: [mk_event(), mk_event(), mk_event()],
+            events: [mk_event(), mk_event()],
             next_event: core::sync::atomic::AtomicU8::new(super::NextEvent::DONE.0),
             current_event: None,
             pending_event: None,

@@ -1309,8 +1309,6 @@ pub struct Stream {
     end_after_headers: bool,
     padding_strategy: PaddingStrategy,
     rst_code: u32,
-    stream_dependency: u32,
-    exclusive: bool,
     weight: u16,
     // current window size for the stream
     window_size: u64,
@@ -1820,8 +1818,6 @@ impl Stream {
             end_after_headers: false,
             padding_strategy,
             rst_code: 0,
-            stream_dependency: 0,
-            exclusive: false,
             // RFC 7540 §5.3.5 / nghttp2 NGHTTP2_DEFAULT_WEIGHT: streams default to weight 16,
             // which is what stream.state.weight reports when no priority was signaled.
             weight: 16,
@@ -6943,7 +6939,6 @@ impl H2FrameParser {
                 if exclusive_js.is_boolean() {
                     if exclusive_js.as_boolean() {
                         exclusive = true;
-                        stream.exclusive = true;
                         has_priority = true;
                     }
                 } else {
@@ -6969,7 +6964,6 @@ impl H2FrameParser {
                         );
                         return Ok(JSValue::js_number(stream.id as f64));
                     }
-                    stream.stream_dependency = u32::try_from(parent).expect("int cast");
                 } else {
                     return Err(global_object.throw_invalid_argument_type_value(
                         b"options.parent",

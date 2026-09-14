@@ -242,20 +242,21 @@ test.skipIf(skip)("Bun.serve: a send error on every datagram does not spin the s
  * MIN_INITIAL_DCID_LEN`, a token-length and a payload-length varint).
  */
 async function unsupportedVersionDatagram(): Promise<Buffer> {
-  const { promise, resolve } = Promise.withResolvers<Buffer>();
+  const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
   await using sink = await Bun.udpSocket({
     port: 0,
     hostname: "127.0.0.1",
     socket: { data: (_s, data) => resolve(Buffer.from(data)) },
   });
   // The client's first datagram is the padded Initial. Nothing answers it, so
-  // abort as soon as it arrives.
+  // abort as soon as it arrives. A fetch that settles first never sent one
+  // (a proxy from the environment makes fetch refuse HTTP/3, for example).
   const abort = new AbortController();
   const pending = fetch(`https://127.0.0.1:${sink.port}/`, {
     protocol: "http3",
     tls: { rejectUnauthorized: false },
     signal: abort.signal,
-  } as RequestInit).catch(() => {});
+  } as RequestInit).then(res => reject(new Error("unexpected response, status " + res.status)), reject);
   const initial = await promise;
   abort.abort();
   await pending;
@@ -264,10 +265,43 @@ async function unsupportedVersionDatagram(): Promise<Buffer> {
   return initial;
 }
 
+/** The versions a Version Negotiation packet offers (RFC 9000 section 17.2.1). Empty for any other packet. */
+function offeredVersions(packet: Buffer): number[] {
+  if (packet.length < 7 || !(packet[0] & 0x80) || packet.readUInt32BE(1) !== 0) return [];
+  let at = 5;
+  at += 1 + packet[at]; // destination connection ID
+  at += 1 + packet[at]; // source connection ID
+  const versions: number[] = [];
+  for (; at + 4 <= packet.length; at += 4) versions.push(packet.readUInt32BE(at));
+  return versions;
+}
+
 test.skipIf(skip)(
   "Bun.serve: a refused version-negotiation reply does not spin the loop when no connection exists",
   async () => {
     const datagram = await unsupportedVersionDatagram();
+    {
+      // Without a fault first: the server must answer this datagram with a
+      // Version Negotiation packet. If it did not, nothing would be refused
+      // below and the CPU check could not fail.
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls,
+        http3: true,
+        http1: false,
+        fetch: () => new Response("ok"),
+      });
+      const { promise, resolve } = Promise.withResolvers<Buffer>();
+      await using sock = await Bun.udpSocket({
+        port: 0,
+        hostname: "127.0.0.1",
+        socket: { data: (_s, data) => resolve(Buffer.from(data)) },
+      });
+      expect(sock.send(datagram, server.port, "127.0.0.1")).toBe(true);
+      // The reply offers QUIC version 1, the version the HTTP/3 client speaks.
+      expect(offeredVersions(await promise)).toContain(1);
+    }
     const report = await withServer(
       async port => {
         await using sock = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });

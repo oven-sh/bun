@@ -7600,6 +7600,61 @@ describe("css tests", () => {
     minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
   });
 
+  // Expected strings are lightningcss 1.30.2 output. Using its f32 D50 constants makes a/b (and c/h)
+  // match it for all 256 sRGB greys, 163 of which print exactly 0 0; with D50 rounded from f64 (one
+  // ulp higher in x and z) only 130 did, and gray printed lab(53.585% -.0000298023 .0000119209) and
+  // lch(53.585% .0000320981 158.199).
+  describe("achromatic colors converted to lab() and lch()", () => {
+    // Except for white, the greys below have bit-identical x, y, z by the time xyz -> lab takes cube
+    // roots (the sRGB ones also need powf to return the nearest float, which the true value is
+    // within 0.2 ulp of at these inputs), so their 0 0 does not depend on the platform's libm.
+    // white reaches the cube root with z / D50[2] = 1 - 2^-24 and relies on cbrtf rounding that to
+    // 1, as the oklch(100% 0 0deg) -> lab(100% 0 0 / .5) fallbacks pinned above always have.
+    minify_test(".foo { color: lab(from gray l a b) }", ".foo{color:lab(53.585% 0 0)}");
+    minify_test(".foo { color: lab(from white l a b) }", ".foo{color:lab(100% 0 0)}");
+    minify_test(".foo { color: lab(from #212121 l a b) }", ".foo{color:lab(12.74% 0 0)}");
+    minify_test(".foo { color: lab(from #bdbdbd l a b) }", ".foo{color:lab(76.6112% 0 0)}");
+    minify_test(".foo { color: lab(from black l a b) }", ".foo{color:lab(0% 0 0)}");
+    minify_test(".foo { color: lch(from gray l c h) }", ".foo{color:lch(53.585% 0 0)}");
+    minify_test(".foo { color: lch(from white l c h) }", ".foo{color:lch(100% 0 0)}");
+    minify_test(".foo { color: lch(from #212121 l c h) }", ".foo{color:lch(12.74% 0 0)}");
+    minify_test(".foo { color: lch(from #bdbdbd l c h) }", ".foo{color:lch(76.6112% 0 0)}");
+
+    minify_test(".foo { color: lab(from color(srgb-linear 0.05 0.05 0.05) l a b) }", ".foo{color:lab(26.7348% 0 0)}");
+    minify_test(".foo { color: lab(from color(srgb-linear 0.1 0.1 0.1) l a b) }", ".foo{color:lab(37.8424% 0 0)}");
+    minify_test(".foo { color: lab(from color(srgb-linear 0.4 0.4 0.4) l a b) }", ".foo{color:lab(69.4695% 0 0)}");
+    minify_test(".foo { color: lab(from color(srgb-linear 0.8 0.8 0.8) l a b) }", ".foo{color:lab(91.6849% 0 0)}");
+    minify_test(".foo { color: lch(from color(srgb-linear 0.05 0.05 0.05) l c h) }", ".foo{color:lch(26.7348% 0 0)}");
+    minify_test(".foo { color: lch(from color(srgb-linear 0.1 0.1 0.1) l c h) }", ".foo{color:lch(37.8424% 0 0)}");
+    minify_test(".foo { color: lch(from color(srgb-linear 0.4 0.4 0.4) l c h) }", ".foo{color:lch(69.4695% 0 0)}");
+    minify_test(".foo { color: lch(from color(srgb-linear 0.8 0.8 0.8) l c h) }", ".foo{color:lch(91.6849% 0 0)}");
+
+    // The converted grey's a/b feed into the mix (b was -9.99999 with the f64 constants).
+    minify_test(".foo { color: color-mix(in lab, gray, lab(50% 50 -20)) }", ".foo{color:lab(51.7925% 25 -10)}");
+    minify_test(".foo { color: color-mix(in lab, white, lab(50% 50 -20)) }", ".foo{color:lab(75% 25 -10)}");
+    minify_test(
+      ".foo { color: color-mix(in lab, color(srgb-linear 0.4 0.4 0.4), lab(50% 50 -20)) }",
+      ".foo{color:lab(59.7348% 25 -10)}",
+    );
+
+    // Chromatic colors, and the lab() -> xyz-d50 direction (which scales by the same reference
+    // white), print the same six digits as before.
+    minify_test(".foo { color: lab(from red l a b) }", ".foo{color:lab(54.2905% 80.8049 69.891)}");
+    minify_test(".foo { color: lch(from #123456 l c h) }", ".foo{color:lch(20.6755% 24.6983 264.711)}");
+    minify_test(
+      ".foo { color: color(from lab(100% 0 0) xyz-d50 x y z) }",
+      ".foo{color:color(xyz-d50 .964296 1 .825105)}",
+    );
+    minify_test(
+      ".foo { color: color(from lab(50% 10 -20) xyz-d50 x y z) }",
+      ".foo{color:color(xyz-d50 .197006 .184187 .247013)}",
+    );
+    minify_test(
+      ".foo { color: color(from lab(50% 0 0) srgb r g b) }",
+      ".foo{color:color(srgb .466326 .466327 .466327)}",
+    );
+  });
+
   describe("container", () => {
     minify_test("@container (width > 100px) { a { color: red } }", "@container (width>100px){a{color:red}}");
     minify_test("@container not (width > 100px) { a { color: red } }", "@container not (width>100px){a{color:red}}");

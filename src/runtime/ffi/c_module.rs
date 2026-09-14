@@ -34,6 +34,10 @@ unsafe extern "C" {
 unsafe extern "C" fn resolve_extern(name: *const c_char, name_len: usize) -> *mut c_void {
     // SAFETY: `name` is NUL-terminated with `name_len` bytes before the NUL.
     let name = unsafe { ZStr::from_raw(name.cast::<u8>(), name_len) };
+    // Bun keeps the list itself (`at_exit`), on every platform.
+    if name.as_bytes() == b"atexit" {
+        return at_exit::atexit as *mut c_void;
+    }
     #[cfg(not(windows))]
     if let Some(address) = compiler_runtime::find(name.as_bytes()) {
         return address;
@@ -110,8 +114,8 @@ mod compiler_runtime {
 /// What a C toolchain on Windows links statically into every program, so no library exports it: the
 /// 128-bit integer routines of the compiler's runtime (taking and returning `__int128` the way this
 /// compiler passes any 16-byte object there: by address, the result through a hidden first pointer),
-/// and the `printf` and `scanf` families and `atexit`, which with the Universal C Runtime are inline
-/// functions of its headers or part of a program's startup code (JSCFFIBridge.cpp has those).
+/// and the `printf` and `scanf` families and `at_quick_exit`, which with the Universal C Runtime are
+/// inline functions of its headers or part of a program's startup code (JSCFFIBridge.cpp has those).
 #[cfg(windows)]
 mod windows_runtime {
     use core::ffi::c_void;
@@ -179,9 +183,6 @@ mod windows_runtime {
         Bun__CModule__vscanf Bun__CModule__vfscanf Bun__CModule__vsscanf
         Bun__CModule__at_quick_exit
     );
-    unsafe extern "C" {
-        pub(super) fn Bun__CModule__atexit(handler: unsafe extern "C" fn()) -> core::ffi::c_int;
-    }
 
     pub(super) fn find(name: &[u8]) -> Option<*mut c_void> {
         Some(match name {
@@ -223,7 +224,6 @@ mod windows_runtime {
             b"_setjmpex" => {
                 return super::windows_libraries(bun_core::zstr!("__intrinsic_setjmpex"));
             }
-            b"atexit" => Bun__CModule__atexit as *mut c_void,
             b"at_quick_exit" => Bun__CModule__at_quick_exit as *mut c_void,
             _ => return None,
         })
@@ -253,25 +253,16 @@ fn windows_libraries(name: &ZStr) -> Option<*mut c_void> {
     })
 }
 
-/// Bun leaves the process with `quick_exit` on Linux, which neither runs `atexit` handlers nor flushes
-/// C's stdio. Compiled C expects both of returning from `main` / the process ending, so the first C
-/// module to load registers one hook, for both ways out, that does them once.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
+/// What compiled C registers with `atexit`, and its destructors: Bun keeps the list, on every
+/// platform, and runs it, then writes out what C's stdio has buffered, when the process ends (once,
+/// whichever way it ends) and when a C program that `--watch` or `--hot` will run again returns.
+/// The first C module to load registers the hook with the way Bun leaves the process there:
+/// `quick_exit` on Linux, which runs neither `atexit` handlers nor flushes anything itself, `exit`
+/// on macOS, Bun's own exit callbacks on Windows (where the C code has a C runtime of its own,
+/// ucrtbase.dll: Bun's is linked statically).
 mod at_exit {
-    use core::ffi::{c_int, c_void};
+    use core::ffi::c_int;
     use core::sync::atomic::{AtomicBool, Ordering};
-
-    unsafe extern "C" {
-        fn __cxa_atexit(
-            function: unsafe extern "C" fn(*mut c_void),
-            argument: *mut c_void,
-            dso_handle: *mut c_void,
-        ) -> c_int;
-        fn __cxa_at_quick_exit(
-            function: unsafe extern "C" fn(*mut c_void),
-            dso_handle: *mut c_void,
-        ) -> c_int;
-    }
 
     static HANDLERS: bun_threading::Guarded<Vec<unsafe extern "C" fn()>> =
         bun_threading::Guarded::new(Vec::new());
@@ -290,33 +281,68 @@ mod at_exit {
         super::flush_c_streams();
     }
 
-    unsafe extern "C" fn at_process_exit(_: *mut c_void) {
+    extern "C" fn at_process_exit() {
         if !RAN.swap(true, Ordering::AcqRel) {
             run_handlers();
-        }
-    }
-
-    unsafe extern "C" fn at_process_quick_exit(_: *mut c_void) {
-        // `quick_exit` is how Bun itself leaves. A C program that calls it gets what C says it
-        // does: its `at_quick_exit` handlers, not its `atexit` ones, and no flush.
-        if bun_core::Global::is_exiting() {
-            // SAFETY: the argument is unused.
-            unsafe { at_process_exit(core::ptr::null_mut()) };
         }
     }
 
     pub(super) fn install() {
         static INSTALLED: std::sync::Once = std::sync::Once::new();
         INSTALLED.call_once(|| {
-            // SAFETY: registers the two hooks with libc; a null dso handle means "not part of a
-            // shared object".
-            unsafe {
-                __cxa_atexit(
-                    at_process_exit,
-                    core::ptr::null_mut(),
-                    core::ptr::null_mut(),
-                );
-                __cxa_at_quick_exit(at_process_quick_exit, core::ptr::null_mut());
+            #[cfg(all(target_os = "linux", target_env = "gnu"))]
+            {
+                use core::ffi::c_void;
+                unsafe extern "C" {
+                    fn __cxa_atexit(
+                        function: unsafe extern "C" fn(*mut c_void),
+                        argument: *mut c_void,
+                        dso_handle: *mut c_void,
+                    ) -> c_int;
+                    fn __cxa_at_quick_exit(
+                        function: unsafe extern "C" fn(*mut c_void),
+                        dso_handle: *mut c_void,
+                    ) -> c_int;
+                }
+                unsafe extern "C" fn at_exit(_: *mut c_void) {
+                    at_process_exit();
+                }
+                unsafe extern "C" fn at_quick_exit(_: *mut c_void) {
+                    // `quick_exit` is how Bun itself leaves. A C program that calls it gets what C
+                    // says it does: its `at_quick_exit` handlers, not its `atexit` ones, and no flush.
+                    if bun_core::Global::is_exiting() {
+                        at_process_exit();
+                    }
+                }
+                // SAFETY: registers the two hooks with libc; a null dso handle means "not part of
+                // a shared object".
+                unsafe {
+                    __cxa_atexit(at_exit, core::ptr::null_mut(), core::ptr::null_mut());
+                    __cxa_at_quick_exit(at_quick_exit, core::ptr::null_mut());
+                }
+            }
+            #[cfg(all(unix, not(all(target_os = "linux", target_env = "gnu"))))]
+            {
+                unsafe extern "C" {
+                    fn atexit(handler: extern "C" fn()) -> c_int;
+                }
+                // SAFETY: registers the hook with libc.
+                unsafe {
+                    atexit(at_process_exit);
+                }
+            }
+            #[cfg(windows)]
+            {
+                unsafe extern "C" {
+                    safe fn Bun__CModule__runExitHandlers();
+                }
+                // Then what the C code's own C runtime does when a program ends: its
+                // `at_quick_exit`-free half of `exit` (`_cexit`).
+                extern "C" fn run() {
+                    at_process_exit();
+                    Bun__CModule__runExitHandlers();
+                }
+                bun_core::Global::add_exit_callback(run);
             }
         });
     }
@@ -329,11 +355,24 @@ mod at_exit {
 }
 
 /// Writes out what the C library's stdio has buffered, in every open output stream.
-#[cfg(unix)]
 fn flush_c_streams() {
-    unsafe extern "C" {
-        fn fflush(stream: *mut c_void) -> core::ffi::c_int;
-    }
+    type Fflush = unsafe extern "C" fn(*mut c_void) -> core::ffi::c_int;
+    #[cfg(unix)]
+    let fflush: Fflush = {
+        unsafe extern "C" {
+            fn fflush(stream: *mut c_void) -> core::ffi::c_int;
+        }
+        fflush
+    };
+    // The C runtime the compiled code's own calls go to, not the one linked into Bun.
+    #[cfg(windows)]
+    let fflush: Fflush = {
+        let Some(address) = windows_libraries(bun_core::zstr!("fflush")) else {
+            return;
+        };
+        // SAFETY: `int fflush(FILE *)` of ucrtbase.dll.
+        unsafe { core::mem::transmute::<*mut c_void, Fflush>(address) }
+    };
     // SAFETY: a null stream means every open output stream.
     unsafe { fflush(core::ptr::null_mut()) };
 }
@@ -371,7 +410,6 @@ fn glibc_static_stub(name: &[u8]) -> Option<*mut c_void> {
         unsafe { __register_atfork(prepare, parent, child, core::ptr::null_mut()) }
     }
     match name {
-        b"atexit" => Some(at_exit::atexit as *mut c_void),
         b"at_quick_exit" => Some(at_quick_exit as *mut c_void),
         b"pthread_atfork" => Some(pthread_atfork as *mut c_void),
         _ => None,
@@ -509,23 +547,7 @@ pub fn finish(
 /// thread's start routine, a pointer to a static object) is an address inside it.
 fn load_bir(global_this: &JSGlobalObject, path: &[u8], bir: &[u8]) -> JsResult<JSValue> {
     bun_analytics::features::c_module.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
     at_exit::install();
-    #[cfg(windows)]
-    {
-        // The C code has a C runtime of its own (ucrtbase.dll; Bun's is linked statically): when the
-        // process ends, its atexit handlers run and its streams are flushed too.
-        static EXIT_HANDLERS: std::sync::Once = std::sync::Once::new();
-        EXIT_HANDLERS.call_once(|| {
-            unsafe extern "C" {
-                safe fn Bun__CModule__runExitHandlers();
-            }
-            extern "C" fn run() {
-                Bun__CModule__runExitHandlers();
-            }
-            bun_core::Global::add_exit_callback(run);
-        });
-    }
 
     let mut module: *mut c_void = core::ptr::null_mut();
     let mut error = bun_core::String::EMPTY;
@@ -550,27 +572,9 @@ fn load_bir(global_this: &JSGlobalObject, path: &[u8], bir: &[u8]) -> JsResult<J
     // `__attribute__((destructor))` functions run when the process ends, after what the program
     // itself registers with atexit while it runs.
     unsafe extern "C" fn run_at_exit(handler: unsafe extern "C" fn()) {
-        #[cfg(all(target_os = "linux", target_env = "gnu"))]
         // SAFETY: records `handler`, a `void f(void)` from the module, to be called at exit.
         unsafe {
             at_exit::atexit(handler);
-        }
-        #[cfg(windows)]
-        {
-            // SAFETY: the list of the C runtime the program itself calls `atexit` in, not Bun's.
-            unsafe {
-                windows_runtime::Bun__CModule__atexit(handler);
-            }
-        }
-        #[cfg(not(any(windows, all(target_os = "linux", target_env = "gnu"))))]
-        {
-            unsafe extern "C" {
-                fn atexit(handler: unsafe extern "C" fn()) -> core::ffi::c_int;
-            }
-            // SAFETY: as above, with libc's own list.
-            unsafe {
-                atexit(handler);
-            }
         }
     }
     // SAFETY: `module` is the live module just created.
@@ -679,10 +683,7 @@ pub fn run_main_if_any(
 
     let vm = global_this.bun_vm().as_mut();
     if vm.is_watcher_enabled() {
-        #[cfg(all(target_os = "linux", target_env = "gnu"))]
         at_exit::run_handlers();
-        #[cfg(all(unix, not(all(target_os = "linux", target_env = "gnu"))))]
-        flush_c_streams();
         return Ok(());
     }
     vm.exit_handler.exit_code = status as u8;

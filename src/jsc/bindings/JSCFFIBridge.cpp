@@ -257,14 +257,8 @@ extern "C" int Bun__CModule__sscanf(const char* buffer, const char* format, ...)
 
 #undef BUN_C_VARIADIC
 
-// `atexit` is in the program's own startup code with Microsoft's toolchain; what it calls is exported.
-extern "C" int Bun__CModule__atexit(void (*function)())
-{
-    using Register = int(__cdecl*)(void (*)());
-    static Register registerFunction = ucrtFunction<Register>("_crt_atexit");
-    return registerFunction ? registerFunction(function) : -1;
-}
-
+// `at_quick_exit` is in the program's own startup code with Microsoft's toolchain; what it calls is exported.
+// (`atexit` is Bun's own list on every platform: c_module.rs.)
 extern "C" int Bun__CModule__at_quick_exit(void (*function)())
 {
     using Register = int(__cdecl*)(void (*)());
@@ -272,8 +266,8 @@ extern "C" int Bun__CModule__at_quick_exit(void (*function)())
     return registerFunction ? registerFunction(function) : -1;
 }
 
-// Runs what the C code registered with atexit and flushes and closes its streams: what returning from `main`
-// does in a program of its own. Bun's exit does that for Bun's C runtime only.
+// Flushes and closes the C code's streams: what returning from `main` does in a program of its own, after the
+// handlers it registered with atexit have run (c_module.rs has those). Bun's exit does that for Bun's C runtime only.
 extern "C" void Bun__CModule__runExitHandlers()
 {
     using Exit = void(__cdecl*)();

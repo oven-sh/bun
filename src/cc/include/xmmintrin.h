@@ -132,7 +132,8 @@ __BUN_CC_INTRIN __m128 _mm_cmpunord_ps(__m128 __a, __m128 __b) { return (__m128)
     }
 __BUN_CC_CMP_SS(eq)
 __BUN_CC_CMP_SS(lt)
-__BUN_CC_CMP_SS(le) __BUN_CC_CMP_SS(gt) __BUN_CC_CMP_SS(ge) __BUN_CC_CMP_SS(neq)
+__BUN_CC_CMP_SS(le)
+__BUN_CC_CMP_SS(gt) __BUN_CC_CMP_SS(ge) __BUN_CC_CMP_SS(neq)
     __BUN_CC_CMP_SS(nlt) __BUN_CC_CMP_SS(nle) __BUN_CC_CMP_SS(ngt) __BUN_CC_CMP_SS(nge) __BUN_CC_CMP_SS(ord) __BUN_CC_CMP_SS(unord)
 #undef __BUN_CC_CMP_SS
 

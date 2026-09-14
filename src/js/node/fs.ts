@@ -1,13 +1,7 @@
 // Hardcoded module "node:fs"
 import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
 const types = require("node:util/types");
-const {
-  validateFunction,
-  validateInteger,
-  validateEncoding,
-  getValidatedPath,
-  throwIfNullBytesInFileName,
-} = require("internal/validators");
+const { validateFunction, validateInteger, validateEncoding, getValidatedPath } = require("internal/validators");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -707,19 +701,10 @@ const realpathSync: typeof import("node:fs").realpathSync =
         // This function is ported 1:1 from node.js, to emulate how it is unable to
         // resolve subst drives to their underlying location. The native call is
         // able to see through that.
-        if (p instanceof URL) {
-          const pathname = p.pathname;
-          if (pathname.indexOf("%00") != -1) {
-            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
-          }
-          p = Bun.fileURLToPath(p as URL);
-        } else {
-          if (typeof p !== "string") {
-            p += "";
-          }
-          p = getValidatedPath(p);
+        if (!(p instanceof URL) && typeof p !== "string") {
+          p += "";
         }
-        throwIfNullBytesInFileName(p);
+        p = getValidatedPath(p);
         const knownHard = new Set();
 
         // Current character position in p
@@ -827,19 +812,10 @@ const realpath: typeof import("node:fs").realpath =
             );
           }
         }
-        if (p instanceof URL) {
-          const pathname = p.pathname;
-          if (pathname.indexOf("%00") != -1) {
-            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
-          }
-          p = Bun.fileURLToPath(p as URL);
-        } else {
-          if (typeof p !== "string") {
-            p += "";
-          }
-          p = getValidatedPath(p);
+        if (!(p instanceof URL) && typeof p !== "string") {
+          p += "";
         }
-        throwIfNullBytesInFileName(p);
+        p = getValidatedPath(p);
 
         const knownHard = new Set();
         const pathModule = require("node:path");

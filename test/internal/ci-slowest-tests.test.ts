@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { retryDelayMs } from "../../scripts/buildkite-retry.mjs";
+import { fetchBuildkite } from "../../scripts/buildkite-fetch.mjs";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
-import { createLogFetcher, parseLog, type Job } from "../../scripts/ci-slowest-tests";
+import { fetchLog, parseLog, type Job } from "../../scripts/ci-slowest-tests";
 import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
@@ -249,44 +249,29 @@ const rateLimited = (reset: number) =>
     },
   );
 
-describe("scripts/buildkite-retry.mjs retryDelayMs", () => {
-  // createLogFetcher below covers the waits that a response asks for.
-  // update-parallel-allowlist.mjs allows 8 retries. Uncapped, its last backoff is 128 s.
-  test("caps the exponential backoff at maxWaitMs", () => {
-    const noHint = (attempt: number, maxWaitMs?: number) => retryDelayMs(new Headers(), null, attempt, maxWaitMs);
-    expect([noHint(6), noHint(7), noHint(8), noHint(4, 5000)]).toEqual([32_000, 60_000, 60_000, 5000]);
-  });
-});
+// `sleep` records the wait and returns at once, so no test waits for real.
+function recordWaits() {
+  const waits: number[] = [];
+  return { waits, options: { token: "secret", sleep: async (ms: number) => void waits.push(ms) } };
+}
 
-describe("scripts/ci-slowest-tests.ts createLogFetcher", () => {
-  // `sleep` records the wait and returns at once, so no test waits for real.
-  function fetcher(cacheDir: string) {
-    const waits: number[] = [];
-    const fetchLog = createLogFetcher({ token: "secret", cacheDir, sleep: async ms => void waits.push(ms) });
-    return { waits, fetchLog };
-  }
-
-  test("waits out a 429, then stores the log in the cache", async () => {
-    using cacheDir = tempDir("ci-slowest-cache", {});
+describe("scripts/buildkite-fetch.mjs fetchBuildkite", () => {
+  test("sends the token and waits out a 429", async () => {
     const authorizations: (string | null)[] = [];
     using api = logServer((id, hit, req) => {
       authorizations.push(req.headers.get("authorization"));
       return hit === 1 ? rateLimited(7) : new Response("the log");
     });
 
-    const { waits, fetchLog } = fetcher(String(cacheDir));
-    expect(await fetchLog(api.job("a"))).toBe("the log");
-    // `reset` counts whole seconds, so the fetcher waits one more.
+    const { waits, options } = recordWaits();
+    const response = await fetchBuildkite(api.job("a").raw_log_url, options);
+    expect(await response.text()).toBe("the log");
+    // `reset` counts whole seconds, so the wait is one second more.
     expect({ waits, hits: api.hits, authorizations }).toEqual({
       waits: [8000],
       hits: { a: 2 },
       authorizations: ["Bearer secret", "Bearer secret"],
     });
-    expect(readFileSync(join(String(cacheDir), "a.log"), "utf8")).toBe("the log");
-
-    // A second run reads the cache and sends no request.
-    expect(await fetcher(String(cacheDir)).fetchLog(api.job("a"))).toBe("the log");
-    expect(api.hits).toEqual({ a: 2 });
   });
 
   test.each<[string, () => Response, number[]]>([
@@ -306,65 +291,65 @@ describe("scripts/ci-slowest-tests.ts createLogFetcher", () => {
     ],
     ["maxWaitMs and one second at most", () => rateLimited(3600), [61_000, 61_000]],
   ])("waits for %s", async (_, refusal, expected) => {
-    using cacheDir = tempDir("ci-slowest-cache", {});
     using api = logServer((id, hit) => (hit <= 2 ? refusal() : new Response("the log")));
 
-    const { waits, fetchLog } = fetcher(String(cacheDir));
-    expect(await fetchLog(api.job("a"))).toBe("the log");
+    const { waits, options } = recordWaits();
+    const response = await fetchBuildkite(api.job("a").raw_log_url, options);
+    expect(await response.text()).toBe("the log");
     expect({ waits, hits: api.hits }).toEqual({ waits: expected, hits: { a: 3 } });
   });
 
-  test("gives up after 6 requests and leaves nothing in the cache", async () => {
-    using cacheDir = tempDir("ci-slowest-cache", {});
+  // update-parallel-allowlist.mjs allows 8 retries. Uncapped, its last backoff is 128 s.
+  test("caps the exponential backoff at maxWaitMs", async () => {
+    using api = logServer((id, hit) => (hit <= 8 ? refuse(500) : new Response("the log")));
+
+    const { waits, options } = recordWaits();
+    const response = await fetchBuildkite(api.job("a").raw_log_url, { ...options, retries: 8 });
+    expect(await response.text()).toBe("the log");
+    expect(waits).toEqual([1000, 2000, 4000, 8000, 16_000, 32_000, 60_000, 60_000]);
+  });
+
+  test("gives up after 5 retries", async () => {
     using api = logServer(() => rateLimited(1));
 
-    const { waits, fetchLog } = fetcher(String(cacheDir));
-    const job = api.job("a");
-    expect(await fetchLog(job).catch(e => e.message)).toBe(`429 ${job.raw_log_url} (6 attempts)`);
+    const { waits, options } = recordWaits();
+    const url = api.job("a").raw_log_url;
+    expect(await fetchBuildkite(url, options).catch(e => e.message)).toBe(`429 ${url} (6 attempts)`);
     expect({ waits, hits: api.hits }).toEqual({ waits: [2000, 2000, 2000, 2000, 2000], hits: { a: 6 } });
-    expect(existsSync(join(String(cacheDir), "a.log"))).toBe(false);
   });
 
   test("does not retry a status that a retry cannot fix", async () => {
+    using api = logServer(() => Response.json({ message: "Not Found" }, { status: 404 }));
+
+    const { waits, options } = recordWaits();
+    const url = api.job("a").raw_log_url;
+    expect(await fetchBuildkite(url, options).catch(e => e.message)).toBe(`404 ${url}`);
+    expect({ waits, hits: api.hits }).toEqual({ waits: [], hits: { a: 1 } });
+  });
+});
+
+describe("scripts/ci-slowest-tests.ts fetchLog", () => {
+  test("stores a downloaded log in the cache and reads it from there the next time", async () => {
+    using cacheDir = tempDir("ci-slowest-cache", {});
+    using api = logServer((id, hit) => (hit === 1 ? rateLimited(7) : new Response("the log")));
+
+    const { waits, options } = recordWaits();
+    expect(await fetchLog(api.job("a"), String(cacheDir), options)).toBe("the log");
+    expect({ waits, hits: api.hits }).toEqual({ waits: [8000], hits: { a: 2 } });
+    expect(readFileSync(join(String(cacheDir), "a.log"), "utf8")).toBe("the log");
+
+    expect(await fetchLog(api.job("a"), String(cacheDir), options)).toBe("the log");
+    expect(api.hits).toEqual({ a: 2 });
+  });
+
+  test("leaves nothing in the cache when the download fails", async () => {
     using cacheDir = tempDir("ci-slowest-cache", {});
     using api = logServer(() => Response.json({ message: "Not Found" }, { status: 404 }));
 
-    const { waits, fetchLog } = fetcher(String(cacheDir));
     const job = api.job("a");
-    expect(await fetchLog(job).catch(e => e.message)).toBe(`404 ${job.raw_log_url}`);
-    expect({ waits, hits: api.hits }).toEqual({ waits: [], hits: { a: 1 } });
-  });
-
-  test("one 429 holds back the other downloads until the wait is over", async () => {
-    using cacheDir = tempDir("ci-slowest-cache", {});
-    const waiting = Promise.withResolvers<void>();
-    const resume = Promise.withResolvers<void>();
-    let resumed = false;
-    const duringTheWait: string[] = [];
-    using api = logServer((id, hit) => {
-      if (id === "a" && hit === 1) return rateLimited(5);
-      if (!resumed && id !== "ping") duringTheWait.push(id);
-      return new Response(`log of ${id}`);
-    });
-    const fetchLog = createLogFetcher({
-      token: "secret",
-      cacheDir: String(cacheDir),
-      sleep() {
-        waiting.resolve();
-        return resume.promise;
-      },
-    });
-
-    const a = fetchLog(api.job("a"));
-    await waiting.promise;
-    const b = fetchLog(api.job("b"));
-    // A request for "b" that did not wait reaches the server before this round trip ends.
-    await fetch(api.job("ping").raw_log_url);
-    resumed = true;
-    resume.resolve();
-
-    expect(await Promise.all([a, b])).toEqual(["log of a", "log of b"]);
-    expect({ duringTheWait, hits: api.hits }).toEqual({ duringTheWait: [], hits: { a: 2, b: 1, ping: 1 } });
+    const { options } = recordWaits();
+    expect(await fetchLog(job, String(cacheDir), options).catch(e => e.message)).toBe(`404 ${job.raw_log_url}`);
+    expect(existsSync(join(String(cacheDir), "a.log"))).toBe(false);
   });
 });
 

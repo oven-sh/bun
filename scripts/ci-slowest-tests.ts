@@ -23,7 +23,7 @@ import { $, spawn } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { retryDelayMs } from "./buildkite-retry.mjs";
+import { fetchBuildkite, type BuildkiteFetchOptions } from "./buildkite-fetch.mjs";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
@@ -86,57 +86,22 @@ export function parseLog(text: string): Map<string, number> {
 
 export type Job = { id: string; name: string; raw_log_url: string; retried?: boolean };
 
-export type LogFetcherOptions = {
-  token: string;
-  /** Holds one `<job id>.log` per fetched log, so a re-run only fetches what is missing. */
-  cacheDir: string;
-  /** Requests per log, the first one included. */
-  maxAttempts?: number;
-  /** Upper bound for one wait. A wait that the response asks for gets one second on top. */
-  maxWaitMs?: number;
-  sleep?: (ms: number) => Promise<unknown>;
-};
-
-function announceAndSleep(ms: number) {
-  console.error(`  waiting ${ms / 1000}s for Buildkite (rate limit or server error)`);
-  return Bun.sleep(ms);
-}
-
+// Returns the log of `job`. `cacheDir` holds one `<job id>.log` per downloaded
+// log, so a re-run only downloads what is missing.
+//
 // Do NOT use `bk job log`: it hangs indefinitely on some Windows/alpine jobs.
 // Fetching raw_log_url directly with the token works for all of them.
 //
 // One build has about 160 test-bun jobs and Buildkite allows 200 requests per
-// minute, shared by every user of the token, so a 429 is routine. On a 429 or a
-// 5xx, wait (scripts/buildkite-retry.mjs says how long) and ask again. The wait
-// is shared: one 429 holds back every download, not only the one that received
-// it.
-export function createLogFetcher({
-  token,
-  cacheDir,
-  maxAttempts = 6,
-  maxWaitMs = 60_000,
-  sleep = announceAndSleep,
-}: LogFetcherOptions) {
-  let pause: Promise<unknown> | null = null;
-  return async function fetchLog(job: Job): Promise<string> {
-    const path = join(cacheDir, `${job.id}.log`);
-    if (existsSync(path)) return readFileSync(path, "utf8");
-    for (let attempt = 1; ; attempt++) {
-      while (pause) await pause;
-      const res = await fetch(job.raw_log_url, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) {
-        const out = await res.text();
-        writeFileSync(path, out);
-        return out;
-      }
-      const retryable = res.status === 429 || res.status >= 500;
-      if (!retryable || attempt === maxAttempts) {
-        throw new Error(`${res.status} ${job.raw_log_url}` + (attempt > 1 ? ` (${attempt} attempts)` : ""));
-      }
-      const wait = retryDelayMs(res.headers, await res.json().catch(() => null), attempt, maxWaitMs);
-      pause ??= sleep(wait).finally(() => (pause = null));
-    }
-  };
+// minute, shared by every user of the token. So a 429 is routine, and
+// fetchBuildkite waits it out.
+export async function fetchLog(job: Job, cacheDir: string, options: BuildkiteFetchOptions): Promise<string> {
+  const path = join(cacheDir, `${job.id}.log`);
+  if (existsSync(path)) return readFileSync(path, "utf8");
+  const response = await fetchBuildkite(job.raw_log_url, options);
+  const log = await response.text();
+  writeFileSync(path, log);
+  return log;
 }
 
 if (import.meta.main) {
@@ -179,6 +144,7 @@ if (import.meta.main) {
 
   const CACHE = join(tmpdir(), `bun-ci-logs-${BUILD}`);
   mkdirSync(CACHE, { recursive: true });
+  const buildkite: BuildkiteFetchOptions = { token: TOKEN };
 
   const buildJson = JSON.parse(
     await new Response(spawn({ cmd: ["bk", "build", "view", BUILD], stdout: "pipe" }).stdout).text(),
@@ -196,8 +162,6 @@ if (import.meta.main) {
       .replace(/^:([a-z]+):/, "$1")
       .trim();
 
-  const fetchLog = createLogFetcher({ token: TOKEN, cacheDir: CACHE });
-
   type Agg = { maxMs: number; maxPlat: string; perPlat: Map<string, number> };
   const agg = new Map<string, Agg>();
 
@@ -209,7 +173,7 @@ if (import.meta.main) {
       const job = queue.shift();
       if (!job) return;
       try {
-        const log = await fetchLog(job);
+        const log = await fetchLog(job, CACHE, buildkite);
         const plat = platOf(job.name);
         for (const [file, ms] of parseLog(log)) {
           let a = agg.get(file);

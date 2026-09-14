@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
-import { retryDelayMs } from "./buildkite-retry.mjs";
+import { fetchBuildkite } from "./buildkite-fetch.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const testDir = join(__dirname, "..", "test");
@@ -33,21 +33,11 @@ if (!token) {
   process.exit(1);
 }
 
-const api = async path => {
-  for (let attempt = 0; ; attempt++) {
-    const r = await fetch(`https://api.buildkite.com/v2/organizations/${opts.org}/pipelines/${opts.pipeline}/${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (r.ok) return r;
-    if ((r.status === 429 || r.status >= 500) && attempt < 8) {
-      const backoff = retryDelayMs(r.headers, await r.json().catch(() => null), attempt + 1);
-      await new Promise(resolve => setTimeout(resolve, backoff));
-      continue;
-    }
-    throw new Error(`${path}: ${r.status} ${r.statusText}`);
-  }
-};
+const api = path =>
+  fetchBuildkite(`https://api.buildkite.com/v2/organizations/${opts.org}/pipelines/${opts.pipeline}/${path}`, {
+    token,
+    retries: 8,
+  });
 
 const isNodeStyle = p =>
   p.includes("js/node/test/parallel/") || p.includes("js/node/test/sequential/") || p.includes("js/bun/test/parallel/");

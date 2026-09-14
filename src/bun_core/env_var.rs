@@ -49,8 +49,7 @@ new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioc
 //
 // It's unclear why this was done.
 new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS", { default: 30 });
-// The environment form of `install.forceRegistry`. Declared here because this accessor reads the
-// process environment only. The DotEnv loader would let a project's `.env` file set it.
+// `install.forceRegistry`, read through this accessor and not the DotEnv loader so that a project's `.env` cannot set it.
 new!(pub BUN_CONFIG_FORCE_REGISTRY: string, "BUN_CONFIG_FORCE_REGISTRY", {});
 // Idle timeout for HTTP client sockets (fetch / `bun install`), in seconds.
 // The timer is armed when the socket opens and re-armed on every read/write;

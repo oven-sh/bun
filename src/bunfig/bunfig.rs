@@ -1322,8 +1322,7 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(registry) = install_obj.get(b"forceRegistry") {
-            // First writer wins, unlike every other key. The global `~/.bunfig.toml` is parsed
-            // before the project bunfig, so the project cannot change a machine-level value.
+            // First writer wins: the global bunfig is parsed first, so a project bunfig cannot replace a machine-level value.
             if install.force_registry.is_none() {
                 install.force_registry = Some(self.parse_registry(&registry)?);
             }

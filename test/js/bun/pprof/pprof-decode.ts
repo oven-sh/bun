@@ -10,6 +10,7 @@ function readVarint(buf: Uint8Array, at: { pos: number }): bigint {
   for (let shift = 0n; ; shift += 7n) {
     if (at.pos >= buf.length) throw new Error("truncated varint");
     const byte = buf[at.pos++];
+    if (shift === 63n && byte > 1) throw new Error("varint overflow");
     result |= BigInt(byte & 0x7f) << shift;
     if (!(byte & 0x80)) return result;
   }

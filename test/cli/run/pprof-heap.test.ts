@@ -13,6 +13,8 @@ const script = `
   console.log(Bun.pprof.heap.isRunning);
 `;
 
+const workerScript = `import { Worker } from "node:worker_threads";\n` + script;
+
 async function run(dir: string, args: string[], env: Record<string, string | undefined> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
@@ -134,9 +136,9 @@ describe.concurrent("--pprof-heap", () => {
   // The profile is the process's, so it is written by whichever thread ends the process.
   test.each([
     ["the main thread", `process.kill(process.pid, "SIGTERM");`],
-    ["a Worker", `new (require("worker_threads").Worker)('process.kill(process.pid, "SIGTERM")', { eval: true });`],
+    ["a Worker", `new Worker('process.kill(process.pid, "SIGTERM")', { eval: true });`],
   ])("is written before %s ends the process with a signal", async (thread, kill) => {
-    using dir = tempDir("pprof-heap-kill", { "script.js": script + kill + "\nsetInterval(() => {}, 1000);" });
+    using dir = tempDir("pprof-heap-kill", { "script.js": workerScript + kill + "\nsetInterval(() => {}, 1000);" });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--pprof-heap=heap.pb.gz", "script.js"],
       cwd: String(dir),
@@ -159,9 +161,9 @@ describe.concurrent("--pprof-heap", () => {
   test.skipIf(isWindows)("a Worker's signal that the main thread listens for leaves the profile running", async () => {
     using dir = tempDir("pprof-heap-listener", {
       "script.js":
-        script +
+        workerScript +
         `process.on("SIGUSR2", () => { console.log(Bun.pprof.heap.isRunning); process.exit(0); });
-         new (require("worker_threads").Worker)('process.kill(process.pid, "SIGUSR2")', { eval: true });
+         new Worker('process.kill(process.pid, "SIGUSR2")', { eval: true });
          setInterval(() => {}, 1000);`,
     });
     const result = await run(String(dir), ["--pprof-heap=heap.pb.gz", "script.js"]);
@@ -173,8 +175,8 @@ describe.concurrent("--pprof-heap", () => {
   test.skipIf(isWindows)("is written before a Worker's SIGINT ends a --watch run", async () => {
     using dir = tempDir("pprof-heap-watch", {
       "script.js":
-        script +
-        `new (require("worker_threads").Worker)('process.kill(process.pid, "SIGINT")', { eval: true });
+        workerScript +
+        `new Worker('process.kill(process.pid, "SIGINT")', { eval: true });
          setInterval(() => {}, 1000);`,
     });
     const result = await run(String(dir), ["--watch", "--pprof-heap=heap.pb.gz", "script.js"]);
@@ -185,8 +187,8 @@ describe.concurrent("--pprof-heap", () => {
   test("process.exit() in a Worker leaves the profile running", async () => {
     using dir = tempDir("pprof-heap-worker-exit", {
       "script.js":
-        script +
-        `new (require("worker_threads").Worker)("process.exit(0)", { eval: true })
+        workerScript +
+        `new Worker("process.exit(0)", { eval: true })
            .on("exit", () => console.log(Bun.pprof.heap.isRunning));`,
     });
     const result = await run(String(dir), ["--pprof-heap=heap.pb.gz", "script.js"]);

@@ -306,12 +306,18 @@ describe.concurrent("Bun.pprof.heap", () => {
     expect(last.inuseSpace).toBeLessThan(last.allocSpace * 0.1);
   });
 
-  test("the decoder these tests read profiles with rejects a truncated packed varint", () => {
-    // Sample { location_id: [packed] } whose one varint ends on a continuation byte.
-    const truncated = gzipSync(new Uint8Array([0x12, 0x03, 0x0a, 0x01, 0x80]));
-    expect(() => decode(truncated)).toThrow("truncated varint");
-    const whole = gzipSync(new Uint8Array([0x12, 0x04, 0x0a, 0x02, 0x80, 0x01]));
-    expect(() => decode(whole)).toThrow("a sample refers to a missing location 128");
+  test("the decoder these tests read profiles with rejects a truncated or oversized packed varint", () => {
+    // Sample { location_id: [packed] } with one varint.
+    const sampleWithLocation = (...varint: number[]) =>
+      gzipSync(new Uint8Array([0x12, varint.length + 2, 0x0a, varint.length, ...varint]));
+    expect(() => decode(sampleWithLocation(0x80))).toThrow("truncated varint");
+    expect(() => decode(sampleWithLocation(0x80, 0x01))).toThrow("a sample refers to a missing location 128");
+    const nine = Array(9).fill(0xff);
+    expect(() => decode(sampleWithLocation(...nine, 0x01))).toThrow(
+      "a sample refers to a missing location 18446744073709551615",
+    );
+    expect(() => decode(sampleWithLocation(...nine, 0x02))).toThrow("varint overflow");
+    expect(() => decode(sampleWithLocation(...nine, 0x81, 0x00))).toThrow("varint overflow");
   });
 
   test("stop() releases what the session held", async () => {

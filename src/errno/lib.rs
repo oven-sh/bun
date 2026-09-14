@@ -567,4 +567,29 @@ mod errno_name_tests {
         );
         assert_eq!(coreutils_error_map::get(0), None);
     }
+
+    #[test]
+    fn coreutils_map_uses_platform_strerror_text() {
+        assert_eq!(
+            coreutils_error_map::get(SystemErrno::EEXIST as i32),
+            Some("File exists")
+        );
+        let busy = coreutils_error_map::get(SystemErrno::EBUSY as i32);
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(busy, Some("Resource busy"));
+            assert_eq!(
+                coreutils_error_map::get(SystemErrno::EOPNOTSUPP as i32),
+                Some("Operation not supported on socket")
+            );
+            assert_eq!(
+                coreutils_error_map::get(SystemErrno::EBADEXEC as i32),
+                Some("Bad executable (or shared library)")
+            );
+        }
+        #[cfg(target_os = "freebsd")]
+        assert_eq!(busy, Some("Device busy"));
+        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+        assert_eq!(busy, Some("Device or resource busy"));
+    }
 }

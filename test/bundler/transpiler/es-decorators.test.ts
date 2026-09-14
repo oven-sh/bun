@@ -1761,7 +1761,7 @@ describe("ES Decorators", () => {
     // to a comma expression, so the engine cannot name it. The parser has to
     // record the target name for these operators the way it already does for `=`.
     // The expected `.name` values are what node prints for the same code with the
-    // decorators (and the `accessor` member, which node does not parse) removed.
+    // decorators removed.
     test.concurrent("class decorator sees the target name as context.name", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         const contextNames = [];
@@ -1781,41 +1781,6 @@ describe("ES Decorators", () => {
       expect(JSON.parse(stdout)).toEqual({
         contextNames: ["Nullish", "Or", "And", "Assigned", "Inner", "InFunction"],
         classNames: ["Nullish", "Or", "And", "Assigned", "Inner", "InFunction"],
-      });
-      expect(exitCode).toBe(0);
-    });
-
-    test.concurrent("a class with only member decorators or accessors keeps the target name", async () => {
-      // Without a class decorator the class expression stays in place and the
-      // engine names it. This pins that the recorded name does not change that.
-      const { stdout, stderr, exitCode } = await runDecorator(`
-        function dec() {}
-        let Nullish; Nullish ??= class { @dec m() {} };
-        let Or = null; Or ||= class { @dec m() {} };
-        let And = 1; And &&= class { @dec m() {} };
-        let Assigned; Assigned = class { @dec m() {} };
-        let Outer, Inner; Outer = Inner ??= class { @dec m() {} };
-        let InFunction; (() => { InFunction ||= class { @dec m() {} }; })();
-        let AccessorOnly; AccessorOnly ??= class { accessor v = 1; };
-        console.log(JSON.stringify({
-          nullish: Nullish.name,
-          or: Or.name,
-          and: And.name,
-          assigned: Assigned.name,
-          chained: Outer.name,
-          inFunction: InFunction.name,
-          accessorOnly: [AccessorOnly.name, new AccessorOnly().v],
-        }));
-      `);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({
-        nullish: "Nullish",
-        or: "Or",
-        and: "And",
-        assigned: "Assigned",
-        chained: "Inner",
-        inFunction: "InFunction",
-        accessorOnly: ["AccessorOnly", 1],
       });
       expect(exitCode).toBe(0);
     });

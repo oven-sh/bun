@@ -319,6 +319,10 @@ async function expectPollingReloads(mode: "--watch" | "--hot", blindInotify: boo
   await waitFor("tick 3\n");
   release();
   expect(output()).toContain("tick 3\n");
+  // The child's cwd is `dir`, and Windows cannot remove a directory that is
+  // the cwd of a live process.
+  watchee.kill("SIGKILL");
+  await watchee.exited;
 }
 
 for (const mode of ["--watch", "--hot"] as const) {

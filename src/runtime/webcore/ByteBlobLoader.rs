@@ -70,8 +70,6 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     }
 }
 
-bun_core::impl_field_parent! { ByteBlobLoader => Source.context; fn parent; }
-
 impl ByteBlobLoader {
     pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // In-place init — `self` is a pre-allocated slot inside `Source`.
@@ -167,7 +165,6 @@ impl ByteBlobLoader {
             blob.content_type.set(ct);
         }
 
-        self.parent().is_closed.set(true);
         Some(blob::Any::Blob(blob))
     }
 

@@ -235,11 +235,6 @@ function generate(ssl) {
         length: 2,
         privateSymbol: "write",
       },
-      "endBuffered": {
-        fn: "endBuffered",
-        length: 2,
-        privateSymbol: "end",
-      },
       getCertificate: {
         fn: "getCertificate",
         length: 0,

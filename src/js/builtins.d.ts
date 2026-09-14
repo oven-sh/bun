@@ -9,7 +9,6 @@ type TODO = any;
 declare module "bun" {
   interface Socket {
     $write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
-    $end(): void;
   }
 }
 

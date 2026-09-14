@@ -108,9 +108,6 @@ public:
 
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
-    template<typename Visitor>
-    static void visitChildren(JSCell*, Visitor&);
-
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 

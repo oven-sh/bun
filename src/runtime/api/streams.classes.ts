@@ -41,9 +41,6 @@ function source(name) {
         fn: "pullFromJS",
         length: 1,
       },
-      isClosed: {
-        getter: "getIsClosedFromJS",
-      },
       ...(name !== "File"
         ? // Buffered versions
           // not implemented in File, yet.

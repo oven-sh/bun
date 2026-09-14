@@ -18,7 +18,7 @@
 #include <openssl/provider.h>
 #endif
 #ifdef OPENSSL_IS_BORINGSSL
-#include "dh-primes.h"
+#include <openssl/mem.h>
 #endif // OPENSSL_IS_BORINGSSL
 
 // EVP_PKEY_CTX_set_dsa_paramgen_q_bits was added in OpenSSL 1.1.1e.

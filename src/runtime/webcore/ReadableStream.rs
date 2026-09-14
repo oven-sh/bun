@@ -888,10 +888,6 @@ pub struct NewSource<C: SourceContext> {
     /// its ref keeps this allocation, not the wrapper, so an unread stream can
     /// be collected. Cleared by [`Self::root_wrapper`].
     pub wrapper_unrooted: Cell<bool>,
-    /// R-2: written by context methods (`ByteStream::to_any_blob`,
-    /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
-    /// interior-mutable.
-    pub is_closed: Cell<bool>,
 }
 
 impl<C: SourceContext + Default> Default for NewSource<C> {
@@ -905,7 +901,6 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
             wrapper_unrooted: Cell::new(false),
-            is_closed: Cell::new(false),
         }
     }
 }
@@ -1342,10 +1337,6 @@ impl<C: SourceContext> NewSource<C> {
             streams::Start::Err(err) => Err(global_this.throw_value(err.to_js(global_this))),
             rc => rc.to_js(global_this),
         }
-    }
-
-    pub fn get_is_closed_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.is_closed.get())
     }
 
     fn process_result(

@@ -20,16 +20,6 @@ AsyncContextFrame* AsyncContextFrame::create(VM& vm, JSC::Structure* structure, 
     return asyncContextData;
 }
 
-AsyncContextFrame* AsyncContextFrame::create(JSGlobalObject* global, JSValue callback, JSValue context)
-{
-    auto& vm = global->vm();
-    ASSERT(callback.isCallable());
-    auto* structure = uncheckedDowncast<Zig::GlobalObject>(global)->AsyncContextFrameStructure();
-    AsyncContextFrame* asyncContextData = new (NotNull, allocateCell<AsyncContextFrame>(vm)) AsyncContextFrame(vm, structure, callback, context);
-    asyncContextData->finishCreation(vm);
-    return asyncContextData;
-}
-
 JSC::Structure* AsyncContextFrame::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info());

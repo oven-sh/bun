@@ -57,11 +57,7 @@ pub(crate) fn generate(
     }
 
     // Get any shadcn components used in the project
-    let shadcn = if ENABLE_SHADCN_UI {
-        get_shadcn_components(result.bundle_v2, result.reachable_files)?
-    } else {
-        StringSet::new()
-    };
+    let shadcn = get_shadcn_components(result.bundle_v2, result.reachable_files)?;
     let needs_to_inject_shadcn_ui = !shadcn.keys().is_empty();
 
     // Add Tailwind dependencies if needed
@@ -759,9 +755,6 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
 
     None
 }
-
-// Disabled until Tailwind v4 is supported.
-const ENABLE_SHADCN_UI: bool = true;
 
 pub struct TemplateFile {
     pub name: &'static [u8],

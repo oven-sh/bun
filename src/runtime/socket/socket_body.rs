@@ -2587,7 +2587,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let args = callframe.arguments_undef::<2>();
 
         Ok(
-            match this.write_or_end_buffered::<false>(global, args.ptr[0], args.ptr[1]) {
+            match this.write_buffered_impl(global, args.ptr[0], args.ptr[1]) {
                 WriteResult::Fail => JSValue::ZERO,
                 WriteResult::Success { wrote, total } => {
                     if wrote < -1 {
@@ -2605,35 +2605,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         )
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn end_buffered(
-        this: &Self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        if this.socket.get().is_detached() {
-            this.buffered_data_for_node_net
-                .with_mut(|b| b.clear_and_free());
-            return Ok(JSValue::FALSE);
-        }
-
-        let args = callframe.arguments_undef::<2>();
-        // `write_or_end_buffered` reaches `internal_flush`, which re-enters JS.
-        let _guard = this.ref_guard();
-        let result = match this.write_or_end_buffered::<true>(global, args.ptr[0], args.ptr[1]) {
-            WriteResult::Fail => JSValue::ZERO,
-            WriteResult::Success { wrote, total } => {
-                if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
-                    let _ = this.internal_flush();
-                }
-
-                JSValue::from(usize::try_from(wrote.max(0)).expect("int cast") == total)
-            }
-        };
-        Ok(result)
-    }
-
-    fn write_or_end_buffered<const IS_END: bool>(
+    fn write_buffered_impl(
         &self,
         global: &JSGlobalObject,
         data_value: JSValue,
@@ -2646,7 +2618,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 JSValue::UNDEFINED,
                 encoding_value,
             ];
-            return self.write_or_end::<IS_END>(global, &mut values, true);
+            return self.write_or_end::<false>(global, &mut values, true);
         }
 
         let buffer: StringOrBuffer = if data_value.is_undefined() {
@@ -2674,10 +2646,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         };
         // `buffer` Drop frees.
-        if !self.flags.get().contains(Flags::END_AFTER_FLUSH) && IS_END {
-            self.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
-        }
-
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
             return WriteResult::Success {

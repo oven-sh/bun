@@ -5459,6 +5459,73 @@ declare module "bun" {
      */
     function setJITPolicy(scale: number): void;
 
+    interface ModuleGraphOptions {
+      /**
+       * Variables that only this graph's modules see. Each own enumerable string
+       * key becomes a free identifier in the graph's module code, in front of
+       * `globalThis`. Graphs constructed with the same set of names share
+       * compiled code.
+       *
+       * `undefined`, `NaN` and `Infinity` cannot be names (`ERR_INVALID_ARG_VALUE`).
+       */
+      globals?: Record<string, unknown>;
+      /**
+       * Receives uncaught exceptions and unhandled rejections raised by this
+       * graph's module code. Without it, and for anything it throws itself,
+       * errors take the normal process-wide path (`uncaughtException` /
+       * `unhandledRejection`).
+       *
+       * An error is attributed to the graph through its stack, so one thrown
+       * by code with no graph frame on the stack (e.g. a non-`Error` value
+       * rejected from a tail call) is reported process-wide.
+       */
+      onError?: (error: unknown) => void;
+    }
+
+    /**
+     * Another instance of the ES module graph inside the current global object.
+     *
+     * Modules imported through a `ModuleGraph` get their own module records,
+     * environments, namespaces, `import.meta` and top-level-await state, while
+     * compiled code is shared with every other instance of the same module.
+     * Everything else is shared with the rest of the process: `globalThis`,
+     * intrinsics, builtin modules, CommonJS modules and `require.cache`, timers
+     * and the event loop. ES modules only.
+     *
+     * @example
+     * ```ts
+     * using graph = new Bun.unsafe.ModuleGraph({ globals: { tenant: "a" } });
+     * const app = await graph.import("./app.ts");
+     * ```
+     */
+    class ModuleGraph implements Disposable {
+      constructor(options?: ModuleGraphOptions);
+
+      /**
+       * `import()` into this graph. `specifier` resolves relative to the caller.
+       * A static or dynamic import made by one of the graph's modules stays in
+       * the graph.
+       *
+       * Rejects with `ERR_INVALID_STATE` once the graph is disposed.
+       */
+      import<T = any>(specifier: string): Promise<T>;
+
+      /**
+       * Drop this graph's module registry, and nothing else: code from the graph
+       * that is still referenced keeps working, but a new `import()` from it (or
+       * through it) rejects with `ERR_INVALID_STATE`.
+       */
+      dispose(): void;
+      [Symbol.dispose](): void;
+
+      /**
+       * The resolved path of the first module imported through this graph, or
+       * `undefined` before that. `import.meta.main` is `true` in that module and
+       * `false` in the graph's other modules.
+       */
+      readonly mainModule: string | undefined;
+    }
+
     /**
      * Per-process memory footprint in bytes: the memory that only this
      * process keeps the machine from reusing.

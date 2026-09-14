@@ -2,6 +2,7 @@
 #include "ZigGlobalObject.h"
 #include "BunProcess.h"
 #include "ModuleLoader.h"
+#include "ModuleGraph.h"
 #include "JSCommonJSModule.h"
 
 namespace Bun {
@@ -232,10 +233,12 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res;
 
+    auto* requiringGraph = global->m_requiringModuleGraph;
     JSValue result = fetchCommonJSModuleNonBuiltin<true>(
         global->bunVM(),
         vm,
         global,
+        requiringGraph ? requiringGraph->loader() : global->moduleLoader(),
         &specifierBunString,
         specifier,
         &empty,

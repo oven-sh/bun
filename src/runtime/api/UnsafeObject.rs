@@ -6,7 +6,7 @@ use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult}
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     // NB: helper sizes inline capacity from `fns.len()`, fixing the prior
     // `len = 3` vs 4-entry drift.
-    jsc::create_host_function_object(
+    let object = jsc::create_host_function_object(
         global,
         &[
             ("gcAggressionLevel", __jsc_host_gc_aggression_level, 1),
@@ -15,7 +15,13 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("memoryFootprint", __jsc_host_memory_footprint, 1),
             ("setJITPolicy", __jsc_host_set_jit_policy, 1),
         ],
-    )
+    );
+    object.put(
+        global,
+        b"ModuleGraph",
+        Bun__ModuleGraph__getConstructor(global),
+    );
+    object
 }
 
 #[bun_jsc::host_fn]
@@ -57,6 +63,7 @@ fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 }
 
 unsafe extern "C" {
+    safe fn Bun__ModuleGraph__getConstructor(global: &JSGlobalObject) -> JSValue;
     safe fn dump_zone_malloc_stats();
     safe fn Bun__memoryFootprint() -> usize;
 }

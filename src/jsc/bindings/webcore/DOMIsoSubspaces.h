@@ -44,6 +44,7 @@ public:
     IsoSubspace* m_subspaceForNodeVMSourceTextModule { nullptr };
     IsoSubspace* m_subspaceForNodeVMSyntheticModule { nullptr };
     IsoSubspace* m_subspaceForJSCommonJSModule { nullptr };
+    IsoSubspace* m_subspaceForJSModuleGraph { nullptr };
     IsoSubspace* m_subspaceForJSCommonJSExtensions { nullptr };
     IsoSubspace* m_subspaceForJSMockImplementation { nullptr };
     IsoSubspace* m_subspaceForJSModuleMock { nullptr };

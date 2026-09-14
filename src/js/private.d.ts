@@ -69,6 +69,10 @@ declare interface Error {
 interface JSCommonJSModule {
   $require(id: string, mod: any, args_count: number, args: Array): any;
   $requireNativeModule(id: string): any;
+  /** Set on a `$requireMap` entry whose exports are an ES module's. */
+  $esModule?: true;
+  /** Set on the module behind `import.meta.require` of a Bun.unsafe.ModuleGraph's module. */
+  $moduleGraph?: object;
   children: JSCommonJSModule[];
   exports: any;
   id: string;

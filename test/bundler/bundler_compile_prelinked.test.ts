@@ -550,4 +550,38 @@ describe.concurrent("bundler", () => {
     // Without splitting everything is the entry module itself, which require.cache does not list.
     stdout: splitting => (splitting ? "0\ntrue 1\nfresh 1" : "0\nfalse 1\nsingle 1"),
   });
+  // A Bun.unsafe.ModuleGraph's loader gets its own records of the embedded modules, built and wired from the same
+  // pre-resolved graph: the entry imports itself through two graphs, and each instance has its own state, builtin
+  // dependency record and import() affinity.
+  graphCase("ModuleGraph", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { basename } from "node:path";
+        import { bump, counter } from "./state";
+        declare const tenant: string | undefined;
+        declare const report: (line: string) => void;
+        if (typeof tenant === "undefined") {
+          bump();
+          const lines: string[] = [];
+          for (const name of ["a", "b"]) {
+            using graph = new (Bun.unsafe as any).ModuleGraph({ globals: { tenant: name, report: (line: string) => lines.push(line) } });
+            await graph.import(import.meta.url);
+            lines.push(name + " main " + (graph.mainModule === import.meta.path));
+          }
+          console.log(["host " + counter(), ...lines].join("\\n"));
+        } else {
+          for (let i = 0; i < tenant.length + (tenant === "b" ? 2 : 0); i++) bump();
+          const again = await import("./state");
+          report(tenant + " " + counter() + " " + again.counter() + " " + typeof basename + " " + import.meta.main);
+        }
+      `,
+      "/state.ts": /* js */ `
+        let n = 0;
+        export function bump() { n++; }
+        export function counter() { return n; }
+      `,
+    },
+    entries: ["/entry.ts", "/state.ts"],
+    stdout: "host 1\na 1 1 function true\na main true\nb 3 3 function true\nb main true",
+  });
 });

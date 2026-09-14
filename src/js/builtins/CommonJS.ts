@@ -34,6 +34,11 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     return this.$requireNativeModule(id);
   } else {
     const existing = $requireMap.$get(id);
+    if (existing && existing.$esModule && this.$moduleGraph !== undefined) {
+      // The entry is the host's instance of an ES module. A Bun.unsafe.ModuleGraph's
+      // modules get their graph's own, which never enters the require cache.
+      return $requireESMExports($requireESM(id, this.$moduleGraph));
+    }
     if (existing) {
       // Scenario where this is necessary:
       //
@@ -71,10 +76,13 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     return Bun.jest(this.filename);
   }
 
-  // To handle import/export cycles, we need to create a module object and put
-  // it into the map before we import it.
+  // To handle import/export cycles, the module object has to be in the map before
+  // the module evaluates. Whether `id` is an ES module is not known yet, and an ES
+  // module is not found in the map while it evaluates (a require cycle gets its live
+  // namespace from the module loader instead), so $require puts `mod` into the map
+  // itself, once `id` turns out to be anything else.
   const mod = $createCommonJSModule(id, {}, false, this);
-  $requireMap.$set(id, mod);
+  const graph = this.$moduleGraph;
 
   var out: LoaderModule | -1;
 
@@ -97,7 +105,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
         $argument(1),
       );
     } catch (E) {
-      $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should no longer be in the map");
+      $assert($requireMap.$get(id) !== mod, "Module " + JSON.stringify(id) + " should no longer be in the map");
       throw E;
     }
   } else {
@@ -106,39 +114,16 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
-    try {
-      out = $requireESM(id);
-    } catch (exception) {
-      // Since the ESM code is mostly JS, we need to handle exceptions here.
-      $requireMap.$delete(id);
-      throw exception;
-    }
-
-    const namespace = out;
-    // In a require cycle the namespace is live while the module body is still
-    // running, so an export named `__esModule` / `module.exports` may be in TDZ.
-    let esModule, moduleExports;
-    try {
-      esModule = namespace.__esModule;
-      moduleExports = namespace["module.exports"];
-    } catch {}
-    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-    // Various libraries expect __esModule to be set when using ESM from require().
-    // We don't want to always inject the __esModule export into every module,
-    // And creating an Object wrapper causes the actual exports to not be own properties.
-    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-    // https://github.com/oven-sh/bun/issues/14411
-    if (esModule === undefined) {
-      try {
-        namespace.__esModule = true;
-      } catch {
-        // https://github.com/oven-sh/bun/issues/17816
-      }
-    }
-
-    return (mod.exports = moduleExports ?? namespace);
+    const exports = $requireESMExports($requireESM(id, graph));
+    // A Bun.unsafe.ModuleGraph's ES module instances never enter the (shared) require cache.
+    if (graph !== undefined) return exports;
+    mod.$esModule = true;
+    $requireMap.$set(id, mod);
+    return (mod.exports = exports);
   }
+
+  // A wrapped Module._extensions handler loaded the graph's instance of an ES module into `mod`.
+  if (graph !== undefined && mod.$esModule) return mod.exports;
 
   const c = $evaluateCommonJSModule(mod, this);
   if (c && c.indexOf(mod) === -1) {
@@ -171,40 +156,35 @@ export function internalRequire(id: string, parent: JSCommonJSModule) {
 }
 
 $visibility = "Private";
-export function loadEsmIntoCjs(resolvedSpecifier: string) {
+export function loadEsmIntoCjs(resolvedSpecifier: string, graph?: object) {
   // The JSC module loader pipeline is now pure C++. $esmLoadSync sets a VM
   // flag that makes the loader's internal promise reactions run immediately
   // (instead of queueing microtasks) whenever the upstream promise is already
   // settled. Because Bun resolves and reads source code synchronously, the
   // entire fetch → parse → link → evaluate chain completes within this call
   // for any module graph that does not use top-level await.
-  return $esmLoadSync(resolvedSpecifier);
+  return $esmLoadSync(resolvedSpecifier, graph);
 }
 
+// `graph` is the Bun.unsafe.ModuleGraph whose instance of the module to load, or
+// undefined for the global object's own.
 $visibility = "Private";
-export function requireESM(this, resolved: string) {
+export function requireESM(this, resolved: string, graph?: object) {
   // `$esmLoadSync` answers from the registry for a record that is already
   // Evaluated, or still Evaluating because this require() sits inside its own
   // evaluation (a require cycle), before it loads anything.
-  const exports = $loadEsmIntoCjs(resolved);
+  const exports = $loadEsmIntoCjs(resolved, graph);
   if (exports === undefined) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
   return exports;
 }
 
-export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
-  $assert(this);
-  let namespace;
-  try {
-    namespace = $requireESM(id);
-  } catch (exception) {
-    // Since the ESM code is mostly JS, we need to handle exceptions here.
-    $requireMap.$delete(id);
-    throw exception;
-  }
-
-  // See `overridableRequire`: TDZ-safe reads for the require-cycle case.
+// What require() returns for an ES module's namespace.
+$visibility = "Private";
+export function requireESMExports(namespace) {
+  // In a require cycle the namespace is live while the module body is still
+  // running, so an export named `__esModule` / `module.exports` may be in TDZ.
   let esModule, moduleExports;
   try {
     esModule = namespace.__esModule;
@@ -225,7 +205,21 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
     }
   }
 
-  this.exports = moduleExports ?? namespace;
+  return moduleExports ?? namespace;
+}
+
+export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
+  $assert(this);
+  // The handler ran with `this` in the require cache, as handlers expect. See
+  // `overridableRequire`: an ES module is not found there while it evaluates.
+  if ($requireMap.$get(id) === this) $requireMap.$delete(id);
+  const graph = $requiringModuleGraph();
+  const namespace = $requireESM(id, graph);
+
+  this.$esModule = true;
+  this.exports = $requireESMExports(namespace);
+  // A Bun.unsafe.ModuleGraph's ES module instances never enter the (shared) require cache.
+  if (graph === undefined) $requireMap.$set(id, this);
 }
 
 $visibility = "Private";
@@ -254,6 +248,7 @@ export function createRequireCache() {
         const namespace = $esmNamespaceForCjs(key);
         if (namespace !== undefined) {
           const mod = $createCommonJSModule(key, namespace, true, undefined);
+          mod.$esModule = true;
           $requireMap.$set(key, mod);
           return mod;
         }

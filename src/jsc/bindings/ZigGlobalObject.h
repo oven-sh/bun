@@ -39,6 +39,8 @@ class JSNextTickQueue;
 class Process;
 class SecureContextCache;
 class GCProfilerObserver;
+class ModuleGraphSymbolTables;
+class JSModuleGraph;
 } // namespace Bun
 
 namespace v8 {
@@ -190,6 +192,8 @@ public:
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&, bool deferred);
+    // The registry key `moduleName` imported from `sourceOrigin` resolves to; throws on failure.
+    static JSC::Identifier resolveImportSpecifier(Zig::GlobalObject*, JSC::JSModuleLoader*, WTF::String moduleName, const JSC::SourceOrigin&, int64_t& referrerAsyncOrder);
     static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap);
     static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, RefPtr<JSC::ScriptFetcher>);
@@ -580,6 +584,11 @@ public:
     V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \
     V(public, LazyClassStructure, m_NodeVMScriptClassStructure)                                              \
     V(public, LazyClassStructure, m_NodeVMSourceTextModuleClassStructure)                                    \
+    V(public, LazyClassStructure, m_JSModuleGraphClassStructure)                                             \
+    /* JSModuleLoader -> JSModuleGraph, for every loader a Bun.unsafe.ModuleGraph created. */                \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSWeakMap>, m_moduleGraphsByLoader)                            \
+    /* JSPromise -> the JSModuleGraph (one with an onError) whose code rejected it. */                       \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSWeakMap>, m_moduleGraphsByRejectedPromise)                   \
     V(public, LazyClassStructure, m_NodeVMSyntheticModuleClassStructure)                                     \
     V(public, LazyClassStructure, m_JSX509CertificateClassStructure)                                         \
     V(public, LazyClassStructure, m_JSWebViewClassStructure)                                                 \
@@ -803,6 +812,15 @@ public:
     // destructor detaches from the heap so a worker that exits mid-profile
     // does not leave the observer registered.
     std::unique_ptr<Bun::GCProfilerObserver> m_gcProfilerObserver;
+
+    // Created by the first Bun.unsafe.ModuleGraph with `globals`. Holds its SymbolTables weakly,
+    // so no visitChildren wiring.
+    std::unique_ptr<Bun::ModuleGraphSymbolTables> m_moduleGraphSymbolTables;
+    // The graph of the `require()` call in progress, when its caller is one of a graph's
+    // modules. Kept alive by that caller's bound require, which is on the stack.
+    Bun::JSModuleGraph* m_requiringModuleGraph { nullptr };
+    // While a graph's onError runs. What it throws is reported process-wide.
+    bool m_isReportingModuleGraphError { false };
 
     WTF::Vector<WTF::Ref<NapiEnv>> m_napiEnvs;
     Ref<NapiEnv> makeNapiEnv(const napi_module&);

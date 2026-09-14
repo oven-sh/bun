@@ -15,6 +15,10 @@ extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* gl
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithStrings(JSC::JSGlobalObject* global, BunString* specifier, BunString* from, bool is_esm);
 
+namespace Bun {
+class JSModuleGraph;
+}
+
 namespace Zig {
 
 using namespace JSC;
@@ -32,13 +36,14 @@ public:
     }
 
     /// Must be called with a valid url string (for `import.meta.url`)
-    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url);
+    /// `graph` is the Bun.unsafe.ModuleGraph the module belongs to, or nullptr for the global object's own loader.
+    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url, Bun::JSModuleGraph* graph = nullptr);
 
     /// Creates an ImportMetaObject from a specifier or URL JSValue
     /// - URL object -> use that url
     /// - string -> see the below method for how the string is processed
     /// - other -> assertion failure
-    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL);
+    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, Bun::JSModuleGraph* graph = nullptr);
 
     /// TODO:
     /// The rules for this function's input is a bit weird. `specifier` is an import path specifier aka a file path.
@@ -54,7 +59,7 @@ public:
     ///
     /// The above rules get a best estimate bandage to solve the problems
     /// stated in https://github.com/oven-sh/bun/pull/9399
-    static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
+    static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier, Bun::JSModuleGraph* graph = nullptr);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -71,6 +76,8 @@ public:
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static JSValue getPrototype(JSObject*, JSC::JSGlobalObject* globalObject);
 
+    Bun::JSModuleGraph* graph() const { return m_graph.get(); }
+
     WTF::String url;
     LazyProperty<JSObject, JSCell> requireProperty;
     LazyProperty<JSObject, JSString> dirProperty;
@@ -79,13 +86,16 @@ public:
     LazyProperty<JSObject, JSString> pathProperty;
 
 private:
-    static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);
+    static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url, Bun::JSModuleGraph* graph);
 
-    ImportMetaObject(JSC::VM& vm, JSC::Structure* structure, const WTF::String& url)
+    ImportMetaObject(JSC::VM& vm, JSC::Structure* structure, const WTF::String& url, Bun::JSModuleGraph* graph)
         : Base(vm, structure)
         , url(url)
+        , m_graph(graph, JSC::WriteBarrierEarlyInit)
     {
     }
+
+    JSC::WriteBarrier<Bun::JSModuleGraph> m_graph;
 
     void finishCreation(JSC::VM&);
 };

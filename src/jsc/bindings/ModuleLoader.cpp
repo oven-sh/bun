@@ -637,8 +637,17 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
+// require() cannot know up front whether its target is an ES module, which is not found in the require cache while it
+// evaluates (see overridableRequire in CommonJS.ts). So the new module enters the cache here, once the target is known
+// to be anything else, and before it evaluates so that a cycle finds it.
+static void cacheRequireTarget(Zig::GlobalObject* globalObject, JSValue specifierValue, JSCommonJSModule* target)
+{
+    globalObject->requireMap()->set(globalObject, specifierValue, target);
+}
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSC::JSModuleLoader* loader,
     JSCommonJSModule* target,
     JSValue specifierValue,
     String specifierWtfString,
@@ -666,6 +675,8 @@ JSValue fetchCommonJSModule(
 
             // If we assigned module.exports to the virtual module, we're done here.
             if (promiseOrCommonJSModule == target) {
+                cacheRequireTarget(globalObject, specifierValue, target);
+                RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, target);
             }
             JSPromise* promise = uncheckedDowncast<JSPromise>(promiseOrCommonJSModule);
@@ -689,7 +700,7 @@ JSValue fetchCommonJSModule(
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
-                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                     vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
@@ -710,6 +721,8 @@ JSValue fetchCommonJSModule(
         // never give it its source); only ES modules go through the loader, which
         // fetches its own copy — this one is released with `res`.
         if (res->result.value.isCommonJSModule) {
+            cacheRequireTarget(globalObject, specifierValue, target);
+            RETURN_IF_EXCEPTION(scope, {});
             target->evaluate(globalObject, specifierWtfString, res->result.value);
             RETURN_IF_EXCEPTION(scope, {});
             RELEASE_AND_RETURN(scope, target);
@@ -717,6 +730,8 @@ JSValue fetchCommonJSModule(
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
     case BuiltinModule::Kind::Exports: {
+        cacheRequireTarget(globalObject, specifierValue, target);
+        RETURN_IF_EXCEPTION(scope, {});
         target->setExportsObject(builtin.exports);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
@@ -735,6 +750,8 @@ JSValue fetchCommonJSModule(
 
             // If we assigned module.exports to the virtual module, we're done here.
             if (promiseOrCommonJSModule == target) {
+                cacheRequireTarget(globalObject, specifierValue, target);
+                RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, target);
             }
             JSPromise* promise = uncheckedDowncast<JSPromise>(promiseOrCommonJSModule);
@@ -758,7 +775,7 @@ JSValue fetchCommonJSModule(
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
-                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                     vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
@@ -770,7 +787,7 @@ JSValue fetchCommonJSModule(
     }
 
     bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
-        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
+        auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
         return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
     }();
 
@@ -784,6 +801,8 @@ JSValue fetchCommonJSModule(
                 // The wrapper override only affects CJS evaluation; if it's
                 // active, fall through and re-transpile so the override can run.
                 if (!globalObject->hasOverriddenModuleWrapper) {
+                    cacheRequireTarget(globalObject, specifierValue, target);
+                    RETURN_IF_EXCEPTION(scope, {});
                     target->evaluate(globalObject, Ref(*cached), cached->m_tag == ResolvedSourceTagPackageJSONTypeModule);
                     RETURN_IF_EXCEPTION(scope, {});
                     RELEASE_AND_RETURN(scope, target);
@@ -792,7 +811,7 @@ JSValue fetchCommonJSModule(
                 JSC::VM::SynchronousModuleQueue queue;
                 queue.prev = vm.m_synchronousModuleQueue;
                 vm.m_synchronousModuleQueue = &queue;
-                globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
+                loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
                 if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                 vm.m_synchronousModuleQueue = queue.prev;
                 RETURN_IF_EXCEPTION(scope, {});
@@ -801,7 +820,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
+    return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, loader, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
 }
 
 template<bool isExtension>
@@ -809,6 +828,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
+    JSC::JSModuleLoader* loader,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,
@@ -821,6 +841,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
 {
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
+        cacheRequireTarget(globalObject, specifierValue, target);
+        RETURN_IF_EXCEPTION(scope, {});
         if constexpr (isExtension) {
             target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->result.value);
         } else {
@@ -851,6 +873,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
         JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
         RETURN_IF_EXCEPTION(scope, {});
 
+        cacheRequireTarget(globalObject, specifierValue, target);
+        RETURN_IF_EXCEPTION(scope, {});
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
@@ -864,6 +888,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
             RELEASE_AND_RETURN(scope, {});
         }
 
+        cacheRequireTarget(globalObject, specifierValue, target);
+        RETURN_IF_EXCEPTION(scope, {});
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
@@ -873,6 +899,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
             RELEASE_AND_RETURN(scope, {});
         }
+        cacheRequireTarget(globalObject, specifierValue, target);
+        RETURN_IF_EXCEPTION(scope, {});
         evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
@@ -890,7 +918,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
         JSC::VM::SynchronousModuleQueue queue;
         queue.prev = vm.m_synchronousModuleQueue;
         vm.m_synchronousModuleQueue = &queue;
-        globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
+        loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
         if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
         vm.m_synchronousModuleQueue = queue.prev;
     }
@@ -903,6 +931,7 @@ template JSValue fetchCommonJSModuleNonBuiltin<true>(
     void* bunVM,
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
+    JSC::JSModuleLoader* loader,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,
@@ -916,6 +945,7 @@ template JSValue fetchCommonJSModuleNonBuiltin<false>(
     void* bunVM,
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
+    JSC::JSModuleLoader* loader,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,

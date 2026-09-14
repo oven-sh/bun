@@ -391,6 +391,7 @@ pub struct TestIsolationState {
 // `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
 // mutating VM/process state through it is interior mutation invisible to Rust.
 unsafe extern "C" {
+    safe fn Bun__ModuleGraph__handleUncaughtException(global: &JSGlobalObject, err: JSValue) -> bool;
     safe fn Bun__handleUncaughtException(
         global: &JSGlobalObject,
         err: JSValue,
@@ -1723,6 +1724,11 @@ impl VirtualMachine {
         // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
         // to be an error may be its termination.
         if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
+            return true;
+        }
+
+        // A rejection's owner was decided when it was rejected (GlobalObject::handleRejectedPromises).
+        if !is_rejection && Bun__ModuleGraph__handleUncaughtException(global_object, err) {
             return true;
         }
 

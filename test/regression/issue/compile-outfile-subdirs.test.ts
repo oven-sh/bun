@@ -1,146 +1,109 @@
 import { describe, expect, test } from "bun:test";
-import { execSync } from "child_process";
-import { existsSync } from "fs";
+import { readdirSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-describe.if(isWindows)("compile --outfile with subdirectories", () => {
-  test("places executable in subdirectory with forward slash", async () => {
-    using dir = tempDir("compile-subdir-forward", {
-      "app.js": `console.log("Hello from subdirectory!");`,
+// https://github.com/oven-sh/bun/pull/22365: `--outfile` / `compile.outfile`
+// with directory components on Windows, including the PE metadata pass, which
+// used to fail on relative paths. The `.`/`..` case is also what the Windows
+// mkdir_recursive_at_mode in src/sys/lib.rs is written against.
+
+async function spawn(cmd: string[], cwd?: string) {
+  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// Runs `bun build --compile` from `cwd`, which is what a relative --outfile
+// resolves against. The summary on stdout is returned with the per-run
+// timings ("   [12ms]", "[1.05s]") stripped so it can be compared exactly.
+async function compile(cwd: string, entrypoint: string, outfile: string, ...flags: string[]) {
+  const { stdout, stderr, exitCode } = await spawn(
+    [bunExe(), "build", "--compile", entrypoint, "--outfile", outfile, ...flags],
+    cwd,
+  );
+  return { stdout: stdout.replace(/^\s*\[[\d.]+m?s\]\s*/gm, ""), stderr, exitCode };
+}
+
+function run(exe: string) {
+  return spawn([exe]);
+}
+
+// Reads every requested VersionInfo field with a single PowerShell invocation;
+// each PowerShell start costs a good fraction of a second.
+async function readVersionInfo(exe: string, fields: string[]): Promise<Record<string, string | null>> {
+  const { stdout, stderr, exitCode } = await spawn([
+    "powershell",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ` +
+      `(Get-Item -LiteralPath '${exe.replaceAll("'", "''")}').VersionInfo | ` +
+      `Select-Object ${fields.join(",")} | ConvertTo-Json -Compress`,
+  ]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  return JSON.parse(stdout);
+}
+
+// Every successful compile below copies the whole bun executable, so the CLI
+// cases run concurrently, each in its own temp dir.
+describe.skipIf(!isWindows).concurrent("compile --outfile with subdirectories", () => {
+  test.each([
+    { outfile: "subdir/nested/app.exe", expected: ["subdir", "nested", "app.exe"] },
+    { outfile: "subdir\\nested\\app.exe", expected: ["subdir", "nested", "app.exe"] },
+    { outfile: "a/b/c/d/e/app.exe", expected: ["a", "b", "c", "d", "e", "app.exe"] },
+    { outfile: "./output/../output/./app.exe", expected: ["output", "app.exe"] },
+  ])("--outfile $outfile creates the directories and places the executable there", async ({ outfile, expected }) => {
+    using dir = tempDir("compile-outfile-subdir", {
+      // The executable prints the --outfile it was compiled with, so running it
+      // proves the file at the expected path is the one this case built.
+      "src/app.js": `console.log(${JSON.stringify(outfile)});`,
     });
 
-    // Use forward slash in outfile
-    const outfile = "subdir/nested/app.exe";
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
+    expect(await compile(String(dir), join(String(dir), "src", "app.js"), outfile)).toEqual({
+      stdout: `bundle  1 modules\ncompile  ${outfile}\n`,
+      stderr: "",
+      exitCode: 0,
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe("");
-
-    // Check that the file exists in the subdirectory
-    const expectedPath = join(String(dir), "subdir", "nested", "app.exe");
-    expect(existsSync(expectedPath)).toBe(true);
-
-    // Run the executable to verify it works
-    await using exe = Bun.spawn({
-      cmd: [expectedPath],
-      env: bunEnv,
-      stdout: "pipe",
-    });
-
-    const exeOutput = await exe.stdout.text();
-    expect(exeOutput.trim()).toBe("Hello from subdirectory!");
+    // Only the requested top-level directory appeared next to src/: nothing
+    // else (such as the temporary copy of the executable) was left in the cwd.
+    expect(readdirSync(String(dir)).sort()).toEqual([expected[0], "src"].sort());
+    expect(await run(join(String(dir), ...expected))).toEqual({ stdout: `${outfile}\n`, stderr: "", exitCode: 0 });
   });
 
-  test("places executable in subdirectory with backslash", async () => {
-    using dir = tempDir("compile-subdir-backslash", {
-      "app.js": `console.log("Hello with backslash!");`,
-    });
-
-    // Use backslash in outfile
-    const outfile = "subdir\\nested\\app.exe";
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe("");
-
-    // Check that the file exists in the subdirectory
-    const expectedPath = join(String(dir), "subdir", "nested", "app.exe");
-    expect(existsSync(expectedPath)).toBe(true);
-  });
-
-  test("creates parent directories if they don't exist", async () => {
-    using dir = tempDir("compile-create-dirs", {
-      "app.js": `console.log("Created directories!");`,
-    });
-
-    // Use a deep nested path that doesn't exist yet
-    const outfile = "a/b/c/d/e/app.exe";
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const exitCode = await proc.exited;
-    expect(exitCode).toBe(0);
-
-    // Check that the file and all directories were created
-    const expectedPath = join(String(dir), "a", "b", "c", "d", "e", "app.exe");
-    expect(existsSync(expectedPath)).toBe(true);
-  });
-
-  test.if(isWindows)("Windows metadata works with subdirectories", async () => {
+  test("Windows metadata works with subdirectories", async () => {
     using dir = tempDir("compile-metadata-subdir", {
       "app.js": `console.log("App with metadata!");`,
     });
 
-    const outfile = "output/bin/app.exe";
-
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--compile",
+    expect(
+      await compile(
+        String(dir),
         join(String(dir), "app.js"),
-        "--outfile",
-        outfile,
+        "output/bin/app.exe",
         "--windows-title",
         "Subdirectory App",
         "--windows-version",
         "1.2.3.4",
         "--windows-description",
         "App in a subdirectory",
-      ],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
+      ),
+    ).toEqual({
+      stdout: "bundle  1 modules\ncompile  output/bin/app.exe\n",
+      stderr: "",
+      exitCode: 0,
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe("");
-
-    const expectedPath = join(String(dir), "output", "bin", "app.exe");
-    expect(existsSync(expectedPath)).toBe(true);
-
-    // Verify metadata was set correctly
-    const getMetadata = (field: string) => {
-      try {
-        return execSync(`powershell -Command "(Get-ItemProperty '${expectedPath}').VersionInfo.${field}"`, {
-          encoding: "utf8",
-        }).trim();
-      } catch {
-        return "";
-      }
-    };
-
-    expect(getMetadata("ProductName")).toBe("Subdirectory App");
-    expect(getMetadata("FileDescription")).toBe("App in a subdirectory");
-    expect(getMetadata("ProductVersion")).toBe("1.2.3.4");
+    // The metadata is written into the executable after it has been moved to
+    // the relative outfile, so check both that it landed and that it still runs.
+    const exe = join(String(dir), "output", "bin", "app.exe");
+    expect(await run(exe)).toEqual({ stdout: "App with metadata!\n", stderr: "", exitCode: 0 });
+    expect(await readVersionInfo(exe, ["ProductName", "FileDescription", "ProductVersion"])).toEqual({
+      ProductName: "Subdirectory App",
+      FileDescription: "App in a subdirectory",
+      ProductVersion: "1.2.3.4",
+    });
   });
 
   test("fails gracefully when parent is a file", async () => {
@@ -149,82 +112,47 @@ describe.if(isWindows)("compile --outfile with subdirectories", () => {
       "blocked": "This is a file, not a directory",
     });
 
-    // Try to use blocked/app.exe where blocked is a file
-    const outfile = "blocked/app.exe";
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
+    expect(await compile(String(dir), join(String(dir), "app.js"), "blocked/app.exe")).toEqual({
+      stdout: "",
+      stderr: 'ENOTDIR: Not a directory: could not open output directory "blocked" (open)\n',
+      exitCode: 1,
     });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(exitCode).not.toBe(0);
-    // Should get an error about the path
-    expect(stderr.toLowerCase()).toContain("notdir");
-  });
-
-  test("works with . and .. in paths", async () => {
-    using dir = tempDir("compile-relative-paths", {
-      "src/app.js": `console.log("Relative paths work!");`,
-    });
-
-    // Use relative path with . and ..
-    const outfile = "./output/../output/./app.exe";
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(String(dir), "src", "app.js"), "--outfile", outfile],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const exitCode = await proc.exited;
-    expect(exitCode).toBe(0);
-
-    // Should normalize to output/app.exe
-    const expectedPath = join(String(dir), "output", "app.exe");
-    expect(existsSync(expectedPath)).toBe(true);
+    // The build fails before the executable is copied, so nothing was written.
+    expect(readdirSync(String(dir)).sort()).toEqual(["app.js", "blocked"]);
   });
 });
 
-describe("Bun.build() compile with subdirectories", () => {
-  test.if(isWindows)("places executable in subdirectory via API", async () => {
+// Bun.build() does the compile step synchronously on this thread. Run inside
+// the concurrent group above, each of these multi-second blocks would count
+// against every other test's timeout, so these two stay serial.
+describe.skipIf(!isWindows).serial("Bun.build() compile with subdirectories", () => {
+  test("places executable in subdirectory via API", async () => {
     using dir = tempDir("api-compile-subdir", {
       "app.js": `console.log("API subdirectory test!");`,
     });
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
+      outdir: String(dir),
       compile: {
         outfile: "dist/bin/app.exe",
       },
-      outdir: String(dir),
     });
 
+    const exe = join(String(dir), "dist", "bin", "app.exe");
     expect(result.success).toBe(true);
-    expect(result.outputs.length).toBe(1);
-
-    // The output path should include the subdirectories
-    expect(result.outputs[0].path).toContain("dist");
-    expect(result.outputs[0].path).toContain("bin");
-
-    // File should exist at the expected location
-    const expectedPath = join(String(dir), "dist", "bin", "app.exe");
-    expect(existsSync(expectedPath)).toBe(true);
+    expect(result.outputs.map(output => output.path)).toEqual([exe]);
+    expect(await run(exe)).toEqual({ stdout: "API subdirectory test!\n", stderr: "", exitCode: 0 });
   });
 
-  test.if(isWindows)("API with Windows metadata and subdirectories", async () => {
+  test("API with Windows metadata and subdirectories", async () => {
     using dir = tempDir("api-metadata-subdir", {
       "app.js": `console.log("API with metadata!");`,
     });
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
+      outdir: String(dir),
       compile: {
         outfile: "build/release/app.exe",
         windows: {
@@ -233,27 +161,16 @@ describe("Bun.build() compile with subdirectories", () => {
           publisher: "Test Publisher",
         },
       },
-      outdir: String(dir),
     });
 
+    const exe = join(String(dir), "build", "release", "app.exe");
     expect(result.success).toBe(true);
-
-    const expectedPath = join(String(dir), "build", "release", "app.exe");
-    expect(existsSync(expectedPath)).toBe(true);
-
-    // Verify metadata
-    const getMetadata = (field: string) => {
-      try {
-        return execSync(`powershell -Command "(Get-ItemProperty '${expectedPath}').VersionInfo.${field}"`, {
-          encoding: "utf8",
-        }).trim();
-      } catch {
-        return "";
-      }
-    };
-
-    expect(getMetadata("ProductName")).toBe("API Subdirectory App");
-    expect(getMetadata("CompanyName")).toBe("Test Publisher");
-    expect(getMetadata("ProductVersion")).toBe("2.0.0.0");
+    expect(result.outputs.map(output => output.path)).toEqual([exe]);
+    expect(await run(exe)).toEqual({ stdout: "API with metadata!\n", stderr: "", exitCode: 0 });
+    expect(await readVersionInfo(exe, ["ProductName", "CompanyName", "ProductVersion"])).toEqual({
+      ProductName: "API Subdirectory App",
+      CompanyName: "Test Publisher",
+      ProductVersion: "2.0.0.0",
+    });
   });
 });

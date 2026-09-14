@@ -2,7 +2,7 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -185,6 +185,58 @@ for (;;) spawnThreadsForTesting(1000, fd, 2);
   },
   30000,
 );
+
+// Every fd the watcher opens must carry O_CLOEXEC. A --watch reload is an
+// execve of the same binary, and macOS has no close_range() sweep before it,
+// so an fd without the flag survives into the new image and the watcher opens
+// another one: one leaked directory fd per reload (#42700). Linux hides the
+// leak behind its close_range(CLOSE_RANGE_CLOEXEC) sweep, so the check reads
+// the flag itself from /proc instead of counting fds across reloads.
+it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXEC", async () => {
+  using dir = tempDir("watch-cloexec", {
+    "dep.ts": `export const x = 1;`,
+    "main.ts": `import { x } from "./dep";\nconsole.log("started", x);\nsetInterval(() => {}, 1e6);\n`,
+  });
+  const cwd = realpathSync(String(dir));
+  const proc = spawn({
+    cwd,
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  watchee = proc;
+  const out = stdoutWaiter(proc);
+  await out.waitFor("started 1");
+  out.release();
+
+  const O_CLOEXEC = 0o2000000;
+  const watched = new Map<string, number>();
+  // The watcher thread registers the entrypoint, its import, and their
+  // directory after the script starts, so poll until all three are open.
+  while (watched.size < 3) {
+    watched.clear();
+    for (const fd of readdirSync(`/proc/${proc.pid}/fd`)) {
+      let target: string;
+      try {
+        target = readlinkSync(`/proc/${proc.pid}/fd/${fd}`);
+      } catch {
+        continue;
+      }
+      if (target !== cwd && !target.startsWith(cwd + "/")) continue;
+      const fdinfo = readFileSync(`/proc/${proc.pid}/fdinfo/${fd}`, "utf8");
+      const flags = parseInt(/flags:\s*(\d+)/.exec(fdinfo)![1], 8);
+      watched.set(target.slice(cwd.length) || "/", flags & O_CLOEXEC ? O_CLOEXEC : 0);
+    }
+    if (watched.size < 3) await Bun.sleep(10);
+  }
+  expect(Object.fromEntries([...watched].sort())).toEqual({
+    "/": O_CLOEXEC,
+    "/dep.ts": O_CLOEXEC,
+    "/main.ts": O_CLOEXEC,
+  });
+});
 
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An

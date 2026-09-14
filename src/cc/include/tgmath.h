@@ -14,12 +14,14 @@
 #ifdef __BUN_CC_TG_COMPLEX
 /* (Where long double has double's format, long double _Complex is double _Complex: named once.) */
 #if __SIZEOF_LONG_DOUBLE__ > __SIZEOF_DOUBLE__
-#define __bun_cc_tg_ldc(...) long double _Complex : __VA_ARGS__,
+#define __bun_cc_tg_ldc(...) long double _Complex: __VA_ARGS__,
 #else
 #define __bun_cc_tg_ldc(...)
 #endif
-#define __bun_cc_tg_as(x) _Generic((x), float: (float)0, long double: (long double)0, float _Complex: (float _Complex)0, double _Complex: (double _Complex)0, __bun_cc_tg_ldc((long double _Complex)0) default: (double)0)
-#define __bun_cc_tg_real_or_complex(name, selector, ...) _Generic((selector), float: name##f, long double: name##l, float _Complex: c##name##f, double _Complex: c##name, __bun_cc_tg_ldc(c##name##l) default: name)(__VA_ARGS__)
+#define __bun_cc_tg_as(x) _Generic((x), float: (float)0, long double: (long double)0, float _Complex: (float _Complex)0, \
+  double _Complex: (double _Complex)0, __bun_cc_tg_ldc((long double _Complex)0) default: (double)0)
+#define __bun_cc_tg_real_or_complex(name, selector, ...) _Generic((selector), float: name##f, long double: name##l, \
+  float _Complex: c##name##f, double _Complex: c##name, __bun_cc_tg_ldc(c##name##l) default: name)(__VA_ARGS__)
 #else
 #define __bun_cc_tg_as(x) _Generic((x), float: (float)0, long double: (long double)0, default: (double)0)
 #define __bun_cc_tg_real_or_complex(name, selector, ...) _Generic((selector), float: name##f, long double: name##l, default: name)(__VA_ARGS__)
@@ -63,7 +65,8 @@
 #define pow(x, y) __bun_cc_tg_real_or_complex(pow, __bun_cc_tg_2(x, y), x, y)
 #undef fabs
 #ifdef __BUN_CC_TG_COMPLEX
-#define fabs(x) _Generic(__bun_cc_tg_1(x), float: fabsf, long double: fabsl, float _Complex: cabsf, double _Complex: cabs, __bun_cc_tg_ldc(cabsl) default: fabs)(x)
+#define fabs(x) _Generic(__bun_cc_tg_1(x), float: fabsf, long double: fabsl, float _Complex: cabsf, double _Complex: cabs, \
+  __bun_cc_tg_ldc(cabsl) default: fabs)(x)
 #else
 #define fabs(x) __bun_cc_tg_real(fabs, __bun_cc_tg_1(x), x)
 #endif
@@ -147,7 +150,8 @@
 
 #ifdef __BUN_CC_TG_COMPLEX
 /* For complex arguments only; a real one counts as a complex number of its kind. */
-#define __bun_cc_tg_complex(name, x) _Generic(__bun_cc_tg_1(x), float: name##f, long double: name##l, float _Complex: name##f, __bun_cc_tg_ldc(name##l) default: name)(x)
+#define __bun_cc_tg_complex(name, x) _Generic(__bun_cc_tg_1(x), float: name##f, long double: name##l, float _Complex: name##f, \
+  __bun_cc_tg_ldc(name##l) default: name)(x)
 #undef carg
 #define carg(x) __bun_cc_tg_complex(carg, x)
 #undef cimag

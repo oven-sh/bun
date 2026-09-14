@@ -23,11 +23,11 @@ typedef float64_t float64x2_t __attribute__((__vector_size__(16)));
 #define __BUN_CC_INTRIN static __inline __attribute__((__always_inline__, __unused__))
 
 /* int8x16_t */
-__BUN_CC_INTRIN int8x16_t vdupq_n_s8(int8_t __x) { return (int8x16_t) { __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN int8x16_t vmovq_n_s8(int8_t __x) { return (int8x16_t) { __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN int8x16_t vld1q_s8(const int8_t* __p) { return *(const int8x16_t*)__p; }
-__BUN_CC_INTRIN int8x16_t vld1q_dup_s8(const int8_t* __p) { return vdupq_n_s8(*__p); }
-__BUN_CC_INTRIN void vst1q_s8(int8_t* __p, int8x16_t __v) { *(int8x16_t*)__p = __v; }
+__BUN_CC_INTRIN int8x16_t vdupq_n_s8(int8_t __x) { return (int8x16_t){__x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN int8x16_t vmovq_n_s8(int8_t __x) { return (int8x16_t){__x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN int8x16_t vld1q_s8(const int8_t *__p) { return *(const int8x16_t *)__p; }
+__BUN_CC_INTRIN int8x16_t vld1q_dup_s8(const int8_t *__p) { return vdupq_n_s8(*__p); }
+__BUN_CC_INTRIN void vst1q_s8(int8_t *__p, int8x16_t __v) { *(int8x16_t *)__p = __v; }
 #define vgetq_lane_s8(v, lane) ((((int8x16_t)(v)))[lane])
 #define vsetq_lane_s8(x, v, lane) __extension__({ int8x16_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN int8x16_t vaddq_s8(int8x16_t __a, int8x16_t __b) { return __a + __b; }
@@ -57,11 +57,11 @@ __BUN_CC_INTRIN int8_t vmaxvq_s8(int8x16_t __a) { return __builtin_reduce_max(__
 __BUN_CC_INTRIN int8_t vminvq_s8(int8x16_t __a) { return __builtin_reduce_min(__a); }
 
 /* uint8x16_t */
-__BUN_CC_INTRIN uint8x16_t vdupq_n_u8(uint8_t __x) { return (uint8x16_t) { __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN uint8x16_t vmovq_n_u8(uint8_t __x) { return (uint8x16_t) { __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN uint8x16_t vld1q_u8(const uint8_t* __p) { return *(const uint8x16_t*)__p; }
-__BUN_CC_INTRIN uint8x16_t vld1q_dup_u8(const uint8_t* __p) { return vdupq_n_u8(*__p); }
-__BUN_CC_INTRIN void vst1q_u8(uint8_t* __p, uint8x16_t __v) { *(uint8x16_t*)__p = __v; }
+__BUN_CC_INTRIN uint8x16_t vdupq_n_u8(uint8_t __x) { return (uint8x16_t){__x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN uint8x16_t vmovq_n_u8(uint8_t __x) { return (uint8x16_t){__x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN uint8x16_t vld1q_u8(const uint8_t *__p) { return *(const uint8x16_t *)__p; }
+__BUN_CC_INTRIN uint8x16_t vld1q_dup_u8(const uint8_t *__p) { return vdupq_n_u8(*__p); }
+__BUN_CC_INTRIN void vst1q_u8(uint8_t *__p, uint8x16_t __v) { *(uint8x16_t *)__p = __v; }
 #define vgetq_lane_u8(v, lane) ((((uint8x16_t)(v)))[lane])
 #define vsetq_lane_u8(x, v, lane) __extension__({ uint8x16_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN uint8x16_t vaddq_u8(uint8x16_t __a, uint8x16_t __b) { return __a + __b; }
@@ -89,11 +89,11 @@ __BUN_CC_INTRIN uint8_t vmaxvq_u8(uint8x16_t __a) { return __builtin_reduce_max(
 __BUN_CC_INTRIN uint8_t vminvq_u8(uint8x16_t __a) { return __builtin_reduce_min(__a); }
 
 /* int16x8_t */
-__BUN_CC_INTRIN int16x8_t vdupq_n_s16(int16_t __x) { return (int16x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN int16x8_t vmovq_n_s16(int16_t __x) { return (int16x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN int16x8_t vld1q_s16(const int16_t* __p) { return *(const int16x8_t*)__p; }
-__BUN_CC_INTRIN int16x8_t vld1q_dup_s16(const int16_t* __p) { return vdupq_n_s16(*__p); }
-__BUN_CC_INTRIN void vst1q_s16(int16_t* __p, int16x8_t __v) { *(int16x8_t*)__p = __v; }
+__BUN_CC_INTRIN int16x8_t vdupq_n_s16(int16_t __x) { return (int16x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN int16x8_t vmovq_n_s16(int16_t __x) { return (int16x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN int16x8_t vld1q_s16(const int16_t *__p) { return *(const int16x8_t *)__p; }
+__BUN_CC_INTRIN int16x8_t vld1q_dup_s16(const int16_t *__p) { return vdupq_n_s16(*__p); }
+__BUN_CC_INTRIN void vst1q_s16(int16_t *__p, int16x8_t __v) { *(int16x8_t *)__p = __v; }
 #define vgetq_lane_s16(v, lane) ((((int16x8_t)(v)))[lane])
 #define vsetq_lane_s16(x, v, lane) __extension__({ int16x8_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN int16x8_t vaddq_s16(int16x8_t __a, int16x8_t __b) { return __a + __b; }
@@ -123,11 +123,11 @@ __BUN_CC_INTRIN int16_t vmaxvq_s16(int16x8_t __a) { return __builtin_reduce_max(
 __BUN_CC_INTRIN int16_t vminvq_s16(int16x8_t __a) { return __builtin_reduce_min(__a); }
 
 /* uint16x8_t */
-__BUN_CC_INTRIN uint16x8_t vdupq_n_u16(uint16_t __x) { return (uint16x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN uint16x8_t vmovq_n_u16(uint16_t __x) { return (uint16x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN uint16x8_t vld1q_u16(const uint16_t* __p) { return *(const uint16x8_t*)__p; }
-__BUN_CC_INTRIN uint16x8_t vld1q_dup_u16(const uint16_t* __p) { return vdupq_n_u16(*__p); }
-__BUN_CC_INTRIN void vst1q_u16(uint16_t* __p, uint16x8_t __v) { *(uint16x8_t*)__p = __v; }
+__BUN_CC_INTRIN uint16x8_t vdupq_n_u16(uint16_t __x) { return (uint16x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN uint16x8_t vmovq_n_u16(uint16_t __x) { return (uint16x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN uint16x8_t vld1q_u16(const uint16_t *__p) { return *(const uint16x8_t *)__p; }
+__BUN_CC_INTRIN uint16x8_t vld1q_dup_u16(const uint16_t *__p) { return vdupq_n_u16(*__p); }
+__BUN_CC_INTRIN void vst1q_u16(uint16_t *__p, uint16x8_t __v) { *(uint16x8_t *)__p = __v; }
 #define vgetq_lane_u16(v, lane) ((((uint16x8_t)(v)))[lane])
 #define vsetq_lane_u16(x, v, lane) __extension__({ uint16x8_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN uint16x8_t vaddq_u16(uint16x8_t __a, uint16x8_t __b) { return __a + __b; }
@@ -155,11 +155,11 @@ __BUN_CC_INTRIN uint16_t vmaxvq_u16(uint16x8_t __a) { return __builtin_reduce_ma
 __BUN_CC_INTRIN uint16_t vminvq_u16(uint16x8_t __a) { return __builtin_reduce_min(__a); }
 
 /* int32x4_t */
-__BUN_CC_INTRIN int32x4_t vdupq_n_s32(int32_t __x) { return (int32x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN int32x4_t vmovq_n_s32(int32_t __x) { return (int32x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN int32x4_t vld1q_s32(const int32_t* __p) { return *(const int32x4_t*)__p; }
-__BUN_CC_INTRIN int32x4_t vld1q_dup_s32(const int32_t* __p) { return vdupq_n_s32(*__p); }
-__BUN_CC_INTRIN void vst1q_s32(int32_t* __p, int32x4_t __v) { *(int32x4_t*)__p = __v; }
+__BUN_CC_INTRIN int32x4_t vdupq_n_s32(int32_t __x) { return (int32x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN int32x4_t vmovq_n_s32(int32_t __x) { return (int32x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN int32x4_t vld1q_s32(const int32_t *__p) { return *(const int32x4_t *)__p; }
+__BUN_CC_INTRIN int32x4_t vld1q_dup_s32(const int32_t *__p) { return vdupq_n_s32(*__p); }
+__BUN_CC_INTRIN void vst1q_s32(int32_t *__p, int32x4_t __v) { *(int32x4_t *)__p = __v; }
 #define vgetq_lane_s32(v, lane) ((((int32x4_t)(v)))[lane])
 #define vsetq_lane_s32(x, v, lane) __extension__({ int32x4_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN int32x4_t vaddq_s32(int32x4_t __a, int32x4_t __b) { return __a + __b; }
@@ -189,11 +189,11 @@ __BUN_CC_INTRIN int32_t vmaxvq_s32(int32x4_t __a) { return __builtin_reduce_max(
 __BUN_CC_INTRIN int32_t vminvq_s32(int32x4_t __a) { return __builtin_reduce_min(__a); }
 
 /* uint32x4_t */
-__BUN_CC_INTRIN uint32x4_t vdupq_n_u32(uint32_t __x) { return (uint32x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN uint32x4_t vmovq_n_u32(uint32_t __x) { return (uint32x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN uint32x4_t vld1q_u32(const uint32_t* __p) { return *(const uint32x4_t*)__p; }
-__BUN_CC_INTRIN uint32x4_t vld1q_dup_u32(const uint32_t* __p) { return vdupq_n_u32(*__p); }
-__BUN_CC_INTRIN void vst1q_u32(uint32_t* __p, uint32x4_t __v) { *(uint32x4_t*)__p = __v; }
+__BUN_CC_INTRIN uint32x4_t vdupq_n_u32(uint32_t __x) { return (uint32x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN uint32x4_t vmovq_n_u32(uint32_t __x) { return (uint32x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN uint32x4_t vld1q_u32(const uint32_t *__p) { return *(const uint32x4_t *)__p; }
+__BUN_CC_INTRIN uint32x4_t vld1q_dup_u32(const uint32_t *__p) { return vdupq_n_u32(*__p); }
+__BUN_CC_INTRIN void vst1q_u32(uint32_t *__p, uint32x4_t __v) { *(uint32x4_t *)__p = __v; }
 #define vgetq_lane_u32(v, lane) ((((uint32x4_t)(v)))[lane])
 #define vsetq_lane_u32(x, v, lane) __extension__({ uint32x4_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN uint32x4_t vaddq_u32(uint32x4_t __a, uint32x4_t __b) { return __a + __b; }
@@ -221,11 +221,11 @@ __BUN_CC_INTRIN uint32_t vmaxvq_u32(uint32x4_t __a) { return __builtin_reduce_ma
 __BUN_CC_INTRIN uint32_t vminvq_u32(uint32x4_t __a) { return __builtin_reduce_min(__a); }
 
 /* int64x2_t */
-__BUN_CC_INTRIN int64x2_t vdupq_n_s64(int64_t __x) { return (int64x2_t) { __x, __x }; }
-__BUN_CC_INTRIN int64x2_t vmovq_n_s64(int64_t __x) { return (int64x2_t) { __x, __x }; }
-__BUN_CC_INTRIN int64x2_t vld1q_s64(const int64_t* __p) { return *(const int64x2_t*)__p; }
-__BUN_CC_INTRIN int64x2_t vld1q_dup_s64(const int64_t* __p) { return vdupq_n_s64(*__p); }
-__BUN_CC_INTRIN void vst1q_s64(int64_t* __p, int64x2_t __v) { *(int64x2_t*)__p = __v; }
+__BUN_CC_INTRIN int64x2_t vdupq_n_s64(int64_t __x) { return (int64x2_t){__x, __x}; }
+__BUN_CC_INTRIN int64x2_t vmovq_n_s64(int64_t __x) { return (int64x2_t){__x, __x}; }
+__BUN_CC_INTRIN int64x2_t vld1q_s64(const int64_t *__p) { return *(const int64x2_t *)__p; }
+__BUN_CC_INTRIN int64x2_t vld1q_dup_s64(const int64_t *__p) { return vdupq_n_s64(*__p); }
+__BUN_CC_INTRIN void vst1q_s64(int64_t *__p, int64x2_t __v) { *(int64x2_t *)__p = __v; }
 #define vgetq_lane_s64(v, lane) ((((int64x2_t)(v)))[lane])
 #define vsetq_lane_s64(x, v, lane) __extension__({ int64x2_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN int64x2_t vaddq_s64(int64x2_t __a, int64x2_t __b) { return __a + __b; }
@@ -248,11 +248,11 @@ __BUN_CC_INTRIN int64x2_t vbslq_s64(uint64x2_t __m, int64x2_t __a, int64x2_t __b
 __BUN_CC_INTRIN int64_t vaddvq_s64(int64x2_t __a) { return __builtin_reduce_add(__a); }
 
 /* uint64x2_t */
-__BUN_CC_INTRIN uint64x2_t vdupq_n_u64(uint64_t __x) { return (uint64x2_t) { __x, __x }; }
-__BUN_CC_INTRIN uint64x2_t vmovq_n_u64(uint64_t __x) { return (uint64x2_t) { __x, __x }; }
-__BUN_CC_INTRIN uint64x2_t vld1q_u64(const uint64_t* __p) { return *(const uint64x2_t*)__p; }
-__BUN_CC_INTRIN uint64x2_t vld1q_dup_u64(const uint64_t* __p) { return vdupq_n_u64(*__p); }
-__BUN_CC_INTRIN void vst1q_u64(uint64_t* __p, uint64x2_t __v) { *(uint64x2_t*)__p = __v; }
+__BUN_CC_INTRIN uint64x2_t vdupq_n_u64(uint64_t __x) { return (uint64x2_t){__x, __x}; }
+__BUN_CC_INTRIN uint64x2_t vmovq_n_u64(uint64_t __x) { return (uint64x2_t){__x, __x}; }
+__BUN_CC_INTRIN uint64x2_t vld1q_u64(const uint64_t *__p) { return *(const uint64x2_t *)__p; }
+__BUN_CC_INTRIN uint64x2_t vld1q_dup_u64(const uint64_t *__p) { return vdupq_n_u64(*__p); }
+__BUN_CC_INTRIN void vst1q_u64(uint64_t *__p, uint64x2_t __v) { *(uint64x2_t *)__p = __v; }
 #define vgetq_lane_u64(v, lane) ((((uint64x2_t)(v)))[lane])
 #define vsetq_lane_u64(x, v, lane) __extension__({ uint64x2_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN uint64x2_t vaddq_u64(uint64x2_t __a, uint64x2_t __b) { return __a + __b; }
@@ -273,11 +273,11 @@ __BUN_CC_INTRIN uint64x2_t vbslq_u64(uint64x2_t __m, uint64x2_t __a, uint64x2_t 
 __BUN_CC_INTRIN uint64_t vaddvq_u64(uint64x2_t __a) { return __builtin_reduce_add(__a); }
 
 /* float32x4_t */
-__BUN_CC_INTRIN float32x4_t vdupq_n_f32(float32_t __x) { return (float32x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN float32x4_t vmovq_n_f32(float32_t __x) { return (float32x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN float32x4_t vld1q_f32(const float32_t* __p) { return *(const float32x4_t*)__p; }
-__BUN_CC_INTRIN float32x4_t vld1q_dup_f32(const float32_t* __p) { return vdupq_n_f32(*__p); }
-__BUN_CC_INTRIN void vst1q_f32(float32_t* __p, float32x4_t __v) { *(float32x4_t*)__p = __v; }
+__BUN_CC_INTRIN float32x4_t vdupq_n_f32(float32_t __x) { return (float32x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN float32x4_t vmovq_n_f32(float32_t __x) { return (float32x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN float32x4_t vld1q_f32(const float32_t *__p) { return *(const float32x4_t *)__p; }
+__BUN_CC_INTRIN float32x4_t vld1q_dup_f32(const float32_t *__p) { return vdupq_n_f32(*__p); }
+__BUN_CC_INTRIN void vst1q_f32(float32_t *__p, float32x4_t __v) { *(float32x4_t *)__p = __v; }
 #define vgetq_lane_f32(v, lane) ((((float32x4_t)(v)))[lane])
 #define vsetq_lane_f32(x, v, lane) __extension__({ float32x4_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN float32x4_t vaddq_f32(float32x4_t __a, float32x4_t __b) { return __a + __b; }
@@ -302,11 +302,11 @@ __BUN_CC_INTRIN float32_t vmaxvq_f32(float32x4_t __a) { return __builtin_reduce_
 __BUN_CC_INTRIN float32_t vminvq_f32(float32x4_t __a) { return __builtin_reduce_min(__a); }
 
 /* float64x2_t */
-__BUN_CC_INTRIN float64x2_t vdupq_n_f64(float64_t __x) { return (float64x2_t) { __x, __x }; }
-__BUN_CC_INTRIN float64x2_t vmovq_n_f64(float64_t __x) { return (float64x2_t) { __x, __x }; }
-__BUN_CC_INTRIN float64x2_t vld1q_f64(const float64_t* __p) { return *(const float64x2_t*)__p; }
-__BUN_CC_INTRIN float64x2_t vld1q_dup_f64(const float64_t* __p) { return vdupq_n_f64(*__p); }
-__BUN_CC_INTRIN void vst1q_f64(float64_t* __p, float64x2_t __v) { *(float64x2_t*)__p = __v; }
+__BUN_CC_INTRIN float64x2_t vdupq_n_f64(float64_t __x) { return (float64x2_t){__x, __x}; }
+__BUN_CC_INTRIN float64x2_t vmovq_n_f64(float64_t __x) { return (float64x2_t){__x, __x}; }
+__BUN_CC_INTRIN float64x2_t vld1q_f64(const float64_t *__p) { return *(const float64x2_t *)__p; }
+__BUN_CC_INTRIN float64x2_t vld1q_dup_f64(const float64_t *__p) { return vdupq_n_f64(*__p); }
+__BUN_CC_INTRIN void vst1q_f64(float64_t *__p, float64x2_t __v) { *(float64x2_t *)__p = __v; }
 #define vgetq_lane_f64(v, lane) ((((float64x2_t)(v)))[lane])
 #define vsetq_lane_f64(x, v, lane) __extension__({ float64x2_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN float64x2_t vaddq_f64(float64x2_t __a, float64x2_t __b) { return __a + __b; }
@@ -478,247 +478,91 @@ typedef poly64_t poly64x1_t __attribute__((__vector_size__(8)));
 typedef poly8_t poly8x16_t __attribute__((__vector_size__(16)));
 typedef poly16_t poly16x8_t __attribute__((__vector_size__(16)));
 typedef poly64_t poly64x2_t __attribute__((__vector_size__(16)));
-typedef struct int8x8x2_t {
-    int8x8_t val[2];
-} int8x8x2_t;
-typedef struct int8x16x2_t {
-    int8x16_t val[2];
-} int8x16x2_t;
-typedef struct int8x8x3_t {
-    int8x8_t val[3];
-} int8x8x3_t;
-typedef struct int8x16x3_t {
-    int8x16_t val[3];
-} int8x16x3_t;
-typedef struct int8x8x4_t {
-    int8x8_t val[4];
-} int8x8x4_t;
-typedef struct int8x16x4_t {
-    int8x16_t val[4];
-} int8x16x4_t;
-typedef struct uint8x8x2_t {
-    uint8x8_t val[2];
-} uint8x8x2_t;
-typedef struct uint8x16x2_t {
-    uint8x16_t val[2];
-} uint8x16x2_t;
-typedef struct uint8x8x3_t {
-    uint8x8_t val[3];
-} uint8x8x3_t;
-typedef struct uint8x16x3_t {
-    uint8x16_t val[3];
-} uint8x16x3_t;
-typedef struct uint8x8x4_t {
-    uint8x8_t val[4];
-} uint8x8x4_t;
-typedef struct uint8x16x4_t {
-    uint8x16_t val[4];
-} uint8x16x4_t;
-typedef struct int16x4x2_t {
-    int16x4_t val[2];
-} int16x4x2_t;
-typedef struct int16x8x2_t {
-    int16x8_t val[2];
-} int16x8x2_t;
-typedef struct int16x4x3_t {
-    int16x4_t val[3];
-} int16x4x3_t;
-typedef struct int16x8x3_t {
-    int16x8_t val[3];
-} int16x8x3_t;
-typedef struct int16x4x4_t {
-    int16x4_t val[4];
-} int16x4x4_t;
-typedef struct int16x8x4_t {
-    int16x8_t val[4];
-} int16x8x4_t;
-typedef struct uint16x4x2_t {
-    uint16x4_t val[2];
-} uint16x4x2_t;
-typedef struct uint16x8x2_t {
-    uint16x8_t val[2];
-} uint16x8x2_t;
-typedef struct uint16x4x3_t {
-    uint16x4_t val[3];
-} uint16x4x3_t;
-typedef struct uint16x8x3_t {
-    uint16x8_t val[3];
-} uint16x8x3_t;
-typedef struct uint16x4x4_t {
-    uint16x4_t val[4];
-} uint16x4x4_t;
-typedef struct uint16x8x4_t {
-    uint16x8_t val[4];
-} uint16x8x4_t;
-typedef struct int32x2x2_t {
-    int32x2_t val[2];
-} int32x2x2_t;
-typedef struct int32x4x2_t {
-    int32x4_t val[2];
-} int32x4x2_t;
-typedef struct int32x2x3_t {
-    int32x2_t val[3];
-} int32x2x3_t;
-typedef struct int32x4x3_t {
-    int32x4_t val[3];
-} int32x4x3_t;
-typedef struct int32x2x4_t {
-    int32x2_t val[4];
-} int32x2x4_t;
-typedef struct int32x4x4_t {
-    int32x4_t val[4];
-} int32x4x4_t;
-typedef struct uint32x2x2_t {
-    uint32x2_t val[2];
-} uint32x2x2_t;
-typedef struct uint32x4x2_t {
-    uint32x4_t val[2];
-} uint32x4x2_t;
-typedef struct uint32x2x3_t {
-    uint32x2_t val[3];
-} uint32x2x3_t;
-typedef struct uint32x4x3_t {
-    uint32x4_t val[3];
-} uint32x4x3_t;
-typedef struct uint32x2x4_t {
-    uint32x2_t val[4];
-} uint32x2x4_t;
-typedef struct uint32x4x4_t {
-    uint32x4_t val[4];
-} uint32x4x4_t;
-typedef struct int64x1x2_t {
-    int64x1_t val[2];
-} int64x1x2_t;
-typedef struct int64x2x2_t {
-    int64x2_t val[2];
-} int64x2x2_t;
-typedef struct int64x1x3_t {
-    int64x1_t val[3];
-} int64x1x3_t;
-typedef struct int64x2x3_t {
-    int64x2_t val[3];
-} int64x2x3_t;
-typedef struct int64x1x4_t {
-    int64x1_t val[4];
-} int64x1x4_t;
-typedef struct int64x2x4_t {
-    int64x2_t val[4];
-} int64x2x4_t;
-typedef struct uint64x1x2_t {
-    uint64x1_t val[2];
-} uint64x1x2_t;
-typedef struct uint64x2x2_t {
-    uint64x2_t val[2];
-} uint64x2x2_t;
-typedef struct uint64x1x3_t {
-    uint64x1_t val[3];
-} uint64x1x3_t;
-typedef struct uint64x2x3_t {
-    uint64x2_t val[3];
-} uint64x2x3_t;
-typedef struct uint64x1x4_t {
-    uint64x1_t val[4];
-} uint64x1x4_t;
-typedef struct uint64x2x4_t {
-    uint64x2_t val[4];
-} uint64x2x4_t;
-typedef struct float32x2x2_t {
-    float32x2_t val[2];
-} float32x2x2_t;
-typedef struct float32x4x2_t {
-    float32x4_t val[2];
-} float32x4x2_t;
-typedef struct float32x2x3_t {
-    float32x2_t val[3];
-} float32x2x3_t;
-typedef struct float32x4x3_t {
-    float32x4_t val[3];
-} float32x4x3_t;
-typedef struct float32x2x4_t {
-    float32x2_t val[4];
-} float32x2x4_t;
-typedef struct float32x4x4_t {
-    float32x4_t val[4];
-} float32x4x4_t;
-typedef struct float64x1x2_t {
-    float64x1_t val[2];
-} float64x1x2_t;
-typedef struct float64x2x2_t {
-    float64x2_t val[2];
-} float64x2x2_t;
-typedef struct float64x1x3_t {
-    float64x1_t val[3];
-} float64x1x3_t;
-typedef struct float64x2x3_t {
-    float64x2_t val[3];
-} float64x2x3_t;
-typedef struct float64x1x4_t {
-    float64x1_t val[4];
-} float64x1x4_t;
-typedef struct float64x2x4_t {
-    float64x2_t val[4];
-} float64x2x4_t;
-typedef struct poly8x8x2_t {
-    poly8x8_t val[2];
-} poly8x8x2_t;
-typedef struct poly8x16x2_t {
-    poly8x16_t val[2];
-} poly8x16x2_t;
-typedef struct poly8x8x3_t {
-    poly8x8_t val[3];
-} poly8x8x3_t;
-typedef struct poly8x16x3_t {
-    poly8x16_t val[3];
-} poly8x16x3_t;
-typedef struct poly8x8x4_t {
-    poly8x8_t val[4];
-} poly8x8x4_t;
-typedef struct poly8x16x4_t {
-    poly8x16_t val[4];
-} poly8x16x4_t;
-typedef struct poly16x4x2_t {
-    poly16x4_t val[2];
-} poly16x4x2_t;
-typedef struct poly16x8x2_t {
-    poly16x8_t val[2];
-} poly16x8x2_t;
-typedef struct poly16x4x3_t {
-    poly16x4_t val[3];
-} poly16x4x3_t;
-typedef struct poly16x8x3_t {
-    poly16x8_t val[3];
-} poly16x8x3_t;
-typedef struct poly16x4x4_t {
-    poly16x4_t val[4];
-} poly16x4x4_t;
-typedef struct poly16x8x4_t {
-    poly16x8_t val[4];
-} poly16x8x4_t;
-typedef struct poly64x1x2_t {
-    poly64x1_t val[2];
-} poly64x1x2_t;
-typedef struct poly64x2x2_t {
-    poly64x2_t val[2];
-} poly64x2x2_t;
-typedef struct poly64x1x3_t {
-    poly64x1_t val[3];
-} poly64x1x3_t;
-typedef struct poly64x2x3_t {
-    poly64x2_t val[3];
-} poly64x2x3_t;
-typedef struct poly64x1x4_t {
-    poly64x1_t val[4];
-} poly64x1x4_t;
-typedef struct poly64x2x4_t {
-    poly64x2_t val[4];
-} poly64x2x4_t;
+typedef struct int8x8x2_t { int8x8_t val[2]; } int8x8x2_t;
+typedef struct int8x16x2_t { int8x16_t val[2]; } int8x16x2_t;
+typedef struct int8x8x3_t { int8x8_t val[3]; } int8x8x3_t;
+typedef struct int8x16x3_t { int8x16_t val[3]; } int8x16x3_t;
+typedef struct int8x8x4_t { int8x8_t val[4]; } int8x8x4_t;
+typedef struct int8x16x4_t { int8x16_t val[4]; } int8x16x4_t;
+typedef struct uint8x8x2_t { uint8x8_t val[2]; } uint8x8x2_t;
+typedef struct uint8x16x2_t { uint8x16_t val[2]; } uint8x16x2_t;
+typedef struct uint8x8x3_t { uint8x8_t val[3]; } uint8x8x3_t;
+typedef struct uint8x16x3_t { uint8x16_t val[3]; } uint8x16x3_t;
+typedef struct uint8x8x4_t { uint8x8_t val[4]; } uint8x8x4_t;
+typedef struct uint8x16x4_t { uint8x16_t val[4]; } uint8x16x4_t;
+typedef struct int16x4x2_t { int16x4_t val[2]; } int16x4x2_t;
+typedef struct int16x8x2_t { int16x8_t val[2]; } int16x8x2_t;
+typedef struct int16x4x3_t { int16x4_t val[3]; } int16x4x3_t;
+typedef struct int16x8x3_t { int16x8_t val[3]; } int16x8x3_t;
+typedef struct int16x4x4_t { int16x4_t val[4]; } int16x4x4_t;
+typedef struct int16x8x4_t { int16x8_t val[4]; } int16x8x4_t;
+typedef struct uint16x4x2_t { uint16x4_t val[2]; } uint16x4x2_t;
+typedef struct uint16x8x2_t { uint16x8_t val[2]; } uint16x8x2_t;
+typedef struct uint16x4x3_t { uint16x4_t val[3]; } uint16x4x3_t;
+typedef struct uint16x8x3_t { uint16x8_t val[3]; } uint16x8x3_t;
+typedef struct uint16x4x4_t { uint16x4_t val[4]; } uint16x4x4_t;
+typedef struct uint16x8x4_t { uint16x8_t val[4]; } uint16x8x4_t;
+typedef struct int32x2x2_t { int32x2_t val[2]; } int32x2x2_t;
+typedef struct int32x4x2_t { int32x4_t val[2]; } int32x4x2_t;
+typedef struct int32x2x3_t { int32x2_t val[3]; } int32x2x3_t;
+typedef struct int32x4x3_t { int32x4_t val[3]; } int32x4x3_t;
+typedef struct int32x2x4_t { int32x2_t val[4]; } int32x2x4_t;
+typedef struct int32x4x4_t { int32x4_t val[4]; } int32x4x4_t;
+typedef struct uint32x2x2_t { uint32x2_t val[2]; } uint32x2x2_t;
+typedef struct uint32x4x2_t { uint32x4_t val[2]; } uint32x4x2_t;
+typedef struct uint32x2x3_t { uint32x2_t val[3]; } uint32x2x3_t;
+typedef struct uint32x4x3_t { uint32x4_t val[3]; } uint32x4x3_t;
+typedef struct uint32x2x4_t { uint32x2_t val[4]; } uint32x2x4_t;
+typedef struct uint32x4x4_t { uint32x4_t val[4]; } uint32x4x4_t;
+typedef struct int64x1x2_t { int64x1_t val[2]; } int64x1x2_t;
+typedef struct int64x2x2_t { int64x2_t val[2]; } int64x2x2_t;
+typedef struct int64x1x3_t { int64x1_t val[3]; } int64x1x3_t;
+typedef struct int64x2x3_t { int64x2_t val[3]; } int64x2x3_t;
+typedef struct int64x1x4_t { int64x1_t val[4]; } int64x1x4_t;
+typedef struct int64x2x4_t { int64x2_t val[4]; } int64x2x4_t;
+typedef struct uint64x1x2_t { uint64x1_t val[2]; } uint64x1x2_t;
+typedef struct uint64x2x2_t { uint64x2_t val[2]; } uint64x2x2_t;
+typedef struct uint64x1x3_t { uint64x1_t val[3]; } uint64x1x3_t;
+typedef struct uint64x2x3_t { uint64x2_t val[3]; } uint64x2x3_t;
+typedef struct uint64x1x4_t { uint64x1_t val[4]; } uint64x1x4_t;
+typedef struct uint64x2x4_t { uint64x2_t val[4]; } uint64x2x4_t;
+typedef struct float32x2x2_t { float32x2_t val[2]; } float32x2x2_t;
+typedef struct float32x4x2_t { float32x4_t val[2]; } float32x4x2_t;
+typedef struct float32x2x3_t { float32x2_t val[3]; } float32x2x3_t;
+typedef struct float32x4x3_t { float32x4_t val[3]; } float32x4x3_t;
+typedef struct float32x2x4_t { float32x2_t val[4]; } float32x2x4_t;
+typedef struct float32x4x4_t { float32x4_t val[4]; } float32x4x4_t;
+typedef struct float64x1x2_t { float64x1_t val[2]; } float64x1x2_t;
+typedef struct float64x2x2_t { float64x2_t val[2]; } float64x2x2_t;
+typedef struct float64x1x3_t { float64x1_t val[3]; } float64x1x3_t;
+typedef struct float64x2x3_t { float64x2_t val[3]; } float64x2x3_t;
+typedef struct float64x1x4_t { float64x1_t val[4]; } float64x1x4_t;
+typedef struct float64x2x4_t { float64x2_t val[4]; } float64x2x4_t;
+typedef struct poly8x8x2_t { poly8x8_t val[2]; } poly8x8x2_t;
+typedef struct poly8x16x2_t { poly8x16_t val[2]; } poly8x16x2_t;
+typedef struct poly8x8x3_t { poly8x8_t val[3]; } poly8x8x3_t;
+typedef struct poly8x16x3_t { poly8x16_t val[3]; } poly8x16x3_t;
+typedef struct poly8x8x4_t { poly8x8_t val[4]; } poly8x8x4_t;
+typedef struct poly8x16x4_t { poly8x16_t val[4]; } poly8x16x4_t;
+typedef struct poly16x4x2_t { poly16x4_t val[2]; } poly16x4x2_t;
+typedef struct poly16x8x2_t { poly16x8_t val[2]; } poly16x8x2_t;
+typedef struct poly16x4x3_t { poly16x4_t val[3]; } poly16x4x3_t;
+typedef struct poly16x8x3_t { poly16x8_t val[3]; } poly16x8x3_t;
+typedef struct poly16x4x4_t { poly16x4_t val[4]; } poly16x4x4_t;
+typedef struct poly16x8x4_t { poly16x8_t val[4]; } poly16x8x4_t;
+typedef struct poly64x1x2_t { poly64x1_t val[2]; } poly64x1x2_t;
+typedef struct poly64x2x2_t { poly64x2_t val[2]; } poly64x2x2_t;
+typedef struct poly64x1x3_t { poly64x1_t val[3]; } poly64x1x3_t;
+typedef struct poly64x2x3_t { poly64x2_t val[3]; } poly64x2x3_t;
+typedef struct poly64x1x4_t { poly64x1_t val[4]; } poly64x1x4_t;
+typedef struct poly64x2x4_t { poly64x2_t val[4]; } poly64x2x4_t;
 
 /* int8x8_t */
-__BUN_CC_INTRIN int8x8_t vdup_n_s8(int8_t __x) { return (int8x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN int8x8_t vmov_n_s8(int8_t __x) { return (int8x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN int8x8_t vld1_s8(const int8_t* __p) { return *(const int8x8_t*)__p; }
-__BUN_CC_INTRIN int8x8_t vld1_dup_s8(const int8_t* __p) { return vdup_n_s8(*__p); }
-__BUN_CC_INTRIN void vst1_s8(int8_t* __p, int8x8_t __v) { *(int8x8_t*)__p = __v; }
+__BUN_CC_INTRIN int8x8_t vdup_n_s8(int8_t __x) { return (int8x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN int8x8_t vmov_n_s8(int8_t __x) { return (int8x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN int8x8_t vld1_s8(const int8_t *__p) { return *(const int8x8_t *)__p; }
+__BUN_CC_INTRIN int8x8_t vld1_dup_s8(const int8_t *__p) { return vdup_n_s8(*__p); }
+__BUN_CC_INTRIN void vst1_s8(int8_t *__p, int8x8_t __v) { *(int8x8_t *)__p = __v; }
 #define vget_lane_s8(v, lane) ((((int8x8_t)(v)))[lane])
 #define vset_lane_s8(x, v, lane) __extension__({ int8x8_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN int8x8_t vcreate_s8(uint64_t __x) { return (int8x8_t)__x; }
@@ -727,11 +571,11 @@ __BUN_CC_INTRIN int8x8_t vget_high_s8(int8x16_t __a) { return __builtin_shufflev
 __BUN_CC_INTRIN int8x16_t vcombine_s8(int8x8_t __lo, int8x8_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15); }
 
 /* uint8x8_t */
-__BUN_CC_INTRIN uint8x8_t vdup_n_u8(uint8_t __x) { return (uint8x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN uint8x8_t vmov_n_u8(uint8_t __x) { return (uint8x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN uint8x8_t vld1_u8(const uint8_t* __p) { return *(const uint8x8_t*)__p; }
-__BUN_CC_INTRIN uint8x8_t vld1_dup_u8(const uint8_t* __p) { return vdup_n_u8(*__p); }
-__BUN_CC_INTRIN void vst1_u8(uint8_t* __p, uint8x8_t __v) { *(uint8x8_t*)__p = __v; }
+__BUN_CC_INTRIN uint8x8_t vdup_n_u8(uint8_t __x) { return (uint8x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN uint8x8_t vmov_n_u8(uint8_t __x) { return (uint8x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN uint8x8_t vld1_u8(const uint8_t *__p) { return *(const uint8x8_t *)__p; }
+__BUN_CC_INTRIN uint8x8_t vld1_dup_u8(const uint8_t *__p) { return vdup_n_u8(*__p); }
+__BUN_CC_INTRIN void vst1_u8(uint8_t *__p, uint8x8_t __v) { *(uint8x8_t *)__p = __v; }
 #define vget_lane_u8(v, lane) ((((uint8x8_t)(v)))[lane])
 #define vset_lane_u8(x, v, lane) __extension__({ uint8x8_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN uint8x8_t vcreate_u8(uint64_t __x) { return (uint8x8_t)__x; }
@@ -740,11 +584,11 @@ __BUN_CC_INTRIN uint8x8_t vget_high_u8(uint8x16_t __a) { return __builtin_shuffl
 __BUN_CC_INTRIN uint8x16_t vcombine_u8(uint8x8_t __lo, uint8x8_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15); }
 
 /* int16x4_t */
-__BUN_CC_INTRIN int16x4_t vdup_n_s16(int16_t __x) { return (int16x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN int16x4_t vmov_n_s16(int16_t __x) { return (int16x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN int16x4_t vld1_s16(const int16_t* __p) { return *(const int16x4_t*)__p; }
-__BUN_CC_INTRIN int16x4_t vld1_dup_s16(const int16_t* __p) { return vdup_n_s16(*__p); }
-__BUN_CC_INTRIN void vst1_s16(int16_t* __p, int16x4_t __v) { *(int16x4_t*)__p = __v; }
+__BUN_CC_INTRIN int16x4_t vdup_n_s16(int16_t __x) { return (int16x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN int16x4_t vmov_n_s16(int16_t __x) { return (int16x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN int16x4_t vld1_s16(const int16_t *__p) { return *(const int16x4_t *)__p; }
+__BUN_CC_INTRIN int16x4_t vld1_dup_s16(const int16_t *__p) { return vdup_n_s16(*__p); }
+__BUN_CC_INTRIN void vst1_s16(int16_t *__p, int16x4_t __v) { *(int16x4_t *)__p = __v; }
 #define vget_lane_s16(v, lane) ((((int16x4_t)(v)))[lane])
 #define vset_lane_s16(x, v, lane) __extension__({ int16x4_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN int16x4_t vcreate_s16(uint64_t __x) { return (int16x4_t)__x; }
@@ -753,11 +597,11 @@ __BUN_CC_INTRIN int16x4_t vget_high_s16(int16x8_t __a) { return __builtin_shuffl
 __BUN_CC_INTRIN int16x8_t vcombine_s16(int16x4_t __lo, int16x4_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1, 2, 3, 4, 5, 6, 7); }
 
 /* uint16x4_t */
-__BUN_CC_INTRIN uint16x4_t vdup_n_u16(uint16_t __x) { return (uint16x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN uint16x4_t vmov_n_u16(uint16_t __x) { return (uint16x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN uint16x4_t vld1_u16(const uint16_t* __p) { return *(const uint16x4_t*)__p; }
-__BUN_CC_INTRIN uint16x4_t vld1_dup_u16(const uint16_t* __p) { return vdup_n_u16(*__p); }
-__BUN_CC_INTRIN void vst1_u16(uint16_t* __p, uint16x4_t __v) { *(uint16x4_t*)__p = __v; }
+__BUN_CC_INTRIN uint16x4_t vdup_n_u16(uint16_t __x) { return (uint16x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN uint16x4_t vmov_n_u16(uint16_t __x) { return (uint16x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN uint16x4_t vld1_u16(const uint16_t *__p) { return *(const uint16x4_t *)__p; }
+__BUN_CC_INTRIN uint16x4_t vld1_dup_u16(const uint16_t *__p) { return vdup_n_u16(*__p); }
+__BUN_CC_INTRIN void vst1_u16(uint16_t *__p, uint16x4_t __v) { *(uint16x4_t *)__p = __v; }
 #define vget_lane_u16(v, lane) ((((uint16x4_t)(v)))[lane])
 #define vset_lane_u16(x, v, lane) __extension__({ uint16x4_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN uint16x4_t vcreate_u16(uint64_t __x) { return (uint16x4_t)__x; }
@@ -766,11 +610,11 @@ __BUN_CC_INTRIN uint16x4_t vget_high_u16(uint16x8_t __a) { return __builtin_shuf
 __BUN_CC_INTRIN uint16x8_t vcombine_u16(uint16x4_t __lo, uint16x4_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1, 2, 3, 4, 5, 6, 7); }
 
 /* int32x2_t */
-__BUN_CC_INTRIN int32x2_t vdup_n_s32(int32_t __x) { return (int32x2_t) { __x, __x }; }
-__BUN_CC_INTRIN int32x2_t vmov_n_s32(int32_t __x) { return (int32x2_t) { __x, __x }; }
-__BUN_CC_INTRIN int32x2_t vld1_s32(const int32_t* __p) { return *(const int32x2_t*)__p; }
-__BUN_CC_INTRIN int32x2_t vld1_dup_s32(const int32_t* __p) { return vdup_n_s32(*__p); }
-__BUN_CC_INTRIN void vst1_s32(int32_t* __p, int32x2_t __v) { *(int32x2_t*)__p = __v; }
+__BUN_CC_INTRIN int32x2_t vdup_n_s32(int32_t __x) { return (int32x2_t){__x, __x}; }
+__BUN_CC_INTRIN int32x2_t vmov_n_s32(int32_t __x) { return (int32x2_t){__x, __x}; }
+__BUN_CC_INTRIN int32x2_t vld1_s32(const int32_t *__p) { return *(const int32x2_t *)__p; }
+__BUN_CC_INTRIN int32x2_t vld1_dup_s32(const int32_t *__p) { return vdup_n_s32(*__p); }
+__BUN_CC_INTRIN void vst1_s32(int32_t *__p, int32x2_t __v) { *(int32x2_t *)__p = __v; }
 #define vget_lane_s32(v, lane) ((((int32x2_t)(v)))[lane])
 #define vset_lane_s32(x, v, lane) __extension__({ int32x2_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN int32x2_t vcreate_s32(uint64_t __x) { return (int32x2_t)__x; }
@@ -779,11 +623,11 @@ __BUN_CC_INTRIN int32x2_t vget_high_s32(int32x4_t __a) { return __builtin_shuffl
 __BUN_CC_INTRIN int32x4_t vcombine_s32(int32x2_t __lo, int32x2_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1, 2, 3); }
 
 /* uint32x2_t */
-__BUN_CC_INTRIN uint32x2_t vdup_n_u32(uint32_t __x) { return (uint32x2_t) { __x, __x }; }
-__BUN_CC_INTRIN uint32x2_t vmov_n_u32(uint32_t __x) { return (uint32x2_t) { __x, __x }; }
-__BUN_CC_INTRIN uint32x2_t vld1_u32(const uint32_t* __p) { return *(const uint32x2_t*)__p; }
-__BUN_CC_INTRIN uint32x2_t vld1_dup_u32(const uint32_t* __p) { return vdup_n_u32(*__p); }
-__BUN_CC_INTRIN void vst1_u32(uint32_t* __p, uint32x2_t __v) { *(uint32x2_t*)__p = __v; }
+__BUN_CC_INTRIN uint32x2_t vdup_n_u32(uint32_t __x) { return (uint32x2_t){__x, __x}; }
+__BUN_CC_INTRIN uint32x2_t vmov_n_u32(uint32_t __x) { return (uint32x2_t){__x, __x}; }
+__BUN_CC_INTRIN uint32x2_t vld1_u32(const uint32_t *__p) { return *(const uint32x2_t *)__p; }
+__BUN_CC_INTRIN uint32x2_t vld1_dup_u32(const uint32_t *__p) { return vdup_n_u32(*__p); }
+__BUN_CC_INTRIN void vst1_u32(uint32_t *__p, uint32x2_t __v) { *(uint32x2_t *)__p = __v; }
 #define vget_lane_u32(v, lane) ((((uint32x2_t)(v)))[lane])
 #define vset_lane_u32(x, v, lane) __extension__({ uint32x2_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN uint32x2_t vcreate_u32(uint64_t __x) { return (uint32x2_t)__x; }
@@ -792,11 +636,11 @@ __BUN_CC_INTRIN uint32x2_t vget_high_u32(uint32x4_t __a) { return __builtin_shuf
 __BUN_CC_INTRIN uint32x4_t vcombine_u32(uint32x2_t __lo, uint32x2_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1, 2, 3); }
 
 /* int64x1_t */
-__BUN_CC_INTRIN int64x1_t vdup_n_s64(int64_t __x) { return (int64x1_t) { __x }; }
-__BUN_CC_INTRIN int64x1_t vmov_n_s64(int64_t __x) { return (int64x1_t) { __x }; }
-__BUN_CC_INTRIN int64x1_t vld1_s64(const int64_t* __p) { return *(const int64x1_t*)__p; }
-__BUN_CC_INTRIN int64x1_t vld1_dup_s64(const int64_t* __p) { return vdup_n_s64(*__p); }
-__BUN_CC_INTRIN void vst1_s64(int64_t* __p, int64x1_t __v) { *(int64x1_t*)__p = __v; }
+__BUN_CC_INTRIN int64x1_t vdup_n_s64(int64_t __x) { return (int64x1_t){__x}; }
+__BUN_CC_INTRIN int64x1_t vmov_n_s64(int64_t __x) { return (int64x1_t){__x}; }
+__BUN_CC_INTRIN int64x1_t vld1_s64(const int64_t *__p) { return *(const int64x1_t *)__p; }
+__BUN_CC_INTRIN int64x1_t vld1_dup_s64(const int64_t *__p) { return vdup_n_s64(*__p); }
+__BUN_CC_INTRIN void vst1_s64(int64_t *__p, int64x1_t __v) { *(int64x1_t *)__p = __v; }
 #define vget_lane_s64(v, lane) ((((int64x1_t)(v)))[lane])
 #define vset_lane_s64(x, v, lane) __extension__({ int64x1_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN int64x1_t vcreate_s64(uint64_t __x) { return (int64x1_t)__x; }
@@ -805,11 +649,11 @@ __BUN_CC_INTRIN int64x1_t vget_high_s64(int64x2_t __a) { return __builtin_shuffl
 __BUN_CC_INTRIN int64x2_t vcombine_s64(int64x1_t __lo, int64x1_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1); }
 
 /* uint64x1_t */
-__BUN_CC_INTRIN uint64x1_t vdup_n_u64(uint64_t __x) { return (uint64x1_t) { __x }; }
-__BUN_CC_INTRIN uint64x1_t vmov_n_u64(uint64_t __x) { return (uint64x1_t) { __x }; }
-__BUN_CC_INTRIN uint64x1_t vld1_u64(const uint64_t* __p) { return *(const uint64x1_t*)__p; }
-__BUN_CC_INTRIN uint64x1_t vld1_dup_u64(const uint64_t* __p) { return vdup_n_u64(*__p); }
-__BUN_CC_INTRIN void vst1_u64(uint64_t* __p, uint64x1_t __v) { *(uint64x1_t*)__p = __v; }
+__BUN_CC_INTRIN uint64x1_t vdup_n_u64(uint64_t __x) { return (uint64x1_t){__x}; }
+__BUN_CC_INTRIN uint64x1_t vmov_n_u64(uint64_t __x) { return (uint64x1_t){__x}; }
+__BUN_CC_INTRIN uint64x1_t vld1_u64(const uint64_t *__p) { return *(const uint64x1_t *)__p; }
+__BUN_CC_INTRIN uint64x1_t vld1_dup_u64(const uint64_t *__p) { return vdup_n_u64(*__p); }
+__BUN_CC_INTRIN void vst1_u64(uint64_t *__p, uint64x1_t __v) { *(uint64x1_t *)__p = __v; }
 #define vget_lane_u64(v, lane) ((((uint64x1_t)(v)))[lane])
 #define vset_lane_u64(x, v, lane) __extension__({ uint64x1_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN uint64x1_t vcreate_u64(uint64_t __x) { return (uint64x1_t)__x; }
@@ -818,11 +662,11 @@ __BUN_CC_INTRIN uint64x1_t vget_high_u64(uint64x2_t __a) { return __builtin_shuf
 __BUN_CC_INTRIN uint64x2_t vcombine_u64(uint64x1_t __lo, uint64x1_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1); }
 
 /* float32x2_t */
-__BUN_CC_INTRIN float32x2_t vdup_n_f32(float32_t __x) { return (float32x2_t) { __x, __x }; }
-__BUN_CC_INTRIN float32x2_t vmov_n_f32(float32_t __x) { return (float32x2_t) { __x, __x }; }
-__BUN_CC_INTRIN float32x2_t vld1_f32(const float32_t* __p) { return *(const float32x2_t*)__p; }
-__BUN_CC_INTRIN float32x2_t vld1_dup_f32(const float32_t* __p) { return vdup_n_f32(*__p); }
-__BUN_CC_INTRIN void vst1_f32(float32_t* __p, float32x2_t __v) { *(float32x2_t*)__p = __v; }
+__BUN_CC_INTRIN float32x2_t vdup_n_f32(float32_t __x) { return (float32x2_t){__x, __x}; }
+__BUN_CC_INTRIN float32x2_t vmov_n_f32(float32_t __x) { return (float32x2_t){__x, __x}; }
+__BUN_CC_INTRIN float32x2_t vld1_f32(const float32_t *__p) { return *(const float32x2_t *)__p; }
+__BUN_CC_INTRIN float32x2_t vld1_dup_f32(const float32_t *__p) { return vdup_n_f32(*__p); }
+__BUN_CC_INTRIN void vst1_f32(float32_t *__p, float32x2_t __v) { *(float32x2_t *)__p = __v; }
 #define vget_lane_f32(v, lane) ((((float32x2_t)(v)))[lane])
 #define vset_lane_f32(x, v, lane) __extension__({ float32x2_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN float32x2_t vcreate_f32(uint64_t __x) { return (float32x2_t)__x; }
@@ -831,11 +675,11 @@ __BUN_CC_INTRIN float32x2_t vget_high_f32(float32x4_t __a) { return __builtin_sh
 __BUN_CC_INTRIN float32x4_t vcombine_f32(float32x2_t __lo, float32x2_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1, 2, 3); }
 
 /* float64x1_t */
-__BUN_CC_INTRIN float64x1_t vdup_n_f64(float64_t __x) { return (float64x1_t) { __x }; }
-__BUN_CC_INTRIN float64x1_t vmov_n_f64(float64_t __x) { return (float64x1_t) { __x }; }
-__BUN_CC_INTRIN float64x1_t vld1_f64(const float64_t* __p) { return *(const float64x1_t*)__p; }
-__BUN_CC_INTRIN float64x1_t vld1_dup_f64(const float64_t* __p) { return vdup_n_f64(*__p); }
-__BUN_CC_INTRIN void vst1_f64(float64_t* __p, float64x1_t __v) { *(float64x1_t*)__p = __v; }
+__BUN_CC_INTRIN float64x1_t vdup_n_f64(float64_t __x) { return (float64x1_t){__x}; }
+__BUN_CC_INTRIN float64x1_t vmov_n_f64(float64_t __x) { return (float64x1_t){__x}; }
+__BUN_CC_INTRIN float64x1_t vld1_f64(const float64_t *__p) { return *(const float64x1_t *)__p; }
+__BUN_CC_INTRIN float64x1_t vld1_dup_f64(const float64_t *__p) { return vdup_n_f64(*__p); }
+__BUN_CC_INTRIN void vst1_f64(float64_t *__p, float64x1_t __v) { *(float64x1_t *)__p = __v; }
 #define vget_lane_f64(v, lane) ((((float64x1_t)(v)))[lane])
 #define vset_lane_f64(x, v, lane) __extension__({ float64x1_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN float64x1_t vcreate_f64(uint64_t __x) { return (float64x1_t)__x; }
@@ -844,60 +688,60 @@ __BUN_CC_INTRIN float64x1_t vget_high_f64(float64x2_t __a) { return __builtin_sh
 __BUN_CC_INTRIN float64x2_t vcombine_f64(float64x1_t __lo, float64x1_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1); }
 
 /* poly8x8_t */
-__BUN_CC_INTRIN poly8x8_t vdup_n_p8(poly8_t __x) { return (poly8x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN poly8x8_t vmov_n_p8(poly8_t __x) { return (poly8x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN poly8x8_t vld1_p8(const poly8_t* __p) { return *(const poly8x8_t*)__p; }
-__BUN_CC_INTRIN poly8x8_t vld1_dup_p8(const poly8_t* __p) { return vdup_n_p8(*__p); }
-__BUN_CC_INTRIN void vst1_p8(poly8_t* __p, poly8x8_t __v) { *(poly8x8_t*)__p = __v; }
+__BUN_CC_INTRIN poly8x8_t vdup_n_p8(poly8_t __x) { return (poly8x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN poly8x8_t vmov_n_p8(poly8_t __x) { return (poly8x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN poly8x8_t vld1_p8(const poly8_t *__p) { return *(const poly8x8_t *)__p; }
+__BUN_CC_INTRIN poly8x8_t vld1_dup_p8(const poly8_t *__p) { return vdup_n_p8(*__p); }
+__BUN_CC_INTRIN void vst1_p8(poly8_t *__p, poly8x8_t __v) { *(poly8x8_t *)__p = __v; }
 #define vget_lane_p8(v, lane) ((((poly8x8_t)(v)))[lane])
 #define vset_lane_p8(x, v, lane) __extension__({ poly8x8_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN poly8x8_t vcreate_p8(uint64_t __x) { return (poly8x8_t)__x; }
 __BUN_CC_INTRIN poly8x8_t vget_low_p8(poly8x16_t __a) { return __builtin_shufflevector(__a, __a, 0, 1, 2, 3, 4, 5, 6, 7); }
 __BUN_CC_INTRIN poly8x8_t vget_high_p8(poly8x16_t __a) { return __builtin_shufflevector(__a, __a, 8, 9, 10, 11, 12, 13, 14, 15); }
 __BUN_CC_INTRIN poly8x16_t vcombine_p8(poly8x8_t __lo, poly8x8_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15); }
-__BUN_CC_INTRIN poly8x16_t vdupq_n_p8(poly8_t __x) { return (poly8x16_t) { __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN poly8x16_t vld1q_p8(const poly8_t* __p) { return *(const poly8x16_t*)__p; }
-__BUN_CC_INTRIN void vst1q_p8(poly8_t* __p, poly8x16_t __v) { *(poly8x16_t*)__p = __v; }
+__BUN_CC_INTRIN poly8x16_t vdupq_n_p8(poly8_t __x) { return (poly8x16_t){__x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN poly8x16_t vld1q_p8(const poly8_t *__p) { return *(const poly8x16_t *)__p; }
+__BUN_CC_INTRIN void vst1q_p8(poly8_t *__p, poly8x16_t __v) { *(poly8x16_t *)__p = __v; }
 #define vgetq_lane_p8(v, lane) ((((poly8x16_t)(v)))[lane])
 #define vsetq_lane_p8(x, v, lane) __extension__({ poly8x16_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN poly8x8_t vbsl_p8(uint8x8_t __m, poly8x8_t __a, poly8x8_t __b) { return (poly8x8_t)((__m & (uint8x8_t)__a) | (~__m & (uint8x8_t)__b)); }
 __BUN_CC_INTRIN poly8x16_t vbslq_p8(uint8x16_t __m, poly8x16_t __a, poly8x16_t __b) { return (poly8x16_t)((__m & (uint8x16_t)__a) | (~__m & (uint8x16_t)__b)); }
 
 /* poly16x4_t */
-__BUN_CC_INTRIN poly16x4_t vdup_n_p16(poly16_t __x) { return (poly16x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN poly16x4_t vmov_n_p16(poly16_t __x) { return (poly16x4_t) { __x, __x, __x, __x }; }
-__BUN_CC_INTRIN poly16x4_t vld1_p16(const poly16_t* __p) { return *(const poly16x4_t*)__p; }
-__BUN_CC_INTRIN poly16x4_t vld1_dup_p16(const poly16_t* __p) { return vdup_n_p16(*__p); }
-__BUN_CC_INTRIN void vst1_p16(poly16_t* __p, poly16x4_t __v) { *(poly16x4_t*)__p = __v; }
+__BUN_CC_INTRIN poly16x4_t vdup_n_p16(poly16_t __x) { return (poly16x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN poly16x4_t vmov_n_p16(poly16_t __x) { return (poly16x4_t){__x, __x, __x, __x}; }
+__BUN_CC_INTRIN poly16x4_t vld1_p16(const poly16_t *__p) { return *(const poly16x4_t *)__p; }
+__BUN_CC_INTRIN poly16x4_t vld1_dup_p16(const poly16_t *__p) { return vdup_n_p16(*__p); }
+__BUN_CC_INTRIN void vst1_p16(poly16_t *__p, poly16x4_t __v) { *(poly16x4_t *)__p = __v; }
 #define vget_lane_p16(v, lane) ((((poly16x4_t)(v)))[lane])
 #define vset_lane_p16(x, v, lane) __extension__({ poly16x4_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN poly16x4_t vcreate_p16(uint64_t __x) { return (poly16x4_t)__x; }
 __BUN_CC_INTRIN poly16x4_t vget_low_p16(poly16x8_t __a) { return __builtin_shufflevector(__a, __a, 0, 1, 2, 3); }
 __BUN_CC_INTRIN poly16x4_t vget_high_p16(poly16x8_t __a) { return __builtin_shufflevector(__a, __a, 4, 5, 6, 7); }
 __BUN_CC_INTRIN poly16x8_t vcombine_p16(poly16x4_t __lo, poly16x4_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1, 2, 3, 4, 5, 6, 7); }
-__BUN_CC_INTRIN poly16x8_t vdupq_n_p16(poly16_t __x) { return (poly16x8_t) { __x, __x, __x, __x, __x, __x, __x, __x }; }
-__BUN_CC_INTRIN poly16x8_t vld1q_p16(const poly16_t* __p) { return *(const poly16x8_t*)__p; }
-__BUN_CC_INTRIN void vst1q_p16(poly16_t* __p, poly16x8_t __v) { *(poly16x8_t*)__p = __v; }
+__BUN_CC_INTRIN poly16x8_t vdupq_n_p16(poly16_t __x) { return (poly16x8_t){__x, __x, __x, __x, __x, __x, __x, __x}; }
+__BUN_CC_INTRIN poly16x8_t vld1q_p16(const poly16_t *__p) { return *(const poly16x8_t *)__p; }
+__BUN_CC_INTRIN void vst1q_p16(poly16_t *__p, poly16x8_t __v) { *(poly16x8_t *)__p = __v; }
 #define vgetq_lane_p16(v, lane) ((((poly16x8_t)(v)))[lane])
 #define vsetq_lane_p16(x, v, lane) __extension__({ poly16x8_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN poly16x4_t vbsl_p16(uint16x4_t __m, poly16x4_t __a, poly16x4_t __b) { return (poly16x4_t)((__m & (uint16x4_t)__a) | (~__m & (uint16x4_t)__b)); }
 __BUN_CC_INTRIN poly16x8_t vbslq_p16(uint16x8_t __m, poly16x8_t __a, poly16x8_t __b) { return (poly16x8_t)((__m & (uint16x8_t)__a) | (~__m & (uint16x8_t)__b)); }
 
 /* poly64x1_t */
-__BUN_CC_INTRIN poly64x1_t vdup_n_p64(poly64_t __x) { return (poly64x1_t) { __x }; }
-__BUN_CC_INTRIN poly64x1_t vmov_n_p64(poly64_t __x) { return (poly64x1_t) { __x }; }
-__BUN_CC_INTRIN poly64x1_t vld1_p64(const poly64_t* __p) { return *(const poly64x1_t*)__p; }
-__BUN_CC_INTRIN poly64x1_t vld1_dup_p64(const poly64_t* __p) { return vdup_n_p64(*__p); }
-__BUN_CC_INTRIN void vst1_p64(poly64_t* __p, poly64x1_t __v) { *(poly64x1_t*)__p = __v; }
+__BUN_CC_INTRIN poly64x1_t vdup_n_p64(poly64_t __x) { return (poly64x1_t){__x}; }
+__BUN_CC_INTRIN poly64x1_t vmov_n_p64(poly64_t __x) { return (poly64x1_t){__x}; }
+__BUN_CC_INTRIN poly64x1_t vld1_p64(const poly64_t *__p) { return *(const poly64x1_t *)__p; }
+__BUN_CC_INTRIN poly64x1_t vld1_dup_p64(const poly64_t *__p) { return vdup_n_p64(*__p); }
+__BUN_CC_INTRIN void vst1_p64(poly64_t *__p, poly64x1_t __v) { *(poly64x1_t *)__p = __v; }
 #define vget_lane_p64(v, lane) ((((poly64x1_t)(v)))[lane])
 #define vset_lane_p64(x, v, lane) __extension__({ poly64x1_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN poly64x1_t vcreate_p64(uint64_t __x) { return (poly64x1_t)__x; }
 __BUN_CC_INTRIN poly64x1_t vget_low_p64(poly64x2_t __a) { return __builtin_shufflevector(__a, __a, 0); }
 __BUN_CC_INTRIN poly64x1_t vget_high_p64(poly64x2_t __a) { return __builtin_shufflevector(__a, __a, 1); }
 __BUN_CC_INTRIN poly64x2_t vcombine_p64(poly64x1_t __lo, poly64x1_t __hi) { return __builtin_shufflevector(__lo, __hi, 0, 1); }
-__BUN_CC_INTRIN poly64x2_t vdupq_n_p64(poly64_t __x) { return (poly64x2_t) { __x, __x }; }
-__BUN_CC_INTRIN poly64x2_t vld1q_p64(const poly64_t* __p) { return *(const poly64x2_t*)__p; }
-__BUN_CC_INTRIN void vst1q_p64(poly64_t* __p, poly64x2_t __v) { *(poly64x2_t*)__p = __v; }
+__BUN_CC_INTRIN poly64x2_t vdupq_n_p64(poly64_t __x) { return (poly64x2_t){__x, __x}; }
+__BUN_CC_INTRIN poly64x2_t vld1q_p64(const poly64_t *__p) { return *(const poly64x2_t *)__p; }
+__BUN_CC_INTRIN void vst1q_p64(poly64_t *__p, poly64x2_t __v) { *(poly64x2_t *)__p = __v; }
 #define vgetq_lane_p64(v, lane) ((((poly64x2_t)(v)))[lane])
 #define vsetq_lane_p64(x, v, lane) __extension__({ poly64x2_t __bun_v = (v); __bun_v[lane] = (x); __bun_v; })
 __BUN_CC_INTRIN poly64x1_t vbsl_p64(uint64x1_t __m, poly64x1_t __a, poly64x1_t __b) { return (poly64x1_t)((__m & (uint64x1_t)__a) | (~__m & (uint64x1_t)__b)); }
@@ -1611,18 +1455,8 @@ __BUN_CC_INTRIN int8x16_t vshrn_high_n_s16(int8x8_t __r, int16x8_t __a, int __n)
 __BUN_CC_INTRIN int8x8_t vrshrn_n_s16(int16x8_t __a, int __n) { return vmovn_s16((__a >> __n) + ((__a >> (__n - 1)) & 1)); }
 __BUN_CC_INTRIN int8x8_t vaddhn_s16(int16x8_t __a, int16x8_t __b) { return vmovn_s16((__a + __b) >> 8); }
 __BUN_CC_INTRIN int8x8_t vsubhn_s16(int16x8_t __a, int16x8_t __b) { return vmovn_s16((__a - __b) >> 8); }
-__BUN_CC_INTRIN int8x8_t vqmovn_s16(int16x8_t __a)
-{
-    __a = __a > vdupq_n_s16(127) ? vdupq_n_s16(127) : __a;
-    __a = __a < vdupq_n_s16(-127 - 1) ? vdupq_n_s16(-127 - 1) : __a;
-    return __builtin_convertvector(__a, int8x8_t);
-}
-__BUN_CC_INTRIN uint8x8_t vqmovun_s16(int16x8_t __a)
-{
-    __a = __a > vdupq_n_s16(255) ? vdupq_n_s16(255) : __a;
-    __a = __a < 0 ? vdupq_n_s16(0) : __a;
-    return __builtin_convertvector(__a, uint8x8_t);
-}
+__BUN_CC_INTRIN int8x8_t vqmovn_s16(int16x8_t __a) { __a = __a > vdupq_n_s16(127) ? vdupq_n_s16(127) : __a; __a = __a < vdupq_n_s16(-127 - 1) ? vdupq_n_s16(-127 - 1) : __a; return __builtin_convertvector(__a, int8x8_t); }
+__BUN_CC_INTRIN uint8x8_t vqmovun_s16(int16x8_t __a) { __a = __a > vdupq_n_s16(255) ? vdupq_n_s16(255) : __a; __a = __a < 0 ? vdupq_n_s16(0) : __a; return __builtin_convertvector(__a, uint8x8_t); }
 __BUN_CC_INTRIN uint8x16_t vqmovun_high_s16(uint8x8_t __r, int16x8_t __a) { return vcombine_u8(__r, vqmovun_s16(__a)); }
 __BUN_CC_INTRIN int8x16_t vqmovn_high_s16(int8x8_t __r, int16x8_t __a) { return vcombine_s8(__r, vqmovn_s16(__a)); }
 __BUN_CC_INTRIN uint8x8_t vmovn_u16(uint16x8_t __a) { return __builtin_convertvector(__a, uint8x8_t); }
@@ -1632,11 +1466,7 @@ __BUN_CC_INTRIN uint8x16_t vshrn_high_n_u16(uint8x8_t __r, uint16x8_t __a, int _
 __BUN_CC_INTRIN uint8x8_t vrshrn_n_u16(uint16x8_t __a, int __n) { return vmovn_u16((__a >> __n) + ((__a >> (__n - 1)) & 1)); }
 __BUN_CC_INTRIN uint8x8_t vaddhn_u16(uint16x8_t __a, uint16x8_t __b) { return vmovn_u16((__a + __b) >> 8); }
 __BUN_CC_INTRIN uint8x8_t vsubhn_u16(uint16x8_t __a, uint16x8_t __b) { return vmovn_u16((__a - __b) >> 8); }
-__BUN_CC_INTRIN uint8x8_t vqmovn_u16(uint16x8_t __a)
-{
-    __a = __a > vdupq_n_u16(255u) ? vdupq_n_u16(255u) : __a;
-    return __builtin_convertvector(__a, uint8x8_t);
-}
+__BUN_CC_INTRIN uint8x8_t vqmovn_u16(uint16x8_t __a) { __a = __a > vdupq_n_u16(255u) ? vdupq_n_u16(255u) : __a; return __builtin_convertvector(__a, uint8x8_t); }
 __BUN_CC_INTRIN uint8x16_t vqmovn_high_u16(uint8x8_t __r, uint16x8_t __a) { return vcombine_u8(__r, vqmovn_u16(__a)); }
 __BUN_CC_INTRIN int16x4_t vmovn_s32(int32x4_t __a) { return __builtin_convertvector(__a, int16x4_t); }
 __BUN_CC_INTRIN int16x8_t vmovn_high_s32(int16x4_t __r, int32x4_t __a) { return vcombine_s16(__r, vmovn_s32(__a)); }
@@ -1645,18 +1475,8 @@ __BUN_CC_INTRIN int16x8_t vshrn_high_n_s32(int16x4_t __r, int32x4_t __a, int __n
 __BUN_CC_INTRIN int16x4_t vrshrn_n_s32(int32x4_t __a, int __n) { return vmovn_s32((__a >> __n) + ((__a >> (__n - 1)) & 1)); }
 __BUN_CC_INTRIN int16x4_t vaddhn_s32(int32x4_t __a, int32x4_t __b) { return vmovn_s32((__a + __b) >> 16); }
 __BUN_CC_INTRIN int16x4_t vsubhn_s32(int32x4_t __a, int32x4_t __b) { return vmovn_s32((__a - __b) >> 16); }
-__BUN_CC_INTRIN int16x4_t vqmovn_s32(int32x4_t __a)
-{
-    __a = __a > vdupq_n_s32(32767) ? vdupq_n_s32(32767) : __a;
-    __a = __a < vdupq_n_s32(-32767 - 1) ? vdupq_n_s32(-32767 - 1) : __a;
-    return __builtin_convertvector(__a, int16x4_t);
-}
-__BUN_CC_INTRIN uint16x4_t vqmovun_s32(int32x4_t __a)
-{
-    __a = __a > vdupq_n_s32(65535) ? vdupq_n_s32(65535) : __a;
-    __a = __a < 0 ? vdupq_n_s32(0) : __a;
-    return __builtin_convertvector(__a, uint16x4_t);
-}
+__BUN_CC_INTRIN int16x4_t vqmovn_s32(int32x4_t __a) { __a = __a > vdupq_n_s32(32767) ? vdupq_n_s32(32767) : __a; __a = __a < vdupq_n_s32(-32767 - 1) ? vdupq_n_s32(-32767 - 1) : __a; return __builtin_convertvector(__a, int16x4_t); }
+__BUN_CC_INTRIN uint16x4_t vqmovun_s32(int32x4_t __a) { __a = __a > vdupq_n_s32(65535) ? vdupq_n_s32(65535) : __a; __a = __a < 0 ? vdupq_n_s32(0) : __a; return __builtin_convertvector(__a, uint16x4_t); }
 __BUN_CC_INTRIN uint16x8_t vqmovun_high_s32(uint16x4_t __r, int32x4_t __a) { return vcombine_u16(__r, vqmovun_s32(__a)); }
 __BUN_CC_INTRIN int16x8_t vqmovn_high_s32(int16x4_t __r, int32x4_t __a) { return vcombine_s16(__r, vqmovn_s32(__a)); }
 __BUN_CC_INTRIN uint16x4_t vmovn_u32(uint32x4_t __a) { return __builtin_convertvector(__a, uint16x4_t); }
@@ -1666,11 +1486,7 @@ __BUN_CC_INTRIN uint16x8_t vshrn_high_n_u32(uint16x4_t __r, uint32x4_t __a, int 
 __BUN_CC_INTRIN uint16x4_t vrshrn_n_u32(uint32x4_t __a, int __n) { return vmovn_u32((__a >> __n) + ((__a >> (__n - 1)) & 1)); }
 __BUN_CC_INTRIN uint16x4_t vaddhn_u32(uint32x4_t __a, uint32x4_t __b) { return vmovn_u32((__a + __b) >> 16); }
 __BUN_CC_INTRIN uint16x4_t vsubhn_u32(uint32x4_t __a, uint32x4_t __b) { return vmovn_u32((__a - __b) >> 16); }
-__BUN_CC_INTRIN uint16x4_t vqmovn_u32(uint32x4_t __a)
-{
-    __a = __a > vdupq_n_u32(65535u) ? vdupq_n_u32(65535u) : __a;
-    return __builtin_convertvector(__a, uint16x4_t);
-}
+__BUN_CC_INTRIN uint16x4_t vqmovn_u32(uint32x4_t __a) { __a = __a > vdupq_n_u32(65535u) ? vdupq_n_u32(65535u) : __a; return __builtin_convertvector(__a, uint16x4_t); }
 __BUN_CC_INTRIN uint16x8_t vqmovn_high_u32(uint16x4_t __r, uint32x4_t __a) { return vcombine_u16(__r, vqmovn_u32(__a)); }
 __BUN_CC_INTRIN int32x2_t vmovn_s64(int64x2_t __a) { return __builtin_convertvector(__a, int32x2_t); }
 __BUN_CC_INTRIN int32x4_t vmovn_high_s64(int32x2_t __r, int64x2_t __a) { return vcombine_s32(__r, vmovn_s64(__a)); }
@@ -1679,18 +1495,8 @@ __BUN_CC_INTRIN int32x4_t vshrn_high_n_s64(int32x2_t __r, int64x2_t __a, int __n
 __BUN_CC_INTRIN int32x2_t vrshrn_n_s64(int64x2_t __a, int __n) { return vmovn_s64((__a >> __n) + ((__a >> (__n - 1)) & 1)); }
 __BUN_CC_INTRIN int32x2_t vaddhn_s64(int64x2_t __a, int64x2_t __b) { return vmovn_s64((__a + __b) >> 32); }
 __BUN_CC_INTRIN int32x2_t vsubhn_s64(int64x2_t __a, int64x2_t __b) { return vmovn_s64((__a - __b) >> 32); }
-__BUN_CC_INTRIN int32x2_t vqmovn_s64(int64x2_t __a)
-{
-    __a = __a > vdupq_n_s64(2147483647) ? vdupq_n_s64(2147483647) : __a;
-    __a = __a < vdupq_n_s64(-2147483647 - 1) ? vdupq_n_s64(-2147483647 - 1) : __a;
-    return __builtin_convertvector(__a, int32x2_t);
-}
-__BUN_CC_INTRIN uint32x2_t vqmovun_s64(int64x2_t __a)
-{
-    __a = __a > vdupq_n_s64(4294967295) ? vdupq_n_s64(4294967295) : __a;
-    __a = __a < 0 ? vdupq_n_s64(0) : __a;
-    return __builtin_convertvector(__a, uint32x2_t);
-}
+__BUN_CC_INTRIN int32x2_t vqmovn_s64(int64x2_t __a) { __a = __a > vdupq_n_s64(2147483647) ? vdupq_n_s64(2147483647) : __a; __a = __a < vdupq_n_s64(-2147483647 - 1) ? vdupq_n_s64(-2147483647 - 1) : __a; return __builtin_convertvector(__a, int32x2_t); }
+__BUN_CC_INTRIN uint32x2_t vqmovun_s64(int64x2_t __a) { __a = __a > vdupq_n_s64(4294967295) ? vdupq_n_s64(4294967295) : __a; __a = __a < 0 ? vdupq_n_s64(0) : __a; return __builtin_convertvector(__a, uint32x2_t); }
 __BUN_CC_INTRIN uint32x4_t vqmovun_high_s64(uint32x2_t __r, int64x2_t __a) { return vcombine_u32(__r, vqmovun_s64(__a)); }
 __BUN_CC_INTRIN int32x4_t vqmovn_high_s64(int32x2_t __r, int64x2_t __a) { return vcombine_s32(__r, vqmovn_s64(__a)); }
 __BUN_CC_INTRIN uint32x2_t vmovn_u64(uint64x2_t __a) { return __builtin_convertvector(__a, uint32x2_t); }
@@ -1700,11 +1506,7 @@ __BUN_CC_INTRIN uint32x4_t vshrn_high_n_u64(uint32x2_t __r, uint64x2_t __a, int 
 __BUN_CC_INTRIN uint32x2_t vrshrn_n_u64(uint64x2_t __a, int __n) { return vmovn_u64((__a >> __n) + ((__a >> (__n - 1)) & 1)); }
 __BUN_CC_INTRIN uint32x2_t vaddhn_u64(uint64x2_t __a, uint64x2_t __b) { return vmovn_u64((__a + __b) >> 32); }
 __BUN_CC_INTRIN uint32x2_t vsubhn_u64(uint64x2_t __a, uint64x2_t __b) { return vmovn_u64((__a - __b) >> 32); }
-__BUN_CC_INTRIN uint32x2_t vqmovn_u64(uint64x2_t __a)
-{
-    __a = __a > vdupq_n_u64(4294967295u) ? vdupq_n_u64(4294967295u) : __a;
-    return __builtin_convertvector(__a, uint32x2_t);
-}
+__BUN_CC_INTRIN uint32x2_t vqmovn_u64(uint64x2_t __a) { __a = __a > vdupq_n_u64(4294967295u) ? vdupq_n_u64(4294967295u) : __a; return __builtin_convertvector(__a, uint32x2_t); }
 __BUN_CC_INTRIN uint32x4_t vqmovn_high_u64(uint32x2_t __r, uint64x2_t __a) { return vcombine_u32(__r, vqmovn_u64(__a)); }
 __BUN_CC_INTRIN uint8x8_t vqshl_n_u8(uint8x8_t __a, int __n) { return __n == 0 ? __a : ((__a >> (8 - __n)) != 0 ? ~vdup_n_u8(0) : __a << __n); }
 __BUN_CC_INTRIN uint8x16_t vqshlq_n_u8(uint8x16_t __a, int __n) { return __n == 0 ? __a : ((__a >> (8 - __n)) != 0 ? ~vdupq_n_u8(0) : __a << __n); }
@@ -1738,144 +1540,144 @@ __BUN_CC_INTRIN int8x8_t vrev32_s8(int8x8_t __a) { return __builtin_shufflevecto
 __BUN_CC_INTRIN int8x8_t vrev16_s8(int8x8_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2, 5, 4, 7, 6); }
 __BUN_CC_INTRIN int8x8_t vzip1_s8(int8x8_t __a, int8x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 1, 9, 2, 10, 3, 11); }
 __BUN_CC_INTRIN int8x8_t vzip2_s8(int8x8_t __a, int8x8_t __b) { return __builtin_shufflevector(__a, __b, 4, 12, 5, 13, 6, 14, 7, 15); }
-__BUN_CC_INTRIN int8x8x2_t vzip_s8(int8x8_t __a, int8x8_t __b) { return (int8x8x2_t) { { vzip1_s8(__a, __b), vzip2_s8(__a, __b) } }; }
+__BUN_CC_INTRIN int8x8x2_t vzip_s8(int8x8_t __a, int8x8_t __b) { return (int8x8x2_t){{vzip1_s8(__a, __b), vzip2_s8(__a, __b)}}; }
 __BUN_CC_INTRIN int8x8_t vuzp1_s8(int8x8_t __a, int8x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6, 8, 10, 12, 14); }
 __BUN_CC_INTRIN int8x8_t vuzp2_s8(int8x8_t __a, int8x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7, 9, 11, 13, 15); }
-__BUN_CC_INTRIN int8x8x2_t vuzp_s8(int8x8_t __a, int8x8_t __b) { return (int8x8x2_t) { { vuzp1_s8(__a, __b), vuzp2_s8(__a, __b) } }; }
+__BUN_CC_INTRIN int8x8x2_t vuzp_s8(int8x8_t __a, int8x8_t __b) { return (int8x8x2_t){{vuzp1_s8(__a, __b), vuzp2_s8(__a, __b)}}; }
 __BUN_CC_INTRIN int8x8_t vtrn1_s8(int8x8_t __a, int8x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 2, 10, 4, 12, 6, 14); }
 __BUN_CC_INTRIN int8x8_t vtrn2_s8(int8x8_t __a, int8x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 9, 3, 11, 5, 13, 7, 15); }
-__BUN_CC_INTRIN int8x8x2_t vtrn_s8(int8x8_t __a, int8x8_t __b) { return (int8x8x2_t) { { vtrn1_s8(__a, __b), vtrn2_s8(__a, __b) } }; }
+__BUN_CC_INTRIN int8x8x2_t vtrn_s8(int8x8_t __a, int8x8_t __b) { return (int8x8x2_t){{vtrn1_s8(__a, __b), vtrn2_s8(__a, __b)}}; }
 #define vextq_s8(a, b, n) __builtin_shufflevector((int8x16_t)(a), (int8x16_t)(b), (n), (n) + 1, (n) + 2, (n) + 3, (n) + 4, (n) + 5, (n) + 6, (n) + 7, (n) + 8, (n) + 9, (n) + 10, (n) + 11, (n) + 12, (n) + 13, (n) + 14, (n) + 15)
 __BUN_CC_INTRIN int8x16_t vrev64q_s8(int8x16_t __a) { return __builtin_shufflevector(__a, __a, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8); }
 __BUN_CC_INTRIN int8x16_t vrev32q_s8(int8x16_t __a) { return __builtin_shufflevector(__a, __a, 3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12); }
 __BUN_CC_INTRIN int8x16_t vrev16q_s8(int8x16_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14); }
 __BUN_CC_INTRIN int8x16_t vzip1q_s8(int8x16_t __a, int8x16_t __b) { return __builtin_shufflevector(__a, __b, 0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23); }
 __BUN_CC_INTRIN int8x16_t vzip2q_s8(int8x16_t __a, int8x16_t __b) { return __builtin_shufflevector(__a, __b, 8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31); }
-__BUN_CC_INTRIN int8x16x2_t vzipq_s8(int8x16_t __a, int8x16_t __b) { return (int8x16x2_t) { { vzip1q_s8(__a, __b), vzip2q_s8(__a, __b) } }; }
+__BUN_CC_INTRIN int8x16x2_t vzipq_s8(int8x16_t __a, int8x16_t __b) { return (int8x16x2_t){{vzip1q_s8(__a, __b), vzip2q_s8(__a, __b)}}; }
 __BUN_CC_INTRIN int8x16_t vuzp1q_s8(int8x16_t __a, int8x16_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30); }
 __BUN_CC_INTRIN int8x16_t vuzp2q_s8(int8x16_t __a, int8x16_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31); }
-__BUN_CC_INTRIN int8x16x2_t vuzpq_s8(int8x16_t __a, int8x16_t __b) { return (int8x16x2_t) { { vuzp1q_s8(__a, __b), vuzp2q_s8(__a, __b) } }; }
+__BUN_CC_INTRIN int8x16x2_t vuzpq_s8(int8x16_t __a, int8x16_t __b) { return (int8x16x2_t){{vuzp1q_s8(__a, __b), vuzp2q_s8(__a, __b)}}; }
 __BUN_CC_INTRIN int8x16_t vtrn1q_s8(int8x16_t __a, int8x16_t __b) { return __builtin_shufflevector(__a, __b, 0, 16, 2, 18, 4, 20, 6, 22, 8, 24, 10, 26, 12, 28, 14, 30); }
 __BUN_CC_INTRIN int8x16_t vtrn2q_s8(int8x16_t __a, int8x16_t __b) { return __builtin_shufflevector(__a, __b, 1, 17, 3, 19, 5, 21, 7, 23, 9, 25, 11, 27, 13, 29, 15, 31); }
-__BUN_CC_INTRIN int8x16x2_t vtrnq_s8(int8x16_t __a, int8x16_t __b) { return (int8x16x2_t) { { vtrn1q_s8(__a, __b), vtrn2q_s8(__a, __b) } }; }
+__BUN_CC_INTRIN int8x16x2_t vtrnq_s8(int8x16_t __a, int8x16_t __b) { return (int8x16x2_t){{vtrn1q_s8(__a, __b), vtrn2q_s8(__a, __b)}}; }
 #define vext_u8(a, b, n) __builtin_shufflevector((uint8x8_t)(a), (uint8x8_t)(b), (n), (n) + 1, (n) + 2, (n) + 3, (n) + 4, (n) + 5, (n) + 6, (n) + 7)
 __BUN_CC_INTRIN uint8x8_t vrev64_u8(uint8x8_t __a) { return __builtin_shufflevector(__a, __a, 7, 6, 5, 4, 3, 2, 1, 0); }
 __BUN_CC_INTRIN uint8x8_t vrev32_u8(uint8x8_t __a) { return __builtin_shufflevector(__a, __a, 3, 2, 1, 0, 7, 6, 5, 4); }
 __BUN_CC_INTRIN uint8x8_t vrev16_u8(uint8x8_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2, 5, 4, 7, 6); }
 __BUN_CC_INTRIN uint8x8_t vzip1_u8(uint8x8_t __a, uint8x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 1, 9, 2, 10, 3, 11); }
 __BUN_CC_INTRIN uint8x8_t vzip2_u8(uint8x8_t __a, uint8x8_t __b) { return __builtin_shufflevector(__a, __b, 4, 12, 5, 13, 6, 14, 7, 15); }
-__BUN_CC_INTRIN uint8x8x2_t vzip_u8(uint8x8_t __a, uint8x8_t __b) { return (uint8x8x2_t) { { vzip1_u8(__a, __b), vzip2_u8(__a, __b) } }; }
+__BUN_CC_INTRIN uint8x8x2_t vzip_u8(uint8x8_t __a, uint8x8_t __b) { return (uint8x8x2_t){{vzip1_u8(__a, __b), vzip2_u8(__a, __b)}}; }
 __BUN_CC_INTRIN uint8x8_t vuzp1_u8(uint8x8_t __a, uint8x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6, 8, 10, 12, 14); }
 __BUN_CC_INTRIN uint8x8_t vuzp2_u8(uint8x8_t __a, uint8x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7, 9, 11, 13, 15); }
-__BUN_CC_INTRIN uint8x8x2_t vuzp_u8(uint8x8_t __a, uint8x8_t __b) { return (uint8x8x2_t) { { vuzp1_u8(__a, __b), vuzp2_u8(__a, __b) } }; }
+__BUN_CC_INTRIN uint8x8x2_t vuzp_u8(uint8x8_t __a, uint8x8_t __b) { return (uint8x8x2_t){{vuzp1_u8(__a, __b), vuzp2_u8(__a, __b)}}; }
 __BUN_CC_INTRIN uint8x8_t vtrn1_u8(uint8x8_t __a, uint8x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 2, 10, 4, 12, 6, 14); }
 __BUN_CC_INTRIN uint8x8_t vtrn2_u8(uint8x8_t __a, uint8x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 9, 3, 11, 5, 13, 7, 15); }
-__BUN_CC_INTRIN uint8x8x2_t vtrn_u8(uint8x8_t __a, uint8x8_t __b) { return (uint8x8x2_t) { { vtrn1_u8(__a, __b), vtrn2_u8(__a, __b) } }; }
+__BUN_CC_INTRIN uint8x8x2_t vtrn_u8(uint8x8_t __a, uint8x8_t __b) { return (uint8x8x2_t){{vtrn1_u8(__a, __b), vtrn2_u8(__a, __b)}}; }
 #define vextq_u8(a, b, n) __builtin_shufflevector((uint8x16_t)(a), (uint8x16_t)(b), (n), (n) + 1, (n) + 2, (n) + 3, (n) + 4, (n) + 5, (n) + 6, (n) + 7, (n) + 8, (n) + 9, (n) + 10, (n) + 11, (n) + 12, (n) + 13, (n) + 14, (n) + 15)
 __BUN_CC_INTRIN uint8x16_t vrev64q_u8(uint8x16_t __a) { return __builtin_shufflevector(__a, __a, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8); }
 __BUN_CC_INTRIN uint8x16_t vrev32q_u8(uint8x16_t __a) { return __builtin_shufflevector(__a, __a, 3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12); }
 __BUN_CC_INTRIN uint8x16_t vrev16q_u8(uint8x16_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14); }
 __BUN_CC_INTRIN uint8x16_t vzip1q_u8(uint8x16_t __a, uint8x16_t __b) { return __builtin_shufflevector(__a, __b, 0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23); }
 __BUN_CC_INTRIN uint8x16_t vzip2q_u8(uint8x16_t __a, uint8x16_t __b) { return __builtin_shufflevector(__a, __b, 8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31); }
-__BUN_CC_INTRIN uint8x16x2_t vzipq_u8(uint8x16_t __a, uint8x16_t __b) { return (uint8x16x2_t) { { vzip1q_u8(__a, __b), vzip2q_u8(__a, __b) } }; }
+__BUN_CC_INTRIN uint8x16x2_t vzipq_u8(uint8x16_t __a, uint8x16_t __b) { return (uint8x16x2_t){{vzip1q_u8(__a, __b), vzip2q_u8(__a, __b)}}; }
 __BUN_CC_INTRIN uint8x16_t vuzp1q_u8(uint8x16_t __a, uint8x16_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30); }
 __BUN_CC_INTRIN uint8x16_t vuzp2q_u8(uint8x16_t __a, uint8x16_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31); }
-__BUN_CC_INTRIN uint8x16x2_t vuzpq_u8(uint8x16_t __a, uint8x16_t __b) { return (uint8x16x2_t) { { vuzp1q_u8(__a, __b), vuzp2q_u8(__a, __b) } }; }
+__BUN_CC_INTRIN uint8x16x2_t vuzpq_u8(uint8x16_t __a, uint8x16_t __b) { return (uint8x16x2_t){{vuzp1q_u8(__a, __b), vuzp2q_u8(__a, __b)}}; }
 __BUN_CC_INTRIN uint8x16_t vtrn1q_u8(uint8x16_t __a, uint8x16_t __b) { return __builtin_shufflevector(__a, __b, 0, 16, 2, 18, 4, 20, 6, 22, 8, 24, 10, 26, 12, 28, 14, 30); }
 __BUN_CC_INTRIN uint8x16_t vtrn2q_u8(uint8x16_t __a, uint8x16_t __b) { return __builtin_shufflevector(__a, __b, 1, 17, 3, 19, 5, 21, 7, 23, 9, 25, 11, 27, 13, 29, 15, 31); }
-__BUN_CC_INTRIN uint8x16x2_t vtrnq_u8(uint8x16_t __a, uint8x16_t __b) { return (uint8x16x2_t) { { vtrn1q_u8(__a, __b), vtrn2q_u8(__a, __b) } }; }
+__BUN_CC_INTRIN uint8x16x2_t vtrnq_u8(uint8x16_t __a, uint8x16_t __b) { return (uint8x16x2_t){{vtrn1q_u8(__a, __b), vtrn2q_u8(__a, __b)}}; }
 #define vext_s16(a, b, n) __builtin_shufflevector((int16x4_t)(a), (int16x4_t)(b), (n), (n) + 1, (n) + 2, (n) + 3)
 __BUN_CC_INTRIN int16x4_t vrev64_s16(int16x4_t __a) { return __builtin_shufflevector(__a, __a, 3, 2, 1, 0); }
 __BUN_CC_INTRIN int16x4_t vrev32_s16(int16x4_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2); }
 __BUN_CC_INTRIN int16x4_t vzip1_s16(int16x4_t __a, int16x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 1, 5); }
 __BUN_CC_INTRIN int16x4_t vzip2_s16(int16x4_t __a, int16x4_t __b) { return __builtin_shufflevector(__a, __b, 2, 6, 3, 7); }
-__BUN_CC_INTRIN int16x4x2_t vzip_s16(int16x4_t __a, int16x4_t __b) { return (int16x4x2_t) { { vzip1_s16(__a, __b), vzip2_s16(__a, __b) } }; }
+__BUN_CC_INTRIN int16x4x2_t vzip_s16(int16x4_t __a, int16x4_t __b) { return (int16x4x2_t){{vzip1_s16(__a, __b), vzip2_s16(__a, __b)}}; }
 __BUN_CC_INTRIN int16x4_t vuzp1_s16(int16x4_t __a, int16x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6); }
 __BUN_CC_INTRIN int16x4_t vuzp2_s16(int16x4_t __a, int16x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7); }
-__BUN_CC_INTRIN int16x4x2_t vuzp_s16(int16x4_t __a, int16x4_t __b) { return (int16x4x2_t) { { vuzp1_s16(__a, __b), vuzp2_s16(__a, __b) } }; }
+__BUN_CC_INTRIN int16x4x2_t vuzp_s16(int16x4_t __a, int16x4_t __b) { return (int16x4x2_t){{vuzp1_s16(__a, __b), vuzp2_s16(__a, __b)}}; }
 __BUN_CC_INTRIN int16x4_t vtrn1_s16(int16x4_t __a, int16x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 2, 6); }
 __BUN_CC_INTRIN int16x4_t vtrn2_s16(int16x4_t __a, int16x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 5, 3, 7); }
-__BUN_CC_INTRIN int16x4x2_t vtrn_s16(int16x4_t __a, int16x4_t __b) { return (int16x4x2_t) { { vtrn1_s16(__a, __b), vtrn2_s16(__a, __b) } }; }
+__BUN_CC_INTRIN int16x4x2_t vtrn_s16(int16x4_t __a, int16x4_t __b) { return (int16x4x2_t){{vtrn1_s16(__a, __b), vtrn2_s16(__a, __b)}}; }
 #define vextq_s16(a, b, n) __builtin_shufflevector((int16x8_t)(a), (int16x8_t)(b), (n), (n) + 1, (n) + 2, (n) + 3, (n) + 4, (n) + 5, (n) + 6, (n) + 7)
 __BUN_CC_INTRIN int16x8_t vrev64q_s16(int16x8_t __a) { return __builtin_shufflevector(__a, __a, 3, 2, 1, 0, 7, 6, 5, 4); }
 __BUN_CC_INTRIN int16x8_t vrev32q_s16(int16x8_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2, 5, 4, 7, 6); }
 __BUN_CC_INTRIN int16x8_t vzip1q_s16(int16x8_t __a, int16x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 1, 9, 2, 10, 3, 11); }
 __BUN_CC_INTRIN int16x8_t vzip2q_s16(int16x8_t __a, int16x8_t __b) { return __builtin_shufflevector(__a, __b, 4, 12, 5, 13, 6, 14, 7, 15); }
-__BUN_CC_INTRIN int16x8x2_t vzipq_s16(int16x8_t __a, int16x8_t __b) { return (int16x8x2_t) { { vzip1q_s16(__a, __b), vzip2q_s16(__a, __b) } }; }
+__BUN_CC_INTRIN int16x8x2_t vzipq_s16(int16x8_t __a, int16x8_t __b) { return (int16x8x2_t){{vzip1q_s16(__a, __b), vzip2q_s16(__a, __b)}}; }
 __BUN_CC_INTRIN int16x8_t vuzp1q_s16(int16x8_t __a, int16x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6, 8, 10, 12, 14); }
 __BUN_CC_INTRIN int16x8_t vuzp2q_s16(int16x8_t __a, int16x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7, 9, 11, 13, 15); }
-__BUN_CC_INTRIN int16x8x2_t vuzpq_s16(int16x8_t __a, int16x8_t __b) { return (int16x8x2_t) { { vuzp1q_s16(__a, __b), vuzp2q_s16(__a, __b) } }; }
+__BUN_CC_INTRIN int16x8x2_t vuzpq_s16(int16x8_t __a, int16x8_t __b) { return (int16x8x2_t){{vuzp1q_s16(__a, __b), vuzp2q_s16(__a, __b)}}; }
 __BUN_CC_INTRIN int16x8_t vtrn1q_s16(int16x8_t __a, int16x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 2, 10, 4, 12, 6, 14); }
 __BUN_CC_INTRIN int16x8_t vtrn2q_s16(int16x8_t __a, int16x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 9, 3, 11, 5, 13, 7, 15); }
-__BUN_CC_INTRIN int16x8x2_t vtrnq_s16(int16x8_t __a, int16x8_t __b) { return (int16x8x2_t) { { vtrn1q_s16(__a, __b), vtrn2q_s16(__a, __b) } }; }
+__BUN_CC_INTRIN int16x8x2_t vtrnq_s16(int16x8_t __a, int16x8_t __b) { return (int16x8x2_t){{vtrn1q_s16(__a, __b), vtrn2q_s16(__a, __b)}}; }
 #define vext_u16(a, b, n) __builtin_shufflevector((uint16x4_t)(a), (uint16x4_t)(b), (n), (n) + 1, (n) + 2, (n) + 3)
 __BUN_CC_INTRIN uint16x4_t vrev64_u16(uint16x4_t __a) { return __builtin_shufflevector(__a, __a, 3, 2, 1, 0); }
 __BUN_CC_INTRIN uint16x4_t vrev32_u16(uint16x4_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2); }
 __BUN_CC_INTRIN uint16x4_t vzip1_u16(uint16x4_t __a, uint16x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 1, 5); }
 __BUN_CC_INTRIN uint16x4_t vzip2_u16(uint16x4_t __a, uint16x4_t __b) { return __builtin_shufflevector(__a, __b, 2, 6, 3, 7); }
-__BUN_CC_INTRIN uint16x4x2_t vzip_u16(uint16x4_t __a, uint16x4_t __b) { return (uint16x4x2_t) { { vzip1_u16(__a, __b), vzip2_u16(__a, __b) } }; }
+__BUN_CC_INTRIN uint16x4x2_t vzip_u16(uint16x4_t __a, uint16x4_t __b) { return (uint16x4x2_t){{vzip1_u16(__a, __b), vzip2_u16(__a, __b)}}; }
 __BUN_CC_INTRIN uint16x4_t vuzp1_u16(uint16x4_t __a, uint16x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6); }
 __BUN_CC_INTRIN uint16x4_t vuzp2_u16(uint16x4_t __a, uint16x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7); }
-__BUN_CC_INTRIN uint16x4x2_t vuzp_u16(uint16x4_t __a, uint16x4_t __b) { return (uint16x4x2_t) { { vuzp1_u16(__a, __b), vuzp2_u16(__a, __b) } }; }
+__BUN_CC_INTRIN uint16x4x2_t vuzp_u16(uint16x4_t __a, uint16x4_t __b) { return (uint16x4x2_t){{vuzp1_u16(__a, __b), vuzp2_u16(__a, __b)}}; }
 __BUN_CC_INTRIN uint16x4_t vtrn1_u16(uint16x4_t __a, uint16x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 2, 6); }
 __BUN_CC_INTRIN uint16x4_t vtrn2_u16(uint16x4_t __a, uint16x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 5, 3, 7); }
-__BUN_CC_INTRIN uint16x4x2_t vtrn_u16(uint16x4_t __a, uint16x4_t __b) { return (uint16x4x2_t) { { vtrn1_u16(__a, __b), vtrn2_u16(__a, __b) } }; }
+__BUN_CC_INTRIN uint16x4x2_t vtrn_u16(uint16x4_t __a, uint16x4_t __b) { return (uint16x4x2_t){{vtrn1_u16(__a, __b), vtrn2_u16(__a, __b)}}; }
 #define vextq_u16(a, b, n) __builtin_shufflevector((uint16x8_t)(a), (uint16x8_t)(b), (n), (n) + 1, (n) + 2, (n) + 3, (n) + 4, (n) + 5, (n) + 6, (n) + 7)
 __BUN_CC_INTRIN uint16x8_t vrev64q_u16(uint16x8_t __a) { return __builtin_shufflevector(__a, __a, 3, 2, 1, 0, 7, 6, 5, 4); }
 __BUN_CC_INTRIN uint16x8_t vrev32q_u16(uint16x8_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2, 5, 4, 7, 6); }
 __BUN_CC_INTRIN uint16x8_t vzip1q_u16(uint16x8_t __a, uint16x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 1, 9, 2, 10, 3, 11); }
 __BUN_CC_INTRIN uint16x8_t vzip2q_u16(uint16x8_t __a, uint16x8_t __b) { return __builtin_shufflevector(__a, __b, 4, 12, 5, 13, 6, 14, 7, 15); }
-__BUN_CC_INTRIN uint16x8x2_t vzipq_u16(uint16x8_t __a, uint16x8_t __b) { return (uint16x8x2_t) { { vzip1q_u16(__a, __b), vzip2q_u16(__a, __b) } }; }
+__BUN_CC_INTRIN uint16x8x2_t vzipq_u16(uint16x8_t __a, uint16x8_t __b) { return (uint16x8x2_t){{vzip1q_u16(__a, __b), vzip2q_u16(__a, __b)}}; }
 __BUN_CC_INTRIN uint16x8_t vuzp1q_u16(uint16x8_t __a, uint16x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6, 8, 10, 12, 14); }
 __BUN_CC_INTRIN uint16x8_t vuzp2q_u16(uint16x8_t __a, uint16x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7, 9, 11, 13, 15); }
-__BUN_CC_INTRIN uint16x8x2_t vuzpq_u16(uint16x8_t __a, uint16x8_t __b) { return (uint16x8x2_t) { { vuzp1q_u16(__a, __b), vuzp2q_u16(__a, __b) } }; }
+__BUN_CC_INTRIN uint16x8x2_t vuzpq_u16(uint16x8_t __a, uint16x8_t __b) { return (uint16x8x2_t){{vuzp1q_u16(__a, __b), vuzp2q_u16(__a, __b)}}; }
 __BUN_CC_INTRIN uint16x8_t vtrn1q_u16(uint16x8_t __a, uint16x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 2, 10, 4, 12, 6, 14); }
 __BUN_CC_INTRIN uint16x8_t vtrn2q_u16(uint16x8_t __a, uint16x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 9, 3, 11, 5, 13, 7, 15); }
-__BUN_CC_INTRIN uint16x8x2_t vtrnq_u16(uint16x8_t __a, uint16x8_t __b) { return (uint16x8x2_t) { { vtrn1q_u16(__a, __b), vtrn2q_u16(__a, __b) } }; }
+__BUN_CC_INTRIN uint16x8x2_t vtrnq_u16(uint16x8_t __a, uint16x8_t __b) { return (uint16x8x2_t){{vtrn1q_u16(__a, __b), vtrn2q_u16(__a, __b)}}; }
 #define vext_s32(a, b, n) __builtin_shufflevector((int32x2_t)(a), (int32x2_t)(b), (n), (n) + 1)
 __BUN_CC_INTRIN int32x2_t vrev64_s32(int32x2_t __a) { return __builtin_shufflevector(__a, __a, 1, 0); }
 __BUN_CC_INTRIN int32x2_t vzip1_s32(int32x2_t __a, int32x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
 __BUN_CC_INTRIN int32x2_t vzip2_s32(int32x2_t __a, int32x2_t __b) { return __builtin_shufflevector(__a, __b, 1, 3); }
-__BUN_CC_INTRIN int32x2x2_t vzip_s32(int32x2_t __a, int32x2_t __b) { return (int32x2x2_t) { { vzip1_s32(__a, __b), vzip2_s32(__a, __b) } }; }
+__BUN_CC_INTRIN int32x2x2_t vzip_s32(int32x2_t __a, int32x2_t __b) { return (int32x2x2_t){{vzip1_s32(__a, __b), vzip2_s32(__a, __b)}}; }
 __BUN_CC_INTRIN int32x2_t vuzp1_s32(int32x2_t __a, int32x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
 __BUN_CC_INTRIN int32x2_t vuzp2_s32(int32x2_t __a, int32x2_t __b) { return __builtin_shufflevector(__a, __b, 1, 3); }
-__BUN_CC_INTRIN int32x2x2_t vuzp_s32(int32x2_t __a, int32x2_t __b) { return (int32x2x2_t) { { vuzp1_s32(__a, __b), vuzp2_s32(__a, __b) } }; }
+__BUN_CC_INTRIN int32x2x2_t vuzp_s32(int32x2_t __a, int32x2_t __b) { return (int32x2x2_t){{vuzp1_s32(__a, __b), vuzp2_s32(__a, __b)}}; }
 __BUN_CC_INTRIN int32x2_t vtrn1_s32(int32x2_t __a, int32x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
 __BUN_CC_INTRIN int32x2_t vtrn2_s32(int32x2_t __a, int32x2_t __b) { return __builtin_shufflevector(__a, __b, 1, 3); }
-__BUN_CC_INTRIN int32x2x2_t vtrn_s32(int32x2_t __a, int32x2_t __b) { return (int32x2x2_t) { { vtrn1_s32(__a, __b), vtrn2_s32(__a, __b) } }; }
+__BUN_CC_INTRIN int32x2x2_t vtrn_s32(int32x2_t __a, int32x2_t __b) { return (int32x2x2_t){{vtrn1_s32(__a, __b), vtrn2_s32(__a, __b)}}; }
 #define vextq_s32(a, b, n) __builtin_shufflevector((int32x4_t)(a), (int32x4_t)(b), (n), (n) + 1, (n) + 2, (n) + 3)
 __BUN_CC_INTRIN int32x4_t vrev64q_s32(int32x4_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2); }
 __BUN_CC_INTRIN int32x4_t vzip1q_s32(int32x4_t __a, int32x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 1, 5); }
 __BUN_CC_INTRIN int32x4_t vzip2q_s32(int32x4_t __a, int32x4_t __b) { return __builtin_shufflevector(__a, __b, 2, 6, 3, 7); }
-__BUN_CC_INTRIN int32x4x2_t vzipq_s32(int32x4_t __a, int32x4_t __b) { return (int32x4x2_t) { { vzip1q_s32(__a, __b), vzip2q_s32(__a, __b) } }; }
+__BUN_CC_INTRIN int32x4x2_t vzipq_s32(int32x4_t __a, int32x4_t __b) { return (int32x4x2_t){{vzip1q_s32(__a, __b), vzip2q_s32(__a, __b)}}; }
 __BUN_CC_INTRIN int32x4_t vuzp1q_s32(int32x4_t __a, int32x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6); }
 __BUN_CC_INTRIN int32x4_t vuzp2q_s32(int32x4_t __a, int32x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7); }
-__BUN_CC_INTRIN int32x4x2_t vuzpq_s32(int32x4_t __a, int32x4_t __b) { return (int32x4x2_t) { { vuzp1q_s32(__a, __b), vuzp2q_s32(__a, __b) } }; }
+__BUN_CC_INTRIN int32x4x2_t vuzpq_s32(int32x4_t __a, int32x4_t __b) { return (int32x4x2_t){{vuzp1q_s32(__a, __b), vuzp2q_s32(__a, __b)}}; }
 __BUN_CC_INTRIN int32x4_t vtrn1q_s32(int32x4_t __a, int32x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 2, 6); }
 __BUN_CC_INTRIN int32x4_t vtrn2q_s32(int32x4_t __a, int32x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 5, 3, 7); }
-__BUN_CC_INTRIN int32x4x2_t vtrnq_s32(int32x4_t __a, int32x4_t __b) { return (int32x4x2_t) { { vtrn1q_s32(__a, __b), vtrn2q_s32(__a, __b) } }; }
+__BUN_CC_INTRIN int32x4x2_t vtrnq_s32(int32x4_t __a, int32x4_t __b) { return (int32x4x2_t){{vtrn1q_s32(__a, __b), vtrn2q_s32(__a, __b)}}; }
 #define vext_u32(a, b, n) __builtin_shufflevector((uint32x2_t)(a), (uint32x2_t)(b), (n), (n) + 1)
 __BUN_CC_INTRIN uint32x2_t vrev64_u32(uint32x2_t __a) { return __builtin_shufflevector(__a, __a, 1, 0); }
 __BUN_CC_INTRIN uint32x2_t vzip1_u32(uint32x2_t __a, uint32x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
 __BUN_CC_INTRIN uint32x2_t vzip2_u32(uint32x2_t __a, uint32x2_t __b) { return __builtin_shufflevector(__a, __b, 1, 3); }
-__BUN_CC_INTRIN uint32x2x2_t vzip_u32(uint32x2_t __a, uint32x2_t __b) { return (uint32x2x2_t) { { vzip1_u32(__a, __b), vzip2_u32(__a, __b) } }; }
+__BUN_CC_INTRIN uint32x2x2_t vzip_u32(uint32x2_t __a, uint32x2_t __b) { return (uint32x2x2_t){{vzip1_u32(__a, __b), vzip2_u32(__a, __b)}}; }
 __BUN_CC_INTRIN uint32x2_t vuzp1_u32(uint32x2_t __a, uint32x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
 __BUN_CC_INTRIN uint32x2_t vuzp2_u32(uint32x2_t __a, uint32x2_t __b) { return __builtin_shufflevector(__a, __b, 1, 3); }
-__BUN_CC_INTRIN uint32x2x2_t vuzp_u32(uint32x2_t __a, uint32x2_t __b) { return (uint32x2x2_t) { { vuzp1_u32(__a, __b), vuzp2_u32(__a, __b) } }; }
+__BUN_CC_INTRIN uint32x2x2_t vuzp_u32(uint32x2_t __a, uint32x2_t __b) { return (uint32x2x2_t){{vuzp1_u32(__a, __b), vuzp2_u32(__a, __b)}}; }
 __BUN_CC_INTRIN uint32x2_t vtrn1_u32(uint32x2_t __a, uint32x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
 __BUN_CC_INTRIN uint32x2_t vtrn2_u32(uint32x2_t __a, uint32x2_t __b) { return __builtin_shufflevector(__a, __b, 1, 3); }
-__BUN_CC_INTRIN uint32x2x2_t vtrn_u32(uint32x2_t __a, uint32x2_t __b) { return (uint32x2x2_t) { { vtrn1_u32(__a, __b), vtrn2_u32(__a, __b) } }; }
+__BUN_CC_INTRIN uint32x2x2_t vtrn_u32(uint32x2_t __a, uint32x2_t __b) { return (uint32x2x2_t){{vtrn1_u32(__a, __b), vtrn2_u32(__a, __b)}}; }
 #define vextq_u32(a, b, n) __builtin_shufflevector((uint32x4_t)(a), (uint32x4_t)(b), (n), (n) + 1, (n) + 2, (n) + 3)
 __BUN_CC_INTRIN uint32x4_t vrev64q_u32(uint32x4_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2); }
 __BUN_CC_INTRIN uint32x4_t vzip1q_u32(uint32x4_t __a, uint32x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 1, 5); }
 __BUN_CC_INTRIN uint32x4_t vzip2q_u32(uint32x4_t __a, uint32x4_t __b) { return __builtin_shufflevector(__a, __b, 2, 6, 3, 7); }
-__BUN_CC_INTRIN uint32x4x2_t vzipq_u32(uint32x4_t __a, uint32x4_t __b) { return (uint32x4x2_t) { { vzip1q_u32(__a, __b), vzip2q_u32(__a, __b) } }; }
+__BUN_CC_INTRIN uint32x4x2_t vzipq_u32(uint32x4_t __a, uint32x4_t __b) { return (uint32x4x2_t){{vzip1q_u32(__a, __b), vzip2q_u32(__a, __b)}}; }
 __BUN_CC_INTRIN uint32x4_t vuzp1q_u32(uint32x4_t __a, uint32x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6); }
 __BUN_CC_INTRIN uint32x4_t vuzp2q_u32(uint32x4_t __a, uint32x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7); }
-__BUN_CC_INTRIN uint32x4x2_t vuzpq_u32(uint32x4_t __a, uint32x4_t __b) { return (uint32x4x2_t) { { vuzp1q_u32(__a, __b), vuzp2q_u32(__a, __b) } }; }
+__BUN_CC_INTRIN uint32x4x2_t vuzpq_u32(uint32x4_t __a, uint32x4_t __b) { return (uint32x4x2_t){{vuzp1q_u32(__a, __b), vuzp2q_u32(__a, __b)}}; }
 __BUN_CC_INTRIN uint32x4_t vtrn1q_u32(uint32x4_t __a, uint32x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 2, 6); }
 __BUN_CC_INTRIN uint32x4_t vtrn2q_u32(uint32x4_t __a, uint32x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 5, 3, 7); }
-__BUN_CC_INTRIN uint32x4x2_t vtrnq_u32(uint32x4_t __a, uint32x4_t __b) { return (uint32x4x2_t) { { vtrn1q_u32(__a, __b), vtrn2q_u32(__a, __b) } }; }
+__BUN_CC_INTRIN uint32x4x2_t vtrnq_u32(uint32x4_t __a, uint32x4_t __b) { return (uint32x4x2_t){{vtrn1q_u32(__a, __b), vtrn2q_u32(__a, __b)}}; }
 #define vext_s64(a, b, n) __builtin_shufflevector((int64x1_t)(a), (int64x1_t)(b), (n))
 #define vextq_s64(a, b, n) __builtin_shufflevector((int64x2_t)(a), (int64x2_t)(b), (n), (n) + 1)
 __BUN_CC_INTRIN int64x2_t vzip1q_s64(int64x2_t __a, int64x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
@@ -1896,24 +1698,24 @@ __BUN_CC_INTRIN uint64x2_t vtrn2q_u64(uint64x2_t __a, uint64x2_t __b) { return _
 __BUN_CC_INTRIN float32x2_t vrev64_f32(float32x2_t __a) { return __builtin_shufflevector(__a, __a, 1, 0); }
 __BUN_CC_INTRIN float32x2_t vzip1_f32(float32x2_t __a, float32x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
 __BUN_CC_INTRIN float32x2_t vzip2_f32(float32x2_t __a, float32x2_t __b) { return __builtin_shufflevector(__a, __b, 1, 3); }
-__BUN_CC_INTRIN float32x2x2_t vzip_f32(float32x2_t __a, float32x2_t __b) { return (float32x2x2_t) { { vzip1_f32(__a, __b), vzip2_f32(__a, __b) } }; }
+__BUN_CC_INTRIN float32x2x2_t vzip_f32(float32x2_t __a, float32x2_t __b) { return (float32x2x2_t){{vzip1_f32(__a, __b), vzip2_f32(__a, __b)}}; }
 __BUN_CC_INTRIN float32x2_t vuzp1_f32(float32x2_t __a, float32x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
 __BUN_CC_INTRIN float32x2_t vuzp2_f32(float32x2_t __a, float32x2_t __b) { return __builtin_shufflevector(__a, __b, 1, 3); }
-__BUN_CC_INTRIN float32x2x2_t vuzp_f32(float32x2_t __a, float32x2_t __b) { return (float32x2x2_t) { { vuzp1_f32(__a, __b), vuzp2_f32(__a, __b) } }; }
+__BUN_CC_INTRIN float32x2x2_t vuzp_f32(float32x2_t __a, float32x2_t __b) { return (float32x2x2_t){{vuzp1_f32(__a, __b), vuzp2_f32(__a, __b)}}; }
 __BUN_CC_INTRIN float32x2_t vtrn1_f32(float32x2_t __a, float32x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
 __BUN_CC_INTRIN float32x2_t vtrn2_f32(float32x2_t __a, float32x2_t __b) { return __builtin_shufflevector(__a, __b, 1, 3); }
-__BUN_CC_INTRIN float32x2x2_t vtrn_f32(float32x2_t __a, float32x2_t __b) { return (float32x2x2_t) { { vtrn1_f32(__a, __b), vtrn2_f32(__a, __b) } }; }
+__BUN_CC_INTRIN float32x2x2_t vtrn_f32(float32x2_t __a, float32x2_t __b) { return (float32x2x2_t){{vtrn1_f32(__a, __b), vtrn2_f32(__a, __b)}}; }
 #define vextq_f32(a, b, n) __builtin_shufflevector((float32x4_t)(a), (float32x4_t)(b), (n), (n) + 1, (n) + 2, (n) + 3)
 __BUN_CC_INTRIN float32x4_t vrev64q_f32(float32x4_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2); }
 __BUN_CC_INTRIN float32x4_t vzip1q_f32(float32x4_t __a, float32x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 1, 5); }
 __BUN_CC_INTRIN float32x4_t vzip2q_f32(float32x4_t __a, float32x4_t __b) { return __builtin_shufflevector(__a, __b, 2, 6, 3, 7); }
-__BUN_CC_INTRIN float32x4x2_t vzipq_f32(float32x4_t __a, float32x4_t __b) { return (float32x4x2_t) { { vzip1q_f32(__a, __b), vzip2q_f32(__a, __b) } }; }
+__BUN_CC_INTRIN float32x4x2_t vzipq_f32(float32x4_t __a, float32x4_t __b) { return (float32x4x2_t){{vzip1q_f32(__a, __b), vzip2q_f32(__a, __b)}}; }
 __BUN_CC_INTRIN float32x4_t vuzp1q_f32(float32x4_t __a, float32x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6); }
 __BUN_CC_INTRIN float32x4_t vuzp2q_f32(float32x4_t __a, float32x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7); }
-__BUN_CC_INTRIN float32x4x2_t vuzpq_f32(float32x4_t __a, float32x4_t __b) { return (float32x4x2_t) { { vuzp1q_f32(__a, __b), vuzp2q_f32(__a, __b) } }; }
+__BUN_CC_INTRIN float32x4x2_t vuzpq_f32(float32x4_t __a, float32x4_t __b) { return (float32x4x2_t){{vuzp1q_f32(__a, __b), vuzp2q_f32(__a, __b)}}; }
 __BUN_CC_INTRIN float32x4_t vtrn1q_f32(float32x4_t __a, float32x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 2, 6); }
 __BUN_CC_INTRIN float32x4_t vtrn2q_f32(float32x4_t __a, float32x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 5, 3, 7); }
-__BUN_CC_INTRIN float32x4x2_t vtrnq_f32(float32x4_t __a, float32x4_t __b) { return (float32x4x2_t) { { vtrn1q_f32(__a, __b), vtrn2q_f32(__a, __b) } }; }
+__BUN_CC_INTRIN float32x4x2_t vtrnq_f32(float32x4_t __a, float32x4_t __b) { return (float32x4x2_t){{vtrn1q_f32(__a, __b), vtrn2q_f32(__a, __b)}}; }
 #define vext_f64(a, b, n) __builtin_shufflevector((float64x1_t)(a), (float64x1_t)(b), (n))
 #define vextq_f64(a, b, n) __builtin_shufflevector((float64x2_t)(a), (float64x2_t)(b), (n), (n) + 1)
 __BUN_CC_INTRIN float64x2_t vzip1q_f64(float64x2_t __a, float64x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
@@ -1928,50 +1730,50 @@ __BUN_CC_INTRIN poly8x8_t vrev32_p8(poly8x8_t __a) { return __builtin_shufflevec
 __BUN_CC_INTRIN poly8x8_t vrev16_p8(poly8x8_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2, 5, 4, 7, 6); }
 __BUN_CC_INTRIN poly8x8_t vzip1_p8(poly8x8_t __a, poly8x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 1, 9, 2, 10, 3, 11); }
 __BUN_CC_INTRIN poly8x8_t vzip2_p8(poly8x8_t __a, poly8x8_t __b) { return __builtin_shufflevector(__a, __b, 4, 12, 5, 13, 6, 14, 7, 15); }
-__BUN_CC_INTRIN poly8x8x2_t vzip_p8(poly8x8_t __a, poly8x8_t __b) { return (poly8x8x2_t) { { vzip1_p8(__a, __b), vzip2_p8(__a, __b) } }; }
+__BUN_CC_INTRIN poly8x8x2_t vzip_p8(poly8x8_t __a, poly8x8_t __b) { return (poly8x8x2_t){{vzip1_p8(__a, __b), vzip2_p8(__a, __b)}}; }
 __BUN_CC_INTRIN poly8x8_t vuzp1_p8(poly8x8_t __a, poly8x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6, 8, 10, 12, 14); }
 __BUN_CC_INTRIN poly8x8_t vuzp2_p8(poly8x8_t __a, poly8x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7, 9, 11, 13, 15); }
-__BUN_CC_INTRIN poly8x8x2_t vuzp_p8(poly8x8_t __a, poly8x8_t __b) { return (poly8x8x2_t) { { vuzp1_p8(__a, __b), vuzp2_p8(__a, __b) } }; }
+__BUN_CC_INTRIN poly8x8x2_t vuzp_p8(poly8x8_t __a, poly8x8_t __b) { return (poly8x8x2_t){{vuzp1_p8(__a, __b), vuzp2_p8(__a, __b)}}; }
 __BUN_CC_INTRIN poly8x8_t vtrn1_p8(poly8x8_t __a, poly8x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 2, 10, 4, 12, 6, 14); }
 __BUN_CC_INTRIN poly8x8_t vtrn2_p8(poly8x8_t __a, poly8x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 9, 3, 11, 5, 13, 7, 15); }
-__BUN_CC_INTRIN poly8x8x2_t vtrn_p8(poly8x8_t __a, poly8x8_t __b) { return (poly8x8x2_t) { { vtrn1_p8(__a, __b), vtrn2_p8(__a, __b) } }; }
+__BUN_CC_INTRIN poly8x8x2_t vtrn_p8(poly8x8_t __a, poly8x8_t __b) { return (poly8x8x2_t){{vtrn1_p8(__a, __b), vtrn2_p8(__a, __b)}}; }
 #define vextq_p8(a, b, n) __builtin_shufflevector((poly8x16_t)(a), (poly8x16_t)(b), (n), (n) + 1, (n) + 2, (n) + 3, (n) + 4, (n) + 5, (n) + 6, (n) + 7, (n) + 8, (n) + 9, (n) + 10, (n) + 11, (n) + 12, (n) + 13, (n) + 14, (n) + 15)
 __BUN_CC_INTRIN poly8x16_t vrev64q_p8(poly8x16_t __a) { return __builtin_shufflevector(__a, __a, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8); }
 __BUN_CC_INTRIN poly8x16_t vrev32q_p8(poly8x16_t __a) { return __builtin_shufflevector(__a, __a, 3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12); }
 __BUN_CC_INTRIN poly8x16_t vrev16q_p8(poly8x16_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14); }
 __BUN_CC_INTRIN poly8x16_t vzip1q_p8(poly8x16_t __a, poly8x16_t __b) { return __builtin_shufflevector(__a, __b, 0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23); }
 __BUN_CC_INTRIN poly8x16_t vzip2q_p8(poly8x16_t __a, poly8x16_t __b) { return __builtin_shufflevector(__a, __b, 8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31); }
-__BUN_CC_INTRIN poly8x16x2_t vzipq_p8(poly8x16_t __a, poly8x16_t __b) { return (poly8x16x2_t) { { vzip1q_p8(__a, __b), vzip2q_p8(__a, __b) } }; }
+__BUN_CC_INTRIN poly8x16x2_t vzipq_p8(poly8x16_t __a, poly8x16_t __b) { return (poly8x16x2_t){{vzip1q_p8(__a, __b), vzip2q_p8(__a, __b)}}; }
 __BUN_CC_INTRIN poly8x16_t vuzp1q_p8(poly8x16_t __a, poly8x16_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30); }
 __BUN_CC_INTRIN poly8x16_t vuzp2q_p8(poly8x16_t __a, poly8x16_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31); }
-__BUN_CC_INTRIN poly8x16x2_t vuzpq_p8(poly8x16_t __a, poly8x16_t __b) { return (poly8x16x2_t) { { vuzp1q_p8(__a, __b), vuzp2q_p8(__a, __b) } }; }
+__BUN_CC_INTRIN poly8x16x2_t vuzpq_p8(poly8x16_t __a, poly8x16_t __b) { return (poly8x16x2_t){{vuzp1q_p8(__a, __b), vuzp2q_p8(__a, __b)}}; }
 __BUN_CC_INTRIN poly8x16_t vtrn1q_p8(poly8x16_t __a, poly8x16_t __b) { return __builtin_shufflevector(__a, __b, 0, 16, 2, 18, 4, 20, 6, 22, 8, 24, 10, 26, 12, 28, 14, 30); }
 __BUN_CC_INTRIN poly8x16_t vtrn2q_p8(poly8x16_t __a, poly8x16_t __b) { return __builtin_shufflevector(__a, __b, 1, 17, 3, 19, 5, 21, 7, 23, 9, 25, 11, 27, 13, 29, 15, 31); }
-__BUN_CC_INTRIN poly8x16x2_t vtrnq_p8(poly8x16_t __a, poly8x16_t __b) { return (poly8x16x2_t) { { vtrn1q_p8(__a, __b), vtrn2q_p8(__a, __b) } }; }
+__BUN_CC_INTRIN poly8x16x2_t vtrnq_p8(poly8x16_t __a, poly8x16_t __b) { return (poly8x16x2_t){{vtrn1q_p8(__a, __b), vtrn2q_p8(__a, __b)}}; }
 #define vext_p16(a, b, n) __builtin_shufflevector((poly16x4_t)(a), (poly16x4_t)(b), (n), (n) + 1, (n) + 2, (n) + 3)
 __BUN_CC_INTRIN poly16x4_t vrev64_p16(poly16x4_t __a) { return __builtin_shufflevector(__a, __a, 3, 2, 1, 0); }
 __BUN_CC_INTRIN poly16x4_t vrev32_p16(poly16x4_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2); }
 __BUN_CC_INTRIN poly16x4_t vzip1_p16(poly16x4_t __a, poly16x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 1, 5); }
 __BUN_CC_INTRIN poly16x4_t vzip2_p16(poly16x4_t __a, poly16x4_t __b) { return __builtin_shufflevector(__a, __b, 2, 6, 3, 7); }
-__BUN_CC_INTRIN poly16x4x2_t vzip_p16(poly16x4_t __a, poly16x4_t __b) { return (poly16x4x2_t) { { vzip1_p16(__a, __b), vzip2_p16(__a, __b) } }; }
+__BUN_CC_INTRIN poly16x4x2_t vzip_p16(poly16x4_t __a, poly16x4_t __b) { return (poly16x4x2_t){{vzip1_p16(__a, __b), vzip2_p16(__a, __b)}}; }
 __BUN_CC_INTRIN poly16x4_t vuzp1_p16(poly16x4_t __a, poly16x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6); }
 __BUN_CC_INTRIN poly16x4_t vuzp2_p16(poly16x4_t __a, poly16x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7); }
-__BUN_CC_INTRIN poly16x4x2_t vuzp_p16(poly16x4_t __a, poly16x4_t __b) { return (poly16x4x2_t) { { vuzp1_p16(__a, __b), vuzp2_p16(__a, __b) } }; }
+__BUN_CC_INTRIN poly16x4x2_t vuzp_p16(poly16x4_t __a, poly16x4_t __b) { return (poly16x4x2_t){{vuzp1_p16(__a, __b), vuzp2_p16(__a, __b)}}; }
 __BUN_CC_INTRIN poly16x4_t vtrn1_p16(poly16x4_t __a, poly16x4_t __b) { return __builtin_shufflevector(__a, __b, 0, 4, 2, 6); }
 __BUN_CC_INTRIN poly16x4_t vtrn2_p16(poly16x4_t __a, poly16x4_t __b) { return __builtin_shufflevector(__a, __b, 1, 5, 3, 7); }
-__BUN_CC_INTRIN poly16x4x2_t vtrn_p16(poly16x4_t __a, poly16x4_t __b) { return (poly16x4x2_t) { { vtrn1_p16(__a, __b), vtrn2_p16(__a, __b) } }; }
+__BUN_CC_INTRIN poly16x4x2_t vtrn_p16(poly16x4_t __a, poly16x4_t __b) { return (poly16x4x2_t){{vtrn1_p16(__a, __b), vtrn2_p16(__a, __b)}}; }
 #define vextq_p16(a, b, n) __builtin_shufflevector((poly16x8_t)(a), (poly16x8_t)(b), (n), (n) + 1, (n) + 2, (n) + 3, (n) + 4, (n) + 5, (n) + 6, (n) + 7)
 __BUN_CC_INTRIN poly16x8_t vrev64q_p16(poly16x8_t __a) { return __builtin_shufflevector(__a, __a, 3, 2, 1, 0, 7, 6, 5, 4); }
 __BUN_CC_INTRIN poly16x8_t vrev32q_p16(poly16x8_t __a) { return __builtin_shufflevector(__a, __a, 1, 0, 3, 2, 5, 4, 7, 6); }
 __BUN_CC_INTRIN poly16x8_t vzip1q_p16(poly16x8_t __a, poly16x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 1, 9, 2, 10, 3, 11); }
 __BUN_CC_INTRIN poly16x8_t vzip2q_p16(poly16x8_t __a, poly16x8_t __b) { return __builtin_shufflevector(__a, __b, 4, 12, 5, 13, 6, 14, 7, 15); }
-__BUN_CC_INTRIN poly16x8x2_t vzipq_p16(poly16x8_t __a, poly16x8_t __b) { return (poly16x8x2_t) { { vzip1q_p16(__a, __b), vzip2q_p16(__a, __b) } }; }
+__BUN_CC_INTRIN poly16x8x2_t vzipq_p16(poly16x8_t __a, poly16x8_t __b) { return (poly16x8x2_t){{vzip1q_p16(__a, __b), vzip2q_p16(__a, __b)}}; }
 __BUN_CC_INTRIN poly16x8_t vuzp1q_p16(poly16x8_t __a, poly16x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 2, 4, 6, 8, 10, 12, 14); }
 __BUN_CC_INTRIN poly16x8_t vuzp2q_p16(poly16x8_t __a, poly16x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 3, 5, 7, 9, 11, 13, 15); }
-__BUN_CC_INTRIN poly16x8x2_t vuzpq_p16(poly16x8_t __a, poly16x8_t __b) { return (poly16x8x2_t) { { vuzp1q_p16(__a, __b), vuzp2q_p16(__a, __b) } }; }
+__BUN_CC_INTRIN poly16x8x2_t vuzpq_p16(poly16x8_t __a, poly16x8_t __b) { return (poly16x8x2_t){{vuzp1q_p16(__a, __b), vuzp2q_p16(__a, __b)}}; }
 __BUN_CC_INTRIN poly16x8_t vtrn1q_p16(poly16x8_t __a, poly16x8_t __b) { return __builtin_shufflevector(__a, __b, 0, 8, 2, 10, 4, 12, 6, 14); }
 __BUN_CC_INTRIN poly16x8_t vtrn2q_p16(poly16x8_t __a, poly16x8_t __b) { return __builtin_shufflevector(__a, __b, 1, 9, 3, 11, 5, 13, 7, 15); }
-__BUN_CC_INTRIN poly16x8x2_t vtrnq_p16(poly16x8_t __a, poly16x8_t __b) { return (poly16x8x2_t) { { vtrn1q_p16(__a, __b), vtrn2q_p16(__a, __b) } }; }
+__BUN_CC_INTRIN poly16x8x2_t vtrnq_p16(poly16x8_t __a, poly16x8_t __b) { return (poly16x8x2_t){{vtrn1q_p16(__a, __b), vtrn2q_p16(__a, __b)}}; }
 #define vext_p64(a, b, n) __builtin_shufflevector((poly64x1_t)(a), (poly64x1_t)(b), (n))
 #define vextq_p64(a, b, n) __builtin_shufflevector((poly64x2_t)(a), (poly64x2_t)(b), (n), (n) + 1)
 __BUN_CC_INTRIN poly64x2_t vzip1q_p64(poly64x2_t __a, poly64x2_t __b) { return __builtin_shufflevector(__a, __b, 0, 2); }
@@ -1983,1155 +1785,289 @@ __BUN_CC_INTRIN poly64x2_t vtrn2q_p64(poly64x2_t __a, poly64x2_t __b) { return _
 __BUN_CC_INTRIN int8x8_t vtbl1_s8(int8x8_t __t, int8x8_t __i) { return (int8x8_t)__builtin_bir_swizzle((uint8x8_t)__t, (uint8x8_t)__i); }
 __BUN_CC_INTRIN int8x8_t vtbl2_s8(int8x8x2_t __t, int8x8_t __i) { return (int8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)vcombine_s8(__t.val[0], __t.val[1]), vcombine_u8((uint8x8_t)__i, (uint8x8_t)__i))); }
 __BUN_CC_INTRIN int8x8_t vqtbl1_s8(int8x16_t __t, uint8x8_t __i) { return (int8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t, vcombine_u8(__i, __i))); }
-__BUN_CC_INTRIN int8x8_t vcnt_s8(int8x8_t __a)
-{
-    uint8x8_t __v = (uint8x8_t)__a;
-    __v = __v - ((__v >> 1) & 0x55);
-    __v = (__v & 0x33) + ((__v >> 2) & 0x33);
-    return (int8x8_t)((__v + (__v >> 4)) & 0x0f);
-}
-__BUN_CC_INTRIN int8x16_t vcntq_s8(int8x16_t __a)
-{
-    uint8x16_t __v = (uint8x16_t)__a;
-    __v = __v - ((__v >> 1) & 0x55);
-    __v = (__v & 0x33) + ((__v >> 2) & 0x33);
-    return (int8x16_t)((__v + (__v >> 4)) & 0x0f);
-}
+__BUN_CC_INTRIN int8x8_t vcnt_s8(int8x8_t __a) { uint8x8_t __v = (uint8x8_t)__a; __v = __v - ((__v >> 1) & 0x55); __v = (__v & 0x33) + ((__v >> 2) & 0x33); return (int8x8_t)((__v + (__v >> 4)) & 0x0f); }
+__BUN_CC_INTRIN int8x16_t vcntq_s8(int8x16_t __a) { uint8x16_t __v = (uint8x16_t)__a; __v = __v - ((__v >> 1) & 0x55); __v = (__v & 0x33) + ((__v >> 2) & 0x33); return (int8x16_t)((__v + (__v >> 4)) & 0x0f); }
 __BUN_CC_INTRIN uint8x8_t vtbl1_u8(uint8x8_t __t, uint8x8_t __i) { return (uint8x8_t)__builtin_bir_swizzle((uint8x8_t)__t, (uint8x8_t)__i); }
 __BUN_CC_INTRIN uint8x8_t vtbl2_u8(uint8x8x2_t __t, uint8x8_t __i) { return (uint8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)vcombine_u8(__t.val[0], __t.val[1]), vcombine_u8((uint8x8_t)__i, (uint8x8_t)__i))); }
 __BUN_CC_INTRIN uint8x8_t vqtbl1_u8(uint8x16_t __t, uint8x8_t __i) { return (uint8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t, vcombine_u8(__i, __i))); }
-__BUN_CC_INTRIN uint8x8_t vcnt_u8(uint8x8_t __a)
-{
-    uint8x8_t __v = (uint8x8_t)__a;
-    __v = __v - ((__v >> 1) & 0x55);
-    __v = (__v & 0x33) + ((__v >> 2) & 0x33);
-    return (uint8x8_t)((__v + (__v >> 4)) & 0x0f);
-}
-__BUN_CC_INTRIN uint8x16_t vcntq_u8(uint8x16_t __a)
-{
-    uint8x16_t __v = (uint8x16_t)__a;
-    __v = __v - ((__v >> 1) & 0x55);
-    __v = (__v & 0x33) + ((__v >> 2) & 0x33);
-    return (uint8x16_t)((__v + (__v >> 4)) & 0x0f);
-}
+__BUN_CC_INTRIN uint8x8_t vcnt_u8(uint8x8_t __a) { uint8x8_t __v = (uint8x8_t)__a; __v = __v - ((__v >> 1) & 0x55); __v = (__v & 0x33) + ((__v >> 2) & 0x33); return (uint8x8_t)((__v + (__v >> 4)) & 0x0f); }
+__BUN_CC_INTRIN uint8x16_t vcntq_u8(uint8x16_t __a) { uint8x16_t __v = (uint8x16_t)__a; __v = __v - ((__v >> 1) & 0x55); __v = (__v & 0x33) + ((__v >> 2) & 0x33); return (uint8x16_t)((__v + (__v >> 4)) & 0x0f); }
 __BUN_CC_INTRIN poly8x8_t vtbl1_p8(poly8x8_t __t, uint8x8_t __i) { return (poly8x8_t)__builtin_bir_swizzle((uint8x8_t)__t, (uint8x8_t)__i); }
 __BUN_CC_INTRIN poly8x8_t vtbl2_p8(poly8x8x2_t __t, uint8x8_t __i) { return (poly8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)vcombine_p8(__t.val[0], __t.val[1]), vcombine_u8((uint8x8_t)__i, (uint8x8_t)__i))); }
 __BUN_CC_INTRIN poly8x8_t vqtbl1_p8(poly8x16_t __t, uint8x8_t __i) { return (poly8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t, vcombine_u8(__i, __i))); }
 __BUN_CC_INTRIN poly8x16_t vqtbl1q_p8(poly8x16_t __t, uint8x16_t __i) { return (poly8x16_t)__builtin_bir_swizzle((uint8x16_t)__t, __i); }
-__BUN_CC_INTRIN poly8x8_t vcnt_p8(poly8x8_t __a)
-{
-    uint8x8_t __v = (uint8x8_t)__a;
-    __v = __v - ((__v >> 1) & 0x55);
-    __v = (__v & 0x33) + ((__v >> 2) & 0x33);
-    return (poly8x8_t)((__v + (__v >> 4)) & 0x0f);
-}
-__BUN_CC_INTRIN poly8x16_t vcntq_p8(poly8x16_t __a)
-{
-    uint8x16_t __v = (uint8x16_t)__a;
-    __v = __v - ((__v >> 1) & 0x55);
-    __v = (__v & 0x33) + ((__v >> 2) & 0x33);
-    return (poly8x16_t)((__v + (__v >> 4)) & 0x0f);
-}
+__BUN_CC_INTRIN poly8x8_t vcnt_p8(poly8x8_t __a) { uint8x8_t __v = (uint8x8_t)__a; __v = __v - ((__v >> 1) & 0x55); __v = (__v & 0x33) + ((__v >> 2) & 0x33); return (poly8x8_t)((__v + (__v >> 4)) & 0x0f); }
+__BUN_CC_INTRIN poly8x16_t vcntq_p8(poly8x16_t __a) { uint8x16_t __v = (uint8x16_t)__a; __v = __v - ((__v >> 1) & 0x55); __v = (__v & 0x33) + ((__v >> 2) & 0x33); return (poly8x16_t)((__v + (__v >> 4)) & 0x0f); }
 
 /* Several vectors loaded and stored together, plainly and interleaved. */
-__BUN_CC_INTRIN int8x8x2_t vld1_s8_x2(const int8_t* __p) { return (int8x8x2_t) { { vld1_s8(__p + 0), vld1_s8(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1_s8_x2(int8_t* __p, int8x8x2_t __v)
-{
-    vst1_s8(__p + 0, __v.val[0]);
-    vst1_s8(__p + 8, __v.val[1]);
-}
-__BUN_CC_INTRIN int8x8x3_t vld1_s8_x3(const int8_t* __p) { return (int8x8x3_t) { { vld1_s8(__p + 0), vld1_s8(__p + 8), vld1_s8(__p + 16) } }; }
-__BUN_CC_INTRIN void vst1_s8_x3(int8_t* __p, int8x8x3_t __v)
-{
-    vst1_s8(__p + 0, __v.val[0]);
-    vst1_s8(__p + 8, __v.val[1]);
-    vst1_s8(__p + 16, __v.val[2]);
-}
-__BUN_CC_INTRIN int8x8x4_t vld1_s8_x4(const int8_t* __p) { return (int8x8x4_t) { { vld1_s8(__p + 0), vld1_s8(__p + 8), vld1_s8(__p + 16), vld1_s8(__p + 24) } }; }
-__BUN_CC_INTRIN void vst1_s8_x4(int8_t* __p, int8x8x4_t __v)
-{
-    vst1_s8(__p + 0, __v.val[0]);
-    vst1_s8(__p + 8, __v.val[1]);
-    vst1_s8(__p + 16, __v.val[2]);
-    vst1_s8(__p + 24, __v.val[3]);
-}
-__BUN_CC_INTRIN int8x8x2_t vld2_s8(const int8_t* __p)
-{
-    int8x8_t __a = vld1_s8(__p), __b = vld1_s8(__p + 8);
-    return (int8x8x2_t) { { vuzp1_s8(__a, __b), vuzp2_s8(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2_s8(int8_t* __p, int8x8x2_t __v)
-{
-    vst1_s8(__p, vzip1_s8(__v.val[0], __v.val[1]));
-    vst1_s8(__p + 8, vzip2_s8(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN int8x8x4_t vld4_s8(const int8_t* __p)
-{
-    int8x8_t __a = vld1_s8(__p), __b = vld1_s8(__p + 8), __c = vld1_s8(__p + 16), __d = vld1_s8(__p + 24);
-    int8x8_t __e0 = vuzp1_s8(__a, __b), __o0 = vuzp2_s8(__a, __b), __e1 = vuzp1_s8(__c, __d), __o1 = vuzp2_s8(__c, __d);
-    return (int8x8x4_t) { { vuzp1_s8(__e0, __e1), vuzp1_s8(__o0, __o1), vuzp2_s8(__e0, __e1), vuzp2_s8(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4_s8(int8_t* __p, int8x8x4_t __v)
-{
-    int8x8_t __l02 = vzip1_s8(__v.val[0], __v.val[2]), __h02 = vzip2_s8(__v.val[0], __v.val[2]), __l13 = vzip1_s8(__v.val[1], __v.val[3]), __h13 = vzip2_s8(__v.val[1], __v.val[3]);
-    vst1_s8(__p, vzip1_s8(__l02, __l13));
-    vst1_s8(__p + 8, vzip2_s8(__l02, __l13));
-    vst1_s8(__p + 16, vzip1_s8(__h02, __h13));
-    vst1_s8(__p + 24, vzip2_s8(__h02, __h13));
-}
-__BUN_CC_INTRIN int8x16x2_t vld1q_s8_x2(const int8_t* __p) { return (int8x16x2_t) { { vld1q_s8(__p + 0), vld1q_s8(__p + 16) } }; }
-__BUN_CC_INTRIN void vst1q_s8_x2(int8_t* __p, int8x16x2_t __v)
-{
-    vst1q_s8(__p + 0, __v.val[0]);
-    vst1q_s8(__p + 16, __v.val[1]);
-}
-__BUN_CC_INTRIN int8x16x3_t vld1q_s8_x3(const int8_t* __p) { return (int8x16x3_t) { { vld1q_s8(__p + 0), vld1q_s8(__p + 16), vld1q_s8(__p + 32) } }; }
-__BUN_CC_INTRIN void vst1q_s8_x3(int8_t* __p, int8x16x3_t __v)
-{
-    vst1q_s8(__p + 0, __v.val[0]);
-    vst1q_s8(__p + 16, __v.val[1]);
-    vst1q_s8(__p + 32, __v.val[2]);
-}
-__BUN_CC_INTRIN int8x16x4_t vld1q_s8_x4(const int8_t* __p) { return (int8x16x4_t) { { vld1q_s8(__p + 0), vld1q_s8(__p + 16), vld1q_s8(__p + 32), vld1q_s8(__p + 48) } }; }
-__BUN_CC_INTRIN void vst1q_s8_x4(int8_t* __p, int8x16x4_t __v)
-{
-    vst1q_s8(__p + 0, __v.val[0]);
-    vst1q_s8(__p + 16, __v.val[1]);
-    vst1q_s8(__p + 32, __v.val[2]);
-    vst1q_s8(__p + 48, __v.val[3]);
-}
-__BUN_CC_INTRIN int8x16x2_t vld2q_s8(const int8_t* __p)
-{
-    int8x16_t __a = vld1q_s8(__p), __b = vld1q_s8(__p + 16);
-    return (int8x16x2_t) { { vuzp1q_s8(__a, __b), vuzp2q_s8(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_s8(int8_t* __p, int8x16x2_t __v)
-{
-    vst1q_s8(__p, vzip1q_s8(__v.val[0], __v.val[1]));
-    vst1q_s8(__p + 16, vzip2q_s8(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN int8x16x4_t vld4q_s8(const int8_t* __p)
-{
-    int8x16_t __a = vld1q_s8(__p), __b = vld1q_s8(__p + 16), __c = vld1q_s8(__p + 32), __d = vld1q_s8(__p + 48);
-    int8x16_t __e0 = vuzp1q_s8(__a, __b), __o0 = vuzp2q_s8(__a, __b), __e1 = vuzp1q_s8(__c, __d), __o1 = vuzp2q_s8(__c, __d);
-    return (int8x16x4_t) { { vuzp1q_s8(__e0, __e1), vuzp1q_s8(__o0, __o1), vuzp2q_s8(__e0, __e1), vuzp2q_s8(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_s8(int8_t* __p, int8x16x4_t __v)
-{
-    int8x16_t __l02 = vzip1q_s8(__v.val[0], __v.val[2]), __h02 = vzip2q_s8(__v.val[0], __v.val[2]), __l13 = vzip1q_s8(__v.val[1], __v.val[3]), __h13 = vzip2q_s8(__v.val[1], __v.val[3]);
-    vst1q_s8(__p, vzip1q_s8(__l02, __l13));
-    vst1q_s8(__p + 16, vzip2q_s8(__l02, __l13));
-    vst1q_s8(__p + 32, vzip1q_s8(__h02, __h13));
-    vst1q_s8(__p + 48, vzip2q_s8(__h02, __h13));
-}
-__BUN_CC_INTRIN uint8x8x2_t vld1_u8_x2(const uint8_t* __p) { return (uint8x8x2_t) { { vld1_u8(__p + 0), vld1_u8(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1_u8_x2(uint8_t* __p, uint8x8x2_t __v)
-{
-    vst1_u8(__p + 0, __v.val[0]);
-    vst1_u8(__p + 8, __v.val[1]);
-}
-__BUN_CC_INTRIN uint8x8x3_t vld1_u8_x3(const uint8_t* __p) { return (uint8x8x3_t) { { vld1_u8(__p + 0), vld1_u8(__p + 8), vld1_u8(__p + 16) } }; }
-__BUN_CC_INTRIN void vst1_u8_x3(uint8_t* __p, uint8x8x3_t __v)
-{
-    vst1_u8(__p + 0, __v.val[0]);
-    vst1_u8(__p + 8, __v.val[1]);
-    vst1_u8(__p + 16, __v.val[2]);
-}
-__BUN_CC_INTRIN uint8x8x4_t vld1_u8_x4(const uint8_t* __p) { return (uint8x8x4_t) { { vld1_u8(__p + 0), vld1_u8(__p + 8), vld1_u8(__p + 16), vld1_u8(__p + 24) } }; }
-__BUN_CC_INTRIN void vst1_u8_x4(uint8_t* __p, uint8x8x4_t __v)
-{
-    vst1_u8(__p + 0, __v.val[0]);
-    vst1_u8(__p + 8, __v.val[1]);
-    vst1_u8(__p + 16, __v.val[2]);
-    vst1_u8(__p + 24, __v.val[3]);
-}
-__BUN_CC_INTRIN uint8x8x2_t vld2_u8(const uint8_t* __p)
-{
-    uint8x8_t __a = vld1_u8(__p), __b = vld1_u8(__p + 8);
-    return (uint8x8x2_t) { { vuzp1_u8(__a, __b), vuzp2_u8(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2_u8(uint8_t* __p, uint8x8x2_t __v)
-{
-    vst1_u8(__p, vzip1_u8(__v.val[0], __v.val[1]));
-    vst1_u8(__p + 8, vzip2_u8(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN uint8x8x4_t vld4_u8(const uint8_t* __p)
-{
-    uint8x8_t __a = vld1_u8(__p), __b = vld1_u8(__p + 8), __c = vld1_u8(__p + 16), __d = vld1_u8(__p + 24);
-    uint8x8_t __e0 = vuzp1_u8(__a, __b), __o0 = vuzp2_u8(__a, __b), __e1 = vuzp1_u8(__c, __d), __o1 = vuzp2_u8(__c, __d);
-    return (uint8x8x4_t) { { vuzp1_u8(__e0, __e1), vuzp1_u8(__o0, __o1), vuzp2_u8(__e0, __e1), vuzp2_u8(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4_u8(uint8_t* __p, uint8x8x4_t __v)
-{
-    uint8x8_t __l02 = vzip1_u8(__v.val[0], __v.val[2]), __h02 = vzip2_u8(__v.val[0], __v.val[2]), __l13 = vzip1_u8(__v.val[1], __v.val[3]), __h13 = vzip2_u8(__v.val[1], __v.val[3]);
-    vst1_u8(__p, vzip1_u8(__l02, __l13));
-    vst1_u8(__p + 8, vzip2_u8(__l02, __l13));
-    vst1_u8(__p + 16, vzip1_u8(__h02, __h13));
-    vst1_u8(__p + 24, vzip2_u8(__h02, __h13));
-}
-__BUN_CC_INTRIN uint8x16x2_t vld1q_u8_x2(const uint8_t* __p) { return (uint8x16x2_t) { { vld1q_u8(__p + 0), vld1q_u8(__p + 16) } }; }
-__BUN_CC_INTRIN void vst1q_u8_x2(uint8_t* __p, uint8x16x2_t __v)
-{
-    vst1q_u8(__p + 0, __v.val[0]);
-    vst1q_u8(__p + 16, __v.val[1]);
-}
-__BUN_CC_INTRIN uint8x16x3_t vld1q_u8_x3(const uint8_t* __p) { return (uint8x16x3_t) { { vld1q_u8(__p + 0), vld1q_u8(__p + 16), vld1q_u8(__p + 32) } }; }
-__BUN_CC_INTRIN void vst1q_u8_x3(uint8_t* __p, uint8x16x3_t __v)
-{
-    vst1q_u8(__p + 0, __v.val[0]);
-    vst1q_u8(__p + 16, __v.val[1]);
-    vst1q_u8(__p + 32, __v.val[2]);
-}
-__BUN_CC_INTRIN uint8x16x4_t vld1q_u8_x4(const uint8_t* __p) { return (uint8x16x4_t) { { vld1q_u8(__p + 0), vld1q_u8(__p + 16), vld1q_u8(__p + 32), vld1q_u8(__p + 48) } }; }
-__BUN_CC_INTRIN void vst1q_u8_x4(uint8_t* __p, uint8x16x4_t __v)
-{
-    vst1q_u8(__p + 0, __v.val[0]);
-    vst1q_u8(__p + 16, __v.val[1]);
-    vst1q_u8(__p + 32, __v.val[2]);
-    vst1q_u8(__p + 48, __v.val[3]);
-}
-__BUN_CC_INTRIN uint8x16x2_t vld2q_u8(const uint8_t* __p)
-{
-    uint8x16_t __a = vld1q_u8(__p), __b = vld1q_u8(__p + 16);
-    return (uint8x16x2_t) { { vuzp1q_u8(__a, __b), vuzp2q_u8(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_u8(uint8_t* __p, uint8x16x2_t __v)
-{
-    vst1q_u8(__p, vzip1q_u8(__v.val[0], __v.val[1]));
-    vst1q_u8(__p + 16, vzip2q_u8(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN uint8x16x4_t vld4q_u8(const uint8_t* __p)
-{
-    uint8x16_t __a = vld1q_u8(__p), __b = vld1q_u8(__p + 16), __c = vld1q_u8(__p + 32), __d = vld1q_u8(__p + 48);
-    uint8x16_t __e0 = vuzp1q_u8(__a, __b), __o0 = vuzp2q_u8(__a, __b), __e1 = vuzp1q_u8(__c, __d), __o1 = vuzp2q_u8(__c, __d);
-    return (uint8x16x4_t) { { vuzp1q_u8(__e0, __e1), vuzp1q_u8(__o0, __o1), vuzp2q_u8(__e0, __e1), vuzp2q_u8(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_u8(uint8_t* __p, uint8x16x4_t __v)
-{
-    uint8x16_t __l02 = vzip1q_u8(__v.val[0], __v.val[2]), __h02 = vzip2q_u8(__v.val[0], __v.val[2]), __l13 = vzip1q_u8(__v.val[1], __v.val[3]), __h13 = vzip2q_u8(__v.val[1], __v.val[3]);
-    vst1q_u8(__p, vzip1q_u8(__l02, __l13));
-    vst1q_u8(__p + 16, vzip2q_u8(__l02, __l13));
-    vst1q_u8(__p + 32, vzip1q_u8(__h02, __h13));
-    vst1q_u8(__p + 48, vzip2q_u8(__h02, __h13));
-}
-__BUN_CC_INTRIN int16x4x2_t vld1_s16_x2(const int16_t* __p) { return (int16x4x2_t) { { vld1_s16(__p + 0), vld1_s16(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1_s16_x2(int16_t* __p, int16x4x2_t __v)
-{
-    vst1_s16(__p + 0, __v.val[0]);
-    vst1_s16(__p + 4, __v.val[1]);
-}
-__BUN_CC_INTRIN int16x4x3_t vld1_s16_x3(const int16_t* __p) { return (int16x4x3_t) { { vld1_s16(__p + 0), vld1_s16(__p + 4), vld1_s16(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1_s16_x3(int16_t* __p, int16x4x3_t __v)
-{
-    vst1_s16(__p + 0, __v.val[0]);
-    vst1_s16(__p + 4, __v.val[1]);
-    vst1_s16(__p + 8, __v.val[2]);
-}
-__BUN_CC_INTRIN int16x4x4_t vld1_s16_x4(const int16_t* __p) { return (int16x4x4_t) { { vld1_s16(__p + 0), vld1_s16(__p + 4), vld1_s16(__p + 8), vld1_s16(__p + 12) } }; }
-__BUN_CC_INTRIN void vst1_s16_x4(int16_t* __p, int16x4x4_t __v)
-{
-    vst1_s16(__p + 0, __v.val[0]);
-    vst1_s16(__p + 4, __v.val[1]);
-    vst1_s16(__p + 8, __v.val[2]);
-    vst1_s16(__p + 12, __v.val[3]);
-}
-__BUN_CC_INTRIN int16x4x2_t vld2_s16(const int16_t* __p)
-{
-    int16x4_t __a = vld1_s16(__p), __b = vld1_s16(__p + 4);
-    return (int16x4x2_t) { { vuzp1_s16(__a, __b), vuzp2_s16(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2_s16(int16_t* __p, int16x4x2_t __v)
-{
-    vst1_s16(__p, vzip1_s16(__v.val[0], __v.val[1]));
-    vst1_s16(__p + 4, vzip2_s16(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN int16x4x4_t vld4_s16(const int16_t* __p)
-{
-    int16x4_t __a = vld1_s16(__p), __b = vld1_s16(__p + 4), __c = vld1_s16(__p + 8), __d = vld1_s16(__p + 12);
-    int16x4_t __e0 = vuzp1_s16(__a, __b), __o0 = vuzp2_s16(__a, __b), __e1 = vuzp1_s16(__c, __d), __o1 = vuzp2_s16(__c, __d);
-    return (int16x4x4_t) { { vuzp1_s16(__e0, __e1), vuzp1_s16(__o0, __o1), vuzp2_s16(__e0, __e1), vuzp2_s16(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4_s16(int16_t* __p, int16x4x4_t __v)
-{
-    int16x4_t __l02 = vzip1_s16(__v.val[0], __v.val[2]), __h02 = vzip2_s16(__v.val[0], __v.val[2]), __l13 = vzip1_s16(__v.val[1], __v.val[3]), __h13 = vzip2_s16(__v.val[1], __v.val[3]);
-    vst1_s16(__p, vzip1_s16(__l02, __l13));
-    vst1_s16(__p + 4, vzip2_s16(__l02, __l13));
-    vst1_s16(__p + 8, vzip1_s16(__h02, __h13));
-    vst1_s16(__p + 12, vzip2_s16(__h02, __h13));
-}
-__BUN_CC_INTRIN int16x8x2_t vld1q_s16_x2(const int16_t* __p) { return (int16x8x2_t) { { vld1q_s16(__p + 0), vld1q_s16(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1q_s16_x2(int16_t* __p, int16x8x2_t __v)
-{
-    vst1q_s16(__p + 0, __v.val[0]);
-    vst1q_s16(__p + 8, __v.val[1]);
-}
-__BUN_CC_INTRIN int16x8x3_t vld1q_s16_x3(const int16_t* __p) { return (int16x8x3_t) { { vld1q_s16(__p + 0), vld1q_s16(__p + 8), vld1q_s16(__p + 16) } }; }
-__BUN_CC_INTRIN void vst1q_s16_x3(int16_t* __p, int16x8x3_t __v)
-{
-    vst1q_s16(__p + 0, __v.val[0]);
-    vst1q_s16(__p + 8, __v.val[1]);
-    vst1q_s16(__p + 16, __v.val[2]);
-}
-__BUN_CC_INTRIN int16x8x4_t vld1q_s16_x4(const int16_t* __p) { return (int16x8x4_t) { { vld1q_s16(__p + 0), vld1q_s16(__p + 8), vld1q_s16(__p + 16), vld1q_s16(__p + 24) } }; }
-__BUN_CC_INTRIN void vst1q_s16_x4(int16_t* __p, int16x8x4_t __v)
-{
-    vst1q_s16(__p + 0, __v.val[0]);
-    vst1q_s16(__p + 8, __v.val[1]);
-    vst1q_s16(__p + 16, __v.val[2]);
-    vst1q_s16(__p + 24, __v.val[3]);
-}
-__BUN_CC_INTRIN int16x8x2_t vld2q_s16(const int16_t* __p)
-{
-    int16x8_t __a = vld1q_s16(__p), __b = vld1q_s16(__p + 8);
-    return (int16x8x2_t) { { vuzp1q_s16(__a, __b), vuzp2q_s16(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_s16(int16_t* __p, int16x8x2_t __v)
-{
-    vst1q_s16(__p, vzip1q_s16(__v.val[0], __v.val[1]));
-    vst1q_s16(__p + 8, vzip2q_s16(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN int16x8x4_t vld4q_s16(const int16_t* __p)
-{
-    int16x8_t __a = vld1q_s16(__p), __b = vld1q_s16(__p + 8), __c = vld1q_s16(__p + 16), __d = vld1q_s16(__p + 24);
-    int16x8_t __e0 = vuzp1q_s16(__a, __b), __o0 = vuzp2q_s16(__a, __b), __e1 = vuzp1q_s16(__c, __d), __o1 = vuzp2q_s16(__c, __d);
-    return (int16x8x4_t) { { vuzp1q_s16(__e0, __e1), vuzp1q_s16(__o0, __o1), vuzp2q_s16(__e0, __e1), vuzp2q_s16(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_s16(int16_t* __p, int16x8x4_t __v)
-{
-    int16x8_t __l02 = vzip1q_s16(__v.val[0], __v.val[2]), __h02 = vzip2q_s16(__v.val[0], __v.val[2]), __l13 = vzip1q_s16(__v.val[1], __v.val[3]), __h13 = vzip2q_s16(__v.val[1], __v.val[3]);
-    vst1q_s16(__p, vzip1q_s16(__l02, __l13));
-    vst1q_s16(__p + 8, vzip2q_s16(__l02, __l13));
-    vst1q_s16(__p + 16, vzip1q_s16(__h02, __h13));
-    vst1q_s16(__p + 24, vzip2q_s16(__h02, __h13));
-}
-__BUN_CC_INTRIN uint16x4x2_t vld1_u16_x2(const uint16_t* __p) { return (uint16x4x2_t) { { vld1_u16(__p + 0), vld1_u16(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1_u16_x2(uint16_t* __p, uint16x4x2_t __v)
-{
-    vst1_u16(__p + 0, __v.val[0]);
-    vst1_u16(__p + 4, __v.val[1]);
-}
-__BUN_CC_INTRIN uint16x4x3_t vld1_u16_x3(const uint16_t* __p) { return (uint16x4x3_t) { { vld1_u16(__p + 0), vld1_u16(__p + 4), vld1_u16(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1_u16_x3(uint16_t* __p, uint16x4x3_t __v)
-{
-    vst1_u16(__p + 0, __v.val[0]);
-    vst1_u16(__p + 4, __v.val[1]);
-    vst1_u16(__p + 8, __v.val[2]);
-}
-__BUN_CC_INTRIN uint16x4x4_t vld1_u16_x4(const uint16_t* __p) { return (uint16x4x4_t) { { vld1_u16(__p + 0), vld1_u16(__p + 4), vld1_u16(__p + 8), vld1_u16(__p + 12) } }; }
-__BUN_CC_INTRIN void vst1_u16_x4(uint16_t* __p, uint16x4x4_t __v)
-{
-    vst1_u16(__p + 0, __v.val[0]);
-    vst1_u16(__p + 4, __v.val[1]);
-    vst1_u16(__p + 8, __v.val[2]);
-    vst1_u16(__p + 12, __v.val[3]);
-}
-__BUN_CC_INTRIN uint16x4x2_t vld2_u16(const uint16_t* __p)
-{
-    uint16x4_t __a = vld1_u16(__p), __b = vld1_u16(__p + 4);
-    return (uint16x4x2_t) { { vuzp1_u16(__a, __b), vuzp2_u16(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2_u16(uint16_t* __p, uint16x4x2_t __v)
-{
-    vst1_u16(__p, vzip1_u16(__v.val[0], __v.val[1]));
-    vst1_u16(__p + 4, vzip2_u16(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN uint16x4x4_t vld4_u16(const uint16_t* __p)
-{
-    uint16x4_t __a = vld1_u16(__p), __b = vld1_u16(__p + 4), __c = vld1_u16(__p + 8), __d = vld1_u16(__p + 12);
-    uint16x4_t __e0 = vuzp1_u16(__a, __b), __o0 = vuzp2_u16(__a, __b), __e1 = vuzp1_u16(__c, __d), __o1 = vuzp2_u16(__c, __d);
-    return (uint16x4x4_t) { { vuzp1_u16(__e0, __e1), vuzp1_u16(__o0, __o1), vuzp2_u16(__e0, __e1), vuzp2_u16(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4_u16(uint16_t* __p, uint16x4x4_t __v)
-{
-    uint16x4_t __l02 = vzip1_u16(__v.val[0], __v.val[2]), __h02 = vzip2_u16(__v.val[0], __v.val[2]), __l13 = vzip1_u16(__v.val[1], __v.val[3]), __h13 = vzip2_u16(__v.val[1], __v.val[3]);
-    vst1_u16(__p, vzip1_u16(__l02, __l13));
-    vst1_u16(__p + 4, vzip2_u16(__l02, __l13));
-    vst1_u16(__p + 8, vzip1_u16(__h02, __h13));
-    vst1_u16(__p + 12, vzip2_u16(__h02, __h13));
-}
-__BUN_CC_INTRIN uint16x8x2_t vld1q_u16_x2(const uint16_t* __p) { return (uint16x8x2_t) { { vld1q_u16(__p + 0), vld1q_u16(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1q_u16_x2(uint16_t* __p, uint16x8x2_t __v)
-{
-    vst1q_u16(__p + 0, __v.val[0]);
-    vst1q_u16(__p + 8, __v.val[1]);
-}
-__BUN_CC_INTRIN uint16x8x3_t vld1q_u16_x3(const uint16_t* __p) { return (uint16x8x3_t) { { vld1q_u16(__p + 0), vld1q_u16(__p + 8), vld1q_u16(__p + 16) } }; }
-__BUN_CC_INTRIN void vst1q_u16_x3(uint16_t* __p, uint16x8x3_t __v)
-{
-    vst1q_u16(__p + 0, __v.val[0]);
-    vst1q_u16(__p + 8, __v.val[1]);
-    vst1q_u16(__p + 16, __v.val[2]);
-}
-__BUN_CC_INTRIN uint16x8x4_t vld1q_u16_x4(const uint16_t* __p) { return (uint16x8x4_t) { { vld1q_u16(__p + 0), vld1q_u16(__p + 8), vld1q_u16(__p + 16), vld1q_u16(__p + 24) } }; }
-__BUN_CC_INTRIN void vst1q_u16_x4(uint16_t* __p, uint16x8x4_t __v)
-{
-    vst1q_u16(__p + 0, __v.val[0]);
-    vst1q_u16(__p + 8, __v.val[1]);
-    vst1q_u16(__p + 16, __v.val[2]);
-    vst1q_u16(__p + 24, __v.val[3]);
-}
-__BUN_CC_INTRIN uint16x8x2_t vld2q_u16(const uint16_t* __p)
-{
-    uint16x8_t __a = vld1q_u16(__p), __b = vld1q_u16(__p + 8);
-    return (uint16x8x2_t) { { vuzp1q_u16(__a, __b), vuzp2q_u16(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_u16(uint16_t* __p, uint16x8x2_t __v)
-{
-    vst1q_u16(__p, vzip1q_u16(__v.val[0], __v.val[1]));
-    vst1q_u16(__p + 8, vzip2q_u16(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN uint16x8x4_t vld4q_u16(const uint16_t* __p)
-{
-    uint16x8_t __a = vld1q_u16(__p), __b = vld1q_u16(__p + 8), __c = vld1q_u16(__p + 16), __d = vld1q_u16(__p + 24);
-    uint16x8_t __e0 = vuzp1q_u16(__a, __b), __o0 = vuzp2q_u16(__a, __b), __e1 = vuzp1q_u16(__c, __d), __o1 = vuzp2q_u16(__c, __d);
-    return (uint16x8x4_t) { { vuzp1q_u16(__e0, __e1), vuzp1q_u16(__o0, __o1), vuzp2q_u16(__e0, __e1), vuzp2q_u16(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_u16(uint16_t* __p, uint16x8x4_t __v)
-{
-    uint16x8_t __l02 = vzip1q_u16(__v.val[0], __v.val[2]), __h02 = vzip2q_u16(__v.val[0], __v.val[2]), __l13 = vzip1q_u16(__v.val[1], __v.val[3]), __h13 = vzip2q_u16(__v.val[1], __v.val[3]);
-    vst1q_u16(__p, vzip1q_u16(__l02, __l13));
-    vst1q_u16(__p + 8, vzip2q_u16(__l02, __l13));
-    vst1q_u16(__p + 16, vzip1q_u16(__h02, __h13));
-    vst1q_u16(__p + 24, vzip2q_u16(__h02, __h13));
-}
-__BUN_CC_INTRIN int32x2x2_t vld1_s32_x2(const int32_t* __p) { return (int32x2x2_t) { { vld1_s32(__p + 0), vld1_s32(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1_s32_x2(int32_t* __p, int32x2x2_t __v)
-{
-    vst1_s32(__p + 0, __v.val[0]);
-    vst1_s32(__p + 2, __v.val[1]);
-}
-__BUN_CC_INTRIN int32x2x3_t vld1_s32_x3(const int32_t* __p) { return (int32x2x3_t) { { vld1_s32(__p + 0), vld1_s32(__p + 2), vld1_s32(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1_s32_x3(int32_t* __p, int32x2x3_t __v)
-{
-    vst1_s32(__p + 0, __v.val[0]);
-    vst1_s32(__p + 2, __v.val[1]);
-    vst1_s32(__p + 4, __v.val[2]);
-}
-__BUN_CC_INTRIN int32x2x4_t vld1_s32_x4(const int32_t* __p) { return (int32x2x4_t) { { vld1_s32(__p + 0), vld1_s32(__p + 2), vld1_s32(__p + 4), vld1_s32(__p + 6) } }; }
-__BUN_CC_INTRIN void vst1_s32_x4(int32_t* __p, int32x2x4_t __v)
-{
-    vst1_s32(__p + 0, __v.val[0]);
-    vst1_s32(__p + 2, __v.val[1]);
-    vst1_s32(__p + 4, __v.val[2]);
-    vst1_s32(__p + 6, __v.val[3]);
-}
-__BUN_CC_INTRIN int32x2x2_t vld2_s32(const int32_t* __p)
-{
-    int32x2_t __a = vld1_s32(__p), __b = vld1_s32(__p + 2);
-    return (int32x2x2_t) { { vuzp1_s32(__a, __b), vuzp2_s32(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2_s32(int32_t* __p, int32x2x2_t __v)
-{
-    vst1_s32(__p, vzip1_s32(__v.val[0], __v.val[1]));
-    vst1_s32(__p + 2, vzip2_s32(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN int32x2x4_t vld4_s32(const int32_t* __p)
-{
-    int32x2_t __a = vld1_s32(__p), __b = vld1_s32(__p + 2), __c = vld1_s32(__p + 4), __d = vld1_s32(__p + 6);
-    int32x2_t __e0 = vuzp1_s32(__a, __b), __o0 = vuzp2_s32(__a, __b), __e1 = vuzp1_s32(__c, __d), __o1 = vuzp2_s32(__c, __d);
-    return (int32x2x4_t) { { vuzp1_s32(__e0, __e1), vuzp1_s32(__o0, __o1), vuzp2_s32(__e0, __e1), vuzp2_s32(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4_s32(int32_t* __p, int32x2x4_t __v)
-{
-    int32x2_t __l02 = vzip1_s32(__v.val[0], __v.val[2]), __h02 = vzip2_s32(__v.val[0], __v.val[2]), __l13 = vzip1_s32(__v.val[1], __v.val[3]), __h13 = vzip2_s32(__v.val[1], __v.val[3]);
-    vst1_s32(__p, vzip1_s32(__l02, __l13));
-    vst1_s32(__p + 2, vzip2_s32(__l02, __l13));
-    vst1_s32(__p + 4, vzip1_s32(__h02, __h13));
-    vst1_s32(__p + 6, vzip2_s32(__h02, __h13));
-}
-__BUN_CC_INTRIN int32x4x2_t vld1q_s32_x2(const int32_t* __p) { return (int32x4x2_t) { { vld1q_s32(__p + 0), vld1q_s32(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1q_s32_x2(int32_t* __p, int32x4x2_t __v)
-{
-    vst1q_s32(__p + 0, __v.val[0]);
-    vst1q_s32(__p + 4, __v.val[1]);
-}
-__BUN_CC_INTRIN int32x4x3_t vld1q_s32_x3(const int32_t* __p) { return (int32x4x3_t) { { vld1q_s32(__p + 0), vld1q_s32(__p + 4), vld1q_s32(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1q_s32_x3(int32_t* __p, int32x4x3_t __v)
-{
-    vst1q_s32(__p + 0, __v.val[0]);
-    vst1q_s32(__p + 4, __v.val[1]);
-    vst1q_s32(__p + 8, __v.val[2]);
-}
-__BUN_CC_INTRIN int32x4x4_t vld1q_s32_x4(const int32_t* __p) { return (int32x4x4_t) { { vld1q_s32(__p + 0), vld1q_s32(__p + 4), vld1q_s32(__p + 8), vld1q_s32(__p + 12) } }; }
-__BUN_CC_INTRIN void vst1q_s32_x4(int32_t* __p, int32x4x4_t __v)
-{
-    vst1q_s32(__p + 0, __v.val[0]);
-    vst1q_s32(__p + 4, __v.val[1]);
-    vst1q_s32(__p + 8, __v.val[2]);
-    vst1q_s32(__p + 12, __v.val[3]);
-}
-__BUN_CC_INTRIN int32x4x2_t vld2q_s32(const int32_t* __p)
-{
-    int32x4_t __a = vld1q_s32(__p), __b = vld1q_s32(__p + 4);
-    return (int32x4x2_t) { { vuzp1q_s32(__a, __b), vuzp2q_s32(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_s32(int32_t* __p, int32x4x2_t __v)
-{
-    vst1q_s32(__p, vzip1q_s32(__v.val[0], __v.val[1]));
-    vst1q_s32(__p + 4, vzip2q_s32(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN int32x4x4_t vld4q_s32(const int32_t* __p)
-{
-    int32x4_t __a = vld1q_s32(__p), __b = vld1q_s32(__p + 4), __c = vld1q_s32(__p + 8), __d = vld1q_s32(__p + 12);
-    int32x4_t __e0 = vuzp1q_s32(__a, __b), __o0 = vuzp2q_s32(__a, __b), __e1 = vuzp1q_s32(__c, __d), __o1 = vuzp2q_s32(__c, __d);
-    return (int32x4x4_t) { { vuzp1q_s32(__e0, __e1), vuzp1q_s32(__o0, __o1), vuzp2q_s32(__e0, __e1), vuzp2q_s32(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_s32(int32_t* __p, int32x4x4_t __v)
-{
-    int32x4_t __l02 = vzip1q_s32(__v.val[0], __v.val[2]), __h02 = vzip2q_s32(__v.val[0], __v.val[2]), __l13 = vzip1q_s32(__v.val[1], __v.val[3]), __h13 = vzip2q_s32(__v.val[1], __v.val[3]);
-    vst1q_s32(__p, vzip1q_s32(__l02, __l13));
-    vst1q_s32(__p + 4, vzip2q_s32(__l02, __l13));
-    vst1q_s32(__p + 8, vzip1q_s32(__h02, __h13));
-    vst1q_s32(__p + 12, vzip2q_s32(__h02, __h13));
-}
-__BUN_CC_INTRIN uint32x2x2_t vld1_u32_x2(const uint32_t* __p) { return (uint32x2x2_t) { { vld1_u32(__p + 0), vld1_u32(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1_u32_x2(uint32_t* __p, uint32x2x2_t __v)
-{
-    vst1_u32(__p + 0, __v.val[0]);
-    vst1_u32(__p + 2, __v.val[1]);
-}
-__BUN_CC_INTRIN uint32x2x3_t vld1_u32_x3(const uint32_t* __p) { return (uint32x2x3_t) { { vld1_u32(__p + 0), vld1_u32(__p + 2), vld1_u32(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1_u32_x3(uint32_t* __p, uint32x2x3_t __v)
-{
-    vst1_u32(__p + 0, __v.val[0]);
-    vst1_u32(__p + 2, __v.val[1]);
-    vst1_u32(__p + 4, __v.val[2]);
-}
-__BUN_CC_INTRIN uint32x2x4_t vld1_u32_x4(const uint32_t* __p) { return (uint32x2x4_t) { { vld1_u32(__p + 0), vld1_u32(__p + 2), vld1_u32(__p + 4), vld1_u32(__p + 6) } }; }
-__BUN_CC_INTRIN void vst1_u32_x4(uint32_t* __p, uint32x2x4_t __v)
-{
-    vst1_u32(__p + 0, __v.val[0]);
-    vst1_u32(__p + 2, __v.val[1]);
-    vst1_u32(__p + 4, __v.val[2]);
-    vst1_u32(__p + 6, __v.val[3]);
-}
-__BUN_CC_INTRIN uint32x2x2_t vld2_u32(const uint32_t* __p)
-{
-    uint32x2_t __a = vld1_u32(__p), __b = vld1_u32(__p + 2);
-    return (uint32x2x2_t) { { vuzp1_u32(__a, __b), vuzp2_u32(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2_u32(uint32_t* __p, uint32x2x2_t __v)
-{
-    vst1_u32(__p, vzip1_u32(__v.val[0], __v.val[1]));
-    vst1_u32(__p + 2, vzip2_u32(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN uint32x2x4_t vld4_u32(const uint32_t* __p)
-{
-    uint32x2_t __a = vld1_u32(__p), __b = vld1_u32(__p + 2), __c = vld1_u32(__p + 4), __d = vld1_u32(__p + 6);
-    uint32x2_t __e0 = vuzp1_u32(__a, __b), __o0 = vuzp2_u32(__a, __b), __e1 = vuzp1_u32(__c, __d), __o1 = vuzp2_u32(__c, __d);
-    return (uint32x2x4_t) { { vuzp1_u32(__e0, __e1), vuzp1_u32(__o0, __o1), vuzp2_u32(__e0, __e1), vuzp2_u32(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4_u32(uint32_t* __p, uint32x2x4_t __v)
-{
-    uint32x2_t __l02 = vzip1_u32(__v.val[0], __v.val[2]), __h02 = vzip2_u32(__v.val[0], __v.val[2]), __l13 = vzip1_u32(__v.val[1], __v.val[3]), __h13 = vzip2_u32(__v.val[1], __v.val[3]);
-    vst1_u32(__p, vzip1_u32(__l02, __l13));
-    vst1_u32(__p + 2, vzip2_u32(__l02, __l13));
-    vst1_u32(__p + 4, vzip1_u32(__h02, __h13));
-    vst1_u32(__p + 6, vzip2_u32(__h02, __h13));
-}
-__BUN_CC_INTRIN uint32x4x2_t vld1q_u32_x2(const uint32_t* __p) { return (uint32x4x2_t) { { vld1q_u32(__p + 0), vld1q_u32(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1q_u32_x2(uint32_t* __p, uint32x4x2_t __v)
-{
-    vst1q_u32(__p + 0, __v.val[0]);
-    vst1q_u32(__p + 4, __v.val[1]);
-}
-__BUN_CC_INTRIN uint32x4x3_t vld1q_u32_x3(const uint32_t* __p) { return (uint32x4x3_t) { { vld1q_u32(__p + 0), vld1q_u32(__p + 4), vld1q_u32(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1q_u32_x3(uint32_t* __p, uint32x4x3_t __v)
-{
-    vst1q_u32(__p + 0, __v.val[0]);
-    vst1q_u32(__p + 4, __v.val[1]);
-    vst1q_u32(__p + 8, __v.val[2]);
-}
-__BUN_CC_INTRIN uint32x4x4_t vld1q_u32_x4(const uint32_t* __p) { return (uint32x4x4_t) { { vld1q_u32(__p + 0), vld1q_u32(__p + 4), vld1q_u32(__p + 8), vld1q_u32(__p + 12) } }; }
-__BUN_CC_INTRIN void vst1q_u32_x4(uint32_t* __p, uint32x4x4_t __v)
-{
-    vst1q_u32(__p + 0, __v.val[0]);
-    vst1q_u32(__p + 4, __v.val[1]);
-    vst1q_u32(__p + 8, __v.val[2]);
-    vst1q_u32(__p + 12, __v.val[3]);
-}
-__BUN_CC_INTRIN uint32x4x2_t vld2q_u32(const uint32_t* __p)
-{
-    uint32x4_t __a = vld1q_u32(__p), __b = vld1q_u32(__p + 4);
-    return (uint32x4x2_t) { { vuzp1q_u32(__a, __b), vuzp2q_u32(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_u32(uint32_t* __p, uint32x4x2_t __v)
-{
-    vst1q_u32(__p, vzip1q_u32(__v.val[0], __v.val[1]));
-    vst1q_u32(__p + 4, vzip2q_u32(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN uint32x4x4_t vld4q_u32(const uint32_t* __p)
-{
-    uint32x4_t __a = vld1q_u32(__p), __b = vld1q_u32(__p + 4), __c = vld1q_u32(__p + 8), __d = vld1q_u32(__p + 12);
-    uint32x4_t __e0 = vuzp1q_u32(__a, __b), __o0 = vuzp2q_u32(__a, __b), __e1 = vuzp1q_u32(__c, __d), __o1 = vuzp2q_u32(__c, __d);
-    return (uint32x4x4_t) { { vuzp1q_u32(__e0, __e1), vuzp1q_u32(__o0, __o1), vuzp2q_u32(__e0, __e1), vuzp2q_u32(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_u32(uint32_t* __p, uint32x4x4_t __v)
-{
-    uint32x4_t __l02 = vzip1q_u32(__v.val[0], __v.val[2]), __h02 = vzip2q_u32(__v.val[0], __v.val[2]), __l13 = vzip1q_u32(__v.val[1], __v.val[3]), __h13 = vzip2q_u32(__v.val[1], __v.val[3]);
-    vst1q_u32(__p, vzip1q_u32(__l02, __l13));
-    vst1q_u32(__p + 4, vzip2q_u32(__l02, __l13));
-    vst1q_u32(__p + 8, vzip1q_u32(__h02, __h13));
-    vst1q_u32(__p + 12, vzip2q_u32(__h02, __h13));
-}
-__BUN_CC_INTRIN int64x1x2_t vld1_s64_x2(const int64_t* __p) { return (int64x1x2_t) { { vld1_s64(__p + 0), vld1_s64(__p + 1) } }; }
-__BUN_CC_INTRIN void vst1_s64_x2(int64_t* __p, int64x1x2_t __v)
-{
-    vst1_s64(__p + 0, __v.val[0]);
-    vst1_s64(__p + 1, __v.val[1]);
-}
-__BUN_CC_INTRIN int64x1x3_t vld1_s64_x3(const int64_t* __p) { return (int64x1x3_t) { { vld1_s64(__p + 0), vld1_s64(__p + 1), vld1_s64(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1_s64_x3(int64_t* __p, int64x1x3_t __v)
-{
-    vst1_s64(__p + 0, __v.val[0]);
-    vst1_s64(__p + 1, __v.val[1]);
-    vst1_s64(__p + 2, __v.val[2]);
-}
-__BUN_CC_INTRIN int64x1x4_t vld1_s64_x4(const int64_t* __p) { return (int64x1x4_t) { { vld1_s64(__p + 0), vld1_s64(__p + 1), vld1_s64(__p + 2), vld1_s64(__p + 3) } }; }
-__BUN_CC_INTRIN void vst1_s64_x4(int64_t* __p, int64x1x4_t __v)
-{
-    vst1_s64(__p + 0, __v.val[0]);
-    vst1_s64(__p + 1, __v.val[1]);
-    vst1_s64(__p + 2, __v.val[2]);
-    vst1_s64(__p + 3, __v.val[3]);
-}
-__BUN_CC_INTRIN int64x1x2_t vld2_s64(const int64_t* __p) { return vld1_s64_x2(__p); }
-__BUN_CC_INTRIN void vst2_s64(int64_t* __p, int64x1x2_t __v) { vst1_s64_x2(__p, __v); }
-__BUN_CC_INTRIN int64x1x3_t vld3_s64(const int64_t* __p) { return vld1_s64_x3(__p); }
-__BUN_CC_INTRIN void vst3_s64(int64_t* __p, int64x1x3_t __v) { vst1_s64_x3(__p, __v); }
-__BUN_CC_INTRIN int64x1x4_t vld4_s64(const int64_t* __p) { return vld1_s64_x4(__p); }
-__BUN_CC_INTRIN void vst4_s64(int64_t* __p, int64x1x4_t __v) { vst1_s64_x4(__p, __v); }
-__BUN_CC_INTRIN int64x2x2_t vld1q_s64_x2(const int64_t* __p) { return (int64x2x2_t) { { vld1q_s64(__p + 0), vld1q_s64(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1q_s64_x2(int64_t* __p, int64x2x2_t __v)
-{
-    vst1q_s64(__p + 0, __v.val[0]);
-    vst1q_s64(__p + 2, __v.val[1]);
-}
-__BUN_CC_INTRIN int64x2x3_t vld1q_s64_x3(const int64_t* __p) { return (int64x2x3_t) { { vld1q_s64(__p + 0), vld1q_s64(__p + 2), vld1q_s64(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1q_s64_x3(int64_t* __p, int64x2x3_t __v)
-{
-    vst1q_s64(__p + 0, __v.val[0]);
-    vst1q_s64(__p + 2, __v.val[1]);
-    vst1q_s64(__p + 4, __v.val[2]);
-}
-__BUN_CC_INTRIN int64x2x4_t vld1q_s64_x4(const int64_t* __p) { return (int64x2x4_t) { { vld1q_s64(__p + 0), vld1q_s64(__p + 2), vld1q_s64(__p + 4), vld1q_s64(__p + 6) } }; }
-__BUN_CC_INTRIN void vst1q_s64_x4(int64_t* __p, int64x2x4_t __v)
-{
-    vst1q_s64(__p + 0, __v.val[0]);
-    vst1q_s64(__p + 2, __v.val[1]);
-    vst1q_s64(__p + 4, __v.val[2]);
-    vst1q_s64(__p + 6, __v.val[3]);
-}
-__BUN_CC_INTRIN int64x2x2_t vld2q_s64(const int64_t* __p)
-{
-    int64x2_t __a = vld1q_s64(__p), __b = vld1q_s64(__p + 2);
-    return (int64x2x2_t) { { vuzp1q_s64(__a, __b), vuzp2q_s64(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_s64(int64_t* __p, int64x2x2_t __v)
-{
-    vst1q_s64(__p, vzip1q_s64(__v.val[0], __v.val[1]));
-    vst1q_s64(__p + 2, vzip2q_s64(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN int64x2x4_t vld4q_s64(const int64_t* __p)
-{
-    int64x2_t __a = vld1q_s64(__p), __b = vld1q_s64(__p + 2), __c = vld1q_s64(__p + 4), __d = vld1q_s64(__p + 6);
-    int64x2_t __e0 = vuzp1q_s64(__a, __b), __o0 = vuzp2q_s64(__a, __b), __e1 = vuzp1q_s64(__c, __d), __o1 = vuzp2q_s64(__c, __d);
-    return (int64x2x4_t) { { vuzp1q_s64(__e0, __e1), vuzp1q_s64(__o0, __o1), vuzp2q_s64(__e0, __e1), vuzp2q_s64(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_s64(int64_t* __p, int64x2x4_t __v)
-{
-    int64x2_t __l02 = vzip1q_s64(__v.val[0], __v.val[2]), __h02 = vzip2q_s64(__v.val[0], __v.val[2]), __l13 = vzip1q_s64(__v.val[1], __v.val[3]), __h13 = vzip2q_s64(__v.val[1], __v.val[3]);
-    vst1q_s64(__p, vzip1q_s64(__l02, __l13));
-    vst1q_s64(__p + 2, vzip2q_s64(__l02, __l13));
-    vst1q_s64(__p + 4, vzip1q_s64(__h02, __h13));
-    vst1q_s64(__p + 6, vzip2q_s64(__h02, __h13));
-}
-__BUN_CC_INTRIN uint64x1x2_t vld1_u64_x2(const uint64_t* __p) { return (uint64x1x2_t) { { vld1_u64(__p + 0), vld1_u64(__p + 1) } }; }
-__BUN_CC_INTRIN void vst1_u64_x2(uint64_t* __p, uint64x1x2_t __v)
-{
-    vst1_u64(__p + 0, __v.val[0]);
-    vst1_u64(__p + 1, __v.val[1]);
-}
-__BUN_CC_INTRIN uint64x1x3_t vld1_u64_x3(const uint64_t* __p) { return (uint64x1x3_t) { { vld1_u64(__p + 0), vld1_u64(__p + 1), vld1_u64(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1_u64_x3(uint64_t* __p, uint64x1x3_t __v)
-{
-    vst1_u64(__p + 0, __v.val[0]);
-    vst1_u64(__p + 1, __v.val[1]);
-    vst1_u64(__p + 2, __v.val[2]);
-}
-__BUN_CC_INTRIN uint64x1x4_t vld1_u64_x4(const uint64_t* __p) { return (uint64x1x4_t) { { vld1_u64(__p + 0), vld1_u64(__p + 1), vld1_u64(__p + 2), vld1_u64(__p + 3) } }; }
-__BUN_CC_INTRIN void vst1_u64_x4(uint64_t* __p, uint64x1x4_t __v)
-{
-    vst1_u64(__p + 0, __v.val[0]);
-    vst1_u64(__p + 1, __v.val[1]);
-    vst1_u64(__p + 2, __v.val[2]);
-    vst1_u64(__p + 3, __v.val[3]);
-}
-__BUN_CC_INTRIN uint64x1x2_t vld2_u64(const uint64_t* __p) { return vld1_u64_x2(__p); }
-__BUN_CC_INTRIN void vst2_u64(uint64_t* __p, uint64x1x2_t __v) { vst1_u64_x2(__p, __v); }
-__BUN_CC_INTRIN uint64x1x3_t vld3_u64(const uint64_t* __p) { return vld1_u64_x3(__p); }
-__BUN_CC_INTRIN void vst3_u64(uint64_t* __p, uint64x1x3_t __v) { vst1_u64_x3(__p, __v); }
-__BUN_CC_INTRIN uint64x1x4_t vld4_u64(const uint64_t* __p) { return vld1_u64_x4(__p); }
-__BUN_CC_INTRIN void vst4_u64(uint64_t* __p, uint64x1x4_t __v) { vst1_u64_x4(__p, __v); }
-__BUN_CC_INTRIN uint64x2x2_t vld1q_u64_x2(const uint64_t* __p) { return (uint64x2x2_t) { { vld1q_u64(__p + 0), vld1q_u64(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1q_u64_x2(uint64_t* __p, uint64x2x2_t __v)
-{
-    vst1q_u64(__p + 0, __v.val[0]);
-    vst1q_u64(__p + 2, __v.val[1]);
-}
-__BUN_CC_INTRIN uint64x2x3_t vld1q_u64_x3(const uint64_t* __p) { return (uint64x2x3_t) { { vld1q_u64(__p + 0), vld1q_u64(__p + 2), vld1q_u64(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1q_u64_x3(uint64_t* __p, uint64x2x3_t __v)
-{
-    vst1q_u64(__p + 0, __v.val[0]);
-    vst1q_u64(__p + 2, __v.val[1]);
-    vst1q_u64(__p + 4, __v.val[2]);
-}
-__BUN_CC_INTRIN uint64x2x4_t vld1q_u64_x4(const uint64_t* __p) { return (uint64x2x4_t) { { vld1q_u64(__p + 0), vld1q_u64(__p + 2), vld1q_u64(__p + 4), vld1q_u64(__p + 6) } }; }
-__BUN_CC_INTRIN void vst1q_u64_x4(uint64_t* __p, uint64x2x4_t __v)
-{
-    vst1q_u64(__p + 0, __v.val[0]);
-    vst1q_u64(__p + 2, __v.val[1]);
-    vst1q_u64(__p + 4, __v.val[2]);
-    vst1q_u64(__p + 6, __v.val[3]);
-}
-__BUN_CC_INTRIN uint64x2x2_t vld2q_u64(const uint64_t* __p)
-{
-    uint64x2_t __a = vld1q_u64(__p), __b = vld1q_u64(__p + 2);
-    return (uint64x2x2_t) { { vuzp1q_u64(__a, __b), vuzp2q_u64(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_u64(uint64_t* __p, uint64x2x2_t __v)
-{
-    vst1q_u64(__p, vzip1q_u64(__v.val[0], __v.val[1]));
-    vst1q_u64(__p + 2, vzip2q_u64(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN uint64x2x4_t vld4q_u64(const uint64_t* __p)
-{
-    uint64x2_t __a = vld1q_u64(__p), __b = vld1q_u64(__p + 2), __c = vld1q_u64(__p + 4), __d = vld1q_u64(__p + 6);
-    uint64x2_t __e0 = vuzp1q_u64(__a, __b), __o0 = vuzp2q_u64(__a, __b), __e1 = vuzp1q_u64(__c, __d), __o1 = vuzp2q_u64(__c, __d);
-    return (uint64x2x4_t) { { vuzp1q_u64(__e0, __e1), vuzp1q_u64(__o0, __o1), vuzp2q_u64(__e0, __e1), vuzp2q_u64(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_u64(uint64_t* __p, uint64x2x4_t __v)
-{
-    uint64x2_t __l02 = vzip1q_u64(__v.val[0], __v.val[2]), __h02 = vzip2q_u64(__v.val[0], __v.val[2]), __l13 = vzip1q_u64(__v.val[1], __v.val[3]), __h13 = vzip2q_u64(__v.val[1], __v.val[3]);
-    vst1q_u64(__p, vzip1q_u64(__l02, __l13));
-    vst1q_u64(__p + 2, vzip2q_u64(__l02, __l13));
-    vst1q_u64(__p + 4, vzip1q_u64(__h02, __h13));
-    vst1q_u64(__p + 6, vzip2q_u64(__h02, __h13));
-}
-__BUN_CC_INTRIN float32x2x2_t vld1_f32_x2(const float32_t* __p) { return (float32x2x2_t) { { vld1_f32(__p + 0), vld1_f32(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1_f32_x2(float32_t* __p, float32x2x2_t __v)
-{
-    vst1_f32(__p + 0, __v.val[0]);
-    vst1_f32(__p + 2, __v.val[1]);
-}
-__BUN_CC_INTRIN float32x2x3_t vld1_f32_x3(const float32_t* __p) { return (float32x2x3_t) { { vld1_f32(__p + 0), vld1_f32(__p + 2), vld1_f32(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1_f32_x3(float32_t* __p, float32x2x3_t __v)
-{
-    vst1_f32(__p + 0, __v.val[0]);
-    vst1_f32(__p + 2, __v.val[1]);
-    vst1_f32(__p + 4, __v.val[2]);
-}
-__BUN_CC_INTRIN float32x2x4_t vld1_f32_x4(const float32_t* __p) { return (float32x2x4_t) { { vld1_f32(__p + 0), vld1_f32(__p + 2), vld1_f32(__p + 4), vld1_f32(__p + 6) } }; }
-__BUN_CC_INTRIN void vst1_f32_x4(float32_t* __p, float32x2x4_t __v)
-{
-    vst1_f32(__p + 0, __v.val[0]);
-    vst1_f32(__p + 2, __v.val[1]);
-    vst1_f32(__p + 4, __v.val[2]);
-    vst1_f32(__p + 6, __v.val[3]);
-}
-__BUN_CC_INTRIN float32x2x2_t vld2_f32(const float32_t* __p)
-{
-    float32x2_t __a = vld1_f32(__p), __b = vld1_f32(__p + 2);
-    return (float32x2x2_t) { { vuzp1_f32(__a, __b), vuzp2_f32(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2_f32(float32_t* __p, float32x2x2_t __v)
-{
-    vst1_f32(__p, vzip1_f32(__v.val[0], __v.val[1]));
-    vst1_f32(__p + 2, vzip2_f32(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN float32x2x4_t vld4_f32(const float32_t* __p)
-{
-    float32x2_t __a = vld1_f32(__p), __b = vld1_f32(__p + 2), __c = vld1_f32(__p + 4), __d = vld1_f32(__p + 6);
-    float32x2_t __e0 = vuzp1_f32(__a, __b), __o0 = vuzp2_f32(__a, __b), __e1 = vuzp1_f32(__c, __d), __o1 = vuzp2_f32(__c, __d);
-    return (float32x2x4_t) { { vuzp1_f32(__e0, __e1), vuzp1_f32(__o0, __o1), vuzp2_f32(__e0, __e1), vuzp2_f32(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4_f32(float32_t* __p, float32x2x4_t __v)
-{
-    float32x2_t __l02 = vzip1_f32(__v.val[0], __v.val[2]), __h02 = vzip2_f32(__v.val[0], __v.val[2]), __l13 = vzip1_f32(__v.val[1], __v.val[3]), __h13 = vzip2_f32(__v.val[1], __v.val[3]);
-    vst1_f32(__p, vzip1_f32(__l02, __l13));
-    vst1_f32(__p + 2, vzip2_f32(__l02, __l13));
-    vst1_f32(__p + 4, vzip1_f32(__h02, __h13));
-    vst1_f32(__p + 6, vzip2_f32(__h02, __h13));
-}
-__BUN_CC_INTRIN float32x4x2_t vld1q_f32_x2(const float32_t* __p) { return (float32x4x2_t) { { vld1q_f32(__p + 0), vld1q_f32(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1q_f32_x2(float32_t* __p, float32x4x2_t __v)
-{
-    vst1q_f32(__p + 0, __v.val[0]);
-    vst1q_f32(__p + 4, __v.val[1]);
-}
-__BUN_CC_INTRIN float32x4x3_t vld1q_f32_x3(const float32_t* __p) { return (float32x4x3_t) { { vld1q_f32(__p + 0), vld1q_f32(__p + 4), vld1q_f32(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1q_f32_x3(float32_t* __p, float32x4x3_t __v)
-{
-    vst1q_f32(__p + 0, __v.val[0]);
-    vst1q_f32(__p + 4, __v.val[1]);
-    vst1q_f32(__p + 8, __v.val[2]);
-}
-__BUN_CC_INTRIN float32x4x4_t vld1q_f32_x4(const float32_t* __p) { return (float32x4x4_t) { { vld1q_f32(__p + 0), vld1q_f32(__p + 4), vld1q_f32(__p + 8), vld1q_f32(__p + 12) } }; }
-__BUN_CC_INTRIN void vst1q_f32_x4(float32_t* __p, float32x4x4_t __v)
-{
-    vst1q_f32(__p + 0, __v.val[0]);
-    vst1q_f32(__p + 4, __v.val[1]);
-    vst1q_f32(__p + 8, __v.val[2]);
-    vst1q_f32(__p + 12, __v.val[3]);
-}
-__BUN_CC_INTRIN float32x4x2_t vld2q_f32(const float32_t* __p)
-{
-    float32x4_t __a = vld1q_f32(__p), __b = vld1q_f32(__p + 4);
-    return (float32x4x2_t) { { vuzp1q_f32(__a, __b), vuzp2q_f32(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_f32(float32_t* __p, float32x4x2_t __v)
-{
-    vst1q_f32(__p, vzip1q_f32(__v.val[0], __v.val[1]));
-    vst1q_f32(__p + 4, vzip2q_f32(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN float32x4x4_t vld4q_f32(const float32_t* __p)
-{
-    float32x4_t __a = vld1q_f32(__p), __b = vld1q_f32(__p + 4), __c = vld1q_f32(__p + 8), __d = vld1q_f32(__p + 12);
-    float32x4_t __e0 = vuzp1q_f32(__a, __b), __o0 = vuzp2q_f32(__a, __b), __e1 = vuzp1q_f32(__c, __d), __o1 = vuzp2q_f32(__c, __d);
-    return (float32x4x4_t) { { vuzp1q_f32(__e0, __e1), vuzp1q_f32(__o0, __o1), vuzp2q_f32(__e0, __e1), vuzp2q_f32(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_f32(float32_t* __p, float32x4x4_t __v)
-{
-    float32x4_t __l02 = vzip1q_f32(__v.val[0], __v.val[2]), __h02 = vzip2q_f32(__v.val[0], __v.val[2]), __l13 = vzip1q_f32(__v.val[1], __v.val[3]), __h13 = vzip2q_f32(__v.val[1], __v.val[3]);
-    vst1q_f32(__p, vzip1q_f32(__l02, __l13));
-    vst1q_f32(__p + 4, vzip2q_f32(__l02, __l13));
-    vst1q_f32(__p + 8, vzip1q_f32(__h02, __h13));
-    vst1q_f32(__p + 12, vzip2q_f32(__h02, __h13));
-}
-__BUN_CC_INTRIN float64x1x2_t vld1_f64_x2(const float64_t* __p) { return (float64x1x2_t) { { vld1_f64(__p + 0), vld1_f64(__p + 1) } }; }
-__BUN_CC_INTRIN void vst1_f64_x2(float64_t* __p, float64x1x2_t __v)
-{
-    vst1_f64(__p + 0, __v.val[0]);
-    vst1_f64(__p + 1, __v.val[1]);
-}
-__BUN_CC_INTRIN float64x1x3_t vld1_f64_x3(const float64_t* __p) { return (float64x1x3_t) { { vld1_f64(__p + 0), vld1_f64(__p + 1), vld1_f64(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1_f64_x3(float64_t* __p, float64x1x3_t __v)
-{
-    vst1_f64(__p + 0, __v.val[0]);
-    vst1_f64(__p + 1, __v.val[1]);
-    vst1_f64(__p + 2, __v.val[2]);
-}
-__BUN_CC_INTRIN float64x1x4_t vld1_f64_x4(const float64_t* __p) { return (float64x1x4_t) { { vld1_f64(__p + 0), vld1_f64(__p + 1), vld1_f64(__p + 2), vld1_f64(__p + 3) } }; }
-__BUN_CC_INTRIN void vst1_f64_x4(float64_t* __p, float64x1x4_t __v)
-{
-    vst1_f64(__p + 0, __v.val[0]);
-    vst1_f64(__p + 1, __v.val[1]);
-    vst1_f64(__p + 2, __v.val[2]);
-    vst1_f64(__p + 3, __v.val[3]);
-}
-__BUN_CC_INTRIN float64x1x2_t vld2_f64(const float64_t* __p) { return vld1_f64_x2(__p); }
-__BUN_CC_INTRIN void vst2_f64(float64_t* __p, float64x1x2_t __v) { vst1_f64_x2(__p, __v); }
-__BUN_CC_INTRIN float64x1x3_t vld3_f64(const float64_t* __p) { return vld1_f64_x3(__p); }
-__BUN_CC_INTRIN void vst3_f64(float64_t* __p, float64x1x3_t __v) { vst1_f64_x3(__p, __v); }
-__BUN_CC_INTRIN float64x1x4_t vld4_f64(const float64_t* __p) { return vld1_f64_x4(__p); }
-__BUN_CC_INTRIN void vst4_f64(float64_t* __p, float64x1x4_t __v) { vst1_f64_x4(__p, __v); }
-__BUN_CC_INTRIN float64x2x2_t vld1q_f64_x2(const float64_t* __p) { return (float64x2x2_t) { { vld1q_f64(__p + 0), vld1q_f64(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1q_f64_x2(float64_t* __p, float64x2x2_t __v)
-{
-    vst1q_f64(__p + 0, __v.val[0]);
-    vst1q_f64(__p + 2, __v.val[1]);
-}
-__BUN_CC_INTRIN float64x2x3_t vld1q_f64_x3(const float64_t* __p) { return (float64x2x3_t) { { vld1q_f64(__p + 0), vld1q_f64(__p + 2), vld1q_f64(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1q_f64_x3(float64_t* __p, float64x2x3_t __v)
-{
-    vst1q_f64(__p + 0, __v.val[0]);
-    vst1q_f64(__p + 2, __v.val[1]);
-    vst1q_f64(__p + 4, __v.val[2]);
-}
-__BUN_CC_INTRIN float64x2x4_t vld1q_f64_x4(const float64_t* __p) { return (float64x2x4_t) { { vld1q_f64(__p + 0), vld1q_f64(__p + 2), vld1q_f64(__p + 4), vld1q_f64(__p + 6) } }; }
-__BUN_CC_INTRIN void vst1q_f64_x4(float64_t* __p, float64x2x4_t __v)
-{
-    vst1q_f64(__p + 0, __v.val[0]);
-    vst1q_f64(__p + 2, __v.val[1]);
-    vst1q_f64(__p + 4, __v.val[2]);
-    vst1q_f64(__p + 6, __v.val[3]);
-}
-__BUN_CC_INTRIN float64x2x2_t vld2q_f64(const float64_t* __p)
-{
-    float64x2_t __a = vld1q_f64(__p), __b = vld1q_f64(__p + 2);
-    return (float64x2x2_t) { { vuzp1q_f64(__a, __b), vuzp2q_f64(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_f64(float64_t* __p, float64x2x2_t __v)
-{
-    vst1q_f64(__p, vzip1q_f64(__v.val[0], __v.val[1]));
-    vst1q_f64(__p + 2, vzip2q_f64(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN float64x2x4_t vld4q_f64(const float64_t* __p)
-{
-    float64x2_t __a = vld1q_f64(__p), __b = vld1q_f64(__p + 2), __c = vld1q_f64(__p + 4), __d = vld1q_f64(__p + 6);
-    float64x2_t __e0 = vuzp1q_f64(__a, __b), __o0 = vuzp2q_f64(__a, __b), __e1 = vuzp1q_f64(__c, __d), __o1 = vuzp2q_f64(__c, __d);
-    return (float64x2x4_t) { { vuzp1q_f64(__e0, __e1), vuzp1q_f64(__o0, __o1), vuzp2q_f64(__e0, __e1), vuzp2q_f64(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_f64(float64_t* __p, float64x2x4_t __v)
-{
-    float64x2_t __l02 = vzip1q_f64(__v.val[0], __v.val[2]), __h02 = vzip2q_f64(__v.val[0], __v.val[2]), __l13 = vzip1q_f64(__v.val[1], __v.val[3]), __h13 = vzip2q_f64(__v.val[1], __v.val[3]);
-    vst1q_f64(__p, vzip1q_f64(__l02, __l13));
-    vst1q_f64(__p + 2, vzip2q_f64(__l02, __l13));
-    vst1q_f64(__p + 4, vzip1q_f64(__h02, __h13));
-    vst1q_f64(__p + 6, vzip2q_f64(__h02, __h13));
-}
-__BUN_CC_INTRIN poly8x8x2_t vld1_p8_x2(const poly8_t* __p) { return (poly8x8x2_t) { { vld1_p8(__p + 0), vld1_p8(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1_p8_x2(poly8_t* __p, poly8x8x2_t __v)
-{
-    vst1_p8(__p + 0, __v.val[0]);
-    vst1_p8(__p + 8, __v.val[1]);
-}
-__BUN_CC_INTRIN poly8x8x3_t vld1_p8_x3(const poly8_t* __p) { return (poly8x8x3_t) { { vld1_p8(__p + 0), vld1_p8(__p + 8), vld1_p8(__p + 16) } }; }
-__BUN_CC_INTRIN void vst1_p8_x3(poly8_t* __p, poly8x8x3_t __v)
-{
-    vst1_p8(__p + 0, __v.val[0]);
-    vst1_p8(__p + 8, __v.val[1]);
-    vst1_p8(__p + 16, __v.val[2]);
-}
-__BUN_CC_INTRIN poly8x8x4_t vld1_p8_x4(const poly8_t* __p) { return (poly8x8x4_t) { { vld1_p8(__p + 0), vld1_p8(__p + 8), vld1_p8(__p + 16), vld1_p8(__p + 24) } }; }
-__BUN_CC_INTRIN void vst1_p8_x4(poly8_t* __p, poly8x8x4_t __v)
-{
-    vst1_p8(__p + 0, __v.val[0]);
-    vst1_p8(__p + 8, __v.val[1]);
-    vst1_p8(__p + 16, __v.val[2]);
-    vst1_p8(__p + 24, __v.val[3]);
-}
-__BUN_CC_INTRIN poly8x8x2_t vld2_p8(const poly8_t* __p)
-{
-    poly8x8_t __a = vld1_p8(__p), __b = vld1_p8(__p + 8);
-    return (poly8x8x2_t) { { vuzp1_p8(__a, __b), vuzp2_p8(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2_p8(poly8_t* __p, poly8x8x2_t __v)
-{
-    vst1_p8(__p, vzip1_p8(__v.val[0], __v.val[1]));
-    vst1_p8(__p + 8, vzip2_p8(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN poly8x8x4_t vld4_p8(const poly8_t* __p)
-{
-    poly8x8_t __a = vld1_p8(__p), __b = vld1_p8(__p + 8), __c = vld1_p8(__p + 16), __d = vld1_p8(__p + 24);
-    poly8x8_t __e0 = vuzp1_p8(__a, __b), __o0 = vuzp2_p8(__a, __b), __e1 = vuzp1_p8(__c, __d), __o1 = vuzp2_p8(__c, __d);
-    return (poly8x8x4_t) { { vuzp1_p8(__e0, __e1), vuzp1_p8(__o0, __o1), vuzp2_p8(__e0, __e1), vuzp2_p8(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4_p8(poly8_t* __p, poly8x8x4_t __v)
-{
-    poly8x8_t __l02 = vzip1_p8(__v.val[0], __v.val[2]), __h02 = vzip2_p8(__v.val[0], __v.val[2]), __l13 = vzip1_p8(__v.val[1], __v.val[3]), __h13 = vzip2_p8(__v.val[1], __v.val[3]);
-    vst1_p8(__p, vzip1_p8(__l02, __l13));
-    vst1_p8(__p + 8, vzip2_p8(__l02, __l13));
-    vst1_p8(__p + 16, vzip1_p8(__h02, __h13));
-    vst1_p8(__p + 24, vzip2_p8(__h02, __h13));
-}
-__BUN_CC_INTRIN poly8x16x2_t vld1q_p8_x2(const poly8_t* __p) { return (poly8x16x2_t) { { vld1q_p8(__p + 0), vld1q_p8(__p + 16) } }; }
-__BUN_CC_INTRIN void vst1q_p8_x2(poly8_t* __p, poly8x16x2_t __v)
-{
-    vst1q_p8(__p + 0, __v.val[0]);
-    vst1q_p8(__p + 16, __v.val[1]);
-}
-__BUN_CC_INTRIN poly8x16x3_t vld1q_p8_x3(const poly8_t* __p) { return (poly8x16x3_t) { { vld1q_p8(__p + 0), vld1q_p8(__p + 16), vld1q_p8(__p + 32) } }; }
-__BUN_CC_INTRIN void vst1q_p8_x3(poly8_t* __p, poly8x16x3_t __v)
-{
-    vst1q_p8(__p + 0, __v.val[0]);
-    vst1q_p8(__p + 16, __v.val[1]);
-    vst1q_p8(__p + 32, __v.val[2]);
-}
-__BUN_CC_INTRIN poly8x16x4_t vld1q_p8_x4(const poly8_t* __p) { return (poly8x16x4_t) { { vld1q_p8(__p + 0), vld1q_p8(__p + 16), vld1q_p8(__p + 32), vld1q_p8(__p + 48) } }; }
-__BUN_CC_INTRIN void vst1q_p8_x4(poly8_t* __p, poly8x16x4_t __v)
-{
-    vst1q_p8(__p + 0, __v.val[0]);
-    vst1q_p8(__p + 16, __v.val[1]);
-    vst1q_p8(__p + 32, __v.val[2]);
-    vst1q_p8(__p + 48, __v.val[3]);
-}
-__BUN_CC_INTRIN poly8x16x2_t vld2q_p8(const poly8_t* __p)
-{
-    poly8x16_t __a = vld1q_p8(__p), __b = vld1q_p8(__p + 16);
-    return (poly8x16x2_t) { { vuzp1q_p8(__a, __b), vuzp2q_p8(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_p8(poly8_t* __p, poly8x16x2_t __v)
-{
-    vst1q_p8(__p, vzip1q_p8(__v.val[0], __v.val[1]));
-    vst1q_p8(__p + 16, vzip2q_p8(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN poly8x16x4_t vld4q_p8(const poly8_t* __p)
-{
-    poly8x16_t __a = vld1q_p8(__p), __b = vld1q_p8(__p + 16), __c = vld1q_p8(__p + 32), __d = vld1q_p8(__p + 48);
-    poly8x16_t __e0 = vuzp1q_p8(__a, __b), __o0 = vuzp2q_p8(__a, __b), __e1 = vuzp1q_p8(__c, __d), __o1 = vuzp2q_p8(__c, __d);
-    return (poly8x16x4_t) { { vuzp1q_p8(__e0, __e1), vuzp1q_p8(__o0, __o1), vuzp2q_p8(__e0, __e1), vuzp2q_p8(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_p8(poly8_t* __p, poly8x16x4_t __v)
-{
-    poly8x16_t __l02 = vzip1q_p8(__v.val[0], __v.val[2]), __h02 = vzip2q_p8(__v.val[0], __v.val[2]), __l13 = vzip1q_p8(__v.val[1], __v.val[3]), __h13 = vzip2q_p8(__v.val[1], __v.val[3]);
-    vst1q_p8(__p, vzip1q_p8(__l02, __l13));
-    vst1q_p8(__p + 16, vzip2q_p8(__l02, __l13));
-    vst1q_p8(__p + 32, vzip1q_p8(__h02, __h13));
-    vst1q_p8(__p + 48, vzip2q_p8(__h02, __h13));
-}
-__BUN_CC_INTRIN poly16x4x2_t vld1_p16_x2(const poly16_t* __p) { return (poly16x4x2_t) { { vld1_p16(__p + 0), vld1_p16(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1_p16_x2(poly16_t* __p, poly16x4x2_t __v)
-{
-    vst1_p16(__p + 0, __v.val[0]);
-    vst1_p16(__p + 4, __v.val[1]);
-}
-__BUN_CC_INTRIN poly16x4x3_t vld1_p16_x3(const poly16_t* __p) { return (poly16x4x3_t) { { vld1_p16(__p + 0), vld1_p16(__p + 4), vld1_p16(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1_p16_x3(poly16_t* __p, poly16x4x3_t __v)
-{
-    vst1_p16(__p + 0, __v.val[0]);
-    vst1_p16(__p + 4, __v.val[1]);
-    vst1_p16(__p + 8, __v.val[2]);
-}
-__BUN_CC_INTRIN poly16x4x4_t vld1_p16_x4(const poly16_t* __p) { return (poly16x4x4_t) { { vld1_p16(__p + 0), vld1_p16(__p + 4), vld1_p16(__p + 8), vld1_p16(__p + 12) } }; }
-__BUN_CC_INTRIN void vst1_p16_x4(poly16_t* __p, poly16x4x4_t __v)
-{
-    vst1_p16(__p + 0, __v.val[0]);
-    vst1_p16(__p + 4, __v.val[1]);
-    vst1_p16(__p + 8, __v.val[2]);
-    vst1_p16(__p + 12, __v.val[3]);
-}
-__BUN_CC_INTRIN poly16x4x2_t vld2_p16(const poly16_t* __p)
-{
-    poly16x4_t __a = vld1_p16(__p), __b = vld1_p16(__p + 4);
-    return (poly16x4x2_t) { { vuzp1_p16(__a, __b), vuzp2_p16(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2_p16(poly16_t* __p, poly16x4x2_t __v)
-{
-    vst1_p16(__p, vzip1_p16(__v.val[0], __v.val[1]));
-    vst1_p16(__p + 4, vzip2_p16(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN poly16x4x4_t vld4_p16(const poly16_t* __p)
-{
-    poly16x4_t __a = vld1_p16(__p), __b = vld1_p16(__p + 4), __c = vld1_p16(__p + 8), __d = vld1_p16(__p + 12);
-    poly16x4_t __e0 = vuzp1_p16(__a, __b), __o0 = vuzp2_p16(__a, __b), __e1 = vuzp1_p16(__c, __d), __o1 = vuzp2_p16(__c, __d);
-    return (poly16x4x4_t) { { vuzp1_p16(__e0, __e1), vuzp1_p16(__o0, __o1), vuzp2_p16(__e0, __e1), vuzp2_p16(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4_p16(poly16_t* __p, poly16x4x4_t __v)
-{
-    poly16x4_t __l02 = vzip1_p16(__v.val[0], __v.val[2]), __h02 = vzip2_p16(__v.val[0], __v.val[2]), __l13 = vzip1_p16(__v.val[1], __v.val[3]), __h13 = vzip2_p16(__v.val[1], __v.val[3]);
-    vst1_p16(__p, vzip1_p16(__l02, __l13));
-    vst1_p16(__p + 4, vzip2_p16(__l02, __l13));
-    vst1_p16(__p + 8, vzip1_p16(__h02, __h13));
-    vst1_p16(__p + 12, vzip2_p16(__h02, __h13));
-}
-__BUN_CC_INTRIN poly16x8x2_t vld1q_p16_x2(const poly16_t* __p) { return (poly16x8x2_t) { { vld1q_p16(__p + 0), vld1q_p16(__p + 8) } }; }
-__BUN_CC_INTRIN void vst1q_p16_x2(poly16_t* __p, poly16x8x2_t __v)
-{
-    vst1q_p16(__p + 0, __v.val[0]);
-    vst1q_p16(__p + 8, __v.val[1]);
-}
-__BUN_CC_INTRIN poly16x8x3_t vld1q_p16_x3(const poly16_t* __p) { return (poly16x8x3_t) { { vld1q_p16(__p + 0), vld1q_p16(__p + 8), vld1q_p16(__p + 16) } }; }
-__BUN_CC_INTRIN void vst1q_p16_x3(poly16_t* __p, poly16x8x3_t __v)
-{
-    vst1q_p16(__p + 0, __v.val[0]);
-    vst1q_p16(__p + 8, __v.val[1]);
-    vst1q_p16(__p + 16, __v.val[2]);
-}
-__BUN_CC_INTRIN poly16x8x4_t vld1q_p16_x4(const poly16_t* __p) { return (poly16x8x4_t) { { vld1q_p16(__p + 0), vld1q_p16(__p + 8), vld1q_p16(__p + 16), vld1q_p16(__p + 24) } }; }
-__BUN_CC_INTRIN void vst1q_p16_x4(poly16_t* __p, poly16x8x4_t __v)
-{
-    vst1q_p16(__p + 0, __v.val[0]);
-    vst1q_p16(__p + 8, __v.val[1]);
-    vst1q_p16(__p + 16, __v.val[2]);
-    vst1q_p16(__p + 24, __v.val[3]);
-}
-__BUN_CC_INTRIN poly16x8x2_t vld2q_p16(const poly16_t* __p)
-{
-    poly16x8_t __a = vld1q_p16(__p), __b = vld1q_p16(__p + 8);
-    return (poly16x8x2_t) { { vuzp1q_p16(__a, __b), vuzp2q_p16(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_p16(poly16_t* __p, poly16x8x2_t __v)
-{
-    vst1q_p16(__p, vzip1q_p16(__v.val[0], __v.val[1]));
-    vst1q_p16(__p + 8, vzip2q_p16(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN poly16x8x4_t vld4q_p16(const poly16_t* __p)
-{
-    poly16x8_t __a = vld1q_p16(__p), __b = vld1q_p16(__p + 8), __c = vld1q_p16(__p + 16), __d = vld1q_p16(__p + 24);
-    poly16x8_t __e0 = vuzp1q_p16(__a, __b), __o0 = vuzp2q_p16(__a, __b), __e1 = vuzp1q_p16(__c, __d), __o1 = vuzp2q_p16(__c, __d);
-    return (poly16x8x4_t) { { vuzp1q_p16(__e0, __e1), vuzp1q_p16(__o0, __o1), vuzp2q_p16(__e0, __e1), vuzp2q_p16(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_p16(poly16_t* __p, poly16x8x4_t __v)
-{
-    poly16x8_t __l02 = vzip1q_p16(__v.val[0], __v.val[2]), __h02 = vzip2q_p16(__v.val[0], __v.val[2]), __l13 = vzip1q_p16(__v.val[1], __v.val[3]), __h13 = vzip2q_p16(__v.val[1], __v.val[3]);
-    vst1q_p16(__p, vzip1q_p16(__l02, __l13));
-    vst1q_p16(__p + 8, vzip2q_p16(__l02, __l13));
-    vst1q_p16(__p + 16, vzip1q_p16(__h02, __h13));
-    vst1q_p16(__p + 24, vzip2q_p16(__h02, __h13));
-}
-__BUN_CC_INTRIN poly64x1x2_t vld1_p64_x2(const poly64_t* __p) { return (poly64x1x2_t) { { vld1_p64(__p + 0), vld1_p64(__p + 1) } }; }
-__BUN_CC_INTRIN void vst1_p64_x2(poly64_t* __p, poly64x1x2_t __v)
-{
-    vst1_p64(__p + 0, __v.val[0]);
-    vst1_p64(__p + 1, __v.val[1]);
-}
-__BUN_CC_INTRIN poly64x1x3_t vld1_p64_x3(const poly64_t* __p) { return (poly64x1x3_t) { { vld1_p64(__p + 0), vld1_p64(__p + 1), vld1_p64(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1_p64_x3(poly64_t* __p, poly64x1x3_t __v)
-{
-    vst1_p64(__p + 0, __v.val[0]);
-    vst1_p64(__p + 1, __v.val[1]);
-    vst1_p64(__p + 2, __v.val[2]);
-}
-__BUN_CC_INTRIN poly64x1x4_t vld1_p64_x4(const poly64_t* __p) { return (poly64x1x4_t) { { vld1_p64(__p + 0), vld1_p64(__p + 1), vld1_p64(__p + 2), vld1_p64(__p + 3) } }; }
-__BUN_CC_INTRIN void vst1_p64_x4(poly64_t* __p, poly64x1x4_t __v)
-{
-    vst1_p64(__p + 0, __v.val[0]);
-    vst1_p64(__p + 1, __v.val[1]);
-    vst1_p64(__p + 2, __v.val[2]);
-    vst1_p64(__p + 3, __v.val[3]);
-}
-__BUN_CC_INTRIN poly64x1x2_t vld2_p64(const poly64_t* __p) { return vld1_p64_x2(__p); }
-__BUN_CC_INTRIN void vst2_p64(poly64_t* __p, poly64x1x2_t __v) { vst1_p64_x2(__p, __v); }
-__BUN_CC_INTRIN poly64x1x3_t vld3_p64(const poly64_t* __p) { return vld1_p64_x3(__p); }
-__BUN_CC_INTRIN void vst3_p64(poly64_t* __p, poly64x1x3_t __v) { vst1_p64_x3(__p, __v); }
-__BUN_CC_INTRIN poly64x1x4_t vld4_p64(const poly64_t* __p) { return vld1_p64_x4(__p); }
-__BUN_CC_INTRIN void vst4_p64(poly64_t* __p, poly64x1x4_t __v) { vst1_p64_x4(__p, __v); }
-__BUN_CC_INTRIN poly64x2x2_t vld1q_p64_x2(const poly64_t* __p) { return (poly64x2x2_t) { { vld1q_p64(__p + 0), vld1q_p64(__p + 2) } }; }
-__BUN_CC_INTRIN void vst1q_p64_x2(poly64_t* __p, poly64x2x2_t __v)
-{
-    vst1q_p64(__p + 0, __v.val[0]);
-    vst1q_p64(__p + 2, __v.val[1]);
-}
-__BUN_CC_INTRIN poly64x2x3_t vld1q_p64_x3(const poly64_t* __p) { return (poly64x2x3_t) { { vld1q_p64(__p + 0), vld1q_p64(__p + 2), vld1q_p64(__p + 4) } }; }
-__BUN_CC_INTRIN void vst1q_p64_x3(poly64_t* __p, poly64x2x3_t __v)
-{
-    vst1q_p64(__p + 0, __v.val[0]);
-    vst1q_p64(__p + 2, __v.val[1]);
-    vst1q_p64(__p + 4, __v.val[2]);
-}
-__BUN_CC_INTRIN poly64x2x4_t vld1q_p64_x4(const poly64_t* __p) { return (poly64x2x4_t) { { vld1q_p64(__p + 0), vld1q_p64(__p + 2), vld1q_p64(__p + 4), vld1q_p64(__p + 6) } }; }
-__BUN_CC_INTRIN void vst1q_p64_x4(poly64_t* __p, poly64x2x4_t __v)
-{
-    vst1q_p64(__p + 0, __v.val[0]);
-    vst1q_p64(__p + 2, __v.val[1]);
-    vst1q_p64(__p + 4, __v.val[2]);
-    vst1q_p64(__p + 6, __v.val[3]);
-}
-__BUN_CC_INTRIN poly64x2x2_t vld2q_p64(const poly64_t* __p)
-{
-    poly64x2_t __a = vld1q_p64(__p), __b = vld1q_p64(__p + 2);
-    return (poly64x2x2_t) { { vuzp1q_p64(__a, __b), vuzp2q_p64(__a, __b) } };
-}
-__BUN_CC_INTRIN void vst2q_p64(poly64_t* __p, poly64x2x2_t __v)
-{
-    vst1q_p64(__p, vzip1q_p64(__v.val[0], __v.val[1]));
-    vst1q_p64(__p + 2, vzip2q_p64(__v.val[0], __v.val[1]));
-}
-__BUN_CC_INTRIN poly64x2x4_t vld4q_p64(const poly64_t* __p)
-{
-    poly64x2_t __a = vld1q_p64(__p), __b = vld1q_p64(__p + 2), __c = vld1q_p64(__p + 4), __d = vld1q_p64(__p + 6);
-    poly64x2_t __e0 = vuzp1q_p64(__a, __b), __o0 = vuzp2q_p64(__a, __b), __e1 = vuzp1q_p64(__c, __d), __o1 = vuzp2q_p64(__c, __d);
-    return (poly64x2x4_t) { { vuzp1q_p64(__e0, __e1), vuzp1q_p64(__o0, __o1), vuzp2q_p64(__e0, __e1), vuzp2q_p64(__o0, __o1) } };
-}
-__BUN_CC_INTRIN void vst4q_p64(poly64_t* __p, poly64x2x4_t __v)
-{
-    poly64x2_t __l02 = vzip1q_p64(__v.val[0], __v.val[2]), __h02 = vzip2q_p64(__v.val[0], __v.val[2]), __l13 = vzip1q_p64(__v.val[1], __v.val[3]), __h13 = vzip2q_p64(__v.val[1], __v.val[3]);
-    vst1q_p64(__p, vzip1q_p64(__l02, __l13));
-    vst1q_p64(__p + 2, vzip2q_p64(__l02, __l13));
-    vst1q_p64(__p + 4, vzip1q_p64(__h02, __h13));
-    vst1q_p64(__p + 6, vzip2q_p64(__h02, __h13));
-}
+__BUN_CC_INTRIN int8x8x2_t vld1_s8_x2(const int8_t *__p) { return (int8x8x2_t){{vld1_s8(__p + 0), vld1_s8(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1_s8_x2(int8_t *__p, int8x8x2_t __v) { vst1_s8(__p + 0, __v.val[0]); vst1_s8(__p + 8, __v.val[1]); }
+__BUN_CC_INTRIN int8x8x3_t vld1_s8_x3(const int8_t *__p) { return (int8x8x3_t){{vld1_s8(__p + 0), vld1_s8(__p + 8), vld1_s8(__p + 16)}}; }
+__BUN_CC_INTRIN void vst1_s8_x3(int8_t *__p, int8x8x3_t __v) { vst1_s8(__p + 0, __v.val[0]); vst1_s8(__p + 8, __v.val[1]); vst1_s8(__p + 16, __v.val[2]); }
+__BUN_CC_INTRIN int8x8x4_t vld1_s8_x4(const int8_t *__p) { return (int8x8x4_t){{vld1_s8(__p + 0), vld1_s8(__p + 8), vld1_s8(__p + 16), vld1_s8(__p + 24)}}; }
+__BUN_CC_INTRIN void vst1_s8_x4(int8_t *__p, int8x8x4_t __v) { vst1_s8(__p + 0, __v.val[0]); vst1_s8(__p + 8, __v.val[1]); vst1_s8(__p + 16, __v.val[2]); vst1_s8(__p + 24, __v.val[3]); }
+__BUN_CC_INTRIN int8x8x2_t vld2_s8(const int8_t *__p) { int8x8_t __a = vld1_s8(__p), __b = vld1_s8(__p + 8); return (int8x8x2_t){{vuzp1_s8(__a, __b), vuzp2_s8(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2_s8(int8_t *__p, int8x8x2_t __v) { vst1_s8(__p, vzip1_s8(__v.val[0], __v.val[1])); vst1_s8(__p + 8, vzip2_s8(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN int8x8x4_t vld4_s8(const int8_t *__p) { int8x8_t __a = vld1_s8(__p), __b = vld1_s8(__p + 8), __c = vld1_s8(__p + 16), __d = vld1_s8(__p + 24); int8x8_t __e0 = vuzp1_s8(__a, __b), __o0 = vuzp2_s8(__a, __b), __e1 = vuzp1_s8(__c, __d), __o1 = vuzp2_s8(__c, __d); return (int8x8x4_t){{vuzp1_s8(__e0, __e1), vuzp1_s8(__o0, __o1), vuzp2_s8(__e0, __e1), vuzp2_s8(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4_s8(int8_t *__p, int8x8x4_t __v) { int8x8_t __l02 = vzip1_s8(__v.val[0], __v.val[2]), __h02 = vzip2_s8(__v.val[0], __v.val[2]), __l13 = vzip1_s8(__v.val[1], __v.val[3]), __h13 = vzip2_s8(__v.val[1], __v.val[3]); vst1_s8(__p, vzip1_s8(__l02, __l13)); vst1_s8(__p + 8, vzip2_s8(__l02, __l13)); vst1_s8(__p + 16, vzip1_s8(__h02, __h13)); vst1_s8(__p + 24, vzip2_s8(__h02, __h13)); }
+__BUN_CC_INTRIN int8x16x2_t vld1q_s8_x2(const int8_t *__p) { return (int8x16x2_t){{vld1q_s8(__p + 0), vld1q_s8(__p + 16)}}; }
+__BUN_CC_INTRIN void vst1q_s8_x2(int8_t *__p, int8x16x2_t __v) { vst1q_s8(__p + 0, __v.val[0]); vst1q_s8(__p + 16, __v.val[1]); }
+__BUN_CC_INTRIN int8x16x3_t vld1q_s8_x3(const int8_t *__p) { return (int8x16x3_t){{vld1q_s8(__p + 0), vld1q_s8(__p + 16), vld1q_s8(__p + 32)}}; }
+__BUN_CC_INTRIN void vst1q_s8_x3(int8_t *__p, int8x16x3_t __v) { vst1q_s8(__p + 0, __v.val[0]); vst1q_s8(__p + 16, __v.val[1]); vst1q_s8(__p + 32, __v.val[2]); }
+__BUN_CC_INTRIN int8x16x4_t vld1q_s8_x4(const int8_t *__p) { return (int8x16x4_t){{vld1q_s8(__p + 0), vld1q_s8(__p + 16), vld1q_s8(__p + 32), vld1q_s8(__p + 48)}}; }
+__BUN_CC_INTRIN void vst1q_s8_x4(int8_t *__p, int8x16x4_t __v) { vst1q_s8(__p + 0, __v.val[0]); vst1q_s8(__p + 16, __v.val[1]); vst1q_s8(__p + 32, __v.val[2]); vst1q_s8(__p + 48, __v.val[3]); }
+__BUN_CC_INTRIN int8x16x2_t vld2q_s8(const int8_t *__p) { int8x16_t __a = vld1q_s8(__p), __b = vld1q_s8(__p + 16); return (int8x16x2_t){{vuzp1q_s8(__a, __b), vuzp2q_s8(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_s8(int8_t *__p, int8x16x2_t __v) { vst1q_s8(__p, vzip1q_s8(__v.val[0], __v.val[1])); vst1q_s8(__p + 16, vzip2q_s8(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN int8x16x4_t vld4q_s8(const int8_t *__p) { int8x16_t __a = vld1q_s8(__p), __b = vld1q_s8(__p + 16), __c = vld1q_s8(__p + 32), __d = vld1q_s8(__p + 48); int8x16_t __e0 = vuzp1q_s8(__a, __b), __o0 = vuzp2q_s8(__a, __b), __e1 = vuzp1q_s8(__c, __d), __o1 = vuzp2q_s8(__c, __d); return (int8x16x4_t){{vuzp1q_s8(__e0, __e1), vuzp1q_s8(__o0, __o1), vuzp2q_s8(__e0, __e1), vuzp2q_s8(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_s8(int8_t *__p, int8x16x4_t __v) { int8x16_t __l02 = vzip1q_s8(__v.val[0], __v.val[2]), __h02 = vzip2q_s8(__v.val[0], __v.val[2]), __l13 = vzip1q_s8(__v.val[1], __v.val[3]), __h13 = vzip2q_s8(__v.val[1], __v.val[3]); vst1q_s8(__p, vzip1q_s8(__l02, __l13)); vst1q_s8(__p + 16, vzip2q_s8(__l02, __l13)); vst1q_s8(__p + 32, vzip1q_s8(__h02, __h13)); vst1q_s8(__p + 48, vzip2q_s8(__h02, __h13)); }
+__BUN_CC_INTRIN uint8x8x2_t vld1_u8_x2(const uint8_t *__p) { return (uint8x8x2_t){{vld1_u8(__p + 0), vld1_u8(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1_u8_x2(uint8_t *__p, uint8x8x2_t __v) { vst1_u8(__p + 0, __v.val[0]); vst1_u8(__p + 8, __v.val[1]); }
+__BUN_CC_INTRIN uint8x8x3_t vld1_u8_x3(const uint8_t *__p) { return (uint8x8x3_t){{vld1_u8(__p + 0), vld1_u8(__p + 8), vld1_u8(__p + 16)}}; }
+__BUN_CC_INTRIN void vst1_u8_x3(uint8_t *__p, uint8x8x3_t __v) { vst1_u8(__p + 0, __v.val[0]); vst1_u8(__p + 8, __v.val[1]); vst1_u8(__p + 16, __v.val[2]); }
+__BUN_CC_INTRIN uint8x8x4_t vld1_u8_x4(const uint8_t *__p) { return (uint8x8x4_t){{vld1_u8(__p + 0), vld1_u8(__p + 8), vld1_u8(__p + 16), vld1_u8(__p + 24)}}; }
+__BUN_CC_INTRIN void vst1_u8_x4(uint8_t *__p, uint8x8x4_t __v) { vst1_u8(__p + 0, __v.val[0]); vst1_u8(__p + 8, __v.val[1]); vst1_u8(__p + 16, __v.val[2]); vst1_u8(__p + 24, __v.val[3]); }
+__BUN_CC_INTRIN uint8x8x2_t vld2_u8(const uint8_t *__p) { uint8x8_t __a = vld1_u8(__p), __b = vld1_u8(__p + 8); return (uint8x8x2_t){{vuzp1_u8(__a, __b), vuzp2_u8(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2_u8(uint8_t *__p, uint8x8x2_t __v) { vst1_u8(__p, vzip1_u8(__v.val[0], __v.val[1])); vst1_u8(__p + 8, vzip2_u8(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN uint8x8x4_t vld4_u8(const uint8_t *__p) { uint8x8_t __a = vld1_u8(__p), __b = vld1_u8(__p + 8), __c = vld1_u8(__p + 16), __d = vld1_u8(__p + 24); uint8x8_t __e0 = vuzp1_u8(__a, __b), __o0 = vuzp2_u8(__a, __b), __e1 = vuzp1_u8(__c, __d), __o1 = vuzp2_u8(__c, __d); return (uint8x8x4_t){{vuzp1_u8(__e0, __e1), vuzp1_u8(__o0, __o1), vuzp2_u8(__e0, __e1), vuzp2_u8(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4_u8(uint8_t *__p, uint8x8x4_t __v) { uint8x8_t __l02 = vzip1_u8(__v.val[0], __v.val[2]), __h02 = vzip2_u8(__v.val[0], __v.val[2]), __l13 = vzip1_u8(__v.val[1], __v.val[3]), __h13 = vzip2_u8(__v.val[1], __v.val[3]); vst1_u8(__p, vzip1_u8(__l02, __l13)); vst1_u8(__p + 8, vzip2_u8(__l02, __l13)); vst1_u8(__p + 16, vzip1_u8(__h02, __h13)); vst1_u8(__p + 24, vzip2_u8(__h02, __h13)); }
+__BUN_CC_INTRIN uint8x16x2_t vld1q_u8_x2(const uint8_t *__p) { return (uint8x16x2_t){{vld1q_u8(__p + 0), vld1q_u8(__p + 16)}}; }
+__BUN_CC_INTRIN void vst1q_u8_x2(uint8_t *__p, uint8x16x2_t __v) { vst1q_u8(__p + 0, __v.val[0]); vst1q_u8(__p + 16, __v.val[1]); }
+__BUN_CC_INTRIN uint8x16x3_t vld1q_u8_x3(const uint8_t *__p) { return (uint8x16x3_t){{vld1q_u8(__p + 0), vld1q_u8(__p + 16), vld1q_u8(__p + 32)}}; }
+__BUN_CC_INTRIN void vst1q_u8_x3(uint8_t *__p, uint8x16x3_t __v) { vst1q_u8(__p + 0, __v.val[0]); vst1q_u8(__p + 16, __v.val[1]); vst1q_u8(__p + 32, __v.val[2]); }
+__BUN_CC_INTRIN uint8x16x4_t vld1q_u8_x4(const uint8_t *__p) { return (uint8x16x4_t){{vld1q_u8(__p + 0), vld1q_u8(__p + 16), vld1q_u8(__p + 32), vld1q_u8(__p + 48)}}; }
+__BUN_CC_INTRIN void vst1q_u8_x4(uint8_t *__p, uint8x16x4_t __v) { vst1q_u8(__p + 0, __v.val[0]); vst1q_u8(__p + 16, __v.val[1]); vst1q_u8(__p + 32, __v.val[2]); vst1q_u8(__p + 48, __v.val[3]); }
+__BUN_CC_INTRIN uint8x16x2_t vld2q_u8(const uint8_t *__p) { uint8x16_t __a = vld1q_u8(__p), __b = vld1q_u8(__p + 16); return (uint8x16x2_t){{vuzp1q_u8(__a, __b), vuzp2q_u8(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_u8(uint8_t *__p, uint8x16x2_t __v) { vst1q_u8(__p, vzip1q_u8(__v.val[0], __v.val[1])); vst1q_u8(__p + 16, vzip2q_u8(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN uint8x16x4_t vld4q_u8(const uint8_t *__p) { uint8x16_t __a = vld1q_u8(__p), __b = vld1q_u8(__p + 16), __c = vld1q_u8(__p + 32), __d = vld1q_u8(__p + 48); uint8x16_t __e0 = vuzp1q_u8(__a, __b), __o0 = vuzp2q_u8(__a, __b), __e1 = vuzp1q_u8(__c, __d), __o1 = vuzp2q_u8(__c, __d); return (uint8x16x4_t){{vuzp1q_u8(__e0, __e1), vuzp1q_u8(__o0, __o1), vuzp2q_u8(__e0, __e1), vuzp2q_u8(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_u8(uint8_t *__p, uint8x16x4_t __v) { uint8x16_t __l02 = vzip1q_u8(__v.val[0], __v.val[2]), __h02 = vzip2q_u8(__v.val[0], __v.val[2]), __l13 = vzip1q_u8(__v.val[1], __v.val[3]), __h13 = vzip2q_u8(__v.val[1], __v.val[3]); vst1q_u8(__p, vzip1q_u8(__l02, __l13)); vst1q_u8(__p + 16, vzip2q_u8(__l02, __l13)); vst1q_u8(__p + 32, vzip1q_u8(__h02, __h13)); vst1q_u8(__p + 48, vzip2q_u8(__h02, __h13)); }
+__BUN_CC_INTRIN int16x4x2_t vld1_s16_x2(const int16_t *__p) { return (int16x4x2_t){{vld1_s16(__p + 0), vld1_s16(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1_s16_x2(int16_t *__p, int16x4x2_t __v) { vst1_s16(__p + 0, __v.val[0]); vst1_s16(__p + 4, __v.val[1]); }
+__BUN_CC_INTRIN int16x4x3_t vld1_s16_x3(const int16_t *__p) { return (int16x4x3_t){{vld1_s16(__p + 0), vld1_s16(__p + 4), vld1_s16(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1_s16_x3(int16_t *__p, int16x4x3_t __v) { vst1_s16(__p + 0, __v.val[0]); vst1_s16(__p + 4, __v.val[1]); vst1_s16(__p + 8, __v.val[2]); }
+__BUN_CC_INTRIN int16x4x4_t vld1_s16_x4(const int16_t *__p) { return (int16x4x4_t){{vld1_s16(__p + 0), vld1_s16(__p + 4), vld1_s16(__p + 8), vld1_s16(__p + 12)}}; }
+__BUN_CC_INTRIN void vst1_s16_x4(int16_t *__p, int16x4x4_t __v) { vst1_s16(__p + 0, __v.val[0]); vst1_s16(__p + 4, __v.val[1]); vst1_s16(__p + 8, __v.val[2]); vst1_s16(__p + 12, __v.val[3]); }
+__BUN_CC_INTRIN int16x4x2_t vld2_s16(const int16_t *__p) { int16x4_t __a = vld1_s16(__p), __b = vld1_s16(__p + 4); return (int16x4x2_t){{vuzp1_s16(__a, __b), vuzp2_s16(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2_s16(int16_t *__p, int16x4x2_t __v) { vst1_s16(__p, vzip1_s16(__v.val[0], __v.val[1])); vst1_s16(__p + 4, vzip2_s16(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN int16x4x4_t vld4_s16(const int16_t *__p) { int16x4_t __a = vld1_s16(__p), __b = vld1_s16(__p + 4), __c = vld1_s16(__p + 8), __d = vld1_s16(__p + 12); int16x4_t __e0 = vuzp1_s16(__a, __b), __o0 = vuzp2_s16(__a, __b), __e1 = vuzp1_s16(__c, __d), __o1 = vuzp2_s16(__c, __d); return (int16x4x4_t){{vuzp1_s16(__e0, __e1), vuzp1_s16(__o0, __o1), vuzp2_s16(__e0, __e1), vuzp2_s16(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4_s16(int16_t *__p, int16x4x4_t __v) { int16x4_t __l02 = vzip1_s16(__v.val[0], __v.val[2]), __h02 = vzip2_s16(__v.val[0], __v.val[2]), __l13 = vzip1_s16(__v.val[1], __v.val[3]), __h13 = vzip2_s16(__v.val[1], __v.val[3]); vst1_s16(__p, vzip1_s16(__l02, __l13)); vst1_s16(__p + 4, vzip2_s16(__l02, __l13)); vst1_s16(__p + 8, vzip1_s16(__h02, __h13)); vst1_s16(__p + 12, vzip2_s16(__h02, __h13)); }
+__BUN_CC_INTRIN int16x8x2_t vld1q_s16_x2(const int16_t *__p) { return (int16x8x2_t){{vld1q_s16(__p + 0), vld1q_s16(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1q_s16_x2(int16_t *__p, int16x8x2_t __v) { vst1q_s16(__p + 0, __v.val[0]); vst1q_s16(__p + 8, __v.val[1]); }
+__BUN_CC_INTRIN int16x8x3_t vld1q_s16_x3(const int16_t *__p) { return (int16x8x3_t){{vld1q_s16(__p + 0), vld1q_s16(__p + 8), vld1q_s16(__p + 16)}}; }
+__BUN_CC_INTRIN void vst1q_s16_x3(int16_t *__p, int16x8x3_t __v) { vst1q_s16(__p + 0, __v.val[0]); vst1q_s16(__p + 8, __v.val[1]); vst1q_s16(__p + 16, __v.val[2]); }
+__BUN_CC_INTRIN int16x8x4_t vld1q_s16_x4(const int16_t *__p) { return (int16x8x4_t){{vld1q_s16(__p + 0), vld1q_s16(__p + 8), vld1q_s16(__p + 16), vld1q_s16(__p + 24)}}; }
+__BUN_CC_INTRIN void vst1q_s16_x4(int16_t *__p, int16x8x4_t __v) { vst1q_s16(__p + 0, __v.val[0]); vst1q_s16(__p + 8, __v.val[1]); vst1q_s16(__p + 16, __v.val[2]); vst1q_s16(__p + 24, __v.val[3]); }
+__BUN_CC_INTRIN int16x8x2_t vld2q_s16(const int16_t *__p) { int16x8_t __a = vld1q_s16(__p), __b = vld1q_s16(__p + 8); return (int16x8x2_t){{vuzp1q_s16(__a, __b), vuzp2q_s16(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_s16(int16_t *__p, int16x8x2_t __v) { vst1q_s16(__p, vzip1q_s16(__v.val[0], __v.val[1])); vst1q_s16(__p + 8, vzip2q_s16(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN int16x8x4_t vld4q_s16(const int16_t *__p) { int16x8_t __a = vld1q_s16(__p), __b = vld1q_s16(__p + 8), __c = vld1q_s16(__p + 16), __d = vld1q_s16(__p + 24); int16x8_t __e0 = vuzp1q_s16(__a, __b), __o0 = vuzp2q_s16(__a, __b), __e1 = vuzp1q_s16(__c, __d), __o1 = vuzp2q_s16(__c, __d); return (int16x8x4_t){{vuzp1q_s16(__e0, __e1), vuzp1q_s16(__o0, __o1), vuzp2q_s16(__e0, __e1), vuzp2q_s16(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_s16(int16_t *__p, int16x8x4_t __v) { int16x8_t __l02 = vzip1q_s16(__v.val[0], __v.val[2]), __h02 = vzip2q_s16(__v.val[0], __v.val[2]), __l13 = vzip1q_s16(__v.val[1], __v.val[3]), __h13 = vzip2q_s16(__v.val[1], __v.val[3]); vst1q_s16(__p, vzip1q_s16(__l02, __l13)); vst1q_s16(__p + 8, vzip2q_s16(__l02, __l13)); vst1q_s16(__p + 16, vzip1q_s16(__h02, __h13)); vst1q_s16(__p + 24, vzip2q_s16(__h02, __h13)); }
+__BUN_CC_INTRIN uint16x4x2_t vld1_u16_x2(const uint16_t *__p) { return (uint16x4x2_t){{vld1_u16(__p + 0), vld1_u16(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1_u16_x2(uint16_t *__p, uint16x4x2_t __v) { vst1_u16(__p + 0, __v.val[0]); vst1_u16(__p + 4, __v.val[1]); }
+__BUN_CC_INTRIN uint16x4x3_t vld1_u16_x3(const uint16_t *__p) { return (uint16x4x3_t){{vld1_u16(__p + 0), vld1_u16(__p + 4), vld1_u16(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1_u16_x3(uint16_t *__p, uint16x4x3_t __v) { vst1_u16(__p + 0, __v.val[0]); vst1_u16(__p + 4, __v.val[1]); vst1_u16(__p + 8, __v.val[2]); }
+__BUN_CC_INTRIN uint16x4x4_t vld1_u16_x4(const uint16_t *__p) { return (uint16x4x4_t){{vld1_u16(__p + 0), vld1_u16(__p + 4), vld1_u16(__p + 8), vld1_u16(__p + 12)}}; }
+__BUN_CC_INTRIN void vst1_u16_x4(uint16_t *__p, uint16x4x4_t __v) { vst1_u16(__p + 0, __v.val[0]); vst1_u16(__p + 4, __v.val[1]); vst1_u16(__p + 8, __v.val[2]); vst1_u16(__p + 12, __v.val[3]); }
+__BUN_CC_INTRIN uint16x4x2_t vld2_u16(const uint16_t *__p) { uint16x4_t __a = vld1_u16(__p), __b = vld1_u16(__p + 4); return (uint16x4x2_t){{vuzp1_u16(__a, __b), vuzp2_u16(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2_u16(uint16_t *__p, uint16x4x2_t __v) { vst1_u16(__p, vzip1_u16(__v.val[0], __v.val[1])); vst1_u16(__p + 4, vzip2_u16(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN uint16x4x4_t vld4_u16(const uint16_t *__p) { uint16x4_t __a = vld1_u16(__p), __b = vld1_u16(__p + 4), __c = vld1_u16(__p + 8), __d = vld1_u16(__p + 12); uint16x4_t __e0 = vuzp1_u16(__a, __b), __o0 = vuzp2_u16(__a, __b), __e1 = vuzp1_u16(__c, __d), __o1 = vuzp2_u16(__c, __d); return (uint16x4x4_t){{vuzp1_u16(__e0, __e1), vuzp1_u16(__o0, __o1), vuzp2_u16(__e0, __e1), vuzp2_u16(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4_u16(uint16_t *__p, uint16x4x4_t __v) { uint16x4_t __l02 = vzip1_u16(__v.val[0], __v.val[2]), __h02 = vzip2_u16(__v.val[0], __v.val[2]), __l13 = vzip1_u16(__v.val[1], __v.val[3]), __h13 = vzip2_u16(__v.val[1], __v.val[3]); vst1_u16(__p, vzip1_u16(__l02, __l13)); vst1_u16(__p + 4, vzip2_u16(__l02, __l13)); vst1_u16(__p + 8, vzip1_u16(__h02, __h13)); vst1_u16(__p + 12, vzip2_u16(__h02, __h13)); }
+__BUN_CC_INTRIN uint16x8x2_t vld1q_u16_x2(const uint16_t *__p) { return (uint16x8x2_t){{vld1q_u16(__p + 0), vld1q_u16(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1q_u16_x2(uint16_t *__p, uint16x8x2_t __v) { vst1q_u16(__p + 0, __v.val[0]); vst1q_u16(__p + 8, __v.val[1]); }
+__BUN_CC_INTRIN uint16x8x3_t vld1q_u16_x3(const uint16_t *__p) { return (uint16x8x3_t){{vld1q_u16(__p + 0), vld1q_u16(__p + 8), vld1q_u16(__p + 16)}}; }
+__BUN_CC_INTRIN void vst1q_u16_x3(uint16_t *__p, uint16x8x3_t __v) { vst1q_u16(__p + 0, __v.val[0]); vst1q_u16(__p + 8, __v.val[1]); vst1q_u16(__p + 16, __v.val[2]); }
+__BUN_CC_INTRIN uint16x8x4_t vld1q_u16_x4(const uint16_t *__p) { return (uint16x8x4_t){{vld1q_u16(__p + 0), vld1q_u16(__p + 8), vld1q_u16(__p + 16), vld1q_u16(__p + 24)}}; }
+__BUN_CC_INTRIN void vst1q_u16_x4(uint16_t *__p, uint16x8x4_t __v) { vst1q_u16(__p + 0, __v.val[0]); vst1q_u16(__p + 8, __v.val[1]); vst1q_u16(__p + 16, __v.val[2]); vst1q_u16(__p + 24, __v.val[3]); }
+__BUN_CC_INTRIN uint16x8x2_t vld2q_u16(const uint16_t *__p) { uint16x8_t __a = vld1q_u16(__p), __b = vld1q_u16(__p + 8); return (uint16x8x2_t){{vuzp1q_u16(__a, __b), vuzp2q_u16(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_u16(uint16_t *__p, uint16x8x2_t __v) { vst1q_u16(__p, vzip1q_u16(__v.val[0], __v.val[1])); vst1q_u16(__p + 8, vzip2q_u16(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN uint16x8x4_t vld4q_u16(const uint16_t *__p) { uint16x8_t __a = vld1q_u16(__p), __b = vld1q_u16(__p + 8), __c = vld1q_u16(__p + 16), __d = vld1q_u16(__p + 24); uint16x8_t __e0 = vuzp1q_u16(__a, __b), __o0 = vuzp2q_u16(__a, __b), __e1 = vuzp1q_u16(__c, __d), __o1 = vuzp2q_u16(__c, __d); return (uint16x8x4_t){{vuzp1q_u16(__e0, __e1), vuzp1q_u16(__o0, __o1), vuzp2q_u16(__e0, __e1), vuzp2q_u16(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_u16(uint16_t *__p, uint16x8x4_t __v) { uint16x8_t __l02 = vzip1q_u16(__v.val[0], __v.val[2]), __h02 = vzip2q_u16(__v.val[0], __v.val[2]), __l13 = vzip1q_u16(__v.val[1], __v.val[3]), __h13 = vzip2q_u16(__v.val[1], __v.val[3]); vst1q_u16(__p, vzip1q_u16(__l02, __l13)); vst1q_u16(__p + 8, vzip2q_u16(__l02, __l13)); vst1q_u16(__p + 16, vzip1q_u16(__h02, __h13)); vst1q_u16(__p + 24, vzip2q_u16(__h02, __h13)); }
+__BUN_CC_INTRIN int32x2x2_t vld1_s32_x2(const int32_t *__p) { return (int32x2x2_t){{vld1_s32(__p + 0), vld1_s32(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1_s32_x2(int32_t *__p, int32x2x2_t __v) { vst1_s32(__p + 0, __v.val[0]); vst1_s32(__p + 2, __v.val[1]); }
+__BUN_CC_INTRIN int32x2x3_t vld1_s32_x3(const int32_t *__p) { return (int32x2x3_t){{vld1_s32(__p + 0), vld1_s32(__p + 2), vld1_s32(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1_s32_x3(int32_t *__p, int32x2x3_t __v) { vst1_s32(__p + 0, __v.val[0]); vst1_s32(__p + 2, __v.val[1]); vst1_s32(__p + 4, __v.val[2]); }
+__BUN_CC_INTRIN int32x2x4_t vld1_s32_x4(const int32_t *__p) { return (int32x2x4_t){{vld1_s32(__p + 0), vld1_s32(__p + 2), vld1_s32(__p + 4), vld1_s32(__p + 6)}}; }
+__BUN_CC_INTRIN void vst1_s32_x4(int32_t *__p, int32x2x4_t __v) { vst1_s32(__p + 0, __v.val[0]); vst1_s32(__p + 2, __v.val[1]); vst1_s32(__p + 4, __v.val[2]); vst1_s32(__p + 6, __v.val[3]); }
+__BUN_CC_INTRIN int32x2x2_t vld2_s32(const int32_t *__p) { int32x2_t __a = vld1_s32(__p), __b = vld1_s32(__p + 2); return (int32x2x2_t){{vuzp1_s32(__a, __b), vuzp2_s32(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2_s32(int32_t *__p, int32x2x2_t __v) { vst1_s32(__p, vzip1_s32(__v.val[0], __v.val[1])); vst1_s32(__p + 2, vzip2_s32(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN int32x2x4_t vld4_s32(const int32_t *__p) { int32x2_t __a = vld1_s32(__p), __b = vld1_s32(__p + 2), __c = vld1_s32(__p + 4), __d = vld1_s32(__p + 6); int32x2_t __e0 = vuzp1_s32(__a, __b), __o0 = vuzp2_s32(__a, __b), __e1 = vuzp1_s32(__c, __d), __o1 = vuzp2_s32(__c, __d); return (int32x2x4_t){{vuzp1_s32(__e0, __e1), vuzp1_s32(__o0, __o1), vuzp2_s32(__e0, __e1), vuzp2_s32(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4_s32(int32_t *__p, int32x2x4_t __v) { int32x2_t __l02 = vzip1_s32(__v.val[0], __v.val[2]), __h02 = vzip2_s32(__v.val[0], __v.val[2]), __l13 = vzip1_s32(__v.val[1], __v.val[3]), __h13 = vzip2_s32(__v.val[1], __v.val[3]); vst1_s32(__p, vzip1_s32(__l02, __l13)); vst1_s32(__p + 2, vzip2_s32(__l02, __l13)); vst1_s32(__p + 4, vzip1_s32(__h02, __h13)); vst1_s32(__p + 6, vzip2_s32(__h02, __h13)); }
+__BUN_CC_INTRIN int32x4x2_t vld1q_s32_x2(const int32_t *__p) { return (int32x4x2_t){{vld1q_s32(__p + 0), vld1q_s32(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1q_s32_x2(int32_t *__p, int32x4x2_t __v) { vst1q_s32(__p + 0, __v.val[0]); vst1q_s32(__p + 4, __v.val[1]); }
+__BUN_CC_INTRIN int32x4x3_t vld1q_s32_x3(const int32_t *__p) { return (int32x4x3_t){{vld1q_s32(__p + 0), vld1q_s32(__p + 4), vld1q_s32(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1q_s32_x3(int32_t *__p, int32x4x3_t __v) { vst1q_s32(__p + 0, __v.val[0]); vst1q_s32(__p + 4, __v.val[1]); vst1q_s32(__p + 8, __v.val[2]); }
+__BUN_CC_INTRIN int32x4x4_t vld1q_s32_x4(const int32_t *__p) { return (int32x4x4_t){{vld1q_s32(__p + 0), vld1q_s32(__p + 4), vld1q_s32(__p + 8), vld1q_s32(__p + 12)}}; }
+__BUN_CC_INTRIN void vst1q_s32_x4(int32_t *__p, int32x4x4_t __v) { vst1q_s32(__p + 0, __v.val[0]); vst1q_s32(__p + 4, __v.val[1]); vst1q_s32(__p + 8, __v.val[2]); vst1q_s32(__p + 12, __v.val[3]); }
+__BUN_CC_INTRIN int32x4x2_t vld2q_s32(const int32_t *__p) { int32x4_t __a = vld1q_s32(__p), __b = vld1q_s32(__p + 4); return (int32x4x2_t){{vuzp1q_s32(__a, __b), vuzp2q_s32(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_s32(int32_t *__p, int32x4x2_t __v) { vst1q_s32(__p, vzip1q_s32(__v.val[0], __v.val[1])); vst1q_s32(__p + 4, vzip2q_s32(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN int32x4x4_t vld4q_s32(const int32_t *__p) { int32x4_t __a = vld1q_s32(__p), __b = vld1q_s32(__p + 4), __c = vld1q_s32(__p + 8), __d = vld1q_s32(__p + 12); int32x4_t __e0 = vuzp1q_s32(__a, __b), __o0 = vuzp2q_s32(__a, __b), __e1 = vuzp1q_s32(__c, __d), __o1 = vuzp2q_s32(__c, __d); return (int32x4x4_t){{vuzp1q_s32(__e0, __e1), vuzp1q_s32(__o0, __o1), vuzp2q_s32(__e0, __e1), vuzp2q_s32(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_s32(int32_t *__p, int32x4x4_t __v) { int32x4_t __l02 = vzip1q_s32(__v.val[0], __v.val[2]), __h02 = vzip2q_s32(__v.val[0], __v.val[2]), __l13 = vzip1q_s32(__v.val[1], __v.val[3]), __h13 = vzip2q_s32(__v.val[1], __v.val[3]); vst1q_s32(__p, vzip1q_s32(__l02, __l13)); vst1q_s32(__p + 4, vzip2q_s32(__l02, __l13)); vst1q_s32(__p + 8, vzip1q_s32(__h02, __h13)); vst1q_s32(__p + 12, vzip2q_s32(__h02, __h13)); }
+__BUN_CC_INTRIN uint32x2x2_t vld1_u32_x2(const uint32_t *__p) { return (uint32x2x2_t){{vld1_u32(__p + 0), vld1_u32(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1_u32_x2(uint32_t *__p, uint32x2x2_t __v) { vst1_u32(__p + 0, __v.val[0]); vst1_u32(__p + 2, __v.val[1]); }
+__BUN_CC_INTRIN uint32x2x3_t vld1_u32_x3(const uint32_t *__p) { return (uint32x2x3_t){{vld1_u32(__p + 0), vld1_u32(__p + 2), vld1_u32(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1_u32_x3(uint32_t *__p, uint32x2x3_t __v) { vst1_u32(__p + 0, __v.val[0]); vst1_u32(__p + 2, __v.val[1]); vst1_u32(__p + 4, __v.val[2]); }
+__BUN_CC_INTRIN uint32x2x4_t vld1_u32_x4(const uint32_t *__p) { return (uint32x2x4_t){{vld1_u32(__p + 0), vld1_u32(__p + 2), vld1_u32(__p + 4), vld1_u32(__p + 6)}}; }
+__BUN_CC_INTRIN void vst1_u32_x4(uint32_t *__p, uint32x2x4_t __v) { vst1_u32(__p + 0, __v.val[0]); vst1_u32(__p + 2, __v.val[1]); vst1_u32(__p + 4, __v.val[2]); vst1_u32(__p + 6, __v.val[3]); }
+__BUN_CC_INTRIN uint32x2x2_t vld2_u32(const uint32_t *__p) { uint32x2_t __a = vld1_u32(__p), __b = vld1_u32(__p + 2); return (uint32x2x2_t){{vuzp1_u32(__a, __b), vuzp2_u32(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2_u32(uint32_t *__p, uint32x2x2_t __v) { vst1_u32(__p, vzip1_u32(__v.val[0], __v.val[1])); vst1_u32(__p + 2, vzip2_u32(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN uint32x2x4_t vld4_u32(const uint32_t *__p) { uint32x2_t __a = vld1_u32(__p), __b = vld1_u32(__p + 2), __c = vld1_u32(__p + 4), __d = vld1_u32(__p + 6); uint32x2_t __e0 = vuzp1_u32(__a, __b), __o0 = vuzp2_u32(__a, __b), __e1 = vuzp1_u32(__c, __d), __o1 = vuzp2_u32(__c, __d); return (uint32x2x4_t){{vuzp1_u32(__e0, __e1), vuzp1_u32(__o0, __o1), vuzp2_u32(__e0, __e1), vuzp2_u32(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4_u32(uint32_t *__p, uint32x2x4_t __v) { uint32x2_t __l02 = vzip1_u32(__v.val[0], __v.val[2]), __h02 = vzip2_u32(__v.val[0], __v.val[2]), __l13 = vzip1_u32(__v.val[1], __v.val[3]), __h13 = vzip2_u32(__v.val[1], __v.val[3]); vst1_u32(__p, vzip1_u32(__l02, __l13)); vst1_u32(__p + 2, vzip2_u32(__l02, __l13)); vst1_u32(__p + 4, vzip1_u32(__h02, __h13)); vst1_u32(__p + 6, vzip2_u32(__h02, __h13)); }
+__BUN_CC_INTRIN uint32x4x2_t vld1q_u32_x2(const uint32_t *__p) { return (uint32x4x2_t){{vld1q_u32(__p + 0), vld1q_u32(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1q_u32_x2(uint32_t *__p, uint32x4x2_t __v) { vst1q_u32(__p + 0, __v.val[0]); vst1q_u32(__p + 4, __v.val[1]); }
+__BUN_CC_INTRIN uint32x4x3_t vld1q_u32_x3(const uint32_t *__p) { return (uint32x4x3_t){{vld1q_u32(__p + 0), vld1q_u32(__p + 4), vld1q_u32(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1q_u32_x3(uint32_t *__p, uint32x4x3_t __v) { vst1q_u32(__p + 0, __v.val[0]); vst1q_u32(__p + 4, __v.val[1]); vst1q_u32(__p + 8, __v.val[2]); }
+__BUN_CC_INTRIN uint32x4x4_t vld1q_u32_x4(const uint32_t *__p) { return (uint32x4x4_t){{vld1q_u32(__p + 0), vld1q_u32(__p + 4), vld1q_u32(__p + 8), vld1q_u32(__p + 12)}}; }
+__BUN_CC_INTRIN void vst1q_u32_x4(uint32_t *__p, uint32x4x4_t __v) { vst1q_u32(__p + 0, __v.val[0]); vst1q_u32(__p + 4, __v.val[1]); vst1q_u32(__p + 8, __v.val[2]); vst1q_u32(__p + 12, __v.val[3]); }
+__BUN_CC_INTRIN uint32x4x2_t vld2q_u32(const uint32_t *__p) { uint32x4_t __a = vld1q_u32(__p), __b = vld1q_u32(__p + 4); return (uint32x4x2_t){{vuzp1q_u32(__a, __b), vuzp2q_u32(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_u32(uint32_t *__p, uint32x4x2_t __v) { vst1q_u32(__p, vzip1q_u32(__v.val[0], __v.val[1])); vst1q_u32(__p + 4, vzip2q_u32(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN uint32x4x4_t vld4q_u32(const uint32_t *__p) { uint32x4_t __a = vld1q_u32(__p), __b = vld1q_u32(__p + 4), __c = vld1q_u32(__p + 8), __d = vld1q_u32(__p + 12); uint32x4_t __e0 = vuzp1q_u32(__a, __b), __o0 = vuzp2q_u32(__a, __b), __e1 = vuzp1q_u32(__c, __d), __o1 = vuzp2q_u32(__c, __d); return (uint32x4x4_t){{vuzp1q_u32(__e0, __e1), vuzp1q_u32(__o0, __o1), vuzp2q_u32(__e0, __e1), vuzp2q_u32(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_u32(uint32_t *__p, uint32x4x4_t __v) { uint32x4_t __l02 = vzip1q_u32(__v.val[0], __v.val[2]), __h02 = vzip2q_u32(__v.val[0], __v.val[2]), __l13 = vzip1q_u32(__v.val[1], __v.val[3]), __h13 = vzip2q_u32(__v.val[1], __v.val[3]); vst1q_u32(__p, vzip1q_u32(__l02, __l13)); vst1q_u32(__p + 4, vzip2q_u32(__l02, __l13)); vst1q_u32(__p + 8, vzip1q_u32(__h02, __h13)); vst1q_u32(__p + 12, vzip2q_u32(__h02, __h13)); }
+__BUN_CC_INTRIN int64x1x2_t vld1_s64_x2(const int64_t *__p) { return (int64x1x2_t){{vld1_s64(__p + 0), vld1_s64(__p + 1)}}; }
+__BUN_CC_INTRIN void vst1_s64_x2(int64_t *__p, int64x1x2_t __v) { vst1_s64(__p + 0, __v.val[0]); vst1_s64(__p + 1, __v.val[1]); }
+__BUN_CC_INTRIN int64x1x3_t vld1_s64_x3(const int64_t *__p) { return (int64x1x3_t){{vld1_s64(__p + 0), vld1_s64(__p + 1), vld1_s64(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1_s64_x3(int64_t *__p, int64x1x3_t __v) { vst1_s64(__p + 0, __v.val[0]); vst1_s64(__p + 1, __v.val[1]); vst1_s64(__p + 2, __v.val[2]); }
+__BUN_CC_INTRIN int64x1x4_t vld1_s64_x4(const int64_t *__p) { return (int64x1x4_t){{vld1_s64(__p + 0), vld1_s64(__p + 1), vld1_s64(__p + 2), vld1_s64(__p + 3)}}; }
+__BUN_CC_INTRIN void vst1_s64_x4(int64_t *__p, int64x1x4_t __v) { vst1_s64(__p + 0, __v.val[0]); vst1_s64(__p + 1, __v.val[1]); vst1_s64(__p + 2, __v.val[2]); vst1_s64(__p + 3, __v.val[3]); }
+__BUN_CC_INTRIN int64x1x2_t vld2_s64(const int64_t *__p) { return vld1_s64_x2(__p); }
+__BUN_CC_INTRIN void vst2_s64(int64_t *__p, int64x1x2_t __v) { vst1_s64_x2(__p, __v); }
+__BUN_CC_INTRIN int64x1x3_t vld3_s64(const int64_t *__p) { return vld1_s64_x3(__p); }
+__BUN_CC_INTRIN void vst3_s64(int64_t *__p, int64x1x3_t __v) { vst1_s64_x3(__p, __v); }
+__BUN_CC_INTRIN int64x1x4_t vld4_s64(const int64_t *__p) { return vld1_s64_x4(__p); }
+__BUN_CC_INTRIN void vst4_s64(int64_t *__p, int64x1x4_t __v) { vst1_s64_x4(__p, __v); }
+__BUN_CC_INTRIN int64x2x2_t vld1q_s64_x2(const int64_t *__p) { return (int64x2x2_t){{vld1q_s64(__p + 0), vld1q_s64(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1q_s64_x2(int64_t *__p, int64x2x2_t __v) { vst1q_s64(__p + 0, __v.val[0]); vst1q_s64(__p + 2, __v.val[1]); }
+__BUN_CC_INTRIN int64x2x3_t vld1q_s64_x3(const int64_t *__p) { return (int64x2x3_t){{vld1q_s64(__p + 0), vld1q_s64(__p + 2), vld1q_s64(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1q_s64_x3(int64_t *__p, int64x2x3_t __v) { vst1q_s64(__p + 0, __v.val[0]); vst1q_s64(__p + 2, __v.val[1]); vst1q_s64(__p + 4, __v.val[2]); }
+__BUN_CC_INTRIN int64x2x4_t vld1q_s64_x4(const int64_t *__p) { return (int64x2x4_t){{vld1q_s64(__p + 0), vld1q_s64(__p + 2), vld1q_s64(__p + 4), vld1q_s64(__p + 6)}}; }
+__BUN_CC_INTRIN void vst1q_s64_x4(int64_t *__p, int64x2x4_t __v) { vst1q_s64(__p + 0, __v.val[0]); vst1q_s64(__p + 2, __v.val[1]); vst1q_s64(__p + 4, __v.val[2]); vst1q_s64(__p + 6, __v.val[3]); }
+__BUN_CC_INTRIN int64x2x2_t vld2q_s64(const int64_t *__p) { int64x2_t __a = vld1q_s64(__p), __b = vld1q_s64(__p + 2); return (int64x2x2_t){{vuzp1q_s64(__a, __b), vuzp2q_s64(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_s64(int64_t *__p, int64x2x2_t __v) { vst1q_s64(__p, vzip1q_s64(__v.val[0], __v.val[1])); vst1q_s64(__p + 2, vzip2q_s64(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN int64x2x4_t vld4q_s64(const int64_t *__p) { int64x2_t __a = vld1q_s64(__p), __b = vld1q_s64(__p + 2), __c = vld1q_s64(__p + 4), __d = vld1q_s64(__p + 6); int64x2_t __e0 = vuzp1q_s64(__a, __b), __o0 = vuzp2q_s64(__a, __b), __e1 = vuzp1q_s64(__c, __d), __o1 = vuzp2q_s64(__c, __d); return (int64x2x4_t){{vuzp1q_s64(__e0, __e1), vuzp1q_s64(__o0, __o1), vuzp2q_s64(__e0, __e1), vuzp2q_s64(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_s64(int64_t *__p, int64x2x4_t __v) { int64x2_t __l02 = vzip1q_s64(__v.val[0], __v.val[2]), __h02 = vzip2q_s64(__v.val[0], __v.val[2]), __l13 = vzip1q_s64(__v.val[1], __v.val[3]), __h13 = vzip2q_s64(__v.val[1], __v.val[3]); vst1q_s64(__p, vzip1q_s64(__l02, __l13)); vst1q_s64(__p + 2, vzip2q_s64(__l02, __l13)); vst1q_s64(__p + 4, vzip1q_s64(__h02, __h13)); vst1q_s64(__p + 6, vzip2q_s64(__h02, __h13)); }
+__BUN_CC_INTRIN uint64x1x2_t vld1_u64_x2(const uint64_t *__p) { return (uint64x1x2_t){{vld1_u64(__p + 0), vld1_u64(__p + 1)}}; }
+__BUN_CC_INTRIN void vst1_u64_x2(uint64_t *__p, uint64x1x2_t __v) { vst1_u64(__p + 0, __v.val[0]); vst1_u64(__p + 1, __v.val[1]); }
+__BUN_CC_INTRIN uint64x1x3_t vld1_u64_x3(const uint64_t *__p) { return (uint64x1x3_t){{vld1_u64(__p + 0), vld1_u64(__p + 1), vld1_u64(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1_u64_x3(uint64_t *__p, uint64x1x3_t __v) { vst1_u64(__p + 0, __v.val[0]); vst1_u64(__p + 1, __v.val[1]); vst1_u64(__p + 2, __v.val[2]); }
+__BUN_CC_INTRIN uint64x1x4_t vld1_u64_x4(const uint64_t *__p) { return (uint64x1x4_t){{vld1_u64(__p + 0), vld1_u64(__p + 1), vld1_u64(__p + 2), vld1_u64(__p + 3)}}; }
+__BUN_CC_INTRIN void vst1_u64_x4(uint64_t *__p, uint64x1x4_t __v) { vst1_u64(__p + 0, __v.val[0]); vst1_u64(__p + 1, __v.val[1]); vst1_u64(__p + 2, __v.val[2]); vst1_u64(__p + 3, __v.val[3]); }
+__BUN_CC_INTRIN uint64x1x2_t vld2_u64(const uint64_t *__p) { return vld1_u64_x2(__p); }
+__BUN_CC_INTRIN void vst2_u64(uint64_t *__p, uint64x1x2_t __v) { vst1_u64_x2(__p, __v); }
+__BUN_CC_INTRIN uint64x1x3_t vld3_u64(const uint64_t *__p) { return vld1_u64_x3(__p); }
+__BUN_CC_INTRIN void vst3_u64(uint64_t *__p, uint64x1x3_t __v) { vst1_u64_x3(__p, __v); }
+__BUN_CC_INTRIN uint64x1x4_t vld4_u64(const uint64_t *__p) { return vld1_u64_x4(__p); }
+__BUN_CC_INTRIN void vst4_u64(uint64_t *__p, uint64x1x4_t __v) { vst1_u64_x4(__p, __v); }
+__BUN_CC_INTRIN uint64x2x2_t vld1q_u64_x2(const uint64_t *__p) { return (uint64x2x2_t){{vld1q_u64(__p + 0), vld1q_u64(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1q_u64_x2(uint64_t *__p, uint64x2x2_t __v) { vst1q_u64(__p + 0, __v.val[0]); vst1q_u64(__p + 2, __v.val[1]); }
+__BUN_CC_INTRIN uint64x2x3_t vld1q_u64_x3(const uint64_t *__p) { return (uint64x2x3_t){{vld1q_u64(__p + 0), vld1q_u64(__p + 2), vld1q_u64(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1q_u64_x3(uint64_t *__p, uint64x2x3_t __v) { vst1q_u64(__p + 0, __v.val[0]); vst1q_u64(__p + 2, __v.val[1]); vst1q_u64(__p + 4, __v.val[2]); }
+__BUN_CC_INTRIN uint64x2x4_t vld1q_u64_x4(const uint64_t *__p) { return (uint64x2x4_t){{vld1q_u64(__p + 0), vld1q_u64(__p + 2), vld1q_u64(__p + 4), vld1q_u64(__p + 6)}}; }
+__BUN_CC_INTRIN void vst1q_u64_x4(uint64_t *__p, uint64x2x4_t __v) { vst1q_u64(__p + 0, __v.val[0]); vst1q_u64(__p + 2, __v.val[1]); vst1q_u64(__p + 4, __v.val[2]); vst1q_u64(__p + 6, __v.val[3]); }
+__BUN_CC_INTRIN uint64x2x2_t vld2q_u64(const uint64_t *__p) { uint64x2_t __a = vld1q_u64(__p), __b = vld1q_u64(__p + 2); return (uint64x2x2_t){{vuzp1q_u64(__a, __b), vuzp2q_u64(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_u64(uint64_t *__p, uint64x2x2_t __v) { vst1q_u64(__p, vzip1q_u64(__v.val[0], __v.val[1])); vst1q_u64(__p + 2, vzip2q_u64(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN uint64x2x4_t vld4q_u64(const uint64_t *__p) { uint64x2_t __a = vld1q_u64(__p), __b = vld1q_u64(__p + 2), __c = vld1q_u64(__p + 4), __d = vld1q_u64(__p + 6); uint64x2_t __e0 = vuzp1q_u64(__a, __b), __o0 = vuzp2q_u64(__a, __b), __e1 = vuzp1q_u64(__c, __d), __o1 = vuzp2q_u64(__c, __d); return (uint64x2x4_t){{vuzp1q_u64(__e0, __e1), vuzp1q_u64(__o0, __o1), vuzp2q_u64(__e0, __e1), vuzp2q_u64(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_u64(uint64_t *__p, uint64x2x4_t __v) { uint64x2_t __l02 = vzip1q_u64(__v.val[0], __v.val[2]), __h02 = vzip2q_u64(__v.val[0], __v.val[2]), __l13 = vzip1q_u64(__v.val[1], __v.val[3]), __h13 = vzip2q_u64(__v.val[1], __v.val[3]); vst1q_u64(__p, vzip1q_u64(__l02, __l13)); vst1q_u64(__p + 2, vzip2q_u64(__l02, __l13)); vst1q_u64(__p + 4, vzip1q_u64(__h02, __h13)); vst1q_u64(__p + 6, vzip2q_u64(__h02, __h13)); }
+__BUN_CC_INTRIN float32x2x2_t vld1_f32_x2(const float32_t *__p) { return (float32x2x2_t){{vld1_f32(__p + 0), vld1_f32(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1_f32_x2(float32_t *__p, float32x2x2_t __v) { vst1_f32(__p + 0, __v.val[0]); vst1_f32(__p + 2, __v.val[1]); }
+__BUN_CC_INTRIN float32x2x3_t vld1_f32_x3(const float32_t *__p) { return (float32x2x3_t){{vld1_f32(__p + 0), vld1_f32(__p + 2), vld1_f32(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1_f32_x3(float32_t *__p, float32x2x3_t __v) { vst1_f32(__p + 0, __v.val[0]); vst1_f32(__p + 2, __v.val[1]); vst1_f32(__p + 4, __v.val[2]); }
+__BUN_CC_INTRIN float32x2x4_t vld1_f32_x4(const float32_t *__p) { return (float32x2x4_t){{vld1_f32(__p + 0), vld1_f32(__p + 2), vld1_f32(__p + 4), vld1_f32(__p + 6)}}; }
+__BUN_CC_INTRIN void vst1_f32_x4(float32_t *__p, float32x2x4_t __v) { vst1_f32(__p + 0, __v.val[0]); vst1_f32(__p + 2, __v.val[1]); vst1_f32(__p + 4, __v.val[2]); vst1_f32(__p + 6, __v.val[3]); }
+__BUN_CC_INTRIN float32x2x2_t vld2_f32(const float32_t *__p) { float32x2_t __a = vld1_f32(__p), __b = vld1_f32(__p + 2); return (float32x2x2_t){{vuzp1_f32(__a, __b), vuzp2_f32(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2_f32(float32_t *__p, float32x2x2_t __v) { vst1_f32(__p, vzip1_f32(__v.val[0], __v.val[1])); vst1_f32(__p + 2, vzip2_f32(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN float32x2x4_t vld4_f32(const float32_t *__p) { float32x2_t __a = vld1_f32(__p), __b = vld1_f32(__p + 2), __c = vld1_f32(__p + 4), __d = vld1_f32(__p + 6); float32x2_t __e0 = vuzp1_f32(__a, __b), __o0 = vuzp2_f32(__a, __b), __e1 = vuzp1_f32(__c, __d), __o1 = vuzp2_f32(__c, __d); return (float32x2x4_t){{vuzp1_f32(__e0, __e1), vuzp1_f32(__o0, __o1), vuzp2_f32(__e0, __e1), vuzp2_f32(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4_f32(float32_t *__p, float32x2x4_t __v) { float32x2_t __l02 = vzip1_f32(__v.val[0], __v.val[2]), __h02 = vzip2_f32(__v.val[0], __v.val[2]), __l13 = vzip1_f32(__v.val[1], __v.val[3]), __h13 = vzip2_f32(__v.val[1], __v.val[3]); vst1_f32(__p, vzip1_f32(__l02, __l13)); vst1_f32(__p + 2, vzip2_f32(__l02, __l13)); vst1_f32(__p + 4, vzip1_f32(__h02, __h13)); vst1_f32(__p + 6, vzip2_f32(__h02, __h13)); }
+__BUN_CC_INTRIN float32x4x2_t vld1q_f32_x2(const float32_t *__p) { return (float32x4x2_t){{vld1q_f32(__p + 0), vld1q_f32(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1q_f32_x2(float32_t *__p, float32x4x2_t __v) { vst1q_f32(__p + 0, __v.val[0]); vst1q_f32(__p + 4, __v.val[1]); }
+__BUN_CC_INTRIN float32x4x3_t vld1q_f32_x3(const float32_t *__p) { return (float32x4x3_t){{vld1q_f32(__p + 0), vld1q_f32(__p + 4), vld1q_f32(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1q_f32_x3(float32_t *__p, float32x4x3_t __v) { vst1q_f32(__p + 0, __v.val[0]); vst1q_f32(__p + 4, __v.val[1]); vst1q_f32(__p + 8, __v.val[2]); }
+__BUN_CC_INTRIN float32x4x4_t vld1q_f32_x4(const float32_t *__p) { return (float32x4x4_t){{vld1q_f32(__p + 0), vld1q_f32(__p + 4), vld1q_f32(__p + 8), vld1q_f32(__p + 12)}}; }
+__BUN_CC_INTRIN void vst1q_f32_x4(float32_t *__p, float32x4x4_t __v) { vst1q_f32(__p + 0, __v.val[0]); vst1q_f32(__p + 4, __v.val[1]); vst1q_f32(__p + 8, __v.val[2]); vst1q_f32(__p + 12, __v.val[3]); }
+__BUN_CC_INTRIN float32x4x2_t vld2q_f32(const float32_t *__p) { float32x4_t __a = vld1q_f32(__p), __b = vld1q_f32(__p + 4); return (float32x4x2_t){{vuzp1q_f32(__a, __b), vuzp2q_f32(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_f32(float32_t *__p, float32x4x2_t __v) { vst1q_f32(__p, vzip1q_f32(__v.val[0], __v.val[1])); vst1q_f32(__p + 4, vzip2q_f32(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN float32x4x4_t vld4q_f32(const float32_t *__p) { float32x4_t __a = vld1q_f32(__p), __b = vld1q_f32(__p + 4), __c = vld1q_f32(__p + 8), __d = vld1q_f32(__p + 12); float32x4_t __e0 = vuzp1q_f32(__a, __b), __o0 = vuzp2q_f32(__a, __b), __e1 = vuzp1q_f32(__c, __d), __o1 = vuzp2q_f32(__c, __d); return (float32x4x4_t){{vuzp1q_f32(__e0, __e1), vuzp1q_f32(__o0, __o1), vuzp2q_f32(__e0, __e1), vuzp2q_f32(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_f32(float32_t *__p, float32x4x4_t __v) { float32x4_t __l02 = vzip1q_f32(__v.val[0], __v.val[2]), __h02 = vzip2q_f32(__v.val[0], __v.val[2]), __l13 = vzip1q_f32(__v.val[1], __v.val[3]), __h13 = vzip2q_f32(__v.val[1], __v.val[3]); vst1q_f32(__p, vzip1q_f32(__l02, __l13)); vst1q_f32(__p + 4, vzip2q_f32(__l02, __l13)); vst1q_f32(__p + 8, vzip1q_f32(__h02, __h13)); vst1q_f32(__p + 12, vzip2q_f32(__h02, __h13)); }
+__BUN_CC_INTRIN float64x1x2_t vld1_f64_x2(const float64_t *__p) { return (float64x1x2_t){{vld1_f64(__p + 0), vld1_f64(__p + 1)}}; }
+__BUN_CC_INTRIN void vst1_f64_x2(float64_t *__p, float64x1x2_t __v) { vst1_f64(__p + 0, __v.val[0]); vst1_f64(__p + 1, __v.val[1]); }
+__BUN_CC_INTRIN float64x1x3_t vld1_f64_x3(const float64_t *__p) { return (float64x1x3_t){{vld1_f64(__p + 0), vld1_f64(__p + 1), vld1_f64(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1_f64_x3(float64_t *__p, float64x1x3_t __v) { vst1_f64(__p + 0, __v.val[0]); vst1_f64(__p + 1, __v.val[1]); vst1_f64(__p + 2, __v.val[2]); }
+__BUN_CC_INTRIN float64x1x4_t vld1_f64_x4(const float64_t *__p) { return (float64x1x4_t){{vld1_f64(__p + 0), vld1_f64(__p + 1), vld1_f64(__p + 2), vld1_f64(__p + 3)}}; }
+__BUN_CC_INTRIN void vst1_f64_x4(float64_t *__p, float64x1x4_t __v) { vst1_f64(__p + 0, __v.val[0]); vst1_f64(__p + 1, __v.val[1]); vst1_f64(__p + 2, __v.val[2]); vst1_f64(__p + 3, __v.val[3]); }
+__BUN_CC_INTRIN float64x1x2_t vld2_f64(const float64_t *__p) { return vld1_f64_x2(__p); }
+__BUN_CC_INTRIN void vst2_f64(float64_t *__p, float64x1x2_t __v) { vst1_f64_x2(__p, __v); }
+__BUN_CC_INTRIN float64x1x3_t vld3_f64(const float64_t *__p) { return vld1_f64_x3(__p); }
+__BUN_CC_INTRIN void vst3_f64(float64_t *__p, float64x1x3_t __v) { vst1_f64_x3(__p, __v); }
+__BUN_CC_INTRIN float64x1x4_t vld4_f64(const float64_t *__p) { return vld1_f64_x4(__p); }
+__BUN_CC_INTRIN void vst4_f64(float64_t *__p, float64x1x4_t __v) { vst1_f64_x4(__p, __v); }
+__BUN_CC_INTRIN float64x2x2_t vld1q_f64_x2(const float64_t *__p) { return (float64x2x2_t){{vld1q_f64(__p + 0), vld1q_f64(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1q_f64_x2(float64_t *__p, float64x2x2_t __v) { vst1q_f64(__p + 0, __v.val[0]); vst1q_f64(__p + 2, __v.val[1]); }
+__BUN_CC_INTRIN float64x2x3_t vld1q_f64_x3(const float64_t *__p) { return (float64x2x3_t){{vld1q_f64(__p + 0), vld1q_f64(__p + 2), vld1q_f64(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1q_f64_x3(float64_t *__p, float64x2x3_t __v) { vst1q_f64(__p + 0, __v.val[0]); vst1q_f64(__p + 2, __v.val[1]); vst1q_f64(__p + 4, __v.val[2]); }
+__BUN_CC_INTRIN float64x2x4_t vld1q_f64_x4(const float64_t *__p) { return (float64x2x4_t){{vld1q_f64(__p + 0), vld1q_f64(__p + 2), vld1q_f64(__p + 4), vld1q_f64(__p + 6)}}; }
+__BUN_CC_INTRIN void vst1q_f64_x4(float64_t *__p, float64x2x4_t __v) { vst1q_f64(__p + 0, __v.val[0]); vst1q_f64(__p + 2, __v.val[1]); vst1q_f64(__p + 4, __v.val[2]); vst1q_f64(__p + 6, __v.val[3]); }
+__BUN_CC_INTRIN float64x2x2_t vld2q_f64(const float64_t *__p) { float64x2_t __a = vld1q_f64(__p), __b = vld1q_f64(__p + 2); return (float64x2x2_t){{vuzp1q_f64(__a, __b), vuzp2q_f64(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_f64(float64_t *__p, float64x2x2_t __v) { vst1q_f64(__p, vzip1q_f64(__v.val[0], __v.val[1])); vst1q_f64(__p + 2, vzip2q_f64(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN float64x2x4_t vld4q_f64(const float64_t *__p) { float64x2_t __a = vld1q_f64(__p), __b = vld1q_f64(__p + 2), __c = vld1q_f64(__p + 4), __d = vld1q_f64(__p + 6); float64x2_t __e0 = vuzp1q_f64(__a, __b), __o0 = vuzp2q_f64(__a, __b), __e1 = vuzp1q_f64(__c, __d), __o1 = vuzp2q_f64(__c, __d); return (float64x2x4_t){{vuzp1q_f64(__e0, __e1), vuzp1q_f64(__o0, __o1), vuzp2q_f64(__e0, __e1), vuzp2q_f64(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_f64(float64_t *__p, float64x2x4_t __v) { float64x2_t __l02 = vzip1q_f64(__v.val[0], __v.val[2]), __h02 = vzip2q_f64(__v.val[0], __v.val[2]), __l13 = vzip1q_f64(__v.val[1], __v.val[3]), __h13 = vzip2q_f64(__v.val[1], __v.val[3]); vst1q_f64(__p, vzip1q_f64(__l02, __l13)); vst1q_f64(__p + 2, vzip2q_f64(__l02, __l13)); vst1q_f64(__p + 4, vzip1q_f64(__h02, __h13)); vst1q_f64(__p + 6, vzip2q_f64(__h02, __h13)); }
+__BUN_CC_INTRIN poly8x8x2_t vld1_p8_x2(const poly8_t *__p) { return (poly8x8x2_t){{vld1_p8(__p + 0), vld1_p8(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1_p8_x2(poly8_t *__p, poly8x8x2_t __v) { vst1_p8(__p + 0, __v.val[0]); vst1_p8(__p + 8, __v.val[1]); }
+__BUN_CC_INTRIN poly8x8x3_t vld1_p8_x3(const poly8_t *__p) { return (poly8x8x3_t){{vld1_p8(__p + 0), vld1_p8(__p + 8), vld1_p8(__p + 16)}}; }
+__BUN_CC_INTRIN void vst1_p8_x3(poly8_t *__p, poly8x8x3_t __v) { vst1_p8(__p + 0, __v.val[0]); vst1_p8(__p + 8, __v.val[1]); vst1_p8(__p + 16, __v.val[2]); }
+__BUN_CC_INTRIN poly8x8x4_t vld1_p8_x4(const poly8_t *__p) { return (poly8x8x4_t){{vld1_p8(__p + 0), vld1_p8(__p + 8), vld1_p8(__p + 16), vld1_p8(__p + 24)}}; }
+__BUN_CC_INTRIN void vst1_p8_x4(poly8_t *__p, poly8x8x4_t __v) { vst1_p8(__p + 0, __v.val[0]); vst1_p8(__p + 8, __v.val[1]); vst1_p8(__p + 16, __v.val[2]); vst1_p8(__p + 24, __v.val[3]); }
+__BUN_CC_INTRIN poly8x8x2_t vld2_p8(const poly8_t *__p) { poly8x8_t __a = vld1_p8(__p), __b = vld1_p8(__p + 8); return (poly8x8x2_t){{vuzp1_p8(__a, __b), vuzp2_p8(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2_p8(poly8_t *__p, poly8x8x2_t __v) { vst1_p8(__p, vzip1_p8(__v.val[0], __v.val[1])); vst1_p8(__p + 8, vzip2_p8(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN poly8x8x4_t vld4_p8(const poly8_t *__p) { poly8x8_t __a = vld1_p8(__p), __b = vld1_p8(__p + 8), __c = vld1_p8(__p + 16), __d = vld1_p8(__p + 24); poly8x8_t __e0 = vuzp1_p8(__a, __b), __o0 = vuzp2_p8(__a, __b), __e1 = vuzp1_p8(__c, __d), __o1 = vuzp2_p8(__c, __d); return (poly8x8x4_t){{vuzp1_p8(__e0, __e1), vuzp1_p8(__o0, __o1), vuzp2_p8(__e0, __e1), vuzp2_p8(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4_p8(poly8_t *__p, poly8x8x4_t __v) { poly8x8_t __l02 = vzip1_p8(__v.val[0], __v.val[2]), __h02 = vzip2_p8(__v.val[0], __v.val[2]), __l13 = vzip1_p8(__v.val[1], __v.val[3]), __h13 = vzip2_p8(__v.val[1], __v.val[3]); vst1_p8(__p, vzip1_p8(__l02, __l13)); vst1_p8(__p + 8, vzip2_p8(__l02, __l13)); vst1_p8(__p + 16, vzip1_p8(__h02, __h13)); vst1_p8(__p + 24, vzip2_p8(__h02, __h13)); }
+__BUN_CC_INTRIN poly8x16x2_t vld1q_p8_x2(const poly8_t *__p) { return (poly8x16x2_t){{vld1q_p8(__p + 0), vld1q_p8(__p + 16)}}; }
+__BUN_CC_INTRIN void vst1q_p8_x2(poly8_t *__p, poly8x16x2_t __v) { vst1q_p8(__p + 0, __v.val[0]); vst1q_p8(__p + 16, __v.val[1]); }
+__BUN_CC_INTRIN poly8x16x3_t vld1q_p8_x3(const poly8_t *__p) { return (poly8x16x3_t){{vld1q_p8(__p + 0), vld1q_p8(__p + 16), vld1q_p8(__p + 32)}}; }
+__BUN_CC_INTRIN void vst1q_p8_x3(poly8_t *__p, poly8x16x3_t __v) { vst1q_p8(__p + 0, __v.val[0]); vst1q_p8(__p + 16, __v.val[1]); vst1q_p8(__p + 32, __v.val[2]); }
+__BUN_CC_INTRIN poly8x16x4_t vld1q_p8_x4(const poly8_t *__p) { return (poly8x16x4_t){{vld1q_p8(__p + 0), vld1q_p8(__p + 16), vld1q_p8(__p + 32), vld1q_p8(__p + 48)}}; }
+__BUN_CC_INTRIN void vst1q_p8_x4(poly8_t *__p, poly8x16x4_t __v) { vst1q_p8(__p + 0, __v.val[0]); vst1q_p8(__p + 16, __v.val[1]); vst1q_p8(__p + 32, __v.val[2]); vst1q_p8(__p + 48, __v.val[3]); }
+__BUN_CC_INTRIN poly8x16x2_t vld2q_p8(const poly8_t *__p) { poly8x16_t __a = vld1q_p8(__p), __b = vld1q_p8(__p + 16); return (poly8x16x2_t){{vuzp1q_p8(__a, __b), vuzp2q_p8(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_p8(poly8_t *__p, poly8x16x2_t __v) { vst1q_p8(__p, vzip1q_p8(__v.val[0], __v.val[1])); vst1q_p8(__p + 16, vzip2q_p8(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN poly8x16x4_t vld4q_p8(const poly8_t *__p) { poly8x16_t __a = vld1q_p8(__p), __b = vld1q_p8(__p + 16), __c = vld1q_p8(__p + 32), __d = vld1q_p8(__p + 48); poly8x16_t __e0 = vuzp1q_p8(__a, __b), __o0 = vuzp2q_p8(__a, __b), __e1 = vuzp1q_p8(__c, __d), __o1 = vuzp2q_p8(__c, __d); return (poly8x16x4_t){{vuzp1q_p8(__e0, __e1), vuzp1q_p8(__o0, __o1), vuzp2q_p8(__e0, __e1), vuzp2q_p8(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_p8(poly8_t *__p, poly8x16x4_t __v) { poly8x16_t __l02 = vzip1q_p8(__v.val[0], __v.val[2]), __h02 = vzip2q_p8(__v.val[0], __v.val[2]), __l13 = vzip1q_p8(__v.val[1], __v.val[3]), __h13 = vzip2q_p8(__v.val[1], __v.val[3]); vst1q_p8(__p, vzip1q_p8(__l02, __l13)); vst1q_p8(__p + 16, vzip2q_p8(__l02, __l13)); vst1q_p8(__p + 32, vzip1q_p8(__h02, __h13)); vst1q_p8(__p + 48, vzip2q_p8(__h02, __h13)); }
+__BUN_CC_INTRIN poly16x4x2_t vld1_p16_x2(const poly16_t *__p) { return (poly16x4x2_t){{vld1_p16(__p + 0), vld1_p16(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1_p16_x2(poly16_t *__p, poly16x4x2_t __v) { vst1_p16(__p + 0, __v.val[0]); vst1_p16(__p + 4, __v.val[1]); }
+__BUN_CC_INTRIN poly16x4x3_t vld1_p16_x3(const poly16_t *__p) { return (poly16x4x3_t){{vld1_p16(__p + 0), vld1_p16(__p + 4), vld1_p16(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1_p16_x3(poly16_t *__p, poly16x4x3_t __v) { vst1_p16(__p + 0, __v.val[0]); vst1_p16(__p + 4, __v.val[1]); vst1_p16(__p + 8, __v.val[2]); }
+__BUN_CC_INTRIN poly16x4x4_t vld1_p16_x4(const poly16_t *__p) { return (poly16x4x4_t){{vld1_p16(__p + 0), vld1_p16(__p + 4), vld1_p16(__p + 8), vld1_p16(__p + 12)}}; }
+__BUN_CC_INTRIN void vst1_p16_x4(poly16_t *__p, poly16x4x4_t __v) { vst1_p16(__p + 0, __v.val[0]); vst1_p16(__p + 4, __v.val[1]); vst1_p16(__p + 8, __v.val[2]); vst1_p16(__p + 12, __v.val[3]); }
+__BUN_CC_INTRIN poly16x4x2_t vld2_p16(const poly16_t *__p) { poly16x4_t __a = vld1_p16(__p), __b = vld1_p16(__p + 4); return (poly16x4x2_t){{vuzp1_p16(__a, __b), vuzp2_p16(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2_p16(poly16_t *__p, poly16x4x2_t __v) { vst1_p16(__p, vzip1_p16(__v.val[0], __v.val[1])); vst1_p16(__p + 4, vzip2_p16(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN poly16x4x4_t vld4_p16(const poly16_t *__p) { poly16x4_t __a = vld1_p16(__p), __b = vld1_p16(__p + 4), __c = vld1_p16(__p + 8), __d = vld1_p16(__p + 12); poly16x4_t __e0 = vuzp1_p16(__a, __b), __o0 = vuzp2_p16(__a, __b), __e1 = vuzp1_p16(__c, __d), __o1 = vuzp2_p16(__c, __d); return (poly16x4x4_t){{vuzp1_p16(__e0, __e1), vuzp1_p16(__o0, __o1), vuzp2_p16(__e0, __e1), vuzp2_p16(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4_p16(poly16_t *__p, poly16x4x4_t __v) { poly16x4_t __l02 = vzip1_p16(__v.val[0], __v.val[2]), __h02 = vzip2_p16(__v.val[0], __v.val[2]), __l13 = vzip1_p16(__v.val[1], __v.val[3]), __h13 = vzip2_p16(__v.val[1], __v.val[3]); vst1_p16(__p, vzip1_p16(__l02, __l13)); vst1_p16(__p + 4, vzip2_p16(__l02, __l13)); vst1_p16(__p + 8, vzip1_p16(__h02, __h13)); vst1_p16(__p + 12, vzip2_p16(__h02, __h13)); }
+__BUN_CC_INTRIN poly16x8x2_t vld1q_p16_x2(const poly16_t *__p) { return (poly16x8x2_t){{vld1q_p16(__p + 0), vld1q_p16(__p + 8)}}; }
+__BUN_CC_INTRIN void vst1q_p16_x2(poly16_t *__p, poly16x8x2_t __v) { vst1q_p16(__p + 0, __v.val[0]); vst1q_p16(__p + 8, __v.val[1]); }
+__BUN_CC_INTRIN poly16x8x3_t vld1q_p16_x3(const poly16_t *__p) { return (poly16x8x3_t){{vld1q_p16(__p + 0), vld1q_p16(__p + 8), vld1q_p16(__p + 16)}}; }
+__BUN_CC_INTRIN void vst1q_p16_x3(poly16_t *__p, poly16x8x3_t __v) { vst1q_p16(__p + 0, __v.val[0]); vst1q_p16(__p + 8, __v.val[1]); vst1q_p16(__p + 16, __v.val[2]); }
+__BUN_CC_INTRIN poly16x8x4_t vld1q_p16_x4(const poly16_t *__p) { return (poly16x8x4_t){{vld1q_p16(__p + 0), vld1q_p16(__p + 8), vld1q_p16(__p + 16), vld1q_p16(__p + 24)}}; }
+__BUN_CC_INTRIN void vst1q_p16_x4(poly16_t *__p, poly16x8x4_t __v) { vst1q_p16(__p + 0, __v.val[0]); vst1q_p16(__p + 8, __v.val[1]); vst1q_p16(__p + 16, __v.val[2]); vst1q_p16(__p + 24, __v.val[3]); }
+__BUN_CC_INTRIN poly16x8x2_t vld2q_p16(const poly16_t *__p) { poly16x8_t __a = vld1q_p16(__p), __b = vld1q_p16(__p + 8); return (poly16x8x2_t){{vuzp1q_p16(__a, __b), vuzp2q_p16(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_p16(poly16_t *__p, poly16x8x2_t __v) { vst1q_p16(__p, vzip1q_p16(__v.val[0], __v.val[1])); vst1q_p16(__p + 8, vzip2q_p16(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN poly16x8x4_t vld4q_p16(const poly16_t *__p) { poly16x8_t __a = vld1q_p16(__p), __b = vld1q_p16(__p + 8), __c = vld1q_p16(__p + 16), __d = vld1q_p16(__p + 24); poly16x8_t __e0 = vuzp1q_p16(__a, __b), __o0 = vuzp2q_p16(__a, __b), __e1 = vuzp1q_p16(__c, __d), __o1 = vuzp2q_p16(__c, __d); return (poly16x8x4_t){{vuzp1q_p16(__e0, __e1), vuzp1q_p16(__o0, __o1), vuzp2q_p16(__e0, __e1), vuzp2q_p16(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_p16(poly16_t *__p, poly16x8x4_t __v) { poly16x8_t __l02 = vzip1q_p16(__v.val[0], __v.val[2]), __h02 = vzip2q_p16(__v.val[0], __v.val[2]), __l13 = vzip1q_p16(__v.val[1], __v.val[3]), __h13 = vzip2q_p16(__v.val[1], __v.val[3]); vst1q_p16(__p, vzip1q_p16(__l02, __l13)); vst1q_p16(__p + 8, vzip2q_p16(__l02, __l13)); vst1q_p16(__p + 16, vzip1q_p16(__h02, __h13)); vst1q_p16(__p + 24, vzip2q_p16(__h02, __h13)); }
+__BUN_CC_INTRIN poly64x1x2_t vld1_p64_x2(const poly64_t *__p) { return (poly64x1x2_t){{vld1_p64(__p + 0), vld1_p64(__p + 1)}}; }
+__BUN_CC_INTRIN void vst1_p64_x2(poly64_t *__p, poly64x1x2_t __v) { vst1_p64(__p + 0, __v.val[0]); vst1_p64(__p + 1, __v.val[1]); }
+__BUN_CC_INTRIN poly64x1x3_t vld1_p64_x3(const poly64_t *__p) { return (poly64x1x3_t){{vld1_p64(__p + 0), vld1_p64(__p + 1), vld1_p64(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1_p64_x3(poly64_t *__p, poly64x1x3_t __v) { vst1_p64(__p + 0, __v.val[0]); vst1_p64(__p + 1, __v.val[1]); vst1_p64(__p + 2, __v.val[2]); }
+__BUN_CC_INTRIN poly64x1x4_t vld1_p64_x4(const poly64_t *__p) { return (poly64x1x4_t){{vld1_p64(__p + 0), vld1_p64(__p + 1), vld1_p64(__p + 2), vld1_p64(__p + 3)}}; }
+__BUN_CC_INTRIN void vst1_p64_x4(poly64_t *__p, poly64x1x4_t __v) { vst1_p64(__p + 0, __v.val[0]); vst1_p64(__p + 1, __v.val[1]); vst1_p64(__p + 2, __v.val[2]); vst1_p64(__p + 3, __v.val[3]); }
+__BUN_CC_INTRIN poly64x1x2_t vld2_p64(const poly64_t *__p) { return vld1_p64_x2(__p); }
+__BUN_CC_INTRIN void vst2_p64(poly64_t *__p, poly64x1x2_t __v) { vst1_p64_x2(__p, __v); }
+__BUN_CC_INTRIN poly64x1x3_t vld3_p64(const poly64_t *__p) { return vld1_p64_x3(__p); }
+__BUN_CC_INTRIN void vst3_p64(poly64_t *__p, poly64x1x3_t __v) { vst1_p64_x3(__p, __v); }
+__BUN_CC_INTRIN poly64x1x4_t vld4_p64(const poly64_t *__p) { return vld1_p64_x4(__p); }
+__BUN_CC_INTRIN void vst4_p64(poly64_t *__p, poly64x1x4_t __v) { vst1_p64_x4(__p, __v); }
+__BUN_CC_INTRIN poly64x2x2_t vld1q_p64_x2(const poly64_t *__p) { return (poly64x2x2_t){{vld1q_p64(__p + 0), vld1q_p64(__p + 2)}}; }
+__BUN_CC_INTRIN void vst1q_p64_x2(poly64_t *__p, poly64x2x2_t __v) { vst1q_p64(__p + 0, __v.val[0]); vst1q_p64(__p + 2, __v.val[1]); }
+__BUN_CC_INTRIN poly64x2x3_t vld1q_p64_x3(const poly64_t *__p) { return (poly64x2x3_t){{vld1q_p64(__p + 0), vld1q_p64(__p + 2), vld1q_p64(__p + 4)}}; }
+__BUN_CC_INTRIN void vst1q_p64_x3(poly64_t *__p, poly64x2x3_t __v) { vst1q_p64(__p + 0, __v.val[0]); vst1q_p64(__p + 2, __v.val[1]); vst1q_p64(__p + 4, __v.val[2]); }
+__BUN_CC_INTRIN poly64x2x4_t vld1q_p64_x4(const poly64_t *__p) { return (poly64x2x4_t){{vld1q_p64(__p + 0), vld1q_p64(__p + 2), vld1q_p64(__p + 4), vld1q_p64(__p + 6)}}; }
+__BUN_CC_INTRIN void vst1q_p64_x4(poly64_t *__p, poly64x2x4_t __v) { vst1q_p64(__p + 0, __v.val[0]); vst1q_p64(__p + 2, __v.val[1]); vst1q_p64(__p + 4, __v.val[2]); vst1q_p64(__p + 6, __v.val[3]); }
+__BUN_CC_INTRIN poly64x2x2_t vld2q_p64(const poly64_t *__p) { poly64x2_t __a = vld1q_p64(__p), __b = vld1q_p64(__p + 2); return (poly64x2x2_t){{vuzp1q_p64(__a, __b), vuzp2q_p64(__a, __b)}}; }
+__BUN_CC_INTRIN void vst2q_p64(poly64_t *__p, poly64x2x2_t __v) { vst1q_p64(__p, vzip1q_p64(__v.val[0], __v.val[1])); vst1q_p64(__p + 2, vzip2q_p64(__v.val[0], __v.val[1])); }
+__BUN_CC_INTRIN poly64x2x4_t vld4q_p64(const poly64_t *__p) { poly64x2_t __a = vld1q_p64(__p), __b = vld1q_p64(__p + 2), __c = vld1q_p64(__p + 4), __d = vld1q_p64(__p + 6); poly64x2_t __e0 = vuzp1q_p64(__a, __b), __o0 = vuzp2q_p64(__a, __b), __e1 = vuzp1q_p64(__c, __d), __o1 = vuzp2q_p64(__c, __d); return (poly64x2x4_t){{vuzp1q_p64(__e0, __e1), vuzp1q_p64(__o0, __o1), vuzp2q_p64(__e0, __e1), vuzp2q_p64(__o0, __o1)}}; }
+__BUN_CC_INTRIN void vst4q_p64(poly64_t *__p, poly64x2x4_t __v) { poly64x2_t __l02 = vzip1q_p64(__v.val[0], __v.val[2]), __h02 = vzip2q_p64(__v.val[0], __v.val[2]), __l13 = vzip1q_p64(__v.val[1], __v.val[3]), __h13 = vzip2q_p64(__v.val[1], __v.val[3]); vst1q_p64(__p, vzip1q_p64(__l02, __l13)); vst1q_p64(__p + 2, vzip2q_p64(__l02, __l13)); vst1q_p64(__p + 4, vzip1q_p64(__h02, __h13)); vst1q_p64(__p + 6, vzip2q_p64(__h02, __h13)); }
 
 /* Reinterpretation of 64-bit vectors, and of the polynomial types. */
 #define vreinterpret_s8_u8(v) ((int8x8_t)(uint8x8_t)(v))
@@ -3358,392 +2294,104 @@ __BUN_CC_INTRIN void vst4q_p64(poly64_t* __p, poly64x2x4_t __v)
 #define vreinterpretq_p64_p16(v) ((poly64x2_t)(poly16x8_t)(v))
 
 /* Shifts by a vector of counts, leading zeros, comparisons with zero, saturating arithmetic on wide lanes. */
-__BUN_CC_INTRIN int8x8_t vshl_s8(int8x8_t __a, int8x8_t __b)
-{
-    int8x8_t __s = __b, __n = -__s;
-    int8x8_t __l = __s >= 8 ? vdup_n_s8(0) : __a << (__s & 7);
-    int8x8_t __r = __s <= -8 ? (__a >> 7) : __a >> (__n & 7);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN int8x8_t vclz_s8(int8x8_t __a)
-{
-    uint8x8_t __v = (uint8x8_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    return (int8x8_t)(8 - vcnt_u8((uint8x8_t)__v));
-}
+__BUN_CC_INTRIN int8x8_t vshl_s8(int8x8_t __a, int8x8_t __b) { int8x8_t __s = __b, __n = -__s; int8x8_t __l = __s >= 8 ? vdup_n_s8(0) : __a << (__s & 7); int8x8_t __r = __s <= -8 ? (__a >> 7) : __a >> (__n & 7); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN int8x8_t vclz_s8(int8x8_t __a) { uint8x8_t __v = (uint8x8_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; return (int8x8_t)(8 - vcnt_u8((uint8x8_t)__v)); }
 __BUN_CC_INTRIN uint8x8_t vcltz_s8(int8x8_t __a) { return (uint8x8_t)(__a < 0); }
 __BUN_CC_INTRIN uint8x8_t vcgtz_s8(int8x8_t __a) { return (uint8x8_t)(__a > 0); }
 __BUN_CC_INTRIN uint8x8_t vclez_s8(int8x8_t __a) { return (uint8x8_t)(__a <= 0); }
 __BUN_CC_INTRIN uint8x8_t vcgez_s8(int8x8_t __a) { return (uint8x8_t)(__a >= 0); }
 __BUN_CC_INTRIN int8x8_t vrsra_n_s8(int8x8_t __a, int8x8_t __b, int __n) { return __a + vrshr_n_s8(__b, __n); }
-__BUN_CC_INTRIN uint8x8_t vqshlu_n_s8(int8x8_t __a, int __n)
-{
-    uint8x8_t __u = (uint8x8_t)__a;
-    uint8x8_t __r = __n == 0 ? __u : ((__u >> (8 - __n)) != 0 ? ~vdup_n_u8(0) : __u << __n);
-    return __a < 0 ? vdup_n_u8(0) : __r;
-}
-__BUN_CC_INTRIN int8x16_t vshlq_s8(int8x16_t __a, int8x16_t __b)
-{
-    int8x16_t __s = __b, __n = -__s;
-    int8x16_t __l = __s >= 8 ? vdupq_n_s8(0) : __a << (__s & 7);
-    int8x16_t __r = __s <= -8 ? (__a >> 7) : __a >> (__n & 7);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN int8x16_t vclzq_s8(int8x16_t __a)
-{
-    uint8x16_t __v = (uint8x16_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    return (int8x16_t)(8 - vcntq_u8((uint8x16_t)__v));
-}
+__BUN_CC_INTRIN uint8x8_t vqshlu_n_s8(int8x8_t __a, int __n) { uint8x8_t __u = (uint8x8_t)__a; uint8x8_t __r = __n == 0 ? __u : ((__u >> (8 - __n)) != 0 ? ~vdup_n_u8(0) : __u << __n); return __a < 0 ? vdup_n_u8(0) : __r; }
+__BUN_CC_INTRIN int8x16_t vshlq_s8(int8x16_t __a, int8x16_t __b) { int8x16_t __s = __b, __n = -__s; int8x16_t __l = __s >= 8 ? vdupq_n_s8(0) : __a << (__s & 7); int8x16_t __r = __s <= -8 ? (__a >> 7) : __a >> (__n & 7); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN int8x16_t vclzq_s8(int8x16_t __a) { uint8x16_t __v = (uint8x16_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; return (int8x16_t)(8 - vcntq_u8((uint8x16_t)__v)); }
 __BUN_CC_INTRIN uint8x16_t vcltzq_s8(int8x16_t __a) { return (uint8x16_t)(__a < 0); }
 __BUN_CC_INTRIN uint8x16_t vcgtzq_s8(int8x16_t __a) { return (uint8x16_t)(__a > 0); }
 __BUN_CC_INTRIN uint8x16_t vclezq_s8(int8x16_t __a) { return (uint8x16_t)(__a <= 0); }
 __BUN_CC_INTRIN uint8x16_t vcgezq_s8(int8x16_t __a) { return (uint8x16_t)(__a >= 0); }
 __BUN_CC_INTRIN int8x16_t vrsraq_n_s8(int8x16_t __a, int8x16_t __b, int __n) { return __a + vrshrq_n_s8(__b, __n); }
-__BUN_CC_INTRIN uint8x16_t vqshluq_n_s8(int8x16_t __a, int __n)
-{
-    uint8x16_t __u = (uint8x16_t)__a;
-    uint8x16_t __r = __n == 0 ? __u : ((__u >> (8 - __n)) != 0 ? ~vdupq_n_u8(0) : __u << __n);
-    return __a < 0 ? vdupq_n_u8(0) : __r;
-}
-__BUN_CC_INTRIN uint8x8_t vshl_u8(uint8x8_t __a, int8x8_t __b)
-{
-    int8x8_t __s = __b, __n = -__s;
-    uint8x8_t __l = __s >= 8 ? vdup_n_u8(0) : __a << (__s & 7);
-    uint8x8_t __r = __s <= -8 ? vdup_n_u8(0) : __a >> (__n & 7);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN uint8x8_t vclz_u8(uint8x8_t __a)
-{
-    uint8x8_t __v = (uint8x8_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    return (uint8x8_t)(8 - vcnt_u8((uint8x8_t)__v));
-}
+__BUN_CC_INTRIN uint8x16_t vqshluq_n_s8(int8x16_t __a, int __n) { uint8x16_t __u = (uint8x16_t)__a; uint8x16_t __r = __n == 0 ? __u : ((__u >> (8 - __n)) != 0 ? ~vdupq_n_u8(0) : __u << __n); return __a < 0 ? vdupq_n_u8(0) : __r; }
+__BUN_CC_INTRIN uint8x8_t vshl_u8(uint8x8_t __a, int8x8_t __b) { int8x8_t __s = __b, __n = -__s; uint8x8_t __l = __s >= 8 ? vdup_n_u8(0) : __a << (__s & 7); uint8x8_t __r = __s <= -8 ? vdup_n_u8(0) : __a >> (__n & 7); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN uint8x8_t vclz_u8(uint8x8_t __a) { uint8x8_t __v = (uint8x8_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; return (uint8x8_t)(8 - vcnt_u8((uint8x8_t)__v)); }
 __BUN_CC_INTRIN uint8x8_t vrsra_n_u8(uint8x8_t __a, uint8x8_t __b, int __n) { return __a + vrshr_n_u8(__b, __n); }
-__BUN_CC_INTRIN uint8x16_t vshlq_u8(uint8x16_t __a, int8x16_t __b)
-{
-    int8x16_t __s = __b, __n = -__s;
-    uint8x16_t __l = __s >= 8 ? vdupq_n_u8(0) : __a << (__s & 7);
-    uint8x16_t __r = __s <= -8 ? vdupq_n_u8(0) : __a >> (__n & 7);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN uint8x16_t vclzq_u8(uint8x16_t __a)
-{
-    uint8x16_t __v = (uint8x16_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    return (uint8x16_t)(8 - vcntq_u8((uint8x16_t)__v));
-}
+__BUN_CC_INTRIN uint8x16_t vshlq_u8(uint8x16_t __a, int8x16_t __b) { int8x16_t __s = __b, __n = -__s; uint8x16_t __l = __s >= 8 ? vdupq_n_u8(0) : __a << (__s & 7); uint8x16_t __r = __s <= -8 ? vdupq_n_u8(0) : __a >> (__n & 7); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN uint8x16_t vclzq_u8(uint8x16_t __a) { uint8x16_t __v = (uint8x16_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; return (uint8x16_t)(8 - vcntq_u8((uint8x16_t)__v)); }
 __BUN_CC_INTRIN uint8x16_t vrsraq_n_u8(uint8x16_t __a, uint8x16_t __b, int __n) { return __a + vrshrq_n_u8(__b, __n); }
-__BUN_CC_INTRIN int16x4_t vshl_s16(int16x4_t __a, int16x4_t __b)
-{
-    int16x4_t __s = (__b << 8) >> 8, __n = -__s;
-    int16x4_t __l = __s >= 16 ? vdup_n_s16(0) : __a << (__s & 15);
-    int16x4_t __r = __s <= -16 ? (__a >> 15) : __a >> (__n & 15);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN int16x4_t vclz_s16(int16x4_t __a)
-{
-    uint16x4_t __v = (uint16x4_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    __v |= __v >> 8;
-    return (int16x4_t)(16 - vpaddl_u8(vcnt_u8((uint8x8_t)__v)));
-}
+__BUN_CC_INTRIN int16x4_t vshl_s16(int16x4_t __a, int16x4_t __b) { int16x4_t __s = (__b << 8) >> 8, __n = -__s; int16x4_t __l = __s >= 16 ? vdup_n_s16(0) : __a << (__s & 15); int16x4_t __r = __s <= -16 ? (__a >> 15) : __a >> (__n & 15); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN int16x4_t vclz_s16(int16x4_t __a) { uint16x4_t __v = (uint16x4_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; __v |= __v >> 8; return (int16x4_t)(16 - vpaddl_u8(vcnt_u8((uint8x8_t)__v))); }
 __BUN_CC_INTRIN uint16x4_t vcltz_s16(int16x4_t __a) { return (uint16x4_t)(__a < 0); }
 __BUN_CC_INTRIN uint16x4_t vcgtz_s16(int16x4_t __a) { return (uint16x4_t)(__a > 0); }
 __BUN_CC_INTRIN uint16x4_t vclez_s16(int16x4_t __a) { return (uint16x4_t)(__a <= 0); }
 __BUN_CC_INTRIN uint16x4_t vcgez_s16(int16x4_t __a) { return (uint16x4_t)(__a >= 0); }
 __BUN_CC_INTRIN int16x4_t vrsra_n_s16(int16x4_t __a, int16x4_t __b, int __n) { return __a + vrshr_n_s16(__b, __n); }
-__BUN_CC_INTRIN uint16x4_t vqshlu_n_s16(int16x4_t __a, int __n)
-{
-    uint16x4_t __u = (uint16x4_t)__a;
-    uint16x4_t __r = __n == 0 ? __u : ((__u >> (16 - __n)) != 0 ? ~vdup_n_u16(0) : __u << __n);
-    return __a < 0 ? vdup_n_u16(0) : __r;
-}
-__BUN_CC_INTRIN int16x8_t vshlq_s16(int16x8_t __a, int16x8_t __b)
-{
-    int16x8_t __s = (__b << 8) >> 8, __n = -__s;
-    int16x8_t __l = __s >= 16 ? vdupq_n_s16(0) : __a << (__s & 15);
-    int16x8_t __r = __s <= -16 ? (__a >> 15) : __a >> (__n & 15);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN int16x8_t vclzq_s16(int16x8_t __a)
-{
-    uint16x8_t __v = (uint16x8_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    __v |= __v >> 8;
-    return (int16x8_t)(16 - vpaddlq_u8(vcntq_u8((uint8x16_t)__v)));
-}
+__BUN_CC_INTRIN uint16x4_t vqshlu_n_s16(int16x4_t __a, int __n) { uint16x4_t __u = (uint16x4_t)__a; uint16x4_t __r = __n == 0 ? __u : ((__u >> (16 - __n)) != 0 ? ~vdup_n_u16(0) : __u << __n); return __a < 0 ? vdup_n_u16(0) : __r; }
+__BUN_CC_INTRIN int16x8_t vshlq_s16(int16x8_t __a, int16x8_t __b) { int16x8_t __s = (__b << 8) >> 8, __n = -__s; int16x8_t __l = __s >= 16 ? vdupq_n_s16(0) : __a << (__s & 15); int16x8_t __r = __s <= -16 ? (__a >> 15) : __a >> (__n & 15); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN int16x8_t vclzq_s16(int16x8_t __a) { uint16x8_t __v = (uint16x8_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; __v |= __v >> 8; return (int16x8_t)(16 - vpaddlq_u8(vcntq_u8((uint8x16_t)__v))); }
 __BUN_CC_INTRIN uint16x8_t vcltzq_s16(int16x8_t __a) { return (uint16x8_t)(__a < 0); }
 __BUN_CC_INTRIN uint16x8_t vcgtzq_s16(int16x8_t __a) { return (uint16x8_t)(__a > 0); }
 __BUN_CC_INTRIN uint16x8_t vclezq_s16(int16x8_t __a) { return (uint16x8_t)(__a <= 0); }
 __BUN_CC_INTRIN uint16x8_t vcgezq_s16(int16x8_t __a) { return (uint16x8_t)(__a >= 0); }
 __BUN_CC_INTRIN int16x8_t vrsraq_n_s16(int16x8_t __a, int16x8_t __b, int __n) { return __a + vrshrq_n_s16(__b, __n); }
-__BUN_CC_INTRIN uint16x8_t vqshluq_n_s16(int16x8_t __a, int __n)
-{
-    uint16x8_t __u = (uint16x8_t)__a;
-    uint16x8_t __r = __n == 0 ? __u : ((__u >> (16 - __n)) != 0 ? ~vdupq_n_u16(0) : __u << __n);
-    return __a < 0 ? vdupq_n_u16(0) : __r;
-}
-__BUN_CC_INTRIN uint16x4_t vshl_u16(uint16x4_t __a, int16x4_t __b)
-{
-    int16x4_t __s = (__b << 8) >> 8, __n = -__s;
-    uint16x4_t __l = __s >= 16 ? vdup_n_u16(0) : __a << (__s & 15);
-    uint16x4_t __r = __s <= -16 ? vdup_n_u16(0) : __a >> (__n & 15);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN uint16x4_t vclz_u16(uint16x4_t __a)
-{
-    uint16x4_t __v = (uint16x4_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    __v |= __v >> 8;
-    return (uint16x4_t)(16 - vpaddl_u8(vcnt_u8((uint8x8_t)__v)));
-}
+__BUN_CC_INTRIN uint16x8_t vqshluq_n_s16(int16x8_t __a, int __n) { uint16x8_t __u = (uint16x8_t)__a; uint16x8_t __r = __n == 0 ? __u : ((__u >> (16 - __n)) != 0 ? ~vdupq_n_u16(0) : __u << __n); return __a < 0 ? vdupq_n_u16(0) : __r; }
+__BUN_CC_INTRIN uint16x4_t vshl_u16(uint16x4_t __a, int16x4_t __b) { int16x4_t __s = (__b << 8) >> 8, __n = -__s; uint16x4_t __l = __s >= 16 ? vdup_n_u16(0) : __a << (__s & 15); uint16x4_t __r = __s <= -16 ? vdup_n_u16(0) : __a >> (__n & 15); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN uint16x4_t vclz_u16(uint16x4_t __a) { uint16x4_t __v = (uint16x4_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; __v |= __v >> 8; return (uint16x4_t)(16 - vpaddl_u8(vcnt_u8((uint8x8_t)__v))); }
 __BUN_CC_INTRIN uint16x4_t vrsra_n_u16(uint16x4_t __a, uint16x4_t __b, int __n) { return __a + vrshr_n_u16(__b, __n); }
-__BUN_CC_INTRIN uint16x8_t vshlq_u16(uint16x8_t __a, int16x8_t __b)
-{
-    int16x8_t __s = (__b << 8) >> 8, __n = -__s;
-    uint16x8_t __l = __s >= 16 ? vdupq_n_u16(0) : __a << (__s & 15);
-    uint16x8_t __r = __s <= -16 ? vdupq_n_u16(0) : __a >> (__n & 15);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN uint16x8_t vclzq_u16(uint16x8_t __a)
-{
-    uint16x8_t __v = (uint16x8_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    __v |= __v >> 8;
-    return (uint16x8_t)(16 - vpaddlq_u8(vcntq_u8((uint8x16_t)__v)));
-}
+__BUN_CC_INTRIN uint16x8_t vshlq_u16(uint16x8_t __a, int16x8_t __b) { int16x8_t __s = (__b << 8) >> 8, __n = -__s; uint16x8_t __l = __s >= 16 ? vdupq_n_u16(0) : __a << (__s & 15); uint16x8_t __r = __s <= -16 ? vdupq_n_u16(0) : __a >> (__n & 15); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN uint16x8_t vclzq_u16(uint16x8_t __a) { uint16x8_t __v = (uint16x8_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; __v |= __v >> 8; return (uint16x8_t)(16 - vpaddlq_u8(vcntq_u8((uint8x16_t)__v))); }
 __BUN_CC_INTRIN uint16x8_t vrsraq_n_u16(uint16x8_t __a, uint16x8_t __b, int __n) { return __a + vrshrq_n_u16(__b, __n); }
-__BUN_CC_INTRIN int32x2_t vshl_s32(int32x2_t __a, int32x2_t __b)
-{
-    int32x2_t __s = (__b << 24) >> 24, __n = -__s;
-    int32x2_t __l = __s >= 32 ? vdup_n_s32(0) : __a << (__s & 31);
-    int32x2_t __r = __s <= -32 ? (__a >> 31) : __a >> (__n & 31);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN int32x2_t vclz_s32(int32x2_t __a)
-{
-    uint32x2_t __v = (uint32x2_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    __v |= __v >> 8;
-    __v |= __v >> 16;
-    return (int32x2_t)(32 - vpaddl_u16(vpaddl_u8(vcnt_u8((uint8x8_t)__v))));
-}
+__BUN_CC_INTRIN int32x2_t vshl_s32(int32x2_t __a, int32x2_t __b) { int32x2_t __s = (__b << 24) >> 24, __n = -__s; int32x2_t __l = __s >= 32 ? vdup_n_s32(0) : __a << (__s & 31); int32x2_t __r = __s <= -32 ? (__a >> 31) : __a >> (__n & 31); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN int32x2_t vclz_s32(int32x2_t __a) { uint32x2_t __v = (uint32x2_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; __v |= __v >> 8; __v |= __v >> 16; return (int32x2_t)(32 - vpaddl_u16(vpaddl_u8(vcnt_u8((uint8x8_t)__v)))); }
 __BUN_CC_INTRIN uint32x2_t vcltz_s32(int32x2_t __a) { return (uint32x2_t)(__a < 0); }
 __BUN_CC_INTRIN uint32x2_t vcgtz_s32(int32x2_t __a) { return (uint32x2_t)(__a > 0); }
 __BUN_CC_INTRIN uint32x2_t vclez_s32(int32x2_t __a) { return (uint32x2_t)(__a <= 0); }
 __BUN_CC_INTRIN uint32x2_t vcgez_s32(int32x2_t __a) { return (uint32x2_t)(__a >= 0); }
-__BUN_CC_INTRIN int32x2_t vqadd_s32(int32x2_t __a, int32x2_t __b)
-{
-    int32x2_t __r = __a + __b;
-    int32x2_t __o = (~(__a ^ __b) & (__a ^ __r)) < 0;
-    return __o ? (__a < 0 ? vdup_n_s32((-2147483647 - 1)) : vdup_n_s32(2147483647)) : __r;
-}
-__BUN_CC_INTRIN int32x2_t vqsub_s32(int32x2_t __a, int32x2_t __b)
-{
-    int32x2_t __r = __a - __b;
-    int32x2_t __o = ((__a ^ __b) & (__a ^ __r)) < 0;
-    return __o ? (__a < 0 ? vdup_n_s32((-2147483647 - 1)) : vdup_n_s32(2147483647)) : __r;
-}
+__BUN_CC_INTRIN int32x2_t vqadd_s32(int32x2_t __a, int32x2_t __b) { int32x2_t __r = __a + __b; int32x2_t __o = (~(__a ^ __b) & (__a ^ __r)) < 0; return __o ? (__a < 0 ? vdup_n_s32((-2147483647 - 1)) : vdup_n_s32(2147483647)) : __r; }
+__BUN_CC_INTRIN int32x2_t vqsub_s32(int32x2_t __a, int32x2_t __b) { int32x2_t __r = __a - __b; int32x2_t __o = ((__a ^ __b) & (__a ^ __r)) < 0; return __o ? (__a < 0 ? vdup_n_s32((-2147483647 - 1)) : vdup_n_s32(2147483647)) : __r; }
 __BUN_CC_INTRIN int32x2_t vrsra_n_s32(int32x2_t __a, int32x2_t __b, int __n) { return __a + vrshr_n_s32(__b, __n); }
-__BUN_CC_INTRIN uint32x2_t vqshlu_n_s32(int32x2_t __a, int __n)
-{
-    uint32x2_t __u = (uint32x2_t)__a;
-    uint32x2_t __r = __n == 0 ? __u : ((__u >> (32 - __n)) != 0 ? ~vdup_n_u32(0) : __u << __n);
-    return __a < 0 ? vdup_n_u32(0) : __r;
-}
-__BUN_CC_INTRIN int32x4_t vshlq_s32(int32x4_t __a, int32x4_t __b)
-{
-    int32x4_t __s = (__b << 24) >> 24, __n = -__s;
-    int32x4_t __l = __s >= 32 ? vdupq_n_s32(0) : __a << (__s & 31);
-    int32x4_t __r = __s <= -32 ? (__a >> 31) : __a >> (__n & 31);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN int32x4_t vclzq_s32(int32x4_t __a)
-{
-    uint32x4_t __v = (uint32x4_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    __v |= __v >> 8;
-    __v |= __v >> 16;
-    return (int32x4_t)(32 - vpaddlq_u16(vpaddlq_u8(vcntq_u8((uint8x16_t)__v))));
-}
+__BUN_CC_INTRIN uint32x2_t vqshlu_n_s32(int32x2_t __a, int __n) { uint32x2_t __u = (uint32x2_t)__a; uint32x2_t __r = __n == 0 ? __u : ((__u >> (32 - __n)) != 0 ? ~vdup_n_u32(0) : __u << __n); return __a < 0 ? vdup_n_u32(0) : __r; }
+__BUN_CC_INTRIN int32x4_t vshlq_s32(int32x4_t __a, int32x4_t __b) { int32x4_t __s = (__b << 24) >> 24, __n = -__s; int32x4_t __l = __s >= 32 ? vdupq_n_s32(0) : __a << (__s & 31); int32x4_t __r = __s <= -32 ? (__a >> 31) : __a >> (__n & 31); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN int32x4_t vclzq_s32(int32x4_t __a) { uint32x4_t __v = (uint32x4_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; __v |= __v >> 8; __v |= __v >> 16; return (int32x4_t)(32 - vpaddlq_u16(vpaddlq_u8(vcntq_u8((uint8x16_t)__v)))); }
 __BUN_CC_INTRIN uint32x4_t vcltzq_s32(int32x4_t __a) { return (uint32x4_t)(__a < 0); }
 __BUN_CC_INTRIN uint32x4_t vcgtzq_s32(int32x4_t __a) { return (uint32x4_t)(__a > 0); }
 __BUN_CC_INTRIN uint32x4_t vclezq_s32(int32x4_t __a) { return (uint32x4_t)(__a <= 0); }
 __BUN_CC_INTRIN uint32x4_t vcgezq_s32(int32x4_t __a) { return (uint32x4_t)(__a >= 0); }
-__BUN_CC_INTRIN int32x4_t vqaddq_s32(int32x4_t __a, int32x4_t __b)
-{
-    int32x4_t __r = __a + __b;
-    int32x4_t __o = (~(__a ^ __b) & (__a ^ __r)) < 0;
-    return __o ? (__a < 0 ? vdupq_n_s32((-2147483647 - 1)) : vdupq_n_s32(2147483647)) : __r;
-}
-__BUN_CC_INTRIN int32x4_t vqsubq_s32(int32x4_t __a, int32x4_t __b)
-{
-    int32x4_t __r = __a - __b;
-    int32x4_t __o = ((__a ^ __b) & (__a ^ __r)) < 0;
-    return __o ? (__a < 0 ? vdupq_n_s32((-2147483647 - 1)) : vdupq_n_s32(2147483647)) : __r;
-}
+__BUN_CC_INTRIN int32x4_t vqaddq_s32(int32x4_t __a, int32x4_t __b) { int32x4_t __r = __a + __b; int32x4_t __o = (~(__a ^ __b) & (__a ^ __r)) < 0; return __o ? (__a < 0 ? vdupq_n_s32((-2147483647 - 1)) : vdupq_n_s32(2147483647)) : __r; }
+__BUN_CC_INTRIN int32x4_t vqsubq_s32(int32x4_t __a, int32x4_t __b) { int32x4_t __r = __a - __b; int32x4_t __o = ((__a ^ __b) & (__a ^ __r)) < 0; return __o ? (__a < 0 ? vdupq_n_s32((-2147483647 - 1)) : vdupq_n_s32(2147483647)) : __r; }
 __BUN_CC_INTRIN int32x4_t vrsraq_n_s32(int32x4_t __a, int32x4_t __b, int __n) { return __a + vrshrq_n_s32(__b, __n); }
-__BUN_CC_INTRIN uint32x4_t vqshluq_n_s32(int32x4_t __a, int __n)
-{
-    uint32x4_t __u = (uint32x4_t)__a;
-    uint32x4_t __r = __n == 0 ? __u : ((__u >> (32 - __n)) != 0 ? ~vdupq_n_u32(0) : __u << __n);
-    return __a < 0 ? vdupq_n_u32(0) : __r;
-}
-__BUN_CC_INTRIN uint32x2_t vshl_u32(uint32x2_t __a, int32x2_t __b)
-{
-    int32x2_t __s = (__b << 24) >> 24, __n = -__s;
-    uint32x2_t __l = __s >= 32 ? vdup_n_u32(0) : __a << (__s & 31);
-    uint32x2_t __r = __s <= -32 ? vdup_n_u32(0) : __a >> (__n & 31);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN uint32x2_t vclz_u32(uint32x2_t __a)
-{
-    uint32x2_t __v = (uint32x2_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    __v |= __v >> 8;
-    __v |= __v >> 16;
-    return (uint32x2_t)(32 - vpaddl_u16(vpaddl_u8(vcnt_u8((uint8x8_t)__v))));
-}
-__BUN_CC_INTRIN uint32x2_t vqadd_u32(uint32x2_t __a, uint32x2_t __b)
-{
-    uint32x2_t __r = __a + __b;
-    return __r < __a ? ~vdup_n_u32(0) : __r;
-}
+__BUN_CC_INTRIN uint32x4_t vqshluq_n_s32(int32x4_t __a, int __n) { uint32x4_t __u = (uint32x4_t)__a; uint32x4_t __r = __n == 0 ? __u : ((__u >> (32 - __n)) != 0 ? ~vdupq_n_u32(0) : __u << __n); return __a < 0 ? vdupq_n_u32(0) : __r; }
+__BUN_CC_INTRIN uint32x2_t vshl_u32(uint32x2_t __a, int32x2_t __b) { int32x2_t __s = (__b << 24) >> 24, __n = -__s; uint32x2_t __l = __s >= 32 ? vdup_n_u32(0) : __a << (__s & 31); uint32x2_t __r = __s <= -32 ? vdup_n_u32(0) : __a >> (__n & 31); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN uint32x2_t vclz_u32(uint32x2_t __a) { uint32x2_t __v = (uint32x2_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; __v |= __v >> 8; __v |= __v >> 16; return (uint32x2_t)(32 - vpaddl_u16(vpaddl_u8(vcnt_u8((uint8x8_t)__v)))); }
+__BUN_CC_INTRIN uint32x2_t vqadd_u32(uint32x2_t __a, uint32x2_t __b) { uint32x2_t __r = __a + __b; return __r < __a ? ~vdup_n_u32(0) : __r; }
 __BUN_CC_INTRIN uint32x2_t vqsub_u32(uint32x2_t __a, uint32x2_t __b) { return __a > __b ? __a - __b : vdup_n_u32(0); }
 __BUN_CC_INTRIN uint32x2_t vrsra_n_u32(uint32x2_t __a, uint32x2_t __b, int __n) { return __a + vrshr_n_u32(__b, __n); }
-__BUN_CC_INTRIN uint32x4_t vshlq_u32(uint32x4_t __a, int32x4_t __b)
-{
-    int32x4_t __s = (__b << 24) >> 24, __n = -__s;
-    uint32x4_t __l = __s >= 32 ? vdupq_n_u32(0) : __a << (__s & 31);
-    uint32x4_t __r = __s <= -32 ? vdupq_n_u32(0) : __a >> (__n & 31);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN uint32x4_t vclzq_u32(uint32x4_t __a)
-{
-    uint32x4_t __v = (uint32x4_t)__a;
-    __v |= __v >> 1;
-    __v |= __v >> 2;
-    __v |= __v >> 4;
-    __v |= __v >> 8;
-    __v |= __v >> 16;
-    return (uint32x4_t)(32 - vpaddlq_u16(vpaddlq_u8(vcntq_u8((uint8x16_t)__v))));
-}
-__BUN_CC_INTRIN uint32x4_t vqaddq_u32(uint32x4_t __a, uint32x4_t __b)
-{
-    uint32x4_t __r = __a + __b;
-    return __r < __a ? ~vdupq_n_u32(0) : __r;
-}
+__BUN_CC_INTRIN uint32x4_t vshlq_u32(uint32x4_t __a, int32x4_t __b) { int32x4_t __s = (__b << 24) >> 24, __n = -__s; uint32x4_t __l = __s >= 32 ? vdupq_n_u32(0) : __a << (__s & 31); uint32x4_t __r = __s <= -32 ? vdupq_n_u32(0) : __a >> (__n & 31); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN uint32x4_t vclzq_u32(uint32x4_t __a) { uint32x4_t __v = (uint32x4_t)__a; __v |= __v >> 1; __v |= __v >> 2; __v |= __v >> 4; __v |= __v >> 8; __v |= __v >> 16; return (uint32x4_t)(32 - vpaddlq_u16(vpaddlq_u8(vcntq_u8((uint8x16_t)__v)))); }
+__BUN_CC_INTRIN uint32x4_t vqaddq_u32(uint32x4_t __a, uint32x4_t __b) { uint32x4_t __r = __a + __b; return __r < __a ? ~vdupq_n_u32(0) : __r; }
 __BUN_CC_INTRIN uint32x4_t vqsubq_u32(uint32x4_t __a, uint32x4_t __b) { return __a > __b ? __a - __b : vdupq_n_u32(0); }
 __BUN_CC_INTRIN uint32x4_t vrsraq_n_u32(uint32x4_t __a, uint32x4_t __b, int __n) { return __a + vrshrq_n_u32(__b, __n); }
-__BUN_CC_INTRIN int64x1_t vshl_s64(int64x1_t __a, int64x1_t __b)
-{
-    int64x1_t __s = (__b << 56) >> 56, __n = -__s;
-    int64x1_t __l = __s >= 64 ? vdup_n_s64(0) : __a << (__s & 63);
-    int64x1_t __r = __s <= -64 ? (__a >> 63) : __a >> (__n & 63);
-    return __s >= 0 ? __l : __r;
-}
+__BUN_CC_INTRIN int64x1_t vshl_s64(int64x1_t __a, int64x1_t __b) { int64x1_t __s = (__b << 56) >> 56, __n = -__s; int64x1_t __l = __s >= 64 ? vdup_n_s64(0) : __a << (__s & 63); int64x1_t __r = __s <= -64 ? (__a >> 63) : __a >> (__n & 63); return __s >= 0 ? __l : __r; }
 __BUN_CC_INTRIN uint64x1_t vcltz_s64(int64x1_t __a) { return (uint64x1_t)(__a < 0); }
 __BUN_CC_INTRIN uint64x1_t vcgtz_s64(int64x1_t __a) { return (uint64x1_t)(__a > 0); }
 __BUN_CC_INTRIN uint64x1_t vclez_s64(int64x1_t __a) { return (uint64x1_t)(__a <= 0); }
 __BUN_CC_INTRIN uint64x1_t vcgez_s64(int64x1_t __a) { return (uint64x1_t)(__a >= 0); }
-__BUN_CC_INTRIN int64x1_t vqadd_s64(int64x1_t __a, int64x1_t __b)
-{
-    int64x1_t __r = __a + __b;
-    int64x1_t __o = (~(__a ^ __b) & (__a ^ __r)) < 0;
-    return __o ? (__a < 0 ? vdup_n_s64((-9223372036854775807ll - 1)) : vdup_n_s64(9223372036854775807ll)) : __r;
-}
-__BUN_CC_INTRIN int64x1_t vqsub_s64(int64x1_t __a, int64x1_t __b)
-{
-    int64x1_t __r = __a - __b;
-    int64x1_t __o = ((__a ^ __b) & (__a ^ __r)) < 0;
-    return __o ? (__a < 0 ? vdup_n_s64((-9223372036854775807ll - 1)) : vdup_n_s64(9223372036854775807ll)) : __r;
-}
+__BUN_CC_INTRIN int64x1_t vqadd_s64(int64x1_t __a, int64x1_t __b) { int64x1_t __r = __a + __b; int64x1_t __o = (~(__a ^ __b) & (__a ^ __r)) < 0; return __o ? (__a < 0 ? vdup_n_s64((-9223372036854775807ll - 1)) : vdup_n_s64(9223372036854775807ll)) : __r; }
+__BUN_CC_INTRIN int64x1_t vqsub_s64(int64x1_t __a, int64x1_t __b) { int64x1_t __r = __a - __b; int64x1_t __o = ((__a ^ __b) & (__a ^ __r)) < 0; return __o ? (__a < 0 ? vdup_n_s64((-9223372036854775807ll - 1)) : vdup_n_s64(9223372036854775807ll)) : __r; }
 __BUN_CC_INTRIN int64x1_t vrsra_n_s64(int64x1_t __a, int64x1_t __b, int __n) { return __a + vrshr_n_s64(__b, __n); }
-__BUN_CC_INTRIN uint64x1_t vqshlu_n_s64(int64x1_t __a, int __n)
-{
-    uint64x1_t __u = (uint64x1_t)__a;
-    uint64x1_t __r = __n == 0 ? __u : ((__u >> (64 - __n)) != 0 ? ~vdup_n_u64(0) : __u << __n);
-    return __a < 0 ? vdup_n_u64(0) : __r;
-}
-__BUN_CC_INTRIN int64x2_t vshlq_s64(int64x2_t __a, int64x2_t __b)
-{
-    int64x2_t __s = (__b << 56) >> 56, __n = -__s;
-    int64x2_t __l = __s >= 64 ? vdupq_n_s64(0) : __a << (__s & 63);
-    int64x2_t __r = __s <= -64 ? (__a >> 63) : __a >> (__n & 63);
-    return __s >= 0 ? __l : __r;
-}
+__BUN_CC_INTRIN uint64x1_t vqshlu_n_s64(int64x1_t __a, int __n) { uint64x1_t __u = (uint64x1_t)__a; uint64x1_t __r = __n == 0 ? __u : ((__u >> (64 - __n)) != 0 ? ~vdup_n_u64(0) : __u << __n); return __a < 0 ? vdup_n_u64(0) : __r; }
+__BUN_CC_INTRIN int64x2_t vshlq_s64(int64x2_t __a, int64x2_t __b) { int64x2_t __s = (__b << 56) >> 56, __n = -__s; int64x2_t __l = __s >= 64 ? vdupq_n_s64(0) : __a << (__s & 63); int64x2_t __r = __s <= -64 ? (__a >> 63) : __a >> (__n & 63); return __s >= 0 ? __l : __r; }
 __BUN_CC_INTRIN uint64x2_t vcltzq_s64(int64x2_t __a) { return (uint64x2_t)(__a < 0); }
 __BUN_CC_INTRIN uint64x2_t vcgtzq_s64(int64x2_t __a) { return (uint64x2_t)(__a > 0); }
 __BUN_CC_INTRIN uint64x2_t vclezq_s64(int64x2_t __a) { return (uint64x2_t)(__a <= 0); }
 __BUN_CC_INTRIN uint64x2_t vcgezq_s64(int64x2_t __a) { return (uint64x2_t)(__a >= 0); }
-__BUN_CC_INTRIN int64x2_t vqaddq_s64(int64x2_t __a, int64x2_t __b)
-{
-    int64x2_t __r = __a + __b;
-    int64x2_t __o = (~(__a ^ __b) & (__a ^ __r)) < 0;
-    return __o ? (__a < 0 ? vdupq_n_s64((-9223372036854775807ll - 1)) : vdupq_n_s64(9223372036854775807ll)) : __r;
-}
-__BUN_CC_INTRIN int64x2_t vqsubq_s64(int64x2_t __a, int64x2_t __b)
-{
-    int64x2_t __r = __a - __b;
-    int64x2_t __o = ((__a ^ __b) & (__a ^ __r)) < 0;
-    return __o ? (__a < 0 ? vdupq_n_s64((-9223372036854775807ll - 1)) : vdupq_n_s64(9223372036854775807ll)) : __r;
-}
+__BUN_CC_INTRIN int64x2_t vqaddq_s64(int64x2_t __a, int64x2_t __b) { int64x2_t __r = __a + __b; int64x2_t __o = (~(__a ^ __b) & (__a ^ __r)) < 0; return __o ? (__a < 0 ? vdupq_n_s64((-9223372036854775807ll - 1)) : vdupq_n_s64(9223372036854775807ll)) : __r; }
+__BUN_CC_INTRIN int64x2_t vqsubq_s64(int64x2_t __a, int64x2_t __b) { int64x2_t __r = __a - __b; int64x2_t __o = ((__a ^ __b) & (__a ^ __r)) < 0; return __o ? (__a < 0 ? vdupq_n_s64((-9223372036854775807ll - 1)) : vdupq_n_s64(9223372036854775807ll)) : __r; }
 __BUN_CC_INTRIN int64x2_t vrsraq_n_s64(int64x2_t __a, int64x2_t __b, int __n) { return __a + vrshrq_n_s64(__b, __n); }
-__BUN_CC_INTRIN uint64x2_t vqshluq_n_s64(int64x2_t __a, int __n)
-{
-    uint64x2_t __u = (uint64x2_t)__a;
-    uint64x2_t __r = __n == 0 ? __u : ((__u >> (64 - __n)) != 0 ? ~vdupq_n_u64(0) : __u << __n);
-    return __a < 0 ? vdupq_n_u64(0) : __r;
-}
-__BUN_CC_INTRIN uint64x1_t vshl_u64(uint64x1_t __a, int64x1_t __b)
-{
-    int64x1_t __s = (__b << 56) >> 56, __n = -__s;
-    uint64x1_t __l = __s >= 64 ? vdup_n_u64(0) : __a << (__s & 63);
-    uint64x1_t __r = __s <= -64 ? vdup_n_u64(0) : __a >> (__n & 63);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN uint64x1_t vqadd_u64(uint64x1_t __a, uint64x1_t __b)
-{
-    uint64x1_t __r = __a + __b;
-    return __r < __a ? ~vdup_n_u64(0) : __r;
-}
+__BUN_CC_INTRIN uint64x2_t vqshluq_n_s64(int64x2_t __a, int __n) { uint64x2_t __u = (uint64x2_t)__a; uint64x2_t __r = __n == 0 ? __u : ((__u >> (64 - __n)) != 0 ? ~vdupq_n_u64(0) : __u << __n); return __a < 0 ? vdupq_n_u64(0) : __r; }
+__BUN_CC_INTRIN uint64x1_t vshl_u64(uint64x1_t __a, int64x1_t __b) { int64x1_t __s = (__b << 56) >> 56, __n = -__s; uint64x1_t __l = __s >= 64 ? vdup_n_u64(0) : __a << (__s & 63); uint64x1_t __r = __s <= -64 ? vdup_n_u64(0) : __a >> (__n & 63); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN uint64x1_t vqadd_u64(uint64x1_t __a, uint64x1_t __b) { uint64x1_t __r = __a + __b; return __r < __a ? ~vdup_n_u64(0) : __r; }
 __BUN_CC_INTRIN uint64x1_t vqsub_u64(uint64x1_t __a, uint64x1_t __b) { return __a > __b ? __a - __b : vdup_n_u64(0); }
 __BUN_CC_INTRIN uint64x1_t vrsra_n_u64(uint64x1_t __a, uint64x1_t __b, int __n) { return __a + vrshr_n_u64(__b, __n); }
-__BUN_CC_INTRIN uint64x2_t vshlq_u64(uint64x2_t __a, int64x2_t __b)
-{
-    int64x2_t __s = (__b << 56) >> 56, __n = -__s;
-    uint64x2_t __l = __s >= 64 ? vdupq_n_u64(0) : __a << (__s & 63);
-    uint64x2_t __r = __s <= -64 ? vdupq_n_u64(0) : __a >> (__n & 63);
-    return __s >= 0 ? __l : __r;
-}
-__BUN_CC_INTRIN uint64x2_t vqaddq_u64(uint64x2_t __a, uint64x2_t __b)
-{
-    uint64x2_t __r = __a + __b;
-    return __r < __a ? ~vdupq_n_u64(0) : __r;
-}
+__BUN_CC_INTRIN uint64x2_t vshlq_u64(uint64x2_t __a, int64x2_t __b) { int64x2_t __s = (__b << 56) >> 56, __n = -__s; uint64x2_t __l = __s >= 64 ? vdupq_n_u64(0) : __a << (__s & 63); uint64x2_t __r = __s <= -64 ? vdupq_n_u64(0) : __a >> (__n & 63); return __s >= 0 ? __l : __r; }
+__BUN_CC_INTRIN uint64x2_t vqaddq_u64(uint64x2_t __a, uint64x2_t __b) { uint64x2_t __r = __a + __b; return __r < __a ? ~vdupq_n_u64(0) : __r; }
 __BUN_CC_INTRIN uint64x2_t vqsubq_u64(uint64x2_t __a, uint64x2_t __b) { return __a > __b ? __a - __b : vdupq_n_u64(0); }
 __BUN_CC_INTRIN uint64x2_t vrsraq_n_u64(uint64x2_t __a, uint64x2_t __b, int __n) { return __a + vrshrq_n_u64(__b, __n); }
 __BUN_CC_INTRIN uint32x2_t vcltz_f32(float32x2_t __a) { return (uint32x2_t)(__a < 0); }
@@ -3940,664 +2588,292 @@ __BUN_CC_INTRIN uint64x2_t vmlsl_n_u32(uint64x2_t __a, uint32x2_t __b, uint32_t 
 #define vmlsq_laneq_f64(a, b, v, lane) vmlsq_f64(a, b, vdupq_laneq_f64(v, lane))
 
 /* Interleaved structures of three, of one lane, and of one element copied to every lane; wider tables. */
-__BUN_CC_INTRIN int8x8x3_t vld3_s8(const int8_t* __p)
-{
-    int8x8x3_t __v;
-    for (int __i = 0; __i < 8; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3_s8(int8_t* __p, int8x8x3_t __v)
-{
-    for (int __i = 0; __i < 8; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN int8x8x2_t vld2_dup_s8(const int8_t* __p) { return (int8x8x2_t) { { vdup_n_s8(__p[0]), vdup_n_s8(__p[1]) } }; }
+__BUN_CC_INTRIN int8x8x3_t vld3_s8(const int8_t *__p) { int8x8x3_t __v; for (int __i = 0; __i < 8; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3_s8(int8_t *__p, int8x8x3_t __v) { for (int __i = 0; __i < 8; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN int8x8x2_t vld2_dup_s8(const int8_t *__p) { return (int8x8x2_t){{vdup_n_s8(__p[0]), vdup_n_s8(__p[1])}}; }
 #define vld2_lane_s8(p, v, lane) __extension__({ int8x8x2_t __bun_v = (v); const int8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_s8(p, v, lane) __extension__({ int8x8x2_t __bun_v = (v); int8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN int8x8x3_t vld3_dup_s8(const int8_t* __p) { return (int8x8x3_t) { { vdup_n_s8(__p[0]), vdup_n_s8(__p[1]), vdup_n_s8(__p[2]) } }; }
+__BUN_CC_INTRIN int8x8x3_t vld3_dup_s8(const int8_t *__p) { return (int8x8x3_t){{vdup_n_s8(__p[0]), vdup_n_s8(__p[1]), vdup_n_s8(__p[2])}}; }
 #define vld3_lane_s8(p, v, lane) __extension__({ int8x8x3_t __bun_v = (v); const int8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_s8(p, v, lane) __extension__({ int8x8x3_t __bun_v = (v); int8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN int8x8x4_t vld4_dup_s8(const int8_t* __p) { return (int8x8x4_t) { { vdup_n_s8(__p[0]), vdup_n_s8(__p[1]), vdup_n_s8(__p[2]), vdup_n_s8(__p[3]) } }; }
+__BUN_CC_INTRIN int8x8x4_t vld4_dup_s8(const int8_t *__p) { return (int8x8x4_t){{vdup_n_s8(__p[0]), vdup_n_s8(__p[1]), vdup_n_s8(__p[2]), vdup_n_s8(__p[3])}}; }
 #define vld4_lane_s8(p, v, lane) __extension__({ int8x8x4_t __bun_v = (v); const int8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_s8(p, v, lane) __extension__({ int8x8x4_t __bun_v = (v); int8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN int8x16x3_t vld3q_s8(const int8_t* __p)
-{
-    int8x16x3_t __v;
-    for (int __i = 0; __i < 16; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_s8(int8_t* __p, int8x16x3_t __v)
-{
-    for (int __i = 0; __i < 16; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN int8x16x2_t vld2q_dup_s8(const int8_t* __p) { return (int8x16x2_t) { { vdupq_n_s8(__p[0]), vdupq_n_s8(__p[1]) } }; }
+__BUN_CC_INTRIN int8x16x3_t vld3q_s8(const int8_t *__p) { int8x16x3_t __v; for (int __i = 0; __i < 16; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_s8(int8_t *__p, int8x16x3_t __v) { for (int __i = 0; __i < 16; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN int8x16x2_t vld2q_dup_s8(const int8_t *__p) { return (int8x16x2_t){{vdupq_n_s8(__p[0]), vdupq_n_s8(__p[1])}}; }
 #define vld2q_lane_s8(p, v, lane) __extension__({ int8x16x2_t __bun_v = (v); const int8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_s8(p, v, lane) __extension__({ int8x16x2_t __bun_v = (v); int8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN int8x16x3_t vld3q_dup_s8(const int8_t* __p) { return (int8x16x3_t) { { vdupq_n_s8(__p[0]), vdupq_n_s8(__p[1]), vdupq_n_s8(__p[2]) } }; }
+__BUN_CC_INTRIN int8x16x3_t vld3q_dup_s8(const int8_t *__p) { return (int8x16x3_t){{vdupq_n_s8(__p[0]), vdupq_n_s8(__p[1]), vdupq_n_s8(__p[2])}}; }
 #define vld3q_lane_s8(p, v, lane) __extension__({ int8x16x3_t __bun_v = (v); const int8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_s8(p, v, lane) __extension__({ int8x16x3_t __bun_v = (v); int8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN int8x16x4_t vld4q_dup_s8(const int8_t* __p) { return (int8x16x4_t) { { vdupq_n_s8(__p[0]), vdupq_n_s8(__p[1]), vdupq_n_s8(__p[2]), vdupq_n_s8(__p[3]) } }; }
+__BUN_CC_INTRIN int8x16x4_t vld4q_dup_s8(const int8_t *__p) { return (int8x16x4_t){{vdupq_n_s8(__p[0]), vdupq_n_s8(__p[1]), vdupq_n_s8(__p[2]), vdupq_n_s8(__p[3])}}; }
 #define vld4q_lane_s8(p, v, lane) __extension__({ int8x16x4_t __bun_v = (v); const int8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_s8(p, v, lane) __extension__({ int8x16x4_t __bun_v = (v); int8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN uint8x8x3_t vld3_u8(const uint8_t* __p)
-{
-    uint8x8x3_t __v;
-    for (int __i = 0; __i < 8; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3_u8(uint8_t* __p, uint8x8x3_t __v)
-{
-    for (int __i = 0; __i < 8; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN uint8x8x2_t vld2_dup_u8(const uint8_t* __p) { return (uint8x8x2_t) { { vdup_n_u8(__p[0]), vdup_n_u8(__p[1]) } }; }
+__BUN_CC_INTRIN uint8x8x3_t vld3_u8(const uint8_t *__p) { uint8x8x3_t __v; for (int __i = 0; __i < 8; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3_u8(uint8_t *__p, uint8x8x3_t __v) { for (int __i = 0; __i < 8; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN uint8x8x2_t vld2_dup_u8(const uint8_t *__p) { return (uint8x8x2_t){{vdup_n_u8(__p[0]), vdup_n_u8(__p[1])}}; }
 #define vld2_lane_u8(p, v, lane) __extension__({ uint8x8x2_t __bun_v = (v); const uint8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_u8(p, v, lane) __extension__({ uint8x8x2_t __bun_v = (v); uint8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN uint8x8x3_t vld3_dup_u8(const uint8_t* __p) { return (uint8x8x3_t) { { vdup_n_u8(__p[0]), vdup_n_u8(__p[1]), vdup_n_u8(__p[2]) } }; }
+__BUN_CC_INTRIN uint8x8x3_t vld3_dup_u8(const uint8_t *__p) { return (uint8x8x3_t){{vdup_n_u8(__p[0]), vdup_n_u8(__p[1]), vdup_n_u8(__p[2])}}; }
 #define vld3_lane_u8(p, v, lane) __extension__({ uint8x8x3_t __bun_v = (v); const uint8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_u8(p, v, lane) __extension__({ uint8x8x3_t __bun_v = (v); uint8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN uint8x8x4_t vld4_dup_u8(const uint8_t* __p) { return (uint8x8x4_t) { { vdup_n_u8(__p[0]), vdup_n_u8(__p[1]), vdup_n_u8(__p[2]), vdup_n_u8(__p[3]) } }; }
+__BUN_CC_INTRIN uint8x8x4_t vld4_dup_u8(const uint8_t *__p) { return (uint8x8x4_t){{vdup_n_u8(__p[0]), vdup_n_u8(__p[1]), vdup_n_u8(__p[2]), vdup_n_u8(__p[3])}}; }
 #define vld4_lane_u8(p, v, lane) __extension__({ uint8x8x4_t __bun_v = (v); const uint8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_u8(p, v, lane) __extension__({ uint8x8x4_t __bun_v = (v); uint8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN uint8x16x3_t vld3q_u8(const uint8_t* __p)
-{
-    uint8x16x3_t __v;
-    for (int __i = 0; __i < 16; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_u8(uint8_t* __p, uint8x16x3_t __v)
-{
-    for (int __i = 0; __i < 16; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN uint8x16x2_t vld2q_dup_u8(const uint8_t* __p) { return (uint8x16x2_t) { { vdupq_n_u8(__p[0]), vdupq_n_u8(__p[1]) } }; }
+__BUN_CC_INTRIN uint8x16x3_t vld3q_u8(const uint8_t *__p) { uint8x16x3_t __v; for (int __i = 0; __i < 16; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_u8(uint8_t *__p, uint8x16x3_t __v) { for (int __i = 0; __i < 16; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN uint8x16x2_t vld2q_dup_u8(const uint8_t *__p) { return (uint8x16x2_t){{vdupq_n_u8(__p[0]), vdupq_n_u8(__p[1])}}; }
 #define vld2q_lane_u8(p, v, lane) __extension__({ uint8x16x2_t __bun_v = (v); const uint8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_u8(p, v, lane) __extension__({ uint8x16x2_t __bun_v = (v); uint8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN uint8x16x3_t vld3q_dup_u8(const uint8_t* __p) { return (uint8x16x3_t) { { vdupq_n_u8(__p[0]), vdupq_n_u8(__p[1]), vdupq_n_u8(__p[2]) } }; }
+__BUN_CC_INTRIN uint8x16x3_t vld3q_dup_u8(const uint8_t *__p) { return (uint8x16x3_t){{vdupq_n_u8(__p[0]), vdupq_n_u8(__p[1]), vdupq_n_u8(__p[2])}}; }
 #define vld3q_lane_u8(p, v, lane) __extension__({ uint8x16x3_t __bun_v = (v); const uint8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_u8(p, v, lane) __extension__({ uint8x16x3_t __bun_v = (v); uint8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN uint8x16x4_t vld4q_dup_u8(const uint8_t* __p) { return (uint8x16x4_t) { { vdupq_n_u8(__p[0]), vdupq_n_u8(__p[1]), vdupq_n_u8(__p[2]), vdupq_n_u8(__p[3]) } }; }
+__BUN_CC_INTRIN uint8x16x4_t vld4q_dup_u8(const uint8_t *__p) { return (uint8x16x4_t){{vdupq_n_u8(__p[0]), vdupq_n_u8(__p[1]), vdupq_n_u8(__p[2]), vdupq_n_u8(__p[3])}}; }
 #define vld4q_lane_u8(p, v, lane) __extension__({ uint8x16x4_t __bun_v = (v); const uint8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_u8(p, v, lane) __extension__({ uint8x16x4_t __bun_v = (v); uint8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN int16x4x3_t vld3_s16(const int16_t* __p)
-{
-    int16x4x3_t __v;
-    for (int __i = 0; __i < 4; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3_s16(int16_t* __p, int16x4x3_t __v)
-{
-    for (int __i = 0; __i < 4; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN int16x4x2_t vld2_dup_s16(const int16_t* __p) { return (int16x4x2_t) { { vdup_n_s16(__p[0]), vdup_n_s16(__p[1]) } }; }
+__BUN_CC_INTRIN int16x4x3_t vld3_s16(const int16_t *__p) { int16x4x3_t __v; for (int __i = 0; __i < 4; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3_s16(int16_t *__p, int16x4x3_t __v) { for (int __i = 0; __i < 4; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN int16x4x2_t vld2_dup_s16(const int16_t *__p) { return (int16x4x2_t){{vdup_n_s16(__p[0]), vdup_n_s16(__p[1])}}; }
 #define vld2_lane_s16(p, v, lane) __extension__({ int16x4x2_t __bun_v = (v); const int16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_s16(p, v, lane) __extension__({ int16x4x2_t __bun_v = (v); int16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN int16x4x3_t vld3_dup_s16(const int16_t* __p) { return (int16x4x3_t) { { vdup_n_s16(__p[0]), vdup_n_s16(__p[1]), vdup_n_s16(__p[2]) } }; }
+__BUN_CC_INTRIN int16x4x3_t vld3_dup_s16(const int16_t *__p) { return (int16x4x3_t){{vdup_n_s16(__p[0]), vdup_n_s16(__p[1]), vdup_n_s16(__p[2])}}; }
 #define vld3_lane_s16(p, v, lane) __extension__({ int16x4x3_t __bun_v = (v); const int16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_s16(p, v, lane) __extension__({ int16x4x3_t __bun_v = (v); int16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN int16x4x4_t vld4_dup_s16(const int16_t* __p) { return (int16x4x4_t) { { vdup_n_s16(__p[0]), vdup_n_s16(__p[1]), vdup_n_s16(__p[2]), vdup_n_s16(__p[3]) } }; }
+__BUN_CC_INTRIN int16x4x4_t vld4_dup_s16(const int16_t *__p) { return (int16x4x4_t){{vdup_n_s16(__p[0]), vdup_n_s16(__p[1]), vdup_n_s16(__p[2]), vdup_n_s16(__p[3])}}; }
 #define vld4_lane_s16(p, v, lane) __extension__({ int16x4x4_t __bun_v = (v); const int16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_s16(p, v, lane) __extension__({ int16x4x4_t __bun_v = (v); int16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN int16x8x3_t vld3q_s16(const int16_t* __p)
-{
-    int16x8x3_t __v;
-    for (int __i = 0; __i < 8; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_s16(int16_t* __p, int16x8x3_t __v)
-{
-    for (int __i = 0; __i < 8; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN int16x8x2_t vld2q_dup_s16(const int16_t* __p) { return (int16x8x2_t) { { vdupq_n_s16(__p[0]), vdupq_n_s16(__p[1]) } }; }
+__BUN_CC_INTRIN int16x8x3_t vld3q_s16(const int16_t *__p) { int16x8x3_t __v; for (int __i = 0; __i < 8; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_s16(int16_t *__p, int16x8x3_t __v) { for (int __i = 0; __i < 8; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN int16x8x2_t vld2q_dup_s16(const int16_t *__p) { return (int16x8x2_t){{vdupq_n_s16(__p[0]), vdupq_n_s16(__p[1])}}; }
 #define vld2q_lane_s16(p, v, lane) __extension__({ int16x8x2_t __bun_v = (v); const int16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_s16(p, v, lane) __extension__({ int16x8x2_t __bun_v = (v); int16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN int16x8x3_t vld3q_dup_s16(const int16_t* __p) { return (int16x8x3_t) { { vdupq_n_s16(__p[0]), vdupq_n_s16(__p[1]), vdupq_n_s16(__p[2]) } }; }
+__BUN_CC_INTRIN int16x8x3_t vld3q_dup_s16(const int16_t *__p) { return (int16x8x3_t){{vdupq_n_s16(__p[0]), vdupq_n_s16(__p[1]), vdupq_n_s16(__p[2])}}; }
 #define vld3q_lane_s16(p, v, lane) __extension__({ int16x8x3_t __bun_v = (v); const int16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_s16(p, v, lane) __extension__({ int16x8x3_t __bun_v = (v); int16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN int16x8x4_t vld4q_dup_s16(const int16_t* __p) { return (int16x8x4_t) { { vdupq_n_s16(__p[0]), vdupq_n_s16(__p[1]), vdupq_n_s16(__p[2]), vdupq_n_s16(__p[3]) } }; }
+__BUN_CC_INTRIN int16x8x4_t vld4q_dup_s16(const int16_t *__p) { return (int16x8x4_t){{vdupq_n_s16(__p[0]), vdupq_n_s16(__p[1]), vdupq_n_s16(__p[2]), vdupq_n_s16(__p[3])}}; }
 #define vld4q_lane_s16(p, v, lane) __extension__({ int16x8x4_t __bun_v = (v); const int16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_s16(p, v, lane) __extension__({ int16x8x4_t __bun_v = (v); int16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN uint16x4x3_t vld3_u16(const uint16_t* __p)
-{
-    uint16x4x3_t __v;
-    for (int __i = 0; __i < 4; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3_u16(uint16_t* __p, uint16x4x3_t __v)
-{
-    for (int __i = 0; __i < 4; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN uint16x4x2_t vld2_dup_u16(const uint16_t* __p) { return (uint16x4x2_t) { { vdup_n_u16(__p[0]), vdup_n_u16(__p[1]) } }; }
+__BUN_CC_INTRIN uint16x4x3_t vld3_u16(const uint16_t *__p) { uint16x4x3_t __v; for (int __i = 0; __i < 4; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3_u16(uint16_t *__p, uint16x4x3_t __v) { for (int __i = 0; __i < 4; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN uint16x4x2_t vld2_dup_u16(const uint16_t *__p) { return (uint16x4x2_t){{vdup_n_u16(__p[0]), vdup_n_u16(__p[1])}}; }
 #define vld2_lane_u16(p, v, lane) __extension__({ uint16x4x2_t __bun_v = (v); const uint16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_u16(p, v, lane) __extension__({ uint16x4x2_t __bun_v = (v); uint16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN uint16x4x3_t vld3_dup_u16(const uint16_t* __p) { return (uint16x4x3_t) { { vdup_n_u16(__p[0]), vdup_n_u16(__p[1]), vdup_n_u16(__p[2]) } }; }
+__BUN_CC_INTRIN uint16x4x3_t vld3_dup_u16(const uint16_t *__p) { return (uint16x4x3_t){{vdup_n_u16(__p[0]), vdup_n_u16(__p[1]), vdup_n_u16(__p[2])}}; }
 #define vld3_lane_u16(p, v, lane) __extension__({ uint16x4x3_t __bun_v = (v); const uint16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_u16(p, v, lane) __extension__({ uint16x4x3_t __bun_v = (v); uint16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN uint16x4x4_t vld4_dup_u16(const uint16_t* __p) { return (uint16x4x4_t) { { vdup_n_u16(__p[0]), vdup_n_u16(__p[1]), vdup_n_u16(__p[2]), vdup_n_u16(__p[3]) } }; }
+__BUN_CC_INTRIN uint16x4x4_t vld4_dup_u16(const uint16_t *__p) { return (uint16x4x4_t){{vdup_n_u16(__p[0]), vdup_n_u16(__p[1]), vdup_n_u16(__p[2]), vdup_n_u16(__p[3])}}; }
 #define vld4_lane_u16(p, v, lane) __extension__({ uint16x4x4_t __bun_v = (v); const uint16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_u16(p, v, lane) __extension__({ uint16x4x4_t __bun_v = (v); uint16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN uint16x8x3_t vld3q_u16(const uint16_t* __p)
-{
-    uint16x8x3_t __v;
-    for (int __i = 0; __i < 8; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_u16(uint16_t* __p, uint16x8x3_t __v)
-{
-    for (int __i = 0; __i < 8; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN uint16x8x2_t vld2q_dup_u16(const uint16_t* __p) { return (uint16x8x2_t) { { vdupq_n_u16(__p[0]), vdupq_n_u16(__p[1]) } }; }
+__BUN_CC_INTRIN uint16x8x3_t vld3q_u16(const uint16_t *__p) { uint16x8x3_t __v; for (int __i = 0; __i < 8; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_u16(uint16_t *__p, uint16x8x3_t __v) { for (int __i = 0; __i < 8; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN uint16x8x2_t vld2q_dup_u16(const uint16_t *__p) { return (uint16x8x2_t){{vdupq_n_u16(__p[0]), vdupq_n_u16(__p[1])}}; }
 #define vld2q_lane_u16(p, v, lane) __extension__({ uint16x8x2_t __bun_v = (v); const uint16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_u16(p, v, lane) __extension__({ uint16x8x2_t __bun_v = (v); uint16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN uint16x8x3_t vld3q_dup_u16(const uint16_t* __p) { return (uint16x8x3_t) { { vdupq_n_u16(__p[0]), vdupq_n_u16(__p[1]), vdupq_n_u16(__p[2]) } }; }
+__BUN_CC_INTRIN uint16x8x3_t vld3q_dup_u16(const uint16_t *__p) { return (uint16x8x3_t){{vdupq_n_u16(__p[0]), vdupq_n_u16(__p[1]), vdupq_n_u16(__p[2])}}; }
 #define vld3q_lane_u16(p, v, lane) __extension__({ uint16x8x3_t __bun_v = (v); const uint16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_u16(p, v, lane) __extension__({ uint16x8x3_t __bun_v = (v); uint16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN uint16x8x4_t vld4q_dup_u16(const uint16_t* __p) { return (uint16x8x4_t) { { vdupq_n_u16(__p[0]), vdupq_n_u16(__p[1]), vdupq_n_u16(__p[2]), vdupq_n_u16(__p[3]) } }; }
+__BUN_CC_INTRIN uint16x8x4_t vld4q_dup_u16(const uint16_t *__p) { return (uint16x8x4_t){{vdupq_n_u16(__p[0]), vdupq_n_u16(__p[1]), vdupq_n_u16(__p[2]), vdupq_n_u16(__p[3])}}; }
 #define vld4q_lane_u16(p, v, lane) __extension__({ uint16x8x4_t __bun_v = (v); const uint16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_u16(p, v, lane) __extension__({ uint16x8x4_t __bun_v = (v); uint16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN int32x2x3_t vld3_s32(const int32_t* __p)
-{
-    int32x2x3_t __v;
-    for (int __i = 0; __i < 2; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3_s32(int32_t* __p, int32x2x3_t __v)
-{
-    for (int __i = 0; __i < 2; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN int32x2x2_t vld2_dup_s32(const int32_t* __p) { return (int32x2x2_t) { { vdup_n_s32(__p[0]), vdup_n_s32(__p[1]) } }; }
+__BUN_CC_INTRIN int32x2x3_t vld3_s32(const int32_t *__p) { int32x2x3_t __v; for (int __i = 0; __i < 2; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3_s32(int32_t *__p, int32x2x3_t __v) { for (int __i = 0; __i < 2; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN int32x2x2_t vld2_dup_s32(const int32_t *__p) { return (int32x2x2_t){{vdup_n_s32(__p[0]), vdup_n_s32(__p[1])}}; }
 #define vld2_lane_s32(p, v, lane) __extension__({ int32x2x2_t __bun_v = (v); const int32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_s32(p, v, lane) __extension__({ int32x2x2_t __bun_v = (v); int32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN int32x2x3_t vld3_dup_s32(const int32_t* __p) { return (int32x2x3_t) { { vdup_n_s32(__p[0]), vdup_n_s32(__p[1]), vdup_n_s32(__p[2]) } }; }
+__BUN_CC_INTRIN int32x2x3_t vld3_dup_s32(const int32_t *__p) { return (int32x2x3_t){{vdup_n_s32(__p[0]), vdup_n_s32(__p[1]), vdup_n_s32(__p[2])}}; }
 #define vld3_lane_s32(p, v, lane) __extension__({ int32x2x3_t __bun_v = (v); const int32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_s32(p, v, lane) __extension__({ int32x2x3_t __bun_v = (v); int32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN int32x2x4_t vld4_dup_s32(const int32_t* __p) { return (int32x2x4_t) { { vdup_n_s32(__p[0]), vdup_n_s32(__p[1]), vdup_n_s32(__p[2]), vdup_n_s32(__p[3]) } }; }
+__BUN_CC_INTRIN int32x2x4_t vld4_dup_s32(const int32_t *__p) { return (int32x2x4_t){{vdup_n_s32(__p[0]), vdup_n_s32(__p[1]), vdup_n_s32(__p[2]), vdup_n_s32(__p[3])}}; }
 #define vld4_lane_s32(p, v, lane) __extension__({ int32x2x4_t __bun_v = (v); const int32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_s32(p, v, lane) __extension__({ int32x2x4_t __bun_v = (v); int32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN int32x4x3_t vld3q_s32(const int32_t* __p)
-{
-    int32x4x3_t __v;
-    for (int __i = 0; __i < 4; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_s32(int32_t* __p, int32x4x3_t __v)
-{
-    for (int __i = 0; __i < 4; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN int32x4x2_t vld2q_dup_s32(const int32_t* __p) { return (int32x4x2_t) { { vdupq_n_s32(__p[0]), vdupq_n_s32(__p[1]) } }; }
+__BUN_CC_INTRIN int32x4x3_t vld3q_s32(const int32_t *__p) { int32x4x3_t __v; for (int __i = 0; __i < 4; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_s32(int32_t *__p, int32x4x3_t __v) { for (int __i = 0; __i < 4; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN int32x4x2_t vld2q_dup_s32(const int32_t *__p) { return (int32x4x2_t){{vdupq_n_s32(__p[0]), vdupq_n_s32(__p[1])}}; }
 #define vld2q_lane_s32(p, v, lane) __extension__({ int32x4x2_t __bun_v = (v); const int32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_s32(p, v, lane) __extension__({ int32x4x2_t __bun_v = (v); int32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN int32x4x3_t vld3q_dup_s32(const int32_t* __p) { return (int32x4x3_t) { { vdupq_n_s32(__p[0]), vdupq_n_s32(__p[1]), vdupq_n_s32(__p[2]) } }; }
+__BUN_CC_INTRIN int32x4x3_t vld3q_dup_s32(const int32_t *__p) { return (int32x4x3_t){{vdupq_n_s32(__p[0]), vdupq_n_s32(__p[1]), vdupq_n_s32(__p[2])}}; }
 #define vld3q_lane_s32(p, v, lane) __extension__({ int32x4x3_t __bun_v = (v); const int32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_s32(p, v, lane) __extension__({ int32x4x3_t __bun_v = (v); int32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN int32x4x4_t vld4q_dup_s32(const int32_t* __p) { return (int32x4x4_t) { { vdupq_n_s32(__p[0]), vdupq_n_s32(__p[1]), vdupq_n_s32(__p[2]), vdupq_n_s32(__p[3]) } }; }
+__BUN_CC_INTRIN int32x4x4_t vld4q_dup_s32(const int32_t *__p) { return (int32x4x4_t){{vdupq_n_s32(__p[0]), vdupq_n_s32(__p[1]), vdupq_n_s32(__p[2]), vdupq_n_s32(__p[3])}}; }
 #define vld4q_lane_s32(p, v, lane) __extension__({ int32x4x4_t __bun_v = (v); const int32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_s32(p, v, lane) __extension__({ int32x4x4_t __bun_v = (v); int32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN uint32x2x3_t vld3_u32(const uint32_t* __p)
-{
-    uint32x2x3_t __v;
-    for (int __i = 0; __i < 2; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3_u32(uint32_t* __p, uint32x2x3_t __v)
-{
-    for (int __i = 0; __i < 2; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN uint32x2x2_t vld2_dup_u32(const uint32_t* __p) { return (uint32x2x2_t) { { vdup_n_u32(__p[0]), vdup_n_u32(__p[1]) } }; }
+__BUN_CC_INTRIN uint32x2x3_t vld3_u32(const uint32_t *__p) { uint32x2x3_t __v; for (int __i = 0; __i < 2; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3_u32(uint32_t *__p, uint32x2x3_t __v) { for (int __i = 0; __i < 2; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN uint32x2x2_t vld2_dup_u32(const uint32_t *__p) { return (uint32x2x2_t){{vdup_n_u32(__p[0]), vdup_n_u32(__p[1])}}; }
 #define vld2_lane_u32(p, v, lane) __extension__({ uint32x2x2_t __bun_v = (v); const uint32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_u32(p, v, lane) __extension__({ uint32x2x2_t __bun_v = (v); uint32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN uint32x2x3_t vld3_dup_u32(const uint32_t* __p) { return (uint32x2x3_t) { { vdup_n_u32(__p[0]), vdup_n_u32(__p[1]), vdup_n_u32(__p[2]) } }; }
+__BUN_CC_INTRIN uint32x2x3_t vld3_dup_u32(const uint32_t *__p) { return (uint32x2x3_t){{vdup_n_u32(__p[0]), vdup_n_u32(__p[1]), vdup_n_u32(__p[2])}}; }
 #define vld3_lane_u32(p, v, lane) __extension__({ uint32x2x3_t __bun_v = (v); const uint32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_u32(p, v, lane) __extension__({ uint32x2x3_t __bun_v = (v); uint32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN uint32x2x4_t vld4_dup_u32(const uint32_t* __p) { return (uint32x2x4_t) { { vdup_n_u32(__p[0]), vdup_n_u32(__p[1]), vdup_n_u32(__p[2]), vdup_n_u32(__p[3]) } }; }
+__BUN_CC_INTRIN uint32x2x4_t vld4_dup_u32(const uint32_t *__p) { return (uint32x2x4_t){{vdup_n_u32(__p[0]), vdup_n_u32(__p[1]), vdup_n_u32(__p[2]), vdup_n_u32(__p[3])}}; }
 #define vld4_lane_u32(p, v, lane) __extension__({ uint32x2x4_t __bun_v = (v); const uint32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_u32(p, v, lane) __extension__({ uint32x2x4_t __bun_v = (v); uint32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN uint32x4x3_t vld3q_u32(const uint32_t* __p)
-{
-    uint32x4x3_t __v;
-    for (int __i = 0; __i < 4; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_u32(uint32_t* __p, uint32x4x3_t __v)
-{
-    for (int __i = 0; __i < 4; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN uint32x4x2_t vld2q_dup_u32(const uint32_t* __p) { return (uint32x4x2_t) { { vdupq_n_u32(__p[0]), vdupq_n_u32(__p[1]) } }; }
+__BUN_CC_INTRIN uint32x4x3_t vld3q_u32(const uint32_t *__p) { uint32x4x3_t __v; for (int __i = 0; __i < 4; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_u32(uint32_t *__p, uint32x4x3_t __v) { for (int __i = 0; __i < 4; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN uint32x4x2_t vld2q_dup_u32(const uint32_t *__p) { return (uint32x4x2_t){{vdupq_n_u32(__p[0]), vdupq_n_u32(__p[1])}}; }
 #define vld2q_lane_u32(p, v, lane) __extension__({ uint32x4x2_t __bun_v = (v); const uint32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_u32(p, v, lane) __extension__({ uint32x4x2_t __bun_v = (v); uint32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN uint32x4x3_t vld3q_dup_u32(const uint32_t* __p) { return (uint32x4x3_t) { { vdupq_n_u32(__p[0]), vdupq_n_u32(__p[1]), vdupq_n_u32(__p[2]) } }; }
+__BUN_CC_INTRIN uint32x4x3_t vld3q_dup_u32(const uint32_t *__p) { return (uint32x4x3_t){{vdupq_n_u32(__p[0]), vdupq_n_u32(__p[1]), vdupq_n_u32(__p[2])}}; }
 #define vld3q_lane_u32(p, v, lane) __extension__({ uint32x4x3_t __bun_v = (v); const uint32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_u32(p, v, lane) __extension__({ uint32x4x3_t __bun_v = (v); uint32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN uint32x4x4_t vld4q_dup_u32(const uint32_t* __p) { return (uint32x4x4_t) { { vdupq_n_u32(__p[0]), vdupq_n_u32(__p[1]), vdupq_n_u32(__p[2]), vdupq_n_u32(__p[3]) } }; }
+__BUN_CC_INTRIN uint32x4x4_t vld4q_dup_u32(const uint32_t *__p) { return (uint32x4x4_t){{vdupq_n_u32(__p[0]), vdupq_n_u32(__p[1]), vdupq_n_u32(__p[2]), vdupq_n_u32(__p[3])}}; }
 #define vld4q_lane_u32(p, v, lane) __extension__({ uint32x4x4_t __bun_v = (v); const uint32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_u32(p, v, lane) __extension__({ uint32x4x4_t __bun_v = (v); uint32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN int64x1x2_t vld2_dup_s64(const int64_t* __p) { return (int64x1x2_t) { { vdup_n_s64(__p[0]), vdup_n_s64(__p[1]) } }; }
+__BUN_CC_INTRIN int64x1x2_t vld2_dup_s64(const int64_t *__p) { return (int64x1x2_t){{vdup_n_s64(__p[0]), vdup_n_s64(__p[1])}}; }
 #define vld2_lane_s64(p, v, lane) __extension__({ int64x1x2_t __bun_v = (v); const int64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_s64(p, v, lane) __extension__({ int64x1x2_t __bun_v = (v); int64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN int64x1x3_t vld3_dup_s64(const int64_t* __p) { return (int64x1x3_t) { { vdup_n_s64(__p[0]), vdup_n_s64(__p[1]), vdup_n_s64(__p[2]) } }; }
+__BUN_CC_INTRIN int64x1x3_t vld3_dup_s64(const int64_t *__p) { return (int64x1x3_t){{vdup_n_s64(__p[0]), vdup_n_s64(__p[1]), vdup_n_s64(__p[2])}}; }
 #define vld3_lane_s64(p, v, lane) __extension__({ int64x1x3_t __bun_v = (v); const int64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_s64(p, v, lane) __extension__({ int64x1x3_t __bun_v = (v); int64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN int64x1x4_t vld4_dup_s64(const int64_t* __p) { return (int64x1x4_t) { { vdup_n_s64(__p[0]), vdup_n_s64(__p[1]), vdup_n_s64(__p[2]), vdup_n_s64(__p[3]) } }; }
+__BUN_CC_INTRIN int64x1x4_t vld4_dup_s64(const int64_t *__p) { return (int64x1x4_t){{vdup_n_s64(__p[0]), vdup_n_s64(__p[1]), vdup_n_s64(__p[2]), vdup_n_s64(__p[3])}}; }
 #define vld4_lane_s64(p, v, lane) __extension__({ int64x1x4_t __bun_v = (v); const int64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_s64(p, v, lane) __extension__({ int64x1x4_t __bun_v = (v); int64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN int64x2x3_t vld3q_s64(const int64_t* __p)
-{
-    int64x2x3_t __v;
-    for (int __i = 0; __i < 2; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_s64(int64_t* __p, int64x2x3_t __v)
-{
-    for (int __i = 0; __i < 2; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN int64x2x2_t vld2q_dup_s64(const int64_t* __p) { return (int64x2x2_t) { { vdupq_n_s64(__p[0]), vdupq_n_s64(__p[1]) } }; }
+__BUN_CC_INTRIN int64x2x3_t vld3q_s64(const int64_t *__p) { int64x2x3_t __v; for (int __i = 0; __i < 2; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_s64(int64_t *__p, int64x2x3_t __v) { for (int __i = 0; __i < 2; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN int64x2x2_t vld2q_dup_s64(const int64_t *__p) { return (int64x2x2_t){{vdupq_n_s64(__p[0]), vdupq_n_s64(__p[1])}}; }
 #define vld2q_lane_s64(p, v, lane) __extension__({ int64x2x2_t __bun_v = (v); const int64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_s64(p, v, lane) __extension__({ int64x2x2_t __bun_v = (v); int64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN int64x2x3_t vld3q_dup_s64(const int64_t* __p) { return (int64x2x3_t) { { vdupq_n_s64(__p[0]), vdupq_n_s64(__p[1]), vdupq_n_s64(__p[2]) } }; }
+__BUN_CC_INTRIN int64x2x3_t vld3q_dup_s64(const int64_t *__p) { return (int64x2x3_t){{vdupq_n_s64(__p[0]), vdupq_n_s64(__p[1]), vdupq_n_s64(__p[2])}}; }
 #define vld3q_lane_s64(p, v, lane) __extension__({ int64x2x3_t __bun_v = (v); const int64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_s64(p, v, lane) __extension__({ int64x2x3_t __bun_v = (v); int64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN int64x2x4_t vld4q_dup_s64(const int64_t* __p) { return (int64x2x4_t) { { vdupq_n_s64(__p[0]), vdupq_n_s64(__p[1]), vdupq_n_s64(__p[2]), vdupq_n_s64(__p[3]) } }; }
+__BUN_CC_INTRIN int64x2x4_t vld4q_dup_s64(const int64_t *__p) { return (int64x2x4_t){{vdupq_n_s64(__p[0]), vdupq_n_s64(__p[1]), vdupq_n_s64(__p[2]), vdupq_n_s64(__p[3])}}; }
 #define vld4q_lane_s64(p, v, lane) __extension__({ int64x2x4_t __bun_v = (v); const int64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_s64(p, v, lane) __extension__({ int64x2x4_t __bun_v = (v); int64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN uint64x1x2_t vld2_dup_u64(const uint64_t* __p) { return (uint64x1x2_t) { { vdup_n_u64(__p[0]), vdup_n_u64(__p[1]) } }; }
+__BUN_CC_INTRIN uint64x1x2_t vld2_dup_u64(const uint64_t *__p) { return (uint64x1x2_t){{vdup_n_u64(__p[0]), vdup_n_u64(__p[1])}}; }
 #define vld2_lane_u64(p, v, lane) __extension__({ uint64x1x2_t __bun_v = (v); const uint64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_u64(p, v, lane) __extension__({ uint64x1x2_t __bun_v = (v); uint64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN uint64x1x3_t vld3_dup_u64(const uint64_t* __p) { return (uint64x1x3_t) { { vdup_n_u64(__p[0]), vdup_n_u64(__p[1]), vdup_n_u64(__p[2]) } }; }
+__BUN_CC_INTRIN uint64x1x3_t vld3_dup_u64(const uint64_t *__p) { return (uint64x1x3_t){{vdup_n_u64(__p[0]), vdup_n_u64(__p[1]), vdup_n_u64(__p[2])}}; }
 #define vld3_lane_u64(p, v, lane) __extension__({ uint64x1x3_t __bun_v = (v); const uint64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_u64(p, v, lane) __extension__({ uint64x1x3_t __bun_v = (v); uint64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN uint64x1x4_t vld4_dup_u64(const uint64_t* __p) { return (uint64x1x4_t) { { vdup_n_u64(__p[0]), vdup_n_u64(__p[1]), vdup_n_u64(__p[2]), vdup_n_u64(__p[3]) } }; }
+__BUN_CC_INTRIN uint64x1x4_t vld4_dup_u64(const uint64_t *__p) { return (uint64x1x4_t){{vdup_n_u64(__p[0]), vdup_n_u64(__p[1]), vdup_n_u64(__p[2]), vdup_n_u64(__p[3])}}; }
 #define vld4_lane_u64(p, v, lane) __extension__({ uint64x1x4_t __bun_v = (v); const uint64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_u64(p, v, lane) __extension__({ uint64x1x4_t __bun_v = (v); uint64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN uint64x2x3_t vld3q_u64(const uint64_t* __p)
-{
-    uint64x2x3_t __v;
-    for (int __i = 0; __i < 2; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_u64(uint64_t* __p, uint64x2x3_t __v)
-{
-    for (int __i = 0; __i < 2; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN uint64x2x2_t vld2q_dup_u64(const uint64_t* __p) { return (uint64x2x2_t) { { vdupq_n_u64(__p[0]), vdupq_n_u64(__p[1]) } }; }
+__BUN_CC_INTRIN uint64x2x3_t vld3q_u64(const uint64_t *__p) { uint64x2x3_t __v; for (int __i = 0; __i < 2; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_u64(uint64_t *__p, uint64x2x3_t __v) { for (int __i = 0; __i < 2; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN uint64x2x2_t vld2q_dup_u64(const uint64_t *__p) { return (uint64x2x2_t){{vdupq_n_u64(__p[0]), vdupq_n_u64(__p[1])}}; }
 #define vld2q_lane_u64(p, v, lane) __extension__({ uint64x2x2_t __bun_v = (v); const uint64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_u64(p, v, lane) __extension__({ uint64x2x2_t __bun_v = (v); uint64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN uint64x2x3_t vld3q_dup_u64(const uint64_t* __p) { return (uint64x2x3_t) { { vdupq_n_u64(__p[0]), vdupq_n_u64(__p[1]), vdupq_n_u64(__p[2]) } }; }
+__BUN_CC_INTRIN uint64x2x3_t vld3q_dup_u64(const uint64_t *__p) { return (uint64x2x3_t){{vdupq_n_u64(__p[0]), vdupq_n_u64(__p[1]), vdupq_n_u64(__p[2])}}; }
 #define vld3q_lane_u64(p, v, lane) __extension__({ uint64x2x3_t __bun_v = (v); const uint64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_u64(p, v, lane) __extension__({ uint64x2x3_t __bun_v = (v); uint64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN uint64x2x4_t vld4q_dup_u64(const uint64_t* __p) { return (uint64x2x4_t) { { vdupq_n_u64(__p[0]), vdupq_n_u64(__p[1]), vdupq_n_u64(__p[2]), vdupq_n_u64(__p[3]) } }; }
+__BUN_CC_INTRIN uint64x2x4_t vld4q_dup_u64(const uint64_t *__p) { return (uint64x2x4_t){{vdupq_n_u64(__p[0]), vdupq_n_u64(__p[1]), vdupq_n_u64(__p[2]), vdupq_n_u64(__p[3])}}; }
 #define vld4q_lane_u64(p, v, lane) __extension__({ uint64x2x4_t __bun_v = (v); const uint64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_u64(p, v, lane) __extension__({ uint64x2x4_t __bun_v = (v); uint64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN float32x2x3_t vld3_f32(const float32_t* __p)
-{
-    float32x2x3_t __v;
-    for (int __i = 0; __i < 2; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3_f32(float32_t* __p, float32x2x3_t __v)
-{
-    for (int __i = 0; __i < 2; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN float32x2x2_t vld2_dup_f32(const float32_t* __p) { return (float32x2x2_t) { { vdup_n_f32(__p[0]), vdup_n_f32(__p[1]) } }; }
+__BUN_CC_INTRIN float32x2x3_t vld3_f32(const float32_t *__p) { float32x2x3_t __v; for (int __i = 0; __i < 2; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3_f32(float32_t *__p, float32x2x3_t __v) { for (int __i = 0; __i < 2; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN float32x2x2_t vld2_dup_f32(const float32_t *__p) { return (float32x2x2_t){{vdup_n_f32(__p[0]), vdup_n_f32(__p[1])}}; }
 #define vld2_lane_f32(p, v, lane) __extension__({ float32x2x2_t __bun_v = (v); const float32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_f32(p, v, lane) __extension__({ float32x2x2_t __bun_v = (v); float32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN float32x2x3_t vld3_dup_f32(const float32_t* __p) { return (float32x2x3_t) { { vdup_n_f32(__p[0]), vdup_n_f32(__p[1]), vdup_n_f32(__p[2]) } }; }
+__BUN_CC_INTRIN float32x2x3_t vld3_dup_f32(const float32_t *__p) { return (float32x2x3_t){{vdup_n_f32(__p[0]), vdup_n_f32(__p[1]), vdup_n_f32(__p[2])}}; }
 #define vld3_lane_f32(p, v, lane) __extension__({ float32x2x3_t __bun_v = (v); const float32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_f32(p, v, lane) __extension__({ float32x2x3_t __bun_v = (v); float32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN float32x2x4_t vld4_dup_f32(const float32_t* __p) { return (float32x2x4_t) { { vdup_n_f32(__p[0]), vdup_n_f32(__p[1]), vdup_n_f32(__p[2]), vdup_n_f32(__p[3]) } }; }
+__BUN_CC_INTRIN float32x2x4_t vld4_dup_f32(const float32_t *__p) { return (float32x2x4_t){{vdup_n_f32(__p[0]), vdup_n_f32(__p[1]), vdup_n_f32(__p[2]), vdup_n_f32(__p[3])}}; }
 #define vld4_lane_f32(p, v, lane) __extension__({ float32x2x4_t __bun_v = (v); const float32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_f32(p, v, lane) __extension__({ float32x2x4_t __bun_v = (v); float32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN float32x4x3_t vld3q_f32(const float32_t* __p)
-{
-    float32x4x3_t __v;
-    for (int __i = 0; __i < 4; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_f32(float32_t* __p, float32x4x3_t __v)
-{
-    for (int __i = 0; __i < 4; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN float32x4x2_t vld2q_dup_f32(const float32_t* __p) { return (float32x4x2_t) { { vdupq_n_f32(__p[0]), vdupq_n_f32(__p[1]) } }; }
+__BUN_CC_INTRIN float32x4x3_t vld3q_f32(const float32_t *__p) { float32x4x3_t __v; for (int __i = 0; __i < 4; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_f32(float32_t *__p, float32x4x3_t __v) { for (int __i = 0; __i < 4; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN float32x4x2_t vld2q_dup_f32(const float32_t *__p) { return (float32x4x2_t){{vdupq_n_f32(__p[0]), vdupq_n_f32(__p[1])}}; }
 #define vld2q_lane_f32(p, v, lane) __extension__({ float32x4x2_t __bun_v = (v); const float32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_f32(p, v, lane) __extension__({ float32x4x2_t __bun_v = (v); float32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN float32x4x3_t vld3q_dup_f32(const float32_t* __p) { return (float32x4x3_t) { { vdupq_n_f32(__p[0]), vdupq_n_f32(__p[1]), vdupq_n_f32(__p[2]) } }; }
+__BUN_CC_INTRIN float32x4x3_t vld3q_dup_f32(const float32_t *__p) { return (float32x4x3_t){{vdupq_n_f32(__p[0]), vdupq_n_f32(__p[1]), vdupq_n_f32(__p[2])}}; }
 #define vld3q_lane_f32(p, v, lane) __extension__({ float32x4x3_t __bun_v = (v); const float32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_f32(p, v, lane) __extension__({ float32x4x3_t __bun_v = (v); float32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN float32x4x4_t vld4q_dup_f32(const float32_t* __p) { return (float32x4x4_t) { { vdupq_n_f32(__p[0]), vdupq_n_f32(__p[1]), vdupq_n_f32(__p[2]), vdupq_n_f32(__p[3]) } }; }
+__BUN_CC_INTRIN float32x4x4_t vld4q_dup_f32(const float32_t *__p) { return (float32x4x4_t){{vdupq_n_f32(__p[0]), vdupq_n_f32(__p[1]), vdupq_n_f32(__p[2]), vdupq_n_f32(__p[3])}}; }
 #define vld4q_lane_f32(p, v, lane) __extension__({ float32x4x4_t __bun_v = (v); const float32_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_f32(p, v, lane) __extension__({ float32x4x4_t __bun_v = (v); float32_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN float64x1x2_t vld2_dup_f64(const float64_t* __p) { return (float64x1x2_t) { { vdup_n_f64(__p[0]), vdup_n_f64(__p[1]) } }; }
+__BUN_CC_INTRIN float64x1x2_t vld2_dup_f64(const float64_t *__p) { return (float64x1x2_t){{vdup_n_f64(__p[0]), vdup_n_f64(__p[1])}}; }
 #define vld2_lane_f64(p, v, lane) __extension__({ float64x1x2_t __bun_v = (v); const float64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_f64(p, v, lane) __extension__({ float64x1x2_t __bun_v = (v); float64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN float64x1x3_t vld3_dup_f64(const float64_t* __p) { return (float64x1x3_t) { { vdup_n_f64(__p[0]), vdup_n_f64(__p[1]), vdup_n_f64(__p[2]) } }; }
+__BUN_CC_INTRIN float64x1x3_t vld3_dup_f64(const float64_t *__p) { return (float64x1x3_t){{vdup_n_f64(__p[0]), vdup_n_f64(__p[1]), vdup_n_f64(__p[2])}}; }
 #define vld3_lane_f64(p, v, lane) __extension__({ float64x1x3_t __bun_v = (v); const float64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_f64(p, v, lane) __extension__({ float64x1x3_t __bun_v = (v); float64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN float64x1x4_t vld4_dup_f64(const float64_t* __p) { return (float64x1x4_t) { { vdup_n_f64(__p[0]), vdup_n_f64(__p[1]), vdup_n_f64(__p[2]), vdup_n_f64(__p[3]) } }; }
+__BUN_CC_INTRIN float64x1x4_t vld4_dup_f64(const float64_t *__p) { return (float64x1x4_t){{vdup_n_f64(__p[0]), vdup_n_f64(__p[1]), vdup_n_f64(__p[2]), vdup_n_f64(__p[3])}}; }
 #define vld4_lane_f64(p, v, lane) __extension__({ float64x1x4_t __bun_v = (v); const float64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_f64(p, v, lane) __extension__({ float64x1x4_t __bun_v = (v); float64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN float64x2x3_t vld3q_f64(const float64_t* __p)
-{
-    float64x2x3_t __v;
-    for (int __i = 0; __i < 2; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_f64(float64_t* __p, float64x2x3_t __v)
-{
-    for (int __i = 0; __i < 2; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN float64x2x2_t vld2q_dup_f64(const float64_t* __p) { return (float64x2x2_t) { { vdupq_n_f64(__p[0]), vdupq_n_f64(__p[1]) } }; }
+__BUN_CC_INTRIN float64x2x3_t vld3q_f64(const float64_t *__p) { float64x2x3_t __v; for (int __i = 0; __i < 2; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_f64(float64_t *__p, float64x2x3_t __v) { for (int __i = 0; __i < 2; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN float64x2x2_t vld2q_dup_f64(const float64_t *__p) { return (float64x2x2_t){{vdupq_n_f64(__p[0]), vdupq_n_f64(__p[1])}}; }
 #define vld2q_lane_f64(p, v, lane) __extension__({ float64x2x2_t __bun_v = (v); const float64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_f64(p, v, lane) __extension__({ float64x2x2_t __bun_v = (v); float64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN float64x2x3_t vld3q_dup_f64(const float64_t* __p) { return (float64x2x3_t) { { vdupq_n_f64(__p[0]), vdupq_n_f64(__p[1]), vdupq_n_f64(__p[2]) } }; }
+__BUN_CC_INTRIN float64x2x3_t vld3q_dup_f64(const float64_t *__p) { return (float64x2x3_t){{vdupq_n_f64(__p[0]), vdupq_n_f64(__p[1]), vdupq_n_f64(__p[2])}}; }
 #define vld3q_lane_f64(p, v, lane) __extension__({ float64x2x3_t __bun_v = (v); const float64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_f64(p, v, lane) __extension__({ float64x2x3_t __bun_v = (v); float64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN float64x2x4_t vld4q_dup_f64(const float64_t* __p) { return (float64x2x4_t) { { vdupq_n_f64(__p[0]), vdupq_n_f64(__p[1]), vdupq_n_f64(__p[2]), vdupq_n_f64(__p[3]) } }; }
+__BUN_CC_INTRIN float64x2x4_t vld4q_dup_f64(const float64_t *__p) { return (float64x2x4_t){{vdupq_n_f64(__p[0]), vdupq_n_f64(__p[1]), vdupq_n_f64(__p[2]), vdupq_n_f64(__p[3])}}; }
 #define vld4q_lane_f64(p, v, lane) __extension__({ float64x2x4_t __bun_v = (v); const float64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_f64(p, v, lane) __extension__({ float64x2x4_t __bun_v = (v); float64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN poly8x8x3_t vld3_p8(const poly8_t* __p)
-{
-    poly8x8x3_t __v;
-    for (int __i = 0; __i < 8; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3_p8(poly8_t* __p, poly8x8x3_t __v)
-{
-    for (int __i = 0; __i < 8; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN poly8x8x2_t vld2_dup_p8(const poly8_t* __p) { return (poly8x8x2_t) { { vdup_n_p8(__p[0]), vdup_n_p8(__p[1]) } }; }
+__BUN_CC_INTRIN poly8x8x3_t vld3_p8(const poly8_t *__p) { poly8x8x3_t __v; for (int __i = 0; __i < 8; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3_p8(poly8_t *__p, poly8x8x3_t __v) { for (int __i = 0; __i < 8; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN poly8x8x2_t vld2_dup_p8(const poly8_t *__p) { return (poly8x8x2_t){{vdup_n_p8(__p[0]), vdup_n_p8(__p[1])}}; }
 #define vld2_lane_p8(p, v, lane) __extension__({ poly8x8x2_t __bun_v = (v); const poly8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_p8(p, v, lane) __extension__({ poly8x8x2_t __bun_v = (v); poly8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN poly8x8x3_t vld3_dup_p8(const poly8_t* __p) { return (poly8x8x3_t) { { vdup_n_p8(__p[0]), vdup_n_p8(__p[1]), vdup_n_p8(__p[2]) } }; }
+__BUN_CC_INTRIN poly8x8x3_t vld3_dup_p8(const poly8_t *__p) { return (poly8x8x3_t){{vdup_n_p8(__p[0]), vdup_n_p8(__p[1]), vdup_n_p8(__p[2])}}; }
 #define vld3_lane_p8(p, v, lane) __extension__({ poly8x8x3_t __bun_v = (v); const poly8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_p8(p, v, lane) __extension__({ poly8x8x3_t __bun_v = (v); poly8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN poly8x8x4_t vld4_dup_p8(const poly8_t* __p) { return (poly8x8x4_t) { { vdup_n_p8(__p[0]), vdup_n_p8(__p[1]), vdup_n_p8(__p[2]), vdup_n_p8(__p[3]) } }; }
+__BUN_CC_INTRIN poly8x8x4_t vld4_dup_p8(const poly8_t *__p) { return (poly8x8x4_t){{vdup_n_p8(__p[0]), vdup_n_p8(__p[1]), vdup_n_p8(__p[2]), vdup_n_p8(__p[3])}}; }
 #define vld4_lane_p8(p, v, lane) __extension__({ poly8x8x4_t __bun_v = (v); const poly8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_p8(p, v, lane) __extension__({ poly8x8x4_t __bun_v = (v); poly8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN poly8x16x3_t vld3q_p8(const poly8_t* __p)
-{
-    poly8x16x3_t __v;
-    for (int __i = 0; __i < 16; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_p8(poly8_t* __p, poly8x16x3_t __v)
-{
-    for (int __i = 0; __i < 16; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN poly8x16x2_t vld2q_dup_p8(const poly8_t* __p) { return (poly8x16x2_t) { { vdupq_n_p8(__p[0]), vdupq_n_p8(__p[1]) } }; }
+__BUN_CC_INTRIN poly8x16x3_t vld3q_p8(const poly8_t *__p) { poly8x16x3_t __v; for (int __i = 0; __i < 16; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_p8(poly8_t *__p, poly8x16x3_t __v) { for (int __i = 0; __i < 16; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN poly8x16x2_t vld2q_dup_p8(const poly8_t *__p) { return (poly8x16x2_t){{vdupq_n_p8(__p[0]), vdupq_n_p8(__p[1])}}; }
 #define vld2q_lane_p8(p, v, lane) __extension__({ poly8x16x2_t __bun_v = (v); const poly8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_p8(p, v, lane) __extension__({ poly8x16x2_t __bun_v = (v); poly8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN poly8x16x3_t vld3q_dup_p8(const poly8_t* __p) { return (poly8x16x3_t) { { vdupq_n_p8(__p[0]), vdupq_n_p8(__p[1]), vdupq_n_p8(__p[2]) } }; }
+__BUN_CC_INTRIN poly8x16x3_t vld3q_dup_p8(const poly8_t *__p) { return (poly8x16x3_t){{vdupq_n_p8(__p[0]), vdupq_n_p8(__p[1]), vdupq_n_p8(__p[2])}}; }
 #define vld3q_lane_p8(p, v, lane) __extension__({ poly8x16x3_t __bun_v = (v); const poly8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_p8(p, v, lane) __extension__({ poly8x16x3_t __bun_v = (v); poly8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN poly8x16x4_t vld4q_dup_p8(const poly8_t* __p) { return (poly8x16x4_t) { { vdupq_n_p8(__p[0]), vdupq_n_p8(__p[1]), vdupq_n_p8(__p[2]), vdupq_n_p8(__p[3]) } }; }
+__BUN_CC_INTRIN poly8x16x4_t vld4q_dup_p8(const poly8_t *__p) { return (poly8x16x4_t){{vdupq_n_p8(__p[0]), vdupq_n_p8(__p[1]), vdupq_n_p8(__p[2]), vdupq_n_p8(__p[3])}}; }
 #define vld4q_lane_p8(p, v, lane) __extension__({ poly8x16x4_t __bun_v = (v); const poly8_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_p8(p, v, lane) __extension__({ poly8x16x4_t __bun_v = (v); poly8_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN poly16x4x3_t vld3_p16(const poly16_t* __p)
-{
-    poly16x4x3_t __v;
-    for (int __i = 0; __i < 4; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3_p16(poly16_t* __p, poly16x4x3_t __v)
-{
-    for (int __i = 0; __i < 4; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN poly16x4x2_t vld2_dup_p16(const poly16_t* __p) { return (poly16x4x2_t) { { vdup_n_p16(__p[0]), vdup_n_p16(__p[1]) } }; }
+__BUN_CC_INTRIN poly16x4x3_t vld3_p16(const poly16_t *__p) { poly16x4x3_t __v; for (int __i = 0; __i < 4; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3_p16(poly16_t *__p, poly16x4x3_t __v) { for (int __i = 0; __i < 4; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN poly16x4x2_t vld2_dup_p16(const poly16_t *__p) { return (poly16x4x2_t){{vdup_n_p16(__p[0]), vdup_n_p16(__p[1])}}; }
 #define vld2_lane_p16(p, v, lane) __extension__({ poly16x4x2_t __bun_v = (v); const poly16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_p16(p, v, lane) __extension__({ poly16x4x2_t __bun_v = (v); poly16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN poly16x4x3_t vld3_dup_p16(const poly16_t* __p) { return (poly16x4x3_t) { { vdup_n_p16(__p[0]), vdup_n_p16(__p[1]), vdup_n_p16(__p[2]) } }; }
+__BUN_CC_INTRIN poly16x4x3_t vld3_dup_p16(const poly16_t *__p) { return (poly16x4x3_t){{vdup_n_p16(__p[0]), vdup_n_p16(__p[1]), vdup_n_p16(__p[2])}}; }
 #define vld3_lane_p16(p, v, lane) __extension__({ poly16x4x3_t __bun_v = (v); const poly16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_p16(p, v, lane) __extension__({ poly16x4x3_t __bun_v = (v); poly16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN poly16x4x4_t vld4_dup_p16(const poly16_t* __p) { return (poly16x4x4_t) { { vdup_n_p16(__p[0]), vdup_n_p16(__p[1]), vdup_n_p16(__p[2]), vdup_n_p16(__p[3]) } }; }
+__BUN_CC_INTRIN poly16x4x4_t vld4_dup_p16(const poly16_t *__p) { return (poly16x4x4_t){{vdup_n_p16(__p[0]), vdup_n_p16(__p[1]), vdup_n_p16(__p[2]), vdup_n_p16(__p[3])}}; }
 #define vld4_lane_p16(p, v, lane) __extension__({ poly16x4x4_t __bun_v = (v); const poly16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_p16(p, v, lane) __extension__({ poly16x4x4_t __bun_v = (v); poly16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN poly16x8x3_t vld3q_p16(const poly16_t* __p)
-{
-    poly16x8x3_t __v;
-    for (int __i = 0; __i < 8; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_p16(poly16_t* __p, poly16x8x3_t __v)
-{
-    for (int __i = 0; __i < 8; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN poly16x8x2_t vld2q_dup_p16(const poly16_t* __p) { return (poly16x8x2_t) { { vdupq_n_p16(__p[0]), vdupq_n_p16(__p[1]) } }; }
+__BUN_CC_INTRIN poly16x8x3_t vld3q_p16(const poly16_t *__p) { poly16x8x3_t __v; for (int __i = 0; __i < 8; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_p16(poly16_t *__p, poly16x8x3_t __v) { for (int __i = 0; __i < 8; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN poly16x8x2_t vld2q_dup_p16(const poly16_t *__p) { return (poly16x8x2_t){{vdupq_n_p16(__p[0]), vdupq_n_p16(__p[1])}}; }
 #define vld2q_lane_p16(p, v, lane) __extension__({ poly16x8x2_t __bun_v = (v); const poly16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_p16(p, v, lane) __extension__({ poly16x8x2_t __bun_v = (v); poly16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN poly16x8x3_t vld3q_dup_p16(const poly16_t* __p) { return (poly16x8x3_t) { { vdupq_n_p16(__p[0]), vdupq_n_p16(__p[1]), vdupq_n_p16(__p[2]) } }; }
+__BUN_CC_INTRIN poly16x8x3_t vld3q_dup_p16(const poly16_t *__p) { return (poly16x8x3_t){{vdupq_n_p16(__p[0]), vdupq_n_p16(__p[1]), vdupq_n_p16(__p[2])}}; }
 #define vld3q_lane_p16(p, v, lane) __extension__({ poly16x8x3_t __bun_v = (v); const poly16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_p16(p, v, lane) __extension__({ poly16x8x3_t __bun_v = (v); poly16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN poly16x8x4_t vld4q_dup_p16(const poly16_t* __p) { return (poly16x8x4_t) { { vdupq_n_p16(__p[0]), vdupq_n_p16(__p[1]), vdupq_n_p16(__p[2]), vdupq_n_p16(__p[3]) } }; }
+__BUN_CC_INTRIN poly16x8x4_t vld4q_dup_p16(const poly16_t *__p) { return (poly16x8x4_t){{vdupq_n_p16(__p[0]), vdupq_n_p16(__p[1]), vdupq_n_p16(__p[2]), vdupq_n_p16(__p[3])}}; }
 #define vld4q_lane_p16(p, v, lane) __extension__({ poly16x8x4_t __bun_v = (v); const poly16_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_p16(p, v, lane) __extension__({ poly16x8x4_t __bun_v = (v); poly16_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN poly64x1x2_t vld2_dup_p64(const poly64_t* __p) { return (poly64x1x2_t) { { vdup_n_p64(__p[0]), vdup_n_p64(__p[1]) } }; }
+__BUN_CC_INTRIN poly64x1x2_t vld2_dup_p64(const poly64_t *__p) { return (poly64x1x2_t){{vdup_n_p64(__p[0]), vdup_n_p64(__p[1])}}; }
 #define vld2_lane_p64(p, v, lane) __extension__({ poly64x1x2_t __bun_v = (v); const poly64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2_lane_p64(p, v, lane) __extension__({ poly64x1x2_t __bun_v = (v); poly64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN poly64x1x3_t vld3_dup_p64(const poly64_t* __p) { return (poly64x1x3_t) { { vdup_n_p64(__p[0]), vdup_n_p64(__p[1]), vdup_n_p64(__p[2]) } }; }
+__BUN_CC_INTRIN poly64x1x3_t vld3_dup_p64(const poly64_t *__p) { return (poly64x1x3_t){{vdup_n_p64(__p[0]), vdup_n_p64(__p[1]), vdup_n_p64(__p[2])}}; }
 #define vld3_lane_p64(p, v, lane) __extension__({ poly64x1x3_t __bun_v = (v); const poly64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3_lane_p64(p, v, lane) __extension__({ poly64x1x3_t __bun_v = (v); poly64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN poly64x1x4_t vld4_dup_p64(const poly64_t* __p) { return (poly64x1x4_t) { { vdup_n_p64(__p[0]), vdup_n_p64(__p[1]), vdup_n_p64(__p[2]), vdup_n_p64(__p[3]) } }; }
+__BUN_CC_INTRIN poly64x1x4_t vld4_dup_p64(const poly64_t *__p) { return (poly64x1x4_t){{vdup_n_p64(__p[0]), vdup_n_p64(__p[1]), vdup_n_p64(__p[2]), vdup_n_p64(__p[3])}}; }
 #define vld4_lane_p64(p, v, lane) __extension__({ poly64x1x4_t __bun_v = (v); const poly64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4_lane_p64(p, v, lane) __extension__({ poly64x1x4_t __bun_v = (v); poly64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
-__BUN_CC_INTRIN poly64x2x3_t vld3q_p64(const poly64_t* __p)
-{
-    poly64x2x3_t __v;
-    for (int __i = 0; __i < 2; __i++) {
-        __v.val[0][__i] = __p[3 * __i];
-        __v.val[1][__i] = __p[3 * __i + 1];
-        __v.val[2][__i] = __p[3 * __i + 2];
-    }
-    return __v;
-}
-__BUN_CC_INTRIN void vst3q_p64(poly64_t* __p, poly64x2x3_t __v)
-{
-    for (int __i = 0; __i < 2; __i++) {
-        __p[3 * __i] = __v.val[0][__i];
-        __p[3 * __i + 1] = __v.val[1][__i];
-        __p[3 * __i + 2] = __v.val[2][__i];
-    }
-}
-__BUN_CC_INTRIN poly64x2x2_t vld2q_dup_p64(const poly64_t* __p) { return (poly64x2x2_t) { { vdupq_n_p64(__p[0]), vdupq_n_p64(__p[1]) } }; }
+__BUN_CC_INTRIN poly64x2x3_t vld3q_p64(const poly64_t *__p) { poly64x2x3_t __v; for (int __i = 0; __i < 2; __i++) { __v.val[0][__i] = __p[3 * __i]; __v.val[1][__i] = __p[3 * __i + 1]; __v.val[2][__i] = __p[3 * __i + 2]; } return __v; }
+__BUN_CC_INTRIN void vst3q_p64(poly64_t *__p, poly64x2x3_t __v) { for (int __i = 0; __i < 2; __i++) { __p[3 * __i] = __v.val[0][__i]; __p[3 * __i + 1] = __v.val[1][__i]; __p[3 * __i + 2] = __v.val[2][__i]; } }
+__BUN_CC_INTRIN poly64x2x2_t vld2q_dup_p64(const poly64_t *__p) { return (poly64x2x2_t){{vdupq_n_p64(__p[0]), vdupq_n_p64(__p[1])}}; }
 #define vld2q_lane_p64(p, v, lane) __extension__({ poly64x2x2_t __bun_v = (v); const poly64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v; })
 #define vst2q_lane_p64(p, v, lane) __extension__({ poly64x2x2_t __bun_v = (v); poly64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; (void)0; })
-__BUN_CC_INTRIN poly64x2x3_t vld3q_dup_p64(const poly64_t* __p) { return (poly64x2x3_t) { { vdupq_n_p64(__p[0]), vdupq_n_p64(__p[1]), vdupq_n_p64(__p[2]) } }; }
+__BUN_CC_INTRIN poly64x2x3_t vld3q_dup_p64(const poly64_t *__p) { return (poly64x2x3_t){{vdupq_n_p64(__p[0]), vdupq_n_p64(__p[1]), vdupq_n_p64(__p[2])}}; }
 #define vld3q_lane_p64(p, v, lane) __extension__({ poly64x2x3_t __bun_v = (v); const poly64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v; })
 #define vst3q_lane_p64(p, v, lane) __extension__({ poly64x2x3_t __bun_v = (v); poly64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; (void)0; })
-__BUN_CC_INTRIN poly64x2x4_t vld4q_dup_p64(const poly64_t* __p) { return (poly64x2x4_t) { { vdupq_n_p64(__p[0]), vdupq_n_p64(__p[1]), vdupq_n_p64(__p[2]), vdupq_n_p64(__p[3]) } }; }
+__BUN_CC_INTRIN poly64x2x4_t vld4q_dup_p64(const poly64_t *__p) { return (poly64x2x4_t){{vdupq_n_p64(__p[0]), vdupq_n_p64(__p[1]), vdupq_n_p64(__p[2]), vdupq_n_p64(__p[3])}}; }
 #define vld4q_lane_p64(p, v, lane) __extension__({ poly64x2x4_t __bun_v = (v); const poly64_t *__bun_p = (p); __bun_v.val[0][lane] = __bun_p[0]; __bun_v.val[1][lane] = __bun_p[1]; __bun_v.val[2][lane] = __bun_p[2]; __bun_v.val[3][lane] = __bun_p[3]; __bun_v; })
 #define vst4q_lane_p64(p, v, lane) __extension__({ poly64x2x4_t __bun_v = (v); poly64_t *__bun_p = (p); __bun_p[0] = __bun_v.val[0][lane]; __bun_p[1] = __bun_v.val[1][lane]; __bun_p[2] = __bun_v.val[2][lane]; __bun_p[3] = __bun_v.val[3][lane]; (void)0; })
 __BUN_CC_INTRIN int8x16_t vqtbl2q_s8(int8x16x2_t __t, uint8x16_t __i) { return (int8x16_t)(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __i) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __i - 16)); }
-__BUN_CC_INTRIN int8x8_t vqtbl2_s8(int8x16x2_t __t, uint8x8_t __i)
-{
-    uint8x16_t __w = vcombine_u8(__i, __i);
-    return (int8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16));
-}
+__BUN_CC_INTRIN int8x8_t vqtbl2_s8(int8x16x2_t __t, uint8x8_t __i) { uint8x16_t __w = vcombine_u8(__i, __i); return (int8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16)); }
 __BUN_CC_INTRIN int8x16_t vqtbl3q_s8(int8x16x3_t __t, uint8x16_t __i) { return (int8x16_t)(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __i) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __i - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __i - 32)); }
-__BUN_CC_INTRIN int8x8_t vqtbl3_s8(int8x16x3_t __t, uint8x8_t __i)
-{
-    uint8x16_t __w = vcombine_u8(__i, __i);
-    return (int8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32));
-}
+__BUN_CC_INTRIN int8x8_t vqtbl3_s8(int8x16x3_t __t, uint8x8_t __i) { uint8x16_t __w = vcombine_u8(__i, __i); return (int8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32)); }
 __BUN_CC_INTRIN int8x16_t vqtbl4q_s8(int8x16x4_t __t, uint8x16_t __i) { return (int8x16_t)(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __i) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __i - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __i - 32) | __builtin_bir_swizzle((uint8x16_t)__t.val[3], __i - 48)); }
-__BUN_CC_INTRIN int8x8_t vqtbl4_s8(int8x16x4_t __t, uint8x8_t __i)
-{
-    uint8x16_t __w = vcombine_u8(__i, __i);
-    return (int8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32) | __builtin_bir_swizzle((uint8x16_t)__t.val[3], __w - 48));
-}
-__BUN_CC_INTRIN int8x8_t vtbl3_s8(int8x8x3_t __t, int8x8_t __i)
-{
-    int8x16x2_t __q = { { vcombine_s8(__t.val[0], __t.val[1]), vcombine_s8(__t.val[2], vdup_n_s8(0)) } };
-    return vqtbl2_s8(__q, vmin_u8((uint8x8_t)__i, vdup_n_u8(24)));
-}
-__BUN_CC_INTRIN int8x8_t vtbl4_s8(int8x8x4_t __t, int8x8_t __i)
-{
-    int8x16x2_t __q = { { vcombine_s8(__t.val[0], __t.val[1]), vcombine_s8(__t.val[2], __t.val[3]) } };
-    return vqtbl2_s8(__q, (uint8x8_t)__i);
-}
+__BUN_CC_INTRIN int8x8_t vqtbl4_s8(int8x16x4_t __t, uint8x8_t __i) { uint8x16_t __w = vcombine_u8(__i, __i); return (int8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32) | __builtin_bir_swizzle((uint8x16_t)__t.val[3], __w - 48)); }
+__BUN_CC_INTRIN int8x8_t vtbl3_s8(int8x8x3_t __t, int8x8_t __i) { int8x16x2_t __q = {{vcombine_s8(__t.val[0], __t.val[1]), vcombine_s8(__t.val[2], vdup_n_s8(0))}}; return vqtbl2_s8(__q, vmin_u8((uint8x8_t)__i, vdup_n_u8(24))); }
+__BUN_CC_INTRIN int8x8_t vtbl4_s8(int8x8x4_t __t, int8x8_t __i) { int8x16x2_t __q = {{vcombine_s8(__t.val[0], __t.val[1]), vcombine_s8(__t.val[2], __t.val[3])}}; return vqtbl2_s8(__q, (uint8x8_t)__i); }
 __BUN_CC_INTRIN int8x8_t vtbx1_s8(int8x8_t __a, int8x8_t __t, int8x8_t __i) { return vbsl_s8(vclt_u8((uint8x8_t)__i, vdup_n_u8(8)), vtbl1_s8(__t, __i), __a); }
 __BUN_CC_INTRIN int8x8_t vtbx2_s8(int8x8_t __a, int8x8x2_t __t, int8x8_t __i) { return vbsl_s8(vclt_u8((uint8x8_t)__i, vdup_n_u8(16)), vtbl2_s8(__t, __i), __a); }
 __BUN_CC_INTRIN int8x8_t vtbx3_s8(int8x8_t __a, int8x8x3_t __t, int8x8_t __i) { return vbsl_s8(vclt_u8((uint8x8_t)__i, vdup_n_u8(24)), vtbl3_s8(__t, __i), __a); }
@@ -4605,33 +2881,13 @@ __BUN_CC_INTRIN int8x8_t vtbx4_s8(int8x8_t __a, int8x8x4_t __t, int8x8_t __i) { 
 __BUN_CC_INTRIN int8x8_t vqtbx1_s8(int8x8_t __a, int8x16_t __t, uint8x8_t __i) { return vbsl_s8(vclt_u8(__i, vdup_n_u8(16)), vqtbl1_s8(__t, __i), __a); }
 __BUN_CC_INTRIN int8x16_t vqtbx1q_s8(int8x16_t __a, int8x16_t __t, uint8x16_t __i) { return vbslq_s8(vcltq_u8(__i, vdupq_n_u8(16)), vqtbl1q_s8(__t, __i), __a); }
 __BUN_CC_INTRIN uint8x16_t vqtbl2q_u8(uint8x16x2_t __t, uint8x16_t __i) { return (uint8x16_t)(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __i) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __i - 16)); }
-__BUN_CC_INTRIN uint8x8_t vqtbl2_u8(uint8x16x2_t __t, uint8x8_t __i)
-{
-    uint8x16_t __w = vcombine_u8(__i, __i);
-    return (uint8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16));
-}
+__BUN_CC_INTRIN uint8x8_t vqtbl2_u8(uint8x16x2_t __t, uint8x8_t __i) { uint8x16_t __w = vcombine_u8(__i, __i); return (uint8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16)); }
 __BUN_CC_INTRIN uint8x16_t vqtbl3q_u8(uint8x16x3_t __t, uint8x16_t __i) { return (uint8x16_t)(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __i) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __i - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __i - 32)); }
-__BUN_CC_INTRIN uint8x8_t vqtbl3_u8(uint8x16x3_t __t, uint8x8_t __i)
-{
-    uint8x16_t __w = vcombine_u8(__i, __i);
-    return (uint8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32));
-}
+__BUN_CC_INTRIN uint8x8_t vqtbl3_u8(uint8x16x3_t __t, uint8x8_t __i) { uint8x16_t __w = vcombine_u8(__i, __i); return (uint8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32)); }
 __BUN_CC_INTRIN uint8x16_t vqtbl4q_u8(uint8x16x4_t __t, uint8x16_t __i) { return (uint8x16_t)(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __i) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __i - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __i - 32) | __builtin_bir_swizzle((uint8x16_t)__t.val[3], __i - 48)); }
-__BUN_CC_INTRIN uint8x8_t vqtbl4_u8(uint8x16x4_t __t, uint8x8_t __i)
-{
-    uint8x16_t __w = vcombine_u8(__i, __i);
-    return (uint8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32) | __builtin_bir_swizzle((uint8x16_t)__t.val[3], __w - 48));
-}
-__BUN_CC_INTRIN uint8x8_t vtbl3_u8(uint8x8x3_t __t, uint8x8_t __i)
-{
-    uint8x16x2_t __q = { { vcombine_u8(__t.val[0], __t.val[1]), vcombine_u8(__t.val[2], vdup_n_u8(0)) } };
-    return vqtbl2_u8(__q, vmin_u8((uint8x8_t)__i, vdup_n_u8(24)));
-}
-__BUN_CC_INTRIN uint8x8_t vtbl4_u8(uint8x8x4_t __t, uint8x8_t __i)
-{
-    uint8x16x2_t __q = { { vcombine_u8(__t.val[0], __t.val[1]), vcombine_u8(__t.val[2], __t.val[3]) } };
-    return vqtbl2_u8(__q, (uint8x8_t)__i);
-}
+__BUN_CC_INTRIN uint8x8_t vqtbl4_u8(uint8x16x4_t __t, uint8x8_t __i) { uint8x16_t __w = vcombine_u8(__i, __i); return (uint8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32) | __builtin_bir_swizzle((uint8x16_t)__t.val[3], __w - 48)); }
+__BUN_CC_INTRIN uint8x8_t vtbl3_u8(uint8x8x3_t __t, uint8x8_t __i) { uint8x16x2_t __q = {{vcombine_u8(__t.val[0], __t.val[1]), vcombine_u8(__t.val[2], vdup_n_u8(0))}}; return vqtbl2_u8(__q, vmin_u8((uint8x8_t)__i, vdup_n_u8(24))); }
+__BUN_CC_INTRIN uint8x8_t vtbl4_u8(uint8x8x4_t __t, uint8x8_t __i) { uint8x16x2_t __q = {{vcombine_u8(__t.val[0], __t.val[1]), vcombine_u8(__t.val[2], __t.val[3])}}; return vqtbl2_u8(__q, (uint8x8_t)__i); }
 __BUN_CC_INTRIN uint8x8_t vtbx1_u8(uint8x8_t __a, uint8x8_t __t, uint8x8_t __i) { return vbsl_u8(vclt_u8((uint8x8_t)__i, vdup_n_u8(8)), vtbl1_u8(__t, __i), __a); }
 __BUN_CC_INTRIN uint8x8_t vtbx2_u8(uint8x8_t __a, uint8x8x2_t __t, uint8x8_t __i) { return vbsl_u8(vclt_u8((uint8x8_t)__i, vdup_n_u8(16)), vtbl2_u8(__t, __i), __a); }
 __BUN_CC_INTRIN uint8x8_t vtbx3_u8(uint8x8_t __a, uint8x8x3_t __t, uint8x8_t __i) { return vbsl_u8(vclt_u8((uint8x8_t)__i, vdup_n_u8(24)), vtbl3_u8(__t, __i), __a); }
@@ -4639,33 +2895,13 @@ __BUN_CC_INTRIN uint8x8_t vtbx4_u8(uint8x8_t __a, uint8x8x4_t __t, uint8x8_t __i
 __BUN_CC_INTRIN uint8x8_t vqtbx1_u8(uint8x8_t __a, uint8x16_t __t, uint8x8_t __i) { return vbsl_u8(vclt_u8(__i, vdup_n_u8(16)), vqtbl1_u8(__t, __i), __a); }
 __BUN_CC_INTRIN uint8x16_t vqtbx1q_u8(uint8x16_t __a, uint8x16_t __t, uint8x16_t __i) { return vbslq_u8(vcltq_u8(__i, vdupq_n_u8(16)), vqtbl1q_u8(__t, __i), __a); }
 __BUN_CC_INTRIN poly8x16_t vqtbl2q_p8(poly8x16x2_t __t, uint8x16_t __i) { return (poly8x16_t)(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __i) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __i - 16)); }
-__BUN_CC_INTRIN poly8x8_t vqtbl2_p8(poly8x16x2_t __t, uint8x8_t __i)
-{
-    uint8x16_t __w = vcombine_u8(__i, __i);
-    return (poly8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16));
-}
+__BUN_CC_INTRIN poly8x8_t vqtbl2_p8(poly8x16x2_t __t, uint8x8_t __i) { uint8x16_t __w = vcombine_u8(__i, __i); return (poly8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16)); }
 __BUN_CC_INTRIN poly8x16_t vqtbl3q_p8(poly8x16x3_t __t, uint8x16_t __i) { return (poly8x16_t)(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __i) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __i - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __i - 32)); }
-__BUN_CC_INTRIN poly8x8_t vqtbl3_p8(poly8x16x3_t __t, uint8x8_t __i)
-{
-    uint8x16_t __w = vcombine_u8(__i, __i);
-    return (poly8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32));
-}
+__BUN_CC_INTRIN poly8x8_t vqtbl3_p8(poly8x16x3_t __t, uint8x8_t __i) { uint8x16_t __w = vcombine_u8(__i, __i); return (poly8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32)); }
 __BUN_CC_INTRIN poly8x16_t vqtbl4q_p8(poly8x16x4_t __t, uint8x16_t __i) { return (poly8x16_t)(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __i) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __i - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __i - 32) | __builtin_bir_swizzle((uint8x16_t)__t.val[3], __i - 48)); }
-__BUN_CC_INTRIN poly8x8_t vqtbl4_p8(poly8x16x4_t __t, uint8x8_t __i)
-{
-    uint8x16_t __w = vcombine_u8(__i, __i);
-    return (poly8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32) | __builtin_bir_swizzle((uint8x16_t)__t.val[3], __w - 48));
-}
-__BUN_CC_INTRIN poly8x8_t vtbl3_p8(poly8x8x3_t __t, uint8x8_t __i)
-{
-    poly8x16x2_t __q = { { vcombine_p8(__t.val[0], __t.val[1]), vcombine_p8(__t.val[2], vdup_n_p8(0)) } };
-    return vqtbl2_p8(__q, vmin_u8((uint8x8_t)__i, vdup_n_u8(24)));
-}
-__BUN_CC_INTRIN poly8x8_t vtbl4_p8(poly8x8x4_t __t, uint8x8_t __i)
-{
-    poly8x16x2_t __q = { { vcombine_p8(__t.val[0], __t.val[1]), vcombine_p8(__t.val[2], __t.val[3]) } };
-    return vqtbl2_p8(__q, (uint8x8_t)__i);
-}
+__BUN_CC_INTRIN poly8x8_t vqtbl4_p8(poly8x16x4_t __t, uint8x8_t __i) { uint8x16_t __w = vcombine_u8(__i, __i); return (poly8x8_t)vget_low_u8(__builtin_bir_swizzle((uint8x16_t)__t.val[0], __w) | __builtin_bir_swizzle((uint8x16_t)__t.val[1], __w - 16) | __builtin_bir_swizzle((uint8x16_t)__t.val[2], __w - 32) | __builtin_bir_swizzle((uint8x16_t)__t.val[3], __w - 48)); }
+__BUN_CC_INTRIN poly8x8_t vtbl3_p8(poly8x8x3_t __t, uint8x8_t __i) { poly8x16x2_t __q = {{vcombine_p8(__t.val[0], __t.val[1]), vcombine_p8(__t.val[2], vdup_n_p8(0))}}; return vqtbl2_p8(__q, vmin_u8((uint8x8_t)__i, vdup_n_u8(24))); }
+__BUN_CC_INTRIN poly8x8_t vtbl4_p8(poly8x8x4_t __t, uint8x8_t __i) { poly8x16x2_t __q = {{vcombine_p8(__t.val[0], __t.val[1]), vcombine_p8(__t.val[2], __t.val[3])}}; return vqtbl2_p8(__q, (uint8x8_t)__i); }
 __BUN_CC_INTRIN poly8x8_t vtbx1_p8(poly8x8_t __a, poly8x8_t __t, uint8x8_t __i) { return vbsl_p8(vclt_u8((uint8x8_t)__i, vdup_n_u8(8)), vtbl1_p8(__t, __i), __a); }
 __BUN_CC_INTRIN poly8x8_t vtbx2_p8(poly8x8_t __a, poly8x8x2_t __t, uint8x8_t __i) { return vbsl_p8(vclt_u8((uint8x8_t)__i, vdup_n_u8(16)), vtbl2_p8(__t, __i), __a); }
 __BUN_CC_INTRIN poly8x8_t vtbx3_p8(poly8x8_t __a, poly8x8x3_t __t, uint8x8_t __i) { return vbsl_p8(vclt_u8((uint8x8_t)__i, vdup_n_u8(24)), vtbl3_p8(__t, __i), __a); }
@@ -4674,189 +2910,29 @@ __BUN_CC_INTRIN poly8x8_t vqtbx1_p8(poly8x8_t __a, poly8x16_t __t, uint8x8_t __i
 __BUN_CC_INTRIN poly8x16_t vqtbx1q_p8(poly8x16_t __a, poly8x16_t __t, uint8x16_t __i) { return vbslq_p8(vcltq_u8(__i, vdupq_n_u8(16)), vqtbl1q_p8(__t, __i), __a); }
 
 /* What the optional architecture features add, worked out with the instructions above: right, not fast. */
-__BUN_CC_INTRIN int8x16_t vreinterpretq_s8_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        int8x16_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_s8(int8x16_t __a)
-{
-    union {
-        int8x16_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN uint8x16_t vreinterpretq_u8_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        uint8x16_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_u8(uint8x16_t __a)
-{
-    union {
-        uint8x16_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN int16x8_t vreinterpretq_s16_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        int16x8_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_s16(int16x8_t __a)
-{
-    union {
-        int16x8_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN uint16x8_t vreinterpretq_u16_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        uint16x8_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_u16(uint16x8_t __a)
-{
-    union {
-        uint16x8_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN int32x4_t vreinterpretq_s32_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        int32x4_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_s32(int32x4_t __a)
-{
-    union {
-        int32x4_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN uint32x4_t vreinterpretq_u32_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        uint32x4_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_u32(uint32x4_t __a)
-{
-    union {
-        uint32x4_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN int64x2_t vreinterpretq_s64_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        int64x2_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_s64(int64x2_t __a)
-{
-    union {
-        int64x2_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN uint64x2_t vreinterpretq_u64_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        uint64x2_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_u64(uint64x2_t __a)
-{
-    union {
-        uint64x2_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN float32x4_t vreinterpretq_f32_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        float32x4_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_f32(float32x4_t __a)
-{
-    union {
-        float32x4_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN float64x2_t vreinterpretq_f64_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        float64x2_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_f64(float64x2_t __a)
-{
-    union {
-        float64x2_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN poly64x2_t vreinterpretq_p64_p128(poly128_t __a)
-{
-    union {
-        poly128_t __p;
-        poly64x2_t __v;
-    } __u = { __a };
-    return __u.__v;
-}
-__BUN_CC_INTRIN poly128_t vreinterpretq_p128_p64(poly64x2_t __a)
-{
-    union {
-        poly64x2_t __v;
-        poly128_t __p;
-    } __u = { __a };
-    return __u.__p;
-}
-__BUN_CC_INTRIN poly128_t vmull_p64(poly64_t __a, poly64_t __b)
-{
-    poly128_t __r = 0;
-    for (int __i = 0; __i < 64; __i++)
-        if ((__b >> __i) & 1) __r ^= (poly128_t)__a << __i;
-    return __r;
-}
+__BUN_CC_INTRIN int8x16_t vreinterpretq_s8_p128(poly128_t __a) { union { poly128_t __p; int8x16_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_s8(int8x16_t __a) { union { int8x16_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN uint8x16_t vreinterpretq_u8_p128(poly128_t __a) { union { poly128_t __p; uint8x16_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_u8(uint8x16_t __a) { union { uint8x16_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN int16x8_t vreinterpretq_s16_p128(poly128_t __a) { union { poly128_t __p; int16x8_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_s16(int16x8_t __a) { union { int16x8_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN uint16x8_t vreinterpretq_u16_p128(poly128_t __a) { union { poly128_t __p; uint16x8_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_u16(uint16x8_t __a) { union { uint16x8_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN int32x4_t vreinterpretq_s32_p128(poly128_t __a) { union { poly128_t __p; int32x4_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_s32(int32x4_t __a) { union { int32x4_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN uint32x4_t vreinterpretq_u32_p128(poly128_t __a) { union { poly128_t __p; uint32x4_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_u32(uint32x4_t __a) { union { uint32x4_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN int64x2_t vreinterpretq_s64_p128(poly128_t __a) { union { poly128_t __p; int64x2_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_s64(int64x2_t __a) { union { int64x2_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN uint64x2_t vreinterpretq_u64_p128(poly128_t __a) { union { poly128_t __p; uint64x2_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_u64(uint64x2_t __a) { union { uint64x2_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN float32x4_t vreinterpretq_f32_p128(poly128_t __a) { union { poly128_t __p; float32x4_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_f32(float32x4_t __a) { union { float32x4_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN float64x2_t vreinterpretq_f64_p128(poly128_t __a) { union { poly128_t __p; float64x2_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_f64(float64x2_t __a) { union { float64x2_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN poly64x2_t vreinterpretq_p64_p128(poly128_t __a) { union { poly128_t __p; poly64x2_t __v; } __u = {__a}; return __u.__v; }
+__BUN_CC_INTRIN poly128_t vreinterpretq_p128_p64(poly64x2_t __a) { union { poly64x2_t __v; poly128_t __p; } __u = {__a}; return __u.__p; }
+__BUN_CC_INTRIN poly128_t vmull_p64(poly64_t __a, poly64_t __b) { poly128_t __r = 0; for (int __i = 0; __i < 64; __i++) if ((__b >> __i) & 1) __r ^= (poly128_t)__a << __i; return __r; }
 __BUN_CC_INTRIN poly128_t vmull_high_p64(poly64x2_t __a, poly64x2_t __b) { return vmull_p64(__a[1], __b[1]); }
 __BUN_CC_INTRIN int8x16_t veor3q_s8(int8x16_t __a, int8x16_t __b, int8x16_t __c) { return __a ^ __b ^ __c; }
 __BUN_CC_INTRIN int8x16_t vbcaxq_s8(int8x16_t __a, int8x16_t __b, int8x16_t __c) { return __a ^ (__b & ~__c); }

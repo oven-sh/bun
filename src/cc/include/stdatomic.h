@@ -7,12 +7,12 @@
 #include <stdint.h>
 
 typedef enum memory_order {
-    memory_order_relaxed = __ATOMIC_RELAXED,
-    memory_order_consume = __ATOMIC_CONSUME,
-    memory_order_acquire = __ATOMIC_ACQUIRE,
-    memory_order_release = __ATOMIC_RELEASE,
-    memory_order_acq_rel = __ATOMIC_ACQ_REL,
-    memory_order_seq_cst = __ATOMIC_SEQ_CST
+  memory_order_relaxed = __ATOMIC_RELAXED,
+  memory_order_consume = __ATOMIC_CONSUME,
+  memory_order_acquire = __ATOMIC_ACQUIRE,
+  memory_order_release = __ATOMIC_RELEASE,
+  memory_order_acq_rel = __ATOMIC_ACQ_REL,
+  memory_order_seq_cst = __ATOMIC_SEQ_CST
 } memory_order;
 
 typedef _Atomic _Bool atomic_bool;
@@ -80,13 +80,13 @@ typedef _Atomic uintmax_t atomic_uintmax_t;
 #define atomic_exchange(obj, desired) __atomic_exchange_n((obj), (desired), __ATOMIC_SEQ_CST)
 
 #define atomic_compare_exchange_strong_explicit(obj, expected, desired, success, failure) \
-    __atomic_compare_exchange_n((obj), (expected), (desired), 0, (success), (failure))
+  __atomic_compare_exchange_n((obj), (expected), (desired), 0, (success), (failure))
 #define atomic_compare_exchange_strong(obj, expected, desired) \
-    __atomic_compare_exchange_n((obj), (expected), (desired), 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)
+  __atomic_compare_exchange_n((obj), (expected), (desired), 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)
 #define atomic_compare_exchange_weak_explicit(obj, expected, desired, success, failure) \
-    __atomic_compare_exchange_n((obj), (expected), (desired), 1, (success), (failure))
+  __atomic_compare_exchange_n((obj), (expected), (desired), 1, (success), (failure))
 #define atomic_compare_exchange_weak(obj, expected, desired) \
-    __atomic_compare_exchange_n((obj), (expected), (desired), 1, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)
+  __atomic_compare_exchange_n((obj), (expected), (desired), 1, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)
 
 /* Adding to an atomic pointer counts in elements, as C11 requires. */
 #define atomic_fetch_add_explicit(obj, operand, order) __c11_atomic_fetch_add((obj), (operand), (order))
@@ -101,7 +101,7 @@ typedef _Atomic uintmax_t atomic_uintmax_t;
 #define atomic_fetch_and(obj, operand) __atomic_fetch_and((obj), (operand), __ATOMIC_SEQ_CST)
 
 typedef struct atomic_flag {
-    _Atomic _Bool _Value;
+  _Atomic _Bool _Value;
 } atomic_flag;
 
 #define ATOMIC_FLAG_INIT { 0 }

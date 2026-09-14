@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_char;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
@@ -1106,12 +1107,12 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    fn parse_value<const IS_PROCESS: bool>(&mut self) -> Result<&[u8], AllocError> {
+    fn parse_value<const IS_PROCESS: bool>(&mut self) -> Result<(&[u8], Option<u8>), AllocError> {
         let start = self.pos;
         self.skip_whitespaces();
         let mut end = self.pos;
         if end >= self.src.len() {
-            return Ok(&self.src[self.src.len()..]);
+            return Ok((&self.src[self.src.len()..], None));
         }
         // reshaped for borrowck — `parse_quoted` returns a borrow of
         // `self.value_buffer`; capture only its length, then re-borrow the buffer
@@ -1124,11 +1125,14 @@ impl<'a> Parser<'a> {
         };
         if let Some(len) = quoted_len {
             let value = &self.value_buffer[..len];
-            return Ok(if IS_PROCESS {
-                value
-            } else {
-                &value[1..value.len() - 1]
-            });
+            return Ok((
+                if IS_PROCESS {
+                    value
+                } else {
+                    &value[1..value.len() - 1]
+                },
+                Some(self.src[end]),
+            ));
         }
         end = start;
         while end < self.src.len() {
@@ -1139,7 +1143,7 @@ impl<'a> Parser<'a> {
             end += 1;
         }
         self.pos = end;
-        Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
+        Ok((strings::trim(&self.src[start..end], WHITESPACE_CHARS), None))
     }
 
     fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
@@ -1259,13 +1263,19 @@ impl<'a> Parser<'a> {
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
-        let mut count = map.map.count();
+        let count = map.map.count();
+        let mut expand_indices = Vec::new();
+        let mut expand_positions = HashMap::new();
+        // Each scheduling event consumes at least one source byte, so this
+        // bounds both tracking structures without a separate dotenv size cap.
+        let max_tracked_entries = self.src.len();
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
                 self.skip_line();
                 continue;
             };
-            let value = self.parse_value::<IS_PROCESS>()?;
+            let (value, quote) = self.parse_value::<IS_PROCESS>()?;
+            let should_expand = EXPAND && quote != Some(b'\'');
             // reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
             let value_owned: Box<[u8]> = Box::from(value);
             let entry = map.map.get_or_put(key)?;
@@ -1280,26 +1290,41 @@ impl<'a> Parser<'a> {
                 // else: previous value freed by Drop on assignment below
             }
             *entry.value_ptr = HashTableValue { value: value_owned };
+            let position = expand_positions.get(&entry.index).copied();
+            match (should_expand, position) {
+                (true, None) => {
+                    if expand_positions.len() >= max_tracked_entries
+                        || expand_indices.len() >= max_tracked_entries
+                    {
+                        return Err(AllocError);
+                    }
+                    expand_positions.try_reserve(1).map_err(|_| AllocError)?;
+                    expand_indices.try_reserve(1).map_err(|_| AllocError)?;
+                    expand_positions.insert(entry.index, expand_indices.len());
+                    expand_indices.push(entry.index);
+                }
+                (false, Some(position)) => {
+                    expand_indices[position] = usize::MAX;
+                    expand_positions.remove(&entry.index);
+                }
+                _ => {}
+            }
         }
         if !IS_PROCESS && EXPAND {
-            // borrowck — index-based iteration: clone the value bytes, run
-            // expansion against an immutable `&Map`, then write back via
-            // `values_mut()`. Values are dupe'd by `parse` above, so length
-            // is bounded by file size.
-            let total = map.map.count();
-            let mut idx = count;
-            while idx < total {
+            // Clone the value bytes so expansion can read the complete map
+            // before writing the expanded value back through `values_mut()`.
+            for idx in expand_indices {
+                if idx == usize::MAX {
+                    continue;
+                }
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
                 if let Some(expanded) = self.expand_value(map, &current)? {
                     map.map.values_mut()[idx] = HashTableValue {
                         value: Box::from(expanded),
                     };
                 }
-                idx += 1;
             }
-            count = 0;
         }
-        let _ = count;
         Ok(())
     }
 

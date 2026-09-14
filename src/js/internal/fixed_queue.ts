@@ -61,8 +61,7 @@ class FixedCircularBuffer<T> {
   constructor() {
     this.bottom = 0;
     this.top = 0;
-    // A [[Set]] into a hole would call a user-defined Array.prototype index
-    // setter and leave the slot empty, so every slot is an own data property.
+    // Own data properties: a [[Set]] into a hole would hit an Array.prototype index setter.
     const list = $newArrayWithSize<T | undefined>(kSize);
     for (let i = 0; i < kSize; i++) $putByValDirect(list, i, undefined);
     this.list = list;

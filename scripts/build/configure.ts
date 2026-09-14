@@ -241,6 +241,30 @@ function ccacheEnv(cfg: Config): Record<string, string> {
 }
 
 /**
+ * Environment for everything ninja spawns (ConfigureResult.env).
+ *
+ * The stream.ts wrappers, fetch-cli.ts and the src/codegen scripts are all
+ * bun processes. Each one starts numberOfGCMarkers - 1 HeapHelper threads
+ * (7 on an 8+ core host) at its first GC, so even a wrapper that only pipes
+ * a child's output holds ~14 threads, and a cold build starts about twenty
+ * of them at once next to cargo/rustc. In a container with a 512 task pids
+ * limit that was over the limit: pthread_create failed in the helpers and
+ * WTF::Thread::create aborted them ("abort() called" from fetch-cli.ts and
+ * cppbind.ts on the first `bun bd` in a fresh container, fine on the second).
+ * One marker removes those threads with no measurable change in the scripts'
+ * wall time. useConcurrentJIT=false would save one more thread per process
+ * but doubles cppbind.ts's run time. Whichever bun runs the helpers parses
+ * this and exits on an option name it doesn't know, so only long-standing
+ * JSC option names belong here.
+ */
+export function buildEnv(cfg: Config): Record<string, string> {
+  return {
+    ...ccacheEnv(cfg),
+    BUN_JSC_numberOfGCMarkers: "1",
+  };
+}
+
+/**
  * Configure: resolve config → emit build.ninja. Returns the resolved config
  * and emitted build info.
  *
@@ -385,5 +409,5 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");
 
-  return { cfg, output, ninjaFile, env: ccacheEnv(cfg), elapsed, changed, exe };
+  return { cfg, output, ninjaFile, env: buildEnv(cfg), elapsed, changed, exe };
 }

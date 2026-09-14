@@ -1535,6 +1535,7 @@ interface BuildMetafile {
         path: string;
         kind: ImportKind;
         original?: string; // Original specifier before resolution
+        entryPoint?: string; // import() / require() split into another output file: the input that file was built from
         external?: boolean;
       }>;
       format?: "esm" | "cjs" | "json" | "css";

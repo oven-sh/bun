@@ -518,6 +518,84 @@ describe("createHash", () => {
     expect(copy.digest("hex")).toBe(hash.digest("hex"));
   });
 
+  // end() takes the digest in _flush. After that update() and copy() must
+  // throw (SHA-3 used to spin forever in BoringSSL's keccak absorb loop, other
+  // digests kept hashing from a zeroed state) while a zero-length update()
+  // and one explicit digest() still work, as in Node. Runs in a child because
+  // the unfixed behaviour is a hang. sha3-*/sha256 are BoringSSL EVP digests,
+  // blake2b512/shake128 take the ExternZigHash path.
+  it("update() and copy() after the stream has ended throw instead of reusing finalized state", async () => {
+    const algorithms = ["sha3-256", "sha3-512", "sha256", "blake2b512", "shake128"];
+    const script = `
+      const crypto = require("node:crypto");
+      const code = fn => { try { fn(); return "returned"; } catch (e) { return e.code; } };
+      const out = {};
+      for (const algo of ${JSON.stringify(algorithms)}) {
+        const expected = crypto.createHash(algo).update("abc").digest("hex");
+        const h = crypto.createHash(algo);
+        h.update("abc");
+        h.end();
+        out[algo] = {
+          streamed: h.read().toString("hex") === expected,
+          update: code(() => h.update("late")),
+          updateEmpty: code(() => h.update("").update(Buffer.alloc(0))),
+          copy: code(() => h.copy()),
+          digest: h.digest("hex") === expected,
+          digestAgain: code(() => h.digest("hex")),
+          updateEmptyAfterDigest: code(() => h.update("")),
+        };
+      }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: Object.fromEntries(
+        algorithms.map(algo => [
+          algo,
+          {
+            streamed: true,
+            update: "ERR_CRYPTO_HASH_UPDATE_FAILED",
+            updateEmpty: "returned",
+            copy: "ERR_CRYPTO_HASH_FINALIZED",
+            digest: true,
+            digestAgain: "ERR_CRYPTO_HASH_FINALIZED",
+            updateEmptyAfterDigest: "ERR_CRYPTO_HASH_FINALIZED",
+          },
+        ]),
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The reverse order: the readable's 'end' handler calls digest() and pipe()
+  // then ends the hash. Node's _flush pushes the cached digest without the
+  // finalized check; this used to emit ERR_CRYPTO_HASH_FINALIZED instead.
+  it("end() after digest() pushes the cached digest and keeps the hash finalized", async () => {
+    for (const algo of ["sha3-256", "sha256", "blake2b512"]) {
+      const expected = crypto.createHash(algo).update("abc").digest();
+      const hash = crypto.createHash(algo);
+      hash.update("abc");
+      expect(hash.digest()).toEqual(expected);
+
+      const chunks = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+      hash.on("data", chunk => chunks.push(chunk));
+      hash.on("end", resolve);
+      hash.on("error", reject);
+      hash.end();
+      await promise;
+
+      expect(Buffer.concat(chunks)).toEqual(expected);
+      const finalized = expect.objectContaining({ code: "ERR_CRYPTO_HASH_FINALIZED" });
+      expect(() => hash.update("d")).toThrow(finalized);
+      expect(() => hash.update("")).toThrow(finalized);
+      expect(() => hash.copy()).toThrow(finalized);
+      expect(() => hash.digest()).toThrow(finalized);
+    }
+  });
+
   it("treats a view over a detached ArrayBuffer as empty input", () => {
     const detachedView = () => {
       const ab = new ArrayBuffer(8);

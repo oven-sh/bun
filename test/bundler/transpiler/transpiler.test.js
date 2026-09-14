@@ -3105,6 +3105,22 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`export * as "" from "m"`, `export * as "" from "m"`);
     });
 
+    it("import clause with more than 65535 names", () => {
+      // "a0000, a0001, ... affff": 65536 distinct names. Byte writes into one
+      // Buffer keep this fast on debug builds, where per-name string concat is slow.
+      const hex = Buffer.from("0123456789abcdef");
+      const names = Buffer.alloc(65536 * 7, "a0000, ");
+      for (let i = 0; i < 65536; i++) {
+        names[i * 7 + 1] = hex[i >> 12];
+        names[i * 7 + 2] = hex[(i >> 8) & 15];
+        names[i * 7 + 3] = hex[(i >> 4) & 15];
+        names[i * 7 + 4] = hex[i & 15];
+      }
+      const list = names.toString("latin1", 0, names.length - 2);
+      const out = new Bun.Transpiler({ loader: "js" }).transformSync("import def, {" + list + '} from "./m.js";');
+      expect(out).toBe("import def, { " + list + ' } from "./m.js";\n');
+    });
+
     it("string quote selection", () => {
       expectPrinted_(`console.log("\\n")`, "console.log(`\n`)");
       expectPrinted_(`console.log("\\"")`, `console.log('"')`);

@@ -530,19 +530,6 @@ impl ModuleInfoSlotTableBuilder {
 // Extension shims over the printer-crate types
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Extension constructor: `StringID::from_raw(u32)` — used by
-/// `linker_context::generateChunksInParallel` when rewriting cross-chunk
-/// specifier IDs.
-pub(crate) trait StringIDExt {
-    fn from_raw(raw: u32) -> StringID;
-}
-impl StringIDExt for StringID {
-    #[inline]
-    fn from_raw(raw: u32) -> StringID {
-        StringID(raw)
-    }
-}
-
 /// Bridges the printer-crate `ModuleInfo` builder to the serialized view
 /// JSC consumes.
 pub trait ModuleInfoExt {

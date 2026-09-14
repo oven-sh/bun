@@ -137,3 +137,14 @@ as React Fast Refresh). At that point the visit pass has already consumed all
 resolved `RefTag::Symbol`, and JSX has been lowered to
 `E::Call { was_jsx_element: true }`. Lowering reads that call shape and
 codegen emits it, so the compiled body needs no further visiting.
+
+The visit pass emits two call shapes. The automatic runtime calls
+`jsx(type, {...props, children}, key)` (or `jsxs` / `jsxDEV`). The classic
+runtime, and the automatic runtime when `key` follows a spread, calls
+`factory(type, props | null, ...children)` with `key` left in `props`. The two
+overlap in arity, so lowering tells them apart by the callee
+(`Host::jsx_import_kind`), and codegen picks the shape the visit pass would
+(`Host::is_jsx_classic`, and whether the HIR `key` attribute follows a spread).
+The callee is not an operand of the HIR `JsxExpression`: codegen resolves the
+classic factory again (`Host::jsx_classic_factory`). Lowering rejects a factory
+that is a local of the function, because the compiler would drop it as unused.

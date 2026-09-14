@@ -1,42 +1,34 @@
-import { describe, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { afterEach, beforeEach, describe, expect } from "bun:test";
+import { isASAN, isDebug, isWindows } from "harness";
 import { BundlerTestInput, BundlerTestRunOptions, itBundled as itBundledBase } from "./expectBundled";
 
 // `bun build --compile --bytecode --format=esm` embeds a pre-resolved module graph that JSC's loader consumes instead
 // of resolving every import by name at startup. These cases pin ES module linking semantics (cycles, live bindings,
 // star exports, namespaces, TLA, CJS interop) for compiled executables: each executable runs with the graph in use,
 // with the graph cross-checked against the specification's ResolveExport, and with the graph disabled, and all three
-// must print the same thing. Without --splitting the bundle is one module record, so only the entry's own record
-// (its exports, TLA and import.meta flags, dynamic-import roots) comes from the graph; the +splitting variants make
-// every listed entry and every import() target a chunk of its own whose bindings are wired across records.
-// GeneratedGraph+splitting also checks the loader log to prove the graph, not by-name resolution, linked the chunks.
+// must print the same thing and nothing on stderr. Without --splitting the bundle is one module record, so only the
+// entry's own record (its exports, TLA and import.meta flags, dynamic-import roots) comes from the graph; the
+// +splitting variants make every listed entry and every import() target a chunk of its own whose bindings are wired
+// across records. GeneratedGraph+splitting also checks the loader log to prove the graph, not by-name resolution,
+// linked the chunks.
 const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
 
-const hasPrelinkOptions =
-  Bun.spawnSync({
-    cmd: [bunExe(), "-p", "'probe'"],
-    env: { ...bunEnv, BUN_JSC_usePrelinkedModuleInfo: "1" },
-    stdout: "pipe",
-    stderr: "ignore",
-  })
-    .stdout.toString()
-    .trim() === "probe";
-
 type LoaderMode = "graph" | "graph+validate" | "by-name";
-// A bun without the options (an older release run against this file) gets the "graph" expectations only, which the
-// loader-log check in GeneratedGraph+splitting then fails.
-const loaderModes: { mode: LoaderMode; env: Record<string, string> }[] = hasPrelinkOptions
-  ? [
-      { mode: "graph", env: {} },
-      { mode: "graph+validate", env: { BUN_JSC_validatePrelinkedModuleInfo: "1" } },
-      { mode: "by-name", env: { BUN_JSC_usePrelinkedModuleInfo: "0" } },
-    ]
-  : [{ mode: "graph", env: {} }];
+const loaderModes: { mode: LoaderMode; env: Record<string, string> }[] = [
+  { mode: "graph", env: {} },
+  { mode: "graph+validate", env: { BUN_JSC_validatePrelinkedModuleInfo: "1" } },
+  { mode: "by-name", env: { BUN_JSC_usePrelinkedModuleInfo: "0" } },
+];
+
+// Windows looks up a new executable's reputation inside its first CreateProcess (seconds under Smart App Control), and
+// Bun.spawn makes that call on the JS thread, where it stalls every other case in flight. Started through cmd.exe, the
+// wait is cmd.exe's. expectBundled puts bunArgs in front of the executable's path.
+const launcher = isWindows ? ["cmd.exe", "/d", "/c"] : [];
 
 function eachMode(run: (mode: LoaderMode) => BundlerTestRunOptions): BundlerTestRunOptions[] {
   return loaderModes.map(({ mode, env }) => {
     const options = run(mode);
-    return { ...options, env: { ...options.env, ...env } };
+    return { ...options, bunArgs: launcher, env: { ...options.env, ...env } };
   });
 }
 
@@ -71,6 +63,7 @@ function graphCase(id: string, c: GraphCase) {
       ...(entries ? { entryPointsRaw: entries.map(e => "./" + e.replace(/^\//, "")), outfile: "dist/out" } : {}),
       run: eachMode(mode => ({
         stdout: variant(c.stdout, splitting),
+        stderr: "",
         ...(entries ? { file: "dist/out" } : {}),
         ...(splitting ? c.splitRun?.(mode) : {}),
       })),
@@ -78,7 +71,23 @@ function graphCase(id: string, c: GraphCase) {
   }
 }
 
-describe("bundler", () => {
+describe.concurrent("bundler", () => {
+  // Every case links an executable: `bun build --compile` copies the bun binary and writes it again with the bundle
+  // patched in. The 20 links describe.concurrent would start at once ran CI out of memory in bundler_compile.test.ts,
+  // so a case takes a slot first, in beforeEach, where its own timeout is not running yet. An ASAN or debug binary is
+  // about a gigabyte and its link is bound by disk writeback, so those run one at a time.
+  let freeSlots = isASAN || isDebug ? 1 : 3;
+  const waiting: (() => void)[] = [];
+  beforeEach(async () => {
+    if (freeSlots > 0) freeSlots--;
+    else await new Promise<void>(resolve => waiting.push(resolve));
+  }, Infinity);
+  afterEach(() => {
+    const next = waiting.shift();
+    if (next) next();
+    else freeSlots++;
+  });
+
   // (1) cycles: b evaluates before a (entry -> a -> b), calls a hoisted function of a while a is unevaluated, and
   // later reads a's live `counter` binding.
   graphCase("CycleTwoModules", {
@@ -462,16 +471,20 @@ describe("bundler", () => {
       files: { "/entry.ts": files["/entry.ts"], ...files },
       entries: ["/entry.ts", ...Array.from({ length: N }, (_, i) => `/m${i}.ts`)],
       stdout: [value[0], value[30], exportsOf(0).size, exportsOf(12).size, exportsOf(24).size, sum].join(" "),
-      // JSC logs one line per host-hook call. All 63 records (entry chunk, 60 module chunks, the shared chunk and
-      // runtime chunk) evaluate either way; with the graph in use only the roots (bun:main, the entry, the import()
-      // of m24) go through the host's resolve, without it every cross-chunk import does.
+      // JSC logs one line per host-hook call, and nothing else may be on stderr. All 63 records (entry chunk, 60 module
+      // chunks, the shared chunk and runtime chunk) evaluate either way, and only the roots (bun:main, the entry, the
+      // import() of m24) are fetched. With the graph in use only those roots go through the host's resolve (bun:main
+      // and m24 twice each), without it every cross-chunk import statement does too.
       splitRun: mode => ({
         env: { BUN_JSC_dumpModuleLoadingState: "1" },
+        stderr: undefined, // the log, checked line by line below
         validate({ stderr }) {
-          const count = (kind: string) => stderr.split("\n").filter(l => l.startsWith(`Loader [${kind}] `)).length;
-          expect(count("evaluate")).toBe(63);
-          if (mode === "by-name") expect(count("resolve")).toBeGreaterThan(63);
-          else expect(count("resolve")).toBeLessThanOrEqual(6);
+          const hookCalls: Record<string, number> = {};
+          for (const line of stderr.trim().split("\n")) {
+            const hook = /^Loader \[(\w+)\] /.exec(line)?.[1] ?? `not a loader line: ${line}`;
+            hookCalls[hook] = (hookCalls[hook] ?? 0) + 1;
+          }
+          expect(hookCalls).toEqual({ resolve: mode === "by-name" ? 252 : 5, fetch: 3, evaluate: 63, import: 1 });
         },
       }),
     });

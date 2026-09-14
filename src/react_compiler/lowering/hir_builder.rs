@@ -758,9 +758,9 @@ impl<'h> HirBuilder<'h> {
         self.is_nested_function
     }
 
-    /// A promoted temporary that `build` declares with `let` at the top of the
-    /// function. A value block cannot hold a declaration, but it can assign
-    /// this.
+    /// Intentional deviation, for `lower_update`: a promoted temporary that
+    /// `build` declares with `let` at the top of the function. A value block
+    /// cannot hold a declaration, but it can assign this.
     pub(crate) fn declare_temporary_at_entry(&mut self, loc: Option<SourceLocation>) -> Place {
         let identifier = self.make_temporary(loc);
         self.env.promote_temporary(identifier);

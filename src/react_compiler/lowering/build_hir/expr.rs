@@ -372,7 +372,7 @@ fn lower_binary(
     let loc = convert_loc(bun_loc);
 
     match bin.op {
-        BinComma => lower_sequence(builder, bin, loc),
+        BinComma => lower_sequence(builder, bin, loc, true),
         BinLogicalOr | BinLogicalAnd | BinNullishCoalescing => lower_logical(builder, bin, loc),
         BinAssign => lower_simple_assignment(builder, bin, loc),
         BinAddAssign | BinSubAssign | BinMulAssign | BinDivAssign | BinRemAssign | BinPowAssign
@@ -607,6 +607,7 @@ fn lower_sequence(
     builder: &mut HirBuilder,
     bin: &E::Binary,
     loc: Option<SourceLocation>,
+    value_is_used: bool,
 ) -> Result<InstructionValue, CompilerError> {
     lower_in_sequence_block(builder, loc, |builder| {
         fn flatten_comma(builder: &mut HirBuilder, e: &Expr) -> Result<Place, CompilerError> {
@@ -616,10 +617,14 @@ fn lower_sequence(
                     return flatten_comma(builder, &b.right);
                 }
             }
-            lower_expression_to_temporary(builder, e)
+            lower_expression_for_effect(builder, e)
         }
         flatten_comma(builder, &bin.left)?;
-        lower_expression_to_temporary(builder, &bin.right)
+        if value_is_used {
+            lower_expression_to_temporary(builder, &bin.right)
+        } else {
+            flatten_comma(builder, &bin.right)
+        }
     })
 }
 
@@ -939,32 +944,41 @@ fn lower_compound_assignment_identifier(
                 effect: Effect::Unknown,
                 loc: ident_loc,
             };
-            if builder.is_context_identifier(ref_) {
-                lower_value_to_temporary(
-                    builder,
-                    InstructionValue::StoreContext {
-                        lvalue: LValue {
-                            kind: InstructionKind::Reassign,
-                            place: place.clone(),
-                        },
-                        value: binary_place,
-                        loc,
+            let is_context = builder.is_context_identifier(ref_);
+            let store = if is_context {
+                InstructionValue::StoreContext {
+                    lvalue: LValue {
+                        kind: InstructionKind::Reassign,
+                        place: place.clone(),
                     },
-                )?;
+                    value: binary_place,
+                    loc,
+                }
+            } else {
+                InstructionValue::StoreLocal {
+                    lvalue: LValue {
+                        kind: InstructionKind::Reassign,
+                        place: place.clone(),
+                    },
+                    value: binary_place,
+                    type_annotation: None,
+                    loc,
+                }
+            };
+            let temp = lower_value_to_temporary(builder, store)?;
+            // Intentional deviation: upstream drops the temporary of the store
+            // and returns a load of `x`. The store is then a statement, and in
+            // a nested function no pass names the operands that come before
+            // it: `[x, x += 1]` gave `[1, 1]`. The value of the store keeps the
+            // assignment in place, as for `x = y`.
+            if builder.is_nested_function() {
+                Ok(InstructionValue::LoadLocal {
+                    loc: temp.loc,
+                    place: temp,
+                })
+            } else if is_context {
                 Ok(InstructionValue::LoadContext { place, loc })
             } else {
-                lower_value_to_temporary(
-                    builder,
-                    InstructionValue::StoreLocal {
-                        lvalue: LValue {
-                            kind: InstructionKind::Reassign,
-                            place: place.clone(),
-                        },
-                        value: binary_place,
-                        type_annotation: None,
-                        loc,
-                    },
-                )?;
                 Ok(InstructionValue::LoadLocal { place, loc })
             }
         }
@@ -1051,20 +1065,25 @@ fn lower_unary(
     }
 }
 
-/// Lowers an expression statement or the update of a `for`: nothing reads
-/// the value.
+/// Intentional deviation: upstream has no such entry point. Lowers an expression
+/// whose value nothing reads: an expression statement, the update of a `for`, or
+/// an operand of a comma that is not the last one (`minify.syntax` joins
+/// `o.p++; o.q++;` into `o.p++, o.q++;`). `lower_update` needs to know.
 pub(super) fn lower_expression_for_effect(
     builder: &mut HirBuilder,
     expr: &Expr,
-) -> Result<(), CompilerError> {
+) -> Result<Place, CompilerError> {
+    let loc = convert_loc(expr.loc);
     let value = match &expr.data {
         Data::EUnary(unary) if matches!(unary.op, OpCode::UnPostInc | OpCode::UnPostDec) => {
-            lower_update(builder, unary, convert_loc(expr.loc), false)?
+            lower_update(builder, unary, loc, false)?
+        }
+        Data::EBinary(bin) if bin.op == OpCode::BinComma => {
+            lower_sequence(builder, bin, loc, false)?
         }
         _ => lower_expression(builder, expr)?,
     };
-    lower_value_to_temporary(builder, value)?;
-    Ok(())
+    lower_value_to_temporary(builder, value)
 }
 
 fn lower_update(

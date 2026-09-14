@@ -337,8 +337,10 @@ impl Sema {
 
     /// `(x << n) | (x >> (W - n))` and `(x << (n & (W-1))) | (x >> (-n & (W-1)))` for an
     /// unsigned 32- or 64-bit `x`, and their mirror images: a rotation. `a` and `b` are the
-    /// converted operands of `|`, `+` or `^` (all the same when no bit is in both).
-    pub(crate) fn rotation(&self, a: &Expr, b: &Expr, loc: Loc) -> Option<Expr> {
+    /// converted operands of `joined_by`, which is `|`, `+` or `^`: all the same when no bit is in
+    /// both halves, which is so for every count the first form is defined for. The second form is
+    /// defined for a count of nothing too, where both halves are `x` and only `|` makes `x` of them.
+    pub(crate) fn rotation(&self, joined_by: BinOp, a: &Expr, b: &Expr, loc: Loc) -> Option<Expr> {
         let (ExprKind::Binary(op_a, xa, na), ExprKind::Binary(op_b, xb, nb)) = (&a.kind, &b.kind)
         else {
             return None;
@@ -425,6 +427,8 @@ impl Sema {
                 Some((left_count, true))
             } else if complement(left_count, true).is_some_and(|n| same(&n, right_count)) {
                 Some((right_count, false))
+            } else if joined_by != BinOp::Or {
+                None
             } else {
                 match (masked(left_count), masked(right_count)) {
                     (Some(l), Some(r)) if complement(&r, false).is_some_and(|n| same(&n, &l)) => {

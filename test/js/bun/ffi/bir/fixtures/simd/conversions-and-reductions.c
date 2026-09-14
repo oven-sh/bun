@@ -41,8 +41,8 @@ static void bun_test_show(bun_test_bytes v) {
 int main(void) {
   bun_test_show((bun_test_bytes)to_float((int __attribute__((vector_size(16))))(bun_test_bytes){1, 0, 0, 0, 254, 255, 255, 255, 44, 1, 0, 0, 0, 0, 0, 0}));
   bun_test_show((bun_test_bytes)unsigned_to_float((unsigned int __attribute__((vector_size(16))))(bun_test_bytes){255, 255, 255, 255, 2, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0}));
-  bun_test_show((bun_test_bytes)to_int((float __attribute__((vector_size(16))))(bun_test_bytes){51, 51, 243, 63, 154, 153, 57, 192, 236, 120, 173, 96, 0, 0, 192, 127}));
-  bun_test_show((bun_test_bytes)to_unsigned((float __attribute__((vector_size(16))))(bun_test_bytes){0, 0, 96, 64, 0, 0, 0, 192, 40, 107, 110, 79, 0, 0, 0, 0}));
+  bun_test_show((bun_test_bytes)to_int((float __attribute__((vector_size(16))))(bun_test_bytes){51, 51, 243, 63, 154, 153, 57, 192, 0, 0, 0, 207, 255, 255, 255, 78}));
+  bun_test_show((bun_test_bytes)to_unsigned((float __attribute__((vector_size(16))))(bun_test_bytes){0, 0, 96, 64, 164, 112, 125, 63, 40, 107, 110, 79, 0, 0, 0, 0}));
   bun_test_show((bun_test_bytes)long_to_double((long long __attribute__((vector_size(16))))(bun_test_bytes){251, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 1, 0, 0}));
   bun_test_show((bun_test_bytes)double_to_long((double __attribute__((vector_size(16))))(bun_test_bytes){154, 153, 153, 153, 153, 153, 31, 192, 0, 0, 0, 162, 148, 26, 109, 66}));
   bun_test_show((bun_test_bytes)same_width((int __attribute__((vector_size(16))))(bun_test_bytes){255, 255, 255, 255, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0}));

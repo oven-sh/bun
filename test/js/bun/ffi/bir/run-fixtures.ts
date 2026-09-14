@@ -3,8 +3,19 @@ import { bunEnv, bunExe, isArm64, isGlibc, isMacOS, isWindows, tempDir } from "h
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
-// Where Bun's own C compiler (bun_cc + JavaScriptCore's B3) has run these tests.
-export const supported = (isGlibc && !isArm64) || (isMacOS && isArm64) || (isWindows && !isArm64 && microsoftHeaders());
+// Where Bun compiles C: a fact about the platform, which is what the product goes by too.
+export const supported = (isGlibc && !isArm64) || (isMacOS && isArm64) || (isWindows && !isArm64);
+
+// What the tests need beyond that is a C library's headers. Where they come with the system or its developer tools,
+// a machine without them fails at the first `#include <stdio.h>`, in words that say so. On Windows they are
+// Microsoft's, installed apart, and without them nothing here could run: that is an error for whoever set the machine
+// up to see, not a reason to skip two thousand tests.
+if (supported && isWindows && !microsoftHeaders()) {
+  throw new Error(
+    "The C tests need Visual Studio's C headers and the Windows SDK's (<vcruntime.h>, <stdio.h>): neither INCLUDE nor " +
+      "'Windows Kits\\10\\Include' and 'Microsoft Visual Studio' under Program Files has them on this machine.",
+  );
+}
 
 // Visual Studio's and the Windows SDK's headers: named by a developer prompt, or where the compiler looks for them
 // (the SDK has <stdio.h>, Visual Studio has <vcruntime.h>, which <stdio.h> includes).
@@ -26,8 +37,8 @@ function microsoftHeaders() {
  * `x87` (80-bit `long double`: x86-64 outside Windows), `x64-sysv` (the System V calling convention for x86-64), `glibc` (its symbols or headers), `posix` (headers and
  * functions Windows does not have), `lp64` (a 64-bit `long`: not Windows), `sysv` (the System V layout of bit-fields
  * and choice of enumeration types, which Windows does not share), `c99-inline` (C99's and GNU C's rules for which
- * `inline` definitions other files see: Microsoft C has its own), `windows` (where `supported` means Visual
- * Studio's and the Windows SDK's headers are installed), or `uchar` (a C library with `<uchar.h>`: not Apple's).
+ * `inline` definitions other files see: Microsoft C has its own), `windows` (Microsoft's headers and C library), or
+ * `uchar` (a C library with `<uchar.h>`: not Apple's).
  * Several of them, separated by white space, must all hold.
  */
 export function meets(requirement: string | undefined): boolean {
@@ -65,8 +76,15 @@ export function meets(requirement: string | undefined): boolean {
 // machine's own to find, is it how the tests are told where a C library's are.
 const ambientIncludePath = isWindows ? (process.env.C_INCLUDE_PATH ?? "") : "";
 
-/** What the tests run `bun` with: `bunEnv`, and a C_INCLUDE_PATH that is the tests' own. */
-export const cEnv: Record<string, string | undefined> = { ...bunEnv, C_INCLUDE_PATH: ambientIncludePath || undefined };
+/**
+ * What the tests run `bun` with: `bunEnv`, a C_INCLUDE_PATH that is the tests' own, and no report sent anywhere when a
+ * program is meant to end in a fault.
+ */
+export const cEnv: Record<string, string | undefined> = {
+  ...bunEnv,
+  C_INCLUDE_PATH: ambientIncludePath || undefined,
+  BUN_ENABLE_CRASH_REPORTING: "0",
+};
 
 /** A C_INCLUDE_PATH of `directories` (then, on Windows, whatever the variable already names). */
 export function includePath(...directories: string[]) {
@@ -92,15 +110,20 @@ function requirementIn(path: string) {
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 }
 
-export async function run(cwd: string, args: string[], env: Record<string, string | undefined> = cEnv) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
+/** `text`, `count` times over. */
+export const repeated = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
 
-/** Runs the program at `exe` in `cwd`; what it printed and how it ended. */
-async function runProgram(exe: string, cwd: string) {
-  await using proc = Bun.spawn({ cmd: [exe], env: cEnv, cwd, stdout: "pipe", stderr: "pipe" });
+/** What `bun build --compile --outfile program` makes, by name. */
+export const programName = isWindows ? "program.exe" : "program";
+
+/** Runs `exe` (this `bun`, unless another program is named) with `args` in `cwd`; what it printed and how it ended. */
+export async function run(
+  cwd: string,
+  args: string[],
+  env: Record<string, string | undefined> = cEnv,
+  exe: string = bunExe(),
+) {
+  await using proc = Bun.spawn({ cmd: [exe, ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -121,7 +144,7 @@ async function bundle(dir: string, out: string, entries: string[]) {
  * the way is made next to where it ends up (and goes away with `out`); the path of the executable.
  */
 async function compile(dir: string, out: string, entries: string[]) {
-  const exe = join(out, isWindows ? "program.exe" : "program");
+  const exe = join(out, programName);
   const build = await run(out, ["build", "--compile", ...entries.map(entry => join(dir, entry)), "--outfile", exe]);
   expect(build.stderr).not.toContain("error:");
   expect(build.exitCode, build.stderr).toBe(0);
@@ -184,21 +207,27 @@ const compiledPerArea = 1;
  * A `<name>.ts` next to it is run (and built) instead when the C file is easier to check by calling into it.
  * A fixture whose `<name>.requires` names something this machine is not is reported as skipped.
  * One with a `<name>.switches` is run once more for every setting that file lists, and must do the same.
- * `failing` names the fixtures the real backend gets wrong today, with the reason.
+ * One more test says that every file of the directory is a fixture's or is used by one (see `strays`).
  */
-export function runFixtures(area: string, failing: Record<string, string> = {}) {
+export function runFixtures(area: string) {
   const dir = join(import.meta.dir, "fixtures", area);
   const names = [...new Bun.Glob("*.c").scanSync(dir)].map(file => file.slice(0, -2)).sort();
+  const isFixture = (name: string) =>
+    existsSync(join(dir, `${name}.expected`)) || existsSync(join(dir, `${name}.values.json`));
   describe.skipIf(!supported)(area, () => {
+    test("every file belongs to a fixture", () => {
+      expect(strays(dir, new Set(names.filter(isFixture)))).toEqual([]);
+    });
     let compiled = 0;
     for (const name of names) {
       const expectedPath = join(dir, `${name}.expected`);
       const valuesPath = join(dir, `${name}.values.json`);
-      // A C file without an expectation is part of another fixture (a second translation unit, an include).
-      if (!existsSync(expectedPath) && !existsSync(valuesPath)) continue;
+      // A C file without an expectation is part of another fixture (a second translation unit, an include): `strays`
+      // checks that one names it.
+      if (!isFixture(name)) continue;
       const applies = meets(requirementIn(join(dir, `${name}.requires`)));
-      const declare = name in failing ? test.failing : test.concurrent;
-      const title = name in failing ? `${name} (${failing[name]})` : name;
+      const declare = test.concurrent;
+      const title = name;
       const entry = existsSync(join(dir, `${name}.ts`)) ? `${name}.ts` : `${name}.c`;
       const check = (result: Result) =>
         existsSync(valuesPath)
@@ -219,14 +248,41 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
         using out = tempDir(`bir-${name}`, {});
         check(await run(dir, [await bundle(dir, String(out), [entry])]));
       });
-      if (applies && !(name in failing) && compiled++ < compiledPerArea) {
+      if (applies && compiled++ < compiledPerArea) {
         declare(`${title} (compiled)`, async () => {
           using out = tempDir(`bir-${name}`, {});
-          check(await runProgram(await compile(dir, String(out), [entry]), dir));
+          check(await run(dir, [], cEnv, await compile(dir, String(out), [entry])));
         });
       }
     }
   });
+}
+
+/**
+ * The files of fixture directory `dir` that no test would ever look at: a side file (`.expected`, `.values.json`,
+ * `.requires`, `.status`, `.switches`) whose name is no fixture's, as a misspelt or renamed one is, and a `.c`, `.h` or
+ * `.ts` that is not a fixture's own and that no other file of the directory names (one fixture's second translation
+ * unit, include or helper is named by it). `fixtures` are the names of the directory's fixtures.
+ */
+function strays(dir: string, fixtures: Set<string>) {
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter(entry => entry.isFile())
+    .map(entry => entry.name);
+  const sources = files.filter(file => /\.(c|h|ts)$/.test(file));
+  const texts = new Map(sources.map(file => [file, readFileSync(join(dir, file), "utf8")]));
+  // (By its name without the extension: an import leaves `.ts` off, and a macro may put `.h` on.)
+  const named = (file: string) =>
+    sources.some(other => other !== file && texts.get(other)!.includes(file.replace(/\.\w+$/, "")));
+  return files
+    .filter(file => {
+      if (file === "NOTICE" || file === "LICENSE") return false;
+      const side = /^(.*)\.(expected|values\.json|requires|status|switches)$/.exec(file);
+      if (side) return !fixtures.has(side[1]);
+      const source = /^(.*)\.(c|h|ts)$/.exec(file);
+      if (source) return !(source[2] !== "h" && fixtures.has(source[1])) && !named(file);
+      return true;
+    })
+    .sort();
 }
 
 /**
@@ -236,7 +292,7 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
  * `compiledPerArea` of an area get a second: the same files built into a standalone executable
  * (`bun build --compile main.c <the others> --outfile …`), which must do the same.
  */
-export function runProjects(area: string, failing: Record<string, string> = {}) {
+export function runProjects(area: string) {
   const root = join(import.meta.dir, "fixtures", area);
   const names = readdirSync(root, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
@@ -247,8 +303,18 @@ export function runProjects(area: string, failing: Record<string, string> = {}) 
     for (const name of names) {
       const dir = join(root, name);
       const applies = meets(requirementIn(join(dir, "requires")));
-      const declare = name in failing ? test.failing : test.concurrent;
-      const title = name in failing ? `${name} (${failing[name]})` : name;
+      const declare = test.concurrent;
+      const title = name;
+      // (A project is its C files and headers, what it must print or report, and what it needs; a file of any other
+      // name, `main.requires` for one, is a slip.)
+      test(`${name}: every file is the project's`, () => {
+        const others = readdirSync(dir).filter(
+          file => !/\.[ch]$/.test(file) && !["expected", "values.json", "status", "requires"].includes(file),
+        );
+        expect(others).toEqual([]);
+        expect(existsSync(join(dir, "main.c"))).toBe(true);
+        expect(existsSync(join(dir, "expected")) || existsSync(join(dir, "values.json"))).toBe(true);
+      });
       const units = () => [
         "main.c",
         ...[...new Bun.Glob("*.c").scanSync(dir)].filter(file => file !== "main.c").sort(),
@@ -261,10 +327,10 @@ export function runProjects(area: string, failing: Record<string, string> = {}) 
         using out = tempDir(`bir-${name}`, {});
         check(await run(dir, [await bundle(dir, String(out), units())]));
       });
-      if (applies && !(name in failing) && compiled++ < compiledPerArea) {
+      if (applies && compiled++ < compiledPerArea) {
         declare(`${title} (compiled)`, async () => {
           using out = tempDir(`bir-${name}`, {});
-          check(await runProgram(await compile(dir, String(out), units()), dir));
+          check(await run(dir, [], cEnv, await compile(dir, String(out), units())));
         });
       }
     }

@@ -91,6 +91,19 @@ fn compile_and_link(
     let system_include_dirs = files::system_include_dirs(target);
     for unit in units {
         files_read.push(unit.path.to_string());
+        // (What `#include` would say of a file like it.)
+        if unit.contents.len() as u64 > files::MAX_SOURCE_BYTES {
+            let text = format!(
+                "'{}' cannot be read: larger than {} bytes",
+                unit.path,
+                files::MAX_SOURCE_BYTES
+            );
+            diagnostics::add(
+                log,
+                diagnostics::message_in_file(Kind::Err, unit.path, text),
+            );
+            return None;
+        }
         let one = compile_unit(unit, target, &system_include_dirs, log, files_read)?;
         compiled.push(one.unit);
         undefined_tls.push(one.undefined_tls);

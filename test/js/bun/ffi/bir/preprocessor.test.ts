@@ -98,4 +98,37 @@ int main(void) {
       expect(exitCode).not.toBe(0);
     });
   }
+
+  // Two hundred files may be open at once, the one being compiled among them: a chain of 199 headers under it is
+  // read to its end, and one of 200 is not.
+  for (const [depth, outcome] of [
+    [1, "1\n"],
+    [198, "198\n"],
+    [199, "199\n"],
+    [200, null],
+    [201, null],
+    [1000, null],
+  ] as const) {
+    test.concurrent(`a chain of ${depth} headers, each including the next`, async () => {
+      const chain: Record<string, string> = {};
+      for (let i = 1; i <= depth; i++)
+        chain[`h${i}.h`] = i < depth ? `#include "h${i + 1}.h"\n` : `#define DEEPEST ${depth}\n`;
+      using dir = tempDir("bir-include-depth", {
+        ...chain,
+        "main.c": '#include "h1.h"\n#include <stdio.h>\nint main(void) { printf("%d\\n", DEEPEST); return 0; }\n',
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ["main.c"]);
+      if (outcome !== null) {
+        expect(lines(stdout), stderr).toBe(outcome);
+        expect(exitCode).toBe(0);
+      } else {
+        // (Said of the #include that was one too many, in the 200th file.)
+        expect(lines(stderr).replaceAll(String(dir) + sep, "")).toContain(
+          "error: #include is nested too deeply\n    at h199.h:1:2\n",
+        );
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+      }
+    });
+  }
 });

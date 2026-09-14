@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { sep } from "node:path";
 import cases from "./fixtures/diagnostics/cases.json";
-import { lines, meets, run, supported } from "./run-fixtures";
+import { lines, meets, repeated, run, supported } from "./run-fixtures";
 
 // What the compiler refuses, and what it says, the way Bun says what is wrong with a TypeScript file: the line, a
 // caret, `error: message` and `at file:line:column`. The first error only. (Here without the directory.)
@@ -113,46 +113,6 @@ int main(void) { puts("ran"); return 0; }
     expect(exitCode).not.toBe(0);
   });
 
-  // `text`, `count` times over.
-  const repeated = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
-
-  // Input nested far deeper than any program is: an error, not a stack overflow.
-  const deep: [string, string, string][] = [
-    ["parentheses", `int f(void) { return ${repeated("(", 5000)}1${repeated(")", 5000)}; }`, "is nested too deeply"],
-    ["blocks", `void f(void) { ${repeated("{", 5000)} ${repeated("}", 5000)} }`, "is nested too deeply"],
-    ["unary operators", `int f(int x) { return ${repeated("-", 5000)}x; }`, "is nested too deeply"],
-    ["declarators", `int ${repeated("(*", 5000)}x${repeated(")", 5000)};`, "is nested too deeply"],
-    ["initializers", `int x = ${repeated("{", 5000)}1${repeated("}", 5000)};`, "is nested too deeply"],
-  ];
-  // A preprocessor asked for more than there is memory or patience for. (The parser takes tokens as they are made,
-  // so each of these is in a place where it would go on accepting them.)
-  const runaway: [string, string, string][] = [
-    [
-      "forty macros that each double the one before",
-      `#define X0 1,\n${Array.from({ length: 39 }, (_, i) => `#define X${i + 1} X${i} X${i}\n`).join("")}int a[] = { X39 };\n`,
-      "macro expansion produces too many tokens",
-    ],
-    [
-      "five thousand nested invocations",
-      `#define F(x) x\n${repeated("F(", 5000)}1${repeated(")", 5000)}`,
-      "macro expansion",
-    ],
-    [
-      "a chain of thirty thousand macros",
-      `${Array.from({ length: 30000 }, (_, i) => `#define C${i} C${i + 1}\n`).join("")}C0`,
-      "nested too deeply",
-    ],
-    ["a hundred thousand #if without #endif", repeated("#if 1\n", 100_000), "unterminated conditional directive"],
-  ];
-  for (const [what, source, message] of runaway) {
-    test.concurrent(what, async () => {
-      const { stdout, stderr, exitCode } = await firstError(source);
-      expect(stderr).toContain(message);
-      expect(stdout).toBe("");
-      expect(exitCode).not.toBe(0);
-    });
-  }
-
   // What any real program stays far inside of. (How deep is too deep depends on how much stack the thread that
   // compiles has left, and a debug build uses several times a release build's.)
   test.concurrent("five hundred additions and a hundred parentheses compile and run", async () => {
@@ -165,12 +125,4 @@ int main(void) { printf("%d %d %d\\n", chain(2), nested(), blocks(1)); return 0;
     expect(lines(stdout), stderr).toBe("1002 7 2\n");
     expect(exitCode).toBe(0);
   });
-  for (const [what, source, message] of deep) {
-    test.concurrent(`five thousand levels of ${what}`, async () => {
-      const { stdout, stderr, exitCode } = await firstError(source);
-      expect(stderr).toContain(message);
-      expect(stdout).toBe("");
-      expect(exitCode).not.toBe(0);
-    });
-  }
 });

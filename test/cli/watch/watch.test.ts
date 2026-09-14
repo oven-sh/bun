@@ -486,50 +486,61 @@ function openPaths(pid: number): string[] {
 // never registers. On macOS each one is an fd for the life of the dev
 // server, and a monorepo with the isolated linker reached tens of thousands
 // of them (#42702).
-it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
-  "--watch holds no file descriptors for paths under node_modules",
-  async () => {
-    using dir = tempDir("watch-node-modules-fds", {
-      "main.ts": `import { x } from "dep";
+for (const [mode, args] of [
+  ["--watch", ["--watch", "--no-clear-screen", "main.ts"]],
+  ["--hot", ["--hot", "--no-clear-screen", "main.ts"]],
+  ["test --watch", ["test", "--watch", "main.test.ts"]],
+] as const) {
+  it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+    `${mode} holds no file descriptors for paths under node_modules`,
+    async () => {
+      using dir = tempDir("watch-node-modules-fds", {
+        "main.ts": `import { x } from "dep";
 import { y } from "dep2";
 console.log("ready", x, y);
 setInterval(() => {}, 1e6);
 `,
-      "node_modules/dep/package.json": JSON.stringify({
-        name: "dep",
-        type: "module",
-        exports: { ".": { import: "./dist/esm/index.js" } },
-      }),
-      "node_modules/dep/dist/esm/index.js": "export const x = 1;",
-      // The layout of the isolated linker: the real package lives under
-      // node_modules/.bun and node_modules/dep2 is a symlink to it.
-      "node_modules/.bun/dep2@1.0.0/node_modules/dep2/package.json": JSON.stringify({
-        name: "dep2",
-        type: "module",
-        main: "./dist/index.js",
-      }),
-      "node_modules/.bun/dep2@1.0.0/node_modules/dep2/dist/index.js": "export const y = 2;",
-    });
-    const cwd = realpathSync(String(dir));
-    symlinkSync(join(".bun", "dep2@1.0.0", "node_modules", "dep2"), join(cwd, "node_modules", "dep2"));
+        "main.test.ts": `import { test } from "bun:test";
+import { x } from "dep";
+import { y } from "dep2";
+test("ready", () => console.log("ready", x, y));
+`,
+        "node_modules/dep/package.json": JSON.stringify({
+          name: "dep",
+          type: "module",
+          exports: { ".": { import: "./dist/esm/index.js" } },
+        }),
+        "node_modules/dep/dist/esm/index.js": "export const x = 1;",
+        // The layout of the isolated linker: the real package lives under
+        // node_modules/.bun and node_modules/dep2 is a symlink to it.
+        "node_modules/.bun/dep2@1.0.0/node_modules/dep2/package.json": JSON.stringify({
+          name: "dep2",
+          type: "module",
+          main: "./dist/index.js",
+        }),
+        "node_modules/.bun/dep2@1.0.0/node_modules/dep2/dist/index.js": "export const y = 2;",
+      });
+      const cwd = realpathSync(String(dir));
+      symlinkSync(join(".bun", "dep2@1.0.0", "node_modules", "dep2"), join(cwd, "node_modules", "dep2"));
 
-    watchee = spawn({
-      cwd,
-      cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-      stdin: "ignore",
-    });
-    const waiter = stdoutWaiter(watchee);
-    await waiter.waitFor("ready 1 2");
+      watchee = spawn({
+        cwd,
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      const waiter = stdoutWaiter(watchee);
+      await waiter.waitFor("ready 1 2");
 
-    const held = openPaths(watchee.pid);
-    waiter.release();
+      const held = openPaths(watchee.pid);
+      waiter.release();
 
-    // stdin, stdout and stderr are always there, so an empty list means the
-    // listing failed rather than that nothing is held.
-    expect(held.length).toBeGreaterThan(0);
-    expect(held.filter(p => p.startsWith(cwd) && p.includes("node_modules"))).toEqual([]);
-  },
-);
+      // stdin, stdout and stderr are always there, so an empty list means the
+      // listing failed rather than that nothing is held.
+      expect(held.length).toBeGreaterThan(0);
+      expect(held.filter(p => p.startsWith(cwd) && p.includes("node_modules"))).toEqual([]);
+    },
+  );
+}

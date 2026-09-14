@@ -71,3 +71,9 @@ extern "C" void* Bun__NativePromiseContext__take(JSC::EncodedJSValue encodedValu
     auto* cell = uncheckedDowncast<Bun::NativePromiseContext>(JSC::JSValue::decode(encodedValue));
     return cell->take();
 }
+
+extern "C" JSC::EncodedJSValue Bun__NativePromiseContext__held(JSC::EncodedJSValue encodedValue)
+{
+    auto* cell = uncheckedDowncast<Bun::NativePromiseContext>(JSC::JSValue::decode(encodedValue));
+    return JSC::JSValue::encode(cell->held());
+}

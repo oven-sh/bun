@@ -6398,6 +6398,11 @@ declare module "bun" {
      * This function may be called in the same tick that it is registered, or it
      * may be called later. It may be called multiple times for different
      * targets.
+     *
+     * If `setup` returns a promise, {@link Bun.build} runs the next plugin after
+     * the promise fulfills. `Bun.build` does not block while the promise is
+     * pending. If the promise rejects after `Bun.build` returned, the promise
+     * that `Bun.build` returned rejects with the same reason.
      */
     setup(
       /**

@@ -4473,6 +4473,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onResolveInputStream;
     } else if (handler == Bun__HTMLRewriter__onRejectInputStream) {
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream;
+    } else if (handler == Bun__JSBundler__onPluginSetupResolve) {
+        return GlobalObject::PromiseFunctions::Bun__JSBundler__onPluginSetupResolve;
+    } else if (handler == Bun__JSBundler__onPluginSetupReject) {
+        return GlobalObject::PromiseFunctions::Bun__JSBundler__onPluginSetupReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

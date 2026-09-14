@@ -376,6 +376,9 @@ export function runSetupFunction(
   if (setupResult && $isPromise(setupResult)) {
     if ($peekPromiseStatus(setupResult) === 1) {
       setupResult = $peekPromiseSettledValue(setupResult);
+    } else if ($peekPromiseStatus(setupResult) === 2) {
+      $pokePromiseAsHandled(setupResult);
+      throw $peekPromiseSettledValue(setupResult);
     } else {
       return setupResult.$then(() => {
         let selfPromises;
@@ -390,6 +393,10 @@ export function runSetupFunction(
 
   let pendingPromises;
   if (is_last && (pendingPromises = this.promises) !== undefined && pendingPromises.length > 0) {
+    for (let i = 0; i < pendingPromises.length; i++) {
+      const promise = pendingPromises[i];
+      if ($peekPromiseStatus(promise) === 2) throw $peekPromiseSettledValue(promise);
+    }
     const awaitAll = Promise.all(pendingPromises);
     return awaitAll.$then(processSetupResult);
   }

@@ -85,6 +85,8 @@ await Bun.build({
 });
 ```
 
+`setup()` can be `async`. `Bun.build` runs the plugins in order, and it runs the next plugin after the promise of the previous `setup()` fulfills. `Bun.build` does not block while that promise is pending. If the promise rejects after `Bun.build` returned, the promise that `Bun.build` returned rejects with the same error.
+
 ## Plugin lifecycle
 
 ### Namespaces

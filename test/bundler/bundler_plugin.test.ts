@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -1893,4 +1894,370 @@ describe("bundler", () => {
       }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
     });
   }
+
+  // Bun.build() does not run the event loop inside the call while a setup() or
+  // onStart() promise is pending. It returns its promise and continues from the
+  // reaction of the pending promise.
+  describe.concurrent("plugin/async setup()", () => {
+    const entry = `export const hello = "world";\n`;
+
+    async function runFixture(files: Record<string, string>, env = bunEnv) {
+      using dir = tempDir("plugin-async-setup", { "entry.js": entry, ...files });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build-fixture.ts"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        // A fixture that hangs (the bug) spins at 100% CPU. Do not leave it behind.
+        timeout: 10_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
+    }
+
+    test("Bun.build() returns while a setup() promise is pending", async () => {
+      const result = await runFixture({
+        "build-fixture.ts": /* ts */ `
+          let release!: () => void;
+          const gate = new Promise<void>(resolve => (release = resolve));
+          const order: string[] = [];
+
+          const built = Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "gated",
+                async setup(build) {
+                  order.push("setup:start");
+                  await gate;
+                  order.push("setup:resume");
+                  build.onLoad({ filter: /entry\\.js$/ }, () => ({
+                    contents: "export const hello = 'patched';",
+                    loader: "js",
+                  }));
+                },
+              },
+            ],
+          });
+
+          // Only this frame can settle the promise that setup() awaits.
+          order.push("returned");
+          Bun.gc(true);
+          release();
+
+          const result = await built;
+          order.push("built");
+          const text = await result.outputs[0].text();
+          console.log(JSON.stringify({ order, patched: text.includes("patched") }));
+        `,
+      });
+      expect(result).toEqual({
+        stdout: JSON.stringify({ order: ["setup:start", "returned", "setup:resume", "built"], patched: true }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    test("a pending setup() promise keeps the process alive", async () => {
+      const result = await runFixture({
+        // No top-level await and an unref'd timer: only the pending build holds the event loop.
+        "build-fixture.ts": /* ts */ `
+          Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "unref",
+                async setup() {
+                  await new Promise(resolve => setTimeout(resolve, 1).unref());
+                },
+              },
+            ],
+          }).then(result => console.log("built", result.success));
+        `,
+      });
+      expect(result).toEqual({ stdout: "built true", stderr: "", exitCode: 0, signalCode: null });
+    });
+
+    test("a setup() promise that nothing can settle does not keep the process alive", async () => {
+      const result = await runFixture({
+        "build-fixture.ts": /* ts */ `
+          Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [{ name: "never", setup: () => new Promise<void>(() => {}) }],
+          });
+          setImmediate(() => {
+            Bun.gc(true);
+            console.log("collected");
+          });
+        `,
+      });
+      expect(result).toEqual({ stdout: "collected", stderr: "", exitCode: 0, signalCode: null });
+    });
+
+    test("process.exit() while a setup() promise is pending", async () => {
+      const result = await runFixture(
+        {
+          "build-fixture.ts": /* ts */ `
+            globalThis.gate = new Promise<void>(() => {});
+            Bun.build({
+              entrypoints: ["./entry.js"],
+              plugins: [{ name: "gated", setup: () => globalThis.gate }],
+            });
+            console.log("pending");
+            process.exit(0);
+          `,
+        },
+        { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      );
+      expect(result).toEqual({ stdout: "pending", stderr: "", exitCode: 0, signalCode: null });
+    });
+
+    test("the bundle starts after a setup() that awaits a timer", async () => {
+      using dir = tempDir("plugin-async-setup-timer", { "entry.js": entry });
+      const order: string[] = [];
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        plugins: [
+          {
+            name: "sleepy",
+            async setup(build) {
+              await Bun.sleep(1);
+              order.push("setup");
+              build.onLoad({ filter: /entry\.js$/ }, () => {
+                order.push("onLoad");
+                return { contents: entry, loader: "js" };
+              });
+            },
+          },
+        ],
+      });
+      expect({ success: result.success, order }).toEqual({ success: true, order: ["setup", "onLoad"] });
+    });
+
+    test("the later plugins run in order, in the caller's async context", async () => {
+      using dir = tempDir("plugin-async-setup-chain", { "entry.js": entry });
+      const order: string[] = [];
+      const context = new AsyncLocalStorage<string>();
+      const result = await context.run("caller", () =>
+        Bun.build({
+          entrypoints: [join(String(dir), "entry.js")],
+          plugins: [
+            {
+              name: "first",
+              async setup() {
+                order.push("first:start");
+                await Bun.sleep(1);
+                order.push("first:done");
+              },
+            },
+            {
+              name: "second",
+              async setup(build) {
+                order.push(`second:start:${context.getStore()}`);
+                build.onStart(async () => {
+                  order.push("second:onStart:start");
+                  await Bun.sleep(1);
+                  order.push("second:onStart:done");
+                });
+                await Bun.sleep(1);
+                order.push("second:done");
+              },
+            },
+            {
+              name: "third",
+              setup(build) {
+                order.push(`third:${context.getStore()}`);
+                build.onStart(async () => {
+                  order.push("third:onStart:start");
+                  await Bun.sleep(1);
+                  order.push("third:onStart:done");
+                });
+                build.onLoad({ filter: /entry\.js$/ }, () => {
+                  order.push("onLoad");
+                  return { contents: entry, loader: "js" };
+                });
+              },
+            },
+          ],
+        }),
+      );
+      expect({ success: result.success, order }).toEqual({
+        success: true,
+        order: [
+          "first:start",
+          "first:done",
+          "second:start:caller",
+          "second:onStart:start",
+          "second:onStart:done",
+          "second:done",
+          "third:caller",
+          "third:onStart:start",
+          "third:onStart:done",
+          "onLoad",
+        ],
+      });
+    });
+
+    test("config that setup() changes after an await is read", async () => {
+      using dir = tempDir("plugin-async-setup-mutate", {
+        "entry.js": `export const flag = BUILD_FLAG;\n`,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        plugins: [
+          {
+            name: "definer",
+            async setup(build) {
+              await Bun.sleep(1);
+              build.config.define = { BUILD_FLAG: JSON.stringify("after-await") };
+            },
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+      expect(await result.outputs[0].text()).toContain("after-await");
+    });
+
+    // Where an error surfaces: `thrown` is from the Bun.build() call, `rejected` from its promise.
+    async function buildError(config: Omit<Bun.BuildConfig, "entrypoints">) {
+      using dir = tempDir("plugin-async-setup-error", { "entry.js": entry });
+      let promise: Promise<Bun.BuildOutput>;
+      try {
+        promise = Bun.build({ entrypoints: [join(String(dir), "entry.js")], ...config });
+      } catch (e) {
+        return { thrown: (e as Error).message };
+      }
+      return await promise.then(
+        () => ({}),
+        e => ({ rejected: (e as Error).message }),
+      );
+    }
+    const sleepy: Bun.BunPlugin = {
+      name: "sleepy",
+      async setup() {
+        await Bun.sleep(1);
+      },
+    };
+
+    // Bun.build() returned before these errors exist, so they reject its promise.
+    test.each([
+      [
+        "an async setup() that rejects",
+        {
+          plugins: [
+            {
+              name: "explosive",
+              async setup() {
+                await Bun.sleep(1);
+                throw new Error("setup exploded");
+              },
+            },
+          ],
+        },
+        "setup exploded",
+      ],
+      [
+        "a pending onStart() promise that rejects",
+        {
+          plugins: [
+            {
+              name: "explosive",
+              setup(build) {
+                build.onStart(async () => {
+                  await Bun.sleep(1);
+                  throw new Error("onStart exploded");
+                });
+              },
+            },
+          ],
+        },
+        "onStart exploded",
+      ],
+      [
+        "a later plugin that is not valid",
+        { plugins: [sleepy, { setup() {} } as unknown as Bun.BunPlugin] },
+        "Expected plugin to have a name",
+      ],
+      [
+        "a later synchronous setup() that throws",
+        {
+          plugins: [
+            sleepy,
+            {
+              name: "explosive",
+              setup() {
+                throw new Error("later setup exploded");
+              },
+            },
+          ],
+        },
+        "later setup exploded",
+      ],
+      [
+        "an option that is not valid",
+        { plugins: [sleepy], format: "not-a-format" as Bun.BuildConfig["format"] },
+        'format must be one of "esm", "cjs", "iife"',
+      ],
+    ] satisfies [string, Omit<Bun.BuildConfig, "entrypoints">, string][])(
+      "the returned promise rejects for %s",
+      async (_, config, message) => {
+        expect(await buildError(config)).toEqual({ rejected: message });
+      },
+    );
+
+    // Nothing is pending when these errors exist, so the call throws them.
+    test.each([
+      [
+        "a synchronous setup() that throws",
+        {
+          plugins: [
+            {
+              name: "explosive",
+              setup() {
+                throw new Error("sync setup exploded");
+              },
+            },
+          ],
+        },
+        "sync setup exploded",
+      ],
+      [
+        "an async setup() that throws before its first await",
+        {
+          plugins: [
+            {
+              name: "explosive",
+              async setup() {
+                throw new Error("async setup exploded");
+              },
+            },
+          ],
+        },
+        "async setup exploded",
+      ],
+      [
+        "an onStart() promise that is already rejected",
+        {
+          plugins: [
+            {
+              name: "explosive",
+              setup(build) {
+                build.onStart(async () => {
+                  throw new Error("onStart exploded");
+                });
+              },
+            },
+          ],
+        },
+        "onStart exploded",
+      ],
+    ] satisfies [string, Omit<Bun.BuildConfig, "entrypoints">, string][])(
+      "the call throws for %s",
+      async (_, config, message) => {
+        expect(await buildError(config)).toEqual({ thrown: message });
+      },
+    );
+  });
 });

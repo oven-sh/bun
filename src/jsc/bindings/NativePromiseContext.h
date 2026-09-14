@@ -49,6 +49,7 @@ public:
         HTMLRewriterSuspension,
         // Task-only tag on the Rust side; never stored in a context cell.
         HTMLRewriterPipeFree,
+        JSBundlerSuspendedBuild,
     };
 
     // `held` is visited, so the reaction keeps it alive for as long as the
@@ -87,6 +88,7 @@ public:
 
     void* pointer() const { return m_data.pointer(); }
     Tag tag() const { return m_data.type(); }
+    JSC::JSValue held() const { return m_held.get(); }
 
 private:
     NativePromiseContext(JSC::VM& vm, JSC::Structure* structure, void* ctx, Tag tag)

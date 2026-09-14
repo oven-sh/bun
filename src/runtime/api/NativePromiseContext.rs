@@ -27,6 +27,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::api::html_rewriter;
+use crate::api::js_bundler::js_bundler::SuspendedBuild;
 use crate::api::server;
 
 // Request contexts are a single generic
@@ -66,10 +67,11 @@ pub enum Tag {
     /// Task-only tag (never a context cell): drops the last ref of a
     /// `RewriterPipe` on behalf of `RewriterPipe::deref_outside_caller`.
     HTMLRewriterPipeFree,
+    JSBundlerSuspendedBuild,
 }
 
 impl Tag {
-    pub const COUNT: usize = 10;
+    pub const COUNT: usize = 11;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -84,6 +86,7 @@ impl Tag {
             7 => Tag::DebugHTTPSServerMuxRequestContext,
             8 => Tag::HTMLRewriterSuspension,
             9 => Tag::HTMLRewriterPipeFree,
+            10 => Tag::JSBundlerSuspendedBuild,
             _ => unreachable!(),
         }
     }
@@ -118,6 +121,9 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> NativePromis
 impl NativePromiseContextType for html_rewriter::RewriterPipe {
     const TAG: Tag = Tag::HTMLRewriterSuspension;
 }
+impl NativePromiseContextType for SuspendedBuild {
+    const TAG: Tag = Tag::JSBundlerSuspendedBuild;
+}
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
 // opaquely (never dereferenced by the C++ side), so the FFI itself has no
@@ -131,6 +137,7 @@ unsafe extern "C" {
         held: JSValue,
     ) -> JSValue;
     safe fn Bun__NativePromiseContext__take(value: JSValue) -> *mut c_void;
+    safe fn Bun__NativePromiseContext__held(value: JSValue) -> JSValue;
 }
 
 /// The cell owns the caller's claim on `ctx` until `take()` transfers it back
@@ -151,6 +158,11 @@ pub(crate) fn create<T: NativePromiseContextType>(
 /// and the ref was released via the destructor on a prior GC cycle).
 pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
     NonNull::new(Bun__NativePromiseContext__take(cell).cast::<T>())
+}
+
+/// The `held` value `create()` was given. `take()` does not clear it.
+pub(crate) fn held(cell: JSValue) -> JSValue {
+    Bun__NativePromiseContext__held(cell)
 }
 
 /// Called from the C++ destructor when a cell is collected with a non-null
@@ -202,7 +214,9 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
             Tag::DebugHTTPSServerMuxRequestContext => {
                 (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
             }
-            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree => {}
+            Tag::HTMLRewriterSuspension
+            | Tag::HTMLRewriterPipeFree
+            | Tag::JSBundlerSuspendedBuild => {}
         }
     }
 }
@@ -262,6 +276,12 @@ impl DeferredDerefTask {
                     <html_rewriter::RewriterPipe as bun_ptr::CellRefCounted>::deref_nn(
                         NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
                     )
+                },
+                // SAFETY: the destroyed context owned this parked build.
+                Tag::JSBundlerSuspendedBuild => unsafe {
+                    SuspendedBuild::abandon_at_teardown(bun_core::heap::take(
+                        ctx.cast::<SuspendedBuild>(),
+                    ))
                 },
                 _ => {}
             }
@@ -325,6 +345,9 @@ impl DeferredDerefTask {
                         NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
                     );
                 }
+                Tag::JSBundlerSuspendedBuild => {
+                    bun_core::heap::destroy(ctx.cast::<SuspendedBuild>());
+                }
             }
         }
     }
@@ -353,3 +376,4 @@ const _: () = assert!(
 );
 const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(core::mem::align_of::<SuspendedBuild>() > DeferredDerefTask::TAG_MASK);

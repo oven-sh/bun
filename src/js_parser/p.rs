@@ -10018,10 +10018,43 @@ impl LowerUsingDeclarationsContext {
                     result.push(stmt);
                     continue;
                 }
-                js_ast::StmtData::SClass(c) => {
-                    if c.is_export {
-                        // can't go in try/catch; hoist out
+                js_ast::StmtData::SClass(mut c) => {
+                    // An exported class leaves the try block unless it has static blocks or computed keys.
+                    let runs_code = c.is_export
+                        && c.class.properties.slice().iter().any(|property| {
+                            property.kind == js_ast::g::PropertyKind::ClassStaticBlock
+                                || property.flags.contains(js_ast::flags::Property::IsComputed)
+                        });
+                    if c.is_export && !runs_code {
                         result.push(stmt);
+                        continue;
+                    }
+                    if c.is_export {
+                        let name = c.class.class_name.expect("an exported class has a name");
+                        exports.push(js_ast::ClauseItem {
+                            name: LocRef {
+                                loc: name.loc,
+                                ref_: name.ref_,
+                            },
+                            alias: p.symbols[name.ref_.inner_index() as usize].original_name,
+                            alias_loc: name.loc,
+                            ..Default::default()
+                        });
+                        let class = core::mem::take(&mut c.class);
+                        let value = p.new_expr(class, stmt.loc);
+                        let binding = p.b(B::Identifier { r#ref: name.ref_ }, name.loc);
+                        stmts[end as usize] = p.s(
+                            S::Local {
+                                kind: js_ast::s::Kind::KVar,
+                                decls: G::DeclList::init_one(G::Decl {
+                                    binding,
+                                    value: Some(value),
+                                }),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        );
+                        end += 1;
                         continue;
                     }
                 }

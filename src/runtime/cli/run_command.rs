@@ -1521,6 +1521,8 @@ impl Run<'_> {
                         .unwrap_or(JSValue::UNDEFINED);
                     if let Some(promise) = result.as_any_promise() {
                         match promise.status() {
+                            // After a fatal error the run is over: no turn that would resume the script.
+                            PromiseStatus::Pending if vm.has_fatal_error() => break 'brk result,
                             PromiseStatus::Pending => {
                                 // C-ABI shims are emitted by
                                 // `generate-host-exports.ts` into

@@ -136,6 +136,16 @@ describe.concurrent("a fatal error during a top-level await ends the run", () =>
     expect({ stdout, exitCode }).toEqual({ stdout: "exit 1\n", exitCode: 1 });
   });
 
+  it("under --print: the result prints as the pending promise it is", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {},
+      "--print",
+      throws + `await new Promise(resolve => setTimeout(resolve, 50)); console.log("after"); 5`,
+    );
+    expect(stderr).toContain("error: boom");
+    expect({ stdout, exitCode }).toEqual({ stdout: "Promise { <pending> }\n", exitCode: 1 });
+  });
+
   const onUncaughtException = `process.on("uncaughtException", e => console.log("caught", e.message));\n`;
   const onUnhandledRejection = `process.on("unhandledRejection", e => console.log("caught", e.message));\n`;
   it.each([

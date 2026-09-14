@@ -1286,7 +1286,8 @@ impl Default for FnOrArrowDataParse {
 #[derive(Clone, Copy, Default)]
 pub struct FnOrArrowDataVisit {
     pub(crate) is_inside_loop: bool,
-    pub(crate) is_inside_switch: bool,
+    /// Inside a `switch`: the scope that the cases of the innermost one share.
+    pub(crate) switch_scope: Option<js_ast::StoreRef<js_ast::Scope>>,
     pub(crate) is_outside_fn_or_arrow: bool,
 
     /// This is used to silence unresolvable imports due to "require" calls inside

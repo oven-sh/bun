@@ -909,7 +909,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let open_parens_loc = data.func.open_parens_loc;
         let this_expr_count_before = p.this_expr_count;
+        let watched_reads = p.watched_reads_in_scope();
         data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc, false);
+        p.keep_locals_read_since(watched_reads);
         p.react_compiler_candidate_name = None;
 
         let name_ref = data.func.name.expect("infallible: name checked").ref_;
@@ -1288,7 +1290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 data.label = None;
             }
         } else if !p.fn_or_arrow_data_visit.is_inside_loop
-            && !p.fn_or_arrow_data_visit.is_inside_switch
+            && p.fn_or_arrow_data_visit.switch_scope.is_none()
         {
             let r = js_lexer::range_of_identifier(p.source, stmt.loc);
             p.log()
@@ -2139,10 +2141,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc)
                 .expect("unreachable");
-            let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
-            p.fn_or_arrow_data_visit.is_inside_switch = true;
+            let old_switch_scope = p.fn_or_arrow_data_visit.switch_scope;
+            p.fn_or_arrow_data_visit.switch_scope = Some(p.current_scope);
             let cases = data.cases.slice_mut();
             for i in 0..cases.len() {
+                // The `switch` can jump here past what an earlier case declares.
+                let watched_reads = p.watched_reads_in_scope();
                 if let Some(val) = cases[i].value.as_mut() {
                     p.visit_expr(val);
                     // TODO: error messages
@@ -2153,8 +2157,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_stmts(&mut _stmts, StmtsKind::SwitchStmt)
                     .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
+                p.keep_locals_read_since(watched_reads);
             }
-            p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
+            p.fn_or_arrow_data_visit.switch_scope = old_switch_scope;
 
             for i in 0..cases.len() {
                 if p.should_lower_using_declarations(cases[i].body.slice()) {

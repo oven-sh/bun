@@ -4302,6 +4302,356 @@ describe("bundler", () => {
     run: { stdout: "0" },
   });
 
+  // ── Locals that stay locals ───────────────────────────────────────────
+
+  // A `var` in a nested scope that names a `.then` parameter is that
+  // parameter: the two share a value, and a read can go through either one.
+  itElides("ThenParamRedeclaredInNestedScope", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        const retry = globalThis.retry === true;
+        async function main() {
+          await import("./m.js").then(({ a }) => {
+            if (retry) {
+              var a = "fallback";
+            }
+            console.log(a);
+          });
+          await import("./m.js").then(ns => {
+            for (var ns of [{ a: "last" }]) {}
+            console.log(ns.a);
+          });
+          await import("./m.js").then(({ a }) => {
+            {
+              var a;
+              console.log("inner", a);
+            }
+          });
+          await import("./m.js").then(ns => {
+            {
+              var ns;
+              console.log(Object.keys(ns).join());
+            }
+          });
+          await Promise.all([import("./m.js"), import("./m.js")]).then(([{ a }, ns]) => {
+            if (!retry) {
+              var ns = { b: "local" };
+            }
+            console.log(a, ns.b);
+          });
+        }
+        main();
+      `,
+      "/m.js": `export const a = "A"; export const b = "B";`,
+    },
+    stdout: "A\nlast\ninner A\na,b\nA local",
+  });
+
+  // Every statement that holds a nested `var` merges it the same way. None
+  // of these assigns, so each read sees the value the pattern bound.
+  const nestedVarStatements = [
+    `{ var a; }`,
+    `if (no) { var a = 1; }`,
+    `for (var a; no; ) {}`,
+    `for (var a in {}) {}`,
+    `for (var a of []) {}`,
+    `try {} catch { var a = 1; }`,
+    `switch (0) { case 1: var a = 1; }`,
+    `skip: { if (!no) break skip; var a = 1; }`,
+    `while (no) { var a = 1; }`,
+    `do { if (no) { var a = 1; } } while (no);`,
+    `{ var { a } = { a }; }`,
+  ];
+  itElides("ThenParamRedeclaredByEachStatement", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        const no = globalThis.no === true;
+        async function main() {
+          ${nestedVarStatements
+            .map(statement => `await import("./m.js").then(({ a }) => { ${statement} console.log(a); });`)
+            .join("\n")}
+        }
+        main();
+      `,
+      "/m.js": `export const a = "A";`,
+    },
+    stdout: nestedVarStatements.map(() => "A").join("\n"),
+  });
+
+  // A `{...rest}` copy does not have the names that the pattern beside it
+  // took, so a pattern off the copy reads the copy.
+  itElides("RestCopyDestructured", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { a, ...rest } = require("./m.js");
+          const { a: x, b } = rest;
+          console.log(a, x, b);
+          const { a: a2, ...rest2 } = await import("./m.js");
+          const { b: b2, ...rest3 } = rest2;
+          const { a: y, b: z, c } = rest3;
+          console.log(a2, b2, y, z, c);
+          await import("./m.js").then(({ a, ...rest }) => {
+            const { a: x, b } = rest;
+            console.log(a, x, b);
+          });
+          const ns = await import("./m.js");
+          const { a: a3, ...rest4 } = ns;
+          const { a: w, b: b3 } = rest4;
+          console.log(a3, w, b3);
+        }
+        main();
+      `,
+      "/m.js": `export const a = "A", b = "B", c = "C"; export const d = "DROPPED";`,
+    },
+    stdout: "A undefined B\nA B undefined undefined C\nA undefined B\nA undefined B",
+  });
+
+  // `ns` may be null. The pattern then throws, and the importee did not load.
+  itElides("ConditionalLocalDestructured", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        function g(c) {
+          const ns = c ? require("./a.js") : null;
+          try {
+            const { x, late } = ns;
+            return "got " + x + " " + late;
+          } catch (e) {
+            return "threw " + e.constructor.name;
+          }
+        }
+        async function h(c) {
+          let ns = !c ? undefined : await import("./a.js");
+          try {
+            const { x } = ns;
+            return "got " + x;
+          } catch (e) {
+            return "threw " + e.constructor.name;
+          }
+        }
+        async function main() {
+          console.log(g(false));
+          console.log(g(true));
+          console.log(await h(false));
+          console.log(await h(true));
+        }
+        main();
+      `,
+      "/a.js": /* js */ `
+        console.log("a init");
+        export const x = "ax";
+        export const late = [1, 2].join("-");
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "threw TypeError\na init\ngot ax 1-2\nthrew TypeError\ngot ax",
+  });
+
+  // A function declared below the `const` runs before it when the code above
+  // calls it. The read in it throws.
+  itElides("ReadBeforeDeclaration", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        function early(get) {
+          try {
+            console.log("early:", get());
+          } catch (e) {
+            console.log("early threw", e.name, /before initialization/.test(e.message));
+          }
+        }
+        function destructured() {
+          early(get);
+          const { a } = require("./m.js");
+          console.log("late:", get());
+          function get() { return a; }
+        }
+        function namespace() {
+          early(get);
+          const ns = require("./m.js");
+          console.log("late:", get());
+          function get() { return ns.a; }
+        }
+        async function awaited() {
+          early(() => get().next().value);
+          let { a } = await import("./m.js");
+          console.log("late:", get().next().value);
+          function* get() { yield typeof a; }
+        }
+        async function awaitedNamespace() {
+          early(get);
+          const ns = await import("./m.js");
+          console.log("late:", get());
+          function get() { return ns.a; }
+        }
+        async function all() {
+          early(get);
+          const [ns] = await Promise.all([import("./m.js")]);
+          console.log("late:", get());
+          function get() { return ns.a; }
+        }
+        // The call goes through a var that is merged into the function.
+        function merged() {
+          {
+            var get;
+            early(get);
+          }
+          const { a } = require("./m.js");
+          console.log("late:", get());
+          function get() { return a; }
+        }
+        // The function that runs early reaches the read through another one.
+        function indirect() {
+          early(first);
+          const { a } = require("./m.js");
+          console.log("late:", first());
+          function first() { return second(); }
+          function second() { return a; }
+        }
+        async function main() {
+          destructured();
+          namespace();
+          await awaited();
+          await awaitedNamespace();
+          await all();
+          merged();
+          indirect();
+        }
+        main();
+      `,
+      "/m.js": `console.log("m init"); export const a = String("A"); export const d = "DROPPED";`,
+    },
+    stdout: [
+      "early threw ReferenceError true\nm init\nlate: A",
+      "early threw ReferenceError true\nlate: A",
+      "early threw ReferenceError true\nlate: string",
+      "early threw ReferenceError true\nlate: A",
+      "early threw ReferenceError true\nlate: A",
+      "early threw ReferenceError true\nlate: A",
+      "early threw ReferenceError true\nlate: A",
+    ].join("\n"),
+  });
+
+  // A later `case` shares the scope of the one that declares, and runs
+  // without it. The importee did not load. (Each local has two uses in its
+  // own case, so the minifier does not move its initializer into a use.)
+  itElides("ReadInLaterSwitchCase", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        function pick(k) {
+          switch (k) {
+            case 0:
+              const { a } = require("./m.js");
+              return a + a.length;
+            case 1:
+              return a;
+          }
+        }
+        function pickNamespace(k) {
+          switch (k) {
+            case 0:
+              const ns = require("./m.js");
+              return ns.a + ns.a.length;
+            default:
+              return ns.a;
+          }
+        }
+        function pickInTest(k) {
+          switch (k) {
+            case 0:
+              const { a } = require("./m.js");
+              return a + a.length;
+            case a:
+              return "matched";
+          }
+        }
+        for (const f of [pick, pickNamespace, pickInTest]) {
+          try {
+            console.log(f(1));
+          } catch (e) {
+            console.log("threw", e.name, /before initialization/.test(e.message));
+          }
+          console.log(f(0));
+        }
+      `,
+      "/m.js": `console.log("m init"); export const a = "A"; export const d = "DROPPED";`,
+    },
+    stdout: "threw ReferenceError true\nm init\nA1\nthrew ReferenceError true\nA1\nthrew ReferenceError true\nA1",
+  });
+
+  // A default value of a `.then` parameter can read a name that the pattern
+  // binds after it. That read throws.
+  itElides("ThenParamDefaultReadsLaterName", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        const report = e => console.log("threw", e.name, /before initialization/.test(e.message));
+        async function main() {
+          await import("./m.js").then(({ b = a, a }) => console.log(a, b)).catch(report);
+          await import("./m.js").then(({ b: { x } = a, a }) => console.log(a, x)).catch(report);
+          await import("./m.js").then(({ c: { x = a }, a }) => console.log(a, x)).catch(report);
+          await Promise.all([undefined, import("./m.js")]).then(([x = ns.a, ns]) => console.log(x, ns.a)).catch(report);
+          await Promise.all([{}, import("./m.js")]).then(([{ x = ns.a }, ns]) => console.log(x, ns.a)).catch(report);
+          await import("./m.js").then(({ a, b = a }) => console.log(a, b)).catch(report);
+        }
+        main();
+      `,
+      "/m.js": `export const a = "A"; export const c = {};`,
+    },
+    stdout: [
+      "threw ReferenceError true",
+      "threw ReferenceError true",
+      "threw ReferenceError true",
+      "threw ReferenceError true",
+      "threw ReferenceError true",
+      "A A",
+    ].join("\n"),
+  });
+
+  // Only a read that can run early keeps its local. A function declared below
+  // the `const` that nothing above refers to runs after it. One that the code
+  // above refers to, or a later `case`, matters only if it reads the local.
+  // A top-level `const` prints as `var`, so no read of it throws.
+  itElides("LocalWithoutEarlyRead", {
+    files: {
+      "/entry.js": /* js */ `
+        keep(top);
+        const { b } = require("./x.js");
+        function top() { return b; }
+        function keep(f) { globalThis.kept = f; }
+        async function unreferenced() {
+          const { a } = await import("./x.js");
+          const ns = require("./x.js");
+          function get() { return a + ns.b; }
+          console.log(get(), kept());
+        }
+        async function unrelated(k) {
+          log("start");
+          const { a } = await import("./x.js");
+          const ns = require("./x.js");
+          console.log(a, ns.b);
+          function log(s) { console.log(s); }
+          switch (k) {
+            case 0:
+              const { b } = require("./x.js");
+              const other = require("./x.js");
+              return b + other.a + other.a.length;
+            default:
+              return "none";
+          }
+        }
+        unreferenced().then(() => unrelated(0)).then(console.log);
+      `,
+      "/x.js": `export const a = "a", b = "b"; export const d = "DROPPED";`,
+    },
+    stdout: "ab b\nstart\na b\nba1",
+  });
+
   // ── Cases that keep the namespace object ──────────────────────────────
 
   function itKeepsNamespace(

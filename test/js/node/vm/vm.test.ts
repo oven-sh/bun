@@ -288,6 +288,63 @@ describe("vm", () => {
         expect(e).toBeTruthy();
       }
     });
+
+    describe("contextExtensions", () => {
+      // Node (V8's ScriptCompiler::CompileFunction) wraps the extensions around
+      // the compiled function only. Nothing else running in the realm may see them.
+      const probe = "[typeof fromFirstExtension, typeof fromSecondExtension]";
+      const extensions = () => [{ fromFirstExtension: "first" }, { fromSecondExtension: "second" }];
+
+      test("are visible to the compiled function, later extensions shadow earlier ones", () => {
+        const fn = compileFunction(
+          "return [fromFirstExtension, fromSecondExtension, shadowed, () => shadowed, eval('shadowed')]",
+          [],
+          {
+            contextExtensions: [
+              { fromFirstExtension: "first", shadowed: "from first" },
+              { fromSecondExtension: "second", shadowed: "from second" },
+            ],
+          },
+        );
+        const [first, second, shadowed, closure, evaluated] = fn();
+        expect([first, second, shadowed, closure(), evaluated]).toEqual([
+          "first",
+          "second",
+          "from second",
+          "from second",
+          "from second",
+        ]);
+      });
+
+      test("are not visible to code that runs in the realm afterwards", () => {
+        const compiledEarlier = compileFunction(`return ${probe}`);
+        const fn = compileFunction(`return ${probe}`, [], { contextExtensions: extensions() });
+        expect(fn()).toEqual(["string", "string"]);
+
+        const notVisible = ["undefined", "undefined"];
+        // @ts-expect-error these identifiers are deliberately undeclared
+        expect([typeof fromFirstExtension, typeof fromSecondExtension]).toEqual(notVisible);
+        expect(runInThisContext(probe)).toEqual(notVisible);
+        expect(new Function(`return ${probe}`)()).toEqual(notVisible);
+        expect((0, eval)(probe)).toEqual(notVisible);
+        expect(compiledEarlier()).toEqual(notVisible);
+        expect(compileFunction(`return ${probe}`)()).toEqual(notVisible);
+      });
+
+      test("are not visible to code that runs in parsingContext afterwards", () => {
+        const parsingContext = createContext({});
+        const compiledEarlier = compileFunction(`return ${probe}`, [], { parsingContext });
+        const fn = compileFunction(`return ${probe}`, [], { parsingContext, contextExtensions: extensions() });
+        expect(fn()).toEqual(["string", "string"]);
+
+        const notVisible = ["undefined", "undefined"];
+        expect(runInContext(probe, parsingContext)).toEqual(notVisible);
+        expect(runInContext(`new Function("return ${probe}")()`, parsingContext)).toEqual(notVisible);
+        expect(compiledEarlier()).toEqual(notVisible);
+        expect(compileFunction(`return ${probe}`, [], { parsingContext })()).toEqual(notVisible);
+        expect(runInThisContext(probe)).toEqual(notVisible);
+      });
+    });
   });
 });
 

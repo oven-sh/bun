@@ -225,6 +225,7 @@ impl Watcher {
         let platform = if use_polling {
             let interval = bun_core::env_var::BUN_WATCHER_POLL_INTERVAL
                 .get()
+                .filter(|&ms| ms > 0)
                 .unwrap_or(polling::DEFAULT_INTERVAL_MS);
             log!("using polling backend (interval={}ms)", interval);
             Backend::Polling(PollingWatcher::new(interval))

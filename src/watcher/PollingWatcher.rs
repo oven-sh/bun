@@ -96,7 +96,7 @@ pub(crate) struct PollingWatcher {
 impl PollingWatcher {
     pub(crate) fn new(interval_ms: u64) -> Self {
         Self {
-            interval: Duration::from_millis(interval_ms.max(1)),
+            interval: Duration::from_millis(interval_ms),
             tracked: HashMap::default(),
             candidates: Vec::new(),
             paths: Vec::new(),

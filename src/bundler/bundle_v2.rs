@@ -7256,9 +7256,10 @@ pub mod bv2_impl {
                         };
                     }
                 }
-                for path in &parse_result.also_depends_on {
-                    if this.should_add_watcher(path) {
-                        let _ = this.bun_watcher_mut().unwrap().add_file_by_path_slow(path);
+                // Taken, so that the list is freed here: nothing drops a parse result's fields.
+                for path in core::mem::take(&mut parse_result.also_depends_on) {
+                    if this.should_add_watcher(&path) {
+                        let _ = this.bun_watcher_mut().unwrap().add_file_by_path_slow(&path);
                     }
                 }
             }

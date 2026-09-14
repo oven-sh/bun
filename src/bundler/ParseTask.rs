@@ -2586,12 +2586,15 @@ pub mod parse_worker {
             }));
             let compilation = bun_cc::compile(&units, c_target, log);
             // Whether or not it compiled: fixing a header is how a header's error gets fixed.
-            task.also_depends_on = compilation
-                .files_read
-                .iter()
-                .filter(|path| path.as_bytes() != file_path.text)
-                .map(|path| Box::<[u8]>::from(path.as_bytes()))
-                .collect();
+            // Only a build that watches files has a use for the list.
+            if worker_ctx.bun_watcher.is_some() {
+                task.also_depends_on = compilation
+                    .files_read
+                    .iter()
+                    .filter(|path| path.as_bytes() != file_path.text)
+                    .map(|path| Box::<[u8]>::from(path.as_bytes()))
+                    .collect();
+            }
             match compilation.output {
                 Some(output) => {
                     c_exports = output.exports;

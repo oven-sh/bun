@@ -6,22 +6,22 @@
 //! function's body because the module keeps its BIR.
 
 use core::ffi::{c_char, c_void};
+use std::borrow::Cow;
 
 use bstr::BStr;
 
 use bun_core::ZStr;
-use bun_jsc::{self as jsc, ErrorCode, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::module_loader::{CCompileError, CompiledC};
+use bun_jsc::{self as jsc, ErrorCode, JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 
 unsafe extern "C" {
     fn Bun__CModule__create(
-        global: *const JSGlobalObject,
         bir: *const u8,
         bir_len: usize,
-        resolver_context: *mut c_void,
-        resolve: unsafe extern "C" fn(*mut c_void, *const c_char, usize) -> *mut c_void,
+        resolve: unsafe extern "C" fn(*const c_char, usize) -> *mut c_void,
         out: *mut *mut c_void,
-    ) -> JSValue;
-    fn Bun__CModule__deref(module: *mut c_void);
+        error: *mut bun_core::String,
+    ) -> bool;
     fn Bun__CModule__registerDestructors(
         module: *mut c_void,
         add: unsafe extern "C" fn(unsafe extern "C" fn()),
@@ -31,31 +31,23 @@ unsafe extern "C" {
 
 /// Resolves what the C source declares but does not define: whatever the process already has
 /// loaded (libc, libm, Bun's own exported symbols such as `napi_*`).
-struct ExternResolver;
-
-impl ExternResolver {
-    unsafe extern "C" fn resolve(
-        _context: *mut c_void,
-        name: *const c_char,
-        name_len: usize,
-    ) -> *mut c_void {
-        // SAFETY: `name` is NUL-terminated with `name_len` bytes before the NUL.
-        let name = unsafe { ZStr::from_raw(name.cast::<u8>(), name_len) };
-        #[cfg(not(windows))]
-        if let Some(address) = compiler_runtime::find(name.as_bytes()) {
-            return address;
-        }
-        if let Some(address) = bun_sys::dlsym_impl(None, name) {
-            return address;
-        }
-        #[cfg(windows)]
-        if let Some(address) =
-            windows_libraries(name).or_else(|| windows_runtime::find(name.as_bytes()))
-        {
-            return address;
-        }
-        glibc_static_stub(name.as_bytes()).unwrap_or(core::ptr::null_mut())
+unsafe extern "C" fn resolve_extern(name: *const c_char, name_len: usize) -> *mut c_void {
+    // SAFETY: `name` is NUL-terminated with `name_len` bytes before the NUL.
+    let name = unsafe { ZStr::from_raw(name.cast::<u8>(), name_len) };
+    #[cfg(not(windows))]
+    if let Some(address) = compiler_runtime::find(name.as_bytes()) {
+        return address;
     }
+    if let Some(address) = bun_sys::dlsym_impl(None, name) {
+        return address;
+    }
+    #[cfg(windows)]
+    if let Some(address) =
+        windows_libraries(name).or_else(|| windows_runtime::find(name.as_bytes()))
+    {
+        return address;
+    }
+    glibc_static_stub(name.as_bytes()).unwrap_or(core::ptr::null_mut())
 }
 
 /// The 128-bit integer routines of a C compiler's runtime library, which compiled code calls for what
@@ -279,18 +271,15 @@ mod at_exit {
             function: unsafe extern "C" fn(*mut c_void),
             dso_handle: *mut c_void,
         ) -> c_int;
-        fn fflush(stream: *mut c_void) -> c_int;
     }
 
     static HANDLERS: bun_threading::Guarded<Vec<unsafe extern "C" fn()>> =
         bun_threading::Guarded::new(Vec::new());
     static RAN: AtomicBool = AtomicBool::new(false);
 
-    unsafe extern "C" fn run(_: *mut c_void) {
-        if RAN.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        // Last registered runs first; a handler may register another.
+    /// Calls what compiled C has registered with `atexit` so far, last registered first (a handler
+    /// may register another), then writes out what C's stdio has buffered.
+    pub(super) fn run_handlers() {
         loop {
             let Some(handler) = HANDLERS.lock().pop() else {
                 break;
@@ -298,17 +287,36 @@ mod at_exit {
             // SAFETY: a `void f(void)` the C program passed to `atexit`.
             unsafe { handler() };
         }
-        // SAFETY: a null stream means every open output stream.
-        unsafe { fflush(core::ptr::null_mut()) };
+        super::flush_c_streams();
+    }
+
+    unsafe extern "C" fn at_process_exit(_: *mut c_void) {
+        if !RAN.swap(true, Ordering::AcqRel) {
+            run_handlers();
+        }
+    }
+
+    unsafe extern "C" fn at_process_quick_exit(_: *mut c_void) {
+        // `quick_exit` is how Bun itself leaves. A C program that calls it gets what C says it
+        // does: its `at_quick_exit` handlers, not its `atexit` ones, and no flush.
+        if bun_core::Global::is_exiting() {
+            // SAFETY: the argument is unused.
+            unsafe { at_process_exit(core::ptr::null_mut()) };
+        }
     }
 
     pub(super) fn install() {
         static INSTALLED: std::sync::Once = std::sync::Once::new();
         INSTALLED.call_once(|| {
-            // SAFETY: registers `run` with libc; a null dso handle means "not part of a shared object".
+            // SAFETY: registers the two hooks with libc; a null dso handle means "not part of a
+            // shared object".
             unsafe {
-                __cxa_atexit(run, core::ptr::null_mut(), core::ptr::null_mut());
-                __cxa_at_quick_exit(run, core::ptr::null_mut());
+                __cxa_atexit(
+                    at_process_exit,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                );
+                __cxa_at_quick_exit(at_process_quick_exit, core::ptr::null_mut());
             }
         });
     }
@@ -318,6 +326,16 @@ mod at_exit {
         HANDLERS.lock().push(handler);
         0
     }
+}
+
+/// Writes out what the C library's stdio has buffered, in every open output stream.
+#[cfg(unix)]
+fn flush_c_streams() {
+    unsafe extern "C" {
+        fn fflush(stream: *mut c_void) -> core::ffi::c_int;
+    }
+    // SAFETY: a null stream means every open output stream.
+    unsafe { fflush(core::ptr::null_mut()) };
 }
 
 /// glibc does not export these from libc.so: a C compiler links them from libc_nonshared.a, where
@@ -365,67 +383,132 @@ fn glibc_static_stub(_name: &[u8]) -> Option<*mut c_void> {
     None
 }
 
-/// `bun build` compiles C ahead of time and embeds the BIR under the original file name.
+/// `bun build` compiles C ahead of time: what a bundle loads in the file's place is its BIR.
 fn is_bir(bytes: &[u8]) -> bool {
     bytes.starts_with(&bun_cc::BIR_MAGIC)
 }
 
-/// C source -> BIR. `#include "…"` resolves next to `path`; `<…>` searches the compiler's own
-/// headers, `C_INCLUDE_PATH`, then the system's.
-fn compile_to_bir(
-    global_this: &JSGlobalObject,
-    path: &[u8],
-    source: &[u8],
-    on_file_read: &mut dyn FnMut(&[u8]),
-) -> JsResult<Vec<u8>> {
+/// The half of importing the C file at `path` that touches no JavaScript state, so that it can be
+/// done on any thread: reads the file (`contents` is the file when the module loader already has it
+/// in memory: a standalone executable's embedded files, a plugin's answer) and compiles it.
+/// `#include "…"` resolves next to `path`; `<…>` searches the compiler's own headers,
+/// `C_INCLUDE_PATH`, then the system's. [`finish`] is the other half.
+pub fn compile<'a>(path: &[u8], contents: Option<&'a [u8]>) -> CompiledC<'a> {
+    let mut compiled = CompiledC {
+        bir: Err(CCompileError::Invalid),
+        precompiled: false,
+        files_read: Vec::new(),
+        log: bun_ast::Log::default(),
+    };
+    let source: Cow<'a, [u8]> = match contents {
+        Some(contents) => Cow::Borrowed(contents),
+        None => match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+            Ok(bytes) => Cow::Owned(bytes),
+            Err(err) => {
+                compiled.bir = Err(CCompileError::Read(err.with_path(path)));
+                return compiled;
+            }
+        },
+    };
+    if is_bir(&source) {
+        compiled.bir = Ok(source);
+        compiled.precompiled = true;
+        return compiled;
+    }
     // The compiler names files with `str`s (they end up in `#include` lookups and diagnostics).
     let Ok(filename) = core::str::from_utf8(path) else {
-        return Err(global_this.throw(format_args!(
-            "cannot compile {}: the path is not valid UTF-8",
-            BStr::new(path)
-        )));
+        compiled.bir = Err(CCompileError::PathNotUtf8);
+        return compiled;
     };
     let Some(target) = bun_cc::Target::host() else {
-        return Err(global_this.throw(format_args!(
-            "cannot import {filename}: compiling C is not supported on this platform yet (it is on {})",
-            bun_cc::Target::SUPPORTED
-        )));
+        compiled.bir = Err(CCompileError::UnsupportedPlatform);
+        return compiled;
     };
-    let mut log = bun_ast::Log::default();
     let unit = bun_cc::Unit {
         path: filename,
-        contents: source,
+        contents: &source,
     };
-    let compilation = bun_cc::compile(&[unit], target, &mut log);
-    for file in &compilation.files_read {
+    let compilation = bun_cc::compile(&[unit], target, &mut compiled.log);
+    compiled.files_read = compilation.files_read;
+    if let Some(output) = compilation.output {
+        compiled.bir = Ok(Cow::Owned(output.bir));
+    }
+    compiled
+}
+
+/// The half of importing the C file at `path` that needs the VM: what [`compile`] made becomes
+/// machine code and the object of its functions, or the error that says why not. `on_file_read`
+/// is told about the source file and each file it `#include`s from outside the system's header
+/// directories, whether or not compiling them succeeded.
+pub fn finish(
+    global_this: &JSGlobalObject,
+    path: &[u8],
+    mut compiled: CompiledC<'_>,
+    on_file_read: &mut dyn FnMut(&[u8]),
+) -> JsResult<JSValue> {
+    for file in &compiled.files_read {
         on_file_read(file.as_bytes());
     }
-    match compilation.output {
-        Some(output) => {
-            if log.warnings > 0 {
-                let _ = log.print(std::ptr::from_mut(bun_core::Output::error_writer()));
-                bun_core::Output::flush();
-            }
-            Ok(output.bir)
+    let bir = match compiled.bir {
+        Ok(bir) => bir,
+        Err(CCompileError::Read(err)) => return Err(err.throw(global_this)),
+        Err(CCompileError::PathNotUtf8) => {
+            return Err(global_this.throw(format_args!(
+                "cannot compile {}: the path is not valid UTF-8",
+                BStr::new(path)
+            )));
+        }
+        Err(CCompileError::UnsupportedPlatform) => {
+            return Err(global_this.throw(format_args!(
+                "cannot import {}: compiling C is not supported on this platform yet (it is on {})",
+                BStr::new(path),
+                bun_cc::Target::SUPPORTED
+            )));
         }
         // What a TypeScript file that does not parse is: a BuildMessage for each message of the log.
-        None => {
+        Err(CCompileError::Invalid) => {
             let specifier = bun_core::String::borrow_utf8(path);
             let error = jsc::virtual_machine::process_fetch_log(
                 global_this,
                 &specifier,
                 &bun_core::String::EMPTY,
-                &mut log,
+                &mut compiled.log,
                 jsc::CrateError::ParserError,
             );
-            Err(global_this.throw_value(error))
+            return Err(global_this.throw_value(error));
         }
+    };
+    if compiled.log.warnings > 0 {
+        let _ = compiled
+            .log
+            .print(std::ptr::from_mut(bun_core::Output::error_writer()));
+        bun_core::Output::flush();
     }
+    let exports = load_bir(global_this, path, &bir)?;
+    if compiled.precompiled {
+        // What `bun build` makes the entry point call when the entry point was a C file.
+        exports.put_non_enumerable(
+            global_this,
+            bun_bundler::options::C_RUN_MAIN_PROPERTY,
+            bun_jsc::JSFunction::create(
+                global_this,
+                "main",
+                __jsc_host_run_main_of_bundled_module,
+                0,
+                Default::default(),
+            ),
+        );
+    }
+    Ok(exports)
 }
 
-/// BIR -> machine code -> `{ name: function }` for every non-static C function. The functions
-/// keep the module (its code and data) alive.
-pub fn load_bir(global_this: &JSGlobalObject, bir: &[u8]) -> JsResult<JSValue> {
+/// BIR -> machine code -> `{ name: function }` for every non-static C function.
+///
+/// The module (its code, data and the libraries it names) stays loaded until the process ends, as a
+/// library opened with `dlopen` does: what C hands to the process (an `atexit` or signal handler, a
+/// thread's start routine, a pointer to a static object) is an address inside it.
+fn load_bir(global_this: &JSGlobalObject, path: &[u8], bir: &[u8]) -> JsResult<JSValue> {
+    bun_analytics::features::c_module.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     at_exit::install();
     #[cfg(windows)]
@@ -445,21 +528,25 @@ pub fn load_bir(global_this: &JSGlobalObject, bir: &[u8]) -> JsResult<JSValue> {
     }
 
     let mut module: *mut c_void = core::ptr::null_mut();
+    let mut error = bun_core::String::EMPTY;
     // SAFETY: `bir` outlives the call; the resolver is only used during it.
-    jsc::call_check_slow(global_this, || unsafe {
+    let created = unsafe {
         Bun__CModule__create(
-            global_this,
             bir.as_ptr(),
             bir.len(),
-            core::ptr::null_mut(),
-            ExternResolver::resolve,
+            resolve_extern,
             &raw mut module,
+            &raw mut error,
         )
-    })?;
-    assert!(
-        !module.is_null(),
-        "Bun__CModule__create succeeded without a module"
-    );
+    };
+    if !created {
+        // "x.c: undefined symbol 'f'": which of the program's C files does not load.
+        return Err(global_this.throw_type_error(format_args!(
+            "{}: {}",
+            BStr::new(bun_paths::basename(path)),
+            error
+        )));
+    }
     // `__attribute__((destructor))` functions run when the process ends, after what the program
     // itself registers with atexit while it runs.
     unsafe extern "C" fn run_at_exit(handler: unsafe extern "C" fn()) {
@@ -488,75 +575,36 @@ pub fn load_bir(global_this: &JSGlobalObject, bir: &[u8]) -> JsResult<JSValue> {
     }
     // SAFETY: `module` is the live module just created.
     unsafe { Bun__CModule__registerDestructors(module, run_at_exit) };
-    let _module = scopeguard::guard(module, |m| {
-        // SAFETY: the +1 reference from `Bun__CModule__create`; each exported function took its own.
-        unsafe { Bun__CModule__deref(m) };
-    });
-    // SAFETY: `module` is live (guarded above).
+    // SAFETY: `module` holds the reference `Bun__CModule__create` returned, which is never released.
     jsc::call_check_slow(global_this, || unsafe {
         Bun__CModule__createExports(global_this, module)
     })
 }
 
-/// What importing a `.c` file evaluates to. `contents` is the file when the module loader already
-/// has it in memory (a standalone executable's embedded files).
-/// `on_file_read` is told about the source file and each file it `#include`s from outside the
-/// system's header directories, whether or not compiling them succeeds.
+/// What importing a `.c` file evaluates to, all of it on this thread: [`compile`], then [`finish`].
 pub fn load(
     global_this: &JSGlobalObject,
     path: &[u8],
     contents: Option<&[u8]>,
     on_file_read: &mut dyn FnMut(&[u8]),
 ) -> JsResult<JSValue> {
-    // Importing C runs native code the program supplied, like `bun:ffi`'s cc(): the same switch
-    // (`--no-ffi-cc`) turns it off.
-    if !global_this.bun_vm().allow_ffi_cc() {
-        return Err(global_this
-            .err(
-                ErrorCode::FFI_CC_DISABLED,
-                format_args!("Cannot import C code because the bun:ffi C compiler is disabled."),
-            )
-            .throw());
-    }
-    let read;
-    let contents = match contents {
-        Some(contents) => contents,
-        None => {
-            read = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    return Err(global_this.throw(format_args!(
-                        "cannot read {}: {}",
-                        BStr::new(path),
-                        BStr::new(err.name())
-                    )));
-                }
-            };
-            &read
-        }
-    };
-    if is_bir(contents) {
-        let exports = load_bir(global_this, contents)?;
-        // What `bun build` makes the entry point call when the entry point was a C file.
-        exports.put_non_enumerable(
-            global_this,
-            RUN_MAIN_PROPERTY,
-            bun_jsc::JSFunction::create(
-                global_this,
-                "main",
-                __jsc_host_run_main_of_bundled_module,
-                0,
-                Default::default(),
-            ),
-        );
-        return Ok(exports);
-    }
-    let bir = compile_to_bir(global_this, path, contents, on_file_read)?;
-    load_bir(global_this, &bir)
+    check_enabled(global_this)?;
+    finish(global_this, path, compile(path, contents), on_file_read)
 }
 
-/// The name `bun build` and the runtime agree on; see `run_main_of_bundled_module`.
-pub const RUN_MAIN_PROPERTY: &[u8] = b"__bun_run_c_main__";
+/// Importing C runs native code the program supplied, like `bun:ffi`'s cc(): the same switch
+/// (`--no-ffi-cc`) turns it off.
+pub fn check_enabled(global_this: &JSGlobalObject) -> JsResult<()> {
+    if global_this.bun_vm().allow_ffi_cc() {
+        return Ok(());
+    }
+    Err(global_this
+        .err(
+            ErrorCode::FFI_CC_DISABLED,
+            format_args!("Cannot import C code because the bun:ffi C compiler is disabled."),
+        )
+        .throw())
+}
 
 /// `require(asset).__bun_run_c_main__()`: what a bundle's entry point is when it was a C file.
 #[bun_jsc::host_fn]
@@ -570,7 +618,9 @@ fn run_main_of_bundled_module(
 }
 
 /// `bun program.c`: a C file that is the entry point and defines `main` is a program. Runs it with
-/// the arguments after the file's name and ends the process with what it returns.
+/// the arguments after the file's name and ends the process with what it returns, the way
+/// `process.exit(status)` does. With `--watch` or `--hot` a program that has run to its end is a
+/// script that has: the process stays to run it again when a file changes.
 pub fn run_main_if_any(
     global_this: &JSGlobalObject,
     exports: JSValue,
@@ -584,8 +634,14 @@ pub fn run_main_if_any(
         return Ok(());
     }
 
+    // In a standalone executable the entry point's path is inside the executable: the program's
+    // own name, as a C program knows it, is the executable's.
+    let program: &[u8] = match bun_standalone_graph::Graph::get_ref() {
+        Some(_) => bun_core::self_exe_path().map_or(path, |exe| exe.as_bytes()),
+        None => path,
+    };
     // `argv` and its strings belong to the program until the process ends.
-    let strings: Vec<std::ffi::CString> = core::iter::once(path)
+    let strings: Vec<std::ffi::CString> = core::iter::once(program)
         .chain(arguments.iter().map(|argument| &**argument))
         .map(|bytes| {
             let end = bun_core::strings::index_of_char_usize(bytes, 0).unwrap_or(bytes.len());
@@ -603,16 +659,105 @@ pub fn run_main_if_any(
     let all = [
         JSValue::js_number(argc as f64),
         JSValue::js_number(argv as usize as f64),
+        JSValue::js_number(environment() as usize as f64),
     ];
-    let status = main.call(
-        global_this,
-        JSValue::UNDEFINED,
-        &all[..(parameter_count as usize).min(all.len())],
-    )?;
-    let status = if status.is_number() {
-        status.to_int32()
+    give_stdout_a_buffer();
+    let status = {
+        let _running = bun_crash_handler::RunningCProgram::enter();
+        main.call(
+            global_this,
+            JSValue::UNDEFINED,
+            &all[..(parameter_count as usize).min(all.len())],
+        )?
+    };
+    // `int` comes back as a number, a wider integer type as a BigInt; `void main` returns nothing.
+    let status = if status.is_number() || status.is_big_int() {
+        status.to_int64()
     } else {
         0
     };
-    bun_core::Global::exit(status as u8 as u32)
+
+    let vm = global_this.bun_vm().as_mut();
+    if vm.is_watcher_enabled() {
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        at_exit::run_handlers();
+        #[cfg(all(unix, not(all(target_os = "linux", target_env = "gnu"))))]
+        flush_c_streams();
+        return Ok(());
+    }
+    vm.exit_handler.exit_code = status as u8;
+    vm.exit_handler.requested = true;
+    vm.on_exit();
+    vm.global_exit()
+}
+
+/// The third argument of `main`, for a program that declares one: the process's environment.
+fn environment() -> *const *const c_char {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn _NSGetEnviron() -> *mut *const *const c_char;
+        }
+        // SAFETY: always returns the address of the process's `environ`.
+        unsafe { *_NSGetEnviron() }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        unsafe extern "C" {
+            static environ: *const *const c_char;
+        }
+        // SAFETY: libc's `environ`; read on the thread that runs JavaScript.
+        unsafe { environ }
+    }
+    #[cfg(windows)]
+    {
+        // The environment of the C runtime the program's own calls (`getenv`) go to.
+        let Some(address) = windows_libraries(bun_core::zstr!("__p__environ")) else {
+            return core::ptr::null();
+        };
+        // SAFETY: `char ***__p__environ(void)` of ucrtbase.dll.
+        unsafe {
+            let get: unsafe extern "C" fn() -> *mut *const *const c_char =
+                core::mem::transmute(address);
+            *get()
+        }
+    }
+}
+
+/// Bun turns buffering off for C's `stdout` when it starts, because it writes to the descriptor
+/// itself. A C program that is the entry point has `stdout` to itself and gets what it would have
+/// in an executable of its own: a line at a time to a terminal, a block at a time otherwise. What is
+/// buffered when the program ends is written by the exit hook.
+fn give_stdout_a_buffer() {
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            #[cfg_attr(target_os = "macos", link_name = "__stdoutp")]
+            static stdout: *mut c_void;
+            fn setvbuf(
+                stream: *mut c_void,
+                buffer: *mut c_char,
+                mode: core::ffi::c_int,
+                size: usize,
+            ) -> core::ffi::c_int;
+            fn isatty(fd: core::ffi::c_int) -> core::ffi::c_int;
+        }
+        const IOFBF: core::ffi::c_int = 0;
+        const IOLBF: core::ffi::c_int = 1;
+        // The stream's for as long as the process runs. (Without a buffer of the caller's, glibc
+        // keeps the one-byte buffer an unbuffered stream has.)
+        struct Buffer(core::cell::UnsafeCell<[c_char; 8192]>);
+        // SAFETY: only libc's stdio touches the bytes, under the stream's lock.
+        unsafe impl Sync for Buffer {}
+        static BUFFER: Buffer = Buffer(core::cell::UnsafeCell::new([0; 8192]));
+        // Once: `--hot` runs the program again, and a stream's buffer is set before it is used.
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            // SAFETY: libc's `stdout`, and a buffer that outlives it.
+            unsafe {
+                let mode = if isatty(1) != 0 { IOLBF } else { IOFBF };
+                setvbuf(stdout, BUFFER.0.get().cast::<c_char>(), mode, 8192);
+            }
+        });
+    }
 }

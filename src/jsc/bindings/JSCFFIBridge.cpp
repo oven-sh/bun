@@ -128,45 +128,34 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
 
 // C compiled by bun_cc (BIR) and lowered to machine code by JSC's B3.
 
-using BunCModuleResolver = void* (*)(void* context, const char* name, size_t nameLength);
+using BunCModuleResolver = void* (*)(const char* name, size_t nameLength);
 
-// On success stores a +1 reference in `out`; otherwise leaves a TypeError pending.
-extern "C" JSC::EncodedJSValue Bun__CModule__create(
-    Zig::GlobalObject* globalObject,
+// On success stores a +1 reference in `out`, which the caller keeps for the life of the process: what the C
+// code gives the process (an exit or signal handler, a thread's start routine, a pointer to a static object)
+// points into the module. Otherwise stores why not in `error`.
+extern "C" bool Bun__CModule__create(
     const uint8_t* bir,
     size_t birLength,
-    void* resolverContext,
     BunCModuleResolver resolve,
-    JSC::FFI::CModule** out)
+    JSC::FFI::CModule** out,
+    BunString* error)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
     auto module = JSC::FFI::CModule::tryCreate(std::span { bir, birLength }, [&](const CString& name) {
-        return resolve(resolverContext, name.data(), name.length());
+        return resolve(name.data(), name.length());
     });
     if (!module) {
-        JSC::throwTypeError(globalObject, scope, module.error());
-        RELEASE_AND_RETURN(scope, {});
+        *error = Bun::toStringRef(module.error());
+        return false;
     }
     *out = &module.value().leakRef();
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-}
-
-extern "C" void Bun__CModule__deref(JSC::FFI::CModule* module)
-{
-    module->deref();
+    return true;
 }
 
 // Passes each `__attribute__((destructor))` function to `add`, last to run first (`add` is
-// `atexit`-like: last registered runs first). A module that has any is never freed: they run
-// when the process ends.
+// `atexit`-like: last registered runs first).
 extern "C" void Bun__CModule__registerDestructors(JSC::FFI::CModule* module, void (*add)(void (*)()))
 {
     const auto& destructors = module->bir().destructors;
-    if (destructors.isEmpty())
-        return;
-    module->ref();
     for (size_t i = destructors.size(); i--;)
         add(reinterpret_cast<void (*)()>(module->functionTable()[destructors[i]]));
 }

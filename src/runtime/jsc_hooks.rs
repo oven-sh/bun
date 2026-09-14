@@ -3366,13 +3366,6 @@ fn transpile_source_code_inner(
         // ────────────────────────────────────────────────────────────────────
         L::C => {
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-            if disable_transpilying {
-                return Ok(ResolvedSource {
-                    source_url: input_specifier.create_if_different(path.text),
-                    tag: ResolvedSourceTag::Esm,
-                    ..Default::default()
-                });
-            }
             // The file and every header it includes, including when it fails to compile.
             let exports = crate::ffi::c_module::load(
                 global_object,
@@ -3676,6 +3669,30 @@ fn get_hardcoded_module(
             Some(js_synthetic_module(name.as_bytes()))
         }
     }
+}
+
+/// `bun_jsc::module_loader::__bun_compile_c`: the pool thread's half of importing a C file.
+#[unsafe(no_mangle)]
+fn __bun_compile_c(path: &[u8]) -> bun_jsc::module_loader::CompiledC<'static> {
+    crate::ffi::c_module::compile(path, None)
+}
+
+/// `bun_jsc::module_loader::__bun_load_compiled_c`: the JavaScript thread's half.
+#[unsafe(no_mangle)]
+fn __bun_load_compiled_c(
+    jsc_vm: *mut VirtualMachine,
+    global: &JSGlobalObject,
+    path: &[u8],
+    compiled: bun_jsc::module_loader::CompiledC<'static>,
+) -> bun_jsc::JsResult<ResolvedSource> {
+    let exports = crate::ffi::c_module::finish(global, path, compiled, &mut |file| {
+        auto_watch_path(jsc_vm, file)
+    })?;
+    Ok(ResolvedSource {
+        jsvalue_for_export: exports,
+        tag: bun_jsc::resolved_source::Tag::ExportsObject,
+        ..Default::default()
+    })
 }
 
 /// With `--watch` / `--hot`: watch a file that a loader read without going through the transpiler.
@@ -4347,7 +4364,13 @@ pub unsafe extern "C" fn Bun__transpileFile(
         if !had_blob
             && allow_promise
             && (has_loaded || is_in_preload)
-            && concurrent_loader.is_java_script_like()
+            // C is compiled on the pool like JavaScript is transpiled there: a file that is read,
+            // and that importing is allowed at all (the error is the synchronous path's to throw).
+            && (concurrent_loader.is_java_script_like()
+                || (concurrent_loader == Loader::C
+                    && lr.virtual_source.is_none()
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    && unsafe { &*jsc_vm }.allow_ffi_cc()))
             && !lr.is_main
             // Plugins make this complicated.
             // TODO: allow running concurrently when no onLoad handlers match a plugin.

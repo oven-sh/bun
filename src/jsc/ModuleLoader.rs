@@ -130,7 +130,40 @@ pub struct TranspileExtra {
     pub promise_ptr: *mut *mut JSInternalPromise,
 }
 
+/// What compiling a C file made: the half of importing one that touches no JavaScript state, so
+/// that a pool thread can do it (`RuntimeTranspilerStore`), as it transpiles JavaScript, where the
+/// import can wait. Loading it into the VM is the other half, on the JavaScript thread.
+pub struct CompiledC<'a> {
+    /// The module's BIR, or why there is none.
+    pub bir: Result<std::borrow::Cow<'a, [u8]>, CCompileError>,
+    /// The file was BIR already, as `bun build` emits it, not C.
+    pub precompiled: bool,
+    /// The file and what it `#include`s from outside the system's header directories, whether or
+    /// not it compiled: what `--watch` and `--hot` watch.
+    pub files_read: Vec<String>,
+    /// Every warning, and for [`CCompileError::Invalid`] the errors.
+    pub log: bun_ast::Log,
+}
+
+pub enum CCompileError {
+    Read(bun_sys::Error),
+    PathNotUtf8,
+    UnsupportedPlatform,
+    /// The C does not compile: the log says why.
+    Invalid,
+}
+
 unsafe extern "Rust" {
+    /// Defined in `bun_runtime::jsc_hooks`. Reads the C file at `path` and compiles it. Any thread.
+    pub(crate) safe fn __bun_compile_c(path: &[u8]) -> CompiledC<'static>;
+    /// Defined in `bun_runtime::jsc_hooks`. Loads what `__bun_compile_c` made of the file at
+    /// `path` into the VM: the module whose exports are its functions. JavaScript thread.
+    pub(crate) fn __bun_load_compiled_c(
+        jsc_vm: *mut VirtualMachine,
+        global: &JSGlobalObject,
+        path: &[u8],
+        compiled: CompiledC<'static>,
+    ) -> crate::JsResult<ResolvedSource>;
     /// Defined in `bun_runtime::jsc_hooks`.
     pub(crate) fn __bun_transpile_source_code(
         jsc_vm: *mut VirtualMachine,

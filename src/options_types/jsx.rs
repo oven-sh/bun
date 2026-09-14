@@ -249,10 +249,7 @@ impl Pragma {
         Cow::Owned(out)
     }
 
-    /// What keeps `text` from being a member expression: the first member that
-    /// is not an identifier (`"a b"` in `"React.a b"`), or all of `text` when it
-    /// has no members (`"."`). `None` when `text` is a dotted chain of
-    /// identifiers.
+    /// The first member of `text` that is not an identifier, or all of `text` when it has no members (`"."`).
     pub fn invalid_member(text: &[u8]) -> Option<&[u8]> {
         use bun_ast::lexer_tables::{T, keyword};
 
@@ -260,8 +257,7 @@ impl Pragma {
         let Some(first) = members.next() else {
             return Some(text);
         };
-        // `first` is looked up as a variable, so it cannot be a reserved word.
-        // The exceptions are the ones in esbuild's `ParseDefineExprOrJSON`.
+        // `first` is looked up as a variable. The exceptions are esbuild's (`ParseDefineExprOrJSON`).
         let first_is_reserved = match keyword(first) {
             None | Some(T::TNull | T::TThis) => false,
             Some(T::TImport) => members.peek() != Some(&b"meta".as_slice()),
@@ -321,9 +317,7 @@ impl Pragma {
     }
 }
 
-/// The member list that a `Bun.build` option, a CLI flag or a bunfig.toml key
-/// sets. The printer writes the members verbatim, so each of those checks the
-/// text where it reads it.
+/// The member list that a `Bun.build` option, a CLI flag or a bunfig.toml key sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberListOption {
     Factory,
@@ -348,10 +342,7 @@ impl MemberListOption {
     }
 }
 
-/// esbuild takes any JSON scalar for the fragment (Mithril's is `'['`). There
-/// is no AST node for one here: the text is a member, which is split on `.`
-/// and printed verbatim. This takes the scalars that come through that intact:
-/// no `.`, and no `\` because nothing validates an escape.
+/// A JSON scalar (esbuild takes one for the fragment) that can be split on `.` and printed verbatim: no `.`, no `\` escape.
 fn is_verbatim_constant(text: &[u8]) -> bool {
     match text {
         b"true" | b"false" | [b'0'] => true,

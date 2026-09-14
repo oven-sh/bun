@@ -1179,10 +1179,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Optimization: Avoid unnecessary "using" machinery by changing ones
-        // initialized to "null" or "undefined" into a normal variable. Note that
+        // initialized to "null" or "undefined" into a normal constant. Note that
         // "await using" still needs the "await", so we can't do it for those.
         if p.options.features.minify_syntax && data.kind == S::Kind::KUsing {
-            data.kind = S::Kind::KLet;
+            data.kind = S::Kind::KConst;
             for d in data.decls.slice() {
                 if let Some(val) = d.value {
                     if !matches!(val.data, js_ast::ExprData::ENull(_))

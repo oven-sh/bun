@@ -82,6 +82,26 @@ bun --watch test
   signal, e.g. `bun --watch --watch-kill-signal SIGINT index.ts`.
 </Note>
 
+### Docker, WSL, and network filesystems
+
+The native filesystem watcher APIs do not report a change that comes from the other side of a mount. The watch succeeds, and then no event arrives. This happens on:
+
+- Docker bind mounts of a Windows or macOS host directory
+- WSL paths under `/mnt/c`
+- NFS and SMB shares, and VM shared folders
+
+For these, `--watch` and `--hot` can poll: Bun calls `stat()` on each watched file on an interval and reloads when the modification time, size, or inode changes. On Linux, Bun turns polling on by itself when the directory you run it in is on a 9p, NFS, SMB, or Parallels filesystem, and prints a note. WSL `/mnt/*` paths are 9p, for example. For any other setup, set `BUN_WATCHER_USE_POLLING=1`:
+
+```bash terminal icon="terminal"
+BUN_WATCHER_USE_POLLING=1 bun --watch index.ts
+```
+
+In a container, set it once with `ENV` in the Dockerfile or under `environment:` in the Compose file.
+
+`BUN_WATCHER_POLL_INTERVAL` sets the interval in milliseconds. The default is `100`. Polling uses more CPU than native events. `BUN_WATCHER_USE_POLLING=0` keeps the native watcher even where Bun would turn polling on.
+
+Polling follows the files that are already in the module graph. It does not see a new file that fixes an import that failed. Save a watched file or restart to pick it up.
+
 ---
 
 ## `--hot` mode

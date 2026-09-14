@@ -260,6 +260,79 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(exitCode).not.toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/5841
+// On a Docker bind mount from a Windows host or a WSL /mnt/c path,
+// inotify_add_watch succeeds and the kernel never delivers an event. The shim
+// reproduces that: the native watcher blocks in read() and nothing reloads.
+// BUN_WATCHER_USE_POLLING=1 selects the backend that stats the watched files.
+const INOTIFY_NEVER_FIRES_C = /* c */ `
+static int next_wd = 1;
+int inotify_add_watch(int fd, const char *path, unsigned int mask) {
+  (void)fd; (void)path; (void)mask;
+  return next_wd++;
+}
+`;
+
+async function expectPollingReloads(mode: "--watch" | "--hot", blindInotify: boolean) {
+  // --hot keeps one process, so the script must stay alive. The content
+  // changes length on every write: same-size writes inside one mtime tick
+  // are invisible to stat.
+  const source = (i: number) =>
+    `console.log("tick ${i}");\n//${Buffer.alloc(i, "-").toString()}\n` +
+    (mode === "--hot" ? "setInterval(() => {}, 1 << 30);\n" : "");
+  using dir = tempDir("watch-poll", {
+    ...(blindInotify ? { "shim.c": INOTIFY_NEVER_FIRES_C } : {}),
+    "watchee.js": source(0),
+  });
+  const cwd = String(dir);
+  const env: Record<string, string | undefined> = {
+    ...bunEnv,
+    BUN_WATCHER_USE_POLLING: "1",
+    BUN_WATCHER_POLL_INTERVAL: "20",
+  };
+  if (blindInotify) {
+    const shimPath = join(cwd, "shim.so");
+    await using ccProc = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(cwd, "shim.c")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+    if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+    env.LD_PRELOAD = bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath;
+  }
+
+  watchee = spawn({
+    cwd,
+    cmd: [bunExe(), mode, "--no-clear-screen", "watchee.js"],
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const { waitFor, release, output } = stdoutWaiter(watchee);
+  for (let i = 0; i < 3; i++) {
+    await waitFor(`tick ${i}\n`);
+    await Bun.write(join(cwd, "watchee.js"), source(i + 1));
+  }
+  await waitFor("tick 3\n");
+  release();
+  expect(output()).toContain("tick 3\n");
+}
+
+for (const mode of ["--watch", "--hot"] as const) {
+  it.skipIf(!isLinux || !cc)(
+    `${mode} with BUN_WATCHER_USE_POLLING=1 reloads when inotify never delivers an event`,
+    () => expectPollingReloads(mode, true),
+    30000,
+  );
+
+  // No shim, so this also passes on the native backend. It is here to run the
+  // polling backend on macOS and Windows.
+  it(`${mode} with BUN_WATCHER_USE_POLLING=1 reloads`, () => expectPollingReloads(mode, false), 30000);
+}
+
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload
 // to the JS thread first (so listeners can run), but forces the reload itself

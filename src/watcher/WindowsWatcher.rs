@@ -3,7 +3,7 @@
 use core::mem::size_of;
 use core::ptr;
 
-use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
+use crate::watcher_impl::{Backend, Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
 use bun_core::strings;
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
@@ -383,17 +383,29 @@ pub(crate) enum Timeout {
     None = 0,
 }
 
+/// `&mut this.platform.buf` for the native backend, with no `&mut Platform` in
+/// between: that borrow also covers `Platform::watcher` and invalidates the
+/// pointer a live `EventIterator` holds into it.
+macro_rules! path_buf {
+    ($this:ident) => {
+        match $this.platform {
+            Backend::Native(WindowsWatcher { ref mut buf, .. }) => buf,
+            Backend::Polling(_) => unreachable!(),
+        }
+    };
+}
+
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // We re-borrow buf inside the inner loop instead of holding `&this.platform.buf`
     // across calls to `this.platform.next()`.
-    let base_idx = this.platform.base_idx;
+    let base_idx = this.platform.native_mut().base_idx;
 
     let mut event_id: usize = 0;
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
     let mut timeout = Timeout::Infinite;
     loop {
-        let mut iter = match this.platform.next(timeout)? {
+        let mut iter = match this.platform.native_mut().next(timeout)? {
             Some(it) => it,
             None => break,
         };
@@ -412,13 +424,13 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             // outer loop reiterates) — encapsulated by the `RawSlice` invariant.
             let filename: &[u16] = event.filename.slice();
             let convert_res =
-                strings::copy_utf16_into_utf8(&mut this.platform.buf[base_idx..], filename);
+                strings::copy_utf16_into_utf8(&mut path_buf!(this)[base_idx..], filename);
             let eventpath_len = base_idx + convert_res.written as usize;
 
             bun_core::scoped_log!(
                 watcher,
                 "watcher update event: (filename: {}, action: {}",
-                bstr::BStr::new(&this.platform.buf[..eventpath_len]),
+                bstr::BStr::new(&path_buf!(this)[..eventpath_len]),
                 <&'static str>::from(event.action)
             );
 
@@ -437,7 +449,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 // are released before we touch `this.watch_events` or hand the
                 // whole `&mut Watcher` to `process_watch_event_batch`.
                 let rel = {
-                    let eventpath = &this.platform.buf[..eventpath_len];
+                    let eventpath = &path_buf!(this)[..eventpath_len];
                     let path = &this.watchlist.items_file_path()[item_idx];
                     let rel = is_parent_or_equal(path.as_ref(), eventpath);
                     bun_core::scoped_log!(
@@ -469,7 +481,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     // then dereference a pointer with invalidated provenance — UB that MIRI flags.
                     // The callee never touches `platform.watcher`, so re-deriving the pointer
                     // here from the now-current `&mut Watcher` restores valid provenance.
-                    iter.watcher = BackRef::new(&this.platform.watcher);
+                    iter.watcher = BackRef::new(&this.platform.native_mut().watcher);
                     // Reset event_id to start a new batch
                     event_id = 0;
                 }

@@ -21,6 +21,9 @@ pub mod kevent_watcher;
 #[path = "WindowsWatcher.rs"]
 pub mod windows_watcher;
 
+#[path = "PollingWatcher.rs"]
+pub(crate) mod polling_watcher;
+
 #[path = "WatcherTrace.rs"]
 pub(crate) mod watcher_trace;
 
@@ -36,6 +39,6 @@ pub use error::{Error, Result};
 pub use WatchItemKind as Kind;
 pub use watcher_impl::{
     AnyResolveWatcher, ChangedFilePath, Event, FdOwnership, HashType, MAX_COUNT,
-    MAX_EVICTION_COUNT, Op, PackageJSON, REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent,
-    WatchItem, WatchItemColumns, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
+    MAX_EVICTION_COUNT, Op, PackageJSON, WATCH_OPEN_FLAGS, WatchEvent, WatchItem, WatchItemColumns,
+    WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
 };

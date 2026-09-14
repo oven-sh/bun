@@ -427,27 +427,7 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
     }
 }
 
-/// With `--target=bun` a `require()` of a split ES module loads the target's
-/// chunk from the middle of the file making the call, and the chunks the
-/// target imports are then skipped if they are being evaluated and run on the
-/// spot if they have not started. `reached_chunks_in_order` lists a chunk's
-/// imports in the order their first file finishes, so a chunk `P` whose file
-/// imports its way to a file of chunk `A` comes after `A`: when `A` runs, `P`
-/// has not started, although in the source `P`'s file is in the middle of being
-/// evaluated (it is waiting for the import that led to `A`). A `require()`
-/// in `A` whose target needs `P` then runs `P`'s files early, inside the call.
-///
-/// Where every file of `P` that runs something is in that state while the
-/// walk reaches `A` (`reached_while_evaluating`), this lists `P` ahead of
-/// `A`: the loader enters `P`, then `A` through it, and `P` is being
-/// evaluated while `A` runs, as in the source. Only where that runs the same
-/// chunks in the same order (`P` imports `A` and whatever else runs in
-/// between, and gets to each through chunks that were in that state too), so
-/// nothing but such a `require()` can tell the difference, and only where one
-/// can run in between.
-///
-/// Returns, per chunk, its `reached_chunks_in_order` reordered that way
-/// (`None`: unchanged).
+/// Per chunk, its `reached_chunks_in_order` reordered as "Nesting cross-chunk imports" in `README.md` says (`None`: unchanged).
 fn nest_cross_chunk_imports(
     chunks: &[Chunk],
 ) -> Result<Vec<Option<Box<[u32]>>>, bun_alloc::AllocError> {
@@ -465,9 +445,7 @@ fn nest_cross_chunk_imports(
         return Ok(nested);
     }
 
-    // The chunks that run something (the ones some walk reached), and, made
-    // when first asked for, a chunk's `import` statements in the order
-    // `sorted_cross_chunk_imports` gives them from `reached_chunks_in_order`.
+    // The chunks that run something: the ones some walk reached.
     let mut runs = AutoBitSet::init_empty(chunks.len())?;
     for chunk in chunks.iter() {
         if let chunk::Content::Javascript(js) = &chunk.content {
@@ -477,6 +455,7 @@ fn nest_cross_chunk_imports(
         }
     }
     let mut rank: Vec<u32> = vec![u32::MAX; chunks.len()];
+    // A chunk's `import` statements in the order `sorted_cross_chunk_imports` gives them, made when first asked for.
     let mut lists: Vec<Option<Vec<u32>>> = Vec::new();
     lists.resize_with(chunks.len(), || None);
     let mut rank_in_other: Vec<u32> = vec![u32::MAX; chunks.len()];
@@ -498,11 +477,7 @@ fn nest_cross_chunk_imports(
         lists[of as usize] = Some(list);
     };
 
-    // A load as the module loader does it: a chunk runs after everything it
-    // imports, imports in statement order. `Entered::{since, before}` bound
-    // where in `reached_chunks_in_order` a chunk must have been reached for
-    // every chunk entered so far to have been in the middle of being
-    // evaluated at that point.
+    // A chunk the simulated load is inside of; what it runs must have been reached at `since..before`.
     struct Entered {
         chunk: u32,
         next: u32,
@@ -512,10 +487,9 @@ fn nest_cross_chunk_imports(
     let mut seen: Vec<u32> = vec![0; chunks.len()];
     let mut epoch = 0u32;
     let mut stack: Vec<Entered> = Vec::new();
-    // For the chunk being looked at: what a load of it runs, in order; how
-    // much of that has run when each chunk it gets to is done; how much when
-    // each of its `import` statements is reached.
+    // What a load of the chunk being looked at runs, in order.
     let mut ran: Vec<u32> = Vec::new();
+    // How much of `ran` there is when each chunk it gets to is done, and when each `import` statement is reached.
     let mut done_at: Vec<u32> = vec![u32::MAX; chunks.len()];
     let mut done: Vec<u32> = Vec::new();
     let mut statement_at: Vec<u32> = Vec::new();
@@ -536,15 +510,7 @@ fn nest_cross_chunk_imports(
             rank[other as usize] = at as u32;
         }
 
-        // Only the outermost: what was reached inside a chunk that moves is
-        // entered through it, wherever this chunk's own `import` of it is,
-        // and that chunk's own statements decide what is nested in it. What
-        // was reached inside one that stays must stay too
-        // (`ChunksBeingEvaluated::not_usable`).
-        //
-        // Where `parent` would go: ahead of the first statement for a chunk
-        // reached at `since` or later (`slot`). Nothing to do when that is
-        // where its own statement is (`own`), or when it has none.
+        // `(at, slot, own)`: the outermost chunks to move, where each would go and where its own statement is.
         candidates.clear();
         for (at, reached_while) in while_evaluating.iter().enumerate() {
             let ReachedWhileEvaluating {
@@ -626,10 +592,7 @@ fn nest_cross_chunk_imports(
             {
                 continue;
             }
-            // Entered there, with `ran[..from]` behind it, `parent` has to run
-            // `ran[from..to]` and then itself, and each of those while only
-            // chunks the walk was in the middle of when it reached that one
-            // are being evaluated: `parent` and whatever it goes through.
+            // Entered at `slot`, `parent` has to run `ran[from..to]` and then itself.
             epoch += 1;
             seen[parent as usize] = epoch;
             stack.push(Entered {

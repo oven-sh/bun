@@ -382,12 +382,7 @@ impl<'a> LinkerContext<'a> {
                 .is_entry_point()
     }
 
-    /// The files whose top level can run a `require()` of a split ES module
-    /// (`CROSS_CHUNK_REQUIRE`): a live part of theirs holds such a call, or
-    /// they statically import their way to a file where one does, so they
-    /// can call what it exports. `None` when the build has no such call. It
-    /// is the one way a chunk gets loaded from the middle of another chunk's
-    /// evaluation.
+    /// Files with a live split `require()` (`CROSS_CHUNK_REQUIRE`) or that statically import their way to one; `None` if the build has none.
     pub(crate) fn files_that_can_require_a_chunk(&self) -> Option<Box<[bool]>> {
         let import_records = self.graph.ast.items_import_records();
         let parts = self.graph.ast.items_parts();

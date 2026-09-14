@@ -23,10 +23,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     // files that run something when loaded; the rest (and every file without
     // code splitting) map to `u32::MAX`.
     let mut chunk_of_file: Vec<u32> = vec![u32::MAX; this.graph.files.len()];
-    // How many of each chunk's files those are, and the files whose top level
-    // can get to a split `require()`. Only where there is one: nothing else
-    // can observe which chunks are in the middle of being evaluated
-    // (`nest_cross_chunk_imports`).
+    // For `nest_cross_chunk_imports`; only kept where the build has a split `require()`.
     let mut files_that_run: Vec<u32> = Vec::new();
     let mut chunk_can_require: Vec<bool> = Vec::new();
     let mut file_can_require: Option<Box<[bool]>> = None;
@@ -276,40 +273,24 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     being_evaluated: Option<ChunksBeingEvaluated<'a>>,
 }
 
-/// Which other chunks the walk is in the middle of while it reaches a chunk:
-/// in the unbundled program their files are being evaluated (each is waiting
-/// for an import) when that chunk's code first runs. `nest_cross_chunk_imports`
-/// orders the `import` statements so that the same holds for the chunks.
+/// Which other chunks the walk is in the middle of while it reaches a chunk ("Nesting cross-chunk imports" in `README.md`).
 pub(crate) struct ChunksBeingEvaluated<'a> {
-    /// Per chunk, how many of its files run something when loaded, and
-    /// whether one of those can `require()` a chunk; per file, whether it can
-    /// (`LinkerContext::files_that_can_require_a_chunk`).
+    /// Per chunk, how many of its files run something when loaded.
     files_that_run: &'a [u32],
+    /// Per chunk and per file, `LinkerContext::files_that_can_require_a_chunk`.
     chunk_can_require: &'a [bool],
     file_can_require: &'a [bool],
-    /// The walk has left a file of its own chunk that can `require()` a
-    /// chunk. The unbundled file ran at that point and may have loaded, out
-    /// of turn, what the walk goes on to reach; in the chunk it runs after
-    /// every import, so from here on the walk does not say what is being
-    /// evaluated when a chunk first runs.
+    /// The walk has left a file of its own chunk that can `require()` a chunk; what it reaches next may have run already.
     own_file_may_have_required: bool,
-    /// Per other chunk not reached yet, how many of its files that run
-    /// something the walk has entered and not left.
+    /// Per other chunk not reached yet, how many of its files that run something the walk has entered and not left.
     open_files: Vec<u32>,
-    /// The chunks with all of them open, outermost first, each with what
-    /// `requiring_reached` was then, except ...
+    /// The chunks with all of them open that can be relied on, outermost first, each with `requiring_reached` at that point.
     all_open: Vec<(u32, u32)>,
-    /// ... the ones that cannot be relied on, counted here along with the
-    /// chunks that have only some open: one that got there after
-    /// `own_file_may_have_required`, or inside another one counted here
-    /// (moving the inner chunk's `import` and not the outer one's would run
-    /// the outer chunk's files, which import the inner one's, first).
+    /// How many chunks have only some open, or all after `own_file_may_have_required` or inside another one counted here.
     not_usable: u32,
-    /// Per chunk in `all_open`, one more than the length of `reached_chunks`
-    /// when it got there; 0 for the others.
+    /// Per chunk in `all_open`, one more than the length of `reached_chunks` when it got there; 0 for the others.
     all_open_since: Vec<u32>,
-    /// How many of the chunks reached so far can `require()` a chunk: only
-    /// that can tell what is being evaluated when it runs.
+    /// How many of the chunks reached so far can `require()` a chunk.
     requiring_reached: u32,
     /// `JavaScriptChunk::reached_while_evaluating` under construction.
     reached: Vec<ReachedWhileEvaluating>,
@@ -335,8 +316,7 @@ impl<'a> ChunksBeingEvaluated<'a> {
         }
     }
 
-    /// The walk enters a file that runs something, of `chunk` (another
-    /// chunk, not reached yet).
+    /// The walk enters a file that runs something, of another chunk that is not reached yet.
     fn enter(&mut self, chunk: u32, reached: usize) {
         self.open_files[chunk as usize] += 1;
         let open = self.open_files[chunk as usize];

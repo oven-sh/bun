@@ -1362,11 +1362,14 @@ impl EntryPoint {
     }
 }
 
-/// See `JavaScriptChunk::reached_while_evaluating`.
+/// What held while the walk reached the chunks at `since..at`, for the chunk at `at` of `reached_chunks_in_order`.
 #[derive(Copy, Clone)]
 pub(crate) struct ReachedWhileEvaluating {
+    /// Every file of the chunk that runs something was being evaluated; `since == at` when that cannot be relied on.
     pub(crate) since: u32,
+    /// The innermost other chunk that was true of when it became true of this one (`u32::MAX`: none).
     pub(crate) inside: u32,
+    /// One of the chunks at `since..at` can `require()` a chunk.
     pub(crate) requires_inside: bool,
 }
 
@@ -1382,18 +1385,9 @@ pub struct JavaScriptChunk {
     /// `compute_cross_chunk_dependencies` sorts this chunk's `import`
     /// statements by it.
     pub(crate) reached_chunks_in_order: Box<[u32]>,
-    /// Parallel to `reached_chunks_in_order`, and empty unless the build has
-    /// a split `require()`. For the chunk `reached_chunks_in_order[at]`:
-    /// every file of it that runs something was being evaluated (entered by
-    /// the walk and not left) the whole time the walk reached the chunks at
-    /// `since..at`, `inside` is the innermost other chunk that was true of
-    /// when it became true of this one (`u32::MAX`: none), and
-    /// `requires_inside` says one of the chunks at `since..at` can
-    /// `require()` a chunk. `since == at` when it does not hold, or cannot be
-    /// relied on. See `nest_cross_chunk_imports`.
+    /// Parallel to `reached_chunks_in_order`; see "Nesting cross-chunk imports" in `linker_context/README.md`.
     pub(crate) reached_while_evaluating: Box<[ReachedWhileEvaluating]>,
-    /// One of the chunk's files that run something can `require()` a split
-    /// ES module while it does (`LinkerContext::files_that_can_require_a_chunk`).
+    /// One of the chunk's files that run something is in `LinkerContext::files_that_can_require_a_chunk`.
     pub(crate) can_require_a_chunk: bool,
     /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
     pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,

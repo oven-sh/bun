@@ -7701,6 +7701,96 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  describe("hsl() and hwb() number channels", () => {
+    // In the modern syntax the saturation/lightness and whiteness/blackness are
+    // <percentage> | <number> | none, and the number is the percentage without
+    // its sign; only the legacy comma syntax is limited to percentages.
+    // https://www.w3.org/TR/css-color-4/#the-hsl-notation
+    // https://www.w3.org/TR/css-color-4/#the-hwb-notation
+    // Every output below is what the percentage spelling already produced and
+    // what lightningcss 1.30 emits for the number spelling.
+    minify_test(".foo { color: hsl(120 50 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 50 40%) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 50% 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120deg 50 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsla(120 50 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 50 40 / 0.5) }", ".foo{color:#33993380}");
+    minify_test(".foo { color: hsla(120 50 40 / 50%) }", ".foo{color:#33993380}");
+    minify_test(".foo { color: hsl(120 none 40) }", ".foo{color:#666}");
+    minify_test(".foo { color: hsl(120 50 none) }", ".foo{color:#000}");
+    minify_test(".foo { color: hsl(120 150 40) }", ".foo{color:#0c0}");
+    minify_test(".foo { color: hsl(120 -50 40) }", ".foo{color:#666}");
+    minify_test(".foo { color: hsl(120 50 140) }", ".foo{color:#fff}");
+    minify_test(".foo { color: hsl(120.5 50.5 40.5) }", ".foo{color:#339b34}");
+    minify_test(".foo { color: hsl(120 .5 40) }", ".foo{color:#656765}");
+    minify_test(".foo { color: hsl(120 calc(25 * 2) 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 calc(25% * 2) 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hwb(120 20 30) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120 20 30%) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120 20% 30) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120deg 20 30) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120 20 30 / 0.5) }", ".foo{color:#33b33380}");
+    minify_test(".foo { color: hwb(120 none 30) }", ".foo{color:#00b300}");
+    minify_test(".foo { color: hwb(120 20 none) }", ".foo{color:#3f3}");
+    minify_test(".foo { color: hwb(120 60 60) }", ".foo{color:gray}");
+    minify_test(".foo { color: hwb(120 -20 30) }", ".foo{color:#00b300}");
+    minify_test(".foo { color: hwb(120 20 130) }", ".foo{color:#2a2a2a}");
+    minify_test(".foo { color: hwb(120 calc(10 * 2) 30) }", ".foo{color:#33b333}");
+
+    // Relative color syntax is the modern syntax; the origin of a relative
+    // color, the operands of color-mix() and colors nested in other values go
+    // through the same parser.
+    minify_test(".foo { color: hsl(from red h 50 l) }", ".foo{color:#bf4040}");
+    minify_test(".foo { color: hwb(from red h 20 b) }", ".foo{color:#f33}");
+    minify_test(".foo { color: rgb(from hsl(120 50 40) r g b) }", ".foo{color:#393}");
+    minify_test(".foo { color: color-mix(in hsl, hsl(120 50 40), hwb(120 20 30)) }", ".foo{color:#33a633}");
+    minify_test(
+      ".foo { background: linear-gradient(hsl(120 50 40), hwb(120 20 30)) }",
+      ".foo{background:linear-gradient(#393,#33b333)}",
+    );
+    // Colors inside token lists (custom properties, var() fallbacks).
+    minify_test(".foo { --c: hsl(120 50 40) }", ".foo{--c:#393}");
+    minify_test(".foo { --c: hwb(120 20 30) }", ".foo{--c:#33b333}");
+    minify_test(".foo { color: var(--c, hsl(120 50 40)) }", ".foo{color:var(--c,#393)}");
+    // An hsl() whose alpha cannot be resolved keeps its channels, which are
+    // always written as percentages.
+    minify_test(".foo { color: hsl(120 50 40 / var(--a)) }", ".foo{color:hsl(120 50% 40%/var(--a))}");
+    minify_test(".foo { color: hsl(120 50 40% / var(--a)) }", ".foo{color:hsl(120 50% 40%/var(--a))}");
+
+    // Downleveling for targets without the space separated syntax works from
+    // the parsed color, so it is the same as for the percentage spelling.
+    prefix_test(
+      `.foo {
+        color: hsl(120 50 40 / 0.5);
+        border-color: hsl(120 50 40 / var(--a));
+        background: hwb(120 20 30 / 0.5);
+      }`,
+      indoc`
+        .foo {
+          color: rgba(51, 153, 51, .5);
+          border-color: hsla(120, 50%, 40%, var(--a));
+          background: rgba(51, 179, 51, .5);
+        }
+      `,
+      { chrome: Some(60 << 16) },
+    );
+
+    // The legacy comma syntax takes only percentages, and hwb() has no legacy
+    // syntax, so these are left for the browser to reject, as before.
+    minify_test(".foo { color: hsl(120, 50, 40) }", ".foo{color:hsl(120,50,40)}");
+    minify_test(".foo { color: hsl(120, 50%, 40) }", ".foo{color:hsl(120,50%,40)}");
+    minify_test(".foo { color: hsl(120, 50, 40%) }", ".foo{color:hsl(120,50,40%)}");
+    minify_test(".foo { color: hsla(120, 50, 40, 0.5) }", ".foo{color:hsla(120,50,40,.5)}");
+    minify_test(".foo { color: hwb(120, 20, 30) }", ".foo{color:hwb(120,20,30)}");
+    minify_test(".foo { color: hsl(120 50, 40) }", ".foo{color:hsl(120 50,40)}");
+    minify_test(".foo { color: hsl(120 50 40 60) }", ".foo{color:hsl(120 50 40 60)}");
+    minify_test(".foo { --c: hsl(120, 50, 40) }", ".foo{--c:hsl(120,50,40)}");
+    // The legacy rgb() percentage form shares the percentage parser.
+    minify_test(".foo { color: rgb(10%, 20, 30) }", ".foo{color:rgb(10%,20,30)}");
+    minify_test(".foo { color: hsl(120, 50%, 40%) }", ".foo{color:#393}");
+    minify_test(".foo { color: rgb(10%, 20%, 30%) }", ".foo{color:#1a334d}");
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

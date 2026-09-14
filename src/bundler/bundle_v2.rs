@@ -6798,10 +6798,9 @@ pub mod bv2_impl {
 
                 if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
                     if self.dev_server.is_some() {
-                        // The dev server finds a file by `path.text` and prints `path.pretty` as
-                        // the module id. An html record still holds the specifier as written.
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
+                        // HTML chunk printing reads the loader and the asset key through it.
                         if loader == Loader::Html {
                             import_record.source_index = Index::init(id);
                         }

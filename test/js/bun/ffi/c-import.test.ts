@@ -1629,4 +1629,47 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     expect(stdout).toBe(`tried ${size * 2} refused some: true\n`);
     expect(exitCode).toBe(0);
   });
+
+  test("the compiled form carries a module's bytes, not the space between them", async () => {
+    using dir = tempDir("c-bundle-data", {
+      // Constants are on pages of their own, 16 KiB apart from what the program writes to.
+      "small.c": `
+        const char *const greeting = "hello";
+        int counter = 41;
+        int next(void) { return ++counter; }
+      `,
+      // More initialized data than anything counted in the format may number.
+      "big.c": `
+        char big[17 << 20] = { [0] = 7, [(17 << 20) - 1] = 1 };
+        const char table[17 << 20] = { [1] = 3, [(17 << 20) - 1] = 2 };
+        int ends(void) { return big[0] * 1000 + big[(17 << 20) - 1] * 100 + table[1] * 10 + table[(17 << 20) - 1]; }
+      `,
+      "index.ts": `
+        import { next } from "./small.c";
+        import { ends } from "./big.c";
+        console.log(next(), ends());
+      `,
+    });
+    const unbundled = await run(String(dir), ["index.ts"]);
+    expect(unbundled.stderr).toBe("");
+    expect(unbundled.stdout).toBe("42 7132\n");
+    expect(unbundled.exitCode).toBe(0);
+
+    const build = await run(String(dir), ["build", "index.ts", "--target=bun", "--outdir", "out"]);
+    expect(build.stderr).not.toContain("error:");
+    expect(build.exitCode).toBe(0);
+    const out = join(String(dir), "out");
+    const sizeOf = (name: string) =>
+      [...new Bun.Glob(name + "-*.c").scanSync(out)].map(asset => Bun.file(join(out, asset)).size);
+    // A few hundred bytes of code and data, and none of the 16 KiB between its two parts.
+    expect(sizeOf("small")).toEqual([expect.any(Number)]);
+    expect(sizeOf("small")[0]).toBeLessThan(4096);
+    // Each array's two ends, 17 MiB apart, and the zeros after the last one dropped.
+    expect(sizeOf("big")[0]).toBeGreaterThan(2 * (17 << 20) - 4096);
+    expect(sizeOf("big")[0]).toBeLessThan(2 * (17 << 20) + 4096);
+    const bundled = await run(String(dir), [join("out", "index.js")]);
+    expect(bundled.stderr).toBe("");
+    expect(bundled.stdout).toBe("42 7132\n");
+    expect(bundled.exitCode).toBe(0);
+  });
 });

@@ -1184,6 +1184,99 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     expect(exitCode).toBe(0);
   });
 
+  // GOAWAY rejects new requests only (RFC 9114 section 5.2). The peer can still
+  // open its control and QPACK streams, and an lsquic client opens its QPACK
+  // encoder stream when the server's SETTINGS arrive. On a new connection that
+  // is after the GOAWAY of a stop() in the first handler. lsquic answered that
+  // stream with STOP_SENDING, which a client has to treat as
+  // H3_CLOSED_CRITICAL_STREAM: it closed the connection, and the request that
+  // stop() was draining died with it.
+  //
+  // The node:quic client shares this thread with the server, so the order is
+  // exact. The request is queued before the handshake completes and leaves with
+  // the client's Finished: the handler runs before the client has the SETTINGS.
+  // The client ends the request body once it has the GOAWAY, so the handler
+  // answers only after the server has read the QPACK encoder stream.
+  //
+  // The handler also makes the client send a second request. The client has not
+  // read the GOAWAY yet, and the server reads that request after the GOAWAY
+  // left: it still has to reject it.
+  test("server.stop() in the first handler of a new H3 connection rejects new requests but not the client's QPACK encoder stream", async () => {
+    let handled = 0;
+    const afterStop = Promise.withResolvers<string>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      async fetch(req) {
+        if (++handled === 1) {
+          server.stop();
+          afterStop.resolve(requestAfterStop());
+        }
+        return new Response("late:" + (await req.text()));
+      },
+    });
+
+    await using endpoint = new QuicEndpoint();
+    const goaway = Promise.withResolvers<void>();
+    const client = await connect(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+      ongoaway: () => goaway.resolve(),
+    });
+    const closed = client.closed.then(
+      () => "closed",
+      (err: Error) => `closed: ${err.message}`,
+    );
+
+    async function requestAfterStop() {
+      let status = "";
+      const stream = await client.createBidirectionalStream({
+        headers: requestHeaders("/after-stop"),
+        onheaders(received: Record<string, string>) {
+          status = received[":status"];
+        },
+      });
+      stream.closed.catch(() => {});
+      for await (const _ of stream as AsyncIterable<Uint8Array[]>) {
+      }
+      return status || "no response";
+    }
+
+    let status = "";
+    const stream = await client.createBidirectionalStream({
+      onheaders(received: Record<string, string>) {
+        status = received[":status"];
+      },
+    });
+    stream.closed.catch(() => {});
+    const writer = stream.writer;
+    stream.sendHeaders({ ...requestHeaders("/"), ":method": "POST" });
+    const outcome = (async () => {
+      let body = "";
+      for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+      // Without a response the session is gone: report why.
+      return status ? `${status} ${body}` : await closed;
+    })();
+
+    await Promise.race([goaway.promise, outcome]);
+    writer.writeSync(new TextEncoder().encode("body"));
+    writer.endSync();
+
+    expect({ inHandler: await outcome, afterStop: await afterStop.promise, handled }).toEqual({
+      inHandler: "200 late:body",
+      afterStop: "no response",
+      handled: 1,
+    });
+    if (!client.destroyed) client.close().catch(() => {});
+  });
+
   // bughunt #3: server.stop() must not leave the lsquic engine pointing at a
   // freed listen-socket. The follow-up GET should cleanly fail to connect,
   // and the process must still be alive to exit 0 on its own.

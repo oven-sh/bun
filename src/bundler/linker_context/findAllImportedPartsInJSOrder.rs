@@ -28,11 +28,13 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     // can observe which chunks are in the middle of being evaluated
     // (`nest_cross_chunk_imports`).
     let mut files_that_run: Vec<u32> = Vec::new();
-    let mut can_require_a_chunk: Option<Box<[bool]>> = None;
+    let mut chunk_can_require: Vec<bool> = Vec::new();
+    let mut file_can_require: Option<Box<[bool]>> = None;
     if this.graph.code_splitting {
-        can_require_a_chunk = this.files_that_can_require_a_chunk();
-        if can_require_a_chunk.is_some() {
+        file_can_require = this.files_that_can_require_a_chunk();
+        if file_can_require.is_some() {
             files_that_run.resize(chunks.len(), 0);
+            chunk_can_require.resize(chunks.len(), false);
         }
         for (chunk_index, chunk) in chunks.iter_mut().enumerate() {
             let chunk::Content::Javascript(js) = &mut chunk.content else {
@@ -41,14 +43,12 @@ pub(crate) fn find_all_imported_parts_in_js_order(
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
                 if !this.loading_file_has_no_side_effects(source_index) {
                     chunk_of_file[source_index as usize] = chunk_index as u32;
-                    if let Some(count) = files_that_run.get_mut(chunk_index) {
-                        *count += 1;
-                    }
-                    if can_require_a_chunk
-                        .as_ref()
-                        .is_some_and(|files| files[source_index as usize])
-                    {
-                        js.can_require_a_chunk = true;
+                    if let Some(files) = &file_can_require {
+                        files_that_run[chunk_index] += 1;
+                        if files[source_index as usize] {
+                            chunk_can_require[chunk_index] = true;
+                            js.can_require_a_chunk = true;
+                        }
                     }
                 }
             }
@@ -59,7 +59,8 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         inner: crate::linker_context_mod::GenerateChunkCtx<'a>,
         chunk_of_file: &'f [u32],
         files_that_run: &'f [u32],
-        can_require_a_chunk: Option<&'f [bool]>,
+        chunk_can_require: &'f [bool],
+        file_can_require: Option<&'f [bool]>,
     }
 
     // One chunk per task. Each task writes only its own `Chunk` and, for
@@ -76,7 +77,8 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         },
         chunk_of_file: &chunk_of_file,
         files_that_run: &files_that_run,
-        can_require_a_chunk: can_require_a_chunk.as_deref(),
+        chunk_can_require: &chunk_can_require,
+        file_can_require: file_can_require.as_deref(),
     };
     let chunks_len = chunks.len();
     this.worker_pool().each_ptr(
@@ -96,8 +98,12 @@ pub(crate) fn find_all_imported_parts_in_js_order(
                 &mut Vec::new(),
                 u32::try_from(index).expect("int cast"),
                 ctx.chunk_of_file,
-                ctx.can_require_a_chunk.map(|can_require_a_chunk| {
-                    ChunksBeingEvaluated::new(ctx.files_that_run, can_require_a_chunk)
+                ctx.file_can_require.map(|file_can_require| {
+                    ChunksBeingEvaluated::new(
+                        ctx.files_that_run,
+                        ctx.chunk_can_require,
+                        file_can_require,
+                    )
                 }),
                 chunks_len,
             ));
@@ -275,47 +281,56 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
 /// for an import) when that chunk's code first runs. `nest_cross_chunk_imports`
 /// orders the `import` statements so that the same holds for the chunks.
 pub(crate) struct ChunksBeingEvaluated<'a> {
-    /// Per chunk, how many of its files run something when loaded.
+    /// Per chunk, how many of its files run something when loaded, and
+    /// whether one of those can `require()` a chunk; per file, whether it can
+    /// (`LinkerContext::files_that_can_require_a_chunk`).
     files_that_run: &'a [u32],
-    /// `LinkerContext::files_that_can_require_a_chunk`.
-    can_require_a_chunk: &'a [bool],
+    chunk_can_require: &'a [bool],
+    file_can_require: &'a [bool],
     /// The walk has left a file of its own chunk that can `require()` a
     /// chunk. The unbundled file ran at that point and may have loaded, out
     /// of turn, what the walk goes on to reach; in the chunk it runs after
     /// every import, so from here on the walk does not say what is being
     /// evaluated when a chunk first runs.
     own_file_may_have_required: bool,
-    /// The other chunks not reached yet that the walk has entered a file of
-    /// (one that runs something) and not left it.
-    open: HashMap<u32, OpenChunk>,
-    /// Those with all such files open, outermost first, except ...
-    all_open: Vec<u32>,
+    /// Per other chunk not reached yet, how many of its files that run
+    /// something the walk has entered and not left.
+    open_files: Vec<u32>,
+    /// The chunks with all of them open, outermost first, each with what
+    /// `requiring_reached` was then, except ...
+    all_open: Vec<(u32, u32)>,
     /// ... the ones that cannot be relied on, counted here along with the
     /// chunks that have only some open: one that got there after
     /// `own_file_may_have_required`, or inside another one counted here
     /// (moving the inner chunk's `import` and not the outer one's would run
     /// the outer chunk's files, which import the inner one's, first).
     not_usable: u32,
+    /// Per chunk in `all_open`, one more than the length of `reached_chunks`
+    /// when it got there; 0 for the others.
+    all_open_since: Vec<u32>,
+    /// How many of the chunks reached so far can `require()` a chunk: only
+    /// that can tell what is being evaluated when it runs.
+    requiring_reached: u32,
     /// `JavaScriptChunk::reached_while_evaluating` under construction.
     reached: Vec<ReachedWhileEvaluating>,
 }
 
-#[derive(Default)]
-struct OpenChunk {
-    files: u32,
-    /// The length of `reached_chunks` when the chunk joined `all_open`.
-    all_since: Option<u32>,
-}
-
 impl<'a> ChunksBeingEvaluated<'a> {
-    fn new(files_that_run: &'a [u32], can_require_a_chunk: &'a [bool]) -> Self {
+    fn new(
+        files_that_run: &'a [u32],
+        chunk_can_require: &'a [bool],
+        file_can_require: &'a [bool],
+    ) -> Self {
         ChunksBeingEvaluated {
             files_that_run,
-            can_require_a_chunk,
+            chunk_can_require,
+            file_can_require,
             own_file_may_have_required: false,
-            open: HashMap::default(),
+            open_files: vec![0; files_that_run.len()],
             all_open: Vec::new(),
             not_usable: 0,
+            all_open_since: vec![0; files_that_run.len()],
+            requiring_reached: 0,
             reached: Vec::new(),
         }
     }
@@ -323,46 +338,44 @@ impl<'a> ChunksBeingEvaluated<'a> {
     /// The walk enters a file that runs something, of `chunk` (another
     /// chunk, not reached yet).
     fn enter(&mut self, chunk: u32, reached: usize) {
-        let open = bun_core::handle_oom(self.open.get_or_put(chunk)).value_ptr;
-        open.files += 1;
-        let all = open.files == self.files_that_run[chunk as usize];
-        if open.files > 1 && all {
+        self.open_files[chunk as usize] += 1;
+        let open = self.open_files[chunk as usize];
+        let all = open == self.files_that_run[chunk as usize];
+        if open > 1 && all {
             self.not_usable -= 1;
         }
         if all && !self.own_file_may_have_required && self.not_usable == 0 {
-            open.all_since = Some(reached as u32);
-            self.all_open.push(chunk);
-        } else if all || open.files == 1 {
+            self.all_open_since[chunk as usize] = reached as u32 + 1;
+            self.all_open.push((chunk, self.requiring_reached));
+        } else if all || open == 1 {
             self.not_usable += 1;
         }
     }
 
     /// The walk leaves the first such file of `chunk`: `chunk` is reached.
     fn reach(&mut self, chunk: u32, reached: usize) {
-        let open = self.open.remove(&chunk);
-        debug_assert!(open.is_some());
-        self.reached.push(match open {
-            Some(OpenChunk {
-                all_since: Some(since),
-                ..
-            }) => {
-                let innermost = self.all_open.pop();
-                debug_assert_eq!(innermost, Some(chunk));
-                ReachedWhileEvaluating {
-                    since,
-                    inside: self.all_open.last().copied().unwrap_or(u32::MAX),
-                }
+        debug_assert!(self.open_files[chunk as usize] > 0);
+        let since = core::mem::take(&mut self.all_open_since[chunk as usize]);
+        self.reached.push(if since == 0 {
+            self.not_usable -= 1;
+            ReachedWhileEvaluating {
+                since: reached as u32,
+                inside: u32::MAX,
+                requires_inside: false,
             }
-            open => {
-                if open.is_some() {
-                    self.not_usable -= 1;
-                }
-                ReachedWhileEvaluating {
-                    since: reached as u32,
-                    inside: u32::MAX,
-                }
+        } else {
+            let innermost = self.all_open.pop();
+            debug_assert_eq!(innermost.map(|(chunk, _)| chunk), Some(chunk));
+            ReachedWhileEvaluating {
+                since: since - 1,
+                inside: self.all_open.last().map_or(u32::MAX, |&(chunk, _)| chunk),
+                requires_inside: innermost
+                    .is_some_and(|(_, requiring)| requiring != self.requiring_reached),
             }
         });
+        if self.chunk_can_require[chunk as usize] {
+            self.requiring_reached += 1;
+        }
     }
 }
 
@@ -461,7 +474,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                 } => {
                     if is_file_in_chunk {
                         if let Some(being_evaluated) = &mut self.being_evaluated
-                            && being_evaluated.can_require_a_chunk[source_index as usize]
+                            && being_evaluated.file_can_require[source_index as usize]
                         {
                             being_evaluated.own_file_may_have_required = true;
                         }

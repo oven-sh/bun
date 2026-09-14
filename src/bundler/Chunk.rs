@@ -1367,6 +1367,7 @@ impl EntryPoint {
 pub(crate) struct ReachedWhileEvaluating {
     pub(crate) since: u32,
     pub(crate) inside: u32,
+    pub(crate) requires_inside: bool,
 }
 
 #[derive(Default)]
@@ -1385,10 +1386,11 @@ pub struct JavaScriptChunk {
     /// a split `require()`. For the chunk `reached_chunks_in_order[at]`:
     /// every file of it that runs something was being evaluated (entered by
     /// the walk and not left) the whole time the walk reached the chunks at
-    /// `since..at`, and `inside` is the innermost other chunk that was true
-    /// of when it became true of this one (`u32::MAX`: none). `since == at`
-    /// when it does not hold, or cannot be relied on. See
-    /// `nest_cross_chunk_imports`.
+    /// `since..at`, `inside` is the innermost other chunk that was true of
+    /// when it became true of this one (`u32::MAX`: none), and
+    /// `requires_inside` says one of the chunks at `since..at` can
+    /// `require()` a chunk. `since == at` when it does not hold, or cannot be
+    /// relied on. See `nest_cross_chunk_imports`.
     pub(crate) reached_while_evaluating: Box<[ReachedWhileEvaluating]>,
     /// One of the chunk's files that run something can `require()` a split
     /// ES module while it does (`LinkerContext::files_that_can_require_a_chunk`).

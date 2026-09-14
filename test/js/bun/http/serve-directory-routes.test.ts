@@ -637,6 +637,23 @@ describe("Bun.serve() directory routes", () => {
       expect([401, 404]).toContain(r.status);
     }
 
+    // uWS resolves dot-segments, `\` and `#` the way request.url does, so
+    // these spellings of an inner path reach the inner route.
+    const innerStatus: Record<string, number> = {};
+    const innerSpellings = [
+      "/static/./admin/secret.txt",
+      "/static/x/../admin/secret.txt",
+      "/static/%2e/admin/secret.txt",
+      "/static/admin\\secret.txt",
+      "/static\\admin\\secret.txt",
+      "/static/secret.pdf#x",
+      "/other/../static/secret.pdf",
+    ];
+    for (const p of innerSpellings) {
+      innerStatus[p] = (await raw(p)).status;
+    }
+    expect(innerStatus).toEqual(Object.fromEntries(innerSpellings.map(p => [p, 401])));
+
     // A directory hit without a trailing slash 301-redirects to the slash
     // form, which re-enters routing and matches `/static/admin/*`. It must
     // not serve `admin/index.html` directly.
@@ -656,6 +673,28 @@ describe("Bun.serve() directory routes", () => {
 
     // Canonical paths under the outer route still work.
     expect(await (await fetch(`${server.url}static/ok.txt`)).text()).toBe("ok");
+  });
+
+  it("rejects a raw '#' and serves an encoded one", async () => {
+    using dir = tempDir("serve-dir-hash", {
+      "public/a": "a-file",
+      "public/a#b.txt": "hash-file",
+    });
+
+    server = serve({
+      port: 0,
+      routes: { "/static/*": { dir: join(String(dir), "public") } },
+    });
+
+    // uWS ends the path at a raw `#`, so it routed `/static/a`. Serving
+    // `a#b.txt` would be a path the router never matched.
+    const rawHash = await raw("/static/a#b.txt");
+    expect(rawHash.body).toBe("");
+    expect(rawHash.status).toBe(404);
+
+    const encodedHash = await raw("/static/a%23b.txt");
+    expect(encodedHash.body).toBe("hash-file");
+    expect(encodedHash.status).toBe(200);
   });
 
   it("yields to more-specific overlapping routes", async () => {

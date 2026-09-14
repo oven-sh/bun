@@ -807,6 +807,33 @@ describe("Bun.serve http2 in-process", () => {
     await closed;
   });
 
+  test("routes match the normalized :path that request.url reports", async () => {
+    // node:http2 sends :path as given, so the server sees the raw spelling.
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      routes: {
+        "/admin/x": req => new Response(`exact ${new URL(req.url).pathname}`),
+        "/w/*": req => new Response(`wildcard ${new URL(req.url).pathname}`),
+      },
+      fetch: req => new Response(`fetch ${new URL(req.url).pathname}`),
+    });
+    const session = await connectH2(server.port, false);
+    const results: Record<string, string> = {};
+    for (const path of ["/admin/x", "/admin\\x", "/w/../admin/x", "/w/%2E%2e/admin/x", "/w\\z", "/w/.."]) {
+      results[path] = (await request(session, { ":path": path })).body.toString();
+    }
+    expect(results).toEqual({
+      "/admin/x": "exact /admin/x",
+      "/admin\\x": "exact /admin/x",
+      "/w/../admin/x": "exact /admin/x",
+      "/w/%2E%2e/admin/x": "exact /admin/x",
+      "/w\\z": "wildcard /w/z",
+      "/w/..": "fetch /",
+    });
+    await new Promise<void>(r => session.close(() => r()));
+  });
+
   test("handler throwing produces 500 over h2", async () => {
     await using server = Bun.serve({
       port: 0,

@@ -1439,6 +1439,40 @@ describe("Bun.serve HTTP/3 request validation", () => {
     });
   });
 
+  test("routes match the normalized :path that request.url reports", async () => {
+    // The base only matters for the last row: with an :authority that is not a host, request.url is the bare :path.
+    const seenPath = (req: Request) => new URL(req.url, "http://no-authority.invalid").pathname;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      routes: {
+        "/admin/x": req => new Response(`exact ${seenPath(req)}`),
+        "/w/*": req => new Response(`wildcard ${seenPath(req)}`),
+      },
+      fetch: req => new Response(`fetch ${seenPath(req)}`),
+    });
+
+    const results: Record<string, string> = {};
+    for (const path of ["/admin/x", "/admin\\x", "/w/../admin/x", "/w/%2E%2e/admin/x", "/w\\z", "/w/.."]) {
+      results[path] = await h3Exchange(server.port, requestHeaders(path));
+    }
+    results["no authority"] = await h3Exchange(server.port, {
+      ...requestHeaders("/admin\\x"),
+      ":authority": "user@example.com",
+    });
+
+    expect(results).toEqual({
+      "/admin/x": "200 exact /admin/x",
+      "/admin\\x": "200 exact /admin/x",
+      "/w/../admin/x": "200 exact /admin/x",
+      "/w/%2E%2e/admin/x": "200 exact /admin/x",
+      "/w\\z": "200 wildcard /w/z",
+      "/w/..": "200 fetch /",
+      "no authority": "200 exact /admin/x",
+    });
+  });
+
   test("requestCert with rejectUnauthorized only serves QUIC clients whose certificate chains to the configured CA", async () => {
     const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
     const pem = (name: string) => readFileSync(join(keysDir, name), "utf8");

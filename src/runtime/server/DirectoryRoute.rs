@@ -498,15 +498,18 @@ fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usi
         return None;
     }
 
-    // uWS routed on the raw URL split on literal `/` with no decode and no
-    // normalization. Any transformation we apply that uWS did not creates a
-    // path uWS never matched, which can bypass a more-specific overlapping
-    // route. So reject every such transformation: `%XX` whose decoded byte is
-    // a `pchar` (would let `%61dmin` reach `admin/`); encoded `%2F`; and any
-    // non-canonical segment (empty / `.` / `..`). Route segments can only
-    // consist of `pchar`s on the wire, so rejecting encoded `pchar`s leaves
-    // percent-decoding as the identity on every byte that could influence
-    // routing, while still decoding `%20`, high-bit bytes, etc.
+    // uWS routes on the path split on `/` with no percent-decode, after it
+    // resolves `.` / `..` segments (also spelled `%2e`), reads `\` as `/` and
+    // drops a `#` with what follows, the way the URL parser builds
+    // `request.url`. This function reads the raw bytes. Any path it derives
+    // that uWS did not match can bypass a more-specific overlapping route. So
+    // reject every difference: a raw `#` (`\` is rejected after the decode
+    // below); `%XX` whose decoded byte is a `pchar` (would let `%61dmin` reach
+    // `admin/`); encoded `%2F`; and any non-canonical segment (empty / `.` /
+    // `..`). Route segments can only consist of `pchar`s on the wire, so
+    // rejecting encoded `pchar`s leaves percent-decoding as the identity on
+    // every byte that could influence routing, while still decoding `%20`,
+    // high-bit bytes, etc.
     let mut raw_slashes = 0usize;
     let mut i = 0usize;
     while i < after_prefix.len() {
@@ -515,6 +518,7 @@ fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usi
                 raw_slashes += 1;
                 i += 1;
             }
+            b'#' => return None,
             b'%' if i + 2 < after_prefix.len()
                 && after_prefix[i + 1].is_ascii_hexdigit()
                 && after_prefix[i + 2].is_ascii_hexdigit() =>
@@ -639,10 +643,12 @@ mod tests {
 
     #[test]
     fn resolve_route_precedence_parity() {
-        // These all route to the outer wildcard in uWS (which matches on raw
-        // segments) but would reach a file under an inner prefix if we
-        // normalized, decoded `/`, or decoded a pchar. Reject so the served
-        // path equals the routed path.
+        // uWS matches segments with no percent-decode and keeps empty ones, so
+        // these route to the outer wildcard but would reach a file under an
+        // inner prefix if we collapsed `//`, decoded `/`, or decoded a pchar.
+        // uWS resolves the dot-segment rows itself; the raw bytes this
+        // function reads still hold them. Reject so the served path equals
+        // the routed path.
         assert_eq!(resolve(b"/static/a%2Fb.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a%2fb.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static//a/b.txt", b"/static/"), None);
@@ -653,6 +659,14 @@ mod tests {
         assert_eq!(resolve(b"/static/a/./b.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a/../b.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a/..", b"/static/"), None);
+        // uWS ends the path at a raw `#` and reads `\` as `/`.
+        assert_eq!(resolve(b"/static/a.txt#b", b"/static/"), None);
+        assert_eq!(resolve(b"/static/a#/b.txt", b"/static/"), None);
+        assert_eq!(resolve(b"/static/a\\b.txt", b"/static/"), None);
+        assert_eq!(
+            resolve(b"/static/a%23b.txt", b"/static/"),
+            ok(b"a#b.txt", false)
+        );
         // `%XX` encoding a pchar (RFC 3986) is rejected: uWS would not have
         // matched the literal segment, so decoding it creates a new path.
         assert_eq!(resolve(b"/static/%61dmin/x", b"/static/"), None);

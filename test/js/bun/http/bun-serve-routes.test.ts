@@ -1107,3 +1107,143 @@ describe.concurrent("false route with no fetch handler", () => {
     await proc.exited;
   });
 });
+
+// fetch() normalizes the path client-side, so these tests write the request line over a plain socket.
+// Without a Host header (HTTP/1.0) request.url is the request-target as sent, not an absolute URL.
+async function rawGet(port: number, target: string, sendHost = true): Promise<string> {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  let received = "";
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: {
+      open(socket) {
+        socket.write(
+          sendHost
+            ? `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`
+            : `GET ${target} HTTP/1.0\r\n\r\n`,
+        );
+      },
+      data(socket, chunk) {
+        received += chunk.toString();
+      },
+      close() {
+        resolve(received);
+      },
+      error(socket, err) {
+        reject(err);
+      },
+    },
+  });
+  return promise;
+}
+
+describe("routes match the same normalized path that request.url reports", () => {
+  // request.url goes through the URL parser, which resolves dot-segments (and their "%2e"
+  // spellings), turns "\" into "/", and ends the path at "#". Routing on the raw bytes would
+  // send "GET /admin\x" to the fallback while every handler downstream reads "/admin/x".
+  const cases: { target: string; route: string; pathname: string; param?: string }[] = [
+    { target: "/admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // "\" is a path separator to the URL parser, so it must be one to the router too
+    { target: "/admin\\x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/w\\z", route: "/w/*", pathname: "/w/z" },
+    { target: "/p\\v1", route: "/p/:v", pathname: "/p/v1", param: "v1" },
+    { target: "/w\\..\\admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // dot-segments must not skip the exact route in favor of the fallback
+    { target: "/admin/../admin/x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/./admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // dot-segments must not hand a path outside the wildcard's prefix to the wildcard handler
+    { target: "/w/../admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // percent-encoded dot-segment spellings the URL parser resolves ("%2e" == ".")
+    { target: "/w/%2e%2e/admin/x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/w/.%2E/admin/x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/w/%2E./admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // the path ends at the fragment
+    { target: "/admin/x#frag", route: "/admin/x", pathname: "/admin/x" },
+    // the HTTP parser strips the query before routing, so dot-segments after "?" never matter
+    { target: "/admin/x?query=1", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/admin/x?next=/w/../admin", route: "/admin/x", pathname: "/admin/x" },
+    // normalization inside a subtree stays inside it
+    { target: "/w/sub/../x", route: "/w/*", pathname: "/w/x" },
+    { target: "/w/%2e/x", route: "/w/*", pathname: "/w/x" },
+    { target: "/p/x/../y", route: "/p/:v", pathname: "/p/y", param: "y" },
+    // empty segments are preserved, and ".." pops the empty segment, not the one before it
+    { target: "/w//../admin/x", route: "/w/*", pathname: "/w/admin/x" },
+    { target: "//a/../b", route: "fallback", pathname: "//b" },
+    { target: "/admin//../x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/w\\\\x", route: "/w/*", pathname: "/w//x" },
+    // normalization never escapes the root
+    { target: "/w/..", route: "fallback", pathname: "/" },
+    { target: "/..", route: "fallback", pathname: "/" },
+    // a trailing dot-segment keeps the trailing slash, which is a different path
+    { target: "/admin/x/y/..", route: "fallback", pathname: "/admin/x/" },
+    { target: "/p/a/..", route: "fallback", pathname: "/p/" },
+    // dotfile segments are not dot-segments
+    { target: "/.well-known/x", route: "fallback", pathname: "/.well-known/x" },
+    { target: "/w/.hidden", route: "/w/*", pathname: "/w/.hidden" },
+    // an encoded "/" is not a path separator and does not split the parameter
+    { target: "/p/..%2fadmin", route: "/p/:v", pathname: "/p/..%2fadmin", param: "../admin" },
+    // matching stays percent-encoded: no decoding is applied to the path
+    { target: "/admin/%78", route: "fallback", pathname: "/admin/%78" },
+  ];
+
+  it.each([
+    ["with a Host header", true],
+    ["without a Host header", false],
+  ])("for raw request-target spellings %s", async (_label, sendHost) => {
+    const seen: { route: string; url: string; param?: string }[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: {
+        "/admin/x": req => {
+          seen.push({ route: "/admin/x", url: req.url });
+          return new Response("admin");
+        },
+        "/w/*": req => {
+          seen.push({ route: "/w/*", url: req.url });
+          return new Response("wildcard");
+        },
+        "/p/:v": req => {
+          seen.push({ route: "/p/:v", url: req.url, param: req.params.v });
+          return new Response("param");
+        },
+      },
+      fetch(req) {
+        seen.push({ route: "fallback", url: req.url });
+        return new Response("fallback");
+      },
+    });
+
+    const results: typeof cases = [];
+    for (const { target } of cases) {
+      seen.length = 0;
+      const response = await rawGet(server.port, target, sendHost);
+      expect(response).toStartWith("HTTP/1.1 200");
+      expect(seen).toHaveLength(1);
+      const { route, url, param } = seen[0];
+      // Without a Host header request.url is a bare path. Prefix an origin the way Bun does with a Host.
+      const pathname = new URL(url.startsWith("/") ? "http://no-host.invalid" + url : url).pathname;
+      results.push({ target, route, pathname, ...(param !== undefined ? { param } : {}) });
+    }
+    expect(results).toEqual(cases);
+  });
+
+  it("for routes that reload() adds to a server that had only a fetch handler", async () => {
+    // With only the catch-all registered the router skips normalization, so adding the first
+    // real route has to turn it on.
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development: false,
+      fetch: () => new Response("fallback"),
+    });
+    expect(await rawGet(server.port, "/admin\\x")).toEndWith("fallback");
+    server.reload({
+      routes: { "/admin/x": () => new Response("admin") },
+      fetch: () => new Response("fallback"),
+    });
+    expect(await rawGet(server.port, "/admin\\x")).toEndWith("admin");
+    expect(await rawGet(server.port, "/w/../admin/x")).toEndWith("admin");
+  });
+});

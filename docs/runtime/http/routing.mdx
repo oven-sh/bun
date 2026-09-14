@@ -96,6 +96,8 @@ Bun.serve({
 });
 ```
 
+Bun matches routes against the same path that `request.url` reports. Before it matches, Bun resolves `.` and `..` segments (also written `%2e`), reads `\` as `/`, and drops a `#` and everything after it. Bun does not percent-decode the path to match it.
+
 ---
 
 ## Type-safe route parameters
@@ -206,7 +208,7 @@ Bun.serve({
 });
 ```
 
-Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains `.`, `..`, empty segments, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`, so the kernel clamps symlinks that would escape `dir`.
+Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains `.`, `..`, empty segments, `\`, `#`, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`, so the kernel clamps symlinks that would escape `dir`.
 
 <Info>
   Routing is case-sensitive, but filesystems on macOS and Windows are case-insensitive by default. As a result, a

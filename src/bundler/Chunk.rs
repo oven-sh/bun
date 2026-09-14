@@ -470,18 +470,12 @@ pub struct CodeResult {
     pub(crate) shifts: Vec<source_map::SourceMapShifts>,
 }
 
-/// Appends `//# sourceMappingURL=<prefix><rel_path>\n` to `out`.
-///
-/// `prefix` is `publicPath` (or `./`) and `rel_path` is made of file names. Both
-/// are percent-encoded: written raw, a LF, CR, U+2028 or U+2029 in either ends
-/// the line comment and what follows it runs as code.
+/// Appends `//# sourceMappingURL=<prefix><rel_path>\n`, percent-encoded so that no byte of either part ends the comment.
 pub(crate) fn append_source_mapping_url_comment(out: &mut Vec<u8>, prefix: &[u8], rel_path: &[u8]) {
     const START: &[u8] = b"//# sourceMappingURL=";
     out.reserve(START.len() + prefix.len() + rel_path.len() + b"\n".len());
     out.extend_from_slice(START);
-    // `publicPath` is the author's URL. Printable ASCII stays as written, so
-    // `?`, `#`, a `[::1]` host and `%XX` escapes keep their meaning. No URL can
-    // contain the rest: control characters, space and non-ASCII bytes.
+    // `prefix` is publicPath, a URL already: printable ASCII stays, so `?`, `#`, `[::1]` and `%XX` keep their meaning.
     percent_encode(out, prefix, |byte| byte.is_ascii_graphic());
     percent_encode(out, rel_path, is_url_path_byte);
     out.push(b'\n');
@@ -513,9 +507,7 @@ fn percent_encode(out: &mut Vec<u8>, bytes: &[u8], keep: impl Fn(u8) -> bool) {
     }
 }
 
-/// In a file path only `/` is syntax. This is the set that Go's `URL.EscapedPath`
-/// keeps, which is what esbuild writes here, without `:` because a first path
-/// segment that has one parses as a URL scheme.
+/// The set Go's `URL.EscapedPath` (esbuild) keeps, minus `:`: a first path segment with a colon parses as a scheme.
 fn is_url_path_byte(byte: u8) -> bool {
     matches!(
         byte,

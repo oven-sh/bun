@@ -1589,4 +1589,37 @@ describe.skipIf(!supported)("bundling a .c file", () => {
       );
     },
   );
+
+  test.concurrent("a damaged asset is an error where it is loaded, never a crash", async () => {
+    using dir = tempDir("c-bundle-damaged", {
+      "program.c": `#include <stdio.h>\nint main(int argc, char **argv) { printf("hi %d\\n", argc); return 3; }\n`,
+      "damage.ts": `
+        import { join } from "path";
+        const [asset] = [...new Bun.Glob("program-*.c").scanSync("out")];
+        const good = await Bun.file(join("out", asset)).bytes();
+        let loaded = 0, refused = 0;
+        const attempt = async (bytes: Uint8Array, name: string) => {
+          await Bun.write(join("damaged", name), bytes);
+          try { require(join(process.cwd(), "damaged", name)); loaded++; } catch { refused++; }
+        };
+        for (let at = 0; at < good.length; at++) {
+          for (const flip of [0x01, 0x80, 0xff]) {
+            const bytes = good.slice();
+            bytes[at] ^= flip;
+            await attempt(bytes, at + "-" + flip + ".c");
+          }
+        }
+        for (let length = 0; length < good.length; length++) await attempt(good.subarray(0, length), "cut-" + length + ".c");
+        console.log("tried", loaded + refused, "refused some:", refused > 0);
+      `,
+    });
+    const build = await run(String(dir), ["build", "program.c", "--target=bun", "--outdir", "out"]);
+    expect(build.exitCode).toBe(0);
+    const [asset] = [...new Bun.Glob("program-*.c").scanSync(join(String(dir), "out"))];
+    const size = (await Bun.file(join(String(dir), "out", asset)).bytes()).length;
+    const { stdout, stderr, exitCode } = await run(String(dir), ["damage.ts"], { BUN_ENABLE_CRASH_REPORTING: "0" });
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`tried ${size * 4} refused some: true\n`);
+    expect(exitCode).toBe(0);
+  });
 });

@@ -537,29 +537,64 @@ pub fn host_fn_construct_this<R: IntoHostConstructReturn>(
 // (Phase 3 of `R-2-design.md` deletes them and drops the `_shared` suffix).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Prototype method (`sharedThis`): `fn(&self, &JSGlobalObject, &CallFrame) -> R`.
+/// How a `sharedThis` prototype method receives the wrapper's `m_ctx`: as a
+/// plain `&T`, or as a [`ThisPtr<T>`](bun_ptr::ThisPtr) when the method needs
+/// the allocation's root pointer (to take/release intrusive refs on itself or
+/// hand itself to a dispatch path that may). The generated thunk is generic
+/// over this, so the method's own signature picks.
+pub trait HostReceiver<'a, T: 'a>: Sized {
+    /// # Safety
+    /// `this` is the live, non-null `m_ctx` of a JS wrapper that stays rooted
+    /// for `'a`.
+    unsafe fn from_m_ctx(this: *mut T) -> Self;
+}
+impl<'a, T: 'a> HostReceiver<'a, T> for &'a T {
+    #[inline(always)]
+    unsafe fn from_m_ctx(this: *mut T) -> Self {
+        // SAFETY: trait contract.
+        unsafe { &*this }
+    }
+}
+impl<'a, T: 'a> HostReceiver<'a, T> for bun_ptr::ThisPtr<T> {
+    #[inline(always)]
+    unsafe fn from_m_ctx(this: *mut T) -> Self {
+        // SAFETY: trait contract.
+        unsafe { bun_ptr::ThisPtr::new(this) }
+    }
+}
+
+/// Prototype method (`sharedThis`) taking `&self` or `this: ThisPtr<Self>`.
+///
+/// # Safety
+/// `this` is the live `m_ctx` of the JS wrapper the call was dispatched on.
 #[track_caller]
 #[inline]
-pub fn host_fn_this_shared<T, R: IntoHostFnReturn>(
-    this: &T,
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-    f: impl FnOnce(&T, &JSGlobalObject, &CallFrame) -> R,
+pub unsafe fn host_fn_this_ptr<'a, T: 'a, Rcv: HostReceiver<'a, T>, R: IntoHostFnReturn>(
+    this: *mut T,
+    global: &'a JSGlobalObject,
+    callframe: &'a CallFrame,
+    f: impl FnOnce(Rcv, &'a JSGlobalObject, &'a CallFrame) -> R,
 ) -> JSValue {
+    // SAFETY: fn contract.
+    let this = unsafe { Rcv::from_m_ctx(this) };
     host_fn_result(global, || f(this, global, callframe))
 }
 
-/// Prototype method (`sharedThis`, passThis):
-/// `fn(&self, &JSGlobalObject, &CallFrame, JSValue) -> R`.
+/// [`host_fn_this_ptr`] with `passThis`.
+///
+/// # Safety
+/// As [`host_fn_this_ptr`].
 #[track_caller]
 #[inline]
-pub fn host_fn_this_value_shared<T, R: IntoHostFnReturn>(
-    this: &T,
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
+pub unsafe fn host_fn_this_value_ptr<'a, T: 'a, Rcv: HostReceiver<'a, T>, R: IntoHostFnReturn>(
+    this: *mut T,
+    global: &'a JSGlobalObject,
+    callframe: &'a CallFrame,
     js_this: JSValue,
-    f: impl FnOnce(&T, &JSGlobalObject, &CallFrame, JSValue) -> R,
+    f: impl FnOnce(Rcv, &'a JSGlobalObject, &'a CallFrame, JSValue) -> R,
 ) -> JSValue {
+    // SAFETY: fn contract.
+    let this = unsafe { Rcv::from_m_ctx(this) };
     host_fn_result(global, || f(this, global, callframe, js_this))
 }
 
@@ -847,6 +882,86 @@ pub fn new_function_with_data(
         function,
         data,
     )
+}
+
+/// A host function that receives a native `&Context` through its callee's
+/// data slot (see [`ContextFunction`]).
+pub trait ContextHostFn {
+    type Context;
+    fn call(
+        ctx: &Self::Context,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> crate::JsResult<JSValue>;
+}
+
+/// A JS function created by [`ContextFunction::new`] whose data slot holds a
+/// [`BackRef`](bun_ptr::BackRef) to a native context. The function is the
+/// back-reference's holder: the context keeps this handle (whose `Drop` clears
+/// the slot, turning later calls into no-ops returning `undefined`) for as long
+/// as — and no longer than — it lives at that address. The JS function itself
+/// must be kept GC-reachable by its holder while this handle exists.
+pub struct ContextFunction(JSValue);
+
+impl ContextFunction {
+    /// Create a JS function that calls `H` with `ctx`'s pointee.
+    #[track_caller]
+    pub fn new<H: ContextHostFn>(
+        global_object: &JSGlobalObject,
+        symbol_name: Option<&EncodedSlice>,
+        arg_count: u32,
+        ctx: bun_ptr::BackRef<H::Context>,
+    ) -> Self {
+        ContextFunction(new_function_with_data(
+            global_object,
+            symbol_name,
+            arg_count,
+            context_host_fn::<H>,
+            ctx.as_const_ptr().cast_mut().cast(),
+        ))
+    }
+
+    #[inline]
+    pub fn value(&self) -> JSValue {
+        self.0
+    }
+}
+
+impl Drop for ContextFunction {
+    fn drop(&mut self) {
+        set_function_data(self.0, None);
+    }
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+unsafe extern "sysv64" fn context_host_fn<H: ContextHostFn>(
+    global: *mut JSGlobalObject,
+    frame: *mut CallFrame,
+) -> JSValue {
+    context_host_fn_body::<H>(global, frame)
+}
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+unsafe extern "C" fn context_host_fn<H: ContextHostFn>(
+    global: *mut JSGlobalObject,
+    frame: *mut CallFrame,
+) -> JSValue {
+    context_host_fn_body::<H>(global, frame)
+}
+
+#[inline(always)]
+fn context_host_fn_body<H: ContextHostFn>(
+    global: *mut JSGlobalObject,
+    frame: *mut CallFrame,
+) -> JSValue {
+    let global = bun_opaque::opaque_deref(global);
+    let frame = bun_opaque::opaque_deref(frame);
+    to_js_host_call(global, || match get_function_data(frame.callee()) {
+        // SAFETY: written by `ContextFunction::new::<H>` from a
+        // `BackRef<H::Context>` whose holder (this function's handle, kept by
+        // the context) clears the slot before the context goes away.
+        Some(ctx) => H::call(unsafe { &*ctx.cast::<H::Context>() }, global, frame),
+        None => Ok(JSValue::UNDEFINED),
+    })
 }
 
 // ───────────────────────── DOMCall codegen helpers ─────────────────────────

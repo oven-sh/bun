@@ -270,6 +270,39 @@ unsafe extern "C" {
 #[repr(transparent)]
 pub struct OwnedSslCtx(core::ptr::NonNull<SSL_CTX>);
 
+/// A typed `SSL` ex-data index: allocated once (per `static`) with
+/// `SSL_get_ex_new_index`, so distinct slots never alias and everything read
+/// through a slot was written as the same `T`.
+pub struct ExDataSlot<T> {
+    index: std::sync::OnceLock<c_int>,
+    _marker: core::marker::PhantomData<fn() -> T>,
+}
+
+impl<T> ExDataSlot<T> {
+    pub const fn new() -> Self {
+        ExDataSlot {
+            index: std::sync::OnceLock::new(),
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    fn index(&self) -> c_int {
+        *self.index.get_or_init(|| {
+            // SAFETY: no argp/callbacks; BoringSSL just hands out the next index.
+            let i = unsafe {
+                SSL_get_ex_new_index(0, core::ptr::null_mut(), core::ptr::null_mut(), None, None)
+            };
+            assert!(i >= 0, "SSL_get_ex_new_index failed");
+            i
+        })
+    }
+}
+
+// SAFETY: holds only an index.
+unsafe impl<T> Sync for ExDataSlot<T> {}
+// SAFETY: holds only an index.
+unsafe impl<T> Send for ExDataSlot<T> {}
+
 impl OwnedSslCtx {
     /// Takes the +1 `raw` carries; `None` when `raw` is null.
     ///
@@ -281,6 +314,11 @@ impl OwnedSslCtx {
 
     pub fn as_ptr(&self) -> *mut SSL_CTX {
         self.0.as_ptr()
+    }
+
+    /// The context this reference keeps alive.
+    pub fn ctx(&self) -> &SSL_CTX {
+        SSL_CTX::opaque_ref(self.0.as_ptr())
     }
 
     /// Transfers the reference back out; the caller must free it.
@@ -514,6 +552,38 @@ impl SSL {
         }
     }
 
+    /// `SSL_set_tlsext_host_name` — the SNI name to send in the ClientHello.
+    pub fn set_tlsext_host_name(&mut self, name: &core::ffi::CStr) -> c_int {
+        // SAFETY: `self` is live; BoringSSL copies the NUL-terminated `name`.
+        unsafe { SSL_set_tlsext_host_name(self, name.as_ptr()) }
+    }
+
+    /// `SSL_set_alpn_protos` — the client's wire-format ALPN list (copied).
+    pub fn set_alpn_protos(&mut self, protos: &[u8]) -> c_int {
+        // SAFETY: `self` is live; `protos` is readable for its length and copied.
+        unsafe { SSL_set_alpn_protos(self, protos.as_ptr(), protos.len()) }
+    }
+
+    /// Store a back-reference to `data` in `slot`. The `BackRef` obligation
+    /// applies to the connection: `data` outlives this `SSL`, or the slot is
+    /// cleared first. Returns whether BoringSSL accepted the write.
+    pub fn set_ex_data<T>(&self, slot: &ExDataSlot<T>, data: Option<bun_ptr::BackRef<T>>) -> bool {
+        let p = data.map_or(core::ptr::null_mut(), |r| {
+            r.as_const_ptr().cast_mut().cast()
+        });
+        // SAFETY: `self` is live; BoringSSL stores `p` opaquely.
+        unsafe { SSL_set_ex_data(core::ptr::from_ref(self).cast_mut(), slot.index(), p) == 1 }
+    }
+
+    /// Read back what [`set_ex_data`](Self::set_ex_data) stored in `slot`.
+    pub fn ex_data<T>(&self, slot: &ExDataSlot<T>) -> Option<bun_ptr::BackRef<T>> {
+        // SAFETY: `self` is live; `slot`'s index is only ever written through
+        // `set_ex_data::<T>`, so a non-null value is a `BackRef<T>`.
+        let p = unsafe { SSL_get_ex_data(self, slot.index()) }.cast::<T>();
+        // SAFETY: non-null values in this slot are `BackRef<T>`s (see above).
+        (!p.is_null()).then(|| unsafe { bun_ptr::BackRef::from_raw(p) })
+    }
+
     /// The peer's leaf certificate, borrowed from this SSL's cert chain.
     pub fn peer_leaf_certificate(&mut self) -> Option<&mut X509> {
         // SAFETY: the chain and its entries are owned by this SSL and outlive
@@ -525,6 +595,187 @@ impl SSL {
             }
             sk_X509_value(cert_chain, 0).as_mut()
         }
+    }
+}
+
+impl SSL_CTX {
+    /// `SSL_CTX_get_verify_mode`.
+    pub fn verify_mode(&self) -> c_int {
+        // SAFETY: `self` is live; read-only.
+        unsafe { SSL_CTX_get_verify_mode(self) }
+    }
+
+    /// Take another reference on this context.
+    pub fn up_ref(&self) -> OwnedSslCtx {
+        // SAFETY: `self` is live; the +1 is owned by the returned guard.
+        unsafe { SSL_CTX_up_ref(core::ptr::from_ref(self).cast_mut()) };
+        OwnedSslCtx(core::ptr::NonNull::from(self))
+    }
+
+    /// Install `H` as this context's server-side ALPN selection hook
+    /// (`SSL_CTX_set_alpn_select_cb`).
+    pub fn set_alpn_select_callback<H: AlpnSelectCallback>(&self) {
+        // SAFETY: `self` is live; the callback and null `arg` are stored opaquely.
+        unsafe {
+            SSL_CTX_set_alpn_select_cb(
+                core::ptr::from_ref(self).cast_mut(),
+                Some(alpn_select_thunk::<H>),
+                core::ptr::null_mut(),
+            )
+        }
+    }
+}
+
+/// A fatal `no_application_protocol` alert from an [`AlpnSelectCallback`].
+pub struct AlpnReject;
+
+/// Server-side ALPN selection (`SSL_CTX_set_alpn_select_cb`), with the
+/// pointer plumbing done once in this crate.
+pub trait AlpnSelectCallback {
+    /// `offered` is the client's wire-format protocol list (non-empty). Return
+    /// the chosen protocol as a sub-slice of `offered` (see
+    /// [`select_next_proto`]), `Ok(None)` to proceed without ALPN, or
+    /// `Err(AlpnReject)` to fail the handshake.
+    fn select<'o>(ssl: &SSL, offered: &'o [u8]) -> Result<Option<&'o [u8]>, AlpnReject>;
+}
+
+unsafe extern "C" fn alpn_select_thunk<H: AlpnSelectCallback>(
+    ssl: *mut SSL,
+    out: *mut *const u8,
+    out_len: *mut u8,
+    in_: *const u8,
+    in_len: c_uint,
+    _arg: *mut c_void,
+) -> c_int {
+    if ssl.is_null() || in_.is_null() || in_len == 0 {
+        return SSL_TLSEXT_ERR_NOACK;
+    }
+    // SAFETY: BoringSSL passes the live handshaking SSL and `in_len` bytes at `in_`.
+    let (ssl, offered) = unsafe {
+        (
+            SSL::opaque_ref(ssl),
+            core::slice::from_raw_parts(in_, in_len as usize),
+        )
+    };
+    match H::select(ssl, offered) {
+        Ok(Some(selected)) => {
+            let range = offered.as_ptr_range();
+            let sel = selected.as_ptr_range();
+            if selected.is_empty()
+                || selected.len() > usize::from(u8::MAX)
+                || sel.start < range.start
+                || sel.end > range.end
+                || !alpn_protocols(offered)
+                    .any(|p| p.as_ptr() == selected.as_ptr() && p.len() == selected.len())
+            {
+                return SSL_TLSEXT_ERR_ALERT_FATAL;
+            }
+            // SAFETY: `out`/`out_len` are BoringSSL's out-params for this call;
+            // `selected` lies inside `offered`, which BoringSSL keeps alive
+            // until it has copied the selection.
+            unsafe {
+                *out = selected.as_ptr();
+                *out_len = selected.len() as u8;
+            }
+            SSL_TLSEXT_ERR_OK
+        }
+        Ok(None) => SSL_TLSEXT_ERR_NOACK,
+        Err(AlpnReject) => SSL_TLSEXT_ERR_ALERT_FATAL,
+    }
+}
+
+/// The entries of an RFC 7301 wire-format protocol list (`len | bytes`)*.
+/// Stops at the first malformed entry.
+pub fn alpn_protocols(list: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut rest = list;
+    core::iter::from_fn(move || {
+        let (&len, tail) = rest.split_first()?;
+        let len = usize::from(len);
+        if len == 0 || tail.len() < len {
+            rest = &[];
+            return None;
+        }
+        let (proto, tail) = tail.split_at(len);
+        rest = tail;
+        Some(proto)
+    })
+}
+
+/// Whether `list` is a well-formed, non-empty RFC 7301 protocol list
+/// (`ssl_is_valid_alpn_list`).
+fn alpn_list_is_valid(list: &[u8]) -> bool {
+    !list.is_empty() && alpn_protocols(list).map(|p| p.len() + 1).sum::<usize>() == list.len()
+}
+
+/// `SSL_select_next_proto` for ALPN: the first protocol in `prefs` (wire
+/// format, in preference order) that `offered` also lists, returned as the
+/// matching entry of `offered`. `None` when either list is malformed or
+/// nothing overlaps.
+pub fn select_next_proto<'a>(prefs: &[u8], offered: &'a [u8]) -> Option<&'a [u8]> {
+    if !alpn_list_is_valid(prefs) || !alpn_list_is_valid(offered) {
+        return None;
+    }
+    alpn_protocols(prefs).find_map(|want| alpn_protocols(offered).find(|got| *got == want))
+}
+
+#[cfg(test)]
+mod alpn_select_tests {
+    use super::*;
+
+    static OFFERED: &[u8] = b"\x02h2\x08http/1.1";
+
+    fn run<H: AlpnSelectCallback>() -> (c_int, *const u8, u8) {
+        let mut out: *const u8 = core::ptr::null();
+        let mut out_len: u8 = 0;
+        // `SSL` is an opaque ZST; the handlers below never touch it.
+        let ssl = core::ptr::NonNull::<SSL>::dangling().as_ptr();
+        // SAFETY: `OFFERED` outlives the call; out-params are locals.
+        let rc = unsafe {
+            alpn_select_thunk::<H>(
+                ssl,
+                &raw mut out,
+                &raw mut out_len,
+                OFFERED.as_ptr(),
+                OFFERED.len() as c_uint,
+                core::ptr::null_mut(),
+            )
+        };
+        (rc, out, out_len)
+    }
+
+    struct Entry;
+    impl AlpnSelectCallback for Entry {
+        fn select<'o>(_: &SSL, offered: &'o [u8]) -> Result<Option<&'o [u8]>, AlpnReject> {
+            Ok(alpn_protocols(offered).nth(1))
+        }
+    }
+
+    struct SubSlice;
+    impl AlpnSelectCallback for SubSlice {
+        fn select<'o>(_: &SSL, offered: &'o [u8]) -> Result<Option<&'o [u8]>, AlpnReject> {
+            Ok(Some(&offered[1..2]))
+        }
+    }
+
+    struct Straddle;
+    impl AlpnSelectCallback for Straddle {
+        fn select<'o>(_: &SSL, offered: &'o [u8]) -> Result<Option<&'o [u8]>, AlpnReject> {
+            Ok(Some(&offered[1..5]))
+        }
+    }
+
+    #[test]
+    fn accepts_exactly_one_offered_entry() {
+        let (rc, out, len) = run::<Entry>();
+        assert_eq!(rc, SSL_TLSEXT_ERR_OK);
+        assert_eq!(len, 8);
+        assert_eq!(out, OFFERED[4..].as_ptr());
+    }
+
+    #[test]
+    fn rejects_a_subslice_that_is_not_an_entry() {
+        assert_eq!(run::<SubSlice>().0, SSL_TLSEXT_ERR_ALERT_FATAL);
+        assert_eq!(run::<Straddle>().0, SSL_TLSEXT_ERR_ALERT_FATAL);
     }
 }
 
@@ -920,6 +1171,13 @@ unsafe extern "C" {
     pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;
     pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
     pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
+    pub fn SSL_get_ex_new_index(
+        argl: core::ffi::c_long,
+        argp: *mut c_void,
+        unused: *mut c_void,
+        dup_unused: Option<unsafe extern "C" fn()>,
+        free_func: Option<unsafe extern "C" fn()>,
+    ) -> c_int;
     pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
     pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: usize) -> c_int;
     pub fn SSL_get0_alpn_selected(ssl: *const SSL, out_data: *mut *const u8, out_len: *mut c_uint);

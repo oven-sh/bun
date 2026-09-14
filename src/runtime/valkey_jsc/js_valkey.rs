@@ -1453,12 +1453,10 @@ impl JSValkeyClient {
                 // Per-VM weak cache: a `duplicate()`'d client (or any
                 // other client with the same config) hits the same
                 // `SSL_CTX*` instead of rebuilding.
-                let state = crate::jsc_hooks::runtime_state();
-                debug_assert!(!state.is_null(), "RuntimeState not installed");
-                // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
-                // stable address for the VM's lifetime, JS-thread-only.
-                let cache = unsafe { &mut (*state).ssl_ctx_cache };
-                self._secure.set(cache.get_or_create(custom, &mut err));
+                self._secure
+                    .set(crate::jsc_hooks::with_ssl_ctx_cache(|cache| {
+                        cache.get_or_create(custom, &mut err)
+                    }));
             }
             self._secure.get().is_none()
         } else {

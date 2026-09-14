@@ -35,6 +35,7 @@ pub use crate::generated_classes::js_SecureContext as js;
 #[bun_jsc::JsClass]
 #[repr(C)]
 pub struct SecureContext {
+    /// The one `SSL_CTX` reference this wrapper owns.
     pub ctx: boringssl::OwnedSslCtx,
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach
     /// `us_ssl_ctx_from_options`. Stored so an `intern()` WeakGCMap hit (keyed by
@@ -319,19 +320,11 @@ impl SecureContext {
         d: [u8; 32],
     ) -> JsResult<Box<SecureContext>> {
         let mut err = uws::create_bun_socket_error_t::none;
-        // Note: spec is `global.bunVM().rareData().sslCtxCache()`. In the
-        // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
-        // opaque cycle-break stub; the concrete per-VM `SSLContextCache` lives
-        // on this crate's `RuntimeState` (one per JS thread, same lifetime as
-        // `RareData`). Reach it via the thread-local — same instance
-        // `Bun__RareData__sslCtxCache` hands out over FFI.
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState` installed by
-        // `init_runtime_state`; the embedded `ssl_ctx_cache` has a stable
-        // address for the VM's lifetime and is only touched from the JS thread.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
-        let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
+        // The per-VM `SSLContextCache` lives on this thread's `RuntimeState`
+        // (`bun_jsc::RareData::ssl_ctx_cache()` is an opaque cycle-break stub).
+        let Some(ctx) = crate::jsc_hooks::with_ssl_ctx_cache(|cache| {
+            cache.get_or_create_digest(ctx_opts, d, &mut err)
+        }) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
             // enum is still `.none`; surface the library error stack instead of

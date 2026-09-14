@@ -847,7 +847,7 @@ impl<'a> ParseRenderer<'a> {
         self.marked_args.append(array);
         self.stack.push(ParseStackEntry {
             children: array,
-            href: Box::from(detail.href),
+            href: detail.href_with_prefix(),
             title: Box::from(detail.title),
             ..Default::default()
         });
@@ -1329,7 +1329,7 @@ impl<'a> JsCallbackRenderer<'a> {
             return Err(self.global_object.throw_stack_overflow());
         }
         self.stack.push(CallbackStackEntry {
-            href: Box::from(detail.href),
+            href: detail.href_with_prefix(),
             title: Box::from(detail.title),
             ..Default::default()
         });

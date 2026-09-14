@@ -79,6 +79,27 @@ describe("Bun.markdown.react", () => {
     expect(link.props.children).toEqual(["click"]);
   });
 
+  // https://github.com/oven-sh/bun/issues/31936
+  test.each([
+    // [markdown, parser options, href, link text]
+    ["<email@example.com>", undefined, "mailto:email@example.com", "email@example.com"],
+    ["email@example.com", { autolinks: true }, "mailto:email@example.com", "email@example.com"],
+    ["www.example.com", { autolinks: true }, "http://www.example.com", "www.example.com"],
+    ["<https://example.com>", undefined, "https://example.com", "https://example.com"],
+    ["https://example.com", { autolinks: true }, "https://example.com", "https://example.com"],
+    ["<mailto:email@example.com>", undefined, "mailto:email@example.com", "mailto:email@example.com"],
+    // Not an autolink: the destination stays as written.
+    ["[text](email@example.com)", { autolinks: true }, "email@example.com", "text"],
+    ["[text](www.example.com)", { autolinks: true }, "www.example.com", "text"],
+  ])("href of %j has the same scheme as in html()", (md, opts, href, text) => {
+    const link = children(md + "\n", undefined, opts)[0].props.children[0];
+    expect({ type: link.type, href: link.props.href, children: link.props.children }).toEqual({
+      type: "a",
+      href,
+      children: [text],
+    });
+  });
+
   test("image has src and alt in props", () => {
     const img = children("![alt](img.png)\n")[0].props.children[0];
     expect(img.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);

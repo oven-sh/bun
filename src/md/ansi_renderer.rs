@@ -2406,12 +2406,7 @@ fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
 /// Caller owns the returned memory.
 fn resolve_href(detail: &SpanDetail) -> Box<[u8]> {
     let mut buf: Vec<u8> = Vec::new();
-    if detail.autolink_email {
-        buf.extend_from_slice(b"mailto:");
-    }
-    if detail.autolink_www {
-        buf.extend_from_slice(b"http://");
-    }
+    buf.extend_from_slice(detail.href_prefix());
     let mut scratch: Vec<u8> = Vec::new();
     buf.extend_from_slice(sanitize_source_text(detail.href, &mut scratch));
     buf.into_boxed_slice()

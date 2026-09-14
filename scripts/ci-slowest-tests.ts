@@ -11,6 +11,11 @@
 //   bun scripts/ci-slowest-tests.ts 47324           # specific build
 //   bun scripts/ci-slowest-tests.ts 47324 100       # top 100
 //   bun scripts/ci-slowest-tests.ts --json          # JSON output
+//   bun scripts/ci-slowest-tests.ts --allow-partial # exit 0 even if some job logs are missing
+//
+// Exit code 2 means that some job logs could not be fetched. The output is
+// there, but it is computed from partial data (`jobsFailed` in the JSON). Run
+// the same command again: only the missing logs are fetched.
 //
 // Requires BUILDKITE_TOKEN (or BUILDKITE_API_TOKEN) and `bk` + `gh` CLIs.
 
@@ -78,9 +83,71 @@ export function parseLog(text: string): Map<string, number> {
   return out;
 }
 
+export type Job = { id: string; name: string; raw_log_url: string; retried?: boolean };
+
+export type LogFetcherOptions = {
+  token: string;
+  /** Holds one `<job id>.log` per fetched log, so a re-run only fetches what is missing. */
+  cacheDir: string;
+  /** Requests per log, the first one included. */
+  maxAttempts?: number;
+  /** Upper bound for the wait that a response can ask for. */
+  maxWaitMs?: number;
+  sleep?: (ms: number) => Promise<unknown>;
+};
+
+function announceAndSleep(ms: number) {
+  console.error(`  waiting ${ms / 1000}s for Buildkite (rate limit or server error)`);
+  return Bun.sleep(ms);
+}
+
+// Do NOT use `bk job log` — it hangs indefinitely on some Windows/alpine jobs.
+// Fetching raw_log_url directly with the token works for all of them.
+//
+// Buildkite limits the REST requests per minute twice: for the organization
+// and for the user of the token (200 each here). Each limit has its own window.
+// One build has about 160 test-bun jobs, so a 429 is routine. On a 429 or a
+// 5xx, wait and ask again. The wait is shared: one 429 holds back every
+// download, not only the one that received it.
+export function createLogFetcher({
+  token,
+  cacheDir,
+  maxAttempts = 6,
+  maxWaitMs = 60_000,
+  sleep = announceAndSleep,
+}: LogFetcherOptions) {
+  let pause: Promise<unknown> | null = null;
+  return async function fetchLog(job: Job): Promise<string> {
+    const path = join(cacheDir, `${job.id}.log`);
+    if (existsSync(path)) return readFileSync(path, "utf8");
+    for (let attempt = 1; ; attempt++) {
+      while (pause) await pause;
+      const res = await fetch(job.raw_log_url, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const out = await res.text();
+        writeFileSync(path, out);
+        return out;
+      }
+      const retryable = res.status === 429 || res.status >= 500;
+      if (!retryable || attempt === maxAttempts) {
+        throw new Error(`${res.status} ${job.raw_log_url}` + (attempt > 1 ? ` (${attempt} attempts)` : ""));
+      }
+      // A Buildkite 429 has no Retry-After. Its body is for the limit that was
+      // exceeded: `{ message, scope, limit, current, reset }`. `reset` counts
+      // whole seconds, so one second on top puts the retry after the reset and
+      // not just before it. Without either hint, back off exponentially.
+      const body = await res.json().catch(() => null);
+      const seconds = Number(res.headers.get("retry-after") ?? body?.reset);
+      const wait = seconds >= 0 ? Math.min(seconds * 1000, maxWaitMs) + 1000 : 1000 * 2 ** (attempt - 1);
+      pause ??= sleep(wait).finally(() => (pause = null));
+    }
+  };
+}
+
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const json = args.includes("--json");
+  const allowPartial = args.includes("--allow-partial");
   const positional = args.filter(a => !a.startsWith("-"));
   let BUILD = positional[0];
   const TOP_N = parseInt(positional[1] || "500", 10);
@@ -118,8 +185,6 @@ if (import.meta.main) {
   const CACHE = join(tmpdir(), `bun-ci-logs-${BUILD}`);
   mkdirSync(CACHE, { recursive: true });
 
-  type Job = { id: string; name: string; raw_log_url: string; retried?: boolean };
-
   const buildJson = JSON.parse(
     await new Response(spawn({ cmd: ["bk", "build", "view", BUILD], stdout: "pipe" }).stdout).text(),
   );
@@ -136,22 +201,13 @@ if (import.meta.main) {
       .replace(/^:([a-z]+):/, "$1")
       .trim();
 
-  // Do NOT use `bk job log` — it hangs indefinitely on some Windows/alpine jobs.
-  // Fetching raw_log_url directly with the token works for all of them.
-  async function fetchLog(job: Job): Promise<string> {
-    const path = join(CACHE, `${job.id}.log`);
-    if (existsSync(path)) return readFileSync(path, "utf8");
-    const res = await fetch(job.raw_log_url, { headers: { Authorization: `Bearer ${TOKEN}` } });
-    if (!res.ok) throw new Error(`${res.status} ${job.raw_log_url}`);
-    const out = await res.text();
-    writeFileSync(path, out);
-    return out;
-  }
+  const fetchLog = createLogFetcher({ token: TOKEN, cacheDir: CACHE });
 
   type Agg = { maxMs: number; maxPlat: string; perPlat: Map<string, number> };
   const agg = new Map<string, Agg>();
 
   let done = 0;
+  const failedJobs: { id: string; platform: string; error: string }[] = [];
   const queue = [...jobs];
   async function worker() {
     for (;;) {
@@ -170,11 +226,16 @@ if (import.meta.main) {
             a.maxPlat = plat;
           }
         }
+        done++;
       } catch (e) {
-        console.error(`  failed ${job.id}: ${(e as Error).message}`);
+        const error = (e as Error).message;
+        console.error(`  failed ${job.id}: ${error}`);
+        failedJobs.push({ id: job.id, platform: platOf(job.name), error });
       }
-      done++;
-      if (done % 20 === 0 || done === jobs.length) console.error(`  ${done}/${jobs.length} logs`);
+      const settled = done + failedJobs.length;
+      if (settled % 20 === 0 || settled === jobs.length) {
+        console.error(`  ${done}/${jobs.length} logs` + (failedJobs.length ? `, ${failedJobs.length} failed` : ""));
+      }
     }
   }
   await Promise.all(Array.from({ length: 16 }, worker));
@@ -192,10 +253,29 @@ if (import.meta.main) {
   console.error(`logs cached at ${CACHE}`);
 
   if (json) {
-    console.log(JSON.stringify({ build: BUILD, count: agg.size, top: sorted }, null, 2));
+    const report = {
+      build: BUILD,
+      count: agg.size,
+      top: sorted,
+      jobs: jobs.length,
+      jobsFailed: failedJobs.length,
+      failedJobs,
+    };
+    console.log(JSON.stringify(report, null, 2));
   } else {
     console.log(`rank\tseconds\tfile\tslowest_platform`);
     sorted.forEach((t, i) => console.log(`${i + 1}\t${(t.maxMs / 1000).toFixed(2)}\t${t.file}\t${t.maxPlat}`));
   }
-  process.exit(0);
+
+  // After the table, so that it is the last thing on a terminal.
+  if (failedJobs.length) {
+    const perPlat = new Map<string, number>();
+    for (const { platform } of failedJobs) perPlat.set(platform, (perPlat.get(platform) ?? 0) + 1);
+    console.error(
+      `warning: ${failedJobs.length} of ${jobs.length} logs are missing, so the result is computed from partial data\n` +
+        `  missing: ${[...perPlat].map(([plat, n]) => `${plat} (${n})`).join(", ")}\n` +
+        `  run the same command again to fetch only the missing logs`,
+    );
+  }
+  process.exit(failedJobs.length && !allowPartial ? 2 : 0);
 }

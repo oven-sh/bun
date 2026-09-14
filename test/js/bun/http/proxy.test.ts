@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Server } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { proxyInternals } from "bun:internal-for-testing";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";

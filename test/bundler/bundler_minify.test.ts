@@ -19,6 +19,69 @@ describe("bundler", () => {
     },
     run: { stdout: "top fn" },
   });
+
+  // A symbol read through a `with` body keeps its original name. The renamer
+  // must not give that name to another symbol the body can see, such as the
+  // parameter of the enclosing function: `function f(obj) { var t = 1; with
+  // (obj) { return t } }` printed as `function f(t) { var t = 1; with (t)
+  // return t }` reads the local instead of `obj.t`. Each `f_` function pins
+  // one of the 54 single-character names the minifier can produce, so
+  // whichever name the (most used) parameter slot gets, one `with` body breaks
+  // without the fix. `hoisted` and `merged` declare the pinned `var` twice, so
+  // the reference that the `with` pins is a link to the function-level symbol,
+  // which has to keep its name too. `braceless` declares the `var` in the
+  // `with` scope itself, which the hoisting walk starts above.
+  const singleCharNames = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
+  const withPinnedNamesSource = [
+    ...singleCharNames.map(n => `function f_${n}(obj) { var ${n} = 1; obj.p; obj.p; with (obj) { return ${n}; } }`),
+    "function hoisted(obj) { var t = 1; obj.p; obj.p; with (obj) { var t = 2; } return [t, obj.t]; }",
+    "function merged(obj) { var t = 1; obj.p; obj.p; { var t = 2; with (obj) { return t; } } }",
+    "function braceless(obj) { obj.p; obj.p; with (obj) var t = 2; return [t, obj.t]; }",
+    "const bad = [];",
+    ...singleCharNames.map(n => `if (f_${n}({}) !== 1 || f_${n}({ ${n}: 9 }) !== 9) bad.push("${n}");`),
+    `if (JSON.stringify([hoisted({}), hoisted({ t: 9 })]) !== "[[2,null],[1,2]]") bad.push("hoisted");`,
+    `if (merged({}) !== 2 || merged({ t: 9 }) !== 9) bad.push("merged");`,
+    `if (JSON.stringify([braceless({}), braceless({ t: 9 })]) !== "[[2,null],[null,2]]") bad.push("braceless");`,
+    "console.log(JSON.stringify(bad));",
+  ].join("\n");
+  itBundled("minify/WithStatementPinnedNameNotReusedByEnclosingScope", {
+    files: {
+      "/entry.js": withPinnedNamesSource,
+    },
+    format: "cjs",
+    minifyIdentifiers: true,
+    run: { stdout: "[]" },
+  });
+  // `bun build --no-bundle` names symbols through the same reserved set.
+  itBundled("minify/WithStatementPinnedNameNotReusedByEnclosingScopeNoBundle", {
+    files: {
+      "/entry.js": withPinnedNamesSource,
+    },
+    bundling: false,
+    format: "cjs",
+    minifyIdentifiers: true,
+    run: { stdout: "[]" },
+  });
+  // `bun build --no-bundle` keeps the export names. They were pinned after the
+  // reserved names were computed, so a local in a nested function could take
+  // one of them and shadow the export it reads.
+  itBundled("minify/NoBundleExportNameNotReusedByLocal", {
+    files: {
+      "/entry.js": [
+        ...singleCharNames.map(n => `export const ${n} = "${n}";`),
+        "export function check() {",
+        "  let local = 0; local; local;",
+        "  const bad = [];",
+        ...singleCharNames.map(n => `  if (${n} !== "${n}") bad.push("${n}");`),
+        "  return bad;",
+        "}",
+        "console.log(JSON.stringify(check()));",
+      ].join("\n"),
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { stdout: "[]" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `

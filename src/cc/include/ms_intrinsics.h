@@ -149,8 +149,8 @@ __BUN_MS(void, __writegsbyte, (unsigned long __offset, unsigned char __v), { __a
 __BUN_MS(void, __writegsword, (unsigned long __offset, unsigned short __v), { __asm__ __volatile__("movw %0, %%gs:(%1)" : : "r"(__v), "r"((unsigned __int64)__offset) : "memory"); })
 __BUN_MS(void, __writegsdword, (unsigned long __offset, unsigned long __v), { __asm__ __volatile__("movl %0, %%gs:(%1)" : : "r"(__v), "r"((unsigned __int64)__offset) : "memory"); })
 __BUN_MS(void, __writegsqword, (unsigned long __offset, unsigned __int64 __v), { __asm__ __volatile__("movq %0, %%gs:(%1)" : : "r"(__v), "r"((unsigned __int64)__offset) : "memory"); })
-__BUN_MS(unsigned __int64, __readeflags, (void), { return (unsigned __int64)__builtin_bun_unsupported("__readeflags: the flags cannot be read without disturbing the stack"); })
-__BUN_MS(void, __halt, (void), { (void)__builtin_bun_unsupported("__halt is a privileged instruction"); })
+__BUN_MS(unsigned __int64, __readeflags, (void), { return (unsigned __int64)__builtin_bun_unsupported("__readeflags: reading the flags (which would disturb the stack)"); })
+__BUN_MS(void, __halt, (void), { (void)__builtin_bun_unsupported("__halt: a privileged instruction"); })
 #endif
 
 #if defined(_M_ARM64)

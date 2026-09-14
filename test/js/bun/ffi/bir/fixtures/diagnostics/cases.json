@@ -3792,5 +3792,21 @@
   "line": 1,
   "column": 25,
   "message": "__builtin_nans: signalling NaNs are not supported"
+ },
+ {
+  "about": "Microsoft C",
+  "source": "void __halt(void);\nint main(void) { __halt(); return 0; }",
+  "line": 2,
+  "column": 18,
+  "message": "__halt: a privileged instruction is not supported",
+  "requires": "windows x64"
+ },
+ {
+  "about": "Microsoft C",
+  "source": "unsigned __int64 __readeflags(void);\nint main(void) { return (int)__readeflags(); }",
+  "line": 2,
+  "column": 30,
+  "message": "__readeflags: reading the flags (which would disturb the stack) is not supported",
+  "requires": "windows x64"
  }
 ]

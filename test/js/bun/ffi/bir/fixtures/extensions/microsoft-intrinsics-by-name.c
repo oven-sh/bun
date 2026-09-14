@@ -67,7 +67,8 @@ int main(int argc, char **argv) {
   CHECK(highest_leaf >= 1 && (info[3] & (1 << 26)) != 0);      // SSE2, which x64 always has
   unsigned __int64 before = __rdtsc(), after = __rdtsc();
   CHECK(after >= before && who_called() != 0 && _AddressOfReturnAddress() != 0 && __readgsqword(0x30) != 0);
-  if (argc > 100) { __debugbreak(); __fastfail(7); __ud2(); __halt(); }
+  // (__halt and __readeflags are refused when the program is compiled: see the diagnostics.)
+  if (argc > 100) { __debugbreak(); __fastfail(7); __ud2(); }
   printf("%d wrong\n", wrong);
   return wrong != 0;
 }

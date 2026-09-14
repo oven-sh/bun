@@ -198,6 +198,12 @@ impl MacroEntryPoint {
         let label_len = macro_label_.len();
         entry.code_buffer[..label_len].copy_from_slice(macro_label_);
 
+        // A JSON string literal is a valid JS string literal with every quote,
+        // backslash, and line terminator escaped.
+        let quoted = bun_fmt::JSONFormatterUTF8Options { quote: true };
+        let unquoted = bun_fmt::JSONFormatterUTF8Options { quote: false };
+        let name = bun_fmt::format_json_string_utf8(function_name, quoted);
+
         let code_len: usize = 'brk: {
             if import_path.base == b"bun" {
                 let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
@@ -211,68 +217,35 @@ impl MacroEntryPoint {
                      \x20  console.error(\"Error importing macro\");\n\
                      \x20  throw err;\n\
                      }}\n\
-                     const macro = Macros['{}'];\n\
+                     const macro = Macros[{name}];\n\
                      if (!macro) {{\n\
-                     \x20 throw new Error(\"Macro '{}' not found in 'bun'\");\n\
+                     \x20 throw new Error(\"Macro '\" + {name} + \"' not found in 'bun'\");\n\
                      }}\n\
                      \n\
-                     Bun.registerMacro({}, macro);",
-                    BStr::new(function_name),
-                    BStr::new(function_name),
-                    macro_id,
+                     Bun.registerMacro({macro_id}, macro);",
                 )
                 .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
                 break 'brk cursor.position() as usize;
             }
 
+            let dir = bun_fmt::format_json_string_utf8(dir_to_use, unquoted);
+            let filename = bun_fmt::format_json_string_utf8(import_path.filename, unquoted);
             let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
             write!(
                 &mut cursor,
                 "//Auto-generated file\n\
                  var Macros;\n\
                  try {{\n\
-                 \x20 Macros = await import('{}{}');\n\
+                 \x20 Macros = await import(\"{dir}{filename}\");\n\
                  }} catch (err) {{\n\
                  \x20  console.error(\"Error importing macro\");\n\
                  \x20  throw err;\n\
                  }}\n\
-                 if (!('{}' in Macros)) {{\n\
-                 \x20 throw new Error(\"Macro '{}' not found in '{}{}'\");\n\
+                 if (!({name} in Macros)) {{\n\
+                 \x20 throw new Error(\"Macro '\" + {name} + \"' not found in '{dir}{filename}'\");\n\
                  }}\n\
                  \n\
-                 Bun.registerMacro({}, Macros['{}']);",
-                bun_fmt::fmt_path_u8(
-                    dir_to_use,
-                    bun_fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        ..Default::default()
-                    }
-                ),
-                bun_fmt::fmt_path_u8(
-                    import_path.filename,
-                    bun_fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        ..Default::default()
-                    }
-                ),
-                BStr::new(function_name),
-                BStr::new(function_name),
-                bun_fmt::fmt_path_u8(
-                    dir_to_use,
-                    bun_fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        ..Default::default()
-                    }
-                ),
-                bun_fmt::fmt_path_u8(
-                    import_path.filename,
-                    bun_fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        ..Default::default()
-                    }
-                ),
-                macro_id,
-                BStr::new(function_name),
+                 Bun.registerMacro({macro_id}, Macros[{name}]);",
             )
             .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             cursor.position() as usize

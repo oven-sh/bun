@@ -939,10 +939,8 @@ pub mod command {
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
-        while !first_arg_name.is_empty()
-            && first_arg_name[0] == b'-'
-            && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
-        {
+        // A lone `-` (stdin script) ends the search like `-e`: the rest of argv is the script's.
+        while first_arg_name.len() > 1 && first_arg_name[0] == b'-' && first_arg_name[1] != b'e' {
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.

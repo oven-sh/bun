@@ -78,9 +78,10 @@ impl Binary {
     ) -> Yield {
         interp.deinit_node(child);
         {
+            let interrupted = interp.interrupted(this);
             let me = interp.as_binary_mut(this);
             me.currently_executing = None;
-            if me.left.is_none() && !me.base.interrupted {
+            if me.left.is_none() && !interrupted {
                 me.left = Some(exit_code);
             } else {
                 me.right = Some(exit_code);

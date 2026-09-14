@@ -257,7 +257,8 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
     ASSERT(!listeners.isEmpty());
     ASSERT(scriptExecutionContext());
 
-    auto& context = *scriptExecutionContext();
+    // A Bun.ModuleGraph's context is freed with the graph, which a listener can bring about.
+    Ref<ScriptExecutionContext> context(*scriptExecutionContext());
 
     for (auto& registeredListener : listeners) {
         if (registeredListener->wasRemoved()) [[unlikely]]

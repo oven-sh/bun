@@ -953,6 +953,10 @@ mod _async_tasks {
                 .bun_vm()
                 .enter_context_if_live(self.context)
             else {
+                if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::default()))
+                {
+                    result.discard();
+                }
                 return Ok(());
             };
             // Move `result` out so the `global_object()` `&self` borrow can coexist
@@ -1122,6 +1126,14 @@ mod _async_tasks {
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub trait FsReturn {
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
+        /// The result is not going to be reported (the context of the script that asked has
+        /// stopped): release what only that script could have released.
+        #[inline]
+        fn discard(self)
+        where
+            Self: Sized,
+        {
+        }
     }
     impl FsReturn for JSValue {
         #[inline]
@@ -1157,6 +1169,10 @@ mod _async_tasks {
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(crate::node::types::FdJsc::to_js(self, global))
+        }
+        #[inline]
+        fn discard(self) {
+            self.close();
         }
     }
     impl FsReturn for StringOrBuffer<'_> {

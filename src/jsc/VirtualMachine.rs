@@ -1226,6 +1226,12 @@ impl VirtualMachine {
         if id == self.root_context.id() || id == self.vm_context.id() {
             return Some(&mut self.rare_data().socket_groups);
         }
+        if id == self.dead_context.id() {
+            // Stopped from the start: what joins is closed on the next turn of the loop.
+            self.stop_graph_context_again(id);
+            // SAFETY: the context boxes its groups; it lives as long as the VM; JS thread.
+            return Some(unsafe { &mut *self.dead_context.socket_groups() });
+        }
         let context = core::ptr::from_ref(self.graph_context(id)?);
         // SAFETY: registered ⇒ not freed; the context boxes its groups; JS thread.
         let context = unsafe { &*context };
@@ -1287,6 +1293,7 @@ impl VirtualMachine {
         if reason == crate::StopReason::VmTeardown {
             result = result.and(self.vm_context.stop_handles(reason));
         }
+        result = result.and(self.dead_context.stop_handles(reason));
         // By index: an owner's callback may create or free a context.
         let mut i = 0;
         while let Some(&context) = self.graph_contexts.values().get(i) {

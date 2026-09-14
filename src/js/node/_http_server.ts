@@ -235,6 +235,31 @@ function emitListenErrorNextTick(self, err) {
   self.emit("error", err);
 }
 
+function formatListenError(err, port, host, socketPath) {
+  const description =
+    err?.code === "EADDRINUSE"
+      ? "address already in use"
+      : err?.code === "EACCES"
+        ? "permission denied"
+        : err?.code === "EADDRNOTAVAIL"
+          ? "address not available"
+          : err?.code === "EINVAL"
+            ? "invalid argument"
+            : undefined;
+  if (!description) {
+    return err;
+  }
+  const address = socketPath ?? host ?? "::";
+  err.syscall = "listen";
+  err.address = address;
+  if (port) {
+    err.port = port;
+  }
+  const location = port ? `${address}:${port}` : address;
+  err.message = `listen ${err.code}: ${description}${location ? ` ${location}` : ""}`;
+  return err;
+}
+
 // Node.js only requests a client certificate when `requestCert: true`.
 // The uSockets SSL context treats `ca` alone as "verify peer", so without
 // these two flags an `https.Server({ ca })` would reject every client that
@@ -615,7 +640,7 @@ Server.prototype.listen = function () {
 
     server[kRealListen](tls, port, host, socketPath, true);
   } catch (err) {
-    process.nextTick(emitListenErrorNextTick, server, err);
+    process.nextTick(emitListenErrorNextTick, server, formatListenError(err, port, host, socketPath));
   }
 
   return this;

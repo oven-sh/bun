@@ -26,7 +26,6 @@ mod pp_predef;
 mod sema;
 mod token;
 mod types;
-mod unroll;
 mod x86_encode;
 mod x87;
 
@@ -224,11 +223,10 @@ fn preprocessor(
     pp.push_source(filename, Rc::from(source), None, None);
     if target.os == Os::Windows {
         // What Microsoft's intrinsics do: see `parser_ms.rs`.
-        let prelude = format!(
-            "#define __BUN_MS(ret, name, params, ...) static __inline __attribute__((__always_inline__, __unused__)) ret __bun_ms_##name params __VA_ARGS__\n{}\n#undef __BUN_MS\n",
-            pp_directive::MS_INTRINSICS
-        );
-        pp.push_source("<intrinsics>", Rc::from(prelude.as_bytes()), None, None);
+        let mut prelude = b"#define __BUN_MS(ret, name, params, ...) static __inline __attribute__((__always_inline__, __unused__)) ret __bun_ms_##name params __VA_ARGS__\n".to_vec();
+        prelude.extend_from_slice(pp_directive::ms_intrinsics());
+        prelude.extend_from_slice(b"\n#undef __BUN_MS\n");
+        pp.push_source("<intrinsics>", Rc::from(prelude), None, None);
     }
     pp.push_source(
         "<built-in>",

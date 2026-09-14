@@ -28,6 +28,8 @@ pub(crate) struct DataObject {
     pub(crate) content: bool,
     /// Every unit that defines it defines the same thing; the first one is kept.
     pub(crate) linkonce: bool,
+    /// `__attribute__((weak))`: a definition in another unit that is not weak replaces it.
+    pub(crate) weak: bool,
     /// The program never writes it (a string literal, a `const` object): it goes among the
     /// constants, which are protected once the module is loaded.
     pub(crate) constant: bool,
@@ -144,6 +146,15 @@ impl<'u> Segment<'u> {
                     Some((pu, po)) => {
                         let previous = &objects_of(&units[pu], tls)[po];
                         if previous.linkonce && object.linkonce {
+                            continue;
+                        }
+                        // A weak definition gives way to one that is not; of two weak ones the
+                        // first stays.
+                        if object.weak {
+                            continue;
+                        }
+                        if previous.weak {
+                            chosen.insert(name, (u, o));
                             continue;
                         }
                         if previous.initialized && object.initialized {
@@ -298,6 +309,9 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
     let mut total_funcs = 0u32;
     // External function name -> (unit, linked index).
     let mut defined_funcs: BTreeMap<&str, (usize, u32)> = BTreeMap::new();
+    // The weak definitions another unit's definition took the place of: linked index -> the
+    // linked index of what is called instead.
+    let mut replaced: BTreeMap<u32, u32> = BTreeMap::new();
     for (u, unit) in units.iter().enumerate() {
         func_bases.push(total_funcs);
         for (f, func) in unit.module.funcs.iter().enumerate() {
@@ -305,7 +319,19 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
                 continue;
             }
             let index = total_funcs + f as u32;
-            if let Some(&(other, _)) = defined_funcs.get(func.name.as_str()) {
+            if let Some(&(other, previous)) = defined_funcs.get(func.name.as_str()) {
+                // A weak definition gives way to one that is not; of two weak ones the first
+                // stays.
+                if unit.weak_functions.contains(&(f as u32)) {
+                    replaced.insert(index, previous);
+                    continue;
+                }
+                let previous_local = previous - func_bases[other];
+                if units[other].weak_functions.contains(&previous_local) {
+                    replaced.insert(previous, index);
+                    defined_funcs.insert(&func.name, (u, index));
+                    continue;
+                }
                 return fail(
                     u,
                     format!(
@@ -341,6 +367,14 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
                 .or_insert((u, func_bases[u] + f));
         }
     }
+
+    // What function `index` of the linked module stands for once weak definitions have given way.
+    let standing = |mut index: u32| {
+        while let Some(&instead) = replaced.get(&index) {
+            index = instead;
+        }
+        index
+    };
 
     // ── Data and thread-local storage ──
     let data = Segment::build(units, false, &defined_funcs, names, &mut warnings)?;
@@ -512,7 +546,10 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
                 let (kind, index) = match reloc.kind {
                     RelocKind::Data => (RelocKind::Data, data_address(u, reloc.index)?),
                     RelocKind::Tls => (RelocKind::Tls, tls.address(units, u, reloc.index)?),
-                    RelocKind::Func => (RelocKind::Func, u64::from(func_bases[u]) + reloc.index),
+                    RelocKind::Func => (
+                        RelocKind::Func,
+                        u64::from(standing(func_bases[u] + reloc.index as u32)),
+                    ),
                     RelocKind::Extern => match resolved[u].get(reloc.index as usize) {
                         Some(Resolved::Func { index, .. }) => (RelocKind::Func, u64::from(*index)),
                         Some(Resolved::Data(offset)) => (RelocKind::Data, *offset),
@@ -553,6 +590,15 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
         }
     }
     size = size.max(image.len() as u64);
+    if size > bir::MAX_SEGMENT_SIZE || tls.size > bir::MAX_SEGMENT_SIZE {
+        return fail(
+            0,
+            format!(
+                "the program's data is larger than {} bytes",
+                bir::MAX_SEGMENT_SIZE
+            ),
+        );
+    }
 
     // ── Function bodies ──
     let mut funcs: Vec<bir::Func> = Vec::with_capacity(total_funcs as usize);
@@ -597,8 +643,10 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
                         });
                     }
                     let rewritten = match inst {
-                        Inst::Call(target, args) => Inst::Call(func_bases[u] + target, args),
-                        Inst::FuncAddr(target) => Inst::FuncAddr(func_bases[u] + target),
+                        Inst::Call(target, args) => {
+                            Inst::Call(standing(func_bases[u] + target), args)
+                        }
+                        Inst::FuncAddr(target) => Inst::FuncAddr(standing(func_bases[u] + target)),
                         Inst::CallIndirect(sig, pointer, args) => {
                             Inst::CallIndirect(sig_maps[u][sig as usize], pointer, args)
                         }
@@ -661,7 +709,7 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
             funcs.push(bir::Func {
                 name: func.name.clone(),
                 sig: sig_maps[u][func.sig as usize],
-                exported: func.exported,
+                exported: func.exported && !replaced.contains_key(&(func_bases[u] + f as u32)),
                 returns_twice: func.returns_twice,
                 inlining: func.inlining,
                 locals: func.locals.clone(),
@@ -670,6 +718,9 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
             });
         }
         for export in &unit.module.exports {
+            if replaced.contains_key(&(func_bases[u] + export.func)) {
+                continue;
+            }
             exports.push(bir::Export {
                 name: export.name.clone(),
                 func: func_bases[u] + export.func,

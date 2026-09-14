@@ -42,8 +42,9 @@ __BUN_CC_INTRIN __m128d _mm_sub_pd(__m128d __a, __m128d __b) { return __a - __b;
 __BUN_CC_INTRIN __m128d _mm_mul_pd(__m128d __a, __m128d __b) { return __a * __b; }
 __BUN_CC_INTRIN __m128d _mm_div_pd(__m128d __a, __m128d __b) { return __a / __b; }
 __BUN_CC_INTRIN __m128d _mm_sqrt_pd(__m128d __a) { return __builtin_elementwise_sqrt(__a); }
-__BUN_CC_INTRIN __m128d _mm_min_pd(__m128d __a, __m128d __b) { return __builtin_elementwise_min(__a, __b); }
-__BUN_CC_INTRIN __m128d _mm_max_pd(__m128d __a, __m128d __b) { return __builtin_elementwise_max(__a, __b); }
+/* As for MINPS: the second operand when the two are unordered or equal. */
+__BUN_CC_INTRIN __m128d _mm_min_pd(__m128d __a, __m128d __b) { return __builtin_elementwise_min(__b, __a); }
+__BUN_CC_INTRIN __m128d _mm_max_pd(__m128d __a, __m128d __b) { return __builtin_elementwise_max(__b, __a); }
 
 __BUN_CC_INTRIN __m128d _mm_and_pd(__m128d __a, __m128d __b) { return (__m128d)((__v2du)__a & (__v2du)__b); }
 __BUN_CC_INTRIN __m128d _mm_andnot_pd(__m128d __a, __m128d __b) { return (__m128d)(~(__v2du)__a & (__v2du)__b); }
@@ -279,9 +280,18 @@ __BUN_CC_INTRIN __m128i _mm_unpackhi_epi64(__m128i __a, __m128i __b) {
 /* Conversions and casts. */
 
 __BUN_CC_INTRIN __m128 _mm_cvtepi32_ps(__m128i __a) { return __builtin_convertvector((__v4si)__a, __v4sf); }
-__BUN_CC_INTRIN __m128i _mm_cvttps_epi32(__m128 __a) { return (__m128i)__builtin_convertvector(__a, __v4si); }
+/* CVTTPS2DQ and CVTTPD2DQ give the "integer indefinite" 0x80000000 for a NaN and for what does not fit; the vector
+   conversion saturates, so those lanes are put right afterwards. */
+__BUN_CC_INTRIN __m128i _mm_cvttps_epi32(__m128 __a) {
+  __v4si __fits = (__v4si)(__a >= -2147483648.0f) & (__v4si)(__a < 2147483648.0f);
+  return (__m128i)((__builtin_convertvector(__a, __v4si) & __fits) | (~__fits & (__v4si){-2147483647 - 1, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1}));
+}
 __BUN_CC_INTRIN __m128d _mm_cvtepi32_pd(__m128i __a) { return __builtin_ia32_cvtdq2pd((__v4si)__a); }
-__BUN_CC_INTRIN __m128i _mm_cvttpd_epi32(__m128d __a) { return (__m128i)__builtin_ia32_cvttpd2dq(__a); }
+__BUN_CC_INTRIN __m128i _mm_cvttpd_epi32(__m128d __a) {
+  __v2di __fits64 = (__v2di)(__a >= -2147483648.0) & (__v2di)(__a < 2147483648.0);
+  __v4si __fits = __builtin_shufflevector((__v4si)__fits64, (__v4si){-1, -1, -1, -1}, 0, 2, 4, 5);
+  return (__m128i)(((__v4si)__builtin_ia32_cvttpd2dq(__a) & __fits) | (~__fits & (__v4si){-2147483647 - 1, -2147483647 - 1, 0, 0}));
+}
 __BUN_CC_INTRIN __m128d _mm_cvtps_pd(__m128 __a) { return __builtin_ia32_cvtps2pd(__a); }
 __BUN_CC_INTRIN __m128 _mm_cvtpd_ps(__m128d __a) { return __builtin_ia32_cvtpd2ps(__a); }
 
@@ -300,8 +310,8 @@ __BUN_CC_INTRIN __m128d _mm_sub_sd(__m128d __a, __m128d __b) { __a[0] = __a[0] -
 __BUN_CC_INTRIN __m128d _mm_mul_sd(__m128d __a, __m128d __b) { __a[0] = __a[0] * __b[0]; return __a; }
 __BUN_CC_INTRIN __m128d _mm_div_sd(__m128d __a, __m128d __b) { __a[0] = __a[0] / __b[0]; return __a; }
 __BUN_CC_INTRIN __m128d _mm_sqrt_sd(__m128d __a, __m128d __b) { __a[0] = __builtin_elementwise_sqrt(__b)[0]; return __a; }
-__BUN_CC_INTRIN __m128d _mm_min_sd(__m128d __a, __m128d __b) { __a[0] = __builtin_elementwise_min(__a, __b)[0]; return __a; }
-__BUN_CC_INTRIN __m128d _mm_max_sd(__m128d __a, __m128d __b) { __a[0] = __builtin_elementwise_max(__a, __b)[0]; return __a; }
+__BUN_CC_INTRIN __m128d _mm_min_sd(__m128d __a, __m128d __b) { __a[0] = __builtin_elementwise_min(__b, __a)[0]; return __a; }
+__BUN_CC_INTRIN __m128d _mm_max_sd(__m128d __a, __m128d __b) { __a[0] = __builtin_elementwise_max(__b, __a)[0]; return __a; }
 __BUN_CC_INTRIN __m128d _mm_move_sd(__m128d __a, __m128d __b) { __a[0] = __b[0]; return __a; }
 
 __BUN_CC_INTRIN __m128d _mm_cmpnlt_pd(__m128d __a, __m128d __b) { return (__m128d)~(__v2di)(__a < __b); }

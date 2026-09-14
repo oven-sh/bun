@@ -159,7 +159,7 @@ pub(crate) struct Sema {
     tags: Vec<BTreeMap<Rc<str>, Tag>>,
     pub(crate) globals: Vec<Global>,
     pub(crate) funcs: Vec<Function>,
-    pub(crate) strings: Vec<Rc<[u8]>>,
+    pub(crate) strings: Vec<StringLiteral>,
     string_ids: BTreeMap<Rc<[u8]>, StrId>,
     pub(crate) func: Option<FnCtx>,
     /// Indexed by the second field of `Type::Vla`.
@@ -170,6 +170,11 @@ pub(crate) struct Sema {
     /// Set by `elaborate_init`: where an initialized flexible array member ends, as an
     /// offset into the object (0 if there is none).
     pub(crate) flexible_end: std::cell::Cell<u64>,
+    /// The depth of the deepest expression made since this was last reset.
+    pub(crate) deepest_expr: std::cell::Cell<u32>,
+    /// For `elaborate_init`: how many of the items so far have been looked at, and the highest
+    /// offset among them.
+    pub(crate) init_highest: std::cell::Cell<(usize, u64)>,
     /// Other external names of functions this unit defines: (name, function).
     pub(crate) function_aliases: Vec<(Rc<str>, FuncId)>,
     /// See `Intrinsic::InlineAsm`.
@@ -272,6 +277,8 @@ impl Sema {
             warnings: std::cell::RefCell::new(Vec::new()),
             defined_enums: Vec::new(),
             flexible_end: std::cell::Cell::new(0),
+            deepest_expr: std::cell::Cell::new(0),
+            init_highest: std::cell::Cell::new((0, 0)),
             function_aliases: Vec::new(),
             asm_blocks: Vec::new(),
             pragma_weak: Vec::new(),
@@ -395,6 +402,11 @@ impl Sema {
         } = rules;
         let ms_bitfields = bit_fields == BitFieldRules::Microsoft;
         let is_union = self.tcx.struct_def(id).is_union;
+        // A type is completed once, so none can come to contain itself.
+        if self.tcx.struct_def(id).is_complete() {
+            let kind = if is_union { "union" } else { "struct" };
+            return err(loc, format!("redefinition of '{kind}'"));
+        }
         let mut members: Vec<Member> = Vec::with_capacity(fields.len());
         // Everything is tracked in bits so bit-fields and ordinary members share one cursor.
         let mut bit_pos: u64 = 0;
@@ -457,10 +469,17 @@ impl Sema {
                 }
                 if let Some(limit) = pragma_pack {
                     bits_packed = true;
-                    falign = falign.min(limit);
-                    // (Microsoft lets an alignment written on the member win.)
-                    if field_align.is_some_and(|a| limit < a) && !windows {
-                        field_align = None;
+                    // While the pragma is in force it, and not `packed`, says how a bit-field's
+                    // type aligns the structure.
+                    falign = if bit_width.is_some() && !ms_bitfields {
+                        natural_align.min(limit)
+                    } else {
+                        falign.min(limit)
+                    };
+                    // An alignment written on the member is held to the limit too. (Microsoft
+                    // lets it win.)
+                    if !windows {
+                        field_align = field_align.map(|a| a.min(limit));
                     }
                 }
                 if let Some(a) = field_align {
@@ -585,15 +604,19 @@ impl Sema {
                     return err(loc, "width of bit-field exceeds its type");
                 }
                 if width == 0 {
-                    // An unnamed zero-width bit-field ends the current storage unit.
+                    // An unnamed zero-width bit-field ends the current storage unit, also as
+                    // the last member.
                     bit_pos = bit_pos.next_multiple_of(natural_align * 8);
+                    size_bits = size_bits.max(bit_pos);
                     continue;
                 }
                 let width = u64::from(width);
-                if starts_unit {
-                    // An aligned bit-field starts a storage unit of its own.
-                    bit_pos = bit_pos.div_ceil(8).next_multiple_of(falign) * 8;
-                } else if !bits_packed {
+                if let (true, Some(start)) = (starts_unit, field_align) {
+                    // An aligned bit-field starts where it asks to, which may be less than its
+                    // type would.
+                    bit_pos = bit_pos.div_ceil(8).next_multiple_of(start) * 8;
+                }
+                if !bits_packed {
                     // It may not span more units of its type than the type has.
                     let unit = falign * 8;
                     let spanned = ((bit_pos % unit) + width).div_ceil(unit);
@@ -686,30 +709,43 @@ impl Sema {
         }
     }
 
-    /// `unsigned` says the value came from an unsigned expression. Enumerators are `int`
-    /// when they fit; larger ones take the narrowest of unsigned int, long, unsigned long
-    /// (a GNU extension that system headers use, e.g. `EPOLLET = 1u << 31`).
+    /// An enumerator inside the braces of its enumeration: `fixed` is the type the enumeration
+    /// was given, and without one the enumerator is an `int` when it fits and otherwise the
+    /// narrowest of unsigned int, long, unsigned long (a GNU extension that system headers use,
+    /// e.g. `EPOLLET = 1u << 31`). `unsigned` says the value came from an unsigned expression.
     pub(crate) fn declare_enum_const(
         &mut self,
         name: Rc<str>,
         value: i64,
         unsigned: bool,
+        fixed: Option<&Type>,
         loc: Loc,
     ) -> Res<()> {
         if self.lookup_current_scope(&name).is_some() {
             return err(loc, format!("redefinition of '{name}'"));
         }
-        let ty = if i32::try_from(value).is_ok() {
+        let ty = if let Some(fixed) = fixed {
+            fixed.clone()
+        } else if unsigned && value < 0 {
+            Type::ULong
+        } else if i32::try_from(value).is_ok() {
             Type::Int
         } else if u32::try_from(value).is_ok() {
             Type::UInt
-        } else if unsigned && value < 0 {
-            Type::ULLong
         } else {
-            Type::LLong
+            Type::Long
         };
-        self.bind(name, Symbol::EnumConst(value, ty));
+        self.bind(name, Symbol::EnumConst(self.wrap_int(value, &ty), ty));
         Ok(())
+    }
+
+    /// Past the closing brace every enumerator of an enumeration that is not all `int`s has
+    /// the enumeration's type, as GCC and Clang have it (and C23 6.7.2.2p12 says).
+    pub(crate) fn retype_enum_consts(&mut self, consts: &[(Rc<str>, i64)], ty: &Type) {
+        for (name, value) in consts {
+            let value = self.wrap_int(*value, ty);
+            self.bind(Rc::clone(name), Symbol::EnumConst(value, ty.clone()));
+        }
     }
 
     pub(crate) fn declare_local(&mut self, name: Rc<str>, ty: Type, loc: Loc) -> Res<LocalId> {
@@ -799,15 +835,6 @@ impl Sema {
         }
     }
 
-    fn compatible_object_types(old: &Type, new: &Type) -> bool {
-        match (old, new) {
-            (Type::Array(a, la), Type::Array(b, lb)) => {
-                Self::compatible_object_types(a, b) && (la.is_none() || lb.is_none() || la == lb)
-            }
-            _ => Self::compatible(old, new),
-        }
-    }
-
     /// Declares or redeclares a variable with static storage duration that is visible by
     /// name at file scope (`int x;`, `static int x = 1;`, `extern int x;`).
     pub(crate) fn declare_global(
@@ -821,7 +848,7 @@ impl Sema {
         let id = match existing {
             Some(Symbol::Global(id)) => {
                 let g = &mut self.globals[id as usize];
-                if !Self::compatible_object_types(&g.ty, &ty) {
+                if !Self::compatible(&g.ty, &ty) {
                     return err(loc, format!("conflicting types for '{name}'"));
                 }
                 if matches!(g.ty, Type::Array(_, None)) {
@@ -1046,13 +1073,20 @@ impl Sema {
         }
     }
 
-    pub(crate) fn intern_string(&mut self, bytes: Vec<u8>) -> StrId {
+    /// The literal with these bytes, whose elements are `align` bytes each. Literals with the
+    /// same bytes are one array, aligned for the widest of their element types.
+    pub(crate) fn intern_string(&mut self, bytes: Vec<u8>, align: u64) -> StrId {
         let key: Rc<[u8]> = Rc::from(bytes);
         if let Some(&id) = self.string_ids.get(&key) {
+            let literal = &mut self.strings[id as usize];
+            literal.align = literal.align.max(align);
             return id;
         }
         let id = self.strings.len() as StrId;
-        self.strings.push(Rc::clone(&key));
+        self.strings.push(StringLiteral {
+            bytes: Rc::clone(&key),
+            align,
+        });
         self.string_ids.insert(key, id);
         id
     }
@@ -1147,6 +1181,7 @@ impl Sema {
         });
         e.has_control_flow = cf;
         e.depth = depth + 1;
+        self.deepest_expr.set(self.deepest_expr.get().max(e.depth));
         if e.depth > MAX_EXPR_DEPTH {
             return err(loc, "expression is nested too deeply");
         }
@@ -1250,7 +1285,7 @@ impl Sema {
     pub(crate) fn string_lit(&mut self, mut bytes: Vec<u8>, loc: Loc) -> Res<Expr> {
         bytes.push(0);
         let len = bytes.len() as u64;
-        let id = self.intern_string(bytes);
+        let id = self.intern_string(bytes, 1);
         self.mk(
             ExprKind::StrLit(id),
             Type::Array(Rc::new(Type::Char), Some(len)),
@@ -1286,7 +1321,7 @@ impl Sema {
             }
         }
         bytes.extend(std::iter::repeat_n(0u8, esize as usize));
-        let id = self.intern_string(bytes);
+        let id = self.intern_string(bytes, self.tcx.align_of(&elem).unwrap_or(esize));
         self.mk(
             ExprKind::StrLit(id),
             Type::Array(Rc::new(elem), Some(count)),
@@ -1305,8 +1340,17 @@ impl Sema {
                     | "__FUNCDNAME__"
             ) {
                 if let Some(f) = &self.func {
-                    let bytes = f.name.as_bytes().to_vec();
-                    return self.string_lit(bytes, loc);
+                    // `static const char __func__[] = "name";` (C11 6.4.2.2).
+                    let mut bytes = f.name.as_bytes().to_vec();
+                    bytes.push(0);
+                    let len = bytes.len() as u64;
+                    let id = self.intern_string(bytes, 1);
+                    let elem = Type::Char.qualified(Quals::CONST);
+                    return self.mk(
+                        ExprKind::StrLit(id),
+                        Type::Array(Rc::new(elem), Some(len)),
+                        loc,
+                    );
                 }
             }
             if name.starts_with("__builtin_va_")
@@ -1392,10 +1436,7 @@ impl Sema {
             _ => {
                 // A bit-field narrower than int promotes to int whatever its declared type.
                 if let ExprKind::BitField { field, .. } = &e.kind {
-                    // As GCC does it: whatever the declared type, a field whose values all fit.
-                    let fits_int = !e.ty.is_int128()
-                        && (field.width < 32 || (field.width == 32 && self.tcx.is_signed(&e.ty)));
-                    if fits_int && e.ty != Type::Int {
+                    if self.bit_field_fits_int(&e.ty, field.width) && e.ty != Type::Int {
                         return self.convert(e, &Type::Int, loc);
                     }
                 }
@@ -1434,8 +1475,8 @@ impl Sema {
         let Ok(Const::Int(at)) = constexpr::eval(index, &self.tcx) else {
             return None;
         };
-        let bytes = self.strings.get(id as usize)?;
-        let byte = *bytes.get(usize::try_from(at).ok()?)?;
+        let literal = self.strings.get(id as usize)?;
+        let byte = *literal.bytes.get(usize::try_from(at).ok()?)?;
         Some(if self.tcx.target.char_is_signed() {
             i64::from(byte as i8)
         } else {
@@ -1503,17 +1544,8 @@ impl Sema {
             (ExprKind::IntLit(v), Type::Float | Type::Double | Type::LongDouble64)
                 if e.ty.is_integer() =>
             {
-                let as_float = if self.tcx.is_signed(&e.ty) {
-                    *v as f64
-                } else {
-                    *v as u64 as f64
-                };
-                let rounded = if matches!(to, Type::Float) {
-                    f64::from(as_float as f32)
-                } else {
-                    as_float
-                };
-                return self.float_lit(rounded, to.clone(), loc);
+                let value = constexpr::int_to_float(*v, &e.ty, to, &self.tcx);
+                return self.float_lit(value, to.clone(), loc);
             }
             (ExprKind::IntLit(v), _) if to.is_long_double() && e.ty.is_integer() => {
                 let value = if self.tcx.is_signed(&e.ty) {
@@ -1536,6 +1568,11 @@ impl Sema {
                 if let Some(folded) = constexpr::long_double_to_int(*v, to, &self.tcx) {
                     return self.int_lit(folded, to.clone(), loc);
                 }
+                if let (true, Some(wide)) = (to.is_int128(), v.to_i128()) {
+                    if self.tcx.is_signed(to) || wide >= 0 {
+                        return self.int128_constant(wide, to, loc);
+                    }
+                }
             }
             (ExprKind::FloatLit(v), Type::Float) => {
                 return self.float_lit(f64::from(*v as f32), Type::Float, loc);
@@ -1547,19 +1584,51 @@ impl Sema {
                 if let Some(folded) = constexpr::float_to_int(*v, to, &self.tcx) {
                     return self.int_lit(folded, to.clone(), loc);
                 }
+                // In the type's range (outside it the conversion is undefined, and left as it
+                // is) but wider than 64 bits.
+                let signed = self.tcx.is_signed(to);
+                let t = v.trunc();
+                let in_range = if signed {
+                    t.abs() < 2f64.powi(127)
+                } else {
+                    t >= 0.0 && t < 2f64.powi(128)
+                };
+                if to.is_int128() && in_range {
+                    let wide = if signed { t as i128 } else { t as u128 as i128 };
+                    return self.int128_constant(wide, to, loc);
+                }
             }
             _ => {}
         }
         self.mk(ExprKind::Cast(Box::new(e)), to.clone(), loc)
     }
 
-    /// An explicit cast `(to)e`.
+    /// The constant `value` (its low 128 bits) of the 128-bit integer type `to`. A literal holds
+    /// 64 bits, sign-extended, so what needs more is `(high << 64) | low`.
+    fn int128_constant(&self, value: i128, to: &Type, loc: Loc) -> Res<Expr> {
+        if let Ok(small) = i64::try_from(value) {
+            if self.tcx.is_signed(to) || small >= 0 {
+                return self.int_lit(small, to.clone(), loc);
+            }
+        }
+        let unsigned = Type::UInt128;
+        let high = self.int_lit((value >> 64) as i64, Type::ULLong, loc)?;
+        let high = self.convert(high, &unsigned, loc)?;
+        let low = self.int_lit(value as i64, Type::ULLong, loc)?;
+        let low = self.convert(low, &unsigned, loc)?;
+        let by = self.int_lit(64, Type::Int, loc)?;
+        let shifted = self.binary(BinOp::Shl, high, by, loc)?;
+        let joined = self.binary(BinOp::Or, shifted, low, loc)?;
+        self.convert(joined, to, loc)
+    }
+
     /// A placeholder for a value that cannot be computed; an error only if it is reached
     /// by code generation or constant evaluation.
     pub(crate) fn unsupported_value(&self, ty: Type, message: String, loc: Loc) -> Res<Expr> {
         self.mk(ExprKind::Unsupported(Rc::from(message)), ty, loc)
     }
 
+    /// An explicit cast `(to)e`.
     pub(crate) fn cast(&self, e: Expr, to: &Type, loc: Loc) -> Res<Expr> {
         if to.is_void() {
             return self.mk(ExprKind::Cast(Box::new(e)), Type::Void, loc);
@@ -2043,7 +2112,8 @@ impl Sema {
                 format!("invalid operand to unary + ('{}')", self.tcx.display(&e.ty)),
             );
         }
-        self.promote(e)
+        let promoted = self.promote(e)?;
+        self.not_an_lvalue(promoted)
     }
 
     pub(crate) fn bit_not(&self, e: Expr, loc: Loc) -> Res<Expr> {
@@ -2330,34 +2400,15 @@ impl Sema {
                 loc,
             );
         }
-        let int_only = matches!(
-            op,
-            BinOp::Rem | BinOp::And | BinOp::Or | BinOp::Xor | BinOp::Shl | BinOp::Shr
-        );
-        let operands_ok = if int_only {
-            ty.is_integer() && rhs.ty.is_integer()
-        } else {
-            ty.is_arith() && rhs.ty.is_arith() && !op.is_compare()
+        // The left operand is read the way `rvalue` reads it: a bit-field whose values all fit
+        // an int is one, whatever type it was declared with.
+        let left_ty = match &lhs.kind {
+            ExprKind::BitField { field, .. } if self.bit_field_fits_int(&ty, field.width) => {
+                Type::Int
+            }
+            _ => ty.clone(),
         };
-        if !operands_ok {
-            return err(
-                loc,
-                format!(
-                    "invalid operands to compound assignment ('{}' and '{}')",
-                    self.tcx.display(&ty),
-                    self.tcx.display(&rhs.ty)
-                ),
-            );
-        }
-        // The type the operation is carried out in, and the type its right operand has.
-        let (op_ty, rhs_ty) = if matches!(op, BinOp::Shl | BinOp::Shr) {
-            (Self::promoted_type(&ty), Type::Int)
-        } else {
-            let common = self.arith_common_type(&ty, &rhs.ty);
-            (common.clone(), common)
-        };
-        let rloc = rhs.loc;
-        let rhs = self.convert(rhs, &rhs_ty, rloc)?;
+        let (op_ty, rhs) = self.compound_operands(op, &left_ty, rhs, loc)?;
         self.mk(
             ExprKind::CompoundAssign {
                 lhs: Box::new(lhs),
@@ -2368,6 +2419,50 @@ impl Sema {
             ty,
             loc,
         )
+    }
+
+    /// For `left op= rhs` on arithmetic operands: the type the operation is carried out in,
+    /// and `rhs` converted to the type its side of the operation has.
+    pub(crate) fn compound_operands(
+        &self,
+        op: BinOp,
+        left: &Type,
+        rhs: Expr,
+        loc: Loc,
+    ) -> Res<(Type, Expr)> {
+        let int_only = matches!(
+            op,
+            BinOp::Rem | BinOp::And | BinOp::Or | BinOp::Xor | BinOp::Shl | BinOp::Shr
+        );
+        let operands_ok = if int_only {
+            left.is_integer() && rhs.ty.is_integer()
+        } else {
+            left.is_arith() && rhs.ty.is_arith() && !op.is_compare()
+        };
+        if !operands_ok {
+            return err(
+                loc,
+                format!(
+                    "invalid operands to compound assignment ('{}' and '{}')",
+                    self.tcx.display(left),
+                    self.tcx.display(&rhs.ty)
+                ),
+            );
+        }
+        let (op_ty, rhs_ty) = if matches!(op, BinOp::Shl | BinOp::Shr) {
+            (Self::promoted_type(left), Type::Int)
+        } else {
+            let common = self.arith_common_type(left, &rhs.ty);
+            (common.clone(), common)
+        };
+        let rloc = rhs.loc;
+        Ok((op_ty, self.convert(rhs, &rhs_ty, rloc)?))
+    }
+
+    /// As GCC does it: a bit-field of `width` bits declared with type `ty` promotes to int
+    /// when all its values fit one.
+    fn bit_field_fits_int(&self, ty: &Type, width: u32) -> bool {
+        !ty.is_int128() && (width < 32 || (width == 32 && self.tcx.is_signed(ty)))
     }
 
     pub(crate) fn inc_dec(&self, lhs: Expr, step: Step, fix: Fix, loc: Loc) -> Res<Expr> {
@@ -2927,8 +3022,8 @@ impl Sema {
         // The value is that of the last statement if it is an expression, labelled or not.
         let mut labels = Vec::new();
         let mut last = stmts.pop();
-        while let Some(Stmt::Label(label, inner)) = last {
-            labels.push(label);
+        while let Some(Stmt::Label(more, inner)) = last {
+            labels.extend(more);
             last = Some(*inner);
         }
         let result = match last {
@@ -2939,15 +3034,13 @@ impl Sema {
             }
             None => None,
         };
-        if result.is_some() {
-            for label in labels {
-                stmts.push(Stmt::Label(label, Box::new(Stmt::Empty)));
-            }
-        } else if let Some(mut tail) = stmts.pop() {
-            for label in labels.into_iter().rev() {
-                tail = Stmt::Label(label, Box::new(tail));
-            }
-            stmts.push(tail);
+        if !labels.is_empty() {
+            let labelled = if result.is_some() {
+                Stmt::Empty
+            } else {
+                stmts.pop().unwrap_or(Stmt::Empty)
+            };
+            stmts.push(Stmt::Label(labels, Box::new(labelled)));
         }
         let ty = result.as_ref().map_or(Type::Void, |r| r.ty.clone());
         let mut e = self.mk(ExprKind::StmtExpr { stmts, result }, ty, loc)?;

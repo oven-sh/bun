@@ -35,8 +35,10 @@ __BUN_CC_INTRIN __m128 _mm_sub_ps(__m128 __a, __m128 __b) { return __a - __b; }
 __BUN_CC_INTRIN __m128 _mm_mul_ps(__m128 __a, __m128 __b) { return __a * __b; }
 __BUN_CC_INTRIN __m128 _mm_div_ps(__m128 __a, __m128 __b) { return __a / __b; }
 __BUN_CC_INTRIN __m128 _mm_sqrt_ps(__m128 __a) { return __builtin_elementwise_sqrt(__a); }
-__BUN_CC_INTRIN __m128 _mm_min_ps(__m128 __a, __m128 __b) { return __builtin_elementwise_min(__a, __b); }
-__BUN_CC_INTRIN __m128 _mm_max_ps(__m128 __a, __m128 __b) { return __builtin_elementwise_max(__a, __b); }
+/* MINPS and MAXPS give the second operand when the two are unordered or equal (a NaN, or zeros of either sign): with
+   the operands this way round that is what comes out. */
+__BUN_CC_INTRIN __m128 _mm_min_ps(__m128 __a, __m128 __b) { return __builtin_elementwise_min(__b, __a); }
+__BUN_CC_INTRIN __m128 _mm_max_ps(__m128 __a, __m128 __b) { return __builtin_elementwise_max(__b, __a); }
 
 __BUN_CC_INTRIN __m128 _mm_and_ps(__m128 __a, __m128 __b) { return (__m128)((__v4su)__a & (__v4su)__b); }
 __BUN_CC_INTRIN __m128 _mm_andnot_ps(__m128 __a, __m128 __b) { return (__m128)(~(__v4su)__a & (__v4su)__b); }
@@ -69,8 +71,8 @@ __BUN_CC_INTRIN __m128 _mm_sub_ss(__m128 __a, __m128 __b) { __a[0] = __a[0] - __
 __BUN_CC_INTRIN __m128 _mm_mul_ss(__m128 __a, __m128 __b) { __a[0] = __a[0] * __b[0]; return __a; }
 __BUN_CC_INTRIN __m128 _mm_div_ss(__m128 __a, __m128 __b) { __a[0] = __a[0] / __b[0]; return __a; }
 __BUN_CC_INTRIN __m128 _mm_sqrt_ss(__m128 __a) { __a[0] = __builtin_elementwise_sqrt(__a)[0]; return __a; }
-__BUN_CC_INTRIN __m128 _mm_min_ss(__m128 __a, __m128 __b) { __a[0] = __builtin_elementwise_min(__a, __b)[0]; return __a; }
-__BUN_CC_INTRIN __m128 _mm_max_ss(__m128 __a, __m128 __b) { __a[0] = __builtin_elementwise_max(__a, __b)[0]; return __a; }
+__BUN_CC_INTRIN __m128 _mm_min_ss(__m128 __a, __m128 __b) { __a[0] = __builtin_elementwise_min(__b, __a)[0]; return __a; }
+__BUN_CC_INTRIN __m128 _mm_max_ss(__m128 __a, __m128 __b) { __a[0] = __builtin_elementwise_max(__b, __a)[0]; return __a; }
 __BUN_CC_INTRIN __m128 _mm_move_ss(__m128 __a, __m128 __b) { __a[0] = __b[0]; return __a; }
 /* The hardware gives 12-bit approximations; these are exact. */
 __BUN_CC_INTRIN __m128 _mm_rcp_ps(__m128 __a) { return (__m128){1.0f, 1.0f, 1.0f, 1.0f} / __a; }

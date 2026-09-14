@@ -325,28 +325,6 @@ impl AtomicExpr {
             AtomicExpr::Fence(_) => {}
         }
     }
-
-    /// The same, to change the operands.
-    pub(crate) fn for_each_child_mut(&mut self, mut f: impl FnMut(&mut Expr)) {
-        match self {
-            AtomicExpr::Load { addr, .. } => f(addr),
-            AtomicExpr::Store { addr, value, .. } | AtomicExpr::Rmw { addr, value, .. } => {
-                f(addr);
-                f(value);
-            }
-            AtomicExpr::Cas {
-                addr,
-                expected,
-                desired,
-                ..
-            } => {
-                f(addr);
-                f(expected);
-                f(desired);
-            }
-            AtomicExpr::Fence(_) => {}
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -494,88 +472,6 @@ impl Expr {
         }
     }
 
-    /// The same, to change the operands. (The statements of a statement expression are
-    /// not operands: see `Stmt::for_each_expr_mut`.)
-    pub(crate) fn for_each_child_mut(&mut self, mut f: impl FnMut(&mut Expr)) {
-        match &mut self.kind {
-            ExprKind::IntLit(_)
-            | ExprKind::FloatLit(_)
-            | ExprKind::LongDoubleLit(_)
-            | ExprKind::Local(_)
-            | ExprKind::Global(_)
-            | ExprKind::Func(_)
-            | ExprKind::StrLit(_)
-            | ExprKind::Unsupported(_) => {}
-            ExprKind::Neg(a)
-            | ExprKind::BitNot(a)
-            | ExprKind::LogNot(a)
-            | ExprKind::Cast(a)
-            | ExprKind::AddrOf(a)
-            | ExprKind::Deref(a)
-            | ExprKind::Member(a, _)
-            | ExprKind::BitField { base: a, .. }
-            | ExprKind::Decay(a)
-            | ExprKind::VaStart(a)
-            | ExprKind::VaArg(a)
-            | ExprKind::VecSplat(a)
-            | ExprKind::TransparentUnion(a)
-            | ExprKind::ComplexPart(a, _)
-            | ExprKind::Alloca(a, _) => f(a),
-            ExprKind::IncDec {
-                lhs, dynamic_scale, ..
-            } => {
-                f(lhs);
-                if let Some(scale) = dynamic_scale {
-                    f(scale);
-                }
-            }
-            ExprKind::Binary(_, a, b)
-            | ExprKind::PtrAdd {
-                ptr: a, index: b, ..
-            }
-            | ExprKind::PtrDiff { a, b, .. }
-            | ExprKind::LogAnd(a, b)
-            | ExprKind::LogOr(a, b)
-            | ExprKind::Assign(a, b)
-            | ExprKind::CompoundAssign { lhs: a, rhs: b, .. }
-            | ExprKind::VaCopy(a, b)
-            | ExprKind::VecElem(a, b)
-            | ExprKind::ComplexMake(a, b)
-            | ExprKind::Comma(a, b) => {
-                f(a);
-                f(b);
-            }
-            ExprKind::Cond(a, b, c) => {
-                f(a);
-                f(b);
-                f(c);
-            }
-            ExprKind::Call { callee, args } => {
-                f(callee);
-                args.iter_mut().for_each(f);
-            }
-            ExprKind::StmtExpr { result, .. } => {
-                if let Some(result) = result {
-                    f(result);
-                }
-            }
-            ExprKind::CompoundLiteral { items, .. } => {
-                for item in items.iter_mut() {
-                    match item {
-                        InitItem::Scalar { expr, .. }
-                        | InitItem::Copy { expr, .. }
-                        | InitItem::Bits { expr, .. } => f(expr),
-                        InitItem::Bytes { .. } => {}
-                    }
-                }
-            }
-            ExprKind::Intrinsic(_, args)
-            | ExprKind::VecInit(args)
-            | ExprKind::VecBuiltin(_, args) => args.iter_mut().for_each(f),
-            ExprKind::Atomic(atomic) => atomic.for_each_child_mut(f),
-        }
-    }
-
     pub(crate) fn is_lvalue(&self) -> bool {
         match &self.kind {
             ExprKind::Local(_)
@@ -634,18 +530,19 @@ pub(crate) enum Stmt {
     DoWhile(Box<Stmt>, Expr),
     For {
         init: Option<Box<Stmt>>,
-        cond: Option<Expr>,
-        step: Option<Expr>,
+        cond: Option<Box<Expr>>,
+        step: Option<Box<Expr>>,
         body: Box<Stmt>,
     },
     Switch {
-        cond: Expr,
+        cond: Box<Expr>,
         body: Box<Stmt>,
         cases: Vec<SwitchCase>,
         default: Option<LabelId>,
     },
-    /// A `case`/`default` label (the values live on the enclosing `Switch`) or a named label.
-    Label(LabelId, Box<Stmt>),
+    /// A statement with the labels in front of it, in order: `case`/`default` labels (the values
+    /// live on the enclosing `Switch`) and named ones.
+    Label(Vec<LabelId>, Box<Stmt>),
     Goto(LabelId),
     Break,
     Continue,
@@ -804,6 +701,12 @@ pub(crate) struct Global {
     pub(crate) linkonce: bool,
 }
 
+/// A string literal's array: its bytes with the terminator, and the alignment of its elements.
+pub(crate) struct StringLiteral {
+    pub(crate) bytes: Rc<[u8]>,
+    pub(crate) align: u64,
+}
+
 /// A whole translation unit after parsing and semantic analysis.
 pub(crate) struct Program {
     /// Size of the target's va_list object, for `va_copy`.
@@ -811,7 +714,7 @@ pub(crate) struct Program {
     pub(crate) tcx: TypeCtx,
     pub(crate) globals: Vec<Global>,
     pub(crate) funcs: Vec<Function>,
-    pub(crate) strings: Vec<Rc<[u8]>>,
+    pub(crate) strings: Vec<StringLiteral>,
     pub(crate) warnings: Vec<(Loc, String)>,
     /// Other external names of functions: `__attribute__((alias("target")))`.
     pub(crate) function_aliases: Vec<(Rc<str>, FuncId)>,

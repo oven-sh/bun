@@ -141,6 +141,7 @@ impl Sema {
     ) -> Res<(Type, Vec<InitItem>)> {
         let mut out = Vec::new();
         self.flexible_end.set(0);
+        self.init_highest.set((0, 0));
         let count = self.init_object(ty, 0, init, &mut out)?;
         let ty = match ty {
             Type::Array(elem, None) => Type::Array(Rc::clone(elem), Some(count)),
@@ -176,6 +177,10 @@ impl Sema {
     /// Initializes the object of type `ty` at `offset` from `init`. For arrays, returns the
     /// number of elements the initializer covers.
     fn init_object(&self, ty: &Type, offset: u64, init: Init, out: &mut Vec<InitItem>) -> Res<u64> {
+        if !self.tcx.stack_check.is_safe_to_recurse() {
+            let (Init::Expr(Expr { loc, .. }) | Init::List(_, loc)) = init;
+            return err(loc, "initializer is nested too deeply");
+        }
         // Initialization is not an atomic operation.
         let ty = ty.unatomic();
         match init {
@@ -238,16 +243,23 @@ impl Sema {
                 }
                 // A brace list initializes the whole sub-object: what an earlier designator gave
                 // any part of it is overridden, mentioned again or not (C11 6.7.9p19).
-                if let Some(size) = self.tcx.size_of(ty) {
-                    out.retain(|item| {
-                        let at = match item {
-                            InitItem::Scalar { offset, .. }
-                            | InitItem::Bytes { offset, .. }
-                            | InitItem::Copy { offset, .. }
-                            | InitItem::Bits { offset, .. } => *offset,
-                        };
-                        at < offset || at >= offset + size
-                    });
+                let at = |item: &InitItem| match item {
+                    InitItem::Scalar { offset, .. }
+                    | InitItem::Bytes { offset, .. }
+                    | InitItem::Copy { offset, .. }
+                    | InitItem::Bits { offset, .. } => *offset,
+                };
+                // Without designators everything written so far lies below this sub-object, which
+                // the highest offset so far says without looking at every item for every list.
+                let (seen, highest) = self.init_highest.get();
+                let highest = out[seen.min(out.len())..]
+                    .iter()
+                    .map(at)
+                    .fold(highest, u64::max);
+                self.init_highest.set((out.len(), highest));
+                if let (Some(size), true) = (self.tcx.size_of(ty), highest >= offset) {
+                    out.retain(|item| at(item) < offset || at(item) >= offset + size);
+                    self.init_highest.set((0, 0));
                 }
                 let mut pos = 0;
                 let count = self.init_list(ty, offset, &mut entries, &mut pos, true, 0, out)?;
@@ -275,7 +287,7 @@ impl Sema {
             if string_initializes(self, ty, &e) {
                 // The stored literal ends with its terminator; whether that fits is decided here.
                 let esize = self.tcx.size_of(elem).unwrap_or(1).max(1);
-                let stored = &self.strings[*id as usize];
+                let stored = &self.strings[*id as usize].bytes;
                 let bytes = &stored[..stored.len().saturating_sub(esize as usize)];
                 let n = bytes.len() as u64 / esize;
                 let mut data = bytes.to_vec();

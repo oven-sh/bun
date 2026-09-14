@@ -47,18 +47,16 @@ impl FnGen<'_, '_> {
 
     /// Somewhere for a `long double` to be.
     pub(super) fn long_double_temp(&mut self) -> V {
-        let slot = self.b.add_slot(16, 16);
-        self.b.def(Inst::SlotAddr(slot), Ty::I64)
+        self.temporary_slot(16, 16)
     }
 
     /// Eight bytes for the `double`, `float` or 64-bit integer side of a conversion.
     fn conversion_temp(&mut self) -> V {
-        let slot = self.b.add_slot(8, 8);
-        self.b.def(Inst::SlotAddr(slot), Ty::I64)
+        self.temporary_slot(8, 8)
     }
 
     pub(super) fn long_double_constant(&mut self, value: Extended) -> V {
-        let blob = self.m.blob(value.to_bytes().to_vec());
+        let blob = self.m.blob(value.to_bytes().to_vec(), 16);
         let object = self.m.blob_object(blob);
         self.data_addr(object)
     }

@@ -150,7 +150,7 @@ pub(crate) fn round_to_f64(significand: u128, exponent: i64, sticky: bool) -> f6
     }
 }
 
-fn round_to_f32(significand: u128, exponent: i64, sticky: bool) -> f32 {
+pub(crate) fn round_to_f32(significand: u128, exponent: i64, sticky: bool) -> f32 {
     match round(significand, exponent, sticky, BINARY32) {
         Rounded::Zero => 0.0,
         Rounded::Infinite => f32::INFINITY,

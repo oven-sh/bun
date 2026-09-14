@@ -104,8 +104,7 @@ impl FnGen<'_, '_> {
 
     /// A 16-byte aligned scratch slot holding `count` vectors; returns its address.
     fn vector_scratch(&mut self, count: u64) -> V {
-        let slot = self.b.add_slot(16 * count, 16);
-        self.b.def(Inst::SlotAddr(slot), Ty::I64)
+        self.temporary_slot(16 * count, 16)
     }
 
     /// `base + (index mod count) * lane size`, for a lane chosen at run time.

@@ -155,15 +155,29 @@ impl Sema {
             (Type::Vla(x, _), Type::Vla(y, _) | Type::Array(y, _))
             | (Type::Array(x, _), Type::Vla(y, _)) => Self::compatible(x, y),
             (Type::Func(f), Type::Func(g)) => {
+                // C11 6.7.6.3p15: a parameter list goes with no list at all only if it has no
+                // ellipsis and every parameter has the type the default promotions leave it.
+                let goes_without = |h: &crate::types::FuncType| {
+                    !h.variadic
+                        && h.params.iter().all(|p| {
+                            let p = p.unqualified();
+                            !matches!(p, Type::Float) && Self::promoted_type(p) == *p
+                        })
+                };
                 Self::compatible(&f.ret, &g.ret)
-                    && (f.unprototyped
-                        || g.unprototyped
-                        || (f.variadic == g.variadic
-                            && f.params.len() == g.params.len()
-                            && f.params
-                                .iter()
-                                .zip(&g.params)
-                                .all(|(p, q)| Self::compatible(p, q))))
+                    && match (f.unprototyped, g.unprototyped) {
+                        (true, true) => true,
+                        (true, false) => goes_without(g),
+                        (false, true) => goes_without(f),
+                        (false, false) => {
+                            f.variadic == g.variadic
+                                && f.params.len() == g.params.len()
+                                && f.params
+                                    .iter()
+                                    .zip(&g.params)
+                                    .all(|(p, q)| Self::compatible(p, q))
+                        }
+                    }
             }
             _ => a == b,
         }

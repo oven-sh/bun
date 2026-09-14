@@ -601,6 +601,44 @@ fn split_operands(text: &[u8]) -> Vec<&[u8]> {
     parts
 }
 
+/// What cannot be inside an `asm` statement, whatever its operands: it would disturb the stack
+/// frame or leave the statement, which the surrounding code cannot account for.
+fn refused(mnemonic: &str) -> Res<()> {
+    if matches!(
+        mnemonic,
+        "push"
+            | "pushq"
+            | "pushl"
+            | "pushw"
+            | "pop"
+            | "popq"
+            | "popl"
+            | "popw"
+            | "pushf"
+            | "pushfq"
+            | "popf"
+            | "popfq"
+            | "call"
+            | "callq"
+            | "ret"
+            | "retq"
+            | "int"
+            | "std"
+            | "leave"
+            | "enter"
+            | "syscall"
+            | "sysenter"
+            | "hlt"
+            | "iret"
+            | "iretq"
+    ) {
+        return Err(format!(
+            "'{mnemonic}' would disturb the stack frame or leave the statement, which the surrounding code cannot account for"
+        ));
+    }
+    Ok(())
+}
+
 fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
     let mnemonic = statement.mnemonic;
     let operands = &statement.operands;
@@ -612,6 +650,8 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
     let fixed: Option<&[u8]> = match (mnemonic, operands.len()) {
         ("nop", 0) => Some(&[0x90]),
         ("pause", 0) => Some(&[0xf3, 0x90]),
+        ("ud2", 0) => Some(&[0x0f, 0x0b]),
+        ("int3", 0) => Some(&[0xcc]),
         ("mfence", 0) => Some(&[0x0f, 0xae, 0xf0]),
         ("lfence", 0) => Some(&[0x0f, 0xae, 0xe8]),
         ("sfence", 0) => Some(&[0x0f, 0xae, 0xf8]),
@@ -651,38 +691,6 @@ fn encode_statement(statement: &Statement, items: &mut Vec<Item>) -> Res<()> {
     if let Some(bytes) = fixed {
         items.push(Item::Bytes(bytes.to_vec()));
         return Ok(());
-    }
-    if matches!(
-        mnemonic,
-        "push"
-            | "pushq"
-            | "pushl"
-            | "pushw"
-            | "pop"
-            | "popq"
-            | "popl"
-            | "popw"
-            | "pushf"
-            | "pushfq"
-            | "popf"
-            | "popfq"
-            | "call"
-            | "callq"
-            | "ret"
-            | "retq"
-            | "int"
-            | "std"
-            | "leave"
-            | "enter"
-            | "syscall"
-            | "sysenter"
-            | "hlt"
-            | "iret"
-            | "iretq"
-    ) {
-        return Err(format!(
-            "'{mnemonic}' would disturb the stack frame or leave the statement, which the surrounding code cannot account for"
-        ));
     }
 
     // Branches to local labels.
@@ -1950,6 +1958,14 @@ pub(crate) fn assemble(text: &[u8]) -> Res<Vec<u8>> {
                         ));
                     }
                 }
+            }
+            refused(mnemonic)?;
+            // A branch through a register or memory goes nobody knows where.
+            if matches!(mnemonic, "jmp" | "jmpq") && arguments.first() == Some(&b'*') {
+                return Err(format!(
+                    "'{mnemonic} {}' would leave the statement, which the surrounding code cannot account for",
+                    crate::token::display_bytes(arguments)
+                ));
             }
             let operands = split_operands(arguments)
                 .into_iter()

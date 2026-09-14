@@ -1,0 +1,704 @@
+[
+  {
+    "name": "#if with 100000 nested parentheses",
+    "source": ["#if ", ["(", 100000], "1", [")", 100000], "\n#endif\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "#elif with 100000 nested parentheses",
+    "source": ["#if 0\n#elif ", ["(", 100000], "1", [")", 100000], "\n#endif\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "#if with 100000 nested parentheses in the arm that is not evaluated",
+    "source": ["#if 0 && ", ["(", 100000], "1", [")", 100000], "\n#endif\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "#if with 100000 conditionals nested in their middle operands",
+    "source": ["#if ", ["1 ? ", 100000], "1", [" : 1", 100000], "\n#endif\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "#if defined with 100000 parentheses",
+    "source": ["#if defined", ["(", 100000], "X", [")", 100000], "\n#endif\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "operator 'defined' requires an identifier",
+      "line": 1,
+      "column": 5
+    }
+  },
+  {
+    "name": "#if with 100000 logical negations",
+    "source": [
+      "#if ",
+      ["!", 100000],
+      "1\n#define V 1\n#else\n#define V 2\n#endif\n",
+      "#include <stdio.h>\nint main(void) { printf(\"%d\\n\", V); return 0; }\n"
+    ],
+    "output": "1\n",
+    "status": 0
+  },
+  {
+    "name": "#if with 100001 logical negations",
+    "source": [
+      "#if ",
+      ["!", 100001],
+      "1\n#define V 1\n#else\n#define V 2\n#endif\n",
+      "#include <stdio.h>\nint main(void) { printf(\"%d\\n\", V); return 0; }\n"
+    ],
+    "output": "2\n",
+    "status": 0
+  },
+  {
+    "name": "#if with 100001 unary minuses",
+    "source": [
+      "#if ",
+      ["- ", 100001],
+      "1 < 0\n#define V 1\n#else\n#define V 2\n#endif\n",
+      "#include <stdio.h>\nint main(void) { printf(\"%d\\n\", V); return 0; }\n"
+    ],
+    "output": "1\n",
+    "status": 0
+  },
+  {
+    "name": "#if with 100001 complements",
+    "source": [
+      "#if ",
+      ["~", 100001],
+      "0 == -1\n#define V 1\n#else\n#define V 2\n#endif\n",
+      "#include <stdio.h>\nint main(void) { printf(\"%d\\n\", V); return 0; }\n"
+    ],
+    "output": "1\n",
+    "status": 0
+  },
+  {
+    "name": "#if with a chain of 100000 conditionals",
+    "source": [
+      "#if ",
+      ["0 ? 5 : ", 100000],
+      "7 == 7\n#define V 1\n#else\n#define V 2\n#endif\n",
+      "#include <stdio.h>\nint main(void) { printf(\"%d\\n\", V); return 0; }\n"
+    ],
+    "output": "1\n",
+    "status": 0
+  },
+  {
+    "name": "#if with 63 nested parentheses, negations and conditionals",
+    "source": [
+      "#if ",
+      ["(", 63],
+      ["!", 63],
+      "0",
+      [")", 63],
+      " && (",
+      ["1 ? ", 63],
+      "1",
+      [" : 0", 63],
+      ")\n#define V 1\n#else\n#define V 2\n#endif\n",
+      "#include <stdio.h>\nint main(void) { printf(\"%d\\n\", V); return 0; }\n"
+    ],
+    "output": "1\n",
+    "status": 0
+  },
+  {
+    "name": "a declarator with 300000 pointers",
+    "source": ["int ", ["*", 300000], "p;\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "a type is derived through too many pointers, arrays and functions",
+      "line": 1,
+      "column": 262
+    }
+  },
+  {
+    "name": "a declarator with 300000 qualified pointers",
+    "source": ["int ", ["* const * volatile ", 150000], "p;\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "a type is derived through too many pointers, arrays and functions",
+      "line": 1,
+      "column": 2445
+    }
+  },
+  {
+    "name": "a declarator with 300000 array dimensions",
+    "source": ["int a", ["[1]", 300000], ";\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "a type is derived through too many pointers, arrays and functions",
+      "line": 1,
+      "column": 777
+    }
+  },
+  {
+    "name": "a declarator with 300000 parameter lists",
+    "source": ["int f", ["()", 300000], ";\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "a type is derived through too many pointers, arrays and functions",
+      "line": 1,
+      "column": 520
+    }
+  },
+  {
+    "name": "an abstract declarator with 300000 pointers in a cast",
+    "source": ["int main(void) { return (int ", ["*", 300000], ")0 == 0; }\n"],
+    "error": {
+      "message": "a type is derived through too many pointers, arrays and functions",
+      "line": 1,
+      "column": 287
+    }
+  },
+  {
+    "name": "an abstract declarator with 300000 pointers in sizeof",
+    "source": ["int main(void) { return sizeof(int ", ["*", 300000], ") == 0; }\n"],
+    "error": {
+      "message": "a type is derived through too many pointers, arrays and functions",
+      "line": 1,
+      "column": 293
+    }
+  },
+  {
+    "name": "a parameter with 300000 pointers",
+    "source": ["void f(int ", ["*", 300000], "p);\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "a type is derived through too many pointers, arrays and functions",
+      "line": 1,
+      "column": 269
+    }
+  },
+  {
+    "name": "a chain of 1000 type definitions that each add a pointer",
+    "source": [
+      "typedef int T0;\n",
+      {
+        "each": "typedef T{i} *T{i+1};\n",
+        "count": 1000,
+        "from": 0
+      },
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "message": "a type is derived through too many pointers, arrays and functions",
+      "line": 258,
+      "column": 19
+    }
+  },
+  {
+    "name": "256 pointers",
+    "source": [
+      "#include <stdio.h>\nint ",
+      ["*", 256],
+      "p;\nint main(void) { printf(\"%d\\n\", (int)sizeof p); return 0; }\n"
+    ],
+    "output": "8\n",
+    "status": 0
+  },
+  {
+    "name": "12 pointers and 8 array dimensions",
+    "source": [
+      "#include <stdio.h>\nint ",
+      ["*", 12],
+      "p;\nint a[2][2][2][2][2][2][2][2];\nint main(void) { a[1][1][1][1][1][1][1][1] = 5; printf(\"%d %d\\n\", (int)(sizeof a / sizeof(int)), a[1][1][1][1][1][1][1][1]); return p != 0; }\n"
+    ],
+    "output": "256 5\n",
+    "status": 0
+  },
+  {
+    "name": "4000 __VA_OPT__ groups nested",
+    "source": [
+      "#define F(...) ",
+      ["__VA_OPT__(", 4000],
+      "1",
+      [")", 4000],
+      "\nint x = F(1);\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "message": "'__VA_OPT__' may not appear in a '__VA_OPT__'",
+      "line": 1,
+      "column": 27
+    }
+  },
+  {
+    "name": "a token doubled by ## through 40 nested invocations",
+    "source": [
+      "#define C2(a) a##a\n#define E(a) C2(a)\nint ",
+      ["E(", 40],
+      "x",
+      [")", 40],
+      ";\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "message": "macro expansion produces too many tokens",
+      "line": 3,
+      "column": 39
+    }
+  },
+  {
+    "name": "a number doubled by ## through 40 nested invocations",
+    "source": [
+      "#define C2(a) a##a\n#define E(a) C2(a)\nint x = ",
+      ["E(", 40],
+      "1",
+      [")", 40],
+      ";\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "message": "macro expansion produces too many tokens",
+      "line": 3,
+      "column": 43
+    }
+  },
+  {
+    "name": "a string doubled by # through 40 nested invocations",
+    "source": [
+      "#define S(x) #x\n#define D(x) S(x x)\nconst char *s = ",
+      ["D(", 40],
+      "a",
+      [")", 40],
+      ";\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "message": "macro expansion produces too many tokens",
+      "line": 3,
+      "column": 71
+    }
+  },
+  {
+    "name": "a string quoted again by # through 40 nested invocations",
+    "source": [
+      "#define STR(x) #x\n#define XSTR(x) STR(x)\nconst char *s = ",
+      ["XSTR(", 40],
+      "\"a\\\\\"",
+      [")", 40],
+      ";\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "message": "macro expansion produces too many tokens",
+      "line": 3,
+      "column": 112
+    }
+  },
+  {
+    "name": "tokens doubled through 40 nested invocations",
+    "source": ["#define D(x) x x\nint y = 0 ", ["D(", 40], "+ 1", [")", 40], ";\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "macro expansion produces too many tokens",
+      "line": 2,
+      "column": 51
+    }
+  },
+  {
+    "name": "a string doubled by # through 10 nested invocations",
+    "source": [
+      "#include <stdio.h>\n#include <string.h>\n#define S(x) #x\n#define D(x) S(x x)\nconst char *s = ",
+      ["D(", 10],
+      "a",
+      [")", 10],
+      ";\nint main(void) { printf(\"%d\\n\", (int)strlen(s)); return 0; }\n"
+    ],
+    "output": "351571\n",
+    "status": 0
+  },
+  {
+    "name": "a megabyte stringized in one piece",
+    "source": [
+      "#include <stdio.h>\n#include <string.h>\n#define S(x) #x\nconst char *s = S(",
+      ["a ", 500000],
+      ");\nint main(void) { printf(\"%d\\n\", (int)strlen(s)); return 0; }\n"
+    ],
+    "output": "999999\n",
+    "status": 0
+  },
+  {
+    "name": "401 nested invocations of one function-like macro",
+    "source": ["#define F(x) x\nint v = ", ["F(", 401], "1", [")", 401], ";\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "399 nested invocations of one function-like macro",
+    "source": [
+      "#define F(x) x\nint v = ",
+      ["F(", 399],
+      "1",
+      [")", 399],
+      ";\n",
+      "#include <stdio.h>\nint main(void) { printf(\"%d\\n\", v); return 0; }\n"
+    ],
+    "output": "1\n",
+    "status": 0
+  },
+  {
+    "name": "100000 nested invocations of one function-like macro",
+    "source": ["#define F(x) x\nint v = ", ["F(", 100000], "1", [")", 100000], ";\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "macro expansion produces too many tokens",
+      "line": 2,
+      "column": 35
+    }
+  },
+  {
+    "name": "a table of 300000 rows that each expand a macro",
+    "source": [
+      "#include <stdio.h>\n#define ENTRY(a, b, c) { (a), (b), (c), (a) + (b) + (c) }\nstatic const int table[][4] = {\n",
+      ["ENTRY(1, 2, 3),\n", 300000],
+      "};\nint main(void) { printf(\"%d %d\\n\", (int)(sizeof table / sizeof table[0]), table[299999][3]); return 0; }\n"
+    ],
+    "output": "300000 6\n",
+    "status": 0
+  },
+  {
+    "name": "_Pragma operators nested through a chain of 1000 macros",
+    "source": [
+      "#define P0 \"once\"\n",
+      {
+        "each": "#define P{i+1} _Pragma(P{i})\n",
+        "count": 1000,
+        "from": 0
+      },
+      "_Pragma(P1000)\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 levels of parentheses",
+    "source": ["int f(void) { return ", ["(", 5000], "1", [")", 5000], "; }\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 levels of blocks",
+    "source": ["void f(void) { ", ["{", 5000], " ", ["}", 5000], " }\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 unary operators",
+    "source": ["int f(int x) { return ", ["-", 5000], "x; }\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 levels of parenthesized declarators",
+    "source": ["int ", ["(*", 5000], "x", [")", 5000], ";\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 levels of braces in an initializer",
+    "source": ["int x = ", ["{", 5000], "1", ["}", 5000], ";\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "a sum of 5000 terms",
+    "source": ["int f(int x) { return x", [" + x", 5000], "; }\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 nested conditional expressions",
+    "source": [
+      "int f(int x) { return ",
+      ["x ? ", 5000],
+      "1",
+      [" : 2", 5000],
+      "; }\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 nested casts",
+    "source": ["int f(int x) { return ", ["(int)", 5000], "x; }\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 nested calls",
+    "source": [
+      "int g(int);\nint f(int x) { return ",
+      ["g(", 5000],
+      "x",
+      [")", 5000],
+      "; }\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 nested statement expressions",
+    "source": ["int f(int x) { return ", ["({ ", 5000], "x;", [" })", 5000], "; }\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 nested structures",
+    "source": [
+      {
+        "each": "struct S{i} { ",
+        "count": 5000,
+        "from": 0
+      },
+      "int x;",
+      {
+        "each": " } m{i};",
+        "count": 5000,
+        "from": 0
+      },
+      "\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 nested loops",
+    "source": ["void f(int x) { ", ["while (x) ", 5000], "; }\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "5000 nested switches",
+    "source": [
+      "void f(int x) { ",
+      ["switch (x) { case 1: ", 5000],
+      ";",
+      [" }", 5000],
+      " }\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "error": {
+      "contains": "is nested too deeply"
+    }
+  },
+  {
+    "name": "a switch with 100000 case labels in a row",
+    "source": [
+      "#include <stdio.h>\nint f(int x) { switch (x) { ",
+      {
+        "each": "case {i}: ",
+        "count": 100000,
+        "from": 0
+      },
+      "return 1; default: return 0; } }\nint main(void) { printf(\"%d %d\\n\", f(99999), f(-1)); return 0; }\n"
+    ],
+    "output": "1 0\n",
+    "status": 0
+  },
+  {
+    "name": "100000 labels in a row",
+    "source": [
+      "#include <stdio.h>\nint f(int x) { if (x) goto l777; ",
+      {
+        "each": "l{i}: ",
+        "count": 100000,
+        "from": 0
+      },
+      "return x + 1; }\nint main(void) { printf(\"%d %d\\n\", f(0), f(1)); return 0; }\n"
+    ],
+    "output": "1 2\n",
+    "status": 0
+  },
+  {
+    "name": "a chain of 5000 else-if arms",
+    "source": [
+      "#include <stdio.h>\nint f(int x) { if (x == -1) return -1;",
+      {
+        "each": " else if (x == {i}) return {i};",
+        "count": 5000,
+        "from": 0
+      },
+      " return -2; }\nint main(void) { printf(\"%d %d %d\\n\", f(5), f(4999), f(-7)); return 0; }\n"
+    ],
+    "output": "5 4999 -2\n",
+    "status": 0
+  },
+  {
+    "name": "a macro with 100000 parameters",
+    "source": [
+      "#define F(p",
+      {
+        "each": "p{i},",
+        "count": 99999,
+        "from": 0
+      },
+      "last) last\n",
+      "int main(void) { return 0; }\n"
+    ],
+    "output": "",
+    "status": 0
+  },
+  {
+    "name": "#include of a device that never ends",
+    "requires": "posix",
+    "source": ["#include \"/dev/zero\"\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "'/dev/zero' cannot be read: not a regular file",
+      "line": 1,
+      "column": 2
+    }
+  },
+  {
+    "name": "__has_include of a device that never ends",
+    "requires": "posix",
+    "source": [
+      "#if __has_include(\"/dev/zero\")\n#error found\n#endif\n#include <stdio.h>\nint main(void) { puts(\"not a header\"); return 0; }\n"
+    ],
+    "output": "not a header\n",
+    "status": 0
+  },
+  {
+    "name": "#include of a FIFO nobody writes to",
+    "requires": "posix",
+    "fifos": ["fifo"],
+    "source": ["#include \"fifo\"\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "'fifo' cannot be read: not a regular file",
+      "line": 1,
+      "column": 2
+    }
+  },
+  {
+    "name": "__has_include of a FIFO nobody writes to",
+    "requires": "posix",
+    "fifos": ["fifo"],
+    "source": [
+      "#if __has_include(\"fifo\")\n#error found\n#endif\n#include <stdio.h>\nint main(void) { puts(\"not a header\"); return 0; }\n"
+    ],
+    "output": "not a header\n",
+    "status": 0
+  },
+  {
+    "name": "#include of a directory",
+    "source": ["#include \".\"\n", "int main(void) { return 0; }\n"],
+    "files": {},
+    "error": {
+      "message": "'.' cannot be read: not a regular file",
+      "line": 1,
+      "column": 2
+    }
+  },
+  {
+    "name": "#include of a file that may not be read",
+    "requires": "posix",
+    "files": {
+      "noperm.h": ["int hidden;\n"]
+    },
+    "unreadable": ["noperm.h"],
+    "source": ["#include \"noperm.h\"\n", "int main(void) { return 0; }\n"],
+    "error": {
+      "message": "'noperm.h' cannot be read: Permission denied",
+      "line": 1,
+      "column": 2
+    }
+  },
+  {
+    "name": "#include of an empty file",
+    "files": {
+      "empty.h": [""]
+    },
+    "source": ["#include \"empty.h\"\n#include <stdio.h>\nint main(void) { puts(\"empty\"); return 0; }\n"],
+    "output": "empty\n",
+    "status": 0
+  },
+  {
+    "name": "#pragma once holds through a symbolic link, a hard link and a linked directory",
+    "requires": "posix",
+    "files": {
+      "once.h": ["#pragma once\nint counter_once = 1;\n"],
+      "sub/marker.h": ["\n"]
+    },
+    "symlinks": {
+      "link.h": "once.h",
+      "sub/up": ".."
+    },
+    "hardlinks": {
+      "hard.h": "once.h"
+    },
+    "source": [
+      "#include \"once.h\"\n#include \"link.h\"\n#include \"hard.h\"\n#include \"sub/up/once.h\"\n#include \"./once.h\"\n#include <stdio.h>\nint main(void) { printf(\"%d\\n\", counter_once); return 0; }\n"
+    ],
+    "output": "1\n",
+    "status": 0
+  },
+  {
+    "name": "two files with the same text are two files to #pragma once",
+    "files": {
+      "a.h": ["#pragma once\nint from_a = VALUE;\n#undef VALUE\n"],
+      "b.h": ["#pragma once\nint from_b = VALUE;\n#undef VALUE\n"]
+    },
+    "source": [
+      "#define VALUE 1\n#include \"a.h\"\n#define VALUE 2\n#include \"b.h\"\n#include \"a.h\"\n#include <stdio.h>\nint main(void) { printf(\"%d %d\\n\", from_a, from_b); return 0; }\n"
+    ],
+    "output": "1 2\n",
+    "status": 0
+  },
+  {
+    "name": "a header included 100000 times, with __COUNTER__ counting through",
+    "files": {
+      "row.h": ["ROW(__COUNTER__)\n"]
+    },
+    "source": [
+      "#include <stdio.h>\n#define ROW(n) + n\nstatic const long total = 0L\n",
+      ["#include \"row.h\"\n", 100000],
+      ";\nint main(void) { printf(\"%ld %d\\n\", total, __COUNTER__); return 0; }\n"
+    ],
+    "output": "4999950000 100000\n",
+    "status": 0,
+    "requires": "lp64"
+  },
+  {
+    "name": "399 invocations nested through an alias of the macro",
+    "source": [
+      "#define F(x) x\n#define G F\nint v = ",
+      ["G(", 399],
+      "1",
+      [")", 399],
+      ";\n#include <stdio.h>\nint main(void) { printf(\"%d\\n\", v); return 0; }\n"
+    ],
+    "output": "1\n",
+    "status": 0
+  },
+  {
+    "name": "400 invocations of two macros in turn",
+    "source": [
+      "#define F(x) x\n#define H(x) (x)\nint v = ",
+      ["F(H(", 200],
+      "1",
+      ["))", 200],
+      ";\n#include <stdio.h>\nint main(void) { printf(\"%d\\n\", v); return 0; }\n"
+    ],
+    "output": "1\n",
+    "status": 0
+  }
+]

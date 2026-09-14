@@ -43,10 +43,15 @@ pub(crate) struct FileTable {
 }
 
 impl FileTable {
-    pub(crate) fn add(&mut self, name: &str, contents: Rc<[u8]>, included_at: Option<Loc>) -> u32 {
+    pub(crate) fn add(
+        &mut self,
+        name: Rc<str>,
+        contents: Rc<[u8]>,
+        included_at: Option<Loc>,
+    ) -> u32 {
         let id = self.files.len() as u32;
         self.files.push(SourceFile {
-            name: Rc::from(name),
+            name,
             contents,
             read_as: id,
             included_at,
@@ -80,8 +85,10 @@ impl FileTable {
 pub(crate) const MAX_INCLUDE_DEPTH: usize = 200;
 /// Maximum nesting of macro-argument pre-expansion.
 const MAX_EXPANSION_DEPTH: u32 = 400;
-/// Tokens macro expansion may produce in one translation unit before it is declared runaway.
-const MAX_EXPANDED_TOKENS: u64 = 10_000_000;
+/// Tokens, and bytes of their spellings, that the macro expansions started by one token of a
+/// file may produce before they are declared runaway.
+const MAX_EXPANDED_TOKENS: u64 = 4_000_000;
+const MAX_EXPANDED_BYTES: u64 = 32 << 20;
 /// Maximum depth of the expansion context stack.
 const MAX_CONTEXTS: usize = 20_000;
 
@@ -146,7 +153,6 @@ pub(crate) fn spelling(tok: &PpToken) -> &[u8] {
     match tok.kind {
         // (A digraph keeps the spelling it was written with.)
         PpKind::Punct(p) if tok.text.is_empty() => p.spelling().as_bytes(),
-        // Printed by `preprocess` with `#pragma ` in front, on a line of its own.
         _ => &tok.text,
     }
 }
@@ -170,8 +176,8 @@ pub(crate) struct Macro {
     pub(crate) name: Rc<str>,
     /// `None` for an object-like macro.
     pub(crate) params: Option<Vec<Rc<str>>>,
-    /// Name of the parameter that receives the variable arguments (`__VA_ARGS__` or a GNU
-    /// named one); it is the last entry of `params`.
+    /// The last entry of `params` receives the variable arguments (it is `__VA_ARGS__`, or a
+    /// GNU named one).
     pub(crate) variadic: bool,
     pub(crate) body: Vec<PpToken>,
     pub(crate) builtin: Option<Builtin>,
@@ -239,6 +245,27 @@ pub(crate) struct Cond {
     pub(crate) seen_else: bool,
 }
 
+/// Which file a `#pragma once` was in: the file itself where the system says which it is
+/// (through whatever name or link it was reached), the path otherwise (the compiler's own
+/// headers).
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum FileKey {
+    Identity(u64, u64),
+    Path(Rc<str>),
+}
+
+/// What a path was found to be, the first time it was looked at.
+#[derive(Clone)]
+pub(crate) enum CachedFile {
+    Source {
+        contents: Rc<[u8]>,
+        identity: Option<(u64, u64)>,
+    },
+    NotFound,
+    /// It is there and cannot be read as source text: why.
+    Unreadable(Rc<str>),
+}
+
 #[derive(Clone)]
 pub(crate) enum SearchDir {
     Dir(Rc<str>),
@@ -256,18 +283,23 @@ pub(crate) struct Preprocessor {
     /// Macros whose expansion is on `contexts`.
     disabled: BTreeSet<Rc<str>>,
     depth: u32,
+    pub(crate) stack_check: bun_core::StackCheck,
     expanded_tokens: u64,
+    expanded_bytes: u64,
     pub(crate) counter: u64,
     /// `<...>` search path; `"..."` additionally looks next to the including file first.
     pub(crate) search: Vec<SearchDir>,
-    pub(crate) pragma_once: BTreeSet<Rc<str>>,
+    pub(crate) pragma_once: BTreeSet<FileKey>,
     /// `#pragma push_macro("name")`: the definitions saved for each name, oldest first
     /// (`None`: the name was not a macro).
     pub(crate) pushed_macros: BTreeMap<Rc<str>, Vec<Option<Rc<Macro>>>>,
     /// A pragma for the parser, to be delivered as the next token.
     pub(crate) pending_pragma: Option<PpToken>,
-    pub(crate) file_cache: BTreeMap<Rc<str>, Option<Rc<[u8]>>>,
+    pub(crate) file_cache: BTreeMap<Rc<str>, CachedFile>,
     pub(crate) base_file: Rc<str>,
+    /// During the search for one `#include`: why the first candidate that was there could not
+    /// be read as source text.
+    pub(crate) unreadable: Option<Rc<str>>,
     /// Seconds since the Unix epoch for `__DATE__`/`__TIME__`.
     pub(crate) now: u64,
 }
@@ -290,7 +322,9 @@ impl Preprocessor {
             contexts: Vec::new(),
             disabled: BTreeSet::new(),
             depth: 0,
+            stack_check: bun_core::StackCheck::init(),
             expanded_tokens: 0,
+            expanded_bytes: 0,
             counter: 0,
             search,
             pragma_once: BTreeSet::new(),
@@ -298,6 +332,7 @@ impl Preprocessor {
             pending_pragma: None,
             file_cache: BTreeMap::new(),
             base_file: Rc::from(base_file),
+            unreadable: None,
             now,
         }
     }
@@ -310,14 +345,19 @@ impl Preprocessor {
         found_at: Option<usize>,
         included_at: Option<Loc>,
     ) {
+        // One copy of the name, however often the file is included.
+        let path: Rc<str> = match self.file_cache.get_key_value(path) {
+            Some((cached, _)) => Rc::clone(cached),
+            None => Rc::from(path),
+        };
         let file = self
             .files
             .borrow_mut()
-            .add(path, Rc::clone(&source), included_at);
+            .add(Rc::clone(&path), Rc::clone(&source), included_at);
         self.frames.push(Frame {
             lexer: Lexer::new(source, file),
             peeked: None,
-            path: Rc::from(path),
+            path,
             found_at,
             conds: Vec::new(),
             line_delta: 0,
@@ -356,6 +396,9 @@ impl Preprocessor {
     pub(crate) fn next_raw(&mut self) -> Res<PTok> {
         let mut tok = loop {
             let Some(context) = self.contexts.last_mut() else {
+                // Every expansion has been read to its end: the next one starts from nothing.
+                self.expanded_tokens = 0;
+                self.expanded_bytes = 0;
                 break self.next_from_files()?;
             };
             match context.tokens.get(context.pos) {
@@ -401,10 +444,10 @@ impl Preprocessor {
 
     /// Fully macro-expands a token list on its own (a macro argument).
     fn expand_list(&mut self, tokens: Vec<PTok>, loc: Loc) -> Res<Vec<PTok>> {
-        self.depth += 1;
-        if self.depth > MAX_EXPANSION_DEPTH {
+        if self.depth >= MAX_EXPANSION_DEPTH || !self.stack_check.is_safe_to_recurse() {
             return err(loc, "macro expansion is nested too deeply");
         }
+        self.depth += 1;
         let result = self.with_isolated_input(tokens, |pp| {
             let mut out = Vec::new();
             loop {
@@ -467,7 +510,8 @@ impl Preprocessor {
 
     fn push_expansion(&mut self, mac: &Macro, body: Vec<PTok>, loc: Loc) -> Res<()> {
         self.expanded_tokens += body.len() as u64 + 1;
-        if self.expanded_tokens > MAX_EXPANDED_TOKENS {
+        self.expanded_bytes += body.iter().map(|t| t.tok.text.len() as u64).sum::<u64>();
+        if self.expanded_tokens > MAX_EXPANDED_TOKENS || self.expanded_bytes > MAX_EXPANDED_BYTES {
             return err(loc, "macro expansion produces too many tokens");
         }
         if self.contexts.len() > MAX_CONTEXTS {
@@ -492,23 +536,15 @@ impl Preprocessor {
             self.unread(open);
             return Ok(false);
         }
-        let mut operand: Vec<PpToken> = Vec::new();
-        let mut depth = 1;
-        loop {
-            let t = self.next_raw()?;
-            if t.is_eof() {
-                return err(open.tok.loc, "unterminated _Pragma");
-            }
-            if t.is_punct(Punct::LParen) {
-                depth += 1;
-            } else if t.is_punct(Punct::RParen) {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-            operand.push(t.tok);
+        // The operand of `_Pragma` is ordinary text, so macros in it are expanded (and one may
+        // hold another `_Pragma`); Microsoft's line is taken as it is written.
+        if self.depth >= MAX_EXPANSION_DEPTH || !self.stack_check.is_safe_to_recurse() {
+            return err(loc, "macro expansion is nested too deeply");
         }
+        self.depth += 1;
+        let operand = self.pragma_operand(&open, microsoft);
+        self.depth -= 1;
+        let mut operand = operand?;
         if microsoft {
             for t in &mut operand {
                 t.loc = loc;
@@ -546,7 +582,11 @@ impl Preprocessor {
         let mut lexer = crate::lexer::Lexer::new(Rc::from(source), loc.file);
         let mut line = Vec::new();
         loop {
-            let mut t = lexer.next_token()?;
+            // What the string holds is somewhere else: a mistake in it is reported here.
+            let mut t = match lexer.next_token() {
+                Ok(t) => t,
+                Err(error) => return err(loc, error.msg),
+            };
             if t.kind == PpKind::Eof {
                 break;
             }
@@ -557,8 +597,34 @@ impl Preprocessor {
         Ok(true)
     }
 
-    /// Collects the arguments of an invocation of `mac`; the opening parenthesis has been
-    /// read. Returns the arguments and the closing parenthesis.
+    /// The tokens between the parentheses of a `_Pragma` or `__pragma` whose `(` is `open`.
+    fn pragma_operand(&mut self, open: &PTok, microsoft: bool) -> Res<Vec<PpToken>> {
+        let mut operand: Vec<PpToken> = Vec::new();
+        let mut depth = 1;
+        loop {
+            let t = if microsoft {
+                self.next_raw()?
+            } else {
+                self.next_expanded()?
+            };
+            if t.is_eof() {
+                return err(open.tok.loc, "unterminated _Pragma");
+            }
+            if t.is_punct(Punct::LParen) {
+                depth += 1;
+            } else if t.is_punct(Punct::RParen) {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            operand.push(t.tok);
+        }
+        Ok(operand)
+    }
+
+    /// Collects the arguments of an invocation of `mac`, up to its closing parenthesis; the
+    /// opening one has been read.
     fn collect_args(&mut self, mac: &Macro, name: &PTok) -> Res<Vec<Vec<PTok>>> {
         let params = mac.params.as_deref().unwrap_or(&[]);
         let mut args: Vec<Vec<PTok>> = vec![Vec::new()];
@@ -594,6 +660,15 @@ impl Preprocessor {
             if let Some(last) = args.last_mut() {
                 last.push(t);
             }
+        }
+        // Arguments are held while what is inside them is expanded, level after level: they
+        // count like what an expansion produces.
+        for t in args.iter().flatten() {
+            self.expanded_tokens += 1;
+            self.expanded_bytes += t.tok.text.len() as u64;
+        }
+        if self.expanded_tokens > MAX_EXPANDED_TOKENS || self.expanded_bytes > MAX_EXPANDED_BYTES {
+            return err(name.tok.loc, "macro expansion produces too many tokens");
         }
         // `F()` is no arguments for a macro without parameters, one empty argument otherwise.
         if params.is_empty() && args.len() == 1 && args[0].is_empty() {
@@ -873,7 +948,8 @@ impl Preprocessor {
 /// What `defined` and `#ifdef` say yes to without a macro of that name. (`__has_warning`
 /// still works inside `#if`; it is not announced because code that finds it defined goes
 /// on to use it in ordinary text, where only Clang expands it.)
-fn is_pp_operator(name: &[u8]) -> bool {
+/// The `__has_*` operators of `#if`, which are also defined as far as `defined` and `#ifdef` go.
+pub(crate) fn is_pp_operator(name: &[u8]) -> bool {
     matches!(
         name,
         b"__has_include"
@@ -936,9 +1012,17 @@ fn paste(lhs: &PTok, rhs: &PTok, loc: Loc) -> Res<PTok> {
     let mut text = spelling(&lhs.tok).to_vec();
     text.extend_from_slice(spelling(&rhs.tok));
     let mut lexer = Lexer::new(Rc::from(text.as_slice()), loc.file);
-    let first = lexer.next_token()?;
-    let second = lexer.next_token()?;
-    if first.kind == PpKind::Eof || second.kind != PpKind::Eof || first.kind == PpKind::Other {
+    // (`/` and `*` paste to the start of a comment, which the scanner itself refuses.)
+    let one_token = lexer
+        .next_token()
+        .ok()
+        .filter(|first| first.kind != PpKind::Eof && first.kind != PpKind::Other)
+        .filter(|_| {
+            lexer
+                .next_token()
+                .is_ok_and(|second| second.kind == PpKind::Eof)
+        });
+    let Some(first) = one_token else {
         return err(
             loc,
             format!(
@@ -947,7 +1031,7 @@ fn paste(lhs: &PTok, rhs: &PTok, loc: Loc) -> Res<PTok> {
                 display_bytes(spelling(&rhs.tok))
             ),
         );
-    }
+    };
     Ok(PTok {
         tok: PpToken {
             kind: first.kind,
@@ -961,14 +1045,14 @@ fn paste(lhs: &PTok, rhs: &PTok, loc: Loc) -> Res<PTok> {
     })
 }
 
-/// Days since 1970-01-01 to (year, month, day), proleptic Gregorian.
-/// A day of the Gregorian calendar.
+/// A day of the proleptic Gregorian calendar.
 struct CivilDate {
     year: i64,
     month: u32,
     day: u32,
 }
 
+/// The day that is `days` days after 1970-01-01.
 fn civil_from_days(days: i64) -> CivilDate {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);

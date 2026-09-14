@@ -1,0 +1,15 @@
+[
+["sizeof(+s.a) == sizeof(int) && sizeof(+s.b) == sizeof(int) && sizeof(+s.c) == sizeof(long long) && sizeof(+s.d) == sizeof(unsigned)", 1],
+["_Alignof(__typeof__(+s.a)) == _Alignof(int) && sizeof(1 ? s.a : 2) == sizeof(int)", 1],
+["+s.a == -3 && +s.b == 17 && +s.c == 1LL << 35 && +s.d == 0xffffffffu && +s.b - 18 < 0 && +s.d - 0 > 0", 1],
+["_Generic(+s.a, int: 1, default: 0) && _Generic(+s.b, int: 1, default: 0) && _Generic(+s.d, unsigned: 1, default: 0) && _Generic(+h, int: 1, default: 0)", 1],
+["_Generic(+x, int: 1, default: 0) && +x == 1 && -+-+x == 1 && sizeof(+h) == sizeof(int) && +(char)5 == 5", 1],
+["name_checks() == 111", 1],
+["_Generic(__func__, const char *: 1, char *: 2, default: 0) == 1 && strcmp(__func__, \"main\") == 0 && strcmp(__FUNCTION__, \"main\") == 0", 1],
+["_Generic(takes_int, int (*)(): 1, default: 0) == 1 && _Generic(takes_double_and_pointer, int (*)(): 1, default: 0) == 1", 1],
+["_Generic(takes_char, int (*)(): 1, default: 0) == 0 && _Generic(takes_float, int (*)(): 1, default: 0) == 0 && _Generic(takes_variable, int (*)(): 1, default: 0) == 0", 1],
+["unprototyped(4) == 5 && __builtin_types_compatible_p(int (*)(), int (*)(int)) && !__builtin_types_compatible_p(int (*)(), int (*)(char)) && !__builtin_types_compatible_p(int (*)(), int (*)(int, ...))", 1],
+["moved == (long)&array[4] && *(int *)moved == 4 && moved_back == (uintptr_t)&array[4] && from_the_left == (uintptr_t)&array[1]", 1],
+["is_there == 1 && function_is_there == 1 && *through_char == 2 && strcmp(inside_a_literal, \"llo\") == 0 && *element_of_a_literal == 'e'", 1],
+["sizeof(max_align_t) == 32 && _Alignof(max_align_t) == 16 && _Alignof(max_align_t) >= _Alignof(long double) && _Alignof(max_align_t) >= _Alignof(long long)", 1]
+]

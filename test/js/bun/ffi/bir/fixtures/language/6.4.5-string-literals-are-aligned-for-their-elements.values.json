@@ -1,0 +1,16 @@
+[
+["ALIGNED(wide_at_file_scope) && ALIGNED(utf16_at_file_scope) && ALIGNED(utf32_at_file_scope)", 1],
+["wcslen(wide_at_file_scope) == 52 && length16(utf16_at_file_scope) == 17 && length32(utf32_at_file_scope) == 20", 1],
+["strlen(narrow_1) == 1 && strlen(narrow_2) == 5 && strlen(narrow_3) == 2", 1],
+["ALIGNED(w) && ALIGNED(u) && ALIGNED(v) && a[0] == 'q' && b[2] == 's'", 1],
+["wcslen(w) == 63 && length16(u) == 24 && length32(v) == 24", 1],
+["wcscmp(w, L\"a wide literal inside a function, long enough for a vector loop\") == 0 && wcscmp(w, wide_at_file_scope) < 0", 1],
+["wcschr(w, L'v') == w + 52 && wmemcmp(w + 2, L\"wide\", 4) == 0", 1],
+["ALIGNED(table[0]) && ALIGNED(table[1]) && ALIGNED(table[2]) && wcslen(table[2]) == 17 && wcslen(table[0]) + wcslen(table[1]) == 8", 1],
+["ALIGNED(records[0].name) && ALIGNED(records[1].name) && length32(records[0].name) == 5 && length32(records[1].name) == 2", 1],
+["L\"abc\"[1] == L'b' && u\"abc\"[2] == u'c' && U\"abc\"[3] == 0 && sizeof L\"abc\" == 4 * sizeof(wchar_t) && sizeof u\"abc\" == 8 && sizeof U\"abc\" == 16", 1],
+["ALIGNED(&L\"xy\"[0]) && ALIGNED(&u\"xy\"[1]) && ALIGNED(&U\"xy\"[2])", 1],
+["(uintptr_t)aligned_narrow % 16 == 0 && (uintptr_t)aligned_wide % 64 == 0 && strcmp(aligned_narrow, \"sixteen\") == 0 && length16(aligned_wide) == 10", 1],
+["ALIGNED(copy) && ALIGNED(copy16) && wcslen(copy) == 6 && length16(copy16) == 6 && sizeof copy == 7 * sizeof(wchar_t)", 1],
+["ld * 4 == 5.0L && d * 2 == 5.0", 1]
+]

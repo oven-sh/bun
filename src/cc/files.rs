@@ -6,18 +6,67 @@ use bun_sys::{Dir, Fd, File};
 
 use crate::types::{Arch, Os, Target};
 
-/// The contents of `path`, or `None` if there is no such file.
+/// A source file that was read: its bytes, and which file it is (device and inode, or what
+/// Windows has for them), so that two names of one file are known to be one.
+pub(crate) struct Loaded {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) identity: Option<(u64, u64)>,
+}
+
+/// Why a path gave no source text.
+pub(crate) enum Unreadable {
+    /// Nothing has that name: the search goes on.
+    NotFound,
+    /// Something has, and this is what is wrong with it.
+    Because(String),
+}
+
+/// The largest source file there can be: positions in one are 32 bits.
+const MAX_SOURCE_BYTES: u64 = 1 << 30;
+
+/// Opens, checks and reads: only a regular file of a sane size is source text. (A FIFO would
+/// block, `/dev/zero` never ends, a directory is not text.)
+fn read_regular_file(path: &[u8]) -> Result<Loaded, Unreadable> {
+    let because = |error: bun_sys::Error| {
+        if error.get_errno() == bun_sys::E::ENOENT || error.get_errno() == bun_sys::E::ENOTDIR {
+            return Unreadable::NotFound;
+        }
+        let what = error.msg().unwrap_or_else(|| error.name());
+        Unreadable::Because(crate::token::display_bytes(what))
+    };
+    let file = File::openat(
+        Fd::cwd(),
+        path,
+        bun_sys::O::RDONLY | bun_sys::O::NONBLOCK,
+        0,
+    )
+    .map_err(because)?;
+    let stat = file.stat().map_err(because)?;
+    if !bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode) {
+        return Err(Unreadable::Because("not a regular file".to_string()));
+    }
+    if stat.st_size as u64 > MAX_SOURCE_BYTES {
+        return Err(Unreadable::Because(format!(
+            "larger than {MAX_SOURCE_BYTES} bytes"
+        )));
+    }
+    let bytes = file.read_to_end().map_err(because)?;
+    Ok(Loaded {
+        bytes,
+        identity: Some((stat.st_dev as u64, stat.st_ino as u64)),
+    })
+}
+
+/// The contents of `path`.
 ///
 /// `any_case` reads the file system the way Windows does: a name that does not exist as spelled
 /// is looked for whatever the case of its letters, and `\` separates directories too. That is
 /// for compiling against a copy of the Windows SDK, whose headers name each other that way, on
 /// a file system that tells `Windows.h` from `windows.h`.
-pub(crate) fn read(path: &[u8], any_case: bool) -> Option<Vec<u8>> {
-    if let Ok(contents) = File::read_from(Fd::cwd(), path) {
-        return Some(contents);
-    }
-    if !any_case {
-        return None;
+pub(crate) fn read(path: &[u8], any_case: bool) -> Result<Loaded, Unreadable> {
+    match read_regular_file(path) {
+        Err(Unreadable::NotFound) if any_case => {}
+        other => return other,
     }
     let mut forward = path.to_vec();
     for byte in &mut forward {
@@ -25,7 +74,10 @@ pub(crate) fn read(path: &[u8], any_case: bool) -> Option<Vec<u8>> {
             *byte = b'/';
         }
     }
-    File::read_from(Fd::cwd(), &spelled_on_disk(&forward)?).ok()
+    match spelled_on_disk(&forward) {
+        Some(spelled) => read_regular_file(&spelled),
+        None => Err(Unreadable::NotFound),
+    }
 }
 
 /// `path` with each component spelled the way the directory that holds it spells it.

@@ -514,6 +514,27 @@ impl Type {
     }
 
     /// The type of the value an lvalue of this type holds: without qualifiers and `_Atomic`.
+    /// How many pointer, array and function types this one is derived through, counted up to
+    /// `most`.
+    pub(crate) fn derivations(&self, most: usize) -> usize {
+        let (mut ty, mut count) = (self, 0);
+        while count < most {
+            ty = match ty {
+                Type::Ptr(inner) | Type::Array(inner, _) | Type::Vla(inner, _) => {
+                    count += 1;
+                    inner
+                }
+                Type::Func(f) => {
+                    count += 1;
+                    &f.ret
+                }
+                Type::Atomic(inner) | Type::Qualified(_, inner) => inner,
+                _ => break,
+            };
+        }
+        count
+    }
+
     pub(crate) fn unatomic(&self) -> &Type {
         match self {
             Type::Atomic(inner) => inner,

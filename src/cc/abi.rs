@@ -13,7 +13,7 @@
 //! merges them per eightbyte exactly as the psABI says; AAPCS64 recognises homogeneous
 //! short-vector aggregates.
 
-use crate::bir::{Exhausts, Param, Ty};
+use crate::bir::{self, Exhausts, Param, Ty};
 use crate::types::{Arch, Os, Type, TypeCtx};
 
 /// One register-sized part of an aggregate.
@@ -265,19 +265,24 @@ pub(crate) fn sysv_classify(tcx: &TypeCtx, ty: &Type) -> Result<Option<Vec<Piece
     }
     #[derive(Clone, Copy, PartialEq)]
     enum Class {
+        /// No field reaches into the eightbyte (the tail of an over-aligned structure): it
+        /// is not passed at all.
+        None,
         Integer,
         Sse,
         SseUp,
     }
-    // INTEGER wins when an eightbyte mixes classes (an all-padding eightbyte is INTEGER
-    // too), then SSE; SSEUP survives only where nothing but upper vector halves live.
+    // INTEGER wins when an eightbyte mixes classes, then SSE; SSEUP survives only where
+    // nothing but upper vector halves live.
     let classes: Vec<Class> = (0..size.div_ceil(8))
         .map(|i| {
             let (start, end) = (i * 8, (i * 8 + 8).min(size));
             let inside = |f: &&Field| f.offset < end && f.offset + f.size > start;
             let is_upper_half = |f: &Field| f.kind == Leaf::V128 && f.offset != start;
             let count = fields.iter().filter(inside).count();
-            if count == 0 || fields.iter().filter(inside).any(|f| f.kind == Leaf::Int) {
+            if count == 0 {
+                Class::None
+            } else if fields.iter().filter(inside).any(|f| f.kind == Leaf::Int) {
                 Class::Integer
             } else if fields.iter().filter(inside).all(is_upper_half) {
                 Class::SseUp
@@ -295,6 +300,9 @@ pub(crate) fn sysv_classify(tcx: &TypeCtx, ty: &Type) -> Result<Option<Vec<Piece
     }
     let mut pieces = Vec::new();
     for (i, class) in classes.iter().enumerate() {
+        if *class == Class::None {
+            continue;
+        }
         let i = i as u64;
         let (start, end) = (i * 8, (i * 8 + 8).min(size));
         // An SSEUP that does not follow an SSE becomes SSE.
@@ -318,6 +326,11 @@ pub(crate) fn sysv_classify(tcx: &TypeCtx, ty: &Type) -> Result<Option<Vec<Piece
         });
     }
     Ok(Some(pieces))
+}
+
+/// Whether `ty` is an AAPCS64 homogeneous aggregate.
+pub(crate) fn is_homogeneous_aggregate(tcx: &TypeCtx, ty: &Type) -> bool {
+    matches!(hfa_pieces(tcx, ty), Ok(Some(_)))
 }
 
 /// AAPCS64 homogeneous aggregate: one to four members of one float or short-vector type.
@@ -541,16 +554,22 @@ pub(crate) fn lower_call(
             }
         } else if arm {
             if size > 16 && hfa_pieces(tcx, arg)?.is_none() {
+                // Its address travels like any pointer, and on Apple's stack it takes a slot
+                // like one: what comes after it counts from there.
+                if apple_arm && anonymous {
+                    apple_anonymous_slots += 1;
+                } else if apple_arm && regs.int_free == 0 {
+                    apple_named_stack_bytes = apple_named_stack_bytes.next_multiple_of(8) + 8;
+                }
                 regs.scalar(Ty::I64);
                 ArgPass::Reference
             } else if apple_arm && anonymous {
                 // Apple passes every variadic argument on the stack in 8-byte slots, which is
                 // also where the backend puts anonymous values: integer pieces give the same bytes.
+                // (What is larger than 16 bytes here is a homogeneous aggregate of three or four
+                // doubles, which Clang passes by value like the rest.)
                 flatten(tcx, arg, 0, &mut Vec::new())?;
-                if size > 16 {
-                    apple_anonymous_slots += 1;
-                    ArgPass::Reference
-                } else {
+                {
                     let mut pieces = int_pieces(size);
                     let slot = apple_named_stack_bytes.div_ceil(8) + apple_anonymous_slots;
                     if align >= 16 && slot % 2 == 1 {
@@ -640,6 +659,21 @@ pub(crate) fn lower_call(
                 align,
                 exhausts,
             } => {
+                // What the loader takes for an argument copied to the stack.
+                if *size > bir::MAX_BY_VALUE_SIZE {
+                    return Err(format!(
+                        "passing a '{}' by value is not supported: it is larger than {} bytes",
+                        tcx.display(arg),
+                        bir::MAX_BY_VALUE_SIZE
+                    ));
+                }
+                if *align > bir::MAX_BY_VALUE_ALIGN {
+                    return Err(format!(
+                        "passing a '{}' by value is not supported: it is aligned to more than {} bytes",
+                        tcx.display(arg),
+                        bir::MAX_BY_VALUE_ALIGN
+                    ));
+                }
                 params.push(Param::ByValStack {
                     size: *size,
                     align: *align,

@@ -194,8 +194,8 @@ pub(crate) struct PpToken {
     pub(crate) has_leading_space: bool,
 }
 
-/// Anything the parser can pull preprocessing tokens from: the lexer today, the
-/// preprocessor (a token -> token stage) later.
+/// What preprocessing tokens are pulled from: the lexer (for the preprocessor) and the
+/// preprocessor (for the parser).
 pub(crate) trait TokenSource {
     fn next_token(&mut self) -> Res<PpToken>;
 }
@@ -994,7 +994,12 @@ fn parse_float(text: &[u8], is_hex: bool, loc: Loc) -> Res<Tok> {
             return bad();
         };
         (
-            extended::round_to_f64(mantissa, exponent, sticky),
+            // Rounded once, to the constant's own type.
+            if single {
+                f64::from(extended::round_to_f32(mantissa, exponent, sticky))
+            } else {
+                extended::round_to_f64(mantissa, exponent, sticky)
+            },
             long_double.then(|| {
                 Extended::from_scaled(
                     extended::Sign::Plus,
@@ -1011,7 +1016,14 @@ fn parse_float(text: &[u8], is_hex: bool, loc: Loc) -> Res<Tok> {
         let parsed = std::str::from_utf8(body)
             .ok()
             .filter(|_| valid)
-            .and_then(|s| s.parse::<f64>().ok());
+            .and_then(|s| {
+                // Rounded once, to the constant's own type.
+                if single {
+                    s.parse::<f32>().ok().map(f64::from)
+                } else {
+                    s.parse::<f64>().ok()
+                }
+            });
         let (Some(value), Some((digits, exponent))) = (parsed, parse_decimal_float(body)) else {
             return bad();
         };
@@ -1019,12 +1031,6 @@ fn parse_float(text: &[u8], is_hex: bool, loc: Loc) -> Res<Tok> {
             value,
             long_double.then(|| Extended::from_decimal(&digits, exponent)),
         )
-    };
-    // Round once, to the constant's own type.
-    let value = if single {
-        f64::from(value as f32)
-    } else {
-        value
     };
     Ok(Tok::Float {
         value,

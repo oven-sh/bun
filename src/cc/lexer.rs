@@ -258,8 +258,25 @@ impl Lexer {
 
     /// After `#include`: a `<...>` header name on the current line, if one follows.
     pub(crate) fn angled_header_name(&mut self) -> Option<Vec<u8>> {
-        while matches!(self.peek(), b' ' | b'\t') && !self.at_end() {
-            self.bump();
+        // White space and comments in front of it, as far as they stay on the line (a comment
+        // that reaches into the next line is left to the ordinary scanner).
+        loop {
+            self.skip_splices();
+            match (self.peek(), self.peek_at(1)) {
+                _ if self.at_end() => return None,
+                (b' ' | b'\t', _) => {
+                    self.bump();
+                }
+                (b'/', b'*') => {
+                    let rest = &self.src[self.pos + 2..];
+                    let close = strings::index_of(rest, b"*/")?;
+                    if strings::index_of_char_usize(&rest[..close], b'\n').is_some() {
+                        return None;
+                    }
+                    self.pos += close + 4;
+                }
+                _ => break,
+            }
         }
         if self.peek() != b'<' {
             return None;

@@ -25,8 +25,10 @@ impl Value {
     }
 }
 
-/// Builtins `__has_builtin` reports as available.
-pub(crate) const SUPPORTED_BUILTINS: &[&str] = &[
+/// The builtins there are, apart from the C library's functions under their `__builtin_` names
+/// (see `has_builtin`). `__has_builtin` answers from this, and the parser takes no builtin that
+/// is not here, so the two cannot come to disagree.
+const SUPPORTED_BUILTINS: &[&str] = &[
     "__builtin_expect",
     "__builtin_expect_with_probability",
     "__builtin_prefetch",
@@ -229,14 +231,118 @@ pub(crate) const SUPPORTED_BUILTINS: &[&str] = &[
     "__sync_lock_test_and_set",
     "__sync_lock_release",
     "__sync_synchronize",
+    "__builtin_assume",
+    "__builtin_bir_average_u16",
+    "__builtin_bir_average_u8",
+    "__builtin_bir_swizzle",
+    "__builtin_bun_unsupported",
+    "__builtin_complex",
+    "__builtin_cpu_is",
+    "__builtin_finite",
+    "__builtin_finitef",
+    "__builtin_finitel",
+    "__builtin_frob_return_addr",
+    "__builtin_ia32_cvtdq2pd",
+    "__builtin_ia32_cvtpd2ps",
+    "__builtin_ia32_cvtps2pd",
+    "__builtin_ia32_cvttpd2dq",
+    "__builtin_ia32_movmskpd",
+    "__builtin_ia32_movmskps",
+    "__builtin_ia32_packssdw128",
+    "__builtin_ia32_packsswb128",
+    "__builtin_ia32_packusdw128",
+    "__builtin_ia32_packuswb128",
+    "__builtin_ia32_paddsb128",
+    "__builtin_ia32_paddsw128",
+    "__builtin_ia32_paddusb128",
+    "__builtin_ia32_paddusw128",
+    "__builtin_ia32_pavgb128",
+    "__builtin_ia32_pavgw128",
+    "__builtin_ia32_pmaddwd128",
+    "__builtin_ia32_pmovmskb128",
+    "__builtin_ia32_pmovsxbw128",
+    "__builtin_ia32_pmovsxdq128",
+    "__builtin_ia32_pmovsxwd128",
+    "__builtin_ia32_pmovzxbw128",
+    "__builtin_ia32_pmovzxdq128",
+    "__builtin_ia32_pmovzxwd128",
+    "__builtin_ia32_pmulhuw128",
+    "__builtin_ia32_pmulhw128",
+    "__builtin_ia32_psubsb128",
+    "__builtin_ia32_psubsw128",
+    "__builtin_ia32_psubusb128",
+    "__builtin_ia32_psubusw128",
+    "__builtin_ia32_ptestz128",
+    "__builtin_isinff",
+    "__builtin_isinfl",
+    "__builtin_isnanf",
+    "__builtin_isnanl",
+    "__builtin_nans",
+    "__builtin_nansf",
+    "__builtin_nansl",
+    "__builtin_unpredictable",
+    "__c11_atomic_compare_exchange_strong",
+    "__c11_atomic_compare_exchange_weak",
+    "__c11_atomic_exchange",
+    "__c11_atomic_init",
+    "__c11_atomic_is_lock_free",
+    "__c11_atomic_load",
+    "__c11_atomic_signal_fence",
+    "__c11_atomic_store",
+    "__c11_atomic_thread_fence",
+    "__atomic_fetch_max",
+    "__atomic_fetch_min",
+    "__atomic_max_fetch",
+    "__atomic_min_fetch",
+    "__builtin___clear_cache",
+    "__builtin_bir_extmul_high_s16",
+    "__builtin_bir_extmul_high_s32",
+    "__builtin_bir_extmul_high_s8",
+    "__builtin_bir_extmul_high_u16",
+    "__builtin_bir_extmul_high_u32",
+    "__builtin_bir_extmul_high_u8",
+    "__builtin_bir_extmul_low_s16",
+    "__builtin_bir_extmul_low_s32",
+    "__builtin_bir_extmul_low_s8",
+    "__builtin_bir_extmul_low_u16",
+    "__builtin_bir_extmul_low_u32",
+    "__builtin_bir_extmul_low_u8",
+    "__c11_atomic_fetch_add",
+    "__c11_atomic_fetch_and",
+    "__c11_atomic_fetch_max",
+    "__c11_atomic_fetch_min",
+    "__c11_atomic_fetch_nand",
+    "__c11_atomic_fetch_or",
+    "__c11_atomic_fetch_sub",
+    "__c11_atomic_fetch_xor",
+    "__sync_fetch_and_max",
+    "__sync_fetch_and_min",
+    "__sync_max_and_fetch",
+    "__sync_min_and_fetch",
 ];
+
+/// Whether `name` is a builtin of this compiler for `target`.
+pub(crate) fn has_builtin(name: &str, target: crate::types::Target) -> bool {
+    SUPPORTED_BUILTINS.contains(&name)
+        || name
+            .strip_prefix("__builtin_")
+            .is_some_and(|function| crate::parser::is_library_builtin(function, target))
+}
 
 struct ExprParser<'t> {
     tokens: &'t [PpToken],
     pos: usize,
     loc: Loc,
     dialect: crate::token::Dialect,
+    /// Parentheses and `?:` middle operands around the current position.
+    nesting: u32,
+    stack_check: &'t bun_core::StackCheck,
+    /// Windows, whose `wchar_t` is an unsigned 16-bit type; elsewhere it is `int`.
+    wchar_is_16_bits: bool,
 }
+
+/// What an `#if` expression may nest (C11 5.2.4.1 asks for 63 levels of parentheses).
+const MAX_NESTING: u32 = 500;
 
 impl Preprocessor {
     pub(crate) fn eval_condition(&mut self, line: Vec<PpToken>, loc: Loc) -> Res<bool> {
@@ -278,6 +384,9 @@ impl Preprocessor {
             pos: 0,
             loc,
             dialect: self.target.dialect(),
+            nesting: 0,
+            stack_check: &self.stack_check,
+            wchar_is_16_bits: self.target.os == crate::types::Os::Windows,
         };
         let value = parser.conditional(true)?;
         if let Some(extra) = parser.tokens.get(parser.pos) {
@@ -306,18 +415,7 @@ impl Preprocessor {
             }
             return Ok(Some(self.is_defined(&operand)));
         }
-        let known = matches!(
-            name,
-            b"__has_include"
-                | b"__has_include_next"
-                | b"__has_attribute"
-                | b"__has_builtin"
-                | b"__has_feature"
-                | b"__has_extension"
-                | b"__has_cpp_attribute"
-                | b"__has_c_attribute"
-                | b"__has_warning"
-        );
+        let known = crate::pp::is_pp_operator(name) || name == b"__has_warning";
         if !known {
             return Ok(None);
         }
@@ -378,9 +476,9 @@ impl Preprocessor {
                 _ => false,
             },
             b"__has_builtin" => match operand.as_slice() {
-                [t] if t.kind == PpKind::Ident => SUPPORTED_BUILTINS
-                    .iter()
-                    .any(|b| b.as_bytes() == t.text.as_slice()),
+                [t] if t.kind == PpKind::Ident => {
+                    std::str::from_utf8(&t.text).is_ok_and(|name| has_builtin(name, self.target))
+                }
                 _ => false,
             },
             _ => false,
@@ -408,23 +506,40 @@ impl ExprParser<'_> {
         self.tokens.get(self.pos).map_or(self.loc, |t| t.loc)
     }
 
+    /// Runs `inner` one level deeper: inside parentheses, or between `?` and `:`.
+    fn nested(&mut self, inner: impl FnOnce(&mut Self) -> Res<Value>) -> Res<Value> {
+        self.nesting += 1;
+        if self.nesting > MAX_NESTING || !self.stack_check.is_safe_to_recurse() {
+            return err(self.here(), "preprocessor expression is nested too deeply");
+        }
+        let v = inner(self);
+        self.nesting -= 1;
+        v
+    }
+
     /// `live` is false in the unevaluated arm of `&&`, `||` and `?:`.
-    fn conditional(&mut self, live: bool) -> Res<Value> {
-        let cond = self.binary(1, live)?;
-        if !self.eat(Punct::Question) {
-            return Ok(cond);
+    fn conditional(&mut self, mut live: bool) -> Res<Value> {
+        // `a ? b : c ? d : e` is a chain, which a loop follows; only `b` and `d` nest.
+        let mut chosen = None;
+        let mut unsigned = false;
+        loop {
+            let cond = self.binary(1, live)?;
+            if !self.eat(Punct::Question) {
+                return Ok(Value {
+                    bits: chosen.unwrap_or(cond.bits),
+                    unsigned: unsigned || cond.unsigned,
+                });
+            }
+            let then = self.nested(|p| p.conditional(live && cond.truth()))?;
+            if !self.eat(Punct::Colon) {
+                return err(self.here(), "expected ':' in preprocessor expression");
+            }
+            unsigned |= then.unsigned;
+            if chosen.is_none() && cond.truth() {
+                chosen = Some(then.bits);
+            }
+            live = live && !cond.truth();
         }
-        let then = self.conditional(live && cond.truth())?;
-        if !self.eat(Punct::Colon) {
-            return err(self.here(), "expected ':' in preprocessor expression");
-        }
-        let otherwise = self.conditional(live && !cond.truth())?;
-        let unsigned = then.unsigned || otherwise.unsigned;
-        let chosen = if cond.truth() { then } else { otherwise };
-        Ok(Value {
-            bits: chosen.bits,
-            unsigned,
-        })
     }
 
     fn binary(&mut self, min_prec: u32, live: bool) -> Res<Value> {
@@ -462,30 +577,42 @@ impl ExprParser<'_> {
     }
 
     fn unary(&mut self, live: bool) -> Res<Value> {
-        let loc = self.here();
-        let Some(tok) = self.tokens.get(self.pos) else {
-            return err(loc, "expected a value in preprocessor expression");
+        // A run of prefix operators is applied from the inside out once its operand is known.
+        let mut prefix = Vec::new();
+        let mut v = loop {
+            let loc = self.here();
+            let Some(tok) = self.tokens.get(self.pos) else {
+                return err(loc, "expected a value in preprocessor expression");
+            };
+            self.pos += 1;
+            match tok.kind {
+                PpKind::Punct(op @ (Punct::Plus | Punct::Minus | Punct::Tilde | Punct::Bang)) => {
+                    prefix.push(op)
+                }
+                _ => break self.primary(tok, loc, live)?,
+            }
         };
-        self.pos += 1;
-        match tok.kind {
-            PpKind::Punct(Punct::Plus) => self.unary(live),
-            PpKind::Punct(Punct::Minus) => {
-                let v = self.unary(live)?;
-                Ok(Value {
+        for op in prefix.into_iter().rev() {
+            v = match op {
+                Punct::Minus => Value {
                     bits: v.bits.wrapping_neg(),
                     unsigned: v.unsigned,
-                })
-            }
-            PpKind::Punct(Punct::Tilde) => {
-                let v = self.unary(live)?;
-                Ok(Value {
+                },
+                Punct::Tilde => Value {
                     bits: !v.bits,
                     unsigned: v.unsigned,
-                })
-            }
-            PpKind::Punct(Punct::Bang) => Ok(Value::signed(i64::from(!self.unary(live)?.truth()))),
+                },
+                Punct::Bang => Value::signed(i64::from(!v.truth())),
+                _ => v,
+            };
+        }
+        Ok(v)
+    }
+
+    fn primary(&mut self, tok: &PpToken, loc: Loc, live: bool) -> Res<Value> {
+        match tok.kind {
             PpKind::Punct(Punct::LParen) => {
-                let v = self.comma(live)?;
+                let v = self.nested(|p| p.comma(live))?;
                 if !self.eat(Punct::RParen) {
                     return err(self.here(), "missing ')' in preprocessor expression");
                 }
@@ -523,6 +650,21 @@ impl ExprParser<'_> {
                         })
                     }
                     Tok::Char(v) => Ok(Value::signed(v)),
+                    // A wide constant has the value it has in the target's `wchar_t`,
+                    // `char16_t` or `char32_t` (C11 6.10.1p4).
+                    Tok::WideChar(kind, v) => Ok(match kind {
+                        crate::token::WideKind::Wchar if !self.wchar_is_16_bits => {
+                            Value::signed(i64::from(v as i32))
+                        }
+                        crate::token::WideKind::Wchar | crate::token::WideKind::Char16 => Value {
+                            bits: i64::from(v as u16),
+                            unsigned: true,
+                        },
+                        crate::token::WideKind::Char32 => Value {
+                            bits: i64::from(v),
+                            unsigned: true,
+                        },
+                    }),
                     Tok::NotANumber(message) => err(loc, message.to_string()),
                     _ => err(loc, "floating constant in preprocessor expression"),
                 }

@@ -1,0 +1,22 @@
+[
+["sizeof(AI_A) == 4 && sizeof(AI_B) == 4 && IS_SIGNED(AI_A) && KIND(AI_B) == 'i' && sizeof(enum all_int) == 4 && IS_SIGNED(enum all_int)", 1],
+["sizeof(NN_B) == 4 && IS_SIGNED(NN_B) && KIND(NN_A) == 'i' && sizeof(enum not_negative) == 4 && !IS_SIGNED(enum not_negative)", 1],
+["sizeof(BI_A) == 4 && sizeof(BI_B) == 4 && !IS_SIGNED(BI_A) && !IS_SIGNED(BI_B) && KIND(BI_A) == 'u' && sizeof(enum beyond_int) == 4", 1],
+["BI_A - 2 > 0 && BI_B + 1 == 0 && -BI_A > 0", 1],
+["sizeof(AM_A) == 4 && !IS_SIGNED(AM_A) && AM_B == 0x80000000u && KIND(AM_B) == 'u' && AM_B > 0", 1],
+["sizeof(NB_A) == 8 && sizeof(NB_B) == 8 && IS_SIGNED(NB_A) && IS_SIGNED(NB_B) && KIND(NB_A) == 'l' && sizeof(enum negative_and_beyond) == 8", 1],
+["NB_A < NB_B && NB_B == 2147483648L && NB_A >> 40 == -1", 1],
+["sizeof(AU_A) == 8 && sizeof(AU_B) == 8 && AU_B == 4294967296 && !IS_SIGNED(AU_A) && KIND(AU_A) == 'L'", 1],
+["sizeof(BU_A) == 8 && sizeof(BU_B) == 8 && !IS_SIGNED(BU_B) && KIND(BU_B) == 'L' && BU_B - 2 > 0", 1],
+["sizeof(EB_A) == 8 && !IS_SIGNED(EB_A) && EB_A > 0 && EB_A > 5 && EB_A >> 1 == 0x7FFFFFFFFFFFFFFF && EB_A / 2 == 0x7FFFFFFFFFFFFFFF && KIND(EB_A) == 'L'", 1],
+["sizeof(MN_A) == 8 && IS_SIGNED(MN_B) && MN_A < 0 && MN_B - 2 < 0 && KIND(MN_B) == 'l'", 1],
+["sizeof(EV_IN) == 8 && sizeof(EV_ET) == 8 && sizeof(EV_BIG) == 8 && sizeof(EV_NEG) == 8 && sizeof(enum events) == 8 && IS_SIGNED(EV_IN) && IS_SIGNED(EV_ET)", 1],
+["EV_ET > 0 && EV_ET == 2147483648 && EV_BIG >> 40 == 1 && EV_NEG < 0 && EV_NEG < EV_ET && KIND(EV_IN) == 'l'", 1],
+["variadic_sum(3, EV_IN, EV_NEG, EV_BIG) == (1L << 40) - 4", 1],
+["IN_SIZE_BEFORE == 4 && IN_SIZE_AFTER == 4 && IN_BIG_SIZE == 8 && sizeof(IN_A) == 8 && sizeof(IN_SIZE_BEFORE) == 8", 1],
+["sizeof(FS_A) == 1 && sizeof(enum fixed_small) == 1 && KIND(FS_B) == 'c' && FS_B == 255 && sizeof(FS_A + 0) == 4", 1],
+["sizeof(FW_A) == 8 && KIND(FW_A) == 'q' && sizeof(enum fixed_wide) == 8", 1],
+["sizeof(FD_A) == 4 && KIND(FD_B) == 'i' && FD_B == -2 && sizeof(enum forward) == 4 && IS_SIGNED(enum forward)", 1],
+["object == 0x80000000L && (object = NB_A) < 0 && bits == ULONG_MAX && same + 1 == 0 && sizeof same == 8", 1],
+["table[1] == 1L << 40 && sizeof table == 16", 1]
+]

@@ -16,8 +16,8 @@
 
 use super::{Callee, FnGen, internal};
 use crate::ast::*;
-use crate::bir::{BinOp as CBin, Inst, MemKind, Ty, UnOp, V};
-use crate::token::{Loc, Res};
+use crate::bir::{BinOp as CBin, ConvOp, Inst, MemKind, Ty, UnOp, V};
+use crate::token::{Loc, Res, err};
 use crate::types::Type;
 
 /// What is known about the upper 64 bits of a 128-bit value.
@@ -127,6 +127,9 @@ impl FnGen<'_, '_> {
     /// The halves of 128-bit `e`, which creates no basic blocks.
     pub(super) fn gen_wide(&mut self, e: &Expr) -> Res<Wide> {
         let loc = e.loc;
+        if !self.tcx.stack_check.is_safe_to_recurse() {
+            return err(loc, "expression is nested too deeply");
+        }
         if Self::is_wide_operation(e) {
             match &e.kind {
                 ExprKind::Cast(inner) if inner.ty.is_int128() => return self.gen_wide(inner),
@@ -394,7 +397,7 @@ impl FnGen<'_, '_> {
 
     /// Memory kind of one half, and the offset of the second half.
     fn pair_layout(ty: &Type) -> (MemKind, i64) {
-        match ty {
+        match ty.unatomic() {
             Type::ComplexFloat => (MemKind::F32, 4),
             Type::ComplexDouble => (MemKind::F64, 8),
             _ => (MemKind::I64, 8),
@@ -431,7 +434,7 @@ impl FnGen<'_, '_> {
 
     /// The value one: what `++` adds.
     pub(super) fn pair_one(&mut self, ty: &Type) -> V {
-        let (re, im) = match ty {
+        let (re, im) = match ty.unatomic() {
             Type::ComplexFloat => (
                 self.b.def(Inst::ConstF32(1f32.to_bits()), Ty::F32),
                 self.zero(Ty::F32),
@@ -639,46 +642,151 @@ impl FnGen<'_, '_> {
     }
 
     fn gen_complex_binary(&mut self, op: BinOp, ty: &Type, a: V, b: V, loc: Loc) -> Res<V> {
-        let Halves { low: a, high: b_im } = self.load_pair(a, ty);
-        let Halves { low: c, high: d } = self.load_pair(b, ty);
-        let (re, im) = match op {
-            BinOp::Add => (self.b.bin(CBin::Add, a, c), self.b.bin(CBin::Add, b_im, d)),
-            BinOp::Sub => (self.b.bin(CBin::Sub, a, c), self.b.bin(CBin::Sub, b_im, d)),
-            BinOp::Mul => {
+        self.gen_complex_mixed(op, ty, (a, true), (b, true), loc)
+    }
+
+    /// `a op b` in the complex type `ty`, where each operand is either a value of that type
+    /// (its address, `true`) or a real number of its part type (`false`). A real operand
+    /// stays real: `z * r` is two multiplications and `z / r` two divisions, which is what
+    /// keeps infinities, signed zeros and large values what they should be (C11 G.5.1).
+    pub(super) fn gen_complex_mixed(
+        &mut self,
+        op: BinOp,
+        ty: &Type,
+        (a, a_is_complex): (V, bool),
+        (b, b_is_complex): (V, bool),
+        loc: Loc,
+    ) -> Res<V> {
+        let mut parts = |v: V, is_complex: bool| -> (V, Option<V>) {
+            if is_complex {
+                let Halves { low, high } = self.load_pair(v, ty);
+                (low, Some(high))
+            } else {
+                (v, None)
+            }
+        };
+        let (a, a_im) = parts(a, a_is_complex);
+        let (c, c_im) = parts(b, b_is_complex);
+        let part = if matches!(ty.unatomic(), Type::ComplexFloat) {
+            Ty::F32
+        } else {
+            Ty::F64
+        };
+        let (re, im) = match (op, a_im, c_im) {
+            (BinOp::Add, b, d) => {
+                let im = match (b, d) {
+                    (Some(b), Some(d)) => self.b.bin(CBin::Add, b, d),
+                    (Some(only), None) | (None, Some(only)) => only,
+                    (None, None) => self.zero(part),
+                };
+                (self.b.bin(CBin::Add, a, c), im)
+            }
+            (BinOp::Sub, b, d) => {
+                let im = match (b, d) {
+                    (Some(b), Some(d)) => self.b.bin(CBin::Sub, b, d),
+                    (Some(b), None) => b,
+                    (None, Some(d)) => self.b.un(UnOp::Neg, d),
+                    (None, None) => self.zero(part),
+                };
+                (self.b.bin(CBin::Sub, a, c), im)
+            }
+            (BinOp::Mul, Some(b), Some(d)) => {
                 let ac = self.b.bin(CBin::Mul, a, c);
-                let bd = self.b.bin(CBin::Mul, b_im, d);
+                let bd = self.b.bin(CBin::Mul, b, d);
                 let ad = self.b.bin(CBin::Mul, a, d);
-                let bc = self.b.bin(CBin::Mul, b_im, c);
+                let bc = self.b.bin(CBin::Mul, b, c);
                 (self.b.bin(CBin::Sub, ac, bd), self.b.bin(CBin::Add, ad, bc))
             }
-            BinOp::Div => {
-                let cc = self.b.bin(CBin::Mul, c, c);
-                let dd = self.b.bin(CBin::Mul, d, d);
-                let scale = self.b.bin(CBin::Add, cc, dd);
-                let ac = self.b.bin(CBin::Mul, a, c);
-                let bd = self.b.bin(CBin::Mul, b_im, d);
-                let bc = self.b.bin(CBin::Mul, b_im, c);
-                let ad = self.b.bin(CBin::Mul, a, d);
-                let re = self.b.bin(CBin::Add, ac, bd);
-                let im = self.b.bin(CBin::Sub, bc, ad);
-                (
-                    self.b.bin(CBin::Div, re, scale),
-                    self.b.bin(CBin::Div, im, scale),
-                )
+            (BinOp::Mul, Some(b), None) => {
+                (self.b.bin(CBin::Mul, a, c), self.b.bin(CBin::Mul, b, c))
             }
-            BinOp::Eq => {
-                let re = self.b.bin(CBin::Eq, a, c);
-                let im = self.b.bin(CBin::Eq, b_im, d);
-                return Ok(self.b.bin(CBin::And, re, im));
+            (BinOp::Mul, None, Some(d)) => {
+                (self.b.bin(CBin::Mul, a, c), self.b.bin(CBin::Mul, a, d))
             }
-            BinOp::Ne => {
-                let re = self.b.bin(CBin::Ne, a, c);
-                let im = self.b.bin(CBin::Ne, b_im, d);
-                return Ok(self.b.bin(CBin::Or, re, im));
+            (BinOp::Div, Some(b), None) => {
+                (self.b.bin(CBin::Div, a, c), self.b.bin(CBin::Div, b, c))
+            }
+            (BinOp::Div, b, Some(d)) => {
+                let b = match b {
+                    Some(b) => b,
+                    None => self.zero(part),
+                };
+                if part == Ty::F32 {
+                    // In double nothing a float can hold overflows or vanishes.
+                    let [a, b, c, d] = [a, b, c, d].map(|v| self.b.un(UnOp::FPromote, v));
+                    let (re, im) = self.complex_quotient(a, b, c, d, false);
+                    (self.b.un(UnOp::FDemote, re), self.b.un(UnOp::FDemote, im))
+                } else {
+                    self.complex_quotient(a, b, c, d, true)
+                }
+            }
+            (BinOp::Eq | BinOp::Ne, b, d) => {
+                let b = match b {
+                    Some(b) => b,
+                    None => self.zero(part),
+                };
+                let d = match d {
+                    Some(d) => d,
+                    None => self.zero(part),
+                };
+                let (compare, combine) = if op == BinOp::Eq {
+                    (CBin::Eq, CBin::And)
+                } else {
+                    (CBin::Ne, CBin::Or)
+                };
+                let re = self.b.bin(compare, a, c);
+                let im = self.b.bin(compare, b, d);
+                return Ok(self.b.bin(combine, re, im));
             }
             _ => return internal(loc, "unsupported complex operation"),
         };
         Ok(self.make_pair(ty, re, im))
+    }
+
+    /// `(a + bi) / (c + di)` on doubles. `scaled`: by Smith's method, which divides by the
+    /// larger of `c` and `d` first so that nothing in between is squared.
+    fn complex_quotient(&mut self, a: V, b: V, c: V, d: V, scaled: bool) -> (V, V) {
+        if !scaled {
+            let cc = self.b.bin(CBin::Mul, c, c);
+            let dd = self.b.bin(CBin::Mul, d, d);
+            let scale = self.b.bin(CBin::Add, cc, dd);
+            let ac = self.b.bin(CBin::Mul, a, c);
+            let bd = self.b.bin(CBin::Mul, b, d);
+            let bc = self.b.bin(CBin::Mul, b, c);
+            let ad = self.b.bin(CBin::Mul, a, d);
+            let re = self.b.bin(CBin::Add, ac, bd);
+            let im = self.b.bin(CBin::Sub, bc, ad);
+            return (
+                self.b.bin(CBin::Div, re, scale),
+                self.b.bin(CBin::Div, im, scale),
+            );
+        }
+        // |c| >= |d|, on the bits without their signs.
+        let magnitude = |this: &mut Self, v: V| {
+            let bits = this.b.conv(ConvOp::Bitcast, Ty::I64, v);
+            let mask = this.b.const_i64(i64::MAX);
+            this.b.bin(CBin::And, bits, mask)
+        };
+        let (mc, md) = (magnitude(self, c), magnitude(self, d));
+        let c_is_larger = self.b.bin(CBin::UGe, mc, md);
+        let larger = self.b.def(Inst::Select(c_is_larger, c, d), Ty::F64);
+        let smaller = self.b.def(Inst::Select(c_is_larger, d, c), Ty::F64);
+        let ratio = self.b.bin(CBin::Div, smaller, larger);
+        let scaled_smaller = self.b.bin(CBin::Mul, smaller, ratio);
+        let denominator = self.b.bin(CBin::Add, larger, scaled_smaller);
+        let ar = self.b.bin(CBin::Mul, a, ratio);
+        let br = self.b.bin(CBin::Mul, b, ratio);
+        // c larger: (a + b r, b - a r); d larger: (a r + b, b r - a).
+        let re_c = self.b.bin(CBin::Add, a, br);
+        let re_d = self.b.bin(CBin::Add, ar, b);
+        let im_c = self.b.bin(CBin::Sub, b, ar);
+        let im_d = self.b.bin(CBin::Sub, br, a);
+        let re = self.b.def(Inst::Select(c_is_larger, re_c, re_d), Ty::F64);
+        let im = self.b.def(Inst::Select(c_is_larger, im_c, im_d), Ty::F64);
+        (
+            self.b.bin(CBin::Div, re, denominator),
+            self.b.bin(CBin::Div, im, denominator),
+        )
     }
 
     /// `-x`, or `~x` (bitwise not of an integer, conjugate of a complex number).

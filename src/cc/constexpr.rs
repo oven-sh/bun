@@ -61,11 +61,13 @@ pub(crate) fn float_to_int(v: f64, to: &Type, tcx: &TypeCtx) -> Option<i64> {
     if !t.is_finite() {
         return None;
     }
+    // A 128-bit literal is its sign-extended 64-bit value, so that is what has to hold it.
     let bits = tcx.size_of(to)? * 8;
-    let (min, max) = if tcx.is_signed(to) {
-        (-(2f64.powi(bits as i32 - 1)), 2f64.powi(bits as i32 - 1))
-    } else {
-        (0.0, 2f64.powi(bits as i32))
+    let (min, max) = match (tcx.is_signed(to), bits) {
+        (true, 128) => (-(2f64.powi(63)), 2f64.powi(63)),
+        (false, 128) => (0.0, 2f64.powi(63)),
+        (true, _) => (-(2f64.powi(bits as i32 - 1)), 2f64.powi(bits as i32 - 1)),
+        (false, _) => (0.0, 2f64.powi(bits as i32)),
     };
     if t < min || t >= max {
         return None;
@@ -83,11 +85,13 @@ pub(crate) fn long_double_to_int(v: Extended, to: &Type, tcx: &TypeCtx) -> Optio
         return Some(i64::from(!v.is_zero()));
     }
     let value = v.to_i128()?;
-    let bits = (tcx.size_of(to)? * 8).min(64) as u32;
-    let (min, max) = if tcx.is_signed(to) {
-        (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
-    } else {
-        (0, (1i128 << bits) - 1)
+    // A 128-bit literal is its sign-extended 64-bit value, so that is what has to hold it.
+    let bits = (tcx.size_of(to)? * 8) as u32;
+    let (min, max) = match (tcx.is_signed(to), bits) {
+        (true, 128) => (i128::from(i64::MIN), i128::from(i64::MAX)),
+        (false, 128) => (0, i128::from(i64::MAX)),
+        (true, _) => (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1),
+        (false, _) => (0, (1i128 << bits) - 1),
     };
     (min..=max).contains(&value).then_some(value as i64)
 }
@@ -120,6 +124,15 @@ fn to_f64(v: i64, from: &Type, tcx: &TypeCtx) -> f64 {
     }
 }
 
+/// The integer `v` of type `from` converted to the floating type `to`, rounded once.
+pub(crate) fn int_to_float(v: i64, from: &Type, to: &Type, tcx: &TypeCtx) -> f64 {
+    match (matches!(to, Type::Float), tcx.is_signed(from)) {
+        (true, true) => f64::from(v as f32),
+        (true, false) => f64::from(v as u64 as f32),
+        (false, _) => to_f64(v, from, tcx),
+    }
+}
+
 /// What an operation on `x` and `y` folds to: the processor makes the NaN of an invalid
 /// operation (`0.0 / 0.0`) negative, a compiler that folds it makes it positive, and `NAN` is
 /// spelled that way by C libraries.
@@ -141,6 +154,9 @@ fn round_to(v: f64, ty: &Type) -> f64 {
 
 /// The address of an lvalue expression, if it is an address constant.
 fn eval_addr(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
+    if !tcx.stack_check.is_safe_to_recurse() {
+        return err(e.loc, "expression is nested too deeply");
+    }
     match &e.kind {
         ExprKind::Global(id) => Ok(Const::Addr {
             base: AddrBase::Global(*id),
@@ -175,9 +191,9 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
     let ty = &e.ty;
     // 128-bit values other than literals are not folded.
     let mut wide = ty.is_int128() && !matches!(e.kind, ExprKind::IntLit(_));
-    if !matches!(e.kind, ExprKind::Cast(_)) {
-        e.for_each_child(|c| wide |= c.ty.is_int128());
-    }
+    // (An address or a member of a 128-bit object is not a 128-bit computation; a conversion
+    // from one to a floating type has an arm of its own below.)
+    e.for_each_child(|c| wide |= ty.is_integer() && c.ty.is_int128());
     if wide {
         // Computed in 128 bits; a result that is not itself 128 bits wide, or fits in 64,
         // is an ordinary integer constant (`(__int128)-1 < 0`, `sizeof(x) * (__int128)2`).
@@ -206,6 +222,20 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
                 None => not_constant(e.loc),
             }
         }
+        ExprKind::Cast(inner) if ty.is_float() && inner.ty.is_int128() => {
+            // One rounding, from all 128 bits.
+            let Some(v) = eval_int128(inner, tcx) else {
+                return not_constant(e.loc);
+            };
+            Ok(Const::Float(
+                match (matches!(ty, Type::Float), tcx.is_signed(&inner.ty)) {
+                    (true, true) => f64::from(v as f32),
+                    (true, false) => f64::from(v as u128 as f32),
+                    (false, true) => v as f64,
+                    (false, false) => v as u128 as f64,
+                },
+            ))
+        }
         ExprKind::Cast(inner) => {
             let v = eval(inner, tcx)?;
             let from = &inner.ty;
@@ -214,7 +244,7 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
                     if ty.is_integer() || ty.is_ptr() {
                         Ok(Const::Int(wrap(i, ty, tcx)))
                     } else if ty.is_float() {
-                        Ok(Const::Float(round_to(to_f64(i, from, tcx), ty)))
+                        Ok(Const::Float(int_to_float(i, from, ty, tcx)))
                     } else if ty.is_long_double() {
                         Ok(Const::LongDouble(int_to_long_double(i, from, tcx)))
                     } else {
@@ -258,8 +288,11 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
                     }
                 }
                 Const::Addr { .. } => {
-                    // An address survives casts between pointers and pointer-sized integers.
-                    if ty.is_ptr() || (ty.is_integer() && tcx.size_of(ty) == Some(8)) {
+                    // An address survives casts between pointers and pointer-sized integers,
+                    // and is not null.
+                    if matches!(ty, Type::Bool) {
+                        Ok(Const::Int(1))
+                    } else if ty.is_ptr() || (ty.is_integer() && tcx.size_of(ty) == Some(8)) {
                         Ok(v)
                     } else {
                         not_constant(e.loc)
@@ -330,6 +363,29 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
                         result
                     }))
                 }
+                // An address that was converted to an integer as wide as it is still moves by
+                // what is added to it.
+                (Const::Addr { base, offset }, Const::Int(n))
+                    if matches!(op, BinOp::Add | BinOp::Sub) && tcx.size_of(ty) == Some(8) =>
+                {
+                    let n = if *op == BinOp::Sub {
+                        n.wrapping_neg()
+                    } else {
+                        n
+                    };
+                    Ok(Const::Addr {
+                        base,
+                        offset: offset.wrapping_add(n),
+                    })
+                }
+                (Const::Int(n), Const::Addr { base, offset })
+                    if *op == BinOp::Add && tcx.size_of(ty) == Some(8) =>
+                {
+                    Ok(Const::Addr {
+                        base,
+                        offset: offset.wrapping_add(n),
+                    })
+                }
                 // The address of an object or a function is not the null pointer, and two places
                 // in one object compare as their offsets do.
                 (Const::Addr { .. }, Const::Int(0)) | (Const::Int(0), Const::Addr { .. })
@@ -356,6 +412,52 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
                 }))),
                 _ => not_constant(e.loc),
             }
+        }
+        ExprKind::Intrinsic(
+            op @ (Intrinsic::Clz
+            | Intrinsic::Ctz
+            | Intrinsic::Popcount
+            | Intrinsic::Bswap
+            | Intrinsic::RotL
+            | Intrinsic::RotR),
+            operands,
+        ) => {
+            // What GCC and Clang fold too; the bit counts of zero are left for run time.
+            let Some(operand) = operands.first() else {
+                return not_constant(e.loc);
+            };
+            let bits = tcx.size_of(&operand.ty).unwrap_or(8) as u32 * 8;
+            let Const::Int(v) = eval(operand, tcx)? else {
+                return not_constant(e.loc);
+            };
+            let mask = if bits >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << bits) - 1
+            };
+            let v = v as u64 & mask;
+            let count = match operands.get(1).map(|n| eval(n, tcx)).transpose()? {
+                Some(Const::Int(n)) => n as u32 % bits,
+                Some(_) => return not_constant(e.loc),
+                None => 0,
+            };
+            let rotated_left = |by: u32| {
+                if by == 0 {
+                    v
+                } else {
+                    ((v << by) | (v >> (bits - by))) & mask
+                }
+            };
+            let result = match op {
+                Intrinsic::Clz if v != 0 => u64::from(v.leading_zeros() - (64 - bits)),
+                Intrinsic::Ctz if v != 0 => u64::from(v.trailing_zeros()),
+                Intrinsic::Popcount => u64::from(v.count_ones()),
+                Intrinsic::Bswap => v.swap_bytes() >> (64 - bits),
+                Intrinsic::RotL => rotated_left(count),
+                Intrinsic::RotR => rotated_left((bits - count) % bits),
+                _ => return not_constant(e.loc),
+            };
+            Ok(Const::Int(wrap(result as i64, ty, tcx)))
         }
         ExprKind::Intrinsic(Intrinsic::X87(operation), operands) => {
             use crate::x87::X87Op;
@@ -417,8 +519,14 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
 
 /// The value of a constant expression of integer type, computed in 128 bits.
 pub(crate) fn eval_int128(e: &Expr, tcx: &TypeCtx) -> Option<i128> {
+    if !tcx.stack_check.is_safe_to_recurse() {
+        return None;
+    }
     // The value an integer of type `ty` stands for when its bits are `v`.
     let fit = |v: i128, ty: &Type| -> i128 {
+        if matches!(ty, Type::Bool) {
+            return i128::from(v != 0);
+        }
         match tcx.size_of(ty) {
             Some(16) if tcx.is_signed(ty) => v,
             Some(16) => v,
@@ -440,7 +548,11 @@ pub(crate) fn eval_int128(e: &Expr, tcx: &TypeCtx) -> Option<i128> {
         ExprKind::IntLit(v) => i128::from(*v),
         ExprKind::Cast(inner) if inner.ty.is_integer() => eval_int128(inner, tcx)?,
         ExprKind::Cast(inner) if inner.ty.is_float() => match eval(inner, tcx).ok()? {
-            Const::Float(v) if v.is_finite() && v.abs() < 1.7e38 => v as i128,
+            // Out of the type's range the conversion is undefined, and left to run time.
+            Const::Float(v) if tcx.is_signed(&e.ty) && v.abs() < 2f64.powi(127) => v as i128,
+            Const::Float(v) if !tcx.is_signed(&e.ty) && v > -1.0 && v < 2f64.powi(128) => {
+                v as u128 as i128
+            }
             _ => return None,
         },
         ExprKind::Cast(inner) if inner.ty.is_long_double() => match eval(inner, tcx).ok()? {
@@ -519,6 +631,9 @@ pub(crate) struct Complex {
 
 /// The value of a constant complex expression.
 pub(crate) fn eval_complex(e: &Expr, tcx: &TypeCtx) -> Option<Complex> {
+    if !tcx.stack_check.is_safe_to_recurse() {
+        return None;
+    }
     let real = |e: &Expr| -> Option<f64> {
         match eval(e, tcx).ok()? {
             Const::Float(v) => Some(v),
@@ -543,26 +658,75 @@ pub(crate) fn eval_complex(e: &Expr, tcx: &TypeCtx) -> Option<Complex> {
             Complex { re, im: -im }
         }
         ExprKind::Binary(op, x, y) if e.ty.is_complex() => {
-            let Complex { re: a, im: b } = eval_complex(x, tcx)?;
-            let Complex { re: c, im: d } = eval_complex(y, tcx)?;
-            match op {
-                BinOp::Add => Complex {
+            // A real operand has no imaginary part, which is not the same as a zero one.
+            let operand = |e: &Expr| -> Option<(f64, Option<f64>)> {
+                if e.ty.is_complex() {
+                    let Complex { re, im } = eval_complex(e, tcx)?;
+                    Some((re, Some(im)))
+                } else {
+                    Some((real(e)?, None))
+                }
+            };
+            let (a, b) = operand(x)?;
+            let (c, d) = operand(y)?;
+            match (op, b, d) {
+                (BinOp::Add, b, d) => Complex {
                     re: a + c,
-                    im: b + d,
+                    im: match (b, d) {
+                        (Some(b), Some(d)) => b + d,
+                        (Some(only), None) | (None, Some(only)) => only,
+                        (None, None) => 0.0,
+                    },
                 },
-                BinOp::Sub => Complex {
+                (BinOp::Sub, b, d) => Complex {
                     re: a - c,
-                    im: b - d,
+                    im: match (b, d) {
+                        (Some(b), Some(d)) => b - d,
+                        (Some(b), None) => b,
+                        (None, Some(d)) => -d,
+                        (None, None) => 0.0,
+                    },
                 },
-                BinOp::Mul => Complex {
-                    re: a * c - b * d,
-                    im: a * d + b * c,
+                (BinOp::Mul, Some(b), Some(d)) => Complex {
+                    re: round(a * c) - round(b * d),
+                    im: round(a * d) + round(b * c),
                 },
-                BinOp::Div => {
-                    let scale = c * c + d * d;
-                    Complex {
-                        re: (a * c + b * d) / scale,
-                        im: (b * c - a * d) / scale,
+                (BinOp::Mul, Some(b), None) => Complex {
+                    re: a * c,
+                    im: b * c,
+                },
+                (BinOp::Mul, None, Some(d)) => Complex {
+                    re: a * c,
+                    im: a * d,
+                },
+                (BinOp::Div, Some(b), None) => Complex {
+                    re: a / c,
+                    im: b / c,
+                },
+                (BinOp::Div, b, Some(d)) => {
+                    let b = b.unwrap_or(0.0);
+                    if single {
+                        // In double nothing a float can hold overflows or vanishes.
+                        let scale = c * c + d * d;
+                        Complex {
+                            re: (a * c + b * d) / scale,
+                            im: (b * c - a * d) / scale,
+                        }
+                    } else if c.abs() >= d.abs() {
+                        // Smith's method: nothing in between is squared.
+                        let ratio = d / c;
+                        let denominator = c + d * ratio;
+                        Complex {
+                            re: (a + b * ratio) / denominator,
+                            im: (b - a * ratio) / denominator,
+                        }
+                    } else {
+                        let ratio = c / d;
+                        let denominator = d + c * ratio;
+                        Complex {
+                            re: (a * ratio + b) / denominator,
+                            im: (b * ratio - a) / denominator,
+                        }
                     }
                 }
                 _ => return None,

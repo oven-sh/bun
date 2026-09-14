@@ -17,7 +17,10 @@ typedef double max_align_t;
 typedef __PTRDIFF_TYPE__ ptrdiff_t;
 typedef __SIZE_TYPE__ size_t;
 typedef __WCHAR_TYPE__ wchar_t;
-typedef union { long long __ll; long double __ld; void *__p; } max_align_t;
+typedef struct {
+  long long __max_align_ll __attribute__((__aligned__(__alignof__(long long))));
+  long double __max_align_ld __attribute__((__aligned__(__alignof__(long double))));
+} max_align_t;
 #ifdef _WIN32
 /* The Windows C runtimes' <stddef.h> (Microsoft's through vcruntime.h, MinGW's and TinyCC's directly)
    also has these, and their other headers count on it. */

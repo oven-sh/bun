@@ -1,12 +1,14 @@
 //! Preprocessor directives: conditionals, `#define`, `#include` and friends.
 
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use bun_core::strings;
 use bun_paths::resolve_path::{self, platform};
 
 use crate::pp::{
-    Builtin, Cond, MAX_INCLUDE_DEPTH, Macro, PTok, Preprocessor, SearchDir, eof_token, spelling,
+    Builtin, CachedFile, Cond, FileKey, MAX_INCLUDE_DEPTH, Macro, PTok, Preprocessor, SearchDir,
+    eof_token, spelling,
 };
 use crate::token::{Loc, PpKind, PpToken, Punct, Res, TokenSource, display_bytes, err};
 
@@ -26,22 +28,7 @@ pub(crate) enum SearchFrom {
     AfterThisFile,
 }
 
-/// The compiler's own headers.
-const BUILTIN_HEADERS: &[(&str, &str)] = &[
-    ("float.h", include_str!("include/float.h")),
-    ("iso646.h", include_str!("include/iso646.h")),
-    ("limits.h", include_str!("include/limits.h")),
-    ("stdalign.h", include_str!("include/stdalign.h")),
-    ("stdarg.h", include_str!("include/stdarg.h")),
-    ("stdbool.h", include_str!("include/stdbool.h")),
-    ("stddef.h", include_str!("include/stddef.h")),
-    ("stdint.h", include_str!("include/stdint.h")),
-    ("stdnoreturn.h", include_str!("include/stdnoreturn.h")),
-    ("stdatomic.h", include_str!("include/stdatomic.h")),
-    ("tgmath.h", include_str!("include/tgmath.h")),
-];
-
-/// The ones Visual Studio and the Universal C Runtime have too.
+/// The ones of the compiler's own headers that Visual Studio and the Universal C Runtime have too.
 const MSVC_RUNTIME_HEADERS: &[&str] = &[
     "float.h",
     "iso646.h",
@@ -53,49 +40,49 @@ const MSVC_RUNTIME_HEADERS: &[&str] = &[
     "stdnoreturn.h",
 ];
 
-/// Intrinsic headers that exist only for one architecture.
-const X86_HEADERS: &[(&str, &str)] = &[
-    ("xmmintrin.h", include_str!("include/xmmintrin.h")),
-    ("emmintrin.h", include_str!("include/emmintrin.h")),
-    ("tmmintrin.h", include_str!("include/tmmintrin.h")),
-    ("smmintrin.h", include_str!("include/smmintrin.h")),
-    ("immintrin.h", include_str!("include/immintrin.h")),
-    ("cpuid.h", include_str!("include/cpuid.h")),
-];
-
-const ARM64_HEADERS: &[(&str, &str)] = &[
-    ("arm_neon.h", include_str!("include/arm_neon.h")),
-    ("arm_acle.h", include_str!("include/arm_acle.h")),
-];
-
-/// What Visual Studio's compiler has built in, for Windows targets. `<intrin.h>` is all of it;
-/// Visual Studio's headers reach it by other names too.
-const WINDOWS_HEADERS: &[(&str, &str)] = &[
-    ("intrin.h", include_str!("include/intrin.h")),
-    ("intrin0.h", include_str!("include/intrin0.h")),
-    ("intrin0.inl.h", include_str!("include/intrin0.h")),
-    ("ms_intrinsics.h", MS_INTRINSICS),
-];
-
-pub(crate) const MS_INTRINSICS: &str = include_str!("include/ms_intrinsics.h");
+/// What Microsoft's intrinsics are made of: see `parser_ms.rs`.
+pub(crate) fn ms_intrinsics() -> &'static [u8] {
+    bun_zstd::embed_compressed!(src "cc/include/ms_intrinsics.h")
+}
 
 const BUILTIN_DIR: &str = "<builtin>";
 
-fn builtin_header(name: &str, target: crate::types::Target) -> Option<&'static str> {
-    let for_arch = match target.arch {
-        crate::types::Arch::X86_64 => X86_HEADERS,
-        crate::types::Arch::Aarch64 => ARM64_HEADERS,
-    };
-    let for_os: &[(&str, &str)] = match target.os {
-        crate::types::Os::Windows => WINDOWS_HEADERS,
-        _ => &[],
-    };
-    BUILTIN_HEADERS
-        .iter()
-        .chain(for_arch)
-        .chain(for_os)
-        .find(|(n, _)| *n == name)
-        .map(|(_, text)| *text)
+/// One of the compiler's own headers. They are kept compressed and inflated when first asked for.
+fn builtin_header(name: &str, target: crate::types::Target) -> Option<&'static [u8]> {
+    use crate::types::{Arch, Os};
+    let x86 = target.arch == Arch::X86_64;
+    let arm64 = target.arch == Arch::Aarch64;
+    let windows = target.os == Os::Windows;
+    Some(match name {
+        "float.h" => bun_zstd::embed_compressed!(src "cc/include/float.h"),
+        "iso646.h" => bun_zstd::embed_compressed!(src "cc/include/iso646.h"),
+        "limits.h" => bun_zstd::embed_compressed!(src "cc/include/limits.h"),
+        "stdalign.h" => bun_zstd::embed_compressed!(src "cc/include/stdalign.h"),
+        "stdarg.h" => bun_zstd::embed_compressed!(src "cc/include/stdarg.h"),
+        "stdbool.h" => bun_zstd::embed_compressed!(src "cc/include/stdbool.h"),
+        "stddef.h" => bun_zstd::embed_compressed!(src "cc/include/stddef.h"),
+        "stdint.h" => bun_zstd::embed_compressed!(src "cc/include/stdint.h"),
+        "stdnoreturn.h" => bun_zstd::embed_compressed!(src "cc/include/stdnoreturn.h"),
+        "stdatomic.h" => bun_zstd::embed_compressed!(src "cc/include/stdatomic.h"),
+        "tgmath.h" => bun_zstd::embed_compressed!(src "cc/include/tgmath.h"),
+        // Intrinsic headers that exist only for one architecture.
+        "xmmintrin.h" if x86 => bun_zstd::embed_compressed!(src "cc/include/xmmintrin.h"),
+        "emmintrin.h" if x86 => bun_zstd::embed_compressed!(src "cc/include/emmintrin.h"),
+        "tmmintrin.h" if x86 => bun_zstd::embed_compressed!(src "cc/include/tmmintrin.h"),
+        "smmintrin.h" if x86 => bun_zstd::embed_compressed!(src "cc/include/smmintrin.h"),
+        "immintrin.h" if x86 => bun_zstd::embed_compressed!(src "cc/include/immintrin.h"),
+        "cpuid.h" if x86 => bun_zstd::embed_compressed!(src "cc/include/cpuid.h"),
+        "arm_neon.h" if arm64 => bun_zstd::embed_compressed!(src "cc/include/arm_neon.h"),
+        "arm_acle.h" if arm64 => bun_zstd::embed_compressed!(src "cc/include/arm_acle.h"),
+        // What Visual Studio's compiler has built in, for Windows targets. `<intrin.h>` is all of
+        // it; Visual Studio's headers reach it by other names too.
+        "intrin.h" if windows => bun_zstd::embed_compressed!(src "cc/include/intrin.h"),
+        "intrin0.h" | "intrin0.inl.h" if windows => {
+            bun_zstd::embed_compressed!(src "cc/include/intrin0.h")
+        }
+        "ms_intrinsics.h" if windows => ms_intrinsics(),
+        _ => return None,
+    })
 }
 
 /// `path` without `.` components and with `dir/..` removed, so that different spellings
@@ -123,13 +110,18 @@ fn same_file_key(path: &str) -> String {
 
 fn directory_of(path: &str) -> &str {
     let directory = resolve_path::dirname::<platform::Loose>(path.as_bytes());
-    // A prefix of `path` that ends ahead of an ASCII separator.
+    // A prefix of `path` that ends ahead of an ASCII separator; of a file in the root, the root.
+    if directory.is_empty() && path.starts_with('/') {
+        return "/";
+    }
     &path[..directory.len()]
 }
 
 fn join(dir: &str, name: &str) -> String {
     if dir.is_empty() {
         name.to_string()
+    } else if dir.ends_with('/') {
+        format!("{dir}{name}")
     } else {
         format!("{dir}/{name}")
     }
@@ -354,8 +346,8 @@ impl Preprocessor {
                 if let [t] = line.as_slice() {
                     if t.kind == PpKind::Ident && t.text == b"once" {
                         if let Some(frame) = self.frames.last() {
-                            self.pragma_once
-                                .insert(Rc::from(same_file_key(&frame.path)));
+                            let key = self.file_key(&Rc::clone(&frame.path));
+                            self.pragma_once.insert(key);
                         }
                     }
                 }
@@ -391,8 +383,6 @@ impl Preprocessor {
         }
     }
 
-    /// The operand of `#ifdef`/`#ifndef`/`#elifdef`.
-    /// `#pragma comment(lib, "name")`: records the library; every other pragma is ignored.
     /// The pragmas that mean something here, from a `#pragma` line or a `_Pragma` operator;
     /// all others are ignored.
     pub(crate) fn pragma(&mut self, line: &[PpToken], loc: Loc) {
@@ -559,6 +549,7 @@ impl Preprocessor {
         });
     }
 
+    /// `#pragma comment(lib, "name")`: records the library.
     fn pragma_comment_lib(&mut self, line: &[PpToken]) {
         let is = |t: &PpToken, text: &[u8]| t.kind == PpKind::Ident && t.text == text;
         let [comment, open, lib, comma, name, close] = line else {
@@ -580,6 +571,7 @@ impl Preprocessor {
         }
     }
 
+    /// The operand of `#ifdef`/`#ifndef`/`#elifdef`.
     fn defined_operand(&self, line: &[PpToken], loc: Loc) -> Res<bool> {
         match line.first() {
             Some(t) if t.kind == PpKind::Ident => Ok(self.is_defined(&t.text)),
@@ -666,6 +658,7 @@ impl Preprocessor {
             .is_some_and(|t| t.kind == PpKind::Punct(Punct::LParen) && !t.has_leading_space)
         {
             let mut list: Vec<Rc<str>> = Vec::new();
+            let mut names: BTreeSet<Rc<str>> = BTreeSet::new();
             let mut i = 1;
             let mut closed = false;
             let mut expect_name = true;
@@ -695,10 +688,11 @@ impl Preprocessor {
                         if p == "__VA_ARGS__" {
                             return err(t.loc, "__VA_ARGS__ cannot be a parameter name");
                         }
-                        if list.iter().any(|existing| &**existing == p) {
+                        let parameter: Rc<str> = Rc::from(p);
+                        if !names.insert(Rc::clone(&parameter)) {
                             return err(t.loc, format!("duplicate macro parameter '{p}'"));
                         }
-                        list.push(Rc::from(p));
+                        list.push(parameter);
                         expect_name = false;
                     }
                     PpKind::Punct(Punct::Comma) if !expect_name && !variadic => expect_name = true,
@@ -740,6 +734,7 @@ impl Preprocessor {
                 }
             }
         }
+        self.check_va_opt(&mac)?;
         if let Some(old) = self.macros.get(&name) {
             // A constraint violation that every compiler only warns about; system headers
             // rely on that (glibc's <arpa/nameser_compat.h> against a library's own copy).
@@ -751,6 +746,48 @@ impl Preprocessor {
             }
         }
         self.macros.insert(name, Rc::new(mac));
+        Ok(())
+    }
+
+    /// C23 6.10.4.1: `__VA_OPT__` belongs to a variadic macro, is followed by a parenthesized
+    /// group, and that group has no `__VA_OPT__` of its own.
+    fn check_va_opt(&self, mac: &Macro) -> Res<()> {
+        let is_va_opt = |t: &PpToken| t.kind == PpKind::Ident && t.text == b"__VA_OPT__";
+        let mut i = 0;
+        while let Some(t) = mac.body.get(i) {
+            i += 1;
+            if !is_va_opt(t) {
+                continue;
+            }
+            if !mac.variadic {
+                self.files.borrow_mut().warnings.push((
+                    t.loc,
+                    "'__VA_OPT__' can only appear in the expansion of a variadic macro".to_string(),
+                ));
+                continue;
+            }
+            if mac.body.get(i).map(|t| t.kind) != Some(PpKind::Punct(Punct::LParen)) {
+                return err(t.loc, "'__VA_OPT__' must be followed by '('");
+            }
+            let mut depth = 0usize;
+            loop {
+                let Some(inner) = mac.body.get(i) else {
+                    return err(t.loc, "unterminated '__VA_OPT__'");
+                };
+                i += 1;
+                match inner.kind {
+                    PpKind::Punct(Punct::LParen) => depth += 1,
+                    PpKind::Punct(Punct::RParen) => depth -= 1,
+                    _ if is_va_opt(inner) => {
+                        return err(inner.loc, "'__VA_OPT__' may not appear in a '__VA_OPT__'");
+                    }
+                    _ => {}
+                }
+                if depth == 0 {
+                    break;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -788,26 +825,80 @@ impl Preprocessor {
     /// `from_system_directory`: the file is looked for in a directory of the search path (or
     /// next to a header that came from one), so it is not the program's own.
     fn load(&mut self, path: &str, from_system_directory: bool) -> Option<Rc<[u8]>> {
-        if let Some(cached) = self.file_cache.get(path) {
-            return cached.clone();
-        }
-        let contents: Option<Rc<[u8]>> = match path
-            .strip_prefix(BUILTIN_DIR)
-            .and_then(|p| p.strip_prefix('/'))
-        {
-            Some(name) => builtin_header(name, self.target).map(|text| Rc::from(text.as_bytes())),
-            None => {
-                // Windows' headers name each other in any case; its file systems do not care.
-                let any_case = self.target.os == crate::types::Os::Windows && !cfg!(windows);
-                let contents = crate::files::read(path.as_bytes(), any_case);
-                if contents.is_some() && !from_system_directory {
-                    self.files.borrow_mut().read.push(path.to_string());
+        if !self.file_cache.contains_key(path) {
+            let found = match path
+                .strip_prefix(BUILTIN_DIR)
+                .and_then(|p| p.strip_prefix('/'))
+            {
+                Some(name) => match builtin_header(name, self.target) {
+                    Some(text) => CachedFile::Source {
+                        contents: Rc::from(text),
+                        identity: None,
+                    },
+                    None => CachedFile::NotFound,
+                },
+                None => {
+                    // Windows' headers name each other in any case; its file systems do not care.
+                    let any_case = self.target.os == crate::types::Os::Windows && !cfg!(windows);
+                    match crate::files::read(path.as_bytes(), any_case) {
+                        Ok(loaded) => {
+                            if !from_system_directory {
+                                self.files.borrow_mut().read.push(path.to_string());
+                            }
+                            CachedFile::Source {
+                                contents: Rc::from(loaded.bytes),
+                                identity: loaded.identity,
+                            }
+                        }
+                        Err(crate::files::Unreadable::NotFound) => CachedFile::NotFound,
+                        Err(crate::files::Unreadable::Because(why)) => {
+                            CachedFile::Unreadable(Rc::from(why))
+                        }
+                    }
                 }
-                contents.map(Rc::from)
+            };
+            self.file_cache.insert(Rc::from(path), found);
+        }
+        match self.file_cache.get(path) {
+            Some(CachedFile::Source { contents, .. }) => Some(Rc::clone(contents)),
+            Some(CachedFile::Unreadable(why)) => {
+                // The first thing in the way is what gets said if nothing is found.
+                if self.unreadable.is_none() {
+                    self.unreadable = Some(Rc::clone(why));
+                }
+                None
             }
-        };
-        self.file_cache.insert(Rc::from(path), contents.clone());
-        contents
+            _ => None,
+        }
+    }
+
+    /// Which file `path`, which has been loaded, is.
+    fn file_key(&self, path: &str) -> FileKey {
+        match self.file_cache.get(path) {
+            Some(CachedFile::Source {
+                identity: Some((device, inode)),
+                ..
+            }) => FileKey::Identity(*device, *inode),
+            _ => FileKey::Path(Rc::from(same_file_key(path))),
+        }
+    }
+
+    /// "'name' file not found", or what was wrong with the file of that name that was found.
+    fn not_included<T>(&mut self, name: &str, form: HeaderForm, loc: Loc) -> Res<T> {
+        if let Some(why) = self.unreadable.take() {
+            return err(loc, format!("'{name}' cannot be read: {why}"));
+        }
+        let message = format!("'{name}' file not found");
+        // Only this machine's own C library is looked for where it is installed.
+        if form == HeaderForm::Angled && Some(self.target) != crate::types::Target::host() {
+            return crate::token::err_with_note(
+                loc,
+                message,
+                loc,
+                "the headers of a target that is not this machine are looked for in the directories of C_INCLUDE_PATH only",
+            );
+        }
+        err(loc, message)
     }
 
     fn search_path(&self, index: usize, name: &str) -> String {
@@ -938,17 +1029,18 @@ impl Preprocessor {
         if name.is_empty() {
             return err(loc, "empty file name in #include");
         }
+        self.unreadable = None;
         let Some((path, found_at)) = self.resolve_include(&name, form, search) else {
-            return err(loc, format!("'{name}' file not found"));
+            return self.not_included(&name, form, loc);
         };
-        if self.pragma_once.contains(same_file_key(&path).as_str()) {
+        if self.pragma_once.contains(&self.file_key(&path)) {
             return Ok(());
         }
         if self.frames.len() >= MAX_INCLUDE_DEPTH {
-            return err(loc, "#include nested too deeply");
+            return err(loc, "#include is nested too deeply");
         }
         let Some(source) = self.load(&path, found_at.is_some()) else {
-            return err(loc, format!("'{name}' file not found"));
+            return self.not_included(&name, form, loc);
         };
         self.push_source(&path, source, found_at, Some(loc));
         Ok(())

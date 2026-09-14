@@ -108,7 +108,8 @@ struct ModuleGen<'a> {
     /// Data externs that stand for thread-local objects other units define.
     tls_externs: Vec<TlsExtern>,
     /// Anonymous read-only data: string literals and initializer images.
-    blobs: Vec<Vec<u8>>,
+    /// Anonymous constant objects: their bytes and alignment.
+    blobs: Vec<(Vec<u8>, u64)>,
     blob_ids: BTreeMap<Vec<u8>, u32>,
     /// For an object that is only declared here under an assembler name that an object
     /// this unit defines has: that object. Every other object maps to itself.
@@ -239,18 +240,22 @@ impl<'a> ModuleGen<'a> {
         index
     }
 
-    fn blob(&mut self, bytes: Vec<u8>) -> u32 {
+    /// The constant object with these bytes, aligned to at least `align`.
+    fn blob(&mut self, bytes: Vec<u8>, align: u64) -> u32 {
         if let Some(&id) = self.blob_ids.get(&bytes) {
+            let existing = &mut self.blobs[id as usize].1;
+            *existing = (*existing).max(align);
             return id;
         }
         let id = self.blobs.len() as u32;
-        self.blobs.push(bytes.clone());
+        self.blobs.push((bytes.clone(), align));
         self.blob_ids.insert(bytes, id);
         id
     }
 
     fn string_blob(&mut self, id: StrId) -> u32 {
-        self.blob(self.prog.strings[id as usize].to_vec())
+        let literal = &self.prog.strings[id as usize];
+        self.blob(literal.bytes.to_vec(), literal.align)
     }
 
     /// Provisional `DataAddr` operand for a data object; patched once the segment is laid out.
@@ -311,6 +316,11 @@ struct FnGen<'a, 'm> {
     vla_stack: Vec<(u32, Option<u32>, Option<Expr>)>,
     body: &'a FuncBody,
     free_temps: [Vec<u32>; 5],
+    /// The stack slots that hold temporaries of the statements being generated (size, alignment,
+    /// slot), oldest first: a statement gives back the ones it took when it ends, and `spare_slots`
+    /// has them for the next one that wants that size.
+    temporary_slots: Vec<(u64, u64, u32)>,
+    spare_slots: Vec<(u64, u64, u32)>,
     ret: Type,
     ret_pass: RetPass,
     /// `gen_wide` is about to make a call and wants the halves of its 128-bit result as
@@ -531,6 +541,9 @@ impl<'a> FnGen<'a, '_> {
     }
 
     fn gen_place(&mut self, e: &Expr) -> Res<Place> {
+        if !self.tcx.stack_check.is_safe_to_recurse() {
+            return err(e.loc, "expression is nested too deeply");
+        }
         if let Some(reg) = self.leaf_of(e) {
             return Ok(Place::Reg(reg));
         }
@@ -603,11 +616,14 @@ impl<'a> FnGen<'a, '_> {
                     if let ExprKind::IntLit(i) = index.kind {
                         let delta = i.wrapping_mul(*scale as i64);
                         let delta = if *sub { delta.wrapping_neg() } else { delta };
-                        let base = self.gen_value(base)?;
-                        return Ok(Place::Mem {
-                            base,
-                            offset: delta,
-                        });
+                        // (As far as a displacement reaches; members may add to it yet.)
+                        if i32::try_from(delta).is_ok_and(|d| d.unsigned_abs() < 1 << 30) {
+                            let base = self.gen_value(base)?;
+                            return Ok(Place::Mem {
+                                base,
+                                offset: delta,
+                            });
+                        }
                     }
                 }
                 Ok(Place::Mem {
@@ -785,7 +801,18 @@ impl<'a> FnGen<'a, '_> {
         }
     }
 
+    /// `base + offset` as an address and a displacement an access can carry: a displacement has
+    /// 32 bits, and what does not fit is added to the address first.
+    fn within_reach(&mut self, base: V, offset: i64) -> (V, i64) {
+        if i32::try_from(offset).is_ok() {
+            return (base, offset);
+        }
+        let delta = self.b.const_i64(offset);
+        (self.b.bin(CBin::Add, base, delta), 0)
+    }
+
     fn load_memory(&mut self, kind: MemKind, base: V, offset: i64, volatile: bool) -> V {
+        let (base, offset) = self.within_reach(base, offset);
         if volatile {
             return self
                 .b
@@ -795,6 +822,7 @@ impl<'a> FnGen<'a, '_> {
     }
 
     fn store_memory(&mut self, kind: MemKind, v: V, base: V, offset: i64, volatile: bool) {
+        let (base, offset) = self.within_reach(base, offset);
         self.b.effect(if volatile {
             Inst::VolatileStore(kind, v, base, offset)
         } else {
@@ -1088,6 +1116,9 @@ impl<'a> FnGen<'a, '_> {
 
     /// Branches to `to.when_true` if scalar `e` is non-zero, else to `to.when_false`.
     fn gen_cond(&mut self, e: &Expr, to: Targets) -> Res<()> {
+        if !self.tcx.stack_check.is_safe_to_recurse() {
+            return err(e.loc, "expression is nested too deeply");
+        }
         match &e.kind {
             ExprKind::LogAnd(a, b) => {
                 let mid = self.b.new_block();
@@ -1274,7 +1305,7 @@ impl<'a> FnGen<'a, '_> {
                 )
             }
             RelocTarget::Str(id) => {
-                let text = &prog.strings[*id as usize];
+                let text = &prog.strings[*id as usize].bytes;
                 (text, &[], text.len() as u64)
             }
             RelocTarget::Func(_) => return Ok(None),
@@ -1437,12 +1468,32 @@ impl<'a> FnGen<'a, '_> {
         }
     }
 
-    /// A fresh stack slot for an object of type `ty`; returns its address.
+    /// A stack slot of `size` bytes that is this statement's until it ends (the lifetime of a
+    /// temporary, C11 6.2.4p8).
+    fn temporary_slot_id(&mut self, size: u64, align: u64) -> u32 {
+        let spare = self
+            .spare_slots
+            .iter()
+            .position(|(s, a, _)| (*s, *a) == (size, align));
+        let slot = match spare {
+            Some(at) => self.spare_slots.swap_remove(at).2,
+            None => self.b.add_slot(size, align),
+        };
+        self.temporary_slots.push((size, align, slot));
+        slot
+    }
+
+    /// Likewise; returns its address.
+    fn temporary_slot(&mut self, size: u64, align: u64) -> V {
+        let slot = self.temporary_slot_id(size, align);
+        self.b.def(Inst::SlotAddr(slot), Ty::I64)
+    }
+
+    /// A stack slot for a temporary object of type `ty`; returns its address.
     fn temp_object(&mut self, ty: &Type) -> V {
         let size = self.tcx.size_of(ty).unwrap_or(0).max(1);
         let align = self.tcx.align_of(ty).unwrap_or(1).max(1);
-        let slot = self.b.add_slot(size, align);
-        self.b.def(Inst::SlotAddr(slot), Ty::I64)
+        self.temporary_slot(size, align)
     }
 
     fn gen_call(&mut self, callee: &Expr, args: &[Expr]) -> Res<Option<V>> {
@@ -1855,6 +1906,15 @@ impl<'a> FnGen<'a, '_> {
                     self.gen_vec_binary(*op, &a.ty, va, vb, &b.ty, loc)?
                 } else if a.ty.is_long_double() {
                     self.long_double_binary(*op, va, vb, loc)?
+                } else if a.ty.is_complex() || b.ty.is_complex() {
+                    let ty = if a.ty.is_complex() { &a.ty } else { &b.ty };
+                    self.gen_complex_mixed(
+                        *op,
+                        ty,
+                        (va, a.ty.is_complex()),
+                        (vb, b.ty.is_complex()),
+                        loc,
+                    )?
                 } else if a.ty.is_pair() {
                     self.gen_pair_binary(*op, &a.ty, va, vb, loc)?
                 } else {
@@ -2088,6 +2148,17 @@ impl<'a> FnGen<'a, '_> {
                         let object = self.temp_object(op_ty);
                         self.store_wide(object, result);
                         object
+                    }
+                    CompoundOp::Arith(bop) if op_ty.is_complex() => {
+                        let widened = self.convert(old, &lhs.ty, op_ty, loc)?;
+                        let result = self.gen_complex_mixed(
+                            *bop,
+                            op_ty,
+                            (widened, true),
+                            (vr, rhs.ty.is_complex()),
+                            loc,
+                        )?;
+                        self.convert(result, op_ty, &lhs.ty, loc)?
                     }
                     CompoundOp::Arith(bop) if op_ty.is_pair() => {
                         let widened = self.convert(old, &lhs.ty, op_ty, loc)?;
@@ -2426,7 +2497,7 @@ impl<'a> FnGen<'a, '_> {
                     if bytes.is_empty() {
                         continue;
                     }
-                    let blob = self.m.blob(bytes.clone());
+                    let blob = self.m.blob(bytes.clone(), 1);
                     let object = self.m.blob_object(blob);
                     let src = self.data_addr(object);
                     let dst = self.local_addr(local, *offset, loc)?;
@@ -2668,8 +2739,6 @@ impl<'a> FnGen<'a, '_> {
         }))
     }
 
-    /// `memcpy`/`memmove`/`memset`. A statement that copies a whole scalar variable that lives
-    /// in a register is a load, a store or a move of its bits.
     /// The BIR local and type of the scalar variable `operand` is the address of, when a
     /// copy of `bytes` bytes to or from it moves its whole value (see `punned_local`).
     fn punned_register(&self, operand: &Expr, bytes: u64) -> Option<(u32, Type)> {
@@ -2682,6 +2751,8 @@ impl<'a> FnGen<'a, '_> {
         }
     }
 
+    /// `memcpy`/`memmove`/`memset`. A statement that copies a whole scalar variable that lives
+    /// in a register is a load, a store or a move of its bits.
     fn gen_memory_builtin(&mut self, e: &Expr, op: Intrinsic, args: &[Expr]) -> Res<Option<V>> {
         let [dst, second, n] = args else {
             return internal(e.loc, "memcpy needs three operands");
@@ -2747,16 +2818,11 @@ impl<'a> FnGen<'a, '_> {
         }
         if op == Intrinsic::MemCopy && e.ty.is_void() {
             if let Ok(crate::constexpr::Const::Int(bytes)) = crate::constexpr::eval(n, self.tcx) {
-                let in_register = |g: &Self, operand: &Expr| -> Option<(u32, Type)> {
-                    let id = punned_local(operand, bytes as u64, g.local_types, g.tcx)?;
-                    match g.locals[id as usize] {
-                        LocalPlace::Reg(reg) => {
-                            Some((reg, g.local_types[id as usize].ty.unatomic().clone()))
-                        }
-                        _ => None,
-                    }
-                };
-                match (in_register(self, dst), in_register(self, second)) {
+                let bytes = bytes as u64;
+                match (
+                    self.punned_register(dst, bytes),
+                    self.punned_register(second, bytes),
+                ) {
                     (Some((to, to_ty)), Some((from, from_ty))) => {
                         let v = self.b.local_get(from);
                         let (from_m, to_m) = (self.mty(&from_ty), self.mty(&to_ty));
@@ -2827,7 +2893,7 @@ impl<'a> FnGen<'a, '_> {
             let inline = if windows {
                 matches!(size, 1 | 2 | 4 | 8)
             } else {
-                size <= 16
+                size <= 16 || abi::is_homogeneous_aggregate(self.tcx, ty)
             };
             let mut cursor = self.b.load(MemKind::I64, ap, 0);
             if inline && align >= 16 {
@@ -2868,6 +2934,10 @@ impl<'a> FnGen<'a, '_> {
         let Some(pieces) = pieces else {
             return Ok(from_overflow(self, ap));
         };
+        if pieces.is_empty() {
+            // Nothing of it is passed: every eightbyte is padding.
+            return Ok(self.temp_object(ty));
+        }
         if pieces.iter().any(|p| p.ty == Ty::V128) {
             return err(
                 loc,
@@ -2880,7 +2950,7 @@ impl<'a> FnGen<'a, '_> {
         let result = self.alloc_temp(Ty::I64);
         self.b.effect(Inst::LocalSet(list, ap));
         // Every eightbyte is stored whole, so the temporary is a whole number of them.
-        let slot = self.b.add_slot(pieces.len() as u64 * 8, align.max(8));
+        let slot = self.temporary_slot_id(size.next_multiple_of(8), align.max(8));
         let (in_registers, in_memory, done) =
             (self.b.new_block(), self.b.new_block(), self.b.new_block());
         let mut fits: Option<V> = None;
@@ -3165,8 +3235,18 @@ impl<'a> FnGen<'a, '_> {
 
     fn gen_stmt(&mut self, stmt: &Stmt, loc: Loc) -> Res<()> {
         if !self.tcx.stack_check.is_safe_to_recurse() {
-            return err(loc, "nesting is too deep");
+            return err(loc, "statement is nested too deeply");
         }
+        // What the statement takes for its temporaries is spare again once it is over; what the
+        // statements around it hold (this one may be inside a statement expression) stays theirs.
+        let held_outside = self.temporary_slots.len();
+        let result = self.gen_statement(stmt, loc);
+        self.spare_slots
+            .extend(self.temporary_slots.drain(held_outside..));
+        result
+    }
+
+    fn gen_statement(&mut self, stmt: &Stmt, loc: Loc) -> Res<()> {
         match stmt {
             Stmt::Empty => Ok(()),
             Stmt::Expr(e) => self.gen_discard(e),
@@ -3339,10 +3419,12 @@ impl<'a> FnGen<'a, '_> {
                 self.b.switch_to(end);
                 Ok(())
             }
-            Stmt::Label(label, body) => {
-                let block = self.label_block(*label);
-                self.b.terminate(Inst::Jump(block));
-                self.b.switch_to(block);
+            Stmt::Label(labels, body) => {
+                for label in labels {
+                    let block = self.label_block(*label);
+                    self.b.terminate(Inst::Jump(block));
+                    self.b.switch_to(block);
+                }
                 self.gen_stmt(body, loc)
             }
             Stmt::Goto(label) => {
@@ -3505,7 +3587,6 @@ impl<'a> FnGen<'a, '_> {
         result
     }
 
-    /// `return;`, or falling off the end: a non-void function returns zero.
     /// The cleanups of every open scope, innermost first: what `return` runs.
     fn run_cleanups(&mut self) -> Res<()> {
         if self.b.is_terminated() {
@@ -3522,6 +3603,7 @@ impl<'a> FnGen<'a, '_> {
         Ok(())
     }
 
+    /// `return;`, or falling off the end: a non-void function returns zero.
     fn gen_default_return(&mut self) {
         if self.b.is_terminated() {
             return;
@@ -3641,6 +3723,8 @@ fn gen_function<'a>(m: &mut ModuleGen<'a>, f: &'a Function, body: &'a FuncBody) 
         vla_stack: Vec::new(),
         body,
         free_temps: Default::default(),
+        temporary_slots: Vec::new(),
+        spare_slots: Vec::new(),
         ret: f.ty.ret.clone(),
         ret_pass: abi.ret.clone(),
         result_unused: false,
@@ -3818,16 +3902,20 @@ fn calls_returns_twice(prog: &Program, body: &FuncBody) -> bool {
     })
 }
 
-/// Whether a defined function is visible outside the module.
-/// For every local of `body`: whether it is an array or structure that code generation
-/// would replace by its elements (see `sroa`).
-pub(crate) fn replaceable_aggregates(body: &FuncBody, tcx: &TypeCtx) -> Vec<bool> {
-    sroa::promotable_locals(body, tcx)
-        .iter()
-        .map(Option::is_some)
-        .collect()
+/// Whether bun:ffi can call a function of this type, which is what gets it an export entry:
+/// scalar arguments and result, no variable arguments, and no more arguments than it takes.
+fn callable_from_javascript(ty: &crate::types::FuncType) -> bool {
+    /// `FFI::Signature::maxArguments`.
+    const MOST_ARGUMENTS: usize = 32;
+    let plain =
+        |ty: &Type| !ty.is_struct() && !ty.is_vector() && !ty.is_pair() && !ty.is_long_double();
+    !ty.variadic
+        && ty.params.len() <= MOST_ARGUMENTS
+        && plain(&ty.ret)
+        && ty.params.iter().all(plain)
 }
 
+/// Whether a defined function is visible outside the module.
 fn is_exported(f: &Function) -> bool {
     !f.is_static && f.external
 }
@@ -3967,6 +4055,9 @@ pub(crate) struct Unit {
     /// Functions of this unit that a unit with no definition of that name may call, though
     /// they are not exported: Microsoft's `inline` definitions.
     pub(crate) linkonce_functions: Vec<(String, u32)>,
+    /// The functions this unit defines `weak`: a definition in another unit that is not takes
+    /// their place.
+    pub(crate) weak_functions: Vec<u32>,
     /// The externs that are the calls 128-bit division turns into (`__udivti3`, ...). They
     /// stay imports of the linked module even when a unit defines a function of that name:
     /// such a function is itself written with the division that needs the call.
@@ -4058,11 +4149,7 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
                 function: funcs.len() as u32,
             });
         }
-        // JS cannot call a variadic function through bun:ffi, so it gets no export entry.
-        let plain =
-            |ty: &Type| !ty.is_struct() && !ty.is_vector() && !ty.is_pair() && !ty.is_long_double();
-        let scalar_only = plain(&f.ty.ret) && f.ty.params.iter().all(plain);
-        if is_exported(f) && !f.ty.variadic && scalar_only {
+        if is_exported(f) && callable_from_javascript(&f.ty) {
             exports.push(bir::Export {
                 name: func.name.clone(),
                 func: funcs.len() as u32,
@@ -4080,9 +4167,7 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
         };
         function_aliases.push((name.to_string(), index));
         funcs[index as usize].exported = true;
-        let plain =
-            |ty: &Type| !ty.is_struct() && !ty.is_vector() && !ty.is_pair() && !ty.is_long_double();
-        if !f.ty.variadic && plain(&f.ty.ret) && f.ty.params.iter().all(plain) {
+        if callable_from_javascript(&f.ty) {
             exports.push(bir::Export {
                 name: name.to_string(),
                 func: index,
@@ -4170,7 +4255,9 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
         image.extend_from_slice(&g.init);
         size += gsize;
     }
-    for (i, blob) in m.blobs.iter().enumerate() {
+    for (i, (blob, blob_align)) in m.blobs.iter().enumerate() {
+        align = align.max(*blob_align);
+        size = size.next_multiple_of(*blob_align);
         offsets[nglobals + i] = size;
         image.resize(size as usize, 0);
         image.extend_from_slice(blob);
@@ -4280,18 +4367,20 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
             initialized: g.has_initializer,
             content: is_initialized(g),
             linkonce: g.linkonce,
+            weak: g.weak,
             constant: !g.thread_local && is_constant_object(&g.ty),
         });
     }
-    for (i, blob) in m.blobs.iter().enumerate() {
+    for (i, (blob, blob_align)) in m.blobs.iter().enumerate() {
         objects.push(crate::link::DataObject {
             offset: offsets[nglobals + i],
             size: blob.len() as u64,
-            align: 1,
+            align: *blob_align,
             symbol: None,
             initialized: true,
             content: true,
             linkonce: false,
+            weak: false,
             // String literals, the images local aggregates are initialized from, and floating
             // constants that instructions cannot hold.
             constant: true,
@@ -4309,6 +4398,13 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
             let name = f.link_name.as_ref().unwrap_or(&f.name).to_string();
             Some((name, m.func_index[id]?))
         })
+        .collect();
+    let mut weak_functions: Vec<u32> = prog
+        .funcs
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.weak.is_some() && f.body.is_some())
+        .filter_map(|(id, _)| m.func_index[id])
         .collect();
     // A private function only code that was never emitted calls (the dead arm of `if (0)`)
     // is not emitted either.
@@ -4375,6 +4471,10 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
         }
         linkonce_functions.retain(|(_, f)| live[*f as usize]);
         for (_, f) in &mut linkonce_functions {
+            *f = renumbered[*f as usize];
+        }
+        weak_functions.retain(|f| live[*f as usize]);
+        for f in &mut weak_functions {
             *f = renumbered[*f as usize];
         }
     }
@@ -4457,6 +4557,7 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
         destructors,
         function_aliases,
         linkonce_functions,
+        weak_functions,
         runtime_externs: m
             .runtime_externs
             .iter()

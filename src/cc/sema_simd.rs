@@ -857,33 +857,8 @@ impl Sema {
                 ty.clone(),
             )
         } else {
-            let int_only = matches!(
-                op,
-                BinOp::Rem | BinOp::And | BinOp::Or | BinOp::Xor | BinOp::Shl | BinOp::Shr
-            );
-            let ok = if int_only {
-                ty.is_integer() && rhs.ty.is_integer()
-            } else {
-                ty.is_arith() && rhs.ty.is_arith() && !op.is_compare()
-            };
-            if !ok {
-                return err(
-                    loc,
-                    format!(
-                        "invalid operands to compound assignment ('{}' and '{}')",
-                        self.tcx.display(&ty),
-                        self.tcx.display(&rhs.ty)
-                    ),
-                );
-            }
-            let (op_ty, rhs_ty) = if matches!(op, BinOp::Shl | BinOp::Shr) {
-                (Self::promoted_type(&ty), Type::Int)
-            } else {
-                let common = self.arith_common_type(&ty, &rhs.ty);
-                (common.clone(), common)
-            };
-            let rloc = rhs.loc;
-            (RmwOp::Arith(op), self.convert(rhs, &rhs_ty, rloc)?, op_ty)
+            let (op_ty, value) = self.compound_operands(op, &ty, rhs, loc)?;
+            (RmwOp::Arith(op), value, op_ty)
         };
         let addr = self.atomic_address(lhs)?;
         let atomic = AtomicExpr::Rmw {

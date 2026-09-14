@@ -3,6 +3,7 @@
 
 use super::Sema;
 use crate::ast::*;
+use crate::constexpr::{self, Const};
 use crate::token::{Loc, Res, err};
 use crate::types::Type;
 
@@ -305,7 +306,7 @@ impl Sema {
             return self.mk(ExprKind::Intrinsic(op, vec![x, n]), ty, loc);
         }
         // Narrow values rotate inside a 32-bit one.
-        let work = if bits < 32 { Type::UInt } else { ty.clone() };
+        let work = Type::UInt;
         let x = self.assign_convert(x, &ty, loc, "passing an argument")?;
         let x = self.convert(x, &work, loc)?;
         let n = self.assign_convert(n, &ty, loc, "passing an argument")?;
@@ -316,15 +317,8 @@ impl Sema {
         let (tn, store_n) = self.temp(n, loc)?;
         // `towards` is the named direction; the other shift brings in the bits that fell off.
         let count = self.read(&tn, loc)?;
-        let other = if bits < 32 {
-            let width = self.int_lit(i64::from(bits), Type::UInt, loc)?;
-            self.binary(BinOp::Sub, width, count, loc)?
-        } else {
-            let zero = self.int_lit(0, Type::UInt, loc)?;
-            let negated = self.binary(BinOp::Sub, zero, count, loc)?;
-            let mask = self.int_lit(i64::from(bits - 1), Type::UInt, loc)?;
-            self.binary(BinOp::And, negated, mask, loc)?
-        };
+        let width = self.int_lit(i64::from(bits), Type::UInt, loc)?;
+        let other = self.binary(BinOp::Sub, width, count, loc)?;
         let (towards, away) = if left {
             (BinOp::Shl, BinOp::Shr)
         } else {
@@ -464,11 +458,22 @@ impl Sema {
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
-        self.needs_function(name, loc)?;
         if args.len() != 1 {
             return err(loc, format!("{name} takes one argument"));
         }
         let x = self.assign_convert(args.swap_remove(0), ty, loc, "passing an argument")?;
+        // Of a constant it is one, anywhere.
+        if let Ok(Const::Int(v)) = constexpr::eval(&x, &self.tcx) {
+            let bits = self.bits_of(ty);
+            let v = if bits >= 64 {
+                v as u64
+            } else {
+                v as u64 & ((1 << bits) - 1)
+            };
+            let index = if v == 0 { 0 } else { v.trailing_zeros() + 1 };
+            return self.int_lit(i64::from(index), Type::Int, loc);
+        }
+        self.needs_function(name, loc)?;
         let (tx, store_x) = self.temp(x, loc)?;
         let test = self.read(&tx, loc)?;
         let operand = self.read(&tx, loc)?;
@@ -892,13 +897,20 @@ impl Sema {
         mut args: Vec<Expr>,
         loc: Loc,
     ) -> Res<Expr> {
-        self.needs_function(name, loc)?;
         if args.len() != 1 {
             return err(loc, format!("{name} takes one argument"));
         }
         let bits = self.bits_of(ty) as i64;
         let unsigned = ty.to_unsigned();
         let x = self.assign_convert(args.swap_remove(0), ty, loc, "passing an argument")?;
+        // Of a constant it is one, anywhere.
+        if let Ok(Const::Int(v)) = constexpr::eval(&x, &self.tcx) {
+            // The value is sign-extended: what differs from its sign starts below the copies.
+            let differing = (v ^ (v >> 63)) as u64;
+            let copies = differing.leading_zeros() as i64 - (64 - bits) - 1;
+            return self.int_lit(copies, Type::Int, loc);
+        }
+        self.needs_function(name, loc)?;
         let (tx, store) = self.temp(x, loc)?;
         // x ^ (x >> (bits - 1)) clears the sign copies; shifting a 1 in keeps clz defined.
         let a = self.read(&tx, loc)?;

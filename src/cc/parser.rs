@@ -15,7 +15,7 @@ use crate::sema::{FieldDecl, FnCtx, Sema, Storage, Symbol, Tag};
 use crate::token::{
     Kw, Loc, PackOp, Punct, Res, Tok, Token, TokenSource, classify, err, err_with_note,
 };
-use crate::types::{FuncType, Quals, Target, Type, WideKind};
+use crate::types::{FuncType, Quals, StructId, Target, Type, WideKind};
 
 #[path = "parser_ms.rs"]
 pub(crate) mod microsoft;
@@ -24,6 +24,18 @@ pub(crate) mod microsoft;
 /// brace initializers): a limit of this implementation (C11 5.2.4.1 asks for 127 levels of
 /// blocks and 63 of parentheses), which also bounds every pass that walks what was parsed.
 const MAX_NESTING: u32 = 500;
+
+/// An upper bound of the stack one level of nesting costs the deepest of the passes that walk
+/// a function body after it has been parsed.
+const STACK_PER_LEVEL: usize = if cfg!(debug_assertions) {
+    16 << 10
+} else {
+    2 << 10
+};
+
+/// Maximum number of pointer, array and function derivations in one type (C11 5.2.4.1 asks
+/// for 12 in a declaration), which bounds every walk over a type.
+const MAX_DERIVATIONS: usize = 256;
 
 /// What the attributes on a declaration asked for; everything else is ignored.
 #[derive(Default, Clone)]
@@ -129,6 +141,8 @@ struct SwitchCtx {
     vla_path: Vec<u32>,
     cond_ty: Type,
     cases: Vec<SwitchCase>,
+    /// The values `cases` cover, as ranges from a first to a last key in the order of `cond_ty`.
+    ranges: std::collections::BTreeMap<u64, u64>,
     default: Option<LabelId>,
 }
 
@@ -139,6 +153,8 @@ pub(crate) struct Parser<S: TokenSource> {
     next: Option<Token>,
     sema: Sema,
     nesting: u32,
+    /// The highest `nesting` has been since this was last reset.
+    deepest_nesting: u32,
     /// Attributes read ahead of a block-scope declaration.
     leading_attrs: Option<Attrs>,
     switches: Vec<SwitchCtx>,
@@ -152,6 +168,8 @@ pub(crate) struct Parser<S: TokenSource> {
     /// Set by an `enum tag` specifier whose enumeration has no enumerator list yet: an
     /// incomplete type, which only a pointer may be made of.
     incomplete_enum: Option<Rc<str>>,
+    /// The structures and unions whose member lists are open at the current position.
+    open_structs: Vec<StructId>,
     /// The `VlaScope`s around the current position, outermost first.
     vla_path: Vec<u32>,
     /// A variable length array object was declared by the block item just parsed.
@@ -230,6 +248,7 @@ impl<S: TokenSource> Parser<S> {
             next: None,
             sema: Sema::new(target),
             nesting: 0,
+            deepest_nesting: 0,
             leading_attrs: None,
             switches: Vec::new(),
             break_targets: 0,
@@ -237,6 +256,7 @@ impl<S: TokenSource> Parser<S> {
             param_depth: 0,
             pending_vla: Vec::new(),
             incomplete_enum: None,
+            open_structs: Vec::new(),
             vla_path: Vec::new(),
             vla_declared: false,
             gotos: Vec::new(),
@@ -392,8 +412,9 @@ impl<S: TokenSource> Parser<S> {
 
     fn enter(&mut self) -> Res<()> {
         self.nesting += 1;
+        self.deepest_nesting = self.deepest_nesting.max(self.nesting);
         if self.nesting > MAX_NESTING || !self.sema.tcx.stack_check.is_safe_to_recurse() {
-            return err(self.loc(), "nesting is too deep");
+            return err(self.loc(), "the source is nested too deeply");
         }
         Ok(())
     }
@@ -776,6 +797,21 @@ impl<S: TokenSource> Parser<S> {
     }
 
     /// `_Alignas` cannot ask for less than the type requires.
+    /// No object is aligned to more than the loader's limit, so no alignment above it is
+    /// taken anywhere one is written.
+    fn check_alignment_limit(&self, bytes: u64, loc: Loc) -> Res<()> {
+        if bytes > crate::bir::MAX_ALIGN {
+            return err(
+                loc,
+                format!(
+                    "alignments over {} bytes are not supported",
+                    crate::bir::MAX_ALIGN
+                ),
+            );
+        }
+        Ok(())
+    }
+
     fn check_alignas(&self, spec: &DeclSpec, ty: &Type) -> Res<()> {
         if let Some((requested, at)) = spec.attrs.alignas {
             if self
@@ -1122,6 +1158,8 @@ impl<S: TokenSource> Parser<S> {
         self.pending_vla.clear();
         self.gotos.clear();
         self.computed_goto = None;
+        self.deepest_nesting = self.nesting;
+        self.sema.deepest_expr.set(0);
         let mut params = Vec::new();
         for p in decl.params.unwrap_or_default() {
             let id = match p.name {
@@ -1175,7 +1213,7 @@ impl<S: TokenSource> Parser<S> {
                 );
             }
         }
-        let mut body = FuncBody {
+        let body = FuncBody {
             params,
             locals: ctx.locals,
             stmts,
@@ -1183,7 +1221,18 @@ impl<S: TokenSource> Parser<S> {
             address_labels: ctx.address_labels,
             label_vla_paths,
         };
-        crate::unroll::unroll_counted_loops(&mut body, &self.sema.tcx);
+        // What follows walks the body recursively, some of it (the copies and the destructor the
+        // compiler derives among it) with no way to stop half way: the room for the deepest walk
+        // is asked for here, once.
+        let levels = (self.deepest_nesting - self.nesting + self.sema.deepest_expr.get()) as usize;
+        if !self
+            .sema
+            .tcx
+            .stack_check
+            .is_safe_to_recurse_with_extra(levels * STACK_PER_LEVEL)
+        {
+            return err(loc, format!("the body of '{name}' is nested too deeply"));
+        }
         self.sema.funcs[id as usize].body = Some(body);
         Ok(())
     }
@@ -1269,8 +1318,9 @@ impl<S: TokenSource> Parser<S> {
         })
     }
 
-    /// Parses any run of `__attribute__((...))`, `__declspec(...)`, `[[...]]` and asm labels.
-    /// Everything is accepted; `aligned`, `packed` and the asm label are recorded.
+    /// Parses any run of `__attribute__((...))`, `__declspec(...)`, `[[...]]` and asm labels:
+    /// what `IMPLEMENTED_ATTRIBUTES` lists is recorded in `attrs` or refused, what
+    /// `IGNORED_ATTRIBUTES` lists is skipped, anything else is skipped with a warning.
     fn parse_attributes(&mut self, attrs: &mut Attrs) -> Res<()> {
         loop {
             if self.at_kw(Kw::Attribute) {
@@ -1370,12 +1420,13 @@ impl<S: TokenSource> Parser<S> {
                         value = self.sema.const_int(&e)?;
                         self.expect(Punct::RParen)?;
                     }
-                    if value <= 0 || !(value as u64).is_power_of_two() || value > (1 << 28) {
+                    if value <= 0 || !(value as u64).is_power_of_two() {
                         return err(
                             self.loc(),
                             "requested alignment is not a positive power of two",
                         );
                     }
+                    self.check_alignment_limit(value as u64, self.loc())?;
                     attrs.aligned = Some(attrs.aligned.unwrap_or(1).max(value as u64));
                     if name == "align" {
                         attrs.declspec_align =
@@ -1687,12 +1738,10 @@ impl<S: TokenSource> Parser<S> {
                             self.sema.const_int(&e)?
                         };
                         self.expect(Punct::RParen)?;
-                        if value < 0
-                            || (value > 0 && !(value as u64).is_power_of_two())
-                            || value > (1 << 28)
-                        {
+                        if value < 0 || (value > 0 && !(value as u64).is_power_of_two()) {
                             return err(tloc, "requested alignment is not a power of two");
                         }
+                        self.check_alignment_limit(value as u64, tloc)?;
                         if value > 0 {
                             attrs.aligned = Some(attrs.aligned.unwrap_or(1).max(value as u64));
                             let most = attrs.alignas.map_or(0, |(most, _)| most).max(value as u64);
@@ -1984,6 +2033,9 @@ impl<S: TokenSource> Parser<S> {
                     if def.is_complete() {
                         return err(kw_loc, format!("redefinition of '{kind} {tag}'"));
                     }
+                    if self.open_structs.contains(&id) {
+                        return err(kw_loc, format!("nested redefinition of '{kind} {tag}'"));
+                    }
                     id
                 }
                 Some(Tag::Enum(_)) => {
@@ -2001,6 +2053,7 @@ impl<S: TokenSource> Parser<S> {
             None => self.sema.new_struct(None, is_union),
         };
         self.expect(Punct::LBrace)?;
+        self.open_structs.push(id);
         let pragma_pack = self.pack;
         let pragma_ms_struct = self.ms_struct;
         let mut fields: Vec<FieldDecl> = Vec::new();
@@ -2107,6 +2160,7 @@ impl<S: TokenSource> Parser<S> {
             self.expect(Punct::Semi)?;
         }
         self.bump()?;
+        self.open_structs.pop();
         self.parse_attributes(&mut struct_attrs)?;
         if let Some(ahead) = self.declspec_struct_align.take() {
             struct_attrs.aligned = Some(struct_attrs.aligned.unwrap_or(1).max(ahead));
@@ -2147,8 +2201,9 @@ impl<S: TokenSource> Parser<S> {
 
     fn parse_enum_specifier(&mut self) -> Res<Type> {
         let kw_loc = self.bump()?.loc;
+        let mut enum_attrs = Attrs::default();
         let mut ignored = Attrs::default();
-        self.parse_attributes(&mut ignored)?;
+        self.parse_attributes(&mut enum_attrs)?;
         let tag = match &self.cur.tok {
             Tok::Ident(name) => {
                 let name = Rc::clone(name);
@@ -2228,6 +2283,9 @@ impl<S: TokenSource> Parser<S> {
         let mut unsigned = false;
         // The range of the enumerators decides the type, the way GCC and clang choose it.
         let (mut any_negative, mut fits_int, mut fits_uint) = (false, true, true);
+        let (mut lowest, mut highest) = (0i128, 0i128);
+        let microsoft = self.sema.tcx.target.os == crate::types::Os::Windows;
+        let mut consts = Vec::new();
         while !self.at(Punct::RBrace) {
             let (name, loc) = self.expect_ident()?;
             self.parse_attributes(&mut ignored)?;
@@ -2236,9 +2294,37 @@ impl<S: TokenSource> Parser<S> {
                 next_value = self.sema.const_int(&e)?;
                 unsigned = !self.sema.tcx.is_signed(&e.ty);
             }
+            if let Some(ty) = &fixed_type {
+                let negative = next_value < 0 && !unsigned;
+                let huge = next_value < 0 && unsigned;
+                let signed = self.sema.tcx.is_signed(ty);
+                if self.sema.wrap_int(next_value, ty) != next_value
+                    || (negative && !signed)
+                    || (huge && signed)
+                {
+                    return err(
+                        loc,
+                        format!(
+                            "the value of '{name}' is outside the range of '{}'",
+                            self.sema.tcx.display(ty)
+                        ),
+                    );
+                }
+            }
+            // Microsoft's enumerations are all `int`, and so are their enumerators.
+            let fixed = fixed_type
+                .as_ref()
+                .or_else(|| microsoft.then_some(&Type::Int));
             self.sema
-                .declare_enum_const(name, next_value, unsigned, loc)?;
+                .declare_enum_const(Rc::clone(&name), next_value, unsigned, fixed, loc)?;
+            consts.push((name, next_value));
             let huge = unsigned && next_value < 0;
+            let exact = if huge {
+                i128::from(next_value as u64)
+            } else {
+                i128::from(next_value)
+            };
+            (lowest, highest) = (lowest.min(exact), highest.max(exact));
             any_negative |= next_value < 0 && !huge;
             fits_int &= !huge && i32::try_from(next_value).is_ok();
             fits_uint &= !huge && u32::try_from(next_value).is_ok();
@@ -2248,13 +2334,35 @@ impl<S: TokenSource> Parser<S> {
             }
         }
         self.expect(Punct::RBrace)?;
-        self.parse_attributes(&mut ignored)?;
+        self.parse_attributes(&mut enum_attrs)?;
+        let fixed_type_absent = fixed_type.is_none();
         let ty = if let Some(fixed) = fixed_type {
             fixed
-        } else if self.sema.tcx.target.os == crate::types::Os::Windows {
-            // Microsoft's enumerations are all `int`.
-            Type::Int
-        } else if forward_declared && fits_int {
+        } else if enum_attrs.packed && !microsoft {
+            // The narrowest type that holds every enumerator.
+            let holds = |bits: u32| {
+                if any_negative {
+                    lowest >= -(1i128 << (bits - 1)) && highest < 1i128 << (bits - 1)
+                } else {
+                    highest < 1i128 << bits
+                }
+            };
+            match (
+                any_negative,
+                [8, 16, 32].into_iter().find(|bits| holds(*bits)),
+            ) {
+                (true, Some(8)) => Type::SChar,
+                (false, Some(8)) => Type::UChar,
+                (true, Some(16)) => Type::Short,
+                (false, Some(16)) => Type::UShort,
+                (true, Some(_)) => Type::Int,
+                (false, Some(_)) => Type::UInt,
+                (true, None) => Type::Long,
+                (false, None) => Type::ULong,
+            }
+        } else if microsoft || (forward_declared && fits_int) {
+            // Microsoft's enumerations are all `int`; so is one that was used before it was
+            // defined, which whatever used it took it for.
             Type::Int
         } else if !any_negative && fits_uint {
             Type::UInt
@@ -2265,6 +2373,9 @@ impl<S: TokenSource> Parser<S> {
         } else {
             Type::ULong
         };
+        if !fits_int && fixed_type_absent && !microsoft {
+            self.sema.retype_enum_consts(&consts, &ty);
+        }
         if let Some(tag) = tag {
             self.sema.bind_tag(tag, Tag::Enum(ty.clone()));
         }
@@ -2439,6 +2550,9 @@ impl<S: TokenSource> Parser<S> {
         let loc = self.loc();
         let outer_cleanup = self.declarator_cleanup.take();
         self.parse_declarator_ops(&mut ops, &mut name)?;
+        if !ops.is_empty() {
+            self.check_derivations(base.derivations(MAX_DERIVATIONS) + ops.len())?;
+        }
         let mut attrs = Attrs::default();
         self.parse_attributes(&mut attrs)?;
         let among_pointers = std::mem::replace(&mut self.declarator_cleanup, outer_cleanup);
@@ -2553,6 +2667,17 @@ impl<S: TokenSource> Parser<S> {
         })
     }
 
+    /// A type is at most `MAX_DERIVATIONS` pointer, array and function types deep.
+    fn check_derivations(&self, count: usize) -> Res<()> {
+        if count > MAX_DERIVATIONS {
+            return err(
+                self.loc(),
+                "a type is derived through too many pointers, arrays and functions",
+            );
+        }
+        Ok(())
+    }
+
     /// Collects the type derivations of a declarator in the order they apply to the base type.
     fn parse_declarator_ops(
         &mut self,
@@ -2566,6 +2691,7 @@ impl<S: TokenSource> Parser<S> {
         let mut pointers: Vec<(bool, Quals)> = Vec::new();
         while self.eat(Punct::Star)? {
             pointers.push(self.skip_qualifiers()?);
+            self.check_derivations(pointers.len())?;
         }
         let mut inner = Vec::new();
         if self.at(Punct::LParen) && self.paren_starts_nested_declarator()? {
@@ -2586,6 +2712,7 @@ impl<S: TokenSource> Parser<S> {
         }
         let mut suffixes = Vec::new();
         loop {
+            self.check_derivations(pointers.len() + suffixes.len())?;
             if self.at(Punct::LBracket) {
                 if matches!(self.peek2()?, Tok::Punct(Punct::LBracket)) {
                     // `[[...]]` is an attribute, not an array declarator.
@@ -2762,6 +2889,9 @@ impl<S: TokenSource> Parser<S> {
             };
             // Later parameters may use this one in an array bound: `int n, int a[n]`.
             if let Some(name) = &decl.name {
+                if params.iter().any(|p: &Param| p.name.as_ref() == Some(name)) {
+                    return err(decl.loc, format!("redefinition of '{name}'"));
+                }
                 self.sema
                     .bind_param(Rc::clone(name), params.len() as LocalId, ty.clone());
             }
@@ -2975,6 +3105,19 @@ impl<S: TokenSource> Parser<S> {
         Ok(result)
     }
 
+    /// The attributes in front of a block item, kept for the declaration they may belong to.
+    /// False if they were a statement by themselves (`[[fallthrough]];`).
+    #[inline(never)]
+    fn parse_leading_attributes(&mut self) -> Res<bool> {
+        let mut attrs = Attrs::default();
+        self.parse_attributes(&mut attrs)?;
+        if self.eat(Punct::Semi)? {
+            return Ok(false);
+        }
+        self.leading_attrs = Some(attrs);
+        Ok(true)
+    }
+
     fn parse_block_item(&mut self, out: &mut Vec<Stmt>) -> Res<()> {
         self.flush_pending_vla(out);
         if self.at_kw(Kw::StaticAssert) {
@@ -2985,9 +3128,7 @@ impl<S: TokenSource> Parser<S> {
         let bracket_attr =
             self.at(Punct::LBracket) && matches!(self.peek2()?, Tok::Punct(Punct::LBracket));
         if self.at_kw(Kw::Attribute) || bracket_attr {
-            let mut attrs = Attrs::default();
-            self.parse_attributes(&mut attrs)?;
-            if self.eat(Punct::Semi)? {
+            if !self.parse_leading_attributes()? {
                 return Ok(());
             }
             // They belong to the declaration that follows; ahead of a label or a statement
@@ -2995,9 +3136,9 @@ impl<S: TokenSource> Parser<S> {
             let labels = matches!(self.cur.tok, Tok::Ident(_))
                 && matches!(self.peek2()?, Tok::Punct(Punct::Colon));
             if self.is_type_start() && !labels {
-                self.leading_attrs = Some(attrs);
                 return self.parse_local_declaration(out);
             }
+            self.leading_attrs = None;
             out.push(self.parse_statement()?);
             return Ok(());
         }
@@ -3281,17 +3422,214 @@ impl<S: TokenSource> Parser<S> {
         Ok(cond)
     }
 
+    // The statements with more to them than a dispatcher should carry: each is a function of
+    // its own, so that the nesting of one statement in another costs the stack of the dispatcher
+    // and of that one kind of statement only.
+    #[inline(never)]
+    fn parse_if_statement(&mut self) -> Res<Stmt> {
+        // `if … else if … else if …` is a chain, which a loop follows: its length is not
+        // nesting. Each `if` after an `else` is still a block of its own.
+        let mut arms = Vec::new();
+        let mut inner_scopes = 0;
+        let otherwise = loop {
+            self.bump()?;
+            let cond = self.parse_paren_condition()?;
+            let then = self.parse_statement()?;
+            arms.push((cond, then));
+            if !self.eat_kw(Kw::Else)? {
+                break None;
+            }
+            if !self.at_kw(Kw::If) {
+                break Some(self.parse_statement()?);
+            }
+            self.sema.push_scope();
+            inner_scopes += 1;
+        };
+        for _ in 0..inner_scopes {
+            self.sema.pop_scope();
+        }
+        if arms.len() == 1 {
+            let (cond, then) = arms.swap_remove(0);
+            return Ok(Stmt::If(cond, Box::new(then), otherwise.map(Box::new)));
+        }
+        // A chain is a sequence: every arm but the last ends by going past the others.
+        let end = self.sema.new_label();
+        self.sema.set_label_vla_path(end, &self.vla_path);
+        let last = arms.len() - 1;
+        let mut chain = Vec::with_capacity(arms.len() + 2);
+        for (i, (cond, then)) in arms.into_iter().enumerate() {
+            let then = if i == last && otherwise.is_none() {
+                then
+            } else {
+                Stmt::Block(vec![then, Stmt::Goto(end)])
+            };
+            chain.push(Stmt::If(cond, Box::new(then), None));
+        }
+        chain.extend(otherwise);
+        chain.push(Stmt::Label(vec![end], Box::new(Stmt::Empty)));
+        Ok(Stmt::Block(chain))
+    }
+
+    #[inline(never)]
+    fn parse_for_statement(&mut self) -> Res<Stmt> {
+        self.bump()?;
+        self.expect(Punct::LParen)?;
+        self.sema.push_scope();
+        // The variables the first clause declares with a cleanup: the whole loop is
+        // their scope.
+        let mut cleanups: Vec<(u32, Expr)> = Vec::new();
+        let init = if self.eat(Punct::Semi)? {
+            None
+        } else if self.is_type_start() {
+            let mut stmts = Vec::new();
+            self.parse_local_declaration(&mut stmts)?;
+            for cleanup in std::mem::take(&mut self.pending_cleanups) {
+                let id = self.sema.new_vla_scope();
+                self.vla_path.push(id);
+                cleanups.push((id, cleanup));
+            }
+            Some(Box::new(Stmt::Block(stmts)))
+        } else {
+            let e = self.parse_expr()?;
+            self.expect(Punct::Semi)?;
+            Some(Box::new(Stmt::Expr(e)))
+        };
+        let cond = if self.at(Punct::Semi) {
+            None
+        } else {
+            let e = self.parse_expr()?;
+            Some(Box::new(self.sema.condition(e)?))
+        };
+        self.expect(Punct::Semi)?;
+        let step = if self.at(Punct::RParen) {
+            None
+        } else {
+            Some(Box::new(self.parse_expr()?))
+        };
+        self.expect(Punct::RParen)?;
+        let body = self.parse_loop_body()?;
+        self.sema.pop_scope();
+        if cleanups.is_empty() {
+            return Ok(Stmt::For {
+                init,
+                cond,
+                step,
+                body: Box::new(body),
+            });
+        }
+        let mut scoped = vec![Stmt::For {
+            init: None,
+            cond,
+            step,
+            body: Box::new(body),
+        }];
+        while let Some((id, cleanup)) = cleanups.pop() {
+            self.vla_path.pop();
+            scoped = vec![Stmt::VlaScope {
+                id,
+                cleanup: Some(Box::new(cleanup)),
+                body: scoped,
+            }];
+        }
+        let mut stmts: Vec<Stmt> = init.map(|init| *init).into_iter().collect();
+        stmts.append(&mut scoped);
+        Ok(Stmt::Block(stmts))
+    }
+
+    #[inline(never)]
+    fn parse_switch_statement(&mut self, loc: Loc) -> Res<Stmt> {
+        self.bump()?;
+        self.expect(Punct::LParen)?;
+        let e = self.parse_expr()?;
+        let e = self.sema.rvalue(e)?;
+        if !e.ty.is_integer() {
+            return err(e.loc, "switch quantity is not an integer");
+        }
+        if e.ty.is_int128() {
+            return err(e.loc, "a switch on a 128-bit integer is not supported yet");
+        }
+        let cond = self.sema.promote(e)?;
+        self.expect(Punct::RParen)?;
+        self.switches.push(SwitchCtx {
+            vla_path: self.vla_path.clone(),
+            cond_ty: cond.ty.clone(),
+            cases: Vec::new(),
+            ranges: std::collections::BTreeMap::new(),
+            default: None,
+        });
+        self.break_targets += 1;
+        let body = self.parse_statement()?;
+        self.break_targets -= 1;
+        let Some(ctx) = self.switches.pop() else {
+            return err(loc, "internal error: switch context lost");
+        };
+        Ok(Stmt::Switch {
+            cond: Box::new(cond),
+            body: Box::new(body),
+            cases: ctx.cases,
+            default: ctx.default,
+        })
+    }
+
+    #[inline(never)]
+    fn parse_goto_statement(&mut self, loc: Loc) -> Res<Stmt> {
+        self.bump()?;
+        if self.eat(Punct::Star)? {
+            let target = self.parse_expr()?;
+            let target = self.sema.rvalue(target)?;
+            if !target.ty.is_ptr() {
+                return err(loc, "the operand of 'goto *' must be a pointer");
+            }
+            self.expect(Punct::Semi)?;
+            if !self.vla_path.is_empty() {
+                return err(
+                    loc,
+                    "a computed goto in the scope of a variable length array is not supported",
+                );
+            }
+            self.computed_goto = Some(loc);
+            return Ok(Stmt::GotoComputed(target));
+        }
+        let (name, nloc) = self.expect_ident()?;
+        self.expect(Punct::Semi)?;
+        let label = self.sema.named_label(&name, false, nloc)?;
+        self.gotos.push((label, self.vla_path.clone(), nloc));
+        Ok(Stmt::Goto(label))
+    }
+
+    #[inline(never)]
+    fn parse_return_statement(&mut self, loc: Loc) -> Res<Stmt> {
+        self.bump()?;
+        if self.eat(Punct::Semi)? {
+            if self.sema.func.as_ref().is_some_and(|f| !f.ret.is_void()) {
+                return err(loc, "a function that returns a value needs one in 'return'");
+            }
+            return Ok(Stmt::Return(None));
+        }
+        let e = self.parse_expr()?;
+        self.expect(Punct::Semi)?;
+        // `return f();` in a void function is accepted when f() is void too.
+        let returns_void = self.sema.func.as_ref().is_some_and(|f| f.ret.is_void());
+        if returns_void && e.ty.is_void() {
+            return Ok(Stmt::Block(vec![Stmt::Expr(e), Stmt::Return(None)]));
+        }
+        Ok(Stmt::Return(Some(self.sema.return_value(e, loc)?)))
+    }
+
     fn parse_statement_inner(&mut self) -> Res<Stmt> {
         let loc = self.loc();
-        if let Tok::Ident(name) = self.cur.tok.clone() {
-            if matches!(self.peek2()?, Tok::Punct(Punct::Colon)) {
-                self.bump()?;
-                self.bump()?;
-                let label = self.sema.named_label(&name, true, loc)?;
-                self.sema.set_label_vla_path(label, &self.vla_path);
-                let stmt = self.parse_labeled_body()?;
-                return Ok(Stmt::Label(label, Box::new(stmt)));
+        // A run of labels belongs to one statement, however long it is.
+        let mut labels = Vec::new();
+        // The `case` and `default` labels of one run are one place to jump to: one label.
+        let mut of_the_switch = None;
+        while let Some(label) = self.parse_label(&mut of_the_switch)? {
+            if labels.last() != Some(&label) {
+                labels.push(label);
             }
+        }
+        if !labels.is_empty() {
+            let stmt = self.parse_labeled_body()?;
+            return Ok(Stmt::Label(labels, Box::new(stmt)));
         }
         match &self.cur.tok {
             Tok::Punct(Punct::Semi) => {
@@ -3306,17 +3644,7 @@ impl<S: TokenSource> Parser<S> {
                 Ok(Stmt::Block(stmts))
             }
             Tok::Kw(Kw::Try | Kw::Leave) => self.parse_structured_exception_handling(),
-            Tok::Kw(Kw::If) => {
-                self.bump()?;
-                let cond = self.parse_paren_condition()?;
-                let then = self.parse_statement()?;
-                let otherwise = if self.eat_kw(Kw::Else)? {
-                    Some(Box::new(self.parse_statement()?))
-                } else {
-                    None
-                };
-                Ok(Stmt::If(cond, Box::new(then), otherwise))
-            }
+            Tok::Kw(Kw::If) => self.parse_if_statement(),
             Tok::Kw(Kw::While) => {
                 self.bump()?;
                 let cond = self.parse_paren_condition()?;
@@ -3336,170 +3664,8 @@ impl<S: TokenSource> Parser<S> {
                 self.expect(Punct::Semi)?;
                 Ok(Stmt::DoWhile(Box::new(body), cond))
             }
-            Tok::Kw(Kw::For) => {
-                self.bump()?;
-                self.expect(Punct::LParen)?;
-                self.sema.push_scope();
-                // The variables the first clause declares with a cleanup: the whole loop is
-                // their scope.
-                let mut cleanups: Vec<(u32, Expr)> = Vec::new();
-                let init = if self.eat(Punct::Semi)? {
-                    None
-                } else if self.is_type_start() {
-                    let mut stmts = Vec::new();
-                    self.parse_local_declaration(&mut stmts)?;
-                    for cleanup in std::mem::take(&mut self.pending_cleanups) {
-                        let id = self.sema.new_vla_scope();
-                        self.vla_path.push(id);
-                        cleanups.push((id, cleanup));
-                    }
-                    Some(Box::new(Stmt::Block(stmts)))
-                } else {
-                    let e = self.parse_expr()?;
-                    self.expect(Punct::Semi)?;
-                    Some(Box::new(Stmt::Expr(e)))
-                };
-                let cond = if self.at(Punct::Semi) {
-                    None
-                } else {
-                    let e = self.parse_expr()?;
-                    Some(self.sema.condition(e)?)
-                };
-                self.expect(Punct::Semi)?;
-                let step = if self.at(Punct::RParen) {
-                    None
-                } else {
-                    Some(self.parse_expr()?)
-                };
-                self.expect(Punct::RParen)?;
-                let body = self.parse_loop_body()?;
-                self.sema.pop_scope();
-                if cleanups.is_empty() {
-                    return Ok(Stmt::For {
-                        init,
-                        cond,
-                        step,
-                        body: Box::new(body),
-                    });
-                }
-                let mut scoped = vec![Stmt::For {
-                    init: None,
-                    cond,
-                    step,
-                    body: Box::new(body),
-                }];
-                while let Some((id, cleanup)) = cleanups.pop() {
-                    self.vla_path.pop();
-                    scoped = vec![Stmt::VlaScope {
-                        id,
-                        cleanup: Some(Box::new(cleanup)),
-                        body: scoped,
-                    }];
-                }
-                let mut stmts: Vec<Stmt> = init.map(|init| *init).into_iter().collect();
-                stmts.append(&mut scoped);
-                Ok(Stmt::Block(stmts))
-            }
-            Tok::Kw(Kw::Switch) => {
-                self.bump()?;
-                self.expect(Punct::LParen)?;
-                let e = self.parse_expr()?;
-                let e = self.sema.rvalue(e)?;
-                if !e.ty.is_integer() {
-                    return err(e.loc, "switch quantity is not an integer");
-                }
-                if e.ty.is_int128() {
-                    return err(e.loc, "a switch on a 128-bit integer is not supported yet");
-                }
-                let cond = self.sema.promote(e)?;
-                self.expect(Punct::RParen)?;
-                self.switches.push(SwitchCtx {
-                    vla_path: self.vla_path.clone(),
-                    cond_ty: cond.ty.clone(),
-                    cases: Vec::new(),
-                    default: None,
-                });
-                self.break_targets += 1;
-                let body = self.parse_statement()?;
-                self.break_targets -= 1;
-                let Some(ctx) = self.switches.pop() else {
-                    return err(loc, "internal error: switch context lost");
-                };
-                Ok(Stmt::Switch {
-                    cond,
-                    body: Box::new(body),
-                    cases: ctx.cases,
-                    default: ctx.default,
-                })
-            }
-            Tok::Kw(Kw::Case) => {
-                self.bump()?;
-                let e = self.parse_conditional()?;
-                let value = self.sema.const_int(&e)?;
-                // GNU case range: `case low ... high:`.
-                let mut high = value;
-                if self.eat(Punct::Ellipsis)? {
-                    let e = self.parse_conditional()?;
-                    high = self.sema.const_int(&e)?;
-                }
-                self.expect(Punct::Colon)?;
-                let label = self.sema.new_label();
-                self.sema.set_label_vla_path(label, &self.vla_path);
-                let Some(ctx) = self.switches.last_mut() else {
-                    return err(loc, "'case' label not within a switch statement");
-                };
-                if ctx.vla_path != self.vla_path {
-                    return err(
-                        loc,
-                        "switch jumps into the scope of a variable length array",
-                    );
-                }
-                let value = self.sema.wrap_int(value, &ctx.cond_ty);
-                let high = self.sema.wrap_int(high, &ctx.cond_ty);
-                let signed = self.sema.tcx.is_signed(&ctx.cond_ty);
-                let empty = if signed {
-                    high < value
-                } else {
-                    (high as u64) < (value as u64)
-                };
-                if empty {
-                    return err(loc, "empty case range");
-                }
-                let overlaps = |c: &SwitchCase| {
-                    if signed {
-                        c.value <= high && value <= c.high
-                    } else {
-                        (c.value as u64) <= (high as u64) && (value as u64) <= (c.high as u64)
-                    }
-                };
-                if ctx.cases.iter().any(overlaps) {
-                    return err(loc, format!("duplicate case value {value}"));
-                }
-                ctx.cases.push(SwitchCase { value, high, label });
-                let stmt = self.parse_labeled_body()?;
-                Ok(Stmt::Label(label, Box::new(stmt)))
-            }
-            Tok::Kw(Kw::Default) => {
-                self.bump()?;
-                self.expect(Punct::Colon)?;
-                let label = self.sema.new_label();
-                self.sema.set_label_vla_path(label, &self.vla_path);
-                let Some(ctx) = self.switches.last_mut() else {
-                    return err(loc, "'default' label not within a switch statement");
-                };
-                if ctx.vla_path != self.vla_path {
-                    return err(
-                        loc,
-                        "switch jumps into the scope of a variable length array",
-                    );
-                }
-                if ctx.default.is_some() {
-                    return err(loc, "multiple default labels in one switch");
-                }
-                ctx.default = Some(label);
-                let stmt = self.parse_labeled_body()?;
-                Ok(Stmt::Label(label, Box::new(stmt)))
-            }
+            Tok::Kw(Kw::For) => self.parse_for_statement(),
+            Tok::Kw(Kw::Switch) => self.parse_switch_statement(loc),
             Tok::Kw(Kw::Break) => {
                 self.bump()?;
                 self.expect(Punct::Semi)?;
@@ -3516,47 +3682,8 @@ impl<S: TokenSource> Parser<S> {
                 }
                 Ok(Stmt::Continue)
             }
-            Tok::Kw(Kw::Goto) => {
-                self.bump()?;
-                if self.eat(Punct::Star)? {
-                    let target = self.parse_expr()?;
-                    let target = self.sema.rvalue(target)?;
-                    if !target.ty.is_ptr() {
-                        return err(loc, "the operand of 'goto *' must be a pointer");
-                    }
-                    self.expect(Punct::Semi)?;
-                    if !self.vla_path.is_empty() {
-                        return err(
-                            loc,
-                            "a computed goto in the scope of a variable length array is not supported",
-                        );
-                    }
-                    self.computed_goto = Some(loc);
-                    return Ok(Stmt::GotoComputed(target));
-                }
-                let (name, nloc) = self.expect_ident()?;
-                self.expect(Punct::Semi)?;
-                let label = self.sema.named_label(&name, false, nloc)?;
-                self.gotos.push((label, self.vla_path.clone(), nloc));
-                Ok(Stmt::Goto(label))
-            }
-            Tok::Kw(Kw::Return) => {
-                self.bump()?;
-                if self.eat(Punct::Semi)? {
-                    if self.sema.func.as_ref().is_some_and(|f| !f.ret.is_void()) {
-                        return err(loc, "a function that returns a value needs one in 'return'");
-                    }
-                    return Ok(Stmt::Return(None));
-                }
-                let e = self.parse_expr()?;
-                self.expect(Punct::Semi)?;
-                // `return f();` in a void function is accepted when f() is void too.
-                let returns_void = self.sema.func.as_ref().is_some_and(|f| f.ret.is_void());
-                if returns_void && e.ty.is_void() {
-                    return Ok(Stmt::Block(vec![Stmt::Expr(e), Stmt::Return(None)]));
-                }
-                Ok(Stmt::Return(Some(self.sema.return_value(e, loc)?)))
-            }
+            Tok::Kw(Kw::Goto) => self.parse_goto_statement(loc),
+            Tok::Kw(Kw::Return) => self.parse_return_statement(loc),
             Tok::Kw(Kw::Asm) => self.parse_asm_statement(),
             _ => {
                 let e = self.parse_expr()?;
@@ -4305,12 +4432,107 @@ impl<S: TokenSource> Parser<S> {
         Ok(())
     }
 
+    /// A label at the current position, if there is one: `name:`, `case value:`,
+    /// `case low ... high:` (GNU) or `default:`.
+    #[inline(never)]
+    fn parse_label(&mut self, of_the_switch: &mut Option<LabelId>) -> Res<Option<LabelId>> {
+        let loc = self.loc();
+        match self.cur.tok.clone() {
+            Tok::Ident(name) if matches!(self.peek2()?, Tok::Punct(Punct::Colon)) => {
+                self.bump()?;
+                self.bump()?;
+                let label = self.sema.named_label(&name, true, loc)?;
+                self.sema.set_label_vla_path(label, &self.vla_path);
+                Ok(Some(label))
+            }
+            Tok::Kw(Kw::Case) => {
+                self.bump()?;
+                let e = self.parse_conditional()?;
+                let value = self.sema.const_int(&e)?;
+                let mut high = value;
+                if self.eat(Punct::Ellipsis)? {
+                    let e = self.parse_conditional()?;
+                    high = self.sema.const_int(&e)?;
+                }
+                self.expect(Punct::Colon)?;
+                let label = self.switch_label(of_the_switch);
+                let Some(ctx) = self.switches.last_mut() else {
+                    return err(loc, "'case' label not within a switch statement");
+                };
+                if ctx.vla_path != self.vla_path {
+                    return err(
+                        loc,
+                        "switch jumps into the scope of a variable length array",
+                    );
+                }
+                let value = self.sema.wrap_int(value, &ctx.cond_ty);
+                let high = self.sema.wrap_int(high, &ctx.cond_ty);
+                // In the order of the controlling expression's type.
+                let key = |v: i64| {
+                    if self.sema.tcx.is_signed(&ctx.cond_ty) {
+                        (v as u64) ^ (1 << 63)
+                    } else {
+                        v as u64
+                    }
+                };
+                if key(high) < key(value) {
+                    return err(loc, "empty case range");
+                }
+                // The ranges so far are disjoint, so only the last one that starts at or below
+                // `high` can reach into this one.
+                if ctx
+                    .ranges
+                    .range(..=key(high))
+                    .next_back()
+                    .is_some_and(|(_, end)| *end >= key(value))
+                {
+                    return err(loc, format!("duplicate case value {value}"));
+                }
+                ctx.ranges.insert(key(value), key(high));
+                ctx.cases.push(SwitchCase { value, high, label });
+                Ok(Some(label))
+            }
+            Tok::Kw(Kw::Default) => {
+                self.bump()?;
+                self.expect(Punct::Colon)?;
+                let label = self.switch_label(of_the_switch);
+                let Some(ctx) = self.switches.last_mut() else {
+                    return err(loc, "'default' label not within a switch statement");
+                };
+                if ctx.vla_path != self.vla_path {
+                    return err(
+                        loc,
+                        "switch jumps into the scope of a variable length array",
+                    );
+                }
+                if ctx.default.is_some() {
+                    return err(loc, "multiple default labels in one switch");
+                }
+                ctx.default = Some(label);
+                Ok(Some(label))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// The label a `case` or `default` stands for: the one the labels before it in the same run
+    /// stand for, or a new one.
+    fn switch_label(&mut self, of_the_switch: &mut Option<LabelId>) -> LabelId {
+        *of_the_switch.get_or_insert_with(|| {
+            let label = self.sema.new_label();
+            self.sema.set_label_vla_path(label, &self.vla_path);
+            label
+        })
+    }
+
     /// The statement after a label. `label: }` (C23) and `label: int x;` are tolerated.
     fn parse_labeled_body(&mut self) -> Res<Stmt> {
         if self.at(Punct::RBrace) {
             return Ok(Stmt::Empty);
         }
-        if self.at_kw(Kw::Attribute) {
+        let bracket_attr =
+            self.at(Punct::LBracket) && matches!(self.peek2()?, Tok::Punct(Punct::LBracket));
+        if self.at_kw(Kw::Attribute) || bracket_attr {
             let mut ignored = Attrs::default();
             self.parse_attributes(&mut ignored)?;
             if self.eat(Punct::Semi)? {
@@ -4457,7 +4679,6 @@ impl<S: TokenSource> Parser<S> {
         self.parse_unary()
     }
 
-    /// The braces of `(type){ ... }`; the parenthesized type has been consumed.
     /// The first named member of union type `ty` that has the type of `operand`, when `operand`
     /// is not of type `ty` already.
     fn union_member_for(&self, ty: &Type, operand: &Expr) -> Option<Rc<str>> {
@@ -4477,6 +4698,7 @@ impl<S: TokenSource> Parser<S> {
             .and_then(|m| m.name.clone())
     }
 
+    /// The braces of `(type){ ... }`; the parenthesized type has been consumed.
     fn parse_compound_literal(&mut self, ty: &Type, loc: Loc) -> Res<Expr> {
         let init = self.parse_initializer()?;
         self.sema.compound_literal(ty, init, loc)
@@ -4654,51 +4876,114 @@ impl<S: TokenSource> Parser<S> {
         Ok(e)
     }
 
+    /// An identifier in an expression: a variable, a function, an enumerator, or a builtin
+    /// that is called like one.
+    #[inline(never)]
+    fn parse_identifier(&mut self, name: &Rc<str>, loc: Loc) -> Res<Expr> {
+        self.bump()?;
+        if self.at(Punct::LParen) && self.sema.is_alloca_builtin(name) {
+            let mut args = self.parse_builtin_args()?;
+            let with_align = &**name == "__builtin_alloca_with_align";
+            if args.len() != 1 + usize::from(with_align) {
+                return err(loc, format!("wrong number of arguments to {name}"));
+            }
+            let align = if with_align {
+                let bits = self.sema.const_int(&args[1])?;
+                if bits < 8 || !(bits as u64).is_power_of_two() {
+                    return err(
+                        loc,
+                        "the alignment of __builtin_alloca_with_align must be a power of two number of bits",
+                    );
+                }
+                self.check_alignment_limit(bits as u64 / 8, loc)?;
+                (bits as u64 / 8).max(16)
+            } else {
+                16
+            };
+            return self.sema.alloca(args.swap_remove(0), align, loc);
+        }
+        if self.dialect.microsoft && self.at(Punct::LParen) {
+            if let Some(e) = self.parse_microsoft_call(name, loc)? {
+                return Ok(e);
+            }
+        }
+        if self.sema.lookup(name).is_none() {
+            if let Some(e) = self.parse_builtin(name, loc)? {
+                return Ok(e);
+            }
+            if self.at(Punct::LParen) {
+                return err(
+                    loc,
+                    format!(
+                        "call to undeclared function '{name}'; implicit function declarations are not allowed"
+                    ),
+                );
+            }
+        }
+        self.sema.ident(name, loc)
+    }
+
+    /// A string literal and the ones that follow it.
+    #[inline(never)]
+    fn parse_string_literals(&mut self, loc: Loc) -> Res<Expr> {
+        // Adjacent string literals concatenate (translation phase 6); one wide part
+        // makes the whole literal wide.
+        let mut narrow: Vec<u8> = Vec::new();
+        let mut points: Vec<u32> = Vec::new();
+        let mut wide = None;
+        let mut utf8_prefixed = false;
+        loop {
+            match &self.cur.tok {
+                Tok::Str(part, escaped, utf8) => {
+                    utf8_prefixed |= utf8.0;
+                    narrow.extend_from_slice(part);
+                    // Source characters become their code points; a byte written as an
+                    // escape is one element.
+                    let mut from = 0;
+                    for &at in escaped.iter().chain(std::iter::once(&(part.len() as u32))) {
+                        let run = &part[from..at as usize];
+                        points.extend(crate::token::display_bytes(run).chars().map(|c| c as u32));
+                        if let Some(&byte) = part.get(at as usize) {
+                            points.push(u32::from(byte));
+                        }
+                        from = at as usize + 1;
+                    }
+                }
+                Tok::WideStr(kind, part) => {
+                    if wide.is_some_and(|k| k != *kind) {
+                        return err(
+                            self.loc(),
+                            "concatenation of string literals with different prefixes",
+                        );
+                    }
+                    wide = Some(*kind);
+                    points.extend_from_slice(part);
+                }
+                _ => break,
+            }
+            self.bump()?;
+        }
+        if wide.is_some() && utf8_prefixed {
+            return err(
+                loc,
+                "concatenation of string literals with different prefixes",
+            );
+        }
+        match wide {
+            Some(kind) => {
+                let elem = self.sema.wide_elem_type(kind);
+                self.sema.wide_string_lit(&points, elem, loc)
+            }
+            None => self.sema.string_lit(narrow, loc),
+        }
+    }
+
     fn parse_primary(&mut self) -> Res<Expr> {
         let loc = self.loc();
         match &self.cur.tok {
             Tok::Ident(name) => {
                 let name = Rc::clone(name);
-                self.bump()?;
-                if self.at(Punct::LParen) && self.sema.is_alloca_builtin(&name) {
-                    let mut args = self.parse_builtin_args()?;
-                    let with_align = &*name == "__builtin_alloca_with_align";
-                    if args.len() != 1 + usize::from(with_align) {
-                        return err(loc, format!("wrong number of arguments to {name}"));
-                    }
-                    let align = if with_align {
-                        let bits = self.sema.const_int(&args[1])?;
-                        if bits < 8 || bits > (1 << 28) || !(bits as u64).is_power_of_two() {
-                            return err(
-                                loc,
-                                "the alignment of __builtin_alloca_with_align must be a power of two number of bits",
-                            );
-                        }
-                        (bits as u64 / 8).max(16)
-                    } else {
-                        16
-                    };
-                    return self.sema.alloca(args.swap_remove(0), align, loc);
-                }
-                if self.dialect.microsoft && self.at(Punct::LParen) {
-                    if let Some(e) = self.parse_microsoft_call(&name, loc)? {
-                        return Ok(e);
-                    }
-                }
-                if self.sema.lookup(&name).is_none() {
-                    if let Some(e) = self.parse_builtin(&name, loc)? {
-                        return Ok(e);
-                    }
-                    if self.at(Punct::LParen) {
-                        return err(
-                            loc,
-                            format!(
-                                "call to undeclared function '{name}'; implicit function declarations are not allowed"
-                            ),
-                        );
-                    }
-                }
-                self.sema.ident(&name, loc)
+                self.parse_identifier(&name, loc)
             }
             Tok::Int {
                 value,
@@ -4752,60 +5037,7 @@ impl<S: TokenSource> Parser<S> {
                 let ty = self.sema.wide_elem_type(kind);
                 self.sema.int_lit(i64::from(value), ty, loc)
             }
-            Tok::Str(..) | Tok::WideStr(..) => {
-                // Adjacent string literals concatenate (translation phase 6); one wide part
-                // makes the whole literal wide.
-                let mut narrow: Vec<u8> = Vec::new();
-                let mut points: Vec<u32> = Vec::new();
-                let mut wide = None;
-                let mut utf8_prefixed = false;
-                loop {
-                    match &self.cur.tok {
-                        Tok::Str(part, escaped, utf8) => {
-                            utf8_prefixed |= utf8.0;
-                            narrow.extend_from_slice(part);
-                            // Source characters become their code points; a byte written as an
-                            // escape is one element.
-                            let mut from = 0;
-                            for &at in escaped.iter().chain(std::iter::once(&(part.len() as u32))) {
-                                let run = &part[from..at as usize];
-                                points.extend(
-                                    crate::token::display_bytes(run).chars().map(|c| c as u32),
-                                );
-                                if let Some(&byte) = part.get(at as usize) {
-                                    points.push(u32::from(byte));
-                                }
-                                from = at as usize + 1;
-                            }
-                        }
-                        Tok::WideStr(kind, part) => {
-                            if wide.is_some_and(|k| k != *kind) {
-                                return err(
-                                    self.loc(),
-                                    "concatenation of string literals with different prefixes",
-                                );
-                            }
-                            wide = Some(*kind);
-                            points.extend_from_slice(part);
-                        }
-                        _ => break,
-                    }
-                    self.bump()?;
-                }
-                if wide.is_some() && utf8_prefixed {
-                    return err(
-                        loc,
-                        "concatenation of string literals with different prefixes",
-                    );
-                }
-                match wide {
-                    Some(kind) => {
-                        let elem = self.sema.wide_elem_type(kind);
-                        self.sema.wide_string_lit(&points, elem, loc)
-                    }
-                    None => self.sema.string_lit(narrow, loc),
-                }
-            }
+            Tok::Str(..) | Tok::WideStr(..) => self.parse_string_literals(loc),
             Tok::Punct(Punct::LParen) => {
                 self.enter()?;
                 self.bump()?;
@@ -4829,6 +5061,20 @@ impl<S: TokenSource> Parser<S> {
     }
 
     /// `({ ... })`; the opening parenthesis has been consumed.
+    /// `value`, after the operands of a builtin that only it is the value of: they are
+    /// evaluated like any argument, unless they are constants (which leaves `value` one).
+    fn after_evaluating(&mut self, operands: Vec<Expr>, value: Expr, loc: Loc) -> Res<Expr> {
+        let evaluated: Vec<Expr> = operands
+            .into_iter()
+            .filter(|operand| !self.sema.constant_p(operand))
+            .collect();
+        if evaluated.is_empty() {
+            return Ok(value);
+        }
+        let before = self.sema.discard_all(evaluated, loc)?;
+        self.sema.comma(before, value, loc)
+    }
+
     fn parse_statement_expr(&mut self, loc: Loc) -> Res<Expr> {
         if self.sema.func.is_none() {
             return err(
@@ -4916,6 +5162,11 @@ impl<S: TokenSource> Parser<S> {
     /// Builtins that are part of the language as far as headers are concerned. Returns
     /// `None` if `name` is not one of them.
     fn parse_builtin(&mut self, name: &str, loc: Loc) -> Res<Option<Expr>> {
+        // (Microsoft's rotates aside, which are functions of its headers elsewhere.)
+        let microsoft = !name.starts_with("__");
+        if !microsoft && !crate::pp_expr::has_builtin(name, self.sema.tcx.target) {
+            return Ok(None);
+        }
         if name.starts_with("__atomic_")
             || name.starts_with("__sync_")
             || name.starts_with("__c11_atomic_")
@@ -4985,8 +5236,9 @@ impl<S: TokenSource> Parser<S> {
                 if args.len() < 2 {
                     return err(loc, "__builtin_expect takes two arguments");
                 }
-                let value = args.swap_remove(0);
-                Ok(Some(self.sema.cast(value, &Type::Long, loc)?))
+                let value = args.remove(0);
+                let value = self.sema.cast(value, &Type::Long, loc)?;
+                Ok(Some(self.after_evaluating(args, value, loc)?))
             }
             "complex" => {
                 let mut args = self.parse_builtin_args()?;
@@ -5033,6 +5285,10 @@ impl<S: TokenSource> Parser<S> {
                 let (op, arg_ty, ret) = match short {
                     "bswap16" => (Intrinsic::Bswap, Type::UShort, Type::UShort),
                     "bswap32" => (Intrinsic::Bswap, uint.clone(), uint),
+                    // `uint64_t`, which is `unsigned long` where that has 64 bits.
+                    "bswap64" if self.sema.tcx.size_of(&ulong) == Some(8) => {
+                        (Intrinsic::Bswap, ulong.clone(), ulong)
+                    }
                     "bswap64" => (Intrinsic::Bswap, ullong.clone(), ullong),
                     "clz" => (Intrinsic::Clz, uint, Type::Int),
                     "clzl" => (Intrinsic::Clz, ulong, Type::Int),
@@ -5059,11 +5315,12 @@ impl<S: TokenSource> Parser<S> {
             "huge_val" | "inf" | "huge_valf" | "inff" | "nan" | "nanf" | "nans" | "nansf"
             | "huge_vall" | "infl" | "nanl" | "nansl" => {
                 self.parse_builtin_args()?;
-                let single = short.ends_with('f') && short != "inf";
+                let single = matches!(short, "huge_valf" | "inff" | "nanf");
+                let long = matches!(short, "huge_vall" | "infl" | "nanl");
                 if matches!(short, "nans" | "nansf" | "nansl") {
                     return err(loc, format!("{name}: signalling NaNs are not supported"));
                 }
-                if short.ends_with('l') && self.sema.tcx.target.long_double_size().is_some() {
+                if long && self.sema.tcx.target.long_double_size().is_some() {
                     if !self.sema.tcx.target.long_double_is_x87() {
                         return err(
                             loc,
@@ -5084,7 +5341,7 @@ impl<S: TokenSource> Parser<S> {
                 };
                 let ty = if single {
                     Type::Float
-                } else if short.ends_with('l') {
+                } else if long {
                     Type::LongDouble64
                 } else {
                     Type::Double
@@ -5120,14 +5377,15 @@ impl<S: TokenSource> Parser<S> {
                 if args.len() != 2 && args.len() != 3 {
                     return err(loc, format!("{name} takes two or three arguments"));
                 }
-                let pointer = self.sema.rvalue(args.swap_remove(0))?;
+                let pointer = self.sema.rvalue(args.remove(0))?;
                 if !pointer.ty.is_ptr() {
                     return err(
                         loc,
                         format!("the first operand of {name} must be a pointer"),
                     );
                 }
-                Ok(Some(self.sema.cast(pointer, &Type::Void.ptr_to(), loc)?))
+                let pointer = self.sema.cast(pointer, &Type::Void.ptr_to(), loc)?;
+                Ok(Some(self.after_evaluating(args, pointer, loc)?))
             }
             // The size of the object a pointer points into is never known here.
             "object_size" | "dynamic_object_size" => {
@@ -5398,7 +5656,7 @@ impl<S: TokenSource> Parser<S> {
             }
             _ => {
                 // `__builtin_memcpy` and friends are the C library functions of the same name.
-                let Some(fty) = library_prototype(short, &self.sema) else {
+                let Some(fty) = library_prototype(short, self.sema.tcx.target) else {
                     return Ok(None);
                 };
                 let id = self.sema.declare_library_function(short, fty, loc)?;
@@ -5977,8 +6235,16 @@ fn overflow_op(name: &str) -> crate::sema::builtin::OverflowOp {
 }
 
 /// Prototypes of the C library functions that have `__builtin_` spellings.
-fn library_prototype(name: &str, sema: &Sema) -> Option<Rc<FuncType>> {
-    let size = sema.size_type();
+pub(crate) fn is_library_builtin(name: &str, target: Target) -> bool {
+    library_prototype(name, target).is_some()
+}
+
+fn library_prototype(name: &str, target: Target) -> Option<Rc<FuncType>> {
+    let size = if target.long_size() == 8 {
+        Type::ULong
+    } else {
+        Type::ULLong
+    };
     let void_ptr = Type::Void.ptr_to();
     let char_ptr = Type::Char.ptr_to();
     let (ret, params): (Type, Vec<Type>) = match name {
@@ -6001,15 +6267,15 @@ fn library_prototype(name: &str, sema: &Sema) -> Option<Rc<FuncType>> {
         "sqrtl" | "floorl" | "ceill" | "truncl" | "roundl" | "rintl" | "nearbyintl" | "sinl"
         | "cosl" | "tanl" | "expl" | "exp2l" | "logl" | "log2l" | "log10l" | "cbrtl" | "logbl"
         | "fabsl" => {
-            let long_double = sema.tcx.target.long_double_type();
+            let long_double = target.long_double_type();
             (long_double.clone(), vec![long_double])
         }
         "powl" | "fmodl" | "fmaxl" | "fminl" | "atan2l" | "hypotl" | "copysignl" => {
-            let long_double = sema.tcx.target.long_double_type();
+            let long_double = target.long_double_type();
             (long_double.clone(), vec![long_double.clone(), long_double])
         }
         "ldexpl" | "scalbnl" => {
-            let long_double = sema.tcx.target.long_double_type();
+            let long_double = target.long_double_type();
             (long_double.clone(), vec![long_double, Type::Int])
         }
         "sqrtf" | "floorf" | "ceilf" | "truncf" | "roundf" | "rintf" | "nearbyintf" | "sinf"

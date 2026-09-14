@@ -84,6 +84,16 @@ impl Sema {
         self.convert(real, to, loc)
     }
 
+    /// An operand of arithmetic done in the complex type `ty`: a complex one is converted to
+    /// `ty`; a real one stays real (C11 6.3.1.8: "without change of type domain") and is
+    /// converted to the type of `ty`'s parts.
+    fn complex_operand(&self, e: Expr, ty: &Type, loc: Loc) -> Res<Expr> {
+        match (e.ty.is_complex(), ty.complex_part()) {
+            (false, Some(part)) => self.convert(e, &part, loc),
+            _ => self.to_complex(e, ty, loc),
+        }
+    }
+
     /// The complex type two operands are brought to.
     fn common_complex(&self, a: &Type, b: &Type) -> Type {
         let real = |t: &Type| t.complex_part().unwrap_or_else(|| t.clone());
@@ -111,8 +121,8 @@ impl Sema {
         }
         let ty = self.common_complex(&a.ty, &b.ty);
         let (aloc, bloc) = (a.loc, b.loc);
-        let a = self.to_complex(a, &ty, aloc)?;
-        let b = self.to_complex(b, &ty, bloc)?;
+        let a = self.complex_operand(a, &ty, aloc)?;
+        let b = self.complex_operand(b, &ty, bloc)?;
         let result = if op.is_compare() { Type::Int } else { ty };
         self.mk(ExprKind::Binary(op, Box::new(a), Box::new(b)), result, loc)
     }
@@ -197,7 +207,7 @@ impl Sema {
         }
         let op_ty = self.common_complex(&ty, &rhs.ty);
         let rloc = rhs.loc;
-        let rhs = self.to_complex(rhs, &op_ty, rloc)?;
+        let rhs = self.complex_operand(rhs, &op_ty, rloc)?;
         self.mk(
             ExprKind::CompoundAssign {
                 lhs: Box::new(lhs),

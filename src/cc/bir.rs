@@ -40,6 +40,16 @@ pub const MAGIC: [u8; 4] = *b"BIR0";
 /// Where the writable part of the data starts when there are constants before it: a multiple of
 /// the largest page size of any target (Apple arm64's), so that no page holds both.
 pub(crate) const DATA_PAGE: u64 = 16384;
+/// What the loader accepts, which `validate` holds a module to and the front end says in its own
+/// words, with a place, before one is ever written.
+/// An argument passed by value on the stack:
+pub(crate) const MAX_BY_VALUE_SIZE: u64 = 1 << 20;
+pub(crate) const MAX_BY_VALUE_ALIGN: u64 = 16;
+/// The alignment of a stack slot, of `StackAlloc` and of the data and thread-local segments:
+pub(crate) const MAX_ALIGN: u64 = 4096;
+pub(crate) const MAX_SLOT_SIZE: u64 = 1 << 28;
+/// The size of the data segment and of the thread-local one:
+pub(crate) const MAX_SEGMENT_SIZE: u64 = 1 << 30;
 /// Or'ed into an extern's kind byte: `__attribute__((weak))`. Null when nothing defines it.
 pub(crate) const WEAK_EXTERN: u8 = 0x80;
 /// Function declaration flags that steer the backend's inliner.
@@ -1226,11 +1236,14 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
         }
     }
     for (i, s) in func.slots.iter().enumerate() {
-        if s.align == 0 || !s.align.is_power_of_two() {
+        if s.align == 0 || !s.align.is_power_of_two() || s.align > MAX_ALIGN {
             return Err(format!(
-                "function '{}': slot {} alignment is not a power of two",
+                "function '{}': slot {} alignment is not a power of two up to {MAX_ALIGN}",
                 func.name, i
             ));
+        }
+        if s.size > MAX_SLOT_SIZE {
+            return Err(format!("function '{}': slot {} is too large", func.name, i));
         }
     }
     if func.blocks.is_empty() {
@@ -1244,9 +1257,14 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
             Param::Value(Ty::Void) => {
                 return Err(format!("function '{}': void parameter", func.name));
             }
-            Param::ByValStack { align, .. } if !align.is_power_of_two() => {
+            Param::ByValStack { size, align, .. }
+                if !matches!(align, 8 | MAX_BY_VALUE_ALIGN)
+                    || size == 0
+                    || size > MAX_BY_VALUE_SIZE
+                    || size % 8 != 0 =>
+            {
                 return Err(format!(
-                    "function '{}': ByValStack alignment is not a power of two",
+                    "function '{}': ByValStack of {size} bytes aligned to {align}",
                     func.name
                 ));
             }
@@ -1680,11 +1698,22 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                     }
                     Some(*ty)
                 }
-                Inst::Load(kind, addr, _) | Inst::VolatileLoad(kind, addr, _) => {
+                Inst::Load(kind, addr, offset) | Inst::VolatileLoad(kind, addr, offset) => {
+                    if i32::try_from(*offset).is_err() {
+                        return Err(fail(bi, ii, "Load offset does not fit 32 bits".to_string()));
+                    }
                     expect(*addr, Ty::I64)?;
                     Some(kind.value_ty())
                 }
-                Inst::Store(kind, value, addr, _) | Inst::VolatileStore(kind, value, addr, _) => {
+                Inst::Store(kind, value, addr, offset)
+                | Inst::VolatileStore(kind, value, addr, offset) => {
+                    if i32::try_from(*offset).is_err() {
+                        return Err(fail(
+                            bi,
+                            ii,
+                            "Store offset does not fit 32 bits".to_string(),
+                        ));
+                    }
                     if matches!(kind, MemKind::I8S | MemKind::I16S) {
                         return Err(fail(bi, ii, "Store with a signed memory kind".to_string()));
                     }
@@ -1795,7 +1824,8 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                         return Err(fail(bi, ii, "Switch on a non-integer value".to_string()));
                     }
                     check_block(*default)?;
-                    for (i, (case, b)) in cases.iter().enumerate() {
+                    let mut seen = std::collections::BTreeSet::new();
+                    for (case, b) in cases {
                         check_block(*b)?;
                         if tv == Ty::I32 && i32::try_from(*case).is_err() {
                             return Err(fail(
@@ -1804,7 +1834,7 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                                 format!("case {case} does not fit the i32 scrutinee"),
                             ));
                         }
-                        if cases[..i].iter().any(|(c, _)| c == case) {
+                        if !seen.insert(*case) {
                             return Err(fail(bi, ii, format!("duplicate case {case}")));
                         }
                     }
@@ -1846,11 +1876,11 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                     None
                 }
                 Inst::StackAlloc(bytes, align) => {
-                    if !align.is_power_of_two() {
+                    if !align.is_power_of_two() || *align > MAX_ALIGN {
                         return Err(fail(
                             bi,
                             ii,
-                            "StackAlloc alignment is not a power of two".to_string(),
+                            format!("StackAlloc alignment is not a power of two up to {MAX_ALIGN}"),
                         ));
                     }
                     expect(*bytes, Ty::I64)?;
@@ -1888,8 +1918,13 @@ pub(crate) fn validate(module: &Module) -> Result<(), String> {
         }
     }
     let data = &module.data;
-    if data.align == 0 || !data.align.is_power_of_two() {
-        return Err("data alignment is not a power of two".to_string());
+    if data.align == 0 || !data.align.is_power_of_two() || data.align > MAX_ALIGN {
+        return Err(format!(
+            "data alignment is not a power of two up to {MAX_ALIGN}"
+        ));
+    }
+    if data.size > MAX_SEGMENT_SIZE {
+        return Err("data is too large".to_string());
     }
     if data.init.len() as u64 > data.size {
         return Err("data ninit exceeds size".to_string());
@@ -1929,8 +1964,13 @@ pub(crate) fn validate(module: &Module) -> Result<(), String> {
             }
         }
     }
-    if tls.size > 0 && (tls.align == 0 || !tls.align.is_power_of_two()) {
-        return Err("tls alignment is not a power of two".to_string());
+    if tls.size > 0 && (tls.align == 0 || !tls.align.is_power_of_two() || tls.align > MAX_ALIGN) {
+        return Err(format!(
+            "tls alignment is not a power of two up to {MAX_ALIGN}"
+        ));
+    }
+    if tls.size > MAX_SEGMENT_SIZE {
+        return Err("tls is too large".to_string());
     }
     if tls.init.len() as u64 > tls.size {
         return Err("tls ninit exceeds size".to_string());

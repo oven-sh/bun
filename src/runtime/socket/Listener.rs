@@ -1785,6 +1785,11 @@ impl WindowsNamedPipeListeningContext {
             PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
         };
 
+        // An accepted pipe is the listening script's.
+        let _context = this_ref
+            .global_this
+            .bun_vm()
+            .enter_context(listener.context);
         let client = WindowsNamedPipeContext::create(&this_ref.global_this, socket);
 
         // SAFETY: `client` was just heap-allocated by `create()`; exclusive

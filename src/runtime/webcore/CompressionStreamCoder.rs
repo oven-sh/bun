@@ -141,6 +141,9 @@ pub struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
+    /// The context of the script that made the stream: its off-thread steps belong to it, also
+    /// the ones a native sink asks for.
+    context: bun_jsc::ContextId,
 }
 
 // SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
@@ -268,6 +271,9 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
+            context: bun_jsc::virtual_machine::VirtualMachine::get()
+                .current_context()
+                .id(),
         }))
     }
 
@@ -1009,6 +1015,8 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
     };
     let (input, pin) = AsyncInput::new(global, chunk, fallback);
     let cx = global.js_thread();
+    // SAFETY: `this` is the live coder owned by the calling JS cell.
+    let _context = cx.vm().enter_context(unsafe { (*this).context });
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
         CompressionAsyncCtx {

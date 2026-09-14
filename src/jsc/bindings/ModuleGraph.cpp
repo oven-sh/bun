@@ -393,6 +393,25 @@ ModuleGraphContextScope::~ModuleGraphContextScope()
         m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous);
 }
 
+// VirtualMachine::enter_context: native code about to run a completion of something a graph's script
+// started. Returns the async context to restore.
+extern "C" EncodedJSValue Bun__ModuleGraph__enterContext(JSGlobalObject* lexicalGlobalObject, WebCore::ScriptExecutionContext* context)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue previous = asyncContextData->getInternalField(0);
+    auto* graph = context->moduleGraph() ? dynamicDowncast<JSIsolatedModuleGraph>(context->moduleGraph()) : nullptr;
+    if (graph && currentIsolatedModuleGraph(globalObject) != graph)
+        asyncContextData->putInternalField(globalObject->vm(), 0, createModuleGraphFrame(globalObject, graph, previous));
+    return JSValue::encode(previous);
+}
+
+extern "C" void Bun__ModuleGraph__leaveContext(JSGlobalObject* lexicalGlobalObject, EncodedJSValue previous)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, JSValue::decode(previous));
+}
+
 bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject* globalObject, JSValue asyncContext)
 {
     auto* state = globalObject->m_moduleGraphs.get();

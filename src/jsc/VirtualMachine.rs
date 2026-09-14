@@ -368,6 +368,8 @@ pub struct VirtualMachine {
     /// Owns what belongs to the VM rather than to the realm script runs in:
     /// stopped only by teardown.
     pub vm_context: crate::ScriptExecutionContext,
+    /// Live [`ContextScope`]s.
+    pub(crate) context_scopes: Cell<u32>,
     pub(crate) context_ids: crate::script_execution_context::ContextIdAllocator,
     /// The contexts made for `Bun.ModuleGraph`s, by id, stopped or not. Empty:
     /// every context question has the root context for an answer.
@@ -419,6 +421,11 @@ unsafe extern "C" {
     safe fn Bun__currentGraphContext(
         global: &JSGlobalObject,
     ) -> *const crate::ScriptExecutionContext;
+    /// ModuleGraph.cpp: make the graph of this `WebCore::ScriptExecutionContext` current;
+    /// returns the async context to restore.
+    fn Bun__ModuleGraph__enterContext(global: &JSGlobalObject, dom_context: *mut c_void)
+    -> JSValue;
+    safe fn Bun__ModuleGraph__leaveContext(global: &JSGlobalObject, previous: JSValue);
     /// ModuleGraph.cpp: deliver an uncaught exception thrown by a `Bun.ModuleGraph`'s
     /// module code (the Exception's throw site decides), or an unhandled rejection whose
     /// owner promiseRejectionTracker decided, to that graph's `onError`. true: delivered
@@ -1084,8 +1091,8 @@ impl VirtualMachine {
         // or process-exit callback) has no current context; it uses the one its owner captured
         // when script created it.
         debug_assert!(
-            self.jsc_vm().is_entered(),
-            "current_context() with no script on the stack: use the context captured when script created the owner"
+            self.jsc_vm().is_entered() || self.context_scopes.get() != 0,
+            "current_context() with no script on the stack: enter_context() the one captured when script created the owner"
         );
         // SAFETY: a graph's context outlives every async context frame that names it.
         unsafe { Bun__currentGraphContext(self.global()).as_ref() }
@@ -1113,6 +1120,23 @@ impl VirtualMachine {
             || self
                 .graph_context(id)
                 .is_some_and(|context| !context.is_stopped())
+    }
+
+    /// Native code reached from the event loop is about to continue what `context`'s script
+    /// started (run a completion, start the next step): while the guard lives
+    /// [`current_context`](Self::current_context) is that context, for native code and for the
+    /// script it calls. A no-op for the realm's own contexts and once the context is freed.
+    pub fn enter_context(&self, context: crate::ContextId) -> ContextScope<'_> {
+        let previous = self
+            .graph_context(context)
+            .map(|context| context.dom_context())
+            .filter(|dom_context| !dom_context.is_null())
+            // SAFETY: non-null ⇒ the `WebCore::ScriptExecutionContext` is alive.
+            .map(|dom_context| unsafe {
+                Bun__ModuleGraph__enterContext(self.global(), dom_context)
+            });
+        self.context_scopes.set(self.context_scopes.get() + 1);
+        ContextScope { vm: self, previous }
     }
 
     /// Whether the running script may name by number (a timer id) something `owner`'s script
@@ -3029,6 +3053,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).auto_killer).write(Default::default());
             addr_of_mut!((*vm).root_context).write(Default::default());
             addr_of_mut!((*vm).vm_context).write(Default::default());
+            addr_of_mut!((*vm).context_scopes).write(Cell::new(0));
             addr_of_mut!((*vm).context_ids).write(Default::default());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
             (*vm).root_context.renew((*vm).context_ids.next());
@@ -7446,4 +7471,21 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         "{}:{}",
         user_namespace, file_path
     )))))
+}
+
+/// See [`VirtualMachine::enter_context`].
+pub struct ContextScope<'a> {
+    vm: &'a VirtualMachine,
+    /// The async context to restore, when the scope changed it. (On the stack: kept alive by
+    /// the conservative scan.)
+    previous: Option<JSValue>,
+}
+
+impl Drop for ContextScope<'_> {
+    fn drop(&mut self) {
+        self.vm.context_scopes.set(self.vm.context_scopes.get() - 1);
+        if let Some(previous) = self.previous {
+            Bun__ModuleGraph__leaveContext(self.vm.global(), previous);
+        }
+    }
 }

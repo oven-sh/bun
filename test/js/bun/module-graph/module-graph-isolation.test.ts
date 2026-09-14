@@ -266,6 +266,10 @@ const dir = String(
         "fetch(file:)": () => fetch("file://" + dataFile).then(response => response.text()),
         "fetch(data:)": () => fetch("data:text/plain,hi").then(response => response.text()),
         "CompressionStream": () => new Response(new Blob(["x".repeat(1000)]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer(),
+        // Over 128 KB a chunk is coded on a thread pool, one step scheduling the next.
+        "CompressionStream (off-thread)": () => new Response(new Blob([Buffer.alloc(1 << 20, "abcdefgh")]).stream().pipeThrough(new CompressionStream("gzip")).pipeThrough(new DecompressionStream("gzip"))).arrayBuffer(),
+        "Bun.write(file, Blob)": () => Bun.write(dataFile + ".big", new Blob([Buffer.alloc(1 << 20, "x")])),
+        "Bun.write(file, file)": () => Bun.write(dataFile + ".copy", Bun.file(dataFile)),
         "MessageChannel": () => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(1); }),
         "Worker": () => new Promise(resolve => { const worker = new Worker("data:text/javascript,postMessage(1)"); worker.onmessage = () => resolve(); }),
         "child_process.exec": () => promisify(childProcess.exec)("echo hi"),

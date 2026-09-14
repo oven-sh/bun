@@ -166,6 +166,10 @@ impl ScriptExecutionContext {
         }
     }
 
+    pub(crate) fn dom_context(&self) -> *mut core::ffi::c_void {
+        self.dom_context.get()
+    }
+
     /// The `WebCore::ScriptExecutionContext` is being destroyed. This one outlives it
     /// until what it still owns is closed.
     pub(crate) fn dom_context_released(&self) {
@@ -359,6 +363,12 @@ impl AbortHandle {
         // SAFETY: a context outlives the handles linked into it (it unlinks
         // them all when it stops).
         unsafe { self.context.get().as_ref() }
+    }
+
+    /// The context the handle is armed in.
+    #[inline]
+    pub fn context_id(&self) -> Option<ContextId> {
+        self.context().map(ScriptExecutionContext::id)
     }
 
     #[inline]

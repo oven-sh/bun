@@ -295,6 +295,12 @@ impl S3HttpSimpleTask {
     // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_response(this: *mut Self) -> bun_jsc::JsResult<()> {
+        // The next request of a multipart upload, a retry, and the script this calls continue
+        // what the requesting script started.
+        // SAFETY: fn contract — `this` is live.
+        let context = unsafe { (*this).abort_handle.context_id() };
+        let vm = VirtualMachine::get();
+        let _context = context.map(|context| vm.enter_context(context));
         // SAFETY: fn contract — `this` is live.
         unsafe { (*this).abort_handle.leave() };
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is

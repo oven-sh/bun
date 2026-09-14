@@ -953,6 +953,9 @@ inline Zig::GlobalObject* defaultGlobalObject()
     return ___private___::getDefaultGlobalObject();
 }
 
+// The Structure a LazyClassStructure constructor allocates with for this newTarget. nullptr on exception.
+JSC::Structure* structureForNewTarget(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue newTarget, JSC::LazyClassStructure Zig::GlobalObject::* classStructure);
+
 inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject)) {

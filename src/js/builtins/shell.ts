@@ -341,7 +341,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       return new ShellPromise(parsed_shell_script, throws);
     };
 
-    Object.setPrototypeOf(Shell, ShellPrototype.prototype);
+    const prototype = new.target.prototype;
+    Object.setPrototypeOf(Shell, $isObject(prototype) ? prototype : ShellPrototype.prototype);
     Object.defineProperty(Shell, "name", { value: "Shell", configurable: true, enumerable: true });
 
     Shell[cwdSymbol] = defaultCwd;

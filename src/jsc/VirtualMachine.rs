@@ -1462,6 +1462,16 @@ impl VirtualMachine {
         vm.heap_size()
     }
 
+    /// `Bun.gc(force)` and `gc()`. Whoever asks for a synchronous collection reads the footprint next: what the collection
+    /// freed goes back to the OS now, not whenever the allocator's purge delay has passed.
+    pub fn garbage_collect_from_js(&self, sync: bool) -> usize {
+        let size = self.garbage_collect(sync);
+        if sync {
+            bun_core::Global::mimalloc_cleanup(true);
+        }
+        size
+    }
+
     #[inline]
     pub fn auto_garbage_collect(&self) {
         if self.aggressive_garbage_collection != GCLevel::None {
@@ -6332,13 +6342,17 @@ impl VirtualMachine {
             // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
             let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
             if let Some(code_value) = obj.get_code_property_vm_inquiry(global_ref) {
-                if code_value.is_string() {
+                // Not `is_string()`: converting a String object runs its `toString` /
+                // `Symbol.toPrimitive`. The property loop below prints one.
+                if code_value.is_string_literal() {
                     match code_value.to_bun_string(global_ref) {
                         Ok(s) if s.is_8bit() => {
                             code_string = Some(s);
                             code_string.as_ref().map(|s| s.latin1())
                         }
                         Ok(_) => None,
+                        // A primitive string only fails to convert when it is a rope
+                        // that cannot be resolved.
                         Err(_) => bun_core::out_of_memory(),
                     }
                 } else {

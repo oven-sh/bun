@@ -121,8 +121,7 @@ void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStr
         RELEASE_AND_RETURN(scope, byteControllerOf(stream)->pullSteps(globalObject, readRequest));
     case ControllerKind::None:
         // No controller yet (an unmaterialized Bun stream): the read stays pending.
-        readableStreamAddReadRequest(vm, stream, readRequest);
-        return;
+        RELEASE_AND_RETURN(scope, readableStreamAddReadRequest(globalObject, stream, readRequest));
     case ControllerKind::Direct: {
         auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
         // The direct pump allocates and settles its own head-of-line promise; a
@@ -141,7 +140,8 @@ void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStr
         }
         // Other read-request kinds wait in [[readRequests]] and are delivered through their
         // own chunk/close/error steps.
-        readableStreamAddReadRequest(vm, stream, readRequest);
+        readableStreamAddReadRequest(globalObject, stream, readRequest);
+        RETURN_IF_EXCEPTION(scope, void());
         scope.release();
         controller->onPull(globalObject, /* readRequestQueued */ true);
         return;

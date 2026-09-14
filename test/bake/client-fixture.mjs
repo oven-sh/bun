@@ -113,6 +113,17 @@ function createWindow(windowUrl) {
     }
   };
 
+  // happy-dom has no `reportError`. A browser reports an uncaught script error
+  // by firing `error` on the window, then logging it unless a listener cancels it.
+  window.reportError = error => {
+    const event = new window.ErrorEvent("error", {
+      error,
+      message: String(error?.message ?? error),
+      cancelable: true,
+    });
+    if (window.dispatchEvent(event)) window.console.error(error);
+  };
+
   const original_window_fetch = window.fetch;
   window.fetch = async function (url, options) {
     if (typeof url === "string") {

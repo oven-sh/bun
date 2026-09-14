@@ -254,11 +254,37 @@ export class HMRModule {
 
   /** Server-only */
   declare builtin: (id: string) => any;
+
+  /** Client-only. Called by the load function of an HTML route's module. */
+  declare loadScripts: (ids: Id[]) => Promise<void>;
 }
 if (side === "server") {
   HMRModule.prototype.builtin = (id: string) =>
     // @ts-expect-error
     import.meta.bakeBuiltin(import.meta.resolve(id));
+}
+if (side === "client") {
+  // The page's `<script src>` tags in document order. Each one is its own
+  // error boundary, like a `<script>` element: a script that throws is
+  // reported as an uncaught error and the next one still runs. A script with
+  // top-level await does not hold up the next one either. `bun build` does
+  // the same through `__script` (runtime.js).
+  const reportScriptError = (e: unknown) => {
+    if (typeof reportError === "function") reportError(e);
+    else console.error(e);
+  };
+  HMRModule.prototype.loadScripts = async function (this: HMRModule, ids: Id[]) {
+    const pending: Promise<unknown>[] = [];
+    for (const id of ids) {
+      try {
+        const mod = loadModuleAsync(id, false, this);
+        if (mod instanceof Promise) pending.push(mod.catch(reportScriptError));
+      } catch (e) {
+        reportScriptError(e);
+      }
+    }
+    await Promise.all(pending);
+  };
 }
 // prettier-ignore
 HMRModule.prototype.indirectHot = new Proxy({}, {

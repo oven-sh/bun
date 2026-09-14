@@ -555,7 +555,7 @@ Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files a
 - Inlines small assets in CSS files into `data:` URLs, reducing the total number of HTTP requests sent over the wire
 </Step>
 <Step title="4. HTML Rewriting">
-- Combines all `<script>` tags into a single `<script>` tag with a content-addressable hash in the URL
+- Combines all `<script>` tags into a single `<script>` tag with a content-addressable hash in the URL. The scripts run in document order. When one of them throws at the top level, Bun reports the error with `reportError()` and the next script still runs.
 - Combines all `<link>` tags into a single `<link>` tag with a content-addressable hash in the URL
 - Outputs a new HTML file
 </Step>

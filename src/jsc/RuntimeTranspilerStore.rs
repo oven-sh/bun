@@ -529,8 +529,21 @@ impl TranspilerJob {
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
+        // SAFETY: `vm` is this thread's live VM, which owns the job; an atomic load of a leaf field.
+        let store_generation = unsafe {
+            (*vm)
+                .transpiler_store
+                .generation_number
+                .load(Ordering::Relaxed)
+        };
         let (specifier, result) = match (self.parse_error, self.compiled_c.take()) {
             (Some(e), _) => (String::clone_utf8(self.path.text), Err(e)),
+            // A C file compiled for a module graph that a reload has since replaced: what was
+            // compiled may no longer be what the file is, and nothing is waiting for it.
+            (None, Some(_)) if self.generation_number != store_generation => (
+                String::clone_utf8(self.path.text),
+                Err(crate::CrateError::TranspilerJobGenerationMismatch),
+            ),
             // A C file: the pool thread compiled it, and what is left needs the VM.
             (None, Some(compiled)) => {
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);

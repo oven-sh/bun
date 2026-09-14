@@ -24,10 +24,18 @@ unsafe extern "C" {
     ) -> bool;
     fn Bun__CModule__registerDestructors(
         module: *mut c_void,
-        add: unsafe extern "C" fn(unsafe extern "C" fn()),
+        add: unsafe extern "C" fn(unsafe extern "C" fn()) -> core::ffi::c_int,
     );
     fn Bun__CModule__runConstructors(module: *mut c_void);
     fn Bun__CModule__createExports(global: *const JSGlobalObject, module: *mut c_void) -> JSValue;
+}
+
+/// A C file loaded into the process, and this VM's object of its functions.
+pub struct Loaded {
+    pub exports: JSValue,
+    /// What [`evaluate`] runs the constructors of: the module is evaluated where the module that
+    /// imports it is, not where it is fetched.
+    pub module: core::ptr::NonNull<c_void>,
 }
 
 /// Resolves what the C source declares but does not define: whatever the process already has
@@ -52,12 +60,20 @@ unsafe extern "C" fn resolve_extern(name: *const c_char, name_len: usize) -> *mu
     if let Some(address) = windows_runtime::find(name.as_bytes()) {
         return address;
     }
+    #[cfg(not(windows))]
     if let Some(address) = bun_sys::dlsym_impl(None, name) {
         return address;
     }
+    // What bun.exe itself exports (`napi_*`), then the libraries every program has.
     #[cfg(windows)]
-    if let Some(address) = windows_libraries(name) {
-        return address;
+    {
+        // SAFETY: a null name is the file the process was made from.
+        let process = unsafe { bun_sys::windows::kernel32::GetModuleHandleW(core::ptr::null()) };
+        if let Some(address) =
+            bun_sys::dlsym_impl(Some(process.cast()), name).or_else(|| windows_libraries(name))
+        {
+            return address;
+        }
     }
     glibc_static_stub(name.as_bytes()).unwrap_or(core::ptr::null_mut())
 }
@@ -554,7 +570,7 @@ pub fn finish(
     path: &[u8],
     mut compiled: CompiledC<'_>,
     on_file_read: &mut dyn FnMut(&[u8]),
-) -> JsResult<JSValue> {
+) -> JsResult<Loaded> {
     for file in &compiled.files_read {
         on_file_read(file.as_bytes());
     }
@@ -593,10 +609,10 @@ pub fn finish(
             .print(std::ptr::from_mut(bun_core::Output::error_writer()));
         bun_core::Output::flush();
     }
-    let exports = load_bir(global_this, path, &bir)?;
+    let loaded = load_bir(global_this, path, &bir)?;
     if compiled.precompiled {
         // What `bun build` makes the entry point call when the entry point was a C file.
-        exports.put_non_enumerable(
+        loaded.exports.put_non_enumerable(
             global_this,
             bun_bundler::options::C_RUN_MAIN_PROPERTY,
             bun_jsc::JSFunction::create(
@@ -608,56 +624,145 @@ pub fn finish(
             ),
         );
     }
-    Ok(exports)
+    Ok(loaded)
 }
 
-/// BIR -> machine code -> `{ name: function }` for every non-static C function.
-///
-/// The module (its code, data and the libraries it names) stays loaded until the process ends, as a
-/// library opened with `dlopen` does: what C hands to the process (an `atexit` or signal handler, a
-/// thread's start routine, a pointer to a static object) is an address inside it.
-fn load_bir(global_this: &JSGlobalObject, path: &[u8], bir: &[u8]) -> JsResult<JSValue> {
+/// The C files the process has loaded, by the path each really is at: a file is loaded once,
+/// like a library the program was linked with, whichever way (`import`, `import()`, `require`, a
+/// bundle's `require(asset)`), how often, under whichever name (a symbolic link's or its own) and
+/// from however many threads it is asked for, so there is one set of its static objects and one
+/// run of its constructors and destructors. Each VM makes its own object of the module's
+/// functions. A file that has changed (`--watch`, `--hot`) is another module: the one in its
+/// place stays loaded, as every module does until the process ends (what C hands to the process,
+/// an `atexit` or signal handler, a thread's start routine, a pointer to a static object, is an
+/// address inside it), and is no longer what the path means.
+mod loaded {
+    use core::ffi::c_void;
+
+    pub(super) struct Module {
+        path: Box<[u8]>,
+        /// What it was loaded from: the same bytes are the same module.
+        bir: Box<[u8]>,
+        pub(super) address: usize,
+    }
+
+    static MODULES: bun_threading::Guarded<Vec<Module>> = bun_threading::Guarded::new(Vec::new());
+    /// The modules whose destructors are on the exit list: those [`super::evaluate`] has been
+    /// asked to run the constructors of.
+    static EVALUATED: bun_threading::Guarded<Vec<usize>> = bun_threading::Guarded::new(Vec::new());
+
+    /// Where the file at `path` really is; `path` itself for what is not a file (a plugin's
+    /// module, a file inside a standalone executable).
+    fn key(path: &[u8]) -> Box<[u8]> {
+        let mut name = bun_paths::path_buffer_pool::get();
+        let mut real = bun_paths::path_buffer_pool::get();
+        if path.len() < name.len() {
+            if let Ok(real) =
+                bun_sys::realpath(bun_paths::resolve_path::z(path, &mut name), &mut real)
+            {
+                return Box::from(real);
+            }
+        }
+        Box::from(path)
+    }
+
+    /// The module `bir` is, at `path`: the one there is, or what `load` makes of it, which is
+    /// what `path` means from then on. One file is loaded at a time.
+    pub(super) fn get_or_load<E>(
+        path: &[u8],
+        bir: &[u8],
+        load: impl FnOnce() -> Result<*mut c_void, E>,
+    ) -> Result<*mut c_void, E> {
+        let path = key(path);
+        let mut modules = MODULES.lock();
+        let at = modules.iter().position(|module| module.path == path);
+        if let Some(module) = at.map(|at| &modules[at]) {
+            if *module.bir == *bir {
+                return Ok(module.address as *mut c_void);
+            }
+        }
+        let address = load()?;
+        let module = Module {
+            path,
+            bir: Box::from(bir),
+            address: address as usize,
+        };
+        match at {
+            Some(at) => modules[at] = module,
+            None => modules.push(module),
+        }
+        Ok(address)
+    }
+
+    /// Whether this is the first time `module` is evaluated. Held until `then` returns: nothing
+    /// runs the constructors of a module whose destructors are not on the exit list yet.
+    pub(super) fn first_evaluation(module: *mut c_void, then: impl FnOnce()) {
+        let mut evaluated = EVALUATED.lock();
+        if !evaluated.contains(&(module as usize)) {
+            evaluated.push(module as usize);
+            then();
+        }
+    }
+}
+
+/// BIR -> machine code -> `{ name: function }` for every non-static C function. None of the
+/// module's code runs: [`evaluate`] does that.
+fn load_bir(global_this: &JSGlobalObject, path: &[u8], bir: &[u8]) -> JsResult<Loaded> {
     bun_analytics::features::c_module.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     at_exit::install();
 
-    let mut module: *mut c_void = core::ptr::null_mut();
-    let mut error = bun_core::String::EMPTY;
-    // SAFETY: `bir` outlives the call; the resolver is only used during it.
-    let created = unsafe {
-        Bun__CModule__create(
-            bir.as_ptr(),
-            bir.len(),
-            resolve_extern,
-            &raw mut module,
-            &raw mut error,
-        )
-    };
-    if !created {
+    let module = loaded::get_or_load(path, bir, || {
+        let mut module: *mut c_void = core::ptr::null_mut();
+        let mut error = bun_core::String::EMPTY;
+        // SAFETY: `bir` outlives the call; the resolver is only used during it.
+        let created = unsafe {
+            Bun__CModule__create(
+                bir.as_ptr(),
+                bir.len(),
+                resolve_extern,
+                &raw mut module,
+                &raw mut error,
+            )
+        };
+        if created { Ok(module) } else { Err(error) }
+    });
+    let module = match module {
+        Ok(module) => core::ptr::NonNull::new(module).expect("a loaded module has an address"),
         // "x.c: undefined symbol 'f'": which of the program's C files does not load.
-        return Err(global_this.throw_type_error(format_args!(
-            "{}: {}",
-            BStr::new(bun_paths::basename(path)),
-            error
-        )));
-    }
-    // `__attribute__((destructor))` functions run when the process ends, after what the program
-    // itself registers with atexit while it runs.
-    unsafe extern "C" fn run_at_exit(handler: unsafe extern "C" fn()) {
-        // SAFETY: records `handler`, a `void f(void)` from the module, to be called at exit.
-        unsafe {
-            at_exit::atexit(handler);
+        Err(error) => {
+            return Err(global_this.throw_type_error(format_args!(
+                "{}: {}",
+                BStr::new(bun_paths::basename(path)),
+                error
+            )));
         }
-    }
-    // SAFETY: `module` is the live module just created.
-    unsafe { Bun__CModule__registerDestructors(module, run_at_exit) };
-    // Constructors run once the destructors are on the list, so that what a constructor registers
-    // with atexit runs before them, as it does in a linked program.
-    // SAFETY: `module` is the live module just created; its constructors are `void f(void)`.
-    unsafe { Bun__CModule__runConstructors(module) };
-    // SAFETY: `module` holds the reference `Bun__CModule__create` returned, which is never released.
-    jsc::call_check_slow(global_this, || unsafe {
-        Bun__CModule__createExports(global_this, module)
-    })
+    };
+    // SAFETY: a loaded module is never unloaded, and its exports object can be made on any VM's thread.
+    let exports = jsc::call_check_slow(global_this, || unsafe {
+        Bun__CModule__createExports(global_this, module.as_ptr())
+    })?;
+    Ok(Loaded { exports, module })
+}
+
+/// Evaluating the module: its `__attribute__((constructor))` functions run, the first time in the
+/// process that anything evaluates it. Its `__attribute__((destructor))` functions are put on the
+/// exit list before, so that they run when the process ends after what the constructors, and the
+/// program while it runs, register with `atexit`, as in a linked program. A thread that gets here
+/// while another runs the constructors waits for them.
+pub fn evaluate(module: core::ptr::NonNull<c_void>) {
+    // SAFETY: `module` is a loaded module, which is never unloaded; its destructors are
+    // `void f(void)`.
+    loaded::first_evaluation(module.as_ptr(), || unsafe {
+        Bun__CModule__registerDestructors(module.as_ptr(), at_exit::atexit)
+    });
+    // SAFETY: as above; its constructors are `void f(void)`.
+    unsafe { Bun__CModule__runConstructors(module.as_ptr()) };
+}
+
+/// [`evaluate`], for the module loader (ModuleLoader.cpp), which is where a module is evaluated.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__CModule__evaluate(module: core::ptr::NonNull<c_void>) {
+    evaluate(module);
 }
 
 /// What importing a `.c` file evaluates to, all of it on this thread: [`compile`], then [`finish`].
@@ -666,7 +771,7 @@ pub fn load(
     path: &[u8],
     contents: Option<&[u8]>,
     on_file_read: &mut dyn FnMut(&[u8]),
-) -> JsResult<JSValue> {
+) -> JsResult<Loaded> {
     check_enabled(global_this)?;
     finish(global_this, path, compile(path, contents), on_file_read)
 }

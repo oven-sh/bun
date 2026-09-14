@@ -323,14 +323,28 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     return result;
 }
 
+// Evaluating a C module (c_module.rs): its constructors run, the first time in the process.
+extern "C" void Bun__CModule__evaluate(void* cModule);
+
+// A C file that `require` loads is evaluated there and then, as any module `require` loads is.
+static void evaluateRequiredCModule(const ResolvedSource& source)
+{
+    if (source.c_module)
+        Bun__CModule__evaluate(source.c_module);
+}
+
 // The source of a module a loader made as an object rather than as text (parsed JSON or TOML, a C file's
-// functions): its properties are the module's named exports and the object itself the default one.
-static JSC::JSSourceCode* sourceCodeOfExportsObject(Zig::GlobalObject* globalObject, JSC::JSValue exports, String&& moduleKey)
+// functions): its properties are the module's named exports and the object itself the default one. A C file's
+// module (`cModule`) is evaluated when the module record is: after the modules imported before it.
+static JSC::JSSourceCode* sourceCodeOfExportsObject(Zig::GlobalObject* globalObject, JSC::JSValue exports, String&& moduleKey, void* cModule)
 {
     auto& vm = JSC::getVM(globalObject);
     auto function = generateJSValueModuleSourceCode(globalObject, exports);
+    JSC::SyntheticSourceProvider::SyntheticSourceEvaluator evaluator;
+    if (cModule)
+        evaluator = [cModule](JSC::JSGlobalObject*, const JSC::Identifier&) { Bun__CModule__evaluate(cModule); };
     auto source = JSC::SourceCode(
-        JSC::SyntheticSourceProvider::create(WTF::move(function), JSC::SourceOrigin(), WTF::move(moduleKey)));
+        JSC::SyntheticSourceProvider::create(WTF::move(function), WTF::move(evaluator), JSC::SourceOrigin(), WTF::move(moduleKey)));
     JSC::ensureStillAliveHere(exports);
     return JSC::JSSourceCode::create(vm, WTF::move(source));
 }
@@ -413,11 +427,12 @@ static JSValue handleVirtualModuleResult(
         if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
             JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
             if (commonJSModule) {
+                evaluateRequiredCModule(res->result.value);
                 commonJSModule->setExportsObject(value);
                 commonJSModule->hasEvaluated = true;
                 return commonJSModule;
             }
-            RELEASE_AND_RETURN(scope, rejectOrResolve(sourceCodeOfExportsObject(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
+            RELEASE_AND_RETURN(scope, rejectOrResolve(sourceCodeOfExportsObject(globalObject, value, specifier->toWTFString(BunString::ZeroCopy), res->result.value.c_module)));
         }
 
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
@@ -536,7 +551,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     } else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
         // A C file, compiled on the pool: the module is the object of its functions.
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
-        promise->resolve(globalObject, vm, sourceCodeOfExportsObject(globalObject, value, specifier->toWTFString(BunString::ZeroCopy)));
+        promise->resolve(globalObject, vm, sourceCodeOfExportsObject(globalObject, value, specifier->toWTFString(BunString::ZeroCopy), res->result.value.c_module));
         scope.assertNoExceptionExceptTermination();
     } else {
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
@@ -587,6 +602,7 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
         // A C file embedded the same way: the object of its functions is.
         case SyntheticModuleType::ExportDefaultObject:
         case SyntheticModuleType::ExportsObject: {
+            evaluateRequiredCModule(res->result.value);
             return { Kind::Exports, JSC::JSValue::decode(res->result.value.jsvalue_for_export) };
         }
 
@@ -900,6 +916,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
             RELEASE_AND_RETURN(scope, {});
         }
 
+        evaluateRequiredCModule(res->result.value);
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
@@ -1096,7 +1113,7 @@ static JSValue fetchESMSourceCode(
         // A C file embedded by `bun build --compile`: each function is a named export.
         case SyntheticModuleType::ExportsObject: {
             JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
-            RELEASE_AND_RETURN(scope, rejectOrResolve(sourceCodeOfExportsObject(globalObject, value, WTF::move(moduleKey))));
+            RELEASE_AND_RETURN(scope, rejectOrResolve(sourceCodeOfExportsObject(globalObject, value, WTF::move(moduleKey), res->result.value.c_module)));
         }
 
         // CommonJS modules from src/js/*
@@ -1222,7 +1239,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        RELEASE_AND_RETURN(scope, rejectOrResolve(sourceCodeOfExportsObject(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(sourceCodeOfExportsObject(globalObject, value, specifier->toWTFString(BunString::ZeroCopy), res->result.value.c_module)));
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {

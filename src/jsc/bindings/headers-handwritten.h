@@ -149,8 +149,11 @@ typedef struct ResolvedSource {
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
+    // For a C file (tag ExportsObject, jsvalue_for_export the object of its functions): the loaded module
+    // (JSC::FFI::CModule*), whose constructors evaluating the module runs (Bun__CModule__evaluate).
+    void* c_module;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 144 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, module_info) == 104 && offsetof(ResolvedSource, c_module) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
@@ -179,7 +182,7 @@ public:
             zig__ModuleInfoDeserialized__deinit(result.value.module_info);
     }
 };
-static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
+static_assert(sizeof(ErrorableResolvedSource) == 152 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 
 typedef struct SystemError {
     int errno_;

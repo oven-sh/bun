@@ -130,9 +130,10 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
 
 using BunCModuleResolver = void* (*)(const char* name, size_t nameLength);
 
-// On success stores a +1 reference in `out`, which the caller keeps for the life of the process: what the C
-// code gives the process (an exit or signal handler, a thread's start routine, a pointer to a static object)
-// points into the module. Otherwise stores why not in `error`.
+// Loads the module: none of its code runs. On success stores it in `out`: a module that has loaded stays loaded
+// for the life of the process (what the C code gives the process, an exit or signal handler, a thread's start
+// routine, a pointer to a static object, points into it), and any thread may use it. Otherwise stores why not in
+// `error`.
 extern "C" bool Bun__CModule__create(
     const uint8_t* bir,
     size_t birLength,
@@ -147,20 +148,21 @@ extern "C" bool Bun__CModule__create(
         *error = Bun::toStringRef(module.error());
         return false;
     }
-    *out = &module.value().leakRef();
+    *out = module.value().ptr();
     return true;
 }
 
-// Passes each `__attribute__((destructor))` function to `add`, last to run first (`add` is
-// `atexit`-like: last registered runs first).
-extern "C" void Bun__CModule__registerDestructors(JSC::FFI::CModule* module, void (*add)(void (*)()))
+// Passes each `__attribute__((destructor))` function to `add`, last to run first (`add` is `atexit`: last
+// registered runs first).
+extern "C" void Bun__CModule__registerDestructors(JSC::FFI::CModule* module, int (*add)(void (*)()))
 {
     const auto& destructors = module->bir().destructors;
     for (size_t i = destructors.size(); i--;)
         add(reinterpret_cast<void (*)()>(module->entrypoint(destructors[i])));
 }
 
-// Runs the module's `__attribute__((constructor))` functions, the first time it is called for a module.
+// Runs the module's `__attribute__((constructor))` functions, the first time it is called for a module; a
+// thread that calls it while another runs them waits for them.
 extern "C" void Bun__CModule__runConstructors(JSC::FFI::CModule* module)
 {
     module->runConstructors();

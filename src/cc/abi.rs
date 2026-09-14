@@ -745,11 +745,15 @@ pub(crate) fn lower_call(
         }
         passes.push(pass);
     }
-    if bir::by_value_size(&named_params).saturating_add(bir::by_value_size(&anonymous_params))
-        > bir::MAX_FRAME_SIZE
-    {
+    // (What the loader counts: 16 bytes for each argument, and what is passed by value besides.)
+    let every: Vec<Param> = named_params
+        .iter()
+        .chain(&anonymous_params)
+        .copied()
+        .collect();
+    if bir::arguments_size(&every, 0) > bir::MAX_FRAME_SIZE {
         return Err(format!(
-            "passing more than {} bytes of structures by value in one call is not supported",
+            "passing more than {} bytes of arguments in one call is not supported",
             bir::MAX_FRAME_SIZE
         ));
     }

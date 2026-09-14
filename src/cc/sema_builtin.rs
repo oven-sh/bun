@@ -5,7 +5,8 @@ use super::Sema;
 use crate::ast::*;
 use crate::constexpr::{self, Const};
 use crate::token::{Loc, Res, err};
-use crate::types::Type;
+use crate::types::{FuncType, Type};
+use std::rc::Rc;
 
 /// Whether `a` and `b` are the same expression, one without side effects that reads no
 /// volatile object: evaluating it once is as good as twice.
@@ -89,6 +90,43 @@ impl Sema {
     fn read(&self, temp: &Temp, loc: Loc) -> Res<Expr> {
         let place = self.mk(ExprKind::Local(temp.local), temp.ty.clone(), loc)?;
         self.rvalue(place)
+    }
+
+    /// `__builtin___clear_cache(start, end)`: what was written there as data is what runs there
+    /// from now on. x86-64 sees to that by itself; on AArch64 the two caches are not coherent, and
+    /// Apple's library has the function that makes them so.
+    pub(crate) fn clear_cache(&mut self, mut args: Vec<Expr>, loc: Loc) -> Res<Expr> {
+        if args.len() != 2 {
+            return err(loc, "__builtin___clear_cache takes two arguments");
+        }
+        let apple_arm64 = self.tcx.target.arch == crate::types::Arch::Aarch64
+            && self.tcx.target.os == crate::types::Os::MacOs;
+        if !apple_arm64 || self.func.is_none() {
+            return self.discard_all(args, loc);
+        }
+        let bytes = Type::Char.ptr_to();
+        let end = self.rvalue(args.swap_remove(1))?;
+        let start = self.rvalue(args.swap_remove(0))?;
+        let (end, start) = (self.cast(end, &bytes, loc)?, self.cast(start, &bytes, loc)?);
+        let (start, store_start) = self.temp(start, loc)?;
+        let size_type = self.size_type();
+        let invalidate = self.declare_library_function(
+            "sys_icache_invalidate",
+            Rc::new(FuncType {
+                ret: Type::Void,
+                params: vec![Type::Void.ptr_to(), size_type.clone()],
+                variadic: false,
+                unprototyped: false,
+            }),
+            loc,
+        )?;
+        let from = self.read(&start, loc)?;
+        let length = self.binary(BinOp::Sub, end, from, loc)?;
+        let length = self.cast(length, &size_type, loc)?;
+        let callee = self.function_ref(invalidate, loc)?;
+        let at = self.read(&start, loc)?;
+        let call = self.call(callee, vec![at, length], loc)?;
+        self.comma(store_start, call, loc)
     }
 
     fn needs_function(&self, name: &str, loc: Loc) -> Res<()> {
@@ -992,9 +1030,6 @@ impl Sema {
         self.convert(swapped, &ty, loc)
     }
 
-    /// `__builtin_constant_p(e)`: numbers and string literals. The address of an object is
-    /// not one for GCC, and neither is it here. (GCC also says yes to `x && 0` and `x * 0`;
-    /// like Clang, this says no: only "no" is always a safe answer.)
     /// `__builtin_object_size(pointer, type)`: how many bytes there are from where `pointer` points
     /// to the end of the object it points into (of the closest member that holds it, with
     /// `closest`), when `pointer` is written as the address of a declared object or a part of one.
@@ -1092,6 +1127,9 @@ impl Sema {
         }
     }
 
+    /// `__builtin_constant_p(e)`: numbers and string literals. The address of an object is
+    /// not one for GCC, and neither is it here. (GCC also says yes to `x && 0` and `x * 0`;
+    /// like Clang, this says no: only "no" is always a safe answer.)
     pub(crate) fn constant_p(&self, e: &Expr) -> bool {
         if matches!(e.kind, ExprKind::StrLit(_)) {
             return true;

@@ -11,8 +11,8 @@
 //!
 //! 128-bit multiplication is `Mul` and `UMulHigh` of the low halves plus the cross terms;
 //! division, remainder and the conversions to and from floating point call the compiler
-//! runtime (`__divti3`, `__floattidf`, ...). Complex division uses the
-//! textbook formula without rescaling, so it overflows earlier than libm's.
+//! runtime (`__divti3`, `__floattidf`, ...). Complex division scales by the larger part of
+//! the divisor (Smith's method), so that finite operands do not overflow on the way.
 
 use super::{Callee, FnGen, internal};
 use crate::ast::*;

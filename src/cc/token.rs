@@ -904,10 +904,6 @@ fn parse_int(text: &[u8], is_hex: bool, loc: Loc) -> Res<Tok> {
     let mut ndigits = 0;
     while i < text.len() {
         let b = text[i];
-        if b == b'\'' {
-            i += 1;
-            continue;
-        }
         let Some(d) = (b as char).to_digit(radix) else {
             break;
         };

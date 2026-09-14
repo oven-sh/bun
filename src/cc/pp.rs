@@ -184,7 +184,7 @@ pub(crate) struct Macro {
 }
 
 impl Macro {
-    fn param_index(&self, tok: &PpToken) -> Option<usize> {
+    pub(crate) fn param_index(&self, tok: &PpToken) -> Option<usize> {
         if tok.kind != PpKind::Ident {
             return None;
         }
@@ -448,7 +448,15 @@ impl Preprocessor {
             return err(loc, "macro expansion is nested too deeply");
         }
         self.depth += 1;
-        let result = self.with_isolated_input(tokens, |pp| {
+        let result = self.expanded_alone(tokens);
+        self.depth -= 1;
+        result
+    }
+
+    /// `tokens` macro-expanded with nothing after them to go on into: the operands of a
+    /// directive, of `_Pragma`, of `__has_include`.
+    pub(crate) fn expanded_alone(&mut self, tokens: Vec<PTok>) -> Res<Vec<PTok>> {
+        self.with_isolated_input(tokens, |pp| {
             let mut out = Vec::new();
             loop {
                 let t = pp.next_expanded()?;
@@ -457,9 +465,7 @@ impl Preprocessor {
                 }
                 out.push(t);
             }
-        });
-        self.depth -= 1;
-        result
+        })
     }
 
     /// The next token after macro expansion.
@@ -549,7 +555,7 @@ impl Preprocessor {
             for t in &mut operand {
                 t.loc = loc;
             }
-            self.pragma(&operand, loc);
+            self.pragma(&operand, loc)?;
             return Ok(true);
         }
         let [literal] = operand.as_slice() else {
@@ -593,7 +599,7 @@ impl Preprocessor {
             t.loc = loc;
             line.push(t);
         }
-        self.pragma(&line, loc);
+        self.pragma(&line, loc)?;
         Ok(true)
     }
 
@@ -623,9 +629,8 @@ impl Preprocessor {
         Ok(operand)
     }
 
-    /// Collects the arguments of an invocation of `mac`, up to its closing parenthesis; the
-    /// opening one has been read.
-    /// The arguments of an invocation of `mac`, one list for each parameter, and whether there was
+    /// The arguments of an invocation of `mac` up to its closing parenthesis (the opening one has
+    /// been read), one list for each parameter, and whether there was
     /// one for `...` (`F(a,)` gives an empty one; `F(a)` gives none, and neither does `F()` when `...`
     /// is all `F` takes).
     fn collect_args(&mut self, mac: &Macro, name: &PTok) -> Res<(Vec<Vec<PTok>>, bool)> {
@@ -963,10 +968,9 @@ impl Preprocessor {
     }
 }
 
-/// What `defined` and `#ifdef` say yes to without a macro of that name. (`__has_warning`
-/// still works inside `#if`; it is not announced because code that finds it defined goes
-/// on to use it in ordinary text, where only Clang expands it.)
-/// The `__has_*` operators of `#if`, which are also defined as far as `defined` and `#ifdef` go.
+/// The `__has_*` operators of `#if`, which are what `defined` and `#ifdef` say yes to without a
+/// macro of that name. (`__has_warning` still works inside `#if`; it is not announced because code
+/// that finds it defined goes on to use it in ordinary text, where only Clang expands it.)
 pub(crate) fn is_pp_operator(name: &[u8]) -> bool {
     matches!(
         name,

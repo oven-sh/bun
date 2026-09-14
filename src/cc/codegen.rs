@@ -12,7 +12,7 @@
 //! * Scalar C variables whose address is never taken are BIR locals; everything else is
 //!   a stack slot. Parameters are copied into their variable on entry.
 //! * Struct/union-typed expressions evaluate to the address of the object (I64).
-//! * `Br`/`Select` conditions are always exactly 0 or 1.
+//! * `Br` and `Select` take any value other than zero for true.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -107,8 +107,8 @@ struct ModuleGen<'a> {
     runtime_externs: BTreeMap<String, u32>,
     /// Data externs that stand for thread-local objects other units define.
     tls_externs: Vec<TlsExtern>,
-    /// Anonymous read-only data: string literals and initializer images.
-    /// Anonymous constant objects: their bytes and alignment.
+    /// Anonymous constant objects (string literals, the images of initializers): their bytes and
+    /// alignment.
     blobs: Vec<(Vec<u8>, u64)>,
     blob_ids: BTreeMap<Vec<u8>, u32>,
     /// For an object that is only declared here under an assembler name that an object
@@ -2709,8 +2709,10 @@ impl<'a> FnGen<'a, '_> {
                 }
                 return Ok(None);
             }
+            // (For the compiler alone: no access is moved across it, and no instruction is made.)
             Intrinsic::Barrier => {
-                self.b.effect(Inst::Fence(bir::order::ACQ_REL));
+                self.b
+                    .effect(Inst::Fence(bir::order::SEQ_CST | bir::COMPILER_FENCE));
                 return Ok(None);
             }
             Intrinsic::X87(operation) => {
@@ -2764,7 +2766,7 @@ impl<'a> FnGen<'a, '_> {
                     })
                     .collect();
                 let instruction = bir::InlineAsm {
-                    flags: u8::from(block.side_effects),
+                    flags: block.effects,
                     code: block.code.clone(),
                     inputs: inputs
                         .iter()
@@ -3271,8 +3273,6 @@ impl<'a> FnGen<'a, '_> {
         Ok(address)
     }
 
-    /// `va_arg`: the address of the next variable argument of class `float`, advancing the
-    /// va_list at `ap`. Each target's layout is the one `VaStart` fills in (see BIR.h).
     /// Where the next argument of the list at `ap` is, a 16-byte vector, advancing the list.
     fn gen_va_arg_vector_address(&mut self, ap: V, loc: Loc) -> Res<V> {
         use crate::types::{Arch, Os};
@@ -3297,6 +3297,8 @@ impl<'a> FnGen<'a, '_> {
         err(loc, "va_arg of a vector is not supported yet")
     }
 
+    /// `va_arg`: the address of the next variable argument of class `float`, advancing the
+    /// va_list at `ap`. Each target's layout is the one `VaStart` fills in (see BIR.h).
     fn gen_va_arg_address(&mut self, ap: V, float: bool) -> V {
         use crate::types::{Arch, Os};
         let target = self.tcx.target;

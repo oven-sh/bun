@@ -52,9 +52,11 @@ pub(crate) const MAX_BY_VALUE_ALIGN: u64 = 16;
 /// The alignment of a stack slot, of `StackAlloc` and of the data and thread-local segments:
 pub(crate) const MAX_ALIGN: u64 = 4096;
 pub(crate) const MAX_SLOT_SIZE: u64 = 1 << 28;
-/// The slots of one function together, each rounded up to 16 plus its alignment; and the by-value
-/// arguments of one signature together, each plus its alignment:
-pub(crate) const MAX_FRAME_SIZE: u64 = 1 << 30;
+/// The slots of one function together, each (or one byte of it) rounded up to 16 plus its alignment;
+/// and the arguments of one call together: 16 bytes for each, the anonymous ones too, and for each
+/// one passed by value its size plus its alignment as well. A signature is held to that for its
+/// parameters whether or not anything calls it.
+pub(crate) const MAX_FRAME_SIZE: u64 = 1 << 29;
 /// The size of the data segment (the loader takes 4 GiB; the offsets of the front end are made for
 /// this much) and of the thread-local one:
 pub(crate) const MAX_SEGMENT_SIZE: u64 = 1 << 30;
@@ -433,6 +435,15 @@ pub(crate) mod atomic_op {
 
 /// Number of `VConvertKind` values.
 pub(crate) const VCONVERT_KINDS: u8 = 26;
+/// An `InlineAsm`'s flags. It has effects of its own and is performed as often and in the order
+/// it is written (`volatile`, or no output operand):
+pub(crate) const ASM_HAS_EFFECTS: u8 = 1;
+/// It reads memory it is not given as a value (an "m" or "+m" operand, a "memory" clobber):
+pub(crate) const ASM_READS_MEMORY: u8 = 2;
+/// It writes memory (an "=m" or "+m" operand, a "memory" clobber):
+pub(crate) const ASM_WRITES_MEMORY: u8 = 4;
+/// Or'ed into a `Fence`'s order: for the compiler only (`atomic_signal_fence`), no instruction.
+pub(crate) const COMPILER_FENCE: u8 = 0x80;
 
 mod opcode {
     pub(super) const CONST_V128: u8 = 0x05;
@@ -489,8 +500,7 @@ pub(crate) type V = u32;
 /// r8..r15 (not rsp, rbp), 16..31 = xmm0..15.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct InlineAsm {
-    /// Bit 0: has effects beyond its results (`volatile`, a "memory" clobber, a memory
-    /// operand it may write).
+    /// `ASM_*`: with none of them the statement is a function of its inputs.
     pub(crate) flags: u8,
     pub(crate) code: Vec<u8>,
     pub(crate) inputs: Vec<(V, u8)>,
@@ -1398,11 +1408,26 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                             ),
                         ));
                     }
+                    let anonymous = args.len() - callee.params.len();
+                    if arguments_size(&callee.params, anonymous) > MAX_FRAME_SIZE {
+                        return Err(fail(bi, ii, "the arguments are too large".to_string()));
+                    }
+                    // Win64 passes a vector by reference, to a variadic function too; Apple's
+                    // AArch64 passes what the named parameters do not cover in 8-byte pieces.
+                    let anonymous_are_scalars =
+                        module.os == 2 || (module.os == 1 && module.arch == 1);
                     for (i, &a) in args.iter().enumerate() {
                         match callee.params.get(i) {
                             Some(&p) => expect(a, p.value_ty())?,
                             None => {
-                                use_value(a)?;
+                                if use_value(a)? == Ty::V128 && anonymous_are_scalars {
+                                    return Err(fail(
+                                        bi,
+                                        ii,
+                                        "a vector among the anonymous arguments of a variadic call"
+                                            .to_string(),
+                                    ));
+                                }
                             }
                         }
                     }
@@ -1557,7 +1582,7 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                     if module.arch != 0 {
                         return Err(fail(bi, ii, "InlineAsm outside x86-64".to_string()));
                     }
-                    if asm.flags > 1
+                    if asm.flags > (ASM_HAS_EFFECTS | ASM_READS_MEMORY | ASM_WRITES_MEMORY)
                         || asm.code.len() > 4096
                         || asm.inputs.len() > 16
                         || asm.outputs.len() > 16
@@ -1565,7 +1590,9 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                     {
                         return Err(fail(bi, ii, "InlineAsm out of bounds".to_string()));
                     }
-                    let usable = |r: u8| r < 32 && r != 4 && r != 5;
+                    // (Windows keeps xmm6 to xmm15 across calls: they are not for the statement.)
+                    let most = if module.os == 2 { 22 } else { 32 };
+                    let usable = |r: u8| r < most && r != 4 && r != 5;
                     for &(v, register) in &asm.inputs {
                         let ty = use_value(v)?;
                         let vector = register >= 16;
@@ -1701,7 +1728,7 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                     Some(kind.value_ty())
                 }
                 Inst::Fence(order) => {
-                    if *order > order::SEQ_CST {
+                    if *order & !COMPILER_FENCE > order::SEQ_CST {
                         return Err(fail(bi, ii, "invalid fence order".to_string()));
                     }
                     None
@@ -2021,9 +2048,13 @@ pub(crate) fn frame_size(slots: &[Slot]) -> u64 {
     })
 }
 
-/// What the loader counts a signature's by-value parameters as (`MAX_FRAME_SIZE`).
-pub(crate) fn by_value_size(params: &[Param]) -> u64 {
-    params.iter().fold(0u64, |total, param| match param {
+/// What the loader counts the arguments of a call as (`MAX_FRAME_SIZE`): `params` are the ones
+/// the signature names and `anonymous` is how many more a variadic call passes.
+pub(crate) fn arguments_size(params: &[Param], anonymous: usize) -> u64 {
+    let each = (params.len() as u64)
+        .saturating_add(anonymous as u64)
+        .saturating_mul(16);
+    params.iter().fold(each, |total, param| match param {
         Param::ByValStack { size, align, .. } => total.saturating_add(size.saturating_add(*align)),
         _ => total,
     })
@@ -2082,10 +2113,8 @@ fn check_sig(module: &Module, index: usize, sig: &Sig) -> Result<(), String> {
             _ => {}
         }
     }
-    if by_value_size(&sig.params) > MAX_FRAME_SIZE {
-        return Err(format!(
-            "sig {index}: the by-value parameters are too large"
-        ));
+    if arguments_size(&sig.params, 0) > MAX_FRAME_SIZE {
+        return Err(format!("sig {index}: the arguments are too large"));
     }
     Ok(())
 }
@@ -2350,7 +2379,7 @@ pub(crate) fn disassemble(module: &Module) -> Result<String, String> {
         0 => "linux",
         1 => "darwin",
         2 => "windows",
-        _ => "freebsd",
+        _ => "?",
     };
     let _ = writeln!(out, "bir module {arch}-{os}");
     for (i, s) in module.sigs.iter().enumerate() {
@@ -2534,7 +2563,15 @@ pub(crate) fn disassemble(module: &Module) -> Result<String, String> {
                         writeln!(
                             out,
                             "InlineAsm{} [{}] ({}) -> ({}) clobbers {:?}",
-                            if asm.flags & 1 != 0 { " effects" } else { "" },
+                            [
+                                (ASM_HAS_EFFECTS, " effects"),
+                                (ASM_READS_MEMORY, " reads"),
+                                (ASM_WRITES_MEMORY, " writes")
+                            ]
+                            .iter()
+                            .filter(|(bit, _)| asm.flags & bit != 0)
+                            .map(|(_, word)| *word)
+                            .collect::<String>(),
                             code.join(" "),
                             inputs.join(", "),
                             outputs.join(", "),

@@ -44,8 +44,8 @@ pub(crate) enum Source {
 #[derive(Debug)]
 pub(crate) struct Plan {
     pub(crate) code: Vec<u8>,
-    /// Must not be removed or reordered with memory accesses.
-    pub(crate) side_effects: bool,
+    /// `bir::ASM_*`: what the statement does besides giving its results.
+    pub(crate) effects: u8,
     /// BIR register numbers: general 0..15, xmm 16..31.
     pub(crate) clobbers: Vec<u8>,
     pub(crate) inputs: Vec<(Source, u8)>,
@@ -326,21 +326,33 @@ pub(crate) fn plan(
     clobbers: &[Vec<u8>],
     is_volatile: bool,
     unique: u32,
+    windows: bool,
 ) -> Res<Plan> {
     if outputs.len() + inputs.len() > 30 {
         return Err("an asm statement can have at most 30 operands".to_string());
     }
-    let mut side_effects = is_volatile || outputs.is_empty();
+    let mut effects = if is_volatile || outputs.is_empty() {
+        crate::bir::ASM_HAS_EFFECTS
+    } else {
+        0
+    };
     let mut clobbered: Vec<u8> = Vec::new();
     for clobber in clobbers {
         let name = crate::token::display_bytes(clobber).to_ascii_lowercase();
         match name.as_str() {
-            "memory" => side_effects = true,
+            "memory" => effects |= crate::bir::ASM_READS_MEMORY | crate::bir::ASM_WRITES_MEMORY,
             "cc" | "flags" | "fpsr" | "dirflag" | "" => {}
             name if name.starts_with("st") || name.starts_with("mm") => {}
             _ => match register_number(clobber) {
                 // The stack and frame pointers are never handed out anyway.
                 Some(4 | 5) => {}
+                // Windows keeps xmm6 to xmm15 across calls, so a statement that changes one would
+                // have to put it back, which nothing here does for it.
+                Some(22..) if windows => {
+                    return Err(format!(
+                        "'{name}' is kept across calls on Windows, and the statement would have to save it: xmm0 to xmm5 are there to be used"
+                    ));
+                }
                 Some(number) => {
                     if !clobbered.contains(&number) {
                         clobbered.push(number);
@@ -365,6 +377,9 @@ pub(crate) fn plan(
     registers.taken[5] = true;
     for &number in &clobbered {
         registers.taken[usize::from(number)] = true;
+    }
+    if windows {
+        registers.taken[22..].fill(true);
     }
 
     // Operands that name their register come first, so the free choice avoids them. An input and
@@ -481,7 +496,10 @@ pub(crate) fn plan(
             }
             Placed::Memory(number) => {
                 plan_inputs.push((Source::OutputAddress(at), number));
-                side_effects = true;
+                effects |= crate::bir::ASM_WRITES_MEMORY;
+                if classified.in_out {
+                    effects |= crate::bir::ASM_READS_MEMORY;
+                }
             }
             Placed::Immediate(_) => unreachable!("an output is never an immediate"),
         }
@@ -491,7 +509,11 @@ pub(crate) fn plan(
             Placed::General(number) | Placed::Xmm(number) => {
                 plan_inputs.push((Source::Input(at), number))
             }
-            Placed::Memory(number) => plan_inputs.push((Source::InputAddress(at), number)),
+            // (An "m" operand says the statement reads that object, where it stands.)
+            Placed::Memory(number) => {
+                plan_inputs.push((Source::InputAddress(at), number));
+                effects |= crate::bir::ASM_READS_MEMORY;
+            }
             Placed::Immediate(_) => {}
         }
     }
@@ -655,7 +677,7 @@ pub(crate) fn plan(
     let code = x86_encode::assemble(&text)?;
     Ok(Plan {
         code,
-        side_effects,
+        effects,
         clobbers: clobbered,
         inputs: plan_inputs,
         outputs: plan_outputs,

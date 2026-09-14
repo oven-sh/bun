@@ -1317,8 +1317,8 @@ impl Sema {
         let e = if hardware && order != bir::order::RELAXED {
             self.mk_atomic(AtomicExpr::Fence(order), Type::Void, loc)?
         } else if order != bir::order::RELAXED {
-            self.mk(
-                ExprKind::Intrinsic(Intrinsic::Barrier, Vec::new()),
+            self.mk_atomic(
+                AtomicExpr::Fence(order | bir::COMPILER_FENCE),
                 Type::Void,
                 loc,
             )?

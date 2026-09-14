@@ -130,10 +130,6 @@ fn is_directory(path: &[u8]) -> bool {
     Dir::open(path).is_ok()
 }
 
-fn joined(parts: &[&str]) -> String {
-    parts.concat()
-}
-
 /// The directories searched for `<...>` headers after the compiler's own, when compiling for
 /// `target`: `C_INCLUDE_PATH` first (what gcc and clang search as `-isystem` directories, so that
 /// a project's copy of a header is the one found), then, when the target is this machine, where
@@ -183,10 +179,10 @@ pub(crate) fn system_include_dirs(target: Target) -> Vec<String> {
                 .filter(|sdk| !sdk.is_empty());
             let installed = || {
                 SDKS.into_iter()
-                    .find(|sdk| bun_sys::exists(joined(&[sdk, "/usr/include/stdio.h"]).as_bytes()))
+                    .find(|sdk| bun_sys::exists([sdk, "/usr/include/stdio.h"].concat().as_bytes()))
             };
             if let Some(sdk) = named.or_else(installed) {
-                dirs.push(joined(&[sdk, "/usr/include"]));
+                dirs.push([sdk, "/usr/include"].concat());
             }
         }
         Os::Windows => dirs.extend(microsoft_include_dirs()),
@@ -222,7 +218,7 @@ fn microsoft_include_dirs() -> Vec<String> {
     let mut dirs = Vec::new();
     // <ProgramFiles>\Microsoft Visual Studio\<year>\<edition>\VC\Tools\MSVC\<version>\include
     'compiler: for root in &program_files {
-        let studio = joined(&[root, "\\Microsoft Visual Studio"]);
+        let studio = [root, "\\Microsoft Visual Studio"].concat();
         let mut years = subdirectories(&studio);
         years.sort();
         for year in years.iter().rev() {
@@ -233,9 +229,9 @@ fn microsoft_include_dirs() -> Vec<String> {
                 "BuildTools",
                 "Preview",
             ] {
-                let tools = joined(&[&studio, "\\", year, "\\", edition, "\\VC\\Tools\\MSVC"]);
+                let tools = [&studio, "\\", year, "\\", edition, "\\VC\\Tools\\MSVC"].concat();
                 if let Some(toolset) = newest_version(&tools, "\\include\\vcruntime.h") {
-                    dirs.push(joined(&[&toolset, "\\include"]));
+                    dirs.push([&toolset, "\\include"].concat());
                     break 'compiler;
                 }
             }
@@ -243,10 +239,10 @@ fn microsoft_include_dirs() -> Vec<String> {
     }
     // <ProgramFiles(x86)>\Windows Kits\10\Include\<version>\{ucrt,shared,um}
     for root in &program_files {
-        let kits = joined(&[root, "\\Windows Kits\\10\\Include"]);
+        let kits = [root, "\\Windows Kits\\10\\Include"].concat();
         if let Some(sdk) = newest_version(&kits, "\\ucrt\\stdio.h") {
             for part in ["\\ucrt", "\\shared", "\\um"] {
-                let dir = joined(&[&sdk, part]);
+                let dir = [&sdk, part].concat();
                 if is_directory(dir.as_bytes()) {
                     dirs.push(dir);
                 }
@@ -281,7 +277,7 @@ fn newest_version(dir: &str, marker: &str) -> Option<String> {
     };
     subdirectories(dir)
         .into_iter()
-        .filter(|name| bun_sys::exists(joined(&[dir, "\\", name, marker]).as_bytes()))
+        .filter(|name| bun_sys::exists([dir, "\\", name, marker].concat().as_bytes()))
         .max_by_key(|name| version(name))
-        .map(|name| joined(&[dir, "\\", &name]))
+        .map(|name| [dir, "\\", &name].concat())
 }

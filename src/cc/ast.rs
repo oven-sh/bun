@@ -398,8 +398,8 @@ pub(crate) enum AsmResult {
 /// See `Intrinsic::InlineAsm`. Registers are numbered as in BIR: general 0..15, xmm 16..31.
 #[derive(Clone, Debug)]
 pub(crate) struct AsmBlock {
-    /// Not to be removed, duplicated or moved across memory accesses.
-    pub(crate) side_effects: bool,
+    /// `bir::ASM_*`.
+    pub(crate) effects: u8,
     pub(crate) code: Vec<u8>,
     pub(crate) input_registers: Vec<u8>,
     pub(crate) outputs: Vec<(AsmResult, u8)>,

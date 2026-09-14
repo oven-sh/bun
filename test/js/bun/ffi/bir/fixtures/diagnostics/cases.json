@@ -4283,5 +4283,21 @@
     "line": 2,
     "column": 22,
     "message": "cannot take the address of a bit-field"
+  },
+  {
+    "about": "inline assembly: Windows keeps xmm6 to xmm15 across calls",
+    "source": "float f(float a) { __asm__(\"addss %0, %0\" : \"+x\"(a) : : \"xmm15\"); return a; }\nint main(void) { return (int)f(1); }",
+    "line": 1,
+    "column": 20,
+    "message": "inline assembly: 'xmm15' is kept across calls on Windows, and the statement would have to save it: xmm0 to xmm5 are there to be used",
+    "requires": "windows x64"
+  },
+  {
+    "about": "inline assembly: Windows keeps xmm6 to xmm15 across calls",
+    "source": "float f(float a) { __asm__(\"addss %0, %0\" : \"+x\"(a) : : \"xmm6\"); return a; }\nint main(void) { return (int)f(1); }",
+    "line": 1,
+    "column": 20,
+    "message": "inline assembly: 'xmm6' is kept across calls on Windows, and the statement would have to save it: xmm0 to xmm5 are there to be used",
+    "requires": "windows x64"
   }
 ]

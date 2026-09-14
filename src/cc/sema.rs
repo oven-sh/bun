@@ -1298,7 +1298,6 @@ impl Sema {
         self.mk(ExprKind::FloatLit(value), ty, loc)
     }
 
-    /// A narrow string literal; `bytes` excludes the terminator.
     pub(crate) fn long_double_lit(&self, value: Extended, loc: Loc) -> Res<Expr> {
         self.mk(
             ExprKind::LongDoubleLit(value),
@@ -1337,6 +1336,7 @@ impl Sema {
         Ok(compared)
     }
 
+    /// A narrow string literal; `bytes` excludes the terminator.
     pub(crate) fn string_lit(&mut self, mut bytes: Vec<u8>, loc: Loc) -> Res<Expr> {
         bytes.push(0);
         let len = bytes.len() as u64;

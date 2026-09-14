@@ -732,8 +732,6 @@ impl TypeCtx {
         }
     }
 
-    /// Whether the size of `ty` is only known at run time: a variable length array, or an
-    /// array of them.
     /// Whether `ty` is a structure or union with a const-qualified member, at any depth.
     pub(crate) fn has_const_member(&self, ty: &Type) -> bool {
         match ty.unqualified().unatomic() {
@@ -748,6 +746,8 @@ impl TypeCtx {
         }
     }
 
+    /// Whether the size of `ty` is only known at run time: a variable length array, or an
+    /// array of them.
     pub(crate) fn is_variably_sized(&self, ty: &Type) -> bool {
         match ty {
             Type::Vla(..) => true,

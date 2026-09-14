@@ -366,8 +366,7 @@ impl Preprocessor {
                         }
                     }
                 }
-                self.pragma(&line, hash_loc);
-                Ok(())
+                self.pragma(&line, hash_loc)
             }
             b"warning" => {
                 let line = self.read_line()?;
@@ -400,29 +399,25 @@ impl Preprocessor {
 
     /// The pragmas that mean something here, from a `#pragma` line or a `_Pragma` operator;
     /// all others are ignored.
-    pub(crate) fn pragma(&mut self, line: &[PpToken], loc: Loc) {
+    pub(crate) fn pragma(&mut self, line: &[PpToken], loc: Loc) -> Res<()> {
         self.pragma_comment_lib(line);
         let is = |t: &PpToken, text: &[u8]| t.kind == PpKind::Ident && t.text == text;
         let punct = |t: &PpToken, p: Punct| t.kind == PpKind::Punct(p);
         let Some((first, rest)) = line.split_first() else {
-            return;
+            return Ok(());
         };
         if is(first, b"redefine_extname") {
             // The operands are macro-expanded; the new name may be spelled as strings.
             let tokens: Vec<PTok> = rest.iter().cloned().map(PTok::plain).collect();
-            let expanded = self.with_isolated_input(tokens, |pp| {
-                let mut out = Vec::new();
-                loop {
-                    let t = pp.next_expanded()?;
-                    if t.is_eof() {
-                        return Ok(out);
-                    }
-                    out.push(t.tok);
-                }
+            let expanded = self.expanded_alone(tokens).map(|expanded| {
+                expanded
+                    .into_iter()
+                    .map(|t| t.tok)
+                    .collect::<Vec<PpToken>>()
             });
-            let Ok(expanded) = expanded else { return };
+            let expanded = expanded?;
             let Some((old, new)) = expanded.split_first() else {
-                return;
+                return Ok(());
             };
             let mut symbol = Vec::new();
             for t in new {
@@ -431,7 +426,7 @@ impl Preprocessor {
                     PpKind::StrLit if t.text.len() >= 2 && t.text[0] == b'"' => {
                         symbol.extend_from_slice(&t.text[1..t.text.len() - 1]);
                     }
-                    _ => return,
+                    _ => return Ok(()),
                 }
             }
             if old.kind == PpKind::Ident && !symbol.is_empty() {
@@ -447,7 +442,7 @@ impl Preprocessor {
                     has_leading_space: false,
                 });
             }
-            return;
+            return Ok(());
         }
         if let (true, [name]) = (is(first, b"weak"), rest) {
             if name.kind == PpKind::Ident {
@@ -461,7 +456,7 @@ impl Preprocessor {
                     has_leading_space: false,
                 });
             }
-            return;
+            return Ok(());
         }
         if let (true, [state]) = (is(first, b"ms_struct"), rest) {
             // `reset` goes back to what the target does, and no target this is set for does.
@@ -470,7 +465,7 @@ impl Preprocessor {
             } else if is(state, b"off") || is(state, b"reset") {
                 b"ms_struct off"
             } else {
-                return;
+                return Ok(());
             };
             self.pending_pragma = Some(PpToken {
                 kind: PpKind::Pragma,
@@ -479,7 +474,7 @@ impl Preprocessor {
                 at_start_of_line: true,
                 has_leading_space: false,
             });
-            return;
+            return Ok(());
         }
         let inner = match rest {
             [open, inner @ .., close]
@@ -487,15 +482,15 @@ impl Preprocessor {
             {
                 inner
             }
-            _ => return,
+            _ => return Ok(()),
         };
         if is(first, b"push_macro") || is(first, b"pop_macro") {
-            let [name] = inner else { return };
+            let [name] = inner else { return Ok(()) };
             if name.kind != PpKind::StrLit || name.text.len() < 2 || name.text[0] != b'"' {
-                return;
+                return Ok(());
             }
             let Ok(name) = std::str::from_utf8(&name.text[1..name.text.len() - 1]) else {
-                return;
+                return Ok(());
             };
             let name: Rc<str> = Rc::from(name);
             if is(first, b"push_macro") {
@@ -511,24 +506,20 @@ impl Preprocessor {
                     }
                 }
             }
-            return;
+            return Ok(());
         }
         if !is(first, b"pack") {
-            return;
+            return Ok(());
         }
         // `pack(push, _CRT_PACKING)`: the operands are macro-expanded.
         let tokens: Vec<PTok> = inner.iter().cloned().map(PTok::plain).collect();
-        let expanded = self.with_isolated_input(tokens, |pp| {
-            let mut out = Vec::new();
-            loop {
-                let t = pp.next_expanded()?;
-                if t.is_eof() {
-                    return Ok(out);
-                }
-                out.push(t.tok);
-            }
+        let expanded = self.expanded_alone(tokens).map(|expanded| {
+            expanded
+                .into_iter()
+                .map(|t| t.tok)
+                .collect::<Vec<PpToken>>()
         });
-        let Ok(expanded) = expanded else { return };
+        let expanded = expanded?;
         let inner = expanded.as_slice();
         // pack() | pack(n) | pack(push[, name][, n]) | pack(pop[, name])
         fn number(t: &PpToken) -> Option<&[u8]> {
@@ -552,7 +543,7 @@ impl Preprocessor {
                     text.extend_from_slice(b"set ");
                     text.extend_from_slice(n);
                 }
-                None => return,
+                None => return Ok(()),
             },
         }
         self.pending_pragma = Some(PpToken {
@@ -562,6 +553,7 @@ impl Preprocessor {
             at_start_of_line: true,
             has_leading_space: false,
         });
+        Ok(())
     }
 
     /// `#pragma comment(lib, "name")`: records the library.
@@ -597,15 +589,11 @@ impl Preprocessor {
     fn line_directive(&mut self, line: Vec<PpToken>, loc: Loc) -> Res<()> {
         let directive_end = line.last().map_or(loc.line, |t| t.loc.line);
         let tokens: Vec<PTok> = line.into_iter().map(PTok::plain).collect();
-        let expanded = self.with_isolated_input(tokens, |pp| {
-            let mut out = Vec::new();
-            loop {
-                let t = pp.next_expanded()?;
-                if t.is_eof() {
-                    return Ok(out);
-                }
-                out.push(t.tok);
-            }
+        let expanded = self.expanded_alone(tokens).map(|expanded| {
+            expanded
+                .into_iter()
+                .map(|t| t.tok)
+                .collect::<Vec<PpToken>>()
         })?;
         let Some(number) = expanded.first().filter(|t| t.kind == PpKind::Number) else {
             return err(loc, "#line expects a line number");
@@ -741,7 +729,7 @@ impl Preprocessor {
             for (i, t) in mac.body.iter().enumerate() {
                 if t.kind == PpKind::Punct(Punct::Hash)
                     && !mac.body.get(i + 1).is_some_and(|n| {
-                        mac.is_param(n)
+                        mac.param_index(n).is_some()
                             || (mac.variadic && n.kind == PpKind::Ident && n.text == b"__VA_OPT__")
                     })
                 {
@@ -1031,15 +1019,11 @@ impl Preprocessor {
                     Self::header_name_from_tokens(&line, loc)?
                 } else {
                     let tokens: Vec<PTok> = line.into_iter().map(PTok::plain).collect();
-                    let expanded = self.with_isolated_input(tokens, |pp| {
-                        let mut out = Vec::new();
-                        loop {
-                            let t = pp.next_expanded()?;
-                            if t.is_eof() {
-                                return Ok(out);
-                            }
-                            out.push(t.for_header_name());
-                        }
+                    let expanded = self.expanded_alone(tokens).map(|expanded| {
+                        expanded
+                            .into_iter()
+                            .map(|t| t.for_header_name())
+                            .collect::<Vec<PpToken>>()
                     })?;
                     Self::header_name_from_tokens(&expanded, loc)?
                 }
@@ -1067,16 +1051,6 @@ impl Preprocessor {
         };
         self.push_source(&path, source, found_at, Some(loc));
         Ok(())
-    }
-}
-
-impl Macro {
-    fn is_param(&self, tok: &PpToken) -> bool {
-        tok.kind == PpKind::Ident
-            && self
-                .params
-                .as_ref()
-                .is_some_and(|ps| ps.iter().any(|p| p.as_bytes() == tok.text.as_slice()))
     }
 }
 

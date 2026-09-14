@@ -465,15 +465,11 @@ impl Preprocessor {
                 } else {
                     let tokens: Vec<crate::pp::PTok> =
                         operand.into_iter().map(crate::pp::PTok::plain).collect();
-                    self.with_isolated_input(tokens, |pp| {
-                        let mut out = Vec::new();
-                        loop {
-                            let t = pp.next_expanded()?;
-                            if t.is_eof() {
-                                return Ok(out);
-                            }
-                            out.push(t.for_header_name());
-                        }
+                    self.expanded_alone(tokens).map(|expanded| {
+                        expanded
+                            .into_iter()
+                            .map(|t| t.for_header_name())
+                            .collect::<Vec<PpToken>>()
                     })?
                 };
                 let (header, form) = Self::header_name_from_tokens(&operand, loc)?;

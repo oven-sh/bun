@@ -4153,6 +4153,7 @@ impl<S: TokenSource> Parser<S> {
             clobbers,
             is_volatile,
             unique,
+            self.sema.tcx.target.os == crate::types::Os::Windows,
         ) {
             Ok(plan) => plan,
             Err(message) => {
@@ -4219,7 +4220,7 @@ impl<S: TokenSource> Parser<S> {
         }
         let index = self.sema.asm_blocks.len() as u32;
         self.sema.asm_blocks.push(AsmBlock {
-            side_effects: plan.side_effects,
+            effects: plan.effects,
             code: plan.code,
             input_registers,
             outputs: results,
@@ -5186,7 +5187,6 @@ impl<S: TokenSource> Parser<S> {
         }
     }
 
-    /// `({ ... })`; the opening parenthesis has been consumed.
     /// `value`, after the operands of a builtin that only it is the value of: they are
     /// evaluated like any argument, unless they are constants (which leaves `value` one).
     fn after_evaluating(&mut self, operands: Vec<Expr>, value: Expr, loc: Loc) -> Res<Expr> {
@@ -5201,6 +5201,7 @@ impl<S: TokenSource> Parser<S> {
         self.sema.comma(before, value, loc)
     }
 
+    /// `({ ... })`; the opening parenthesis has been consumed.
     fn parse_statement_expr(&mut self, loc: Loc) -> Res<Expr> {
         if self.sema.func.is_none() {
             return err(
@@ -5478,9 +5479,13 @@ impl<S: TokenSource> Parser<S> {
                 };
                 Ok(Some(self.sema.float_lit(value, ty, loc)?))
             }
-            "prefetch" | "__clear_cache" => {
+            "prefetch" => {
                 let args = self.parse_builtin_args()?;
                 Ok(Some(self.sema.discard_all(args, loc)?))
+            }
+            "__clear_cache" => {
+                let args = self.parse_builtin_args()?;
+                Ok(Some(self.sema.clear_cache(args, loc)?))
             }
             "cpu_init" => {
                 let args = self.parse_builtin_args()?;
@@ -6229,7 +6234,6 @@ impl<S: TokenSource> Parser<S> {
 /// `extern inline __attribute__((gnu_inline))`: never the external definition.
 const INLINE_ONLY_DEFINITION: u8 = 0x80;
 
-/// Attributes that can be dropped without changing what the program does.
 /// The attributes `parse_attribute_list` gives a meaning to.
 const IMPLEMENTED_ATTRIBUTES: &[&str] = &[
     "aligned",
@@ -6269,6 +6273,7 @@ pub(crate) fn has_attribute(name: &[u8], target: Target) -> bool {
         .any(|known| known.as_bytes() == name)
 }
 
+/// Attributes that can be dropped without changing what the program does.
 const IGNORED_ATTRIBUTES: &[&str] = &[
     // `__declspec`s: where a symbol comes from is the loader's business, and the rest describe
     // C++ classes, code placement, or what the optimizer and the analyzers may assume.
@@ -6298,7 +6303,6 @@ const IGNORED_ATTRIBUTES: &[&str] = &[
     "pass_dynamic_object_size",
     "alloc_align",
     "alloc_size",
-    "always_inline",
     "artificial",
     "assume_aligned",
     "availability",
@@ -6335,7 +6339,6 @@ const IGNORED_ATTRIBUTES: &[&str] = &[
     "no_profile_instrument_function",
     "no_reorder",
     "no_sanitize",
-    "no_sanitize_address",
     "no_sanitize_memory",
     "no_sanitize_thread",
     "no_sanitize_undefined",
@@ -6347,13 +6350,11 @@ const IGNORED_ATTRIBUTES: &[&str] = &[
     "nodebug",
     "nodiscard",
     "noescape",
-    "noinline",
     "noipa",
     "nonnull",
     "nonstring",
     "noplt",
     "noreturn",
-    "nothrow",
     "null_terminated_string_arg",
     "objc_root_class",
     "optimize",

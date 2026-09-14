@@ -304,7 +304,8 @@ describe.concurrent("Bun.pprof.heap", () => {
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const { growthMiB, profileBytes } = JSON.parse(stdout);
     if (quantitative) expect(profileBytes).toBeGreaterThan(200 * 1500);
-    // 200 sessions of about a quarter MiB of tables each: 50 MiB if they were kept.
-    expect(growthMiB).toBeLessThan(isASAN || isDebug ? 32 : 16);
+    // 200 sessions of about a quarter MiB of tables each: 50 MiB if they were kept. Not
+    // under ASAN: the fixture's freed buffers sit in its quarantine, which moves RSS by more.
+    if (!isASAN) expect(growthMiB).toBeLessThan(isDebug ? 32 : 16);
   });
 });

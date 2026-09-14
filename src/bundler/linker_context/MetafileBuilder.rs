@@ -781,6 +781,73 @@ struct PathOnly<'a> {
     path: &'a [u8],
 }
 
+/// A chunk that an entry point loads, and the `outputs[..].imports` edge that reaches it.
+struct LoadedChunk<'a> {
+    path: &'a [u8],
+    kind: &'a [u8],
+    /// The importing chunk. `None`: the entry point's own output file.
+    via: Option<&'a [u8]>,
+}
+
+/// The `(path, kind)` of each entry of an output's `imports`.
+fn chunk_imports<'a>(output: Option<&'a JsonObject>) -> impl Iterator<Item = (&'a [u8], &'a [u8])> {
+    let imports: &'a [JsonValue] = match output.and_then(|output| output.get(b"imports")) {
+        Some(JsonValue::Array(imports)) => imports,
+        _ => &[],
+    };
+    imports.iter().filter_map(|imp| {
+        let JsonValue::Object(imp) = imp else {
+            return None;
+        };
+        match (imp.get(b"path"), imp.get(b"kind")) {
+            (Some(JsonValue::String(path)), Some(JsonValue::String(kind))) => {
+                Some((&path[..], &kind[..]))
+            }
+            _ => None,
+        }
+    })
+}
+
+/// The chunks that load with the output file `entry_path`, then the chunks its own lazy imports load.
+fn loaded_chunks<'a>(
+    entry_path: &'a [u8],
+    outputs_by_path: &StringHashMap<&'a JsonObject>,
+) -> crate::Result<Vec<LoadedChunk<'a>>> {
+    // `order[0]` is the entry point's own output file.
+    let mut order = vec![LoadedChunk {
+        path: entry_path,
+        kind: b"",
+        via: None,
+    }];
+    let mut seen: StringHashMap<()> = StringHashMap::default();
+    seen.put(entry_path, ())?;
+
+    let mut i = 0;
+    while i < order.len() {
+        let importer = order[i].path;
+        let via = (i != 0).then_some(importer);
+        i += 1;
+        for (path, kind) in chunk_imports(outputs_by_path.get(importer).copied()) {
+            if kind == ImportKind::Stmt.label() && !seen.get_or_put(path)?.found_existing {
+                order.push(LoadedChunk { path, kind, via });
+            }
+        }
+    }
+    // Not walked: the target of an `import()` or `require()` has an entry section of its own.
+    for (path, kind) in chunk_imports(outputs_by_path.get(entry_path).copied()) {
+        if !seen.get_or_put(path)?.found_existing {
+            order.push(LoadedChunk {
+                path,
+                kind,
+                via: None,
+            });
+        }
+    }
+
+    order.remove(0);
+    Ok(order)
+}
+
 /// The target of an `inputs[..].imports[..]` edge and whether the edge is external.
 /// A split `import()` / `require()` has the output chunk in "path" and `"external": true`;
 /// its "entryPoint" is the bundled input it loads, so it is reported as that input.
@@ -1113,6 +1180,13 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         b"Each entry point and the total code it loads (including shared chunks).\n\n",
     );
 
+    let mut outputs_by_path: StringHashMap<&JsonObject> = StringHashMap::default();
+    for (output_path, out_value) in outputs_obj.iter() {
+        if let JsonValue::Object(output) = out_value {
+            outputs_by_path.put(output_path, output)?;
+        }
+    }
+
     for (output_path, out_value) in outputs_obj.iter() {
         let JsonValue::Object(output) = out_value else {
             continue;
@@ -1173,51 +1247,26 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         }
 
         // Chunk dependencies
-        if let Some(chunk_imports) = output.get(b"imports") {
-            if let JsonValue::Array(ci_arr) = chunk_imports {
-                if !ci_arr.is_empty() {
-                    md.extend_from_slice(b"\n**Loads these chunks** (code-splitting):\n");
-                    for imp in ci_arr.iter() {
-                        if let JsonValue::Object(imp_obj) = imp {
-                            let Some(path) = imp_obj.get(b"path") else {
-                                continue;
-                            };
-                            let Some(kind) = imp_obj.get(b"kind") else {
-                                continue;
-                            };
-                            if let (JsonValue::String(path_str), JsonValue::String(kind_str)) =
-                                (path, kind)
-                            {
-                                // Try to get chunk size
-                                if let Some(chunk) = outputs_obj.get(path_str) {
-                                    if let JsonValue::Object(chunk_obj) = chunk {
-                                        if let Some(bytes) = chunk_obj.get(b"bytes") {
-                                            if let JsonValue::Integer(bytes_int) = bytes {
-                                                writeln!(
-                                                    md,
-                                                    "- `{}` ({}, {})",
-                                                    BStr::new(path_str),
-                                                    fmt_size(
-                                                        u64::try_from(*bytes_int)
-                                                            .expect("int cast")
-                                                    ),
-                                                    BStr::new(kind_str),
-                                                )?;
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                }
-                                writeln!(
-                                    md,
-                                    "- `{}` ({})",
-                                    BStr::new(path_str),
-                                    BStr::new(kind_str)
-                                )?;
-                            }
-                        }
-                    }
+        let chunks = loaded_chunks(output_path, &outputs_by_path)?;
+        if !chunks.is_empty() {
+            md.extend_from_slice(b"\n**Loads these chunks** (code-splitting):\n");
+            for chunk in chunks.iter() {
+                write!(md, "- `{}` (", BStr::new(chunk.path))?;
+                if let Some(JsonValue::Integer(bytes_int)) = outputs_by_path
+                    .get(chunk.path)
+                    .and_then(|chunk_obj| chunk_obj.get(b"bytes"))
+                {
+                    write!(
+                        md,
+                        "{}, ",
+                        fmt_size(u64::try_from(*bytes_int).expect("int cast"))
+                    )?;
                 }
+                write!(md, "{}", BStr::new(chunk.kind))?;
+                if let Some(via) = chunk.via {
+                    write!(md, ", via `{}`", BStr::new(via))?;
+                }
+                md.extend_from_slice(b")\n");
             }
         }
 

@@ -2,7 +2,8 @@ use core::mem::size_of;
 
 use crate::api::server::html_bundle::HTMLBundleRoute;
 use crate::bake::dev_server::{
-    DevServer, HmrSocket, IncrementalResult, TestingBatchEvents, deferred_request, packed_map,
+    DeferredScriptRequest, DevServer, HmrSocket, IncrementalResult, TestingBatchEvents,
+    deferred_request, packed_map,
 };
 use bun_collections::ArrayHashMap;
 
@@ -218,11 +219,14 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     for failure in dev.bundling_failures.values() {
         other_bytes += failure.data.len();
     }
-    // All entries are owned by the bundler arena, not DevServer, except for `requests`
+    // All entries are owned by the bundler arena, not DevServer, except for
+    // `requests` and `script_requests`
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
         // `SinglyLinkedList::len()` is an O(N) walk; only the node count matters.
         other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
+        other_bytes += memory_cost_array_list(&bundle.script_requests);
+        other_bytes += bundle.script_requests.len() * size_of::<DeferredScriptRequest>();
     }
     // .next_bundle
     {

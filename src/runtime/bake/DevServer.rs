@@ -230,6 +230,8 @@ pub struct CurrentBundle {
     /// calling their handler on success or sending the error page on failure.
     /// Owned by `deferred_request_pool` in DevServer.
     pub(crate) requests: deferred_request::List,
+    /// Answered by `finalize_bundle_cleanup`.
+    pub(crate) script_requests: Vec<bun_ptr::RefPtr<DeferredScriptRequest>>,
     /// Resolution failures are grouped by incremental graph file index.
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
     /// failures can be created asynchronously, and out of order.
@@ -1750,15 +1752,9 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
 
-    let route_bundle = &dev.route_bundles[route_bundle_index.get() as usize];
-    if route_bundle.client_script_generation != generation
-        || route_bundle.server_state != route_bundle::State::Loaded
-    {
-        return resp.corked(move || on_outdated_js_corked(resp));
-    }
-
-    dev.on_js_request_with_bundle(
+    dev.serve_client_script(
         route_bundle_index,
+        generation,
         resp,
         Method::which(req.method()).unwrap_or(Method::POST),
     );
@@ -2221,13 +2217,6 @@ fn check_route_failures(
     resp: DevResponse,
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
-    // Note: erase to a raw pointer so the deferred cleanup only fires on
-    // scope exit when no other borrow of `dev` is live.
-    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
-    scopeguard::defer! {
-        // SAFETY: see Note above.
-        unsafe { (*dev_ptr).incremental_result.failures_added.clear() }
-    };
     let _lock_guard = dev.graph_safety_lock.guard();
     let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
     // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
@@ -2239,7 +2228,7 @@ fn check_route_failures(
         &mut gts,
         TraceImportGoal::FindErrors,
     )?;
-    if !dev.incremental_result.failures_added.is_empty() {
+    if !gts.failures.is_empty() {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {
             // Cache bust EVERYTHING reachable
@@ -2258,11 +2247,7 @@ fn check_route_failures(
             return Ok(CheckResult::Rebuild);
         }
 
-        // SAFETY: `send_serialized_failures` does not mutate
-        // `incremental_result.failures_added`; reborrow through raw ptr to
-        // satisfy borrowck.
-        let failures = unsafe { &(*dev_ptr).incremental_result.failures_added };
-        dev.send_serialized_failures(resp, failures, None)?;
+        dev.send_serialized_failures(resp, &gts.failures, None)?;
         Ok(CheckResult::Stop)
     } else {
         // Failures are unreachable by this route, so it is OK to load.
@@ -2863,7 +2848,52 @@ impl DevServer {
         Ok(array.into_boxed_slice())
     }
 
-    pub(crate) fn on_js_request_with_bundle(
+    /// Answers `/_bun/client/<route>-<generation>.js`.
+    fn serve_client_script(
+        &mut self,
+        bundle_index: route_bundle::Index,
+        generation: u32,
+        resp: AnyResponse,
+        method: Method,
+    ) {
+        let route_bundle = &self.route_bundles[bundle_index.get() as usize];
+        if route_bundle.client_script_generation != generation
+            || route_bundle.server_state != route_bundle::State::Loaded
+        {
+            return resp.corked(move || on_outdated_js_corked(resp));
+        }
+
+        // A bundle in flight frees the code of each file it fails, and unlinks
+        // the imports of each file it finds deleted, before `finalize_bundle`
+        // settles the route's state and generation. A script generated in
+        // between lacks those modules.
+        if route_bundle.client_bundle.is_none()
+            && let Some(current_bundle) = &mut self.current_bundle
+        {
+            let deferred = bun_ptr::RefPtr::new(DeferredScriptRequest {
+                ref_count: ::core::cell::Cell::new(1),
+                route_bundle_index: bundle_index,
+                generation,
+                response: ::core::cell::Cell::new(Some(ResponseAndMethod {
+                    response: resp,
+                    method,
+                })),
+            });
+            // `script_requests` holds the ref until the answer removes this handler.
+            resp.on_aborted_this(
+                |deferred: bun_ptr::ThisPtr<DeferredScriptRequest>, _: AnyResponse| {
+                    deferred.response.set(None)
+                },
+                deferred.this_ptr(),
+            );
+            current_bundle.script_requests.push(deferred);
+            return;
+        }
+
+        self.on_js_request_with_bundle(bundle_index, resp, method);
+    }
+
+    fn on_js_request_with_bundle(
         &mut self,
         bundle_index: route_bundle::Index,
         resp: AnyResponse,
@@ -3101,6 +3131,18 @@ pub struct ResponseAndMethod {
     pub method: Method,
 }
 
+/// A request for a route's client script that arrived while a bundle was in
+/// flight. It is not tied to that bundle's routes, so it is not a `DeferredRequest`.
+#[derive(bun_ptr::CellRefCounted)]
+pub struct DeferredScriptRequest {
+    ref_count: ::core::cell::Cell<u32>,
+    route_bundle_index: route_bundle::Index,
+    /// From the request URL.
+    generation: u32,
+    /// `None` once the client has disconnected.
+    response: ::core::cell::Cell<Option<ResponseAndMethod>>,
+}
+
 impl DevServer {
     pub(crate) fn start_async_bundle(
         &mut self,
@@ -3241,6 +3283,7 @@ impl DevServer {
             start_data,
             had_reload_event,
             requests: ::core::mem::take(&mut self.next_bundle.requests),
+            script_requests: Vec::new(),
             promise: ::core::mem::take(&mut self.next_bundle.promise),
             resolution_failure_entries: Default::default(),
         });
@@ -3745,14 +3788,28 @@ impl<'a> HotUpdateContext<'a> {
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
     bv2.deinit_without_freeing_arena();
+    let mut script_requests = Vec::new();
     if let Some(cb) = &mut dev.current_bundle {
         cb.promise.deinit_idempotently();
+        script_requests = ::core::mem::take(&mut cb.script_requests);
     }
     // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
     dev.current_bundle = None;
     dev.log.clear_and_free();
 
     let _ = dev.assets.reindex_if_needed(); // not fatal
+
+    // Before `start_next_bundle_if_present`, so that they are not deferred again.
+    for deferred in script_requests {
+        if let Some(ResponseAndMethod { response, method }) = deferred.response.take() {
+            dev.serve_client_script(
+                deferred.route_bundle_index,
+                deferred.generation,
+                response,
+                method,
+            );
+        }
+    }
 
     // Signal for testing framework where it is in synchronization
     if matches!(
@@ -3919,6 +3976,7 @@ pub(super) fn finalize_bundle(
     let mut gts_storage = GraphTraceState {
         server_bits: DynamicBitSet::default(),
         client_bits: DynamicBitSet::default(),
+        failures: Vec::new(),
     };
     let mut ctx = HotUpdateContext {
         import_records,
@@ -5482,6 +5540,7 @@ impl DevServer {
         Ok(GraphTraceState {
             server_bits,
             client_bits,
+            failures: Vec::new(),
         })
     }
 }

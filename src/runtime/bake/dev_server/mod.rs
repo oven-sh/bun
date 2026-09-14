@@ -39,9 +39,9 @@ pub(crate) const CLIENT_PREFIX: &str = "/_bun/client";
 // `crate::bake::dev_server::DevServer` (the public path used by `server/`,
 // `dispatch.rs`, …) resolves to that one struct.
 pub use super::dev_server_body::{
-    CacheEntry, CurrentBundle, DeferredPromise, DeferredRequest, DevServer, EntryPointList,
-    HTMLRouter, Magic, NextBundle, Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch,
-    TestingBatchEvents, deferred_request, entry_point_list,
+    CacheEntry, CurrentBundle, DeferredPromise, DeferredRequest, DeferredScriptRequest, DevServer,
+    EntryPointList, HTMLRouter, Magic, NextBundle, Options, PluginState, RouteIndexAndRecurseFlag,
+    TestingBatch, TestingBatchEvents, deferred_request, entry_point_list,
 };
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
@@ -231,6 +231,8 @@ impl IncrementalResult {
 pub struct GraphTraceState {
     pub(crate) client_bits: DynamicBitSet,
     pub(crate) server_bits: DynamicBitSet,
+    /// Filled by `TraceImportGoal::FindErrors`.
+    pub(crate) failures: Vec<SerializedFailure>,
 }
 impl GraphTraceState {
     #[inline]
@@ -244,6 +246,7 @@ impl GraphTraceState {
     pub(crate) fn clear(&mut self) {
         self.server_bits.unmanaged.set_all(false);
         self.client_bits.unmanaged.set_all(false);
+        self.failures.clear();
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
@@ -261,6 +264,7 @@ impl GraphTraceState {
         self.server_bits
             .resize(0, false)
             .expect("freeing memory can not fail");
+        self.failures = Vec::new();
     }
 }
 

@@ -506,6 +506,28 @@ describe("fetch protocol: http3", () => {
     expect(await res.text()).toBe("hello from a stream");
   });
 
+  test("ReadableStream request body that does not match its declared content-length rejects", async () => {
+    const outcomes: unknown[] = [];
+    for (const declared of ["19", "2", "50"]) {
+      outcomes.push(
+        await fetch(`${base}/echo`, {
+          ...h3,
+          method: "POST",
+          headers: { "content-length": declared },
+          body: pullBody(["hello ", "from ", "a ", "stream"]),
+        }).then(
+          res => res.text(),
+          e => e.code,
+        ),
+      );
+    }
+    expect(outcomes).toEqual([
+      "hello from a stream",
+      "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+      "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+    ]);
+  });
+
   test("ReadableStream request body (pull, large)", async () => {
     const piece = Buffer.alloc(32 * 1024, "S");
     const res = await fetch(`${base}/echo`, {

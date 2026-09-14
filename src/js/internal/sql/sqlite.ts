@@ -403,6 +403,10 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     return pushBindParam(this, value, binding_values, index);
   }
 
+  offsetFragmentPlaceholders(fragment: string, _offset: number, _count: number): string {
+    return fragment;
+  }
+
   getHelperCommand(query: string): SharedSQLCommand {
     // when partial is true we stop on the first command we find
     const { command } = parseSQLQuery(query, true);

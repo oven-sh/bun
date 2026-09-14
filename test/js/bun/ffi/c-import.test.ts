@@ -1021,7 +1021,7 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
     ["abort()", 'int main(void) { puts("before"); fflush(stdout); abort(); }'],
     ["a failed assert", 'int main(void) { puts("before"); fflush(stdout); assert(1 == 2); return 0; }'],
   ];
-  test.concurrent.each(faults)("%s in main is the program's crash", async (_, body) => {
+  test.concurrent.each(faults)("%s in main is the program's crash", async (name, body) => {
     using dir = tempDir("c-main-crash", {
       "program.c": `#include <assert.h>\n#include <stdio.h>\n#include <stdlib.h>\n${body}\n`,
     });
@@ -1033,9 +1033,16 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
       { BUN_ENABLE_CRASH_REPORTING: "0" },
     );
     expect(stdout).toBe("before\n");
+    expect(stderr).not.toContain("This indicates a bug in Bun, not your code");
+    if (isWindows && name !== "a null store") {
+      // Microsoft's abort() ends the process with __fastfail, which no handler sees: the status is the
+      // system's, as it is for an executable a C compiler made, and assert has said why first.
+      if (name === "a failed assert") expect(stderr).toContain("Assertion failed");
+      expect(exitCode).toBe(0xc0000409 | 0);
+      return;
+    }
     expect(stderr).toContain("a C program's main() was running");
     expect(stderr).toContain("c_module");
-    expect(stderr).not.toContain("This indicates a bug in Bun, not your code");
     // A signal where there are signals; on Windows the status the system gives a faulting process.
     if (isPosix) expect(signalCode).not.toBeNull();
     else expect(exitCode).not.toBe(0);

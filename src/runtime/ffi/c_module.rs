@@ -223,6 +223,20 @@ mod windows_runtime {
         }
     }
 
+    /// `_set_app_type(_crt_console_app)`.
+    pub(super) fn this_is_a_console_program() {
+        let Some(set_app_type) = super::windows_libraries(bun_core::zstr!("_set_app_type")) else {
+            return;
+        };
+        const CONSOLE_APP: core::ffi::c_int = 1;
+        // SAFETY: `void _set_app_type(_crt_app_type)` of ucrtbase.dll.
+        unsafe {
+            let set_app_type: unsafe extern "C" fn(core::ffi::c_int) =
+                core::mem::transmute(set_app_type);
+            set_app_type(CONSOLE_APP);
+        }
+    }
+
     /// Whether descriptor 1 of that runtime is a console.
     pub(super) fn stdout_is_a_console() -> bool {
         let Some(isatty) = super::windows_libraries(bun_core::zstr!("_isatty")) else {
@@ -402,6 +416,9 @@ mod at_exit {
                 // starts: no buffer, so that what C prints and what JavaScript prints come out
                 // in the order they were printed.
                 super::windows_runtime::buffer_stdout(super::windows_runtime::IONBF, 0);
+                // And it is told what a program's startup code tells it: this is a console
+                // program, whose failed `assert` writes its message to `stderr`.
+                super::windows_runtime::this_is_a_console_program();
             }
         });
     }

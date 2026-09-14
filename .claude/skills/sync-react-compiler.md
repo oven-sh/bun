@@ -69,6 +69,9 @@ the porting reference for the AST-boundary files.
    cargo check -p bun_react_compiler
    bun bd test test/bundler/transpiler/react-compiler.test.ts
    ```
+   `grep -rn "Intentional deviation" src/react_compiler` lists the places where
+   the port differs from upstream on purpose. Keep each one unless upstream
+   now fixes what its comment names.
    Snapshots will change if codegen changed upstream — review the diff against
    upstream's new fixture output and update with `bun bd test -u` if it
    matches.

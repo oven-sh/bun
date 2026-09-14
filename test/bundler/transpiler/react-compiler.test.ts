@@ -2344,6 +2344,382 @@ describe("bundler", () => {
     },
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });
+
+  // `o.p++` lowers to a load, an add and a store, and its value is the
+  // temporary that holds the load. Codegen prints an unnamed temporary where it
+  // is read. The store is a statement, so a read after it printed `o.p` again:
+  // `const id = ref.current++` gave `id` the new value. In the body of a
+  // component a later pass names such a temporary (`const t0 = o.p`). No pass
+  // does in a function inside the component (facebook/react#35205). There the
+  // update now lowers to `(o.p = (t0 = o.p) + 1, t0)`. `x += 1` on a local had
+  // the same shape: a store as a statement, then a load.
+  //
+  // Each callback runs twice. `compiled` says that the component took a memo
+  // cache. The compiler inlines an IIFE and a `useMemo` callback into the
+  // component, where that pass would name only some operands of
+  // `[seq.n++, seq.n]`, so one that has such an update stays a function.
+  // `minify.syntax` turns `const first = seq.n++; return [first, seq.n]` into
+  // that array before the compiler sees it.
+  for (const minifySyntax of [false, true] as const) {
+    itBundled(`react-compiler/PostfixMemberUpdateInNestedFunction-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { useMemo, useRef } from "react";
+          import { sizes } from "react/compiler-runtime";
+
+          const Handle = "handle";
+
+          function DeclaratorInit() {
+            const ref = useRef(0);
+            const next = () => {
+              const id = ref.current++;
+              return id;
+            };
+            return <Handle run={next} />;
+          }
+          function ReturnDecrement() {
+            const ref = useRef(5);
+            const next = () => {
+              return ref.current--;
+            };
+            return <Handle run={next} />;
+          }
+          function ExpressionBody() {
+            const ref = useRef(0);
+            return <Handle run={() => ref.current++} />;
+          }
+          function TemplateLiteral() {
+            const newTabIndex = useRef(0);
+            const add = () => \`newTab\${newTabIndex.current++}\`;
+            return <Handle run={add} />;
+          }
+          function PrefixIncrement() {
+            const ref = useRef(0);
+            const next = () => {
+              const id = ++ref.current;
+              return id;
+            };
+            return <Handle run={next} />;
+          }
+          function Statement() {
+            const ref = useRef(0);
+            const next = () => {
+              ref.current++;
+              return ref.current;
+            };
+            return <Handle run={next} />;
+          }
+          function EarlierOperands() {
+            const ref = useRef(0);
+            const next = () => [ref.current, ref.current++, ref.current];
+            return <Handle run={next} />;
+          }
+          function MethodCallArgument() {
+            const ids = useRef([]);
+            const nextId = useRef(0);
+            const add = () => {
+              ids.current.push(nextId.current++);
+              return [...ids.current];
+            };
+            return <Handle run={add} />;
+          }
+          function ComputedMember() {
+            const counts = useRef({ a: 0 });
+            const hit = key => counts.current[key]++;
+            return <Handle run={hit} />;
+          }
+          function ObjectMethod() {
+            const ref = useRef(0);
+            const api = {
+              next() {
+                return ref.current++;
+              },
+            };
+            return <Handle run={() => api.next()} />;
+          }
+          // \`bump\` captures nothing, so the compiler moves it out of the component.
+          function OutlinedFunction() {
+            const bump = counter => counter.n++;
+            return <Handle run={bump} />;
+          }
+          function TemporaryNamesInUse() {
+            const ref = useRef(0);
+            const next = () => {
+              const t0 = String(ref.current);
+              const t1 = ref.current++;
+              const t2 = ref.current++;
+              return [t0, t1, t2];
+            };
+            return <Handle run={next} />;
+          }
+          function LoopBody() {
+            const ref = useRef(0);
+            const next = () => {
+              const out = [];
+              for (let i = 0; i < 2; i++) out.push(ref.current++);
+              return out;
+            };
+            return <Handle run={next} />;
+          }
+          function InnerFunction() {
+            const ref = useRef(0);
+            const next = () => {
+              const inner = () => ref.current++;
+              return [inner(), inner()];
+            };
+            return <Handle run={next} />;
+          }
+          function EarlierSum() {
+            const ref = useRef(0);
+            const next = () => [ref.current + 1, ref.current++];
+            return <Handle run={next} />;
+          }
+          const order = [];
+          class Made {
+            constructor() {
+              order.push("new");
+            }
+          }
+          const call = () => order.push("call");
+          function EarlierNewAndCall() {
+            const ref = useRef(0);
+            const next = () => {
+              order.length = 0;
+              const made = [new Made(), call(), ref.current++];
+              return [...order, made[2]];
+            };
+            return <Handle run={next} />;
+          }
+          function ForUpdate() {
+            const ref = useRef(0);
+            const next = () => {
+              const seen = [];
+              for (let i = 0; i < 2; ref.current++) seen.push(i++ + ref.current);
+              return seen;
+            };
+            return <Handle run={next} />;
+          }
+          function Conditional() {
+            const ref = useRef(0);
+            return <Handle run={on => (on ? ref.current++ : -1)} />;
+          }
+          function LogicalStatement() {
+            const ref = useRef(0);
+            const next = on => {
+              on && ref.current++;
+              return ref.current;
+            };
+            return <Handle run={next} />;
+          }
+          function SkippedOptionalCall() {
+            const ref = useRef(0);
+            const next = target => [target?.(ref.current++), ref.current];
+            return <Handle run={next} />;
+          }
+          function WhileTest() {
+            const ref = useRef(0);
+            const next = () => {
+              let turns = 0;
+              while (ref.current++ < 3) turns++;
+              return turns;
+            };
+            return <Handle run={next} />;
+          }
+
+          function UseMemoBody() {
+            const row = useMemo(() => {
+              const seq = { n: 0, deep: { c: 5 } };
+              const first = seq.n++;
+              return [first, seq.n, "c".concat(seq.deep.c--), seq.deep.c];
+            }, []);
+            return <Handle run={() => row} />;
+          }
+          function IifeBody() {
+            const row = (() => {
+              const seq = { n: 0, deep: { c: 5 } };
+              const first = seq.n++;
+              return [first, seq.n, "c".concat(seq.deep.c--), seq.deep.c];
+            })();
+            return <Handle run={() => row} />;
+          }
+          function CallbackInUseMemo() {
+            const rows = useMemo(() => {
+              const seq = { n: 0 };
+              return ["a", "b"].map(it => it + seq.n++);
+            }, []);
+            return <Handle run={() => rows} />;
+          }
+
+          function CompoundAssignment() {
+            const ref = useRef(0);
+            const next = () => {
+              let x = ref.current++;
+              return [x, (x += 2), x];
+            };
+            return <Handle run={next} />;
+          }
+          function CompoundAssignmentToCaptured() {
+            const ref = useRef(0);
+            const next = () => {
+              let x = ref.current++;
+              const read = () => x;
+              return [x, (x -= 2), read()];
+            };
+            return <Handle run={next} />;
+          }
+          // No update whose value is used: these callbacks are inlined.
+          function UseMemoStatements() {
+            const total = useMemo(() => {
+              const seq = { n: 0 };
+              seq.n++;
+              seq.n--;
+              seq.n++;
+              return seq.n;
+            }, []);
+            return <Handle run={() => total} />;
+          }
+          function TryFirstUseMemo() {
+            const text = useMemo(() => {
+              try {
+                return JSON.parse("[1]").concat(2);
+              } catch (error) {
+                return [error];
+              }
+            }, []);
+            return <Handle run={() => text} />;
+          }
+          // The component keeps the lowering of upstream.
+          const pair = (...values) => values;
+          function ComponentBody() {
+            const seq = { n: 0 };
+            const row = pair(seq.n++, seq.n, seq.n--);
+            return <Handle run={() => row} />;
+          }
+
+          function probe(Component, ...args) {
+            const before = sizes().length;
+            const { run } = Component({}).props;
+            const compiled = sizes().length > before;
+            return { compiled, results: [run(...args), run(...args)] };
+          }
+          const counter = { n: 3 };
+          console.log(JSON.stringify({
+            DeclaratorInit: probe(DeclaratorInit),
+            ReturnDecrement: probe(ReturnDecrement),
+            ExpressionBody: probe(ExpressionBody),
+            TemplateLiteral: probe(TemplateLiteral),
+            PrefixIncrement: probe(PrefixIncrement),
+            Statement: probe(Statement),
+            EarlierOperands: probe(EarlierOperands),
+            MethodCallArgument: probe(MethodCallArgument),
+            ComputedMember: probe(ComputedMember, "a"),
+            ObjectMethod: probe(ObjectMethod),
+            OutlinedFunction: probe(OutlinedFunction, counter),
+            TemporaryNamesInUse: probe(TemporaryNamesInUse),
+            LoopBody: probe(LoopBody),
+            InnerFunction: probe(InnerFunction),
+            EarlierSum: probe(EarlierSum),
+            EarlierNewAndCall: probe(EarlierNewAndCall),
+            ForUpdate: probe(ForUpdate),
+            Conditional: probe(Conditional, true),
+            LogicalStatement: probe(LogicalStatement, true),
+            SkippedOptionalCall: probe(SkippedOptionalCall, null),
+            WhileTest: probe(WhileTest),
+            UseMemoBody: probe(UseMemoBody),
+            IifeBody: probe(IifeBody),
+            CallbackInUseMemo: probe(CallbackInUseMemo),
+            CompoundAssignment: probe(CompoundAssignment),
+            CompoundAssignmentToCaptured: probe(CompoundAssignmentToCaptured),
+            UseMemoStatements: probe(UseMemoStatements),
+            TryFirstUseMemo: probe(TryFirstUseMemo),
+            ComponentBody: probe(ComponentBody),
+          }));
+        `,
+        ...jsxCallShapeRuntime,
+        "/node_modules/react/index.js": /* js */ `
+          exports.useRef = current => ({ current });
+          exports.useMemo = compute => compute();
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          const sizes = [];
+          exports.c = function useMemoCache(size) {
+            sizes.push(size);
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          };
+          exports.sizes = () => sizes;
+        `,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      minifySyntax,
+      run: {
+        validate({ stdout }) {
+          expect(JSON.parse(stdout)).toEqual({
+            DeclaratorInit: { compiled: true, results: [0, 1] },
+            ReturnDecrement: { compiled: true, results: [5, 4] },
+            ExpressionBody: { compiled: true, results: [0, 1] },
+            TemplateLiteral: { compiled: true, results: ["newTab0", "newTab1"] },
+            PrefixIncrement: { compiled: true, results: [1, 2] },
+            Statement: { compiled: true, results: [1, 2] },
+            // prettier-ignore
+            EarlierOperands: { compiled: true, results: [[0, 0, 1], [1, 1, 2]] },
+            MethodCallArgument: { compiled: true, results: [[0], [0, 1]] },
+            ComputedMember: { compiled: true, results: [0, 1] },
+            ObjectMethod: { compiled: true, results: [0, 1] },
+            OutlinedFunction: { compiled: true, results: [3, 4] },
+            // prettier-ignore
+            TemporaryNamesInUse: { compiled: true, results: [["0", 0, 1], ["2", 2, 3]] },
+            // prettier-ignore
+            LoopBody: { compiled: true, results: [[0, 1], [2, 3]] },
+            // prettier-ignore
+            InnerFunction: { compiled: true, results: [[0, 1], [2, 3]] },
+            // prettier-ignore
+            EarlierSum: { compiled: true, results: [[1, 0], [2, 1]] },
+            // prettier-ignore
+            EarlierNewAndCall: { compiled: true, results: [["new", "call", 0], ["new", "call", 1]] },
+            // prettier-ignore
+            ForUpdate: { compiled: true, results: [[0, 2], [2, 4]] },
+            Conditional: { compiled: true, results: [0, 1] },
+            LogicalStatement: { compiled: true, results: [1, 2] },
+            // JSON turns the `undefined` of the call that does not happen into `null`.
+            // prettier-ignore
+            SkippedOptionalCall: { compiled: true, results: [[null, 0], [null, 0]] },
+            WhileTest: { compiled: true, results: [3, 0] },
+            // prettier-ignore
+            UseMemoBody: { compiled: true, results: [[0, 1, "c5", 4], [0, 1, "c5", 4]] },
+            // prettier-ignore
+            IifeBody: { compiled: true, results: [[0, 1, "c5", 4], [0, 1, "c5", 4]] },
+            // prettier-ignore
+            CallbackInUseMemo: { compiled: true, results: [["a0", "b1"], ["a0", "b1"]] },
+            // prettier-ignore
+            CompoundAssignment: { compiled: true, results: [[0, 2, 2], [1, 3, 3]] },
+            // prettier-ignore
+            CompoundAssignmentToCaptured: { compiled: true, results: [[0, -2, -2], [1, -1, -1]] },
+            UseMemoStatements: { compiled: true, results: [1, 1] },
+            // prettier-ignore
+            TryFirstUseMemo: { compiled: true, results: [[1, 2], [1, 2]] },
+            // prettier-ignore
+            ComponentBody: { compiled: true, results: [[0, 1, 1], [0, 1, 1]] },
+          });
+        },
+      },
+      onAfterBundle(api) {
+        // The body of an inlined callback is in the component.
+        const out = api.readFile("/out.js");
+        const component = (name: string) => {
+          const start = out.indexOf(`function ${name}(`);
+          return out.slice(start, out.indexOf("\nfunction ", start + 1));
+        };
+        expect({
+          UseMemoBody: component("UseMemoBody").includes("seq.n"),
+          IifeBody: component("IifeBody").includes("seq.n"),
+          UseMemoStatements: component("UseMemoStatements").includes("seq.n"),
+          TryFirstUseMemo: component("TryFirstUseMemo").includes("JSON.parse"),
+        }).toEqual({ UseMemoBody: false, IifeBody: false, UseMemoStatements: true, TryFirstUseMemo: true });
+      },
+    });
+  }
 });
 
 // Three passes kept one copy of their work per basic block or per nesting
@@ -2579,4 +2955,162 @@ test("react-compiler compile time is not exponential in the function nesting dep
   expect(stdout).toContain("p.a + s");
   expect(stdout).toMatch(/\b_c\(\d+\)/);
   expect(exitCode).toBe(0);
+});
+
+// A seeded differential run for the lowering of member updates. Each generated
+// function evaluates one random expression around `cell.now.a++` and its
+// relatives, and `note` records the order of the side effects. The module has
+// to print the same with and without the compiler. The update has to keep its
+// place among the other operands: a pass that names only some temporaries of
+// `f(new A(), g(), ref.current++)` runs `g()` before `new A()`.
+//
+// The function is a callback that captures a ref, a callback that captures
+// nothing (the compiler moves it out of the component), or an IIFE or a
+// \`useMemo\` callback (the compiler inlines it into the component).
+test("react-compiler keeps the value and the order of member updates in a callback", async () => {
+  // mulberry32
+  let seed = 1;
+  const random = (below: number) => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) % below;
+  };
+  // Left out, because they fail for other reasons: an assignment to a local
+  // (#42628, #42629) and a key or an object with a side effect (#42451).
+  const atoms = [
+    "cell.now.a",
+    "cell.now.a++",
+    "cell.now.a--",
+    "++cell.now.a",
+    "cell.now.b++",
+    "cell.now[key]++",
+    "box.a++",
+    "box.a",
+    "note(cell.now.a)",
+    "1",
+  ];
+  const expression = (depth: number): string => {
+    if (depth === 0 || random(4) === 0) return atoms[random(atoms.length)];
+    const [a, b, c] = [expression(depth - 1), expression(depth - 1), expression(depth - 1)];
+    const shapes = [
+      `[${a}, ${b}]`,
+      `(${a} + ${b})`,
+      `note(${a})`,
+      `({ k: ${a}, j: ${b} })`,
+      `(${a}, ${b})`,
+      "`${" + a + "}-${" + b + "}`",
+      `pair(${a}, ${b})`,
+      `new Pair(${a}, ${b})`,
+      `(${a} ? ${b} : ${c})`,
+      `(${a} && ${b})`,
+      `(${a} ?? ${b})`,
+      `list[${a} % 3]`,
+      `String(${a}).concat(${b})`,
+      `present?.(${a}, ${b})`,
+      `absent?.(${a})`,
+      `(-${a})`,
+    ];
+    return shapes[random(shapes.length)];
+  };
+  const body = (): string => {
+    const value = expression(3);
+    const bodies = [
+      `const v = ${value}; return [v, cell.now, box];`,
+      `return [${value}, cell.now, box];`,
+      `const all = []; for (let i = 0; i < 2; i++) all.push(${value}); return [all, cell.now, box];`,
+      `let turns = 0, v; while (turns++ < 2 && (v = ${value}, true)); return [v, cell.now, box];`,
+      `let v; if (${expression(1)}) v = ${value}; else v = [${expression(2)}]; return [v, cell.now, box];`,
+    ];
+    return bodies[random(bodies.length)];
+  };
+  const bodies = Array.from({ length: 48 }, body);
+  const hook = (body: string, i: number) =>
+    [
+      `const ref = useRef({ now: { a: 0, b: 10 } });
+       const run = box => { const cell = ref.current; ${body} };
+       return { run };`,
+      `useRef(0);
+       const run = box => { const cell = { now: { a: 0, b: 10 } }; ${body} };
+       return { run };`,
+      `useRef(0);
+       const cell = { now: { a: 0, b: 10 } };
+       const box = { a: 100 };
+       const result = ${i % 2 === 0 ? `(() => { ${body} })()` : `useMemo(() => { ${body} }, [])`};
+       return { run: () => result };`,
+    ][i % 3];
+
+  // One module for each part, so that the parts compile on different threads.
+  // A debug build takes 50 ms for each component.
+  const parts = 4;
+  const caseModule = (part: number) => `
+    import { useMemo, useRef } from "react";
+    import { note, pair, Pair, list, key, present, absent } from "./helpers";
+    ${bodies
+      .map((body, i) => (i % parts !== part ? "" : `export function useGenerated${i}() { ${hook(body, i)} }`))
+      .join("\n")}
+  `;
+  using dir = tempDir("react-compiler-member-update-order", {
+    "helpers.js": `
+      export let log = [];
+      export const resetLog = () => (log = []);
+      export const note = value => (log.push(value), value);
+      export const pair = (a, b) => (log.push("pair"), [a, b]);
+      export class Pair { constructor(a, b) { log.push("new Pair"); this.pair = [a, b]; } }
+      export const list = ["p", "q", "s"];
+      export const key = "a";
+      export const present = (...values) => values;
+      export const absent = null;
+    `,
+    ...Object.fromEntries(Array.from({ length: parts }, (_, part) => [`cases-${part}.jsx`, caseModule(part)])),
+    "entry.js": `
+      import { sizes } from "react/compiler-runtime";
+      import { log, resetLog } from "./helpers";
+      ${Array.from({ length: parts }, (_, part) => `import * as cases${part} from "./cases-${part}.jsx";`).join("\n")}
+      const hooks = { ${Array.from({ length: parts }, (_, part) => `...cases${part}`).join(", ")} };
+      for (let i = 0; i < ${bodies.length}; i++) {
+        resetLog();
+        const before = sizes().length;
+        const { run } = hooks["useGenerated" + i]();
+        const compiled = sizes().length > before;
+        console.log(JSON.stringify({ result: run({ a: 100 }), log, compiled }));
+      }
+    `,
+    "node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "node_modules/react/index.js": `
+      exports.useRef = current => ({ current });
+      exports.useMemo = compute => compute();
+    `,
+    "node_modules/react/compiler-runtime.js": `
+      const sizes = [];
+      exports.c = size => {
+        sizes.push(size);
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+      exports.sizes = () => sizes;
+    `,
+  });
+
+  const results = async (reactCompiler: boolean) => {
+    const built = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], target: "browser", reactCompiler });
+    const outfile = reactCompiler ? "compiled.js" : "plain.js";
+    await Bun.write(join(String(dir), outfile), await built.outputs[0].text());
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return stdout
+      .trim()
+      .split("\n")
+      .map((line, i) => ({ body: bodies[i], ...JSON.parse(line) }));
+  };
+  const [plain, compiled] = await Promise.all([results(false), results(true)]);
+
+  // Every generated hook compiled, and gives what the plain build gives.
+  expect(compiled).toEqual(plain.map(expected => ({ ...expected, compiled: true })));
 });

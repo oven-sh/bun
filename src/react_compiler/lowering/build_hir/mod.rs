@@ -144,6 +144,7 @@ pub(super) fn lower_inner<'h>(
         Some(context_map.clone()),
         None,
         parent_used_refs,
+        !is_top_level,
     );
     builder.set_import_bindings(import_bindings.clone());
 

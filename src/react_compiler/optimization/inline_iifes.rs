@@ -50,8 +50,8 @@ use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
     AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE,
-    GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionId, InstructionKind,
-    InstructionValue, LValue, Place, Terminal,
+    GotoVariant, HirFunction, HirVec, IdentifierId, IdentifierName, Instruction, InstructionId,
+    InstructionKind, InstructionValue, LValue, Place, Terminal,
 };
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
@@ -119,6 +119,11 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
                     if !inner_func.params.is_empty() || inner_func.is_async || inner_func.generator
                     {
                         // Can't inline functions with params, or async/generator functions
+                        continue;
+                    }
+
+                    // Intentional deviation: an in-place member update stays nested.
+                    if has_in_place_member_update(inner_func, env) {
                         continue;
                     }
 
@@ -313,6 +318,22 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
 /// in the source.
 fn is_statement_block_kind(kind: BlockKind) -> bool {
     matches!(kind, BlockKind::Block | BlockKind::Catch)
+}
+
+/// `HirBuilder::build` puts the `let` of an in-place member update first in the entry block.
+fn has_in_place_member_update(func: &HirFunction, env: &Environment) -> bool {
+    let Some(first) = func.body.blocks[&func.body.entry].instructions.first() else {
+        return false;
+    };
+    matches!(
+        &func.instructions[first.0 as usize].value,
+        InstructionValue::DeclareLocal { lvalue, .. }
+            if lvalue.kind == InstructionKind::Let
+                && matches!(
+                    env.identifiers[lvalue.place.identifier.0 as usize].name,
+                    Some(IdentifierName::Promoted(_))
+                )
+    )
 }
 
 /// Returns true if the function has a single exit terminal (throw/return) which is a return.

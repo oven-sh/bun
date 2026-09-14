@@ -14,7 +14,7 @@ use smallvec::SmallVec;
 
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
-use super::expr::lower_reorderable_expression;
+use super::expr::{lower_expression_for_effect, lower_reorderable_expression};
 use super::function::lower_function_declaration;
 use super::helpers::{
     AssignmentStyle, IdentifierForAssignment, build_temporary_place, lower_assignment,
@@ -510,7 +510,7 @@ fn lower_statement(
             lower_value_to_temporary(builder, value)?;
         }
         Data::SExpr(expr_stmt) => {
-            lower_expression_to_temporary(builder, &expr_stmt.value)?;
+            lower_expression_for_effect(builder, &expr_stmt.value)?;
         }
         Data::SReturn(ret) => {
             let loc = convert_loc(stmt_loc);
@@ -816,7 +816,7 @@ fn lower_statement(
             let update_block_id = if let Some(update) = &for_stmt.update {
                 let update_loc = convert_loc(update.loc);
                 Some(builder.try_enter(BlockKind::Loop, |builder, _block_id| {
-                    lower_expression_to_temporary(builder, update)?;
+                    lower_expression_for_effect(builder, update)?;
                     Ok(Terminal::Goto {
                         block: test_block_id,
                         variant: GotoVariant::Break,

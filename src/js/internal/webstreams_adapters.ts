@@ -12,9 +12,10 @@ const Writable = require("internal/streams/writable");
 const Readable = require("internal/streams/readable");
 const Duplex = require("internal/streams/duplex");
 const { destroyer } = require("internal/streams/destroy");
+const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
 const { kEmptyObject } = require("internal/shared");
-const { validateBoolean, validateObject, validateOneOf } = require("internal/validators");
+const { validateAbortSignal, validateBoolean, validateObject, validateOneOf } = require("internal/validators");
 const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
 const { kEosNodeSynchronousCallback } = eos;
@@ -46,13 +47,13 @@ class ReadableFromWeb extends Readable {
   #closed;
   #stream;
 
+  // No `signal`: an aborted one would run _destroy inside super(), before the private fields exist.
   constructor(options, stream) {
-    const { objectMode, highWaterMark, encoding, signal } = options;
+    const { objectMode, highWaterMark, encoding } = options;
     super({
       objectMode,
       highWaterMark,
       encoding,
-      signal,
     });
     this.#reader = undefined;
     this.#stream = stream;
@@ -558,21 +559,22 @@ function newStreamReadableFromReadableStream(readableStream, options: Record<str
 
   // Node acquires the reader at this point, so a locked stream throws here too.
   if (readableStream.locked) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
+  if (signal) validateAbortSignal(signal, "signal");
 
-  const nativeStream = tryTransferToNativeReadable(readableStream, options);
-
-  return (
-    nativeStream ||
-    new ReadableFromWeb(
-      {
-        highWaterMark,
-        encoding,
-        objectMode,
-        signal,
-      },
-      readableStream,
-    )
-  );
+  const readableOptions = { highWaterMark, encoding, objectMode };
+  const readable =
+    tryTransferToNativeReadable(readableStream, readableOptions) ||
+    new ReadableFromWeb(readableOptions, readableStream);
+  if (signal) {
+    try {
+      // Added last: an aborted signal destroys the Readable inside its constructor, before either adapter can cancel the web stream.
+      addAbortSignal(signal, readable);
+    } catch (error) {
+      readable.destroy();
+      throw error;
+    }
+  }
+  return readable;
 }
 
 let dep0201Warned = false;

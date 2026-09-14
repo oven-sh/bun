@@ -447,3 +447,33 @@ devTest("combined html+script rebuild resolves bare script specifiers", {
     await dev.fetch("/").expect.toInclude("<h1>World</h1>");
   },
 });
+// When the script fails to build in the combined rebuild, only the HTML file is
+// bundled. Its record of the script gives the module id in the HTML module's
+// import list, and the key that finds the graph edge to the failed script. With
+// the raw specifier in both places the edge was dropped, and after the repair
+// the page threw "Failed to load bundled module './script.ts'".
+devTest("a script that fails in a combined html+script rebuild stays on the page", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["./script.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "script.ts": `
+      console.log("v1");
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
+      await dev.write("script.ts", `console.log("v2" +);`);
+    }
+    await dev.write("script.ts", `console.log("v3");`);
+
+    await using c = await dev.client("/");
+    await c.expectMessage("v3");
+    await dev.fetch("/").expect.toInclude("<h1>World</h1>");
+  },
+});

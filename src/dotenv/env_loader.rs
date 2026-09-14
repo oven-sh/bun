@@ -1074,6 +1074,10 @@ impl<'a> Parser<'a> {
                                             self.value_buffer.push(b'\r');
                                             i += 2;
                                         }
+                                        b'"' => {
+                                            self.value_buffer.push(b'"');
+                                            i += 2;
+                                        }
                                         _ => {
                                             self.value_buffer
                                                 .extend_from_slice(&self.src[i..i + 2]);

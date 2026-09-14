@@ -308,13 +308,30 @@ function getRetry() {
     // names: `none` is an agent that dropped its connection mid-job,
     // `agent_stop` is a graceful agent restart mid-job, `process_run_error`
     // is the bootstrap failing before the command ever ran. A blanket
-    // `exit_status: -1` / `255` also matches `cancel`, which is what a
-    // `timeout_in_minutes` kill records, so a timed-out shard would be
-    // re-queued just to time out again on the next agent. User-canceled
-    // builds are state=canceled and never auto-retry regardless of these
-    // rules.
+    // `exit_status: -1` / `255` (no `signal_reason` condition) would also
+    // match `cancel`, which is what a `timeout_in_minutes` kill records, so
+    // a timed-out shard would be re-queued just to time out again on the
+    // next agent. User-canceled builds are state=canceled and never
+    // auto-retry regardless of these rules.
+    //
+    // `255` with `signal_reason: none` is the step command exiting 255 on
+    // its own with the agent healthy. That is the darwin tart agents'
+    // command hook failing to ssh/scp into the ephemeral guest VM before any
+    // user code ran (guest never reachable, or a guest-IP collision on the
+    // vmnet bridge landing the connection on the wrong VM as "Permission
+    // denied", builds 90681-90686). A job's own code doesn't produce a bare
+    // 255: the test runner exits 0/2 (getExitCode in runner.node.mjs), and
+    // across 700 builds every failed bare-255 job was one of these ssh
+    // failures. A retry clones a fresh VM with a fresh IP, which is the
+    // recovery this failure mode needs. `limit: 2` like agent_stop, because
+    // the failed attempt frees its agent in under a minute and the re-queued
+    // job is preferentially re-captured by that same still-sick host
+    // (observed back-to-back in builds 90681->90682 and 90684->90686);
+    // denial attempts are cheap, and the expensive repeat (a hang until
+    // timeout) records signal_reason=cancel and is never retried.
     automatic: [
       { exit_status: -1, signal_reason: "none", limit: 1 },
+      { exit_status: 255, signal_reason: "none", limit: 2 },
       { signal_reason: "agent_stop", limit: 2 },
       { signal_reason: "process_run_error", limit: 1 },
     ],

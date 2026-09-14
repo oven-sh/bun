@@ -2371,6 +2371,35 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     },
   );
 
+  // What an executable was started with is known when it is built, as `import.meta.main` of an entry point written
+  // in JavaScript is: the statement that runs main asks nothing at run time. (A bundle's asks `import.meta.main`.)
+  test("in an executable the statement that runs main is unconditional, from bun build and from Bun.build", async () => {
+    using dir = tempDir("c-compile-main-statement", {
+      "hello.c": `#include <stdio.h>\nint main(void) { puts("hello"); return 0; }\n`,
+      "build.ts": `
+        const result = await Bun.build({ entrypoints: ["./hello.c"], compile: { outfile: "./api" } });
+        if (!result.success) throw new Error("build failed");
+      `,
+    });
+    expect((await run(String(dir), ["build", "--compile", "hello.c", "--outfile", "cli"])).exitCode).toBe(0);
+    expect((await run(String(dir), ["build.ts"])).exitCode).toBe(0);
+    expect((await run(String(dir), ["build", "hello.c", "--target=bun", "--outdir", "out"])).exitCode).toBe(0);
+    const statement = (bytes: Buffer) => {
+      const call = bytes.indexOf(".__bun_run_c_main__()");
+      expect(call).toBeGreaterThan(0);
+      const before = bytes.subarray(0, call).toString("latin1");
+      return before.slice(before.lastIndexOf("\n") + 1).replace(/__require\(.*$/, "");
+    };
+    for (const name of ["cli", "api"]) {
+      const exe = join(String(dir), executable(name));
+      expect(statement(Buffer.from(await Bun.file(exe).bytes()))).toBe("");
+      expect((await spawned([exe], String(dir))).stdout).toBe("hello\n");
+    }
+    expect(statement(Buffer.from(await Bun.file(join(String(dir), "out", "hello.js")).bytes()))).toBe(
+      "import.meta.main && ",
+    );
+  });
+
   test("bun build --compile of several C files links them into one program", async () => {
     using dir = tempDir("c-compile-multi", {
       "shared.h": "extern int calls;\nint twice(int);\nint counted(void);\n",
@@ -2453,14 +2482,16 @@ describe.skipIf(!supported)("bundling a .c file", () => {
         import { join } from "path";
         const root = import.meta.dir;
         const main = ${JSON.stringify(main)};
+        // Files that are nowhere but in the build's \`files\`, in a directory that is not there either.
+        const inMemory = name => join(root, "in-memory", name);
         const builds = {
           files: {
-            entrypoints: ["/virtual/main.c", "/virtual/helper.c"],
-            files: { "/virtual/main.c": main, "/virtual/helper.c": "int helper(int x) { return x * 2 + 2; }" },
+            entrypoints: [inMemory("main.c"), inMemory("helper.c")],
+            files: { [inMemory("main.c")]: main, [inMemory("helper.c")]: "int helper(int x) { return x * 2 + 2; }" },
           },
           "one from files": {
-            entrypoints: ["./main.c", "/virtual/helper.c"],
-            files: { "/virtual/helper.c": "int helper(int x) { return x * 3; }" },
+            entrypoints: ["./main.c", inMemory("helper.c")],
+            files: { [inMemory("helper.c")]: "int helper(int x) { return x * 3; }" },
           },
           onLoad: {
             entrypoints: ["./main.c", "./helper.c"],

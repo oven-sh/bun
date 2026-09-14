@@ -1265,6 +1265,9 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     //
     // import.meta.main && require("<asset>", { type: "c" }).__bun_run_c_main__()
     //
+    // In an executable `import.meta.main` is known, as it is for an entry point written in
+    // JavaScript (`ParseTask` has the parser put `true` there): the call is all there is.
+    //
     // The module's own statements load it the same way (`ParseTask`'s `Loader::C`), so this is the
     // module they loaded. Only here is it run: bundled into another entry point, or reached by a
     // split `import()`, it is its exports.
@@ -1292,21 +1295,26 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
             },
             bun_ast::Loc::EMPTY,
         );
+        let value = if c.options.compile_mode.is_executable() {
+            run_main
+        } else {
+            Expr::init(
+                E::Binary {
+                    op: js_ast::OpCode::BinLogicalAnd,
+                    left: Expr {
+                        data: js_ast::ExprData::EImportMetaMain(E::ImportMetaMain {
+                            inverted: false,
+                        }),
+                        loc: bun_ast::Loc::EMPTY,
+                    },
+                    right: run_main,
+                },
+                bun_ast::Loc::EMPTY,
+            )
+        };
         stmts.push(Stmt::alloc(
             S::SExpr {
-                value: Expr::init(
-                    E::Binary {
-                        op: js_ast::OpCode::BinLogicalAnd,
-                        left: Expr {
-                            data: js_ast::ExprData::EImportMetaMain(E::ImportMetaMain {
-                                inverted: false,
-                            }),
-                            loc: bun_ast::Loc::EMPTY,
-                        },
-                        right: run_main,
-                    },
-                    bun_ast::Loc::EMPTY,
-                ),
+                value,
                 ..Default::default()
             },
             bun_ast::Loc::EMPTY,

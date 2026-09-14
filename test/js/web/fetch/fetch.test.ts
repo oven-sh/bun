@@ -3405,10 +3405,13 @@ describe("fetch() with a streaming request body and caller framing headers", () 
       };
       const reply = (status: string, extra = "", text = "") =>
         `HTTP/1.1 ${status}\r\n${extra}Content-Length: ${text.length}\r\n\r\n${text}`;
+      const sockets = new Set<net.Socket>();
       const server = net.createServer(socket => {
         const connection = ++connections;
         let raw = "";
         let abandoned = false;
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
         socket.on("error", () => {});
         socket.on("data", data => {
           if (abandoned) return;
@@ -3453,7 +3456,11 @@ describe("fetch() with a streaming request body and caller framing headers", () 
         get requests() {
           return requests;
         },
-        [Symbol.asyncDispose]: () => server[Symbol.asyncDispose](),
+        // The client keeps these connections alive in its pool; close() would wait for them.
+        [Symbol.asyncDispose]: () => {
+          for (const socket of sockets) socket.destroy();
+          return server[Symbol.asyncDispose]();
+        },
       };
     }
 

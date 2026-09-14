@@ -1990,7 +1990,7 @@ mod spawn_process_body {
             let flag: c_int = if fd_i == 0 {
                 uv::O::RDONLY
             } else {
-                uv::O::WRONLY
+                uv::O::WRONLY | uv::O::CREAT
             };
 
             let mut treat_as_dup: bool = false;
@@ -2035,23 +2035,23 @@ mod spawn_process_body {
                         // loop, `path_z` is NUL-terminated and outlives the call
                         // (sync — no callback).
                         let rc = unsafe {
-                            uv::uv_fs_open(
-                                loop_,
-                                &mut req,
-                                path_z.as_ptr(),
-                                flag | uv::O::CREAT,
-                                0o644,
-                                None,
-                            )
+                            uv::uv_fs_open(loop_, &mut req, path_z.as_ptr(), flag, 0o644, None)
                         };
                         req.deinit();
                         if let Some(err) = rc.to_error(bun_sys::Tag::open) {
                             cleanup_uv_files(&uv_files_to_close, loop_);
+                            return Ok(Err(err.with_path(path)));
+                        }
+                        let fd = rc.int();
+                        uv_files_to_close.push(fd);
+                        if let Err(err) = bun_spawn_sys::spawn_process::reject_directory_stdio(
+                            Fd::from_uv(fd),
+                            path,
+                        ) {
+                            cleanup_uv_files(&uv_files_to_close, loop_);
                             return Ok(Err(err));
                         }
                         stdio.flags = uv::UV_INHERIT_FD;
-                        let fd = rc.int();
-                        uv_files_to_close.push(fd);
                         stdio.data.fd = fd;
                     }
                     WindowsStdio::Buffer(my_pipe) => {
@@ -2126,7 +2126,7 @@ mod spawn_process_body {
                     req.deinit();
                     if let Some(err) = rc.to_error(bun_sys::Tag::open) {
                         cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
+                        return Ok(Err(err.with_path(path)));
                     }
                     stdio.flags = uv::UV_INHERIT_FD;
                     let fd = rc.int();

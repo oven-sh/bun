@@ -14,7 +14,7 @@
 /**
  * @param {Response} response a 429 or a 5xx. This reads its body.
  * @param {number} attempt how many requests were made so far, 1 after the first
- * @param {number} [maxWaitMs] upper bound for the wait that the response can ask for
+ * @param {number} [maxWaitMs] upper bound for one wait, before the extra second
  * @returns {Promise<number>} milliseconds to wait before the next request
  */
 export async function retryDelayMs(response, attempt, maxWaitMs = 60_000) {
@@ -22,5 +22,6 @@ export async function retryDelayMs(response, attempt, maxWaitMs = 60_000) {
   const seconds = Number(response.headers.get("retry-after") ?? body?.reset);
   // `reset` counts whole seconds. One second on top puts the retry after the
   // reset and not just before it. Without a hint, back off exponentially.
-  return seconds >= 0 ? Math.min(seconds * 1000, maxWaitMs) + 1000 : 1000 * 2 ** (attempt - 1);
+  if (seconds >= 0) return Math.min(seconds * 1000, maxWaitMs) + 1000;
+  return Math.min(1000 * 2 ** (attempt - 1), maxWaitMs);
 }

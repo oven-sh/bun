@@ -92,7 +92,7 @@ export type LogFetcherOptions = {
   cacheDir: string;
   /** Requests per log, the first one included. */
   maxAttempts?: number;
-  /** Upper bound for the wait that a response can ask for. */
+  /** Upper bound for one wait. A wait that the response asks for gets one second on top. */
   maxWaitMs?: number;
   sleep?: (ms: number) => Promise<unknown>;
 };

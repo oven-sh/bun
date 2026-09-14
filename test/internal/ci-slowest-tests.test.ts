@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { retryDelayMs } from "../../scripts/buildkite-retry.mjs";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
 import { createLogFetcher, parseLog, type Job } from "../../scripts/ci-slowest-tests";
 import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
@@ -247,6 +248,19 @@ const rateLimited = (reset: number) =>
       },
     },
   );
+
+describe("scripts/buildkite-retry.mjs retryDelayMs", () => {
+  // createLogFetcher below covers the waits that a response asks for.
+  // update-parallel-allowlist.mjs allows 8 retries. Uncapped, its last backoff is 128 s.
+  test("caps the exponential backoff at maxWaitMs", async () => {
+    expect([
+      await retryDelayMs(refuse(500), 6),
+      await retryDelayMs(refuse(500), 7),
+      await retryDelayMs(refuse(500), 8),
+      await retryDelayMs(refuse(429), 4, 5000),
+    ]).toEqual([32_000, 60_000, 60_000, 5000]);
+  });
+});
 
 describe("scripts/ci-slowest-tests.ts createLogFetcher", () => {
   // `sleep` records the wait and returns at once, so no test waits for real.

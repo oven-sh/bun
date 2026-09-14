@@ -1364,7 +1364,7 @@ pub mod js_bundler {
         Ok(build.promise)
     }
 
-    /// One `Bun.build()` call until its bundle is scheduled. It roots nothing: see `park`.
+    /// One `Bun.build()` call until its bundle is scheduled. It roots nothing: it is on the native stack, which the GC scans, until `park`.
     struct PendingBuild {
         config: JSValue,
         /// `config.plugins`, read once so that a getter does not run again on resume. `undefined` without plugins.

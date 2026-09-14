@@ -2155,6 +2155,62 @@ describe("bundler", () => {
       );
     });
 
+    test("a GC while the plugins are validated and the options are parsed does not collect what the build needs", async () => {
+      using dir = tempDir("bun-build-setup-gc", {
+        "entry.js": entry,
+        "gc-in-getters-fixture.ts": /* ts */ `
+          const gc = () => {
+            for (let i = 0; i < 500; i++) ({ i, list: [i, i, i], text: "x" + i });
+            Bun.gc(true);
+          };
+          const results = [];
+          for (const asyncSetup of [false, true]) {
+            const result = await Bun.build({
+              entrypoints: ["./entry.js"],
+              // Read after the last setup(), when only the native stack or the reaction holds the plugin object of the bundler.
+              get minify() {
+                gc();
+                return false;
+              },
+              plugins: [
+                {
+                  // Read before the first setup(), when only the native stack holds it.
+                  get name() {
+                    gc();
+                    return "first";
+                  },
+                  setup(build) {
+                    build.onLoad({ filter: /entry\\.js$/ }, () => ({
+                      contents: "export const hello = 'patched';",
+                      loader: "js",
+                    }));
+                  },
+                },
+                {
+                  get name() {
+                    gc();
+                    return "second";
+                  },
+                  setup: asyncSetup
+                    ? async () => {
+                        await new Promise(resolve => setImmediate(resolve));
+                        gc();
+                      }
+                    : () => gc(),
+                },
+              ],
+            });
+            results.push({ asyncSetup, patched: (await result.outputs[0].text()).includes("patched") });
+          }
+          console.log(JSON.stringify(results));
+        `,
+      });
+      expect(await runFixture(String(dir), "gc-in-getters-fixture.ts")).toEqual([
+        { asyncSetup: false, patched: true },
+        { asyncSetup: true, patched: true },
+      ]);
+    });
+
     test("a build that waits for a promise that is collected without settling is collected with it", async () => {
       using dir = tempDir("bun-build-setup-collected", {
         "entry.js": entry,

@@ -2633,7 +2633,7 @@ where
                         .as_mut()
                         .transpiler
                         .env_mut()
-                        .get_http_proxy(true, None, None)
+                        .get_http_proxy()
                         .map(|proxy| proxy.href);
 
                     let _ = S3::client::stat(

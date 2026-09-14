@@ -23,6 +23,7 @@ import {
 } from "harness";
 
 import { once } from "events";
+import { deadPort } from "../../bun/http/proxy-stress-helpers";
 import { mkfifo } from "mkfifo";
 import type { AddressInfo } from "net";
 import net from "net";
@@ -1790,6 +1791,145 @@ it("fetch() file:// works", async () => {
   expect(fileResponseText).toEqual(bunFileText);
   gc(true);
 });
+it("fetch() file:// rejects a host that is not this machine", async () => {
+  const path = Bun.fileURLToPath(new URL("fixture.html", import.meta.url));
+  const expected = await Bun.file(path).text();
+  const pathname = new URL(import.meta.url).pathname.replace(/[^/]*$/, "fixture.html");
+  const outcome = (url: string) =>
+    fetch(url).then(
+      r => r.text(),
+      e => `${e.name} ${e.code}: ${e.message}`,
+    );
+  expect(await outcome(`file://${pathname}`)).toBe(expected);
+  expect(await outcome(`file://localhost${pathname}`)).toBe(expected);
+  expect(await outcome(`file://LOCALHOST${pathname}`)).toBe(expected);
+  const rejected =
+    `TypeError ERR_INVALID_FILE_URL_HOST: File URL host must be "localhost" or empty` +
+    (isWindows ? ": fetch() does not read UNC paths" : ` on ${process.platform}`);
+  expect(await outcome(`file://any.host${pathname}`)).toBe(rejected);
+  expect(await outcome(`file://127.0.0.1${pathname}`)).toBe(rejected);
+});
+
+it("URL userinfo is sent as Basic credentials unless an Authorization header is given", async () => {
+  const seen: (string | null)[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(req.headers.get("authorization"));
+      return new Response(req.url);
+    },
+  });
+  const base = `localhost:${server.port}`;
+  const urls = await Promise.all(
+    [
+      fetch(`http://user:p%40ss@${base}/a`),
+      fetch(`http://user@${base}/b`),
+      fetch(new Request(`http://user:pass@${base}/c`)),
+      fetch(`http://user:pass@${base}/d`, { headers: { authorization: "Bearer explicit" } }),
+      fetch(`http://${base}/e`),
+    ].map(p => p.then(r => r.text())),
+  );
+  // The request line and Host never carry the userinfo.
+  expect(urls).toEqual(["a", "b", "c", "d", "e"].map(p => `http://${base}/${p}`));
+  expect(seen.toSorted()).toEqual(
+    [
+      `Basic ${btoa("user:p@ss")}`,
+      `Basic ${btoa("user:")}`,
+      `Basic ${btoa("user:pass")}`,
+      "Bearer explicit",
+      null,
+    ].toSorted(),
+  );
+});
+
+it("URL userinfo does not displace the Content-Type a body brings", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const form = await req.formData();
+      return Response.json({ authorization: req.headers.get("authorization"), field: form.get("field") });
+    },
+  });
+  const body = new FormData();
+  body.set("field", "value");
+  const response = await fetch(`http://user:pass@localhost:${server.port}/`, { method: "POST", body });
+  expect(await response.json()).toEqual({ authorization: `Basic ${btoa("user:pass")}`, field: "value" });
+});
+
+it("URL credentials are not forwarded on a cross-origin redirect", async () => {
+  const seen: (string | null)[] = [];
+  using target = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(req.headers.get("authorization"));
+      return new Response("target");
+    },
+  });
+  using origin = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(req.headers.get("authorization"));
+      return Response.redirect(`http://localhost:${target.port}/`, 302);
+    },
+  });
+  expect(await (await fetch(`http://user:pass@localhost:${origin.port}/`)).text()).toBe("target");
+  expect(seen).toEqual([`Basic ${btoa("user:pass")}`, null]);
+});
+
+it("URL credentials survive a same-origin redirect whose Location leaves them out", async () => {
+  const seen: [string, string | null][] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      seen.push([pathname, req.headers.get("authorization")]);
+      return pathname === "/a" ? Response.redirect(`http://localhost:${server.port}/b`, 302) : new Response("b");
+    },
+  });
+  expect(await (await fetch(`http://user:pass@localhost:${server.port}/a`)).text()).toBe("b");
+  const basic = `Basic ${btoa("user:pass")}`;
+  expect(seen).toEqual([
+    ["/a", basic],
+    ["/b", basic],
+  ]);
+});
+
+it("connection failures reject with an errno-style code that the message starts with", async () => {
+  using dead = await deadPort();
+  const refused = await fetch(`http://127.0.0.1:${dead.port}/`).catch(e => e);
+  expect({ name: refused.name, code: refused.code, message: refused.message }).toEqual({
+    name: "TypeError",
+    code: "ECONNREFUSED",
+    message: "ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
+  });
+
+  const resetter = net.createServer(socket => socket.once("data", () => socket.destroy()));
+  resetter.listen(0, "127.0.0.1");
+  await once(resetter, "listening");
+  try {
+    const reset = await fetch(`http://127.0.0.1:${(resetter.address() as net.AddressInfo).port}/`, {
+      method: "POST",
+      body: "not retried",
+    }).catch(e => e);
+    expect({ name: reset.name, code: reset.code, message: reset.message }).toEqual({
+      name: "TypeError",
+      code: "ECONNRESET",
+      message:
+        "ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+    });
+  } finally {
+    resetter.close();
+  }
+
+  using looping = Bun.serve({ port: 0, fetch: req => Response.redirect(req.url, 302) });
+  const tooMany = await fetch(looping.url, { maxRedirects: 2 }).catch(e => e);
+  expect({ code: tooMany.code, message: tooMany.message }).toEqual({
+    code: "TooManyRedirects",
+    message:
+      "TooManyRedirects: The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()",
+  });
+});
+
 it("cloned response headers are independent before accessing", () => {
   const response = new Response("hello", {
     headers: {

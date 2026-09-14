@@ -321,7 +321,7 @@ impl S3Ext for S3 {
             .as_mut()
             .transpiler
             .env_mut()
-            .get_http_proxy(true, None, None);
+            .get_http_proxy();
         let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
@@ -407,7 +407,7 @@ impl S3Ext for S3 {
             .as_mut()
             .transpiler
             .env_mut()
-            .get_http_proxy(true, None, None);
+            .get_http_proxy();
         let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.

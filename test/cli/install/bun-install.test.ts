@@ -448,6 +448,59 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it.each([
+    // The proxy would refuse the retry too.
+    { status: "407 Proxy Authentication Required", code: 407, connects: 1 },
+    // Its upstream may be back by the retry: 1 attempt + 5 retries.
+    { status: "502 Bad Gateway", code: 502, connects: 6 },
+  ])(
+    "reports a proxy that answers CONNECT with $code after $connects attempt(s)",
+    async ({ status, code, connects }) => {
+      await withContext(defaultOpts, async ctx => {
+        const seen: string[] = [];
+        const proxy = listen({
+          socket: {
+            data(socket, data) {
+              seen.push(data.toString().split("\r\n")[0]);
+              socket.end(`HTTP/1.1 ${status}\r\nContent-Length: 0\r\n\r\n`);
+            },
+          },
+          hostname: "127.0.0.1",
+          port: 0,
+        });
+        try {
+          await writeFile(
+            join(ctx.package_dir, "bunfig.toml"),
+            Bun.TOML.stringify({ install: { cache: false, registry: "https://registry.invalid/" } }),
+          );
+          await writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+          );
+          await using proc = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: ctx.package_dir,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: {
+              ...env,
+              HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
+              https_proxy: undefined,
+              NO_PROXY: undefined,
+              no_proxy: undefined,
+            },
+          });
+          const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          expect(err).toContain(`error: ProxyConnectFailed (${code}) downloading package manifest bar`);
+          expect(seen).toEqual(Array(connects).fill("CONNECT registry.invalid:443 HTTP/1.1"));
+          expect(exitCode).toBe(1);
+        } finally {
+          proxy.stop(true);
+        }
+      });
+    },
+  );
+
   it("should support --registry CLI flag", async () => {
     await withContext(defaultOpts, async ctx => {
       const connected = jest.fn();

@@ -1942,7 +1942,14 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
  */
 interface BunFetchRequestInitTLS extends Bun.TLSOptions {
   /**
-   * Custom function to check the server identity
+   * Custom function to check the server identity. It runs once the
+   * certificate chain verified. With `rejectUnauthorized: false` it still
+   * runs, but what it returns is ignored.
+   *
+   * A request that passes its own function opens a connection of its own and
+   * closes it afterwards. To verify once per connection and reuse it, put the
+   * function on a {@link Bun.FetchContext}.
+   *
    * @param hostname - The hostname of the server
    * @param cert - The certificate of the server
    * @returns An error if the server is unauthorized, otherwise undefined
@@ -1970,9 +1977,15 @@ interface BunFetchRequestInit extends RequestInit {
   verbose?: boolean;
 
   /**
-   * The proxy to send the request through, overriding the `http_proxy` and
-   * `HTTPS_PROXY` environment variables. Accepts a URL string, a URL instance,
-   * or an object with `url` and optional `headers`.
+   * The proxy to send the request through, overriding the `http_proxy`,
+   * `HTTPS_PROXY` and `ALL_PROXY` environment variables. Accepts a URL string,
+   * a URL instance, or an object with `url` and optional `headers` and
+   * `respectNoProxy`.
+   *
+   * `false` connects directly, ignoring the proxy environment variables.
+   *
+   * Hosts listed in `NO_PROXY` bypass the proxy unless `respectNoProxy` is
+   * `false`.
    *
    * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
    * precedence over credentials parsed from the proxy URL.
@@ -1996,23 +2009,46 @@ interface BunFetchRequestInit extends RequestInit {
    *    }
    *  }
    * });
+   *
+   * // Never use a proxy for this request
+   * const direct = await fetch("http://example.com", { proxy: false });
    * ```
    */
-  proxy?:
-    | string
-    | URL
-    | {
-        /**
-         * The proxy URL, as a string or a `URL`.
-         */
-        url: string | URL;
-        /**
-         * Custom headers to send to the proxy server.
-         * These headers are sent in the CONNECT request (for HTTPS targets)
-         * or in the proxy request (for HTTP targets).
-         */
-        headers?: Bun.HeadersInit;
-      };
+  proxy?: Bun.FetchProxyOption | undefined;
+
+  /**
+   * Take connection settings, and the keep-alive pool, from a
+   * {@link Bun.FetchContext}. Options given on the request take precedence over
+   * the context's; a request's `tls` replaces the context's `tls` as a whole.
+   *
+   * Not part of the Fetch API specification.
+   */
+  context?: Bun.FetchContext | undefined;
+
+  /**
+   * Resolve the host of every connection this request opens. See
+   * {@link Bun.FetchLookupFunction}.
+   *
+   * Not part of the Fetch API specification.
+   *
+   * @example
+   * ```js
+   * // Connect to an address that was vetted up front
+   * const response = await fetch("https://example.com/hook", {
+   *   lookup: () => "93.184.216.34",
+   *   redirect: "error",
+   * });
+   * ```
+   */
+  lookup?: Bun.FetchLookupFunction | undefined;
+
+  /**
+   * Called once when the connection is done with this request, with what its
+   * last connection attempt did. See {@link Bun.FetchConnectionStats}.
+   *
+   * Not part of the Fetch API specification.
+   */
+  onStats?: ((stats: Bun.FetchConnectionStats) => void) | undefined;
 
   /**
    * Override the default S3 options

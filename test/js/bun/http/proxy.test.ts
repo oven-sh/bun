@@ -7,6 +7,7 @@ import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
 import tls from "node:tls";
+import { deadPort, proxyFreeEnv } from "./proxy-stress-helpers";
 async function createProxyServer(is_tls: boolean) {
   const serverArgs = [];
   if (is_tls) {
@@ -580,14 +581,18 @@ describe.each([
     const port = (server.address() as net.AddressInfo).port;
     try {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", `console.log((await fetch("https://example.invalid/")).status);`],
+        cmd: [
+          bunExe(),
+          "-e",
+          `console.log(await fetch("https://example.invalid/").then(r => "resolved " + r.status, e => e.code + " " + e.status));`,
+        ],
         env: { ...noProxyEnv, https_proxy: `http://${userinfo}@127.0.0.1:${port}` },
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("407");
+      expect(stdout.trim()).toBe("ERR_PROXY_TUNNEL 407");
       expect(capturedAuths).toEqual([expected]);
       expect(exitCode).toBe(0);
     } finally {
@@ -944,11 +949,11 @@ test("HTTPS target through proxy with passing checkServerIdentity round-trips", 
   expect(verified).toEqual(["localhost"]);
 });
 
-test("HTTPS target through proxy reuses the tunnel across checkServerIdentity requests", async () => {
+test("HTTPS target through proxy reuses the tunnel across a context's checkServerIdentity requests", async () => {
   using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
   httpProxyServer.log.length = 0;
   const verified: string[] = [];
-  const withCallback = () => ({
+  using context = new Bun.FetchContext({
     proxy: httpProxyServer.url,
     tls: {
       ca: tlsCert.cert,
@@ -961,23 +966,24 @@ test("HTTPS target through proxy reuses the tunnel across checkServerIdentity re
   const connects = () => httpProxyServer.log.filter(l => l.startsWith("CONNECT")).length;
 
   for (let i = 0; i < 3; i++) {
-    expect(await fetch(target.url, withCallback()).then(r => r.text())).toBe("ok");
+    expect(await fetch(target.url, { context }).then(r => r.text())).toBe("ok");
   }
   expect(verified).toEqual(["localhost"]);
   expect(connects()).toBe(1);
 
-  // A strict request without a callback does not inherit the callback-approved
-  // tunnel, and vice versa.
-  expect(await fetch(target.url, { proxy: httpProxyServer.url, tls: { ca: tlsCert.cert } }).then(r => r.text())).toBe(
-    "ok",
-  );
-  expect(connects()).toBe(2);
-  expect(await fetch(target.url, withCallback()).then(r => r.text())).toBe("ok");
-  expect(await fetch(target.url, { proxy: httpProxyServer.url, tls: { ca: tlsCert.cert } }).then(r => r.text())).toBe(
-    "ok",
-  );
-  expect(connects()).toBe(2);
-  expect(verified).toEqual(["localhost"]);
+  // A per-request callback is a closure nothing can compare: it neither takes
+  // the context's approved tunnel nor leaves one behind.
+  for (let i = 0; i < 2; i++) {
+    const own = await fetch(target.url, {
+      proxy: httpProxyServer.url,
+      tls: { ca: tlsCert.cert, checkServerIdentity: (hostname: string) => void verified.push(`own ${hostname}`) },
+    });
+    expect(await own.text()).toBe("ok");
+  }
+  expect(connects()).toBe(3);
+  expect(await fetch(target.url, { context }).then(r => r.text())).toBe("ok");
+  expect(connects()).toBe(3);
+  expect(verified).toEqual(["localhost", "own localhost", "own localhost"]);
 });
 
 test("HTTPS target through proxy with rejecting checkServerIdentity transmits nothing to the target", async () => {
@@ -2096,6 +2102,195 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
   });
 });
 
+describe.concurrent("proxy environment", () => {
+  // Each case runs in a subprocess that owns its proxy environment. The proxy
+  // answers every request itself with "proxy"; `lookup` sends every direct
+  // connection to the origin, whatever the hostname, which answers "origin".
+  async function run(env: (deadProxy: string) => Record<string, string | undefined>, body: string) {
+    using origin = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("origin") });
+    using proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("proxy") });
+    using dead = await deadPort();
+    const deadProxy = `http://127.0.0.1:${dead.port}`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const PROXY = "http://127.0.0.1:${proxy.port}";
+        const DEAD_PROXY = "${deadProxy}";
+        const ORIGIN_PORT = ${origin.port};
+        const via = host =>
+          fetch("http://" + host + ":${origin.port}/", { keepalive: false, lookup: () => "127.0.0.1" }).then(
+            r => r.text(),
+            e => e.code,
+          );
+        ${body}
+        `,
+      ],
+      env: { ...bunEnv, ...proxyFreeEnv, ...env(deadProxy) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout);
+    expect(exitCode).toBe(0);
+    return parsed;
+  }
+
+  test("NO_PROXY grammar", async () => {
+    const cases: [noProxy: string, host: string, expected: "proxy" | "origin"][] = [
+      // separators
+      ["a.test b.test", "b.test", "origin"],
+      ["a.test\tb.test\n", "b.test", "origin"],
+      ["a.test, b.test", "b.test", "origin"],
+      ["a.test;b.test", "b.test", "proxy"],
+      // domains
+      ["*.example.test", "api.example.test", "origin"],
+      ["*.example.test", "example.test", "origin"],
+      [".example.test", "deep.api.example.test", "origin"],
+      ["example.test", "notexample.test", "proxy"],
+      ["EXAMPLE.test.", "api.example.test", "origin"],
+      ["*", "anything.test", "origin"],
+      ["", "anything.test", "proxy"],
+      // an IP literal only matches an address or a block, never a suffix
+      ["0.0.1", "127.0.0.1", "proxy"],
+      ["127.0.0.1", "127.0.0.1", "origin"],
+      ["127.0.0.2", "127.0.0.1", "proxy"],
+      ["::1", "[::1]", "origin"],
+      ["[::1]", "[::1]", "origin"],
+      ["0:0:0:0:0:0:0:1", "[::1]", "origin"],
+      ["::2", "[::1]", "proxy"],
+      // CIDR
+      ["127.0.0.0/8", "127.0.0.1", "origin"],
+      ["10.0.0.0/8", "127.0.0.1", "proxy"],
+      ["127.0.0.128/25", "127.0.0.1", "proxy"],
+      ["::/127", "[::1]", "origin"],
+      ["fd00::/8", "[::1]", "proxy"],
+      ["127.0.0.0/33", "127.0.0.1", "proxy"],
+      ["127.0.0.0/8", "ten.test", "proxy"],
+    ];
+    const results = await run(
+      () => ({ HTTP_PROXY: "placeholder" }),
+      `
+      process.env.HTTP_PROXY = PROXY;
+      const out = [];
+      for (const [noProxy, host] of ${JSON.stringify(cases.map(([noProxy, host]) => [noProxy, host]))}) {
+        process.env.NO_PROXY = noProxy;
+        out.push(await via(host));
+      }
+      console.log(JSON.stringify(out));
+      `,
+    );
+    expect(cases.map(([noProxy, host], i) => [noProxy, host, results[i]])).toEqual(cases);
+  });
+
+  test("a NO_PROXY entry with a port matches that port only", async () => {
+    const results = await run(
+      () => ({}),
+      `
+      process.env.HTTP_PROXY = PROXY;
+      const out = [];
+      for (const [noProxy, host] of [
+        ["a.test:" + ORIGIN_PORT, "a.test"],
+        ["a.test:1", "a.test"],
+        ["127.0.0.1:" + ORIGIN_PORT, "127.0.0.1"],
+        ["127.0.0.1:1", "127.0.0.1"],
+        ["[::1]:" + ORIGIN_PORT, "[::1]"],
+        ["[::1]:1", "[::1]"],
+      ]) {
+        process.env.NO_PROXY = noProxy;
+        out.push(await via(host));
+      }
+      console.log(JSON.stringify(out));
+      `,
+    );
+    expect(results).toEqual(["origin", "proxy", "origin", "proxy", "origin", "proxy"]);
+  });
+
+  test("both no_proxy and NO_PROXY are honoured", async () => {
+    const results = await run(
+      () => ({ no_proxy: "lower.test", NO_PROXY: "upper.test" }),
+      `
+      process.env.HTTP_PROXY = PROXY;
+      console.log(JSON.stringify([await via("lower.test"), await via("upper.test"), await via("other.test")]));
+      `,
+    );
+    expect(results).toEqual(["origin", "origin", "proxy"]);
+  });
+
+  test("ALL_PROXY is the fallback for an http(s) proxy, and a socks one is left alone", async () => {
+    const results = await run(
+      () => ({}),
+      `
+      const out = {};
+      process.env.ALL_PROXY = PROXY;
+      out.allProxy = await via("a.test");
+      process.env.ALL_PROXY = "socks5://127.0.0.1:1";
+      out.socks = await via("a.test");
+      process.env.all_proxy = PROXY;
+      delete process.env.ALL_PROXY;
+      out.lowercase = await via("a.test");
+      process.env.HTTP_PROXY = DEAD_PROXY;
+      out.schemeSpecificWins = await via("a.test");
+      console.log(JSON.stringify(out));
+      `,
+    );
+    expect(results).toEqual({
+      allProxy: "proxy",
+      socks: "origin",
+      lowercase: "proxy",
+      schemeSpecificWins: "ECONNREFUSED",
+    });
+  });
+
+  test("assigning and deleting process.env proxy variables takes effect on the next fetch", async () => {
+    const script = `
+      const out = [];
+      out.push(await via("a.test"));
+      // A variable that was never set is not a property.
+      out.push("ALL_PROXY" in process.env);
+      // An object inheriting from process.env keeps its writes to itself.
+      const child = Object.create(process.env);
+      child.HTTP_PROXY = PROXY;
+      out.push(Object.hasOwn(child, "HTTP_PROXY"), await via("a.test"));
+      process.env.HTTP_PROXY = PROXY;
+      out.push(await via("a.test"));
+      delete process.env.HTTP_PROXY;
+      out.push(await via("a.test"), String(process.env.HTTP_PROXY), "HTTP_PROXY" in process.env, "HTTP_PROXY" in { ...process.env });
+      process.env.HTTP_PROXY = PROXY;
+      out.push(await via("a.test"), "HTTP_PROXY" in process.env, "HTTP_PROXY" in { ...process.env });
+      process.env.NO_PROXY = "a.test";
+      out.push(await via("a.test"));
+      delete process.env.NO_PROXY;
+      out.push(await via("a.test"));
+      console.log(JSON.stringify(out));
+    `;
+    // `atStartup` is what the environment the process started with leads to.
+    const expected = (atStartup: string) => [
+      atStartup,
+      false,
+      true,
+      atStartup,
+      "proxy",
+      "origin",
+      "undefined",
+      false,
+      false,
+      "proxy",
+      true,
+      true,
+      "origin",
+      "proxy",
+    ];
+    // Unset at startup, and set at startup to something the script replaces.
+    expect(await run(() => ({}), script)).toEqual(expected("origin"));
+    expect(await run(deadProxy => ({ HTTP_PROXY: deadProxy, NO_PROXY: "other.test" }), script)).toEqual(
+      expected("ECONNREFUSED"),
+    );
+  });
+});
+
 describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
   // curl and Node's undici EnvHttpProxyAgent both re-run the proxy/no_proxy
   // decision against the post-redirect URL. Previously Bun resolved it once
@@ -2287,12 +2482,12 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
   });
 });
 
-test("non-200 CONNECT response from proxy is surfaced and its Location header is not followed", async () => {
+test("non-2xx CONNECT response from proxy rejects and its Location header is not followed", async () => {
   // RFC 9110 §9.3.6: a non-2xx response to CONNECT means the tunnel was not
-  // established. The proxy's response must be returned to the caller, but a
-  // Location header on it must never be followed — otherwise the original
-  // method, body, and custom headers would be re-sent to whatever plaintext
-  // origin the proxy names.
+  // established. The proxy's response is not the https origin's, so the fetch
+  // rejects with it attached, and a Location header on it must never be
+  // followed — otherwise the original method, body, and custom headers would
+  // be re-sent to whatever plaintext origin the proxy names.
 
   // Records anything that reaches the address named in the proxy's Location
   // header. Nothing should ever arrive here.
@@ -2332,20 +2527,35 @@ test("non-200 CONNECT response from proxy is surfaced and its Location header is
   const proxyPort = (proxy.address() as net.AddressInfo).port;
 
   try {
-    const response = await fetch(httpsServer.url, {
+    const error = await fetch(httpsServer.url, {
       method: "POST",
       body: "secret request body",
       headers: { "X-Api-Key": "super-secret" },
       proxy: `http://localhost:${proxyPort}`,
       keepalive: false,
       tls: { ca: tlsCert.cert, rejectUnauthorized: false },
-    });
+    }).then(
+      response => ({ resolved: response.status }),
+      e => e,
+    );
 
     // The request did go through the proxy as a CONNECT...
     expect(sawConnect.length).toBe(1);
     expect(sawConnect[0]!.startsWith("CONNECT ")).toBe(true);
-    // ...the proxy's refusal is surfaced to the caller as-is...
-    expect(response.status).toBe(307);
+    // ...the proxy's refusal rejects, with the proxy's head on the error...
+    expect({
+      code: error.code,
+      message: error.message,
+      status: error.status,
+      statusText: error.statusText,
+      location: error.headers?.get("location"),
+    }).toEqual({
+      code: "ERR_PROXY_TUNNEL",
+      message: "Proxy refused to open a tunnel: 307 Temporary Redirect",
+      status: 307,
+      statusText: "Temporary Redirect",
+      location: `${redirectTarget.url.origin}/`,
+    });
     // ...and the Location header on the failed CONNECT is never followed:
     // the body and the X-Api-Key header must not reach the plaintext server
     // it points at.
@@ -2355,6 +2565,49 @@ test("non-200 CONNECT response from proxy is surfaced and its Location header is
     proxy.close();
     await once(proxy, "close");
   }
+});
+
+test("a proxy's own reply to CONNECT never resolves as the https origin's response", async () => {
+  // Nothing authenticated these bytes as coming from the origin: a 4xx with a
+  // body rejects, and a forged 2xx with a body is treated as the start of the
+  // tunnel, where it fails the TLS handshake.
+  const replies = [
+    'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="corp"\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
+    'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
+    'HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
+  ];
+  const outcomes = [];
+  for (const reply of replies) {
+    const connects: string[] = [];
+    const proxy = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", data => {
+        connects.push(data.toString().split(" ")[0]);
+        socket.end(reply);
+      });
+    });
+    await once(proxy.listen(0, "127.0.0.1"), "listening");
+    try {
+      outcomes.push({
+        ...(await fetch("https://origin.invalid/secret", {
+          proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+          keepalive: false,
+        }).then(
+          async response => ({ resolved: response.status, body: await response.text() }),
+          e => ({ code: e.code, status: e.status, authenticate: e.headers?.get("proxy-authenticate") }),
+        )),
+        connects,
+      });
+    } finally {
+      proxy.close();
+    }
+  }
+  expect(outcomes).toEqual([
+    { code: "ERR_PROXY_TUNNEL", status: 407, authenticate: 'Basic realm="corp"', connects: ["CONNECT"] },
+    // The JSON is not a TLS ServerHello: the handshake inside the "tunnel" fails.
+    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"] },
+    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"] },
+  ]);
 });
 
 // RFC 3986 §3.1: the URL scheme is case-insensitive. The explicit

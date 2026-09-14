@@ -529,15 +529,21 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue bunMain;
     if (Bun::JSModuleGraph* graph = thisObject->moduleGraph()) {
-        bunMain = graph->mainPath();
-    } else {
-        if (!globalObject->scriptExecutionContext()->isMainThread())
+        JSValue mainPath = graph->mainPath();
+        if (!mainPath.isString())
             return JSValue::encode(jsBoolean(false));
-        bunMain = JSValue::decode(BunObject_getter_main(globalObject));
+        // graph.mainModule is a registry key: the path, and the query if there is one.
+        WTF::URL url(thisObject->url);
+        auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
     }
+
+    if (!globalObject->scriptExecutionContext()->isMainThread())
+        return JSValue::encode(jsBoolean(false));
+    JSValue bunMain = JSValue::decode(BunObject_getter_main(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
     JSValue path = thisObject->pathProperty.getInitializedOnMainThread(thisObject);
     bool isMain = JSValue::strictEqual(globalObject, path, bunMain);
     RETURN_IF_EXCEPTION(scope, {});

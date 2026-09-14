@@ -550,4 +550,39 @@ describe.concurrent("bundler", () => {
     // Without splitting everything is the entry module itself, which require.cache does not list.
     stdout: splitting => (splitting ? "0\ntrue 1\nfresh 1" : "0\nfalse 1\nsingle 1"),
   });
+
+  // A re-export of the entry whose target is outside the bundle stays unresolved in the graph, so the loader resolves
+  // it by name when the entry links. When that fails, the error names the requested binding (not the alias it is
+  // re-exported under) and the file the external resolved to, the same in all three loader modes.
+  for (const [id, reexport, message] of [
+    [
+      "Default",
+      `export { default as x } from "./ext/p.mjs";`,
+      /^SyntaxError: Missing 'default' export in module '[^']*[\\/]ext[\\/]p\.mjs'\.$/m,
+    ],
+    [
+      "Named",
+      `export { nope as y } from "./ext/p.mjs";`,
+      /^SyntaxError: Export named 'nope' not found in module '[^']*[\\/]ext[\\/]p\.mjs'\.$/m,
+    ],
+  ] as const) {
+    itBundled(`compile/prelinked/ReExportMissingFromExternal${id}`, {
+      compile: true,
+      bytecode: true,
+      format: "esm",
+      files: {
+        "/entry.mjs": reexport,
+        "/ext/p.mjs": `export const a = 1;`,
+      },
+      external: ["./ext/p.mjs"],
+      run: eachMode(() => ({
+        setCwd: true, // a relative external specifier resolves against the working directory
+        exitCode: 1,
+        stdout: "",
+        validate({ stderr }) {
+          expect(stderr).toMatch(message);
+        },
+      })),
+    });
+  }
 });

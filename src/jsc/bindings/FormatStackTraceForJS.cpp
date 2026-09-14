@@ -758,8 +758,8 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto& vm = JSC::getVM(globalObject);
+    // Every Bun::GlobalScope installs this. In a node:vm context, lexicalGlobalObject is a NodeVMGlobalObject, not a Zig::GlobalObject.
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
@@ -770,7 +770,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
-    size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
+    size_t stackTraceLimit = lexicalGlobalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
     if (stackTraceLimit == 0) {
         stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
     }
@@ -800,10 +800,12 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
                 const auto& propertyName = vm.propertyNames->stack;
                 VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
                 DeletePropertySlot slot;
-                JSObject::deleteProperty(instance, globalObject, propertyName, slot);
+                JSObject::deleteProperty(instance, lexicalGlobalObject, propertyName, slot);
             }
             RETURN_IF_EXCEPTION(scope, {});
 
+            // A CustomGetterSetter cell belongs to no realm, so a node:vm context shares the one the Zig::GlobalObject owns.
+            Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
             instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
         }
     } else {

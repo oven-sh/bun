@@ -8,6 +8,7 @@
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "BunClientData.h"
+#include "FormatStackTraceForJS.h"
 
 namespace Bun {
 
@@ -17,6 +18,9 @@ void GlobalScope::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+
+    // Overrides JSC's built-in Error.captureStackTrace. In GlobalScope so that node:vm contexts get it too.
+    errorConstructor()->putDirectNativeFunction(vm, this, vm.propertyNames->captureStackTrace, 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 
     m_encodeIntoObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {

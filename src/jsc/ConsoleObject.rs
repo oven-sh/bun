@@ -3527,7 +3527,15 @@ pub mod formatter {
             };
             writer.add_for_new_line(str.length());
 
-            if self.quote_strings && js_type != jsc::JSType::RegExpObject {
+            // A String wrapper keeps its `[String: "..."]` rendering below when
+            // nested (like `[Number: 1]`) instead of being quoted like a
+            // primitive string.
+            if self.quote_strings
+                && !matches!(
+                    js_type,
+                    jsc::JSType::StringObject | jsc::JSType::RegExpObject
+                )
+            {
                 if str.is_empty() {
                     writer.write_all(b"\"\"");
                     if writer.failed {
@@ -3564,6 +3572,7 @@ pub mod formatter {
             }
 
             if js_type == jsc::JSType::StringObject {
+                writer.add_for_new_line("[String: \"\"]".len());
                 if C {
                     writer.print(format_args!("{}", pfmt!("<r><green>", C)));
                 }

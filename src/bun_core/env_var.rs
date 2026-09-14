@@ -129,8 +129,7 @@ platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows
 new!(pub BUN_TEST_DRAIN_EVENT_LOOP: boolean, "BUN_TEST_DRAIN_EVENT_LOOP", { default: false });
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
-// `--watch`/`--hot` stat polling (src/watcher/PollingWatcher.rs). No default:
-// unset means `Watcher::init` decides from the filesystem of the project root.
+// No default: unset lets `Watcher::init` pick polling from the filesystem type.
 new!(pub BUN_WATCHER_USE_POLLING: boolean, "BUN_WATCHER_USE_POLLING", {});
 new!(pub BUN_WATCHER_POLL_INTERVAL: unsigned, "BUN_WATCHER_POLL_INTERVAL", {});
 new!(pub CI: boolean, "CI", {});

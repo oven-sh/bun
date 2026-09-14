@@ -1,6 +1,5 @@
-//! Stat-polling watch backend for mounts that accept a native watch and then
-//! never report a change made on the other side: 9p (WSL2 `/mnt/*`, Docker
-//! Desktop on Windows), NFS, SMB, VM shared folders. See `Watcher::init`.
+//! Stat-polling watch backend, for mounts that accept a native watch and never
+//! report a change made on the other side (9p, NFS, SMB). See `Watcher::init`.
 
 use std::time::Duration;
 
@@ -14,9 +13,8 @@ use crate::watcher_impl::{
 
 pub(crate) const DEFAULT_INTERVAL_MS: u64 = 100;
 
-/// Whether `root` is on a Linux filesystem where inotify does not see changes
-/// made by the host or by another client. FUSE and overlayfs are not listed:
-/// inotify works on their common local uses.
+/// Whether `root` is on a Linux filesystem where inotify misses changes made by
+/// the host or another client. FUSE and overlayfs mostly work, so are not listed.
 pub(crate) fn should_auto_poll(root: &[u8]) -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -67,9 +65,8 @@ struct Snapshot {
 #[derive(Clone, Copy, Default)]
 struct Tracked {
     last: Snapshot,
-    /// The previous poll did not find the path. Only the second miss in a row
-    /// is a DELETE, so an editor that saves in two steps (unlink or rename
-    /// away, then create) produces one WRITE.
+    /// The previous poll missed the path. Only the second miss in a row is a
+    /// DELETE, so a two-step save (unlink or rename away, then create) is one WRITE.
     missing_once: bool,
 }
 
@@ -136,9 +133,8 @@ impl PollingWatcher {
     }
 }
 
-/// `None` when `stat` fails with anything other than ENOENT/ENOTDIR. A network
-/// filesystem returns ESTALE, EIO or ETIMEDOUT during a short outage, and the
-/// file is still there. The caller keeps the last snapshot.
+/// `None` for any errno other than ENOENT/ENOTDIR: a network mount returns ESTALE,
+/// EIO or ETIMEDOUT for a file that is still there. The caller keeps the snapshot.
 fn stat_path(path: &ZStr) -> Option<Snapshot> {
     match sys::stat(path) {
         Ok(st) => {
@@ -166,8 +162,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> sys::Result<()> {
         unreachable!("polling::watch_loop_cycle on the native backend")
     };
 
-    // `shutdown()` only clears `running`. Sleep in slices so a long interval
-    // does not delay the exit of this thread.
+    // `shutdown()` only clears `running`, so sleep in slices to notice it soon.
     const SLICE: Duration = Duration::from_millis(20);
     let mut remaining = poll.interval;
     while !remaining.is_zero() {
@@ -187,12 +182,9 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> sys::Result<()> {
     candidates.clear();
     paths.clear();
 
-    // Other threads only append to the watchlist. Entries move only in
-    // `flush_evictions`, which runs on this thread inside the dispatch below,
-    // so an index read here names the same entry until then.
-    //
-    // Directories are polled too. Their mtime moves when an entry is added,
-    // removed or renamed, which is what consumers use a directory event for.
+    // Other threads only append. Entries move only in `flush_evictions`, on this
+    // thread inside the dispatch below, so an index read here stays valid.
+    // Directories too: their mtime moves when an entry is added or removed.
     {
         let _guard = this.mutex.lock_guard();
         let file_paths = this.watchlist.items_file_path();

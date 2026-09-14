@@ -212,8 +212,7 @@ impl Watcher {
         let use_polling = match bun_core::env_var::BUN_WATCHER_USE_POLLING::get() {
             Some(v) => v,
             None if polling::should_auto_poll(top_level_dir) => {
-                // `--watch` runs this again in every reloaded process, so the
-                // note says how to turn it off.
+                // `--watch` prints this again in every reloaded process.
                 bun_core::note!(
                     "<b>{}<r> is on a filesystem that does not report file changes, so Bun polls the watched files. <b>BUN_WATCHER_USE_POLLING=1<r> hides this note. <b>BUN_WATCHER_USE_POLLING=0<r> uses native file events.",
                     bstr::BStr::new(top_level_dir),

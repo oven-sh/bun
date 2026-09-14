@@ -127,6 +127,13 @@ export const lsquic: Dependency = {
     // never be encrypted and the peer idled out instead of learning of the
     // close. Select the PNS by handshake progress, as ngtcp2 does.
     "patches/lsquic/connection-close-pns.patch",
+    // A connection that sent GOAWAY answered every new peer stream with
+    // STOP_SENDING, unidirectional ones included. A client that opens its
+    // QPACK encoder stream after the GOAWAY (lsquic does, on a connection
+    // whose first request ran server.stop()) has to treat that as
+    // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
+    // requests the graceful stop was draining. Reject only request streams.
+    "patches/lsquic/goaway-accept-uni-streams.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

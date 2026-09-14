@@ -746,6 +746,8 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     RETURN_IF_EXCEPTION(scope, {});
 
     stream->m_lockedWithoutReader = true;
+    // The sink consumes the stream as a body: it stays locked after directStreamOnClose drops the pump's lock.
+    stream->markConsumedAsBody();
 
     MarkedArgumentBuffer pullArgs;
     pullArgs.append(sinkController);
@@ -1111,6 +1113,8 @@ static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamInt
     RETURN_IF_EXCEPTION(scope, );
     auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, );
+    // The sink consumes the stream as a body: it stays locked after rsisFinally releases the pump's reader.
+    stream->markConsumedAsBody();
     op->setReader(vm, reader);
     reader->m_pipeOperation.set(vm, reader, op);
     // Byte-producing native transform + native JSSink: attach the sink to the transform so its

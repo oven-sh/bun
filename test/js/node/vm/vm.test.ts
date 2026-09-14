@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import {
   compileFunction,
   constants,
@@ -933,6 +933,132 @@ test("SourceTextModule accepts the cachedData it produced", () => {
   );
 });
 
+// JSC decodes a code block's function bodies one at a time, the first time each body runs,
+// reading the cachedData payload through the Decoder until then. The three entry points
+// lent JSC a span over a temporary WTF::Vector copy of the caller's buffer that died with
+// the call, so the first call of a function compiled from accepted cachedData read freed
+// memory. Keeping the caller's Buffer alive does not help: the dangling span is over bun's
+// copy of it.
+describe("a compile from cachedData keeps the payload alive", () => {
+  // Malloc=1 routes WTF's allocator through the system allocator so ASAN sees the freed
+  // payload. Without the fix the child aborts at the first case.
+  test.skipIf(!isASAN)("does not decode function bodies out of freed memory", async () => {
+    const fixture = String.raw`
+      const vm = require("node:vm");
+      const out = [];
+
+      // compileFunction: the compiled function's own body decodes on its first call.
+      {
+        const source = "return a + 1234;";
+        const produced = vm.compileFunction(source, ["a"], { produceCachedData: true });
+        const fn = vm.compileFunction(source, ["a"], { cachedData: produced.cachedData });
+        out.push("compileFunction rejected=" + fn.cachedDataRejected + " call=" + fn(1));
+      }
+
+      // An inner function decodes later still, on its own first call.
+      {
+        const source = "function inner() { return 42 }\nreturn inner;";
+        const produced = vm.compileFunction(source, [], { produceCachedData: true });
+        const fn = vm.compileFunction(source, [], { cachedData: produced.cachedData });
+        out.push("inner rejected=" + fn.cachedDataRejected + " call=" + fn()());
+      }
+
+      // vm.Script holds its cachedData in a member the garbage collector owns.
+      {
+        const source = "(function inner() { return 7 })()";
+        const cachedData = new vm.Script(source).createCachedData();
+        const script = new vm.Script(source, { cachedData });
+        out.push("Script rejected=" + script.cachedDataRejected + " run=" + script.runInThisContext());
+      }
+
+      // vm.SourceTextModule passes a span over a stack local, like compileFunction.
+      {
+        const source = "function inner() { return 9 }\nexport default inner();";
+        const cachedData = new vm.SourceTextModule(source, { identifier: "m" }).createCachedData();
+        const mod = new vm.SourceTextModule(source, { identifier: "m", cachedData });
+        await mod.link(() => {});
+        await mod.evaluate();
+        out.push("SourceTextModule default=" + mod.namespace.default);
+      }
+
+      console.log(out.join("\n"));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        ...(isWindows ? {} : { Malloc: "1" }),
+        // symbolize=0: symbolizing a failure report outlasts the test timeout.
+        // detect_leaks=0: Malloc=1 exposes JSC's never-freed startup allocations to LSAN.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr first: the failure this test guards against aborts the child, so the sanitizer
+    // report is the diagnostic. An empty-stdout diff is not.
+    expect(stderr).not.toContain("ERROR: AddressSanitizer");
+    expect(stdout).toBe(
+      [
+        "compileFunction rejected=false call=1235",
+        "inner rejected=false call=42",
+        "Script rejected=false run=7",
+        "SourceTextModule default=9",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // The same bug with no sanitizer. Work between the compile and the first call reuses the
+  // freed payload's memory, and roughly two unfixed processes in five then die with
+  // "Segmentation fault at address 0x0". It is down to heap layout (an ES module on disk
+  // shows it, `-e` and CommonJS do not), so several children run.
+  test.skipIf(isASAN)("runs the compiled functions after the payload's memory is reused", async () => {
+    const fixture = String.raw`
+      import vm from "node:vm";
+      const out = [];
+      for (let i = 0; i < 20; i++) {
+        const source = 'function inner(x){ return x * ' + (i + 2) + ' + 1 } return [inner(7), "k' + i + '".repeat(3)]';
+        const produced = vm.compileFunction(source, [], { produceCachedData: true });
+        const junk = Array.from({ length: 50 }, (_, j) => new Uint8Array(produced.cachedData.length).fill(j));
+        const fn = vm.compileFunction(source, [], { cachedData: produced.cachedData });
+        const want = JSON.stringify(produced());
+        let got;
+        try {
+          got = JSON.stringify(fn());
+        } catch (e) {
+          got = "threw " + e.message;
+        }
+        out.push(fn.cachedDataRejected + ":" + (got === want ? "ok" : "WRONG " + got));
+      }
+      console.log(out.join(" "));
+    `;
+
+    using dir = tempDir("vm-cached-data-reuse", { "reuse-fixture.mjs": fixture });
+    const children = 8;
+    const runs = await Promise.all(
+      Array.from({ length: children }, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "reuse-fixture.mjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+      }),
+    );
+
+    const clean = { stdout: Array(20).fill("false:ok").join(" ") + "\n", stderr: "", exitCode: 0, signalCode: null };
+    expect(runs).toEqual(Array(children).fill(clean));
+  });
+});
+
 describe("Script compiles its source once and links that in every context it runs in", () => {
   // Runs Script(s) in fresh contexts, keeping what every run produced alive (each run's wrapper function
   // pins that run's ProgramExecutable), and reports how many UnlinkedProgramCodeBlock cells (one per
@@ -1191,6 +1317,98 @@ describe("the options argument", () => {
       expect(runInContext("1 + 1;", createContext({}), options as any)).toBe(2);
       expect(runInNewContext("1 + 1;", {}, options as any)).toBe(2);
     }
+  });
+});
+
+describe("a run option rejected with a vm context's global", () => {
+  // Script#runInContext and Script#runInNewContext validate displayErrors,
+  // timeout and breakOnSigint with the context's global object, which is not a
+  // Bun global. The message renders the rejected value through the console
+  // formatter, and the formatter needs a Bun global, so it read past the end of
+  // the context's cell: ASAN reports a heap-buffer-overflow and a release build
+  // segfaults. Each case gets its own process.
+  //
+  // The vm.* wrappers build the Script first, and that rejects a bad timeout
+  // with the main global, so only the Script methods reach the bug with it.
+  const types = { displayErrors: "boolean", timeout: "number", breakOnSigint: "boolean" } as const;
+  type Option = keyof typeof types;
+  const entryPoints: [name: string, call: string, options: Option[]][] = [
+    ["vm.runInContext()", `vm.runInContext("1", vm.createContext({}), options)`, ["displayErrors", "breakOnSigint"]],
+    ["vm.runInNewContext()", `vm.runInNewContext("1", {}, options)`, ["displayErrors", "breakOnSigint"]],
+    [
+      "Script#runInContext()",
+      `new vm.Script("1").runInContext(vm.createContext({}), options)`,
+      ["displayErrors", "timeout", "breakOnSigint"],
+    ],
+    [
+      "Script#runInNewContext()",
+      `new vm.Script("1").runInNewContext({}, options)`,
+      ["displayErrors", "timeout", "breakOnSigint"],
+    ],
+  ];
+
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A custom inspect function reaches the Bun global's inspect builtins. The
+  // function reports what it was handed, so a wrong global is visible in the
+  // output instead of only as a crash. It sits on the null-prototype object
+  // itself because Node renders the value with `depth: -1`, which runs no
+  // nested inspect function, so this message is Node's byte for byte.
+  test.concurrent.each(
+    entryPoints.flatMap(([name, call, options]) => options.map(option => [name, option, call] as const)),
+  )("%s renders a bad %s through a custom inspect function", async (_, option, call) => {
+    const { stdout, stderr, exitCode } = await run(`
+      const vm = require("node:vm");
+      const util = require("node:util");
+      const seen = [];
+      const bad = Object.create(null);
+      bad[util.inspect.custom] = function (depth, opts, inspect) {
+        seen.push(typeof opts, typeof opts.stylize, typeof inspect, opts.colors);
+        return "CUSTOM";
+      };
+      const options = { ${option}: bad };
+      try {
+        ${call};
+      } catch (e) {
+        console.log([e.code, e.message, seen.join(",")].join(" | "));
+      }
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      `ERR_INVALID_ARG_TYPE | The "options.${option}" property must be of type ${types[option]}. ` +
+        `Received CUSTOM | object,function,function,false\n`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // A value that owns a DOM wrapper reaches a second Bun-global-only read:
+  // printing one builds its wrapper, which needs the global's DOM world. These
+  // need no user hook. The rendering of the value itself is not asserted, only
+  // that the message is produced and the process lives.
+  test.concurrent.each([
+    ["a Response", `new Response("body")`],
+    ["a Request", `new Request("http://127.0.0.1:9/")`],
+    ["a Response.json", `Response.json({ a: 1 })`],
+  ])("renders a bad displayErrors holding %s", async (_, valueExpression) => {
+    const { stdout, stderr, exitCode } = await run(`
+      const vm = require("node:vm");
+      const bad = Object.create(null);
+      bad.value = ${valueExpression};
+      try {
+        vm.runInContext("1", vm.createContext({}), { displayErrors: bad });
+      } catch (e) {
+        console.log([e.code, e.message].join(" | "));
+      }
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith(
+      `ERR_INVALID_ARG_TYPE | The "options.displayErrors" property must be of type boolean. Received `,
+    );
+    expect(exitCode).toBe(0);
   });
 });
 

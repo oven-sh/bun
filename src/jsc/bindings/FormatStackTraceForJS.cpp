@@ -6,6 +6,8 @@
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/DeferTermination.h"
+#include "JavaScriptCore/FrameTracers.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorInstance.h"
@@ -597,11 +599,15 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
+    // A termination thrown in here would survive the clear below and be lost to the restore.
+    JSC::DeferTerminationForAWhile deferTermination(vm);
+    // Runs from the GC end phase while the mutator may have its own pending exception.
+    JSC::SuspendExceptionScope suspendExceptionScope(vm);
+
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
     if (scope.exception()) {
-        // TODO: is this correct? vm.setOnComputeErrorInfo doesnt appear to properly handle a function that can throw
-        // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js is the one that trips the exception checker
+        // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();
         result = WTF::emptyString();
     }

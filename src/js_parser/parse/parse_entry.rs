@@ -1854,96 +1854,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Handle dirname and filename at runtime.
-        //
-        // If we reach this point, it means:
-        //
-        // 1) we are building an ESM file that uses __dirname or __filename
-        // 2) we are targeting bun's runtime.
-        // 3) we are not bundling.
-        //
-        if exports_kind == js_ast::ExportsKind::Esm && (uses_dirname || uses_filename) {
-            debug_assert!(!p.options.bundle);
-            let count = (uses_dirname as usize) + (uses_filename as usize);
-            let mut declared_symbols =
-                bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
-            let decls = p
-                .arena
-                .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
-            if uses_dirname {
-                // var __dirname = import.meta
-                let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
-                decls[0] = G::Decl {
-                    binding: p.b(
-                        B::Identifier {
-                            r#ref: p.dirname_ref,
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    value: Some(p.new_expr(
-                        E::Dot {
-                            name: b"dir".into(),
-                            name_loc: bun_ast::Loc::EMPTY,
-                            target: import_meta,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )),
-                };
-                declared_symbols.append_assume_capacity(DeclaredSymbol {
-                    ref_: p.dirname_ref,
-                    is_top_level: true,
-                });
-            }
-            if uses_filename {
-                // var __filename = import.meta.path
-                let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
-                decls[uses_dirname as usize] = G::Decl {
-                    binding: p.b(
-                        B::Identifier {
-                            r#ref: p.filename_ref,
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    value: Some(p.new_expr(
-                        E::Dot {
-                            name: b"path".into(),
-                            name_loc: bun_ast::Loc::EMPTY,
-                            target: import_meta,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )),
-                };
-                declared_symbols.append_assume_capacity(DeclaredSymbol {
-                    ref_: p.filename_ref,
-                    is_top_level: true,
-                });
-            }
-
-            let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
-                p.s(
-                    S::Local {
-                        kind: js_ast::LocalKind::KVar,
-                        decls: {
-                            let mut dl = G::DeclList::init_capacity(decls.len());
-                            for d in decls.iter_mut() {
-                                dl.append_assume_capacity(core::mem::take(d));
-                            }
-                            dl
-                        },
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                )
-            });
-            before.push(js_ast::Part {
-                stmts: part_stmts.into(),
-                declared_symbols,
-                tag: bun_ast::PartTag::DirnameFilename,
-                ..Default::default()
-            });
-        }
+        // `__dirname` and `__filename` at runtime: a CommonJS module gets them as
+        // arguments of its wrapper. For an ES module, `print_ast` declares them.
+        let uses_dirname_ref = exports_kind == js_ast::ExportsKind::Esm && uses_dirname;
+        let uses_filename_ref = exports_kind == js_ast::ExportsKind::Esm && uses_filename;
+        debug_assert!(!p.options.bundle || !(uses_dirname_ref || uses_filename_ref));
 
         if exports_kind == js_ast::ExportsKind::Esm
             && p.commonjs_named_exports.count() > 0
@@ -2365,7 +2280,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        let mut ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        ast.uses_dirname_ref = uses_dirname_ref;
+        ast.uses_filename_ref = uses_filename_ref;
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.

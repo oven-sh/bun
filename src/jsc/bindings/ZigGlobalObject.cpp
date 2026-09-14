@@ -4206,7 +4206,14 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
-    return Zig::ImportMetaObject::create(globalObject, key);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    // Last: this reads the properties of importMeta, so importMeta is complete by now.
+    importMeta->initializeHoistedBindings(globalObject, record);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return importMeta;
 }
 
 extern "C" bool Bun__VM__entryEvaluationStarted(void*);

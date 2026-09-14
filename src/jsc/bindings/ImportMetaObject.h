@@ -56,6 +56,12 @@ public:
     /// stated in https://github.com/oven-sh/bun/pull/9399
     static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
 
+    /// Call while JSC links the module that owns this import.meta. The runtime transpiler declares `require`,
+    /// `__dirname` and `__filename` as `var` at the start of an ES module (HOISTED_MODULE_BINDINGS in
+    /// src/js_printer/lib.rs). This gives those variables their values now, because a function declaration of
+    /// the module can run before the module body (import cycle).
+    void initializeHoistedBindings(JSC::JSGlobalObject*, JSC::JSModuleRecord*);
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 

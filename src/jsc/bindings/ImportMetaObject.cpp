@@ -34,6 +34,8 @@
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSModuleEnvironment.h>
+#include <JavaScriptCore/JSModuleRecord.h>
 
 #include "JSBufferEncodingType.h"
 #include <JavaScriptCore/JSBase.h>
@@ -703,6 +705,44 @@ void ImportMetaObject::finishCreation(VM& vm)
             init.set(jsString(init.vm, url.path()));
         }
     });
+}
+
+// HoistedModuleBindingRaw in src/js_printer/lib.rs.
+struct BunHoistedModuleBinding {
+    const char* declaration;
+    const char* variable;
+    const char* importMetaProperty;
+};
+extern "C" bool Bun__hoistedModuleBinding(size_t index, BunHoistedModuleBinding* out);
+
+void ImportMetaObject::initializeHoistedBindings(JSGlobalObject* globalObject, JSModuleRecord* record)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The declarations are at the start of the source, in table order, with nothing between them.
+    StringView source = record->sourceCode().view();
+    JSModuleEnvironment* environment = record->moduleEnvironment();
+    BunHoistedModuleBinding binding;
+    for (size_t i = 0; Bun__hoistedModuleBinding(i, &binding); i++) {
+        auto declaration = ASCIILiteral::fromLiteralUnsafe(binding.declaration);
+        if (!source.startsWith(declaration))
+            continue;
+        source = source.substring(declaration.length());
+
+        Identifier variable = Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(binding.variable));
+        // A variable that no function captures is on the stack of the module body, and only the body reads it.
+        SymbolTableEntry::Fast entry = environment->symbolTable()->get(variable.impl());
+        if (entry.isNull() || !entry.varOffset().isScope())
+            continue;
+
+        // The same read as in the declaration. This import.meta is new, so no user code runs.
+        JSValue value = get(globalObject, Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(binding.importMetaProperty)));
+        RETURN_IF_EXCEPTION(scope, );
+        bool putResult = false;
+        symbolTablePutTouchWatchpointSet(environment, globalObject, variable, value, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 }
 
 template<typename Visitor>

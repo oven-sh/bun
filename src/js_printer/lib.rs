@@ -7787,6 +7787,78 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
+/// A free name that Bun defines for each ES module it runs without bundling.
+///
+/// `print_ast` declares the names that a module uses at the very start of its
+/// output, in table order, with nothing between them. A `var` has no value until
+/// the module body starts, but a function declaration of the module can run
+/// before that (import cycle). So `ImportMetaObject::initializeHoistedBindings`
+/// reads this table through `Bun__hoistedModuleBinding`, finds the declarations
+/// at the start of the source, and gives the variables the same values when the
+/// module is linked.
+struct HoistedModuleBinding {
+    name: HoistedModuleBindingName,
+    /// The exact text that `print_ast` prints.
+    declaration: &'static core::ffi::CStr,
+    /// The variable that `declaration` declares.
+    variable: &'static core::ffi::CStr,
+    /// The property of `import.meta` that `declaration` reads.
+    import_meta_property: &'static core::ffi::CStr,
+}
+
+enum HoistedModuleBindingName {
+    Require,
+    Dirname,
+    Filename,
+}
+
+const HOISTED_MODULE_BINDINGS: [HoistedModuleBinding; 3] = [
+    // `import.meta.require` at each call site would show up in
+    // `func.toString()`, and `import.meta` is a syntax error when that text
+    // goes through `new Function`.
+    // https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
+    HoistedModuleBinding {
+        name: HoistedModuleBindingName::Require,
+        declaration: c"var {require}=import.meta;",
+        variable: c"require",
+        import_meta_property: c"require",
+    },
+    HoistedModuleBinding {
+        name: HoistedModuleBindingName::Dirname,
+        declaration: c"var __dirname=import.meta.dir;",
+        variable: c"__dirname",
+        import_meta_property: c"dir",
+    },
+    HoistedModuleBinding {
+        name: HoistedModuleBindingName::Filename,
+        declaration: c"var __filename=import.meta.path;",
+        variable: c"__filename",
+        import_meta_property: c"path",
+    },
+];
+
+/// `HoistedModuleBinding` for C++ (`BunHoistedModuleBinding` in ImportMetaObject.cpp).
+#[repr(C)]
+struct HoistedModuleBindingRaw {
+    declaration: *const core::ffi::c_char,
+    variable: *const core::ffi::c_char,
+    import_meta_property: *const core::ffi::c_char,
+}
+
+/// Entry `index` of `HOISTED_MODULE_BINDINGS`. Returns false after the last one.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__hoistedModuleBinding(index: usize, out: &mut HoistedModuleBindingRaw) -> bool {
+    let Some(binding) = HOISTED_MODULE_BINDINGS.get(index) else {
+        return false;
+    };
+    *out = HoistedModuleBindingRaw {
+        declaration: binding.declaration.as_ptr(),
+        variable: binding.variable.as_ptr(),
+        import_meta_property: binding.import_meta_property.as_ptr(),
+    };
+    true
+}
+
 pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
     bump: &'a bun_alloc::Arena,
@@ -7930,22 +8002,30 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     }
     printer.binary_expression_stack = Vec::new();
 
-    if !printer.options.bundling
-        && tree.uses_require_ref
-        && tree.exports_kind == js_ast::ExportsKind::Esm
-        && printer.options.target == bun_ast::Target::Bun
-    {
-        // Hoist the `var {require}=import.meta;` declaration. Previously,
-        // `import.meta.require` was inlined into transpiled files, which
-        // meant calling `func.toString()` on a function with `require`
-        // would observe `import.meta.require` inside of the source code.
-        // https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
-        //
-        // This is never a symbol collision because `uses_require_ref` means
-        // `require` must be an unbound variable.
-        printer.print(b"var {require}=import.meta;");
+    if !printer.options.bundling {
+        let mut declared_any = false;
+        for binding in &HOISTED_MODULE_BINDINGS {
+            let declare = match binding.name {
+                // Never a symbol collision: `uses_require_ref` means that
+                // `require` is an unbound variable.
+                HoistedModuleBindingName::Require => {
+                    tree.uses_require_ref
+                        && tree.exports_kind == js_ast::ExportsKind::Esm
+                        && printer.options.target == bun_ast::Target::Bun
+                }
+                HoistedModuleBindingName::Dirname => tree.uses_dirname_ref,
+                HoistedModuleBindingName::Filename => tree.uses_filename_ref,
+            };
+            if !declare {
+                continue;
+            }
+            // See `HoistedModuleBinding`: the declarations start the output.
+            debug_assert!(declared_any || printer.writer.slice().is_empty());
+            printer.print(binding.declaration.to_bytes());
+            declared_any = true;
+        }
 
-        if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
+        if declared_any && PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
             if let Some(mi) = printer.module_info.as_deref_mut() {
                 mi.flags.contains_import_meta = true;
             }

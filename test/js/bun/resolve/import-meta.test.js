@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
 import { bunEnv, bunExe, expectRssDeltaBelow, ospath, tempDir } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -254,6 +254,93 @@ it("import.meta.require (javascript, live bindings)", () => {
   expect(Source.foo).toBe(4);
   expect(Namespace.foo).toBe(4);
 });
+
+// In each pair of modules, the "-caller" module runs first (import cycle). It calls a function declaration
+// of the other module before any statement of that module runs. `padding` grows all.ts past the minimum
+// size for the transpiler cache.
+function bindingsBeforeModuleBodyFixture(padding = "") {
+  return {
+    "main.ts": `
+      import "./all.ts";
+      import "./filename-only.ts";
+    `,
+    // The declarations of the bindings must stay at the start of the output, also with a directive here.
+    "all.ts": `
+      "use client";
+      import "./all-caller.ts";
+      export function beforeBody() {
+        return {
+          required: require("./dep.ts").dep,
+          resolved: require.resolve("./dep.ts") === Bun.resolveSync("./dep.ts", import.meta.dir),
+          isImportMetaRequire: require === import.meta.require,
+          dirname: __dirname === import.meta.dir,
+          filename: __filename === import.meta.path,
+        };
+      }
+      console.log("all.ts body");
+      ${padding}
+    `,
+    "all-caller.ts": `
+      import { beforeBody } from "./all.ts";
+      console.log(JSON.stringify(beforeBody()));
+    `,
+    // This module has no declaration for require, which is the first one when present.
+    "filename-only.ts": `
+      import "./filename-only-caller.ts";
+      export function beforeBody() {
+        return __filename === import.meta.path;
+      }
+    `,
+    "filename-only-caller.ts": `
+      import { beforeBody } from "./filename-only.ts";
+      console.log("filename only:", beforeBody());
+    `,
+    // No function captures this `require`, so it is not a variable of the module environment.
+    "dep.ts": `export const dep = require("node:path").basename("/dir/dep");`,
+  };
+}
+
+async function runBindingsBeforeModuleBody(cwd, env) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.ts"], env, cwd, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+const bindingsBeforeModuleBodyResult = {
+  stdout:
+    `{"required":"dep","resolved":true,"isImportMetaRequire":true,"dirname":true,"filename":true}\n` +
+    `all.ts body\n` +
+    `filename only: true\n`,
+  stderr: "",
+  exitCode: 0,
+};
+
+it.concurrent(
+  "require, __dirname and __filename in an ES module have their values before the module body",
+  async () => {
+    using dir = tempDir("esm-bindings-before-module-body", bindingsBeforeModuleBodyFixture());
+    expect(await runBindingsBeforeModuleBody(String(dir), bunEnv)).toEqual(bindingsBeforeModuleBodyResult);
+  },
+);
+
+it.concurrent(
+  "require, __dirname and __filename have their values before the module body, from the transpiler cache",
+  async () => {
+    const padding = "// " + Buffer.alloc(8 * 1024, "x").toString();
+    using dir = tempDir("esm-bindings-before-module-body-cached", bindingsBeforeModuleBodyFixture(padding));
+    const cacheDir = join(String(dir), ".cache");
+    const env = {
+      ...bunEnv,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    // The first run transpiles all.ts and writes the cache entry. The second run restores it.
+    expect(await runBindingsBeforeModuleBody(String(dir), env)).toEqual(bindingsBeforeModuleBodyResult);
+    expect(readdirSync(cacheDir)).toHaveLength(1);
+    expect(await runBindingsBeforeModuleBody(String(dir), env)).toEqual(bindingsBeforeModuleBodyResult);
+    expect(readdirSync(cacheDir)).toHaveLength(1);
+  },
+);
 
 it("import.meta.dir", () => {
   expect(dir).toEndWith(ospath("/test/js/bun/resolve"));

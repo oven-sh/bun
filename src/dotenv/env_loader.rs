@@ -390,12 +390,6 @@ impl Loader {
         [lower, upper]
     }
 
-    /// `http_proxy` / `HTTP_PROXY`, whatever `NO_PROXY` says about any one
-    /// host. `ALL_PROXY` is not a fallback here: nothing would exempt a host from it.
-    pub fn get_http_proxy(&self) -> Option<URL<'_>> {
-        self.scheme_proxy(true).map(URL::parse)
-    }
-
     /// Returns true if `hostname` on `port` should bypass the proxy according
     /// to the NO_PROXY / no_proxy environment variables.
     pub fn is_no_proxy(&self, hostname: &[u8], port: u16) -> bool {

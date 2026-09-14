@@ -502,7 +502,7 @@ export function windowsEnv(
     }
   }
 
-  return new Proxy(internalEnv, {
+  const envProxy = new Proxy(internalEnv, {
     get(_, p) {
       if (typeof p !== "string") {
         // Symbol keys (e.g. Bun.inspect.custom) live on internalEnv as-is.
@@ -519,7 +519,12 @@ export function windowsEnv(
       // matching node where `process.env.hasOwnProperty` is callable.
       return internalEnv[p];
     },
-    set(_, p, value) {
+    set(_, p, value, receiver) {
+      // A write to an object that inherits from process.env is that object's
+      // own: OrdinarySet past a prototype chain that does not have the key.
+      if (receiver !== envProxy) {
+        return Reflect.set({ __proto__: null }, p, value, receiver);
+      }
       // Node's process.env throws a TypeError for symbol keys and symbol
       // values (ToString on a Symbol throws).
       if (typeof p === "symbol" || typeof value === "symbol") {
@@ -611,6 +616,7 @@ export function windowsEnv(
       return envMapList.slice();
     },
   });
+  return envProxy;
 }
 
 export function getChannel() {

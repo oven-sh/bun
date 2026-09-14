@@ -458,10 +458,16 @@ describe.concurrent("bun-install", () => {
     async ({ status, code, connects }) => {
       await withContext(defaultOpts, async ctx => {
         const seen: string[] = [];
-        const proxy = listen({
+        const proxy = listen<{ head: string }>({
           socket: {
+            open(socket) {
+              socket.data = { head: "" };
+            },
             data(socket, data) {
-              seen.push(data.toString().split("\r\n")[0]);
+              socket.data.head += data.toString();
+              const end = socket.data.head.indexOf("\r\n\r\n");
+              if (end === -1) return;
+              seen.push(socket.data.head.slice(0, socket.data.head.indexOf("\r\n")));
               socket.end(`HTTP/1.1 ${status}\r\nContent-Length: 0\r\n\r\n`);
             },
           },

@@ -1811,11 +1811,11 @@ it("fetch() file:// rejects a host that is not this machine", async () => {
 });
 
 it("URL userinfo is sent as Basic credentials unless an Authorization header is given", async () => {
-  const seen: (string | null)[] = [];
+  const seen: Record<string, string | null> = {};
   using server = Bun.serve({
     port: 0,
     fetch(req) {
-      seen.push(req.headers.get("authorization"));
+      seen[new URL(req.url).pathname] = req.headers.get("authorization");
       return new Response(req.url);
     },
   });
@@ -1831,15 +1831,13 @@ it("URL userinfo is sent as Basic credentials unless an Authorization header is 
   );
   // The request line and Host never carry the userinfo.
   expect(urls).toEqual(["a", "b", "c", "d", "e"].map(p => `http://${base}/${p}`));
-  expect(seen.toSorted()).toEqual(
-    [
-      `Basic ${btoa("user:p@ss")}`,
-      `Basic ${btoa("user:")}`,
-      `Basic ${btoa("user:pass")}`,
-      "Bearer explicit",
-      null,
-    ].toSorted(),
-  );
+  expect(seen).toEqual({
+    "/a": `Basic ${btoa("user:p@ss")}`,
+    "/b": `Basic ${btoa("user:")}`,
+    "/c": `Basic ${btoa("user:pass")}`,
+    "/d": "Bearer explicit",
+    "/e": null,
+  });
 });
 
 it("URL userinfo does not displace the Content-Type a body brings", async () => {

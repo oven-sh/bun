@@ -1942,8 +1942,8 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
  */
 interface BunFetchRequestInitTLS extends Bun.TLSOptions {
   /**
-   * Custom function to check the server identity. It runs once the
-   * certificate chain verified. With `rejectUnauthorized: false` it still
+   * Custom function to check the server identity. It runs after the
+   * certificate chain verifies. With `rejectUnauthorized: false` it still
    * runs, but what it returns is ignored.
    *
    * A request that passes its own function opens a connection of its own and

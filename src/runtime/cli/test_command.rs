@@ -348,8 +348,14 @@ impl TestFailure {
                 continue;
             }
             body.extend_from_slice(b"      at ");
+            let pos = frame.position;
+            // A WebAssembly frame has a name, no source and no position.
+            let in_parens = !func.slice().is_empty() && (!file.is_empty() || pos.line.is_valid());
             if !func.slice().is_empty() {
-                let _ = write!(body, "{} (", frame.name_formatter(false));
+                let _ = write!(body, "{}", frame.name_formatter(false));
+            }
+            if in_parens {
+                body.extend_from_slice(b" (");
             }
             let file_start = body.len();
             body.extend_from_slice(file);
@@ -360,13 +366,12 @@ impl TestFailure {
                     }
                 }
             }
-            let pos = frame.position;
             if pos.line.is_valid() && pos.column.is_valid() {
                 let _ = write!(body, ":{}:{}", pos.line.one_based(), pos.column.one_based());
             } else if pos.line.is_valid() {
                 let _ = write!(body, ":{}", pos.line.one_based());
             }
-            if !func.slice().is_empty() {
+            if in_parens {
                 body.push(b')');
             }
             body.push(b'\n');

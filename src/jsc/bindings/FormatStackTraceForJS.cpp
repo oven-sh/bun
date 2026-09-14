@@ -350,6 +350,8 @@ WTF::String formatStackTrace(
         if (sourceURLForFrame.isEmpty()) {
             if (flags & static_cast<unsigned int>(FunctionNameFlags::Builtin)) {
                 sourceURLForFrame = "native"_s;
+            } else if (frame.isWasmFrame()) {
+                sourceURLForFrame = Zig::sourceURL(vm, frame);
             } else {
                 sourceURLForFrame = "unknown"_s;
             }

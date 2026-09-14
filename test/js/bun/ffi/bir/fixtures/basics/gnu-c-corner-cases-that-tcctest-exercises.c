@@ -1,5 +1,5 @@
-typedef unsigned long long __attribute__((aligned(4))) unaligned_u64;
-         struct lowered { unsigned int n; unaligned_u64 start; };
+typedef unsigned long long __attribute__((aligned(4))) packed_to_four;
+         struct lowered { unsigned int n; packed_to_four start; };
          struct natural { unsigned int n; unsigned long long start; };
          typedef struct later later_t; typedef __attribute__((aligned(64))) struct later { int x; } later_t;
          typedef float four __attribute__((__mode__(__V4SF__)));

@@ -17,7 +17,8 @@ typedef int V __attribute__((vector_size(16)));
          double dsum(D d) { return d[0] + d[1]; }
          int size(void) { return sizeof(V) * 100 + _Alignof(V) + sizeof(table) / sizeof(table[0]); }
          int through_pointer(V *p) { V v = *p; p[1] = v + 1; (*p)[2] = 99; return p[1][3]; }
-         int unaligned(char *bytes) { V v = *(V *)(bytes + 1); *(V *)(bytes + 3) = v; return v[0]; }
+         typedef V U __attribute__((aligned(1)));
+         int unaligned(char *bytes) { V v = *(U *)(bytes + 1); *(U *)(bytes + 3) = v; return v[0]; }
          V array_sum(void) { V a[3] = {{1, 1, 1, 1}, {2, 2, 2, 2}}; a[2] = a[0] + a[1]; return a[2] + table; }
          int from_rvalue(V a, V b) { return (a + b)[1] + (a * b)[3]; }
 

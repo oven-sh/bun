@@ -1,0 +1,14 @@
+1: defined in every spelling
+2: #ifdef of a macro whose value is 0
+3: #ifndef
+4: unknown identifiers are 0
+5: arithmetic and bitwise operators
+6: relational, logical and conditional operators
+7: 64-bit signed and unsigned arithmetic
+8: character constants
+9: macros are expanded first
+10: the limits are usable here
+11: the first true #elif
+12: a true #if skips every #elif without looking at it
+13: three levels deep, and a #define in a skipped group did nothing
+14: short circuit

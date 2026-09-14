@@ -6,6 +6,9 @@
 #include <string.h>
 
 static int checks, wrong;
+/* The checks of the blocks that need a processor feature: how many depends on the machine, that each block made
+   all of its own is checked where the feature is there. */
+static int feature_checks;
 #define CHECK(condition) \
   do { \
     checks++; \
@@ -73,18 +76,33 @@ int main(void) {
     cpuid(1, 0, leaf1);
     cpuid(7, 0, leaf7);
     cpuid(0x80000001u, 0, extended);
-    if (leaf1[2] & (1u << 23)) {
-      __asm__("popcntq %1, %0" : "=r"(at) : "r"(0xffffffff00000001ull) : "cc"); CHECK(at == 33);
-      __asm__("popcntl %1, %0" : "=r"(at32) : "rm"(0xf0f0f0f1u) : "cc"); CHECK(at32 == 17);
-      __asm__("popcntw %1, %0" : "=r"(at16) : "r"((uint16_t)0xff01) : "cc"); CHECK(at16 == 9);
+    {
+      int present = (leaf1[2] & (1u << 23)) != 0, before = checks;
+      if (present) {
+        __asm__("popcntq %1, %0" : "=r"(at) : "r"(0xffffffff00000001ull) : "cc"); CHECK(at == 33);
+        __asm__("popcntl %1, %0" : "=r"(at32) : "rm"(0xf0f0f0f1u) : "cc"); CHECK(at32 == 17);
+        __asm__("popcntw %1, %0" : "=r"(at16) : "r"((uint16_t)0xff01) : "cc"); CHECK(at16 == 9);
+      }
+      feature_checks += checks - before;
+      if (present && checks - before != 3) { wrong++; printf("checks are missing (line %d)\n", __LINE__); }
     }
-    if (leaf7[1] & (1u << 3)) {
-      __asm__("tzcntq %1, %0" : "=r"(at) : "r"(1ull << 40) : "cc"); CHECK(at == 40);
-      __asm__("tzcntl %1, %0" : "=r"(at32) : "r"(0u) : "cc"); CHECK(at32 == 32);
+    {
+      int present = (leaf7[1] & (1u << 3)) != 0, before = checks;
+      if (present) {
+        __asm__("tzcntq %1, %0" : "=r"(at) : "r"(1ull << 40) : "cc"); CHECK(at == 40);
+        __asm__("tzcntl %1, %0" : "=r"(at32) : "r"(0u) : "cc"); CHECK(at32 == 32);
+      }
+      feature_checks += checks - before;
+      if (present && checks - before != 2) { wrong++; printf("checks are missing (line %d)\n", __LINE__); }
     }
-    if (extended[2] & (1u << 5)) {
-      __asm__("lzcntq %1, %0" : "=r"(at) : "r"(1ull) : "cc"); CHECK(at == 63);
-      __asm__("lzcntl %1, %0" : "=r"(at32) : "rm"(0x00010000u) : "cc"); CHECK(at32 == 15);
+    {
+      int present = (extended[2] & (1u << 5)) != 0, before = checks;
+      if (present) {
+        __asm__("lzcntq %1, %0" : "=r"(at) : "r"(1ull) : "cc"); CHECK(at == 63);
+        __asm__("lzcntl %1, %0" : "=r"(at32) : "rm"(0x00010000u) : "cc"); CHECK(at32 == 15);
+      }
+      feature_checks += checks - before;
+      if (present && checks - before != 2) { wrong++; printf("checks are missing (line %d)\n", __LINE__); }
     }
 
     /* Byte order. */
@@ -97,49 +115,64 @@ int main(void) {
     __asm__("bswap %0" : "+r"(r9)); CHECK(r9 == 0x0807060504030201ull);
 
     /* BMI1, BMI2 and ADX: three-operand forms, flags untouched by some. */
-    if ((leaf7[1] & (1u << 3)) && (leaf7[1] & (1u << 8))) {
-      uint64_t out, a = 0xff00ff00ff00ff00ull, b = 0x0ff00ff00ff00ff0ull;
-      __asm__("andn %2, %1, %0" : "=r"(out) : "r"(a), "r"(b) : "cc"); CHECK(out == (~a & b));
-      __asm__("andnl %2, %1, %0" : "=r"(at32) : "r"(0xffff0000u), "rm"(0x12345678u) : "cc"); CHECK(at32 == 0x5678);
-      __asm__("blsr %1, %0" : "=r"(out) : "r"(0x50ull) : "cc"); CHECK(out == 0x40);
-      __asm__("blsi %1, %0" : "=r"(out) : "r"(0x50ull) : "cc"); CHECK(out == 0x10);
-      __asm__("blsmsk %1, %0" : "=r"(out) : "rm"(0x50ull) : "cc"); CHECK(out == 0x1f);
-      __asm__("bextr %2, %1, %0" : "=r"(out) : "r"(0x123456789abcdef0ull), "r"(0x0c10ull) : "cc"); CHECK(out == 0xabc);
-      __asm__("shlx %2, %1, %0" : "=r"(out) : "r"(3ull), "r"(62ull)); CHECK(out == 0xc000000000000000ull);
-      __asm__("shrx %2, %1, %0" : "=r"(out) : "rm"(1ull << 63), "r"(63ull)); CHECK(out == 1);
-      __asm__("sarx %2, %1, %0" : "=r"(out) : "r"(1ull << 63), "r"(62ull)); CHECK(out == ~1ull);
-      __asm__("shrxl %2, %1, %0" : "=r"(at32) : "r"(0x80000000u), "r"(31u)); CHECK(at32 == 1);
-      __asm__("rorx $13, %1, %0" : "=r"(out) : "r"(1ull)); CHECK(out == 1ull << 51);
-      __asm__("rorxl $1, %1, %0" : "=r"(at32) : "r"(1u)); CHECK(at32 == 0x80000000u);
-      uint64_t low, high;
-      __asm__("mulx %3, %0, %1" : "=r"(low), "=r"(high) : "d"(0xfedcba9876543210ull), "r"(0x123456789abcdef1ull));
-      CHECK(high == 0x121fa00ad77d7423ull && low == 0x224a4396cc6d0110ull);
-      __asm__("pdep %2, %1, %0" : "=r"(out) : "r"(0xffull), "r"(0x0f0f0f0full)); CHECK(out == 0x0f0f);
-      __asm__("pext %2, %1, %0" : "=r"(out) : "r"(0x12345678ull), "r"(0x0f0f0f0full)); CHECK(out == 0x2468);
-      __asm__("bzhi %2, %1, %0" : "=r"(out) : "r"(~0ull), "r"(12ull) : "cc"); CHECK(out == 0xfff);
-      register uint64_t r10 __asm__("r10") = 0xf0, r11 __asm__("r11") = 0xff, r12 __asm__("r12");
-      __asm__("andn %2, %1, %0" : "=r"(r12) : "r"(r10), "r"(r11) : "cc"); CHECK(r12 == 0x0f);
+    {
+      int present = ((leaf7[1] & (1u << 3)) && (leaf7[1] & (1u << 8))) != 0, before = checks;
+      if (present) {
+        uint64_t out, a = 0xff00ff00ff00ff00ull, b = 0x0ff00ff00ff00ff0ull;
+        __asm__("andn %2, %1, %0" : "=r"(out) : "r"(a), "r"(b) : "cc"); CHECK(out == (~a & b));
+        __asm__("andnl %2, %1, %0" : "=r"(at32) : "r"(0xffff0000u), "rm"(0x12345678u) : "cc"); CHECK(at32 == 0x5678);
+        __asm__("blsr %1, %0" : "=r"(out) : "r"(0x50ull) : "cc"); CHECK(out == 0x40);
+        __asm__("blsi %1, %0" : "=r"(out) : "r"(0x50ull) : "cc"); CHECK(out == 0x10);
+        __asm__("blsmsk %1, %0" : "=r"(out) : "rm"(0x50ull) : "cc"); CHECK(out == 0x1f);
+        __asm__("bextr %2, %1, %0" : "=r"(out) : "r"(0x123456789abcdef0ull), "r"(0x0c10ull) : "cc"); CHECK(out == 0xabc);
+        __asm__("shlx %2, %1, %0" : "=r"(out) : "r"(3ull), "r"(62ull)); CHECK(out == 0xc000000000000000ull);
+        __asm__("shrx %2, %1, %0" : "=r"(out) : "rm"(1ull << 63), "r"(63ull)); CHECK(out == 1);
+        __asm__("sarx %2, %1, %0" : "=r"(out) : "r"(1ull << 63), "r"(62ull)); CHECK(out == ~1ull);
+        __asm__("shrxl %2, %1, %0" : "=r"(at32) : "r"(0x80000000u), "r"(31u)); CHECK(at32 == 1);
+        __asm__("rorx $13, %1, %0" : "=r"(out) : "r"(1ull)); CHECK(out == 1ull << 51);
+        __asm__("rorxl $1, %1, %0" : "=r"(at32) : "r"(1u)); CHECK(at32 == 0x80000000u);
+        uint64_t low, high;
+        __asm__("mulx %3, %0, %1" : "=r"(low), "=r"(high) : "d"(0xfedcba9876543210ull), "r"(0x123456789abcdef1ull));
+        CHECK(high == 0x121fa00ad77d7423ull && low == 0x224a4396cc6d0110ull);
+        __asm__("pdep %2, %1, %0" : "=r"(out) : "r"(0xffull), "r"(0x0f0f0f0full)); CHECK(out == 0x0f0f);
+        __asm__("pext %2, %1, %0" : "=r"(out) : "r"(0x12345678ull), "r"(0x0f0f0f0full)); CHECK(out == 0x2468);
+        __asm__("bzhi %2, %1, %0" : "=r"(out) : "r"(~0ull), "r"(12ull) : "cc"); CHECK(out == 0xfff);
+        register uint64_t r10 __asm__("r10") = 0xf0, r11 __asm__("r11") = 0xff, r12 __asm__("r12");
+        __asm__("andn %2, %1, %0" : "=r"(r12) : "r"(r10), "r"(r11) : "cc"); CHECK(r12 == 0x0f);
+      }
+      feature_checks += checks - before;
+      if (present && checks - before != 17) { wrong++; printf("checks are missing (line %d)\n", __LINE__); }
     }
-    if (leaf7[1] & (1u << 19)) {
-      /* Two carry chains at once: adcx uses the carry flag, adox the overflow flag. */
-      uint64_t a = ~0ull, b = ~0ull;
-      __asm__("xorl %%ecx, %%ecx\n adcxq %2, %0\n adoxq %2, %1\n adcxq %%rcx, %0\n adoxq %%rcx, %1" : "+r"(a), "+r"(b) : "r"(1ull) : "rcx", "cc");
-      CHECK(a == 1 && b == 1);
+    {
+      int present = (leaf7[1] & (1u << 19)) != 0, before = checks;
+      if (present) {
+        /* Two carry chains at once: adcx uses the carry flag, adox the overflow flag. */
+        uint64_t a = ~0ull, b = ~0ull;
+        __asm__("xorl %%ecx, %%ecx\n adcxq %2, %0\n adoxq %2, %1\n adcxq %%rcx, %0\n adoxq %%rcx, %1" : "+r"(a), "+r"(b) : "r"(1ull) : "rcx", "cc");
+        CHECK(a == 1 && b == 1);
+      }
+      feature_checks += checks - before;
+      if (present && checks - before != 1) { wrong++; printf("checks are missing (line %d)\n", __LINE__); }
     }
-    if (leaf1[2] & (1u << 20)) {
-      /* crc32 is the Castagnoli polynomial, a byte, a word, a doubleword or a quadword at a time. */
-      static const uint8_t message[15] = "123456789abcdef";
-      uint32_t crc = ~0u;
-      uint64_t crc64 = ~0u;
-      __asm__("crc32q %1, %0" : "+r"(crc64) : "rm"(*(const uint64_t *)message));
-      crc = (uint32_t)crc64;
-      __asm__("crc32l %1, %0" : "+r"(crc) : "rm"(*(const uint32_t *)(message + 8)));
-      __asm__("crc32w %1, %0" : "+r"(crc) : "r"(*(const uint16_t *)(message + 12)));
-      __asm__("crc32b %1, %0" : "+r"(crc) : "r"(message[14]));
-      CHECK(crc == crc32_bitwise(~0u, message, 15));
-      crc = ~0u;
-      __asm__("crc32b (%1), %0" : "+r"(crc) : "r"(message));
-      CHECK(crc == crc32_bitwise(~0u, message, 1));
+    {
+      int present = (leaf1[2] & (1u << 20)) != 0, before = checks;
+      if (present) {
+        /* crc32 is the Castagnoli polynomial, a byte, a word, a doubleword or a quadword at a time. */
+        static const uint8_t message[15] = "123456789abcdef";
+        uint32_t crc = ~0u;
+        uint64_t crc64 = ~0u;
+        __asm__("crc32q %1, %0" : "+r"(crc64) : "rm"(*(const uint64_t *)message));
+        crc = (uint32_t)crc64;
+        __asm__("crc32l %1, %0" : "+r"(crc) : "rm"(*(const uint32_t *)(message + 8)));
+        __asm__("crc32w %1, %0" : "+r"(crc) : "r"(*(const uint16_t *)(message + 12)));
+        __asm__("crc32b %1, %0" : "+r"(crc) : "r"(message[14]));
+        CHECK(crc == crc32_bitwise(~0u, message, 15));
+        crc = ~0u;
+        __asm__("crc32b (%1), %0" : "+r"(crc) : "r"(message));
+        CHECK(crc == crc32_bitwise(~0u, message, 1));
+      }
+      feature_checks += checks - before;
+      if (present && checks - before != 2) { wrong++; printf("checks are missing (line %d)\n", __LINE__); }
     }
   }
 
@@ -206,11 +239,16 @@ int main(void) {
     cpuid(0, 0, identity);
     cpuid(1, 0, leaf1);
     CHECK(identity[0] >= 1 && identity[1] != 0);
-    if (leaf1[2] & (1u << 30)) {
-      uint64_t random;
-      uint8_t ok;
-      __asm__ volatile("rdrand %0\n setc %1" : "=r"(random), "=q"(ok) : : "cc");
-      CHECK(ok <= 1);
+    {
+      int present = (leaf1[2] & (1u << 30)) != 0, before = checks;
+      if (present) {
+        uint64_t random;
+        uint8_t ok;
+        __asm__ volatile("rdrand %0\n setc %1" : "=r"(random), "=q"(ok) : : "cc");
+        CHECK(ok <= 1);
+      }
+      feature_checks += checks - before;
+      if (present && checks - before != 1) { wrong++; printf("checks are missing (line %d)\n", __LINE__); }
     }
   }
 
@@ -257,18 +295,28 @@ int main(void) {
     __asm__("movdqu (%0), %%xmm15\n movdqu %%xmm15, 16(%0)" : : "r"(memory) : "xmm15", "memory"); CHECK(memory[2] == 3 && memory[3] == 2);
     uint32_t leaf1[4];
     cpuid(1, 0, leaf1);
-    if (leaf1[2] & (1u << 1)) {
-      /* Carry-less multiplication of the high halves. */
-      vector x = {0, 3}, y = {0, 5};
-      __asm__("movdqu %1, %%xmm0\n movdqu %2, %%xmm1\n pclmulqdq $0x11, %%xmm1, %%xmm0\n movdqu %%xmm0, %0" : "=m"(r) : "m"(x), "m"(y) : "xmm0", "xmm1");
-      CHECK(r[0] == 15 && r[1] == 0);
+    {
+      int present = (leaf1[2] & (1u << 1)) != 0, before = checks;
+      if (present) {
+        /* Carry-less multiplication of the high halves. */
+        vector x = {0, 3}, y = {0, 5};
+        __asm__("movdqu %1, %%xmm0\n movdqu %2, %%xmm1\n pclmulqdq $0x11, %%xmm1, %%xmm0\n movdqu %%xmm0, %0" : "=m"(r) : "m"(x), "m"(y) : "xmm0", "xmm1");
+        CHECK(r[0] == 15 && r[1] == 0);
+      }
+      feature_checks += checks - before;
+      if (present && checks - before != 1) { wrong++; printf("checks are missing (line %d)\n", __LINE__); }
     }
-    if (leaf1[2] & (1u << 9)) {
-      vector bytes = {0x0706050403020100ull, 0x0f0e0d0c0b0a0908ull}, reverse = {0x08090a0b0c0d0e0full, 0x0001020304050607ull};
-      r = VECTOR_OP("pshufb", bytes, reverse); CHECK(r[0] == 0x08090a0b0c0d0e0full && r[1] == 0x0001020304050607ull);
+    {
+      int present = (leaf1[2] & (1u << 9)) != 0, before = checks;
+      if (present) {
+        vector bytes = {0x0706050403020100ull, 0x0f0e0d0c0b0a0908ull}, reverse = {0x08090a0b0c0d0e0full, 0x0001020304050607ull};
+        r = VECTOR_OP("pshufb", bytes, reverse); CHECK(r[0] == 0x08090a0b0c0d0e0full && r[1] == 0x0001020304050607ull);
+      }
+      feature_checks += checks - before;
+      if (present && checks - before != 1) { wrong++; printf("checks are missing (line %d)\n", __LINE__); }
     }
   }
 
-  printf("%s, %d wrong\n", checks > 50 ? "every check made" : "checks are missing", wrong);
+  printf("%d checks that every processor runs, %d wrong\n", checks - feature_checks, wrong);
   return wrong != 0;
 }

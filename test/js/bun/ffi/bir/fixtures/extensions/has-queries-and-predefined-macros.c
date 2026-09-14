@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <wchar.h>
 
-static int wrong;
-#define CHECK(c) do { if (!(c)) { wrong++; printf("WRONG (line %d): %s\n", __LINE__, #c); } } while (0)
+static int checks, wrong;
+#define CHECK(c) do { checks++; if (!(c)) { wrong++; printf("WRONG (line %d): %s\n", __LINE__, #c); } } while (0)
 
 #if !defined __has_include || !defined __has_builtin || !defined __has_attribute
 #error the __has_ queries are macros that are defined
@@ -78,6 +78,9 @@ int main(void) {
   CHECK(__STDC_HOSTED__ == 1 && __STDC_VERSION__ >= 201112L);
 #ifndef _MSC_VER
   CHECK(__STDC__ == 1);             // (Microsoft C leaves it undefined unless its extensions are turned off.)
+#endif
+#ifdef __BUN_CC__
+  printf("%d checks\n", checks); // (GCC and Clang skip what they have not got, so their count is another.)
 #endif
   printf("%d wrong\n", wrong);
   return wrong != 0;

@@ -124,7 +124,8 @@ int check13(void) {
 struct T13 original = { -9, 0.75 }, before = original;
 struct T13 back = id13(original);
 struct T13 again = indirect13(id13(back));
-return memcmp(&back, &before, sizeof back) == 0 && memcmp(&original, &before, sizeof before) == 0 && memcmp(&again, &before, sizeof again) == 0;
+// (Member by member: what the padding between them holds after a copy is unspecified, 6.2.6.1p6.)
+return back.a == before.a && back.b == before.b && original.a == before.a && original.b == before.b && again.a == before.a && again.b == before.b;
 }
 struct T14 { double a; int b; };
 static struct T14 id14(struct T14 x) { struct T14 copy = x; scribble(&x, sizeof x); return copy; }
@@ -133,7 +134,8 @@ int check14(void) {
 struct T14 original = { 0.75, -9 }, before = original;
 struct T14 back = id14(original);
 struct T14 again = indirect14(id14(back));
-return memcmp(&back, &before, sizeof back) == 0 && memcmp(&original, &before, sizeof before) == 0 && memcmp(&again, &before, sizeof again) == 0;
+// (Member by member: what the padding between them holds after a copy is unspecified, 6.2.6.1p6.)
+return back.a == before.a && back.b == before.b && original.a == before.a && original.b == before.b && again.a == before.a && again.b == before.b;
 }
 struct T15 { float a; int b; };
 static struct T15 id15(struct T15 x) { struct T15 copy = x; scribble(&x, sizeof x); return copy; }

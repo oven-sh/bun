@@ -7,7 +7,7 @@ void *memcpy(void *, const void *, __SIZE_TYPE__); void *memmove(void *, const v
          void writes(unsigned char *p, int v) { write16(p + 1, (unsigned short)v); }
          u64 bits_of(double d) { u64 u; memcpy(&u, &d, sizeof u); return u; }
          float float_of(u32 u) { float f; (void)memmove(&f, &u, 4); return f; }
-         int narrow(const void *p) { signed char c; short s; _Bool b; memcpy(&c, p, 1); memcpy(&s, p, 2); memcpy(&b, p, 1); return c * 100000 + s + b * 10000000; }
+         int narrow(const void *p) { signed char c; short s; _Bool b; memcpy(&c, p, 1); memcpy(&s, p, 2); memcpy(&b, (const char *)p + 15, 1); return c * 100000 + s + b * 10000000; }
          short resign(unsigned short u) { short s; memcpy(&s, &u, 2); return s; }
          int partial(const void *p) { int v = 0; memcpy(&v, p, 3); return v; }
          int escapes(const void *p) { int v; int *q = &v; memcpy(&v, p, sizeof v); return *q; }

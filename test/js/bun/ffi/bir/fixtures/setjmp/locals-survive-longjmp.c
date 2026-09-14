@@ -1,6 +1,5 @@
-/* What C guarantees after longjmp: volatile locals, and locals not changed since setjmp, have
-   their values; here every local of a function that calls setjmp lives in memory, so the
-   others keep their latest values too. */
+/* What C guarantees after longjmp (7.13.2.1p3): volatile locals, and locals not changed since setjmp, have
+   their values. */
 #include <setjmp.h>
 #include <stdio.h>
 
@@ -16,7 +15,7 @@ static void dive(int n) {
 static int counts(void) {
     volatile int tries = 0;
     int unchanged = 7;
-    double total = 1.5;
+    volatile double total = 1.5;
     struct { int a; char text[8]; } record = { 3, "abc" };
     int code = setjmp(env);
     tries++;

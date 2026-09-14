@@ -21,7 +21,7 @@ static int id(int x) { return x; }
          int vla_free_sum(void) { int buf[10]; int n = fill(buf, 10), s = 0; while (n--) s += buf[n]; return s; }
          int bool_arith(int a, int b) { return (a < b) + (a == b) * 2 + !a * 4 + !!b * 8 + ((a != 0) & (b != 0)) * 16; }
          int unsigned_wrap(unsigned a) { return a - 1 > a; }
-         int int_min(void) { int m = -2147483647 - 1; return m == (int)0x80000000 && -m == m; }
+         int int_min(void) { int m = -2147483647 - 1; return m == (int)0x80000000 && -(m + 1) == 2147483647 && (unsigned)m == 0u - (unsigned)m; }
          long long mixed_promote(short s, unsigned u, long long l) { return s * u + l; }
          int switch_ret_in_loop(int n) { for (int i = 0;; i++) { switch (i - n) { case 0: return i * 2; default: continue; } } }
          int local_static_array(int i) { static const int t[] = { 2, 3, 5, 7, 11 }; static const char *n[] = { "x", "yz" }; return t[i] + n[i & 1][0]; }

@@ -13,8 +13,8 @@
 #define HAVE(name) 0
 #endif
 
-static int wrong;
-#define CHECK(c) do { if (!(c)) { wrong++; printf("WRONG (line %d): %s\n", __LINE__, #c); } } while (0)
+static int checks, wrong;
+#define CHECK(c) do { checks++; if (!(c)) { wrong++; printf("WRONG (line %d): %s\n", __LINE__, #c); } } while (0)
 
 static int sum(int count, ...) {
   __builtin_va_list ap, copy;
@@ -129,6 +129,9 @@ int main(void) {
   CHECK(__builtin_memset(text, 'x', 3) == text && text[2] == 'x' && __builtin_strncmp("abc", "abd", 2) == 0 && __builtin_memmove(text + 1, text, 2) == text + 1 && __builtin_strcpy(text, "z") == text);
   CHECK(__builtin_abs(negative) == 1 && __builtin_labs(-2L) == 2 && __builtin_llabs(-3LL) == 3);
   CHECK(__builtin_sqrt(16.0) == 4.0 && __builtin_floor(d) == -3.0 && __builtin_ceil(d) == -2.0 && __builtin_trunc(d) == -2.0 && __builtin_fmax(1.0, 2.0) == 2.0 && __builtin_fmin(1.0f, 2.0f) == 1.0f && __builtin_sqrtf(4.0f) == 2.0f);
+#ifdef __BUN_CC__
+  printf("%d checks\n", checks); // (GCC and Clang skip what they have not got, so their count is another.)
+#endif
   printf("%d wrong\n", wrong);
   return wrong != 0;
 }

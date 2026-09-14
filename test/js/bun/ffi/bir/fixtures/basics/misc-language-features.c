@@ -7,7 +7,7 @@ enum Color { RED, GREEN = 10, BLUE };
          int forward(int x) { return x * 3; }
          int empty_params() { return 4; }
          int call_empty(void) { return empty_params(); }
-         int fall_off(int x) { if (x) return 5; }
+         int fall_off(int x) { if (x) return 5; return 0; }
          void nothing(void) { return; }
          int dead_code(int x) { return x; x++; goto l; l: return x + 100; }
          int after_break(void) { int s = 0; for (int i = 0; i < 3; i++) { s += 1; continue; s += 100; } while (1) { break; s += 1000; } return s; }

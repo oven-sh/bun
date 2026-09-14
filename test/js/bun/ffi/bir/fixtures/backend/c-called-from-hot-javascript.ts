@@ -1,9 +1,9 @@
 import { ptr } from "bun:ffi";
 import * as c from "./c-called-from-hot-javascript.c";
 
-// Two million calls each, so that the loops reach the last tier; with the optimizing tiers switched off (C itself
-// needs the JIT, so there is no running this with none) they stay in the first, where a tenth of that is plenty.
-const rounds = process.env.BUN_JSC_useDFGJIT === "0" ? 200_000 : 2_000_000;
+// Two hundred thousand calls each: far past the thresholds of every tier, so the loops reach the last one (and with
+// the optimizing tiers switched off, since C itself needs the JIT, they stay in the first).
+const rounds = 200_000;
 const summed = 20_000; // the part of every run that goes into the totals printed, the same in every mode
 
 function tooBig(x: number) {

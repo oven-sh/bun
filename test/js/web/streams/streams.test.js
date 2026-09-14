@@ -3582,6 +3582,7 @@ it("pipeTo writes an already-dequeued chunk when the signal aborts mid-drain", a
 // readable and then tears it down on abort, the transform controller API must not segfault.
 it("TransformStreamDefaultController survives after a native sink tears down its readable", async () => {
   const script = `
+    const { finished } = require("node:stream/promises");
     process.on("unhandledRejection", () => {});
     const actions = {
       desiredSize: c => c.desiredSize,
@@ -3598,9 +3599,11 @@ it("TransformStreamDefaultController survives after a native sink tears down its
       });
       child.kill();
       await child.exited;
-      // The stdin sink's finally step releases its reader and clears the readable's
-      // controller slot; unlocked is the observable post-teardown condition.
-      while (ts.readable.locked) await new Promise(r => setImmediate(r));
+      // The stdin sink cancels the readable once the child is gone, which closes it and queues
+      // the sink's finally step. That step clears the readable's controller slot. The readable
+      // stays locked, so the close is the observable condition: the step has run one turn later.
+      await finished(ts.readable);
+      await new Promise(r => setImmediate(r));
       let outcome;
       try { outcome = "returned:" + fn(ctrl); } catch (e) { outcome = "threw:" + e?.constructor?.name; }
       console.log(name, outcome);

@@ -120,6 +120,12 @@ public:
     {
         return m_transferred || m_consumedAsBody || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);
     }
+    // A Body consumer holds this stream now. It stays disturbed and locked after the consumer lets go of it.
+    void markConsumedAsBody()
+    {
+        m_disturbed = true;
+        m_consumedAsBody = true;
+    }
 
 private:
     JSReadableStream(JSC::VM&, JSC::Structure*);

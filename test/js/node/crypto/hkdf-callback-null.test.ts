@@ -69,3 +69,67 @@ test("crypto.hkdf only accepts a secret KeyObject as ikm", () => {
 
   expect(callback).toHaveBeenCalledTimes(0);
 });
+
+// Node.js documents `keylen` as "Must be greater than 0". The argument validation accepts 0 and
+// the derivation step then fails, so hkdfSync() throws and hkdf() reports the error to the callback.
+const zeroLengthIkm = {
+  "string": () => "key",
+  "empty string": () => "",
+  "Buffer": () => Buffer.from("key"),
+  "ArrayBuffer": () => new Uint8Array([1, 2, 3]).buffer,
+  "secret KeyObject": () => crypto.createSecretKey(Buffer.from("key")),
+};
+
+for (const [name, ikm] of Object.entries(zeroLengthIkm)) {
+  test(`crypto.hkdfSync throws when length is 0 (${name} ikm)`, () => {
+    for (const [salt, info] of [
+      ["", ""],
+      ["salt", "info"],
+    ]) {
+      let error: any;
+      try {
+        crypto.hkdfSync("sha256", ikm(), salt, info, 0);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect({ name: error.name, message: error.message, code: error.code }).toEqual({
+        name: "Error",
+        message: "HKDF derivation failed",
+        code: undefined,
+      });
+    }
+  });
+
+  test(`crypto.hkdf passes an error to the callback when length is 0 (${name} ikm)`, async () => {
+    const { promise, resolve } = Promise.withResolvers<{ args: unknown[] }>();
+    // Node.js does not throw here: the failure comes from the derivation, not from validation.
+    const returned = crypto.hkdf("sha256", ikm(), "salt", "info", 0, (...args) => resolve({ args }));
+    expect(returned).toBeUndefined();
+
+    const { args } = await promise;
+    expect(args).toHaveLength(1);
+    const error = args[0] as any;
+    expect(error).toBeInstanceOf(Error);
+    expect({ name: error.name, message: error.message, code: error.code }).toEqual({
+      name: "Error",
+      message: "HKDF derivation failed",
+      code: undefined,
+    });
+  });
+}
+
+test("crypto.hkdfSync and crypto.hkdf still derive a key when length is 1", async () => {
+  // The first byte of the 32-byte output. Node.js v26.3.0 returns the same value.
+  const expected = "9c";
+  expect(
+    Buffer.from(crypto.hkdfSync("sha256", "key", "salt", "info", 32))
+      .toString("hex")
+      .slice(0, 2),
+  ).toBe(expected);
+  expect(Buffer.from(crypto.hkdfSync("sha256", "key", "salt", "info", 1)).toString("hex")).toBe(expected);
+
+  const { promise, resolve, reject } = Promise.withResolvers<ArrayBuffer>();
+  crypto.hkdf("sha256", "key", "salt", "info", 1, (err, key) => (err ? reject(err) : resolve(key)));
+  expect(Buffer.from(await promise).toString("hex")).toBe(expected);
+});

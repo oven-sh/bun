@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateOrderFile } from "../orderfile/generate.ts";
+import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
@@ -29,7 +29,7 @@ import type { Config } from "./config.ts";
 import { webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
-import { orderFilePath, usesOrderFile } from "./flags.ts";
+import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -214,7 +214,7 @@ export async function spawnWithAnnotations(
 //
 // CI splits builds per-platform into three parallel steps:
 //   build-cpp  → libbun.a + all dep libs (this node uploads)
-//   build-rust → libbun_rust.a (this node uploads)
+//   build-rust → libbun_runtime.a (this node uploads)
 //   build-bun  → downloads both, links (this node downloads first)
 //
 // Paths are uploaded RELATIVE TO buildDir. buildkite-agent recreates the
@@ -342,7 +342,10 @@ function upload(paths: string[], cwd: string): void {
 //           ├── bun-profile[.exe]
 //           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
 //           ├── features.json
-//           ├── bun-profile.linker-map   (linux/mac non-asan)
+//           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
+//           ├── bun-profile.map          (windows; with the above, what the
+//           │                             trace-order step resolves addresses with)
+//           ├── linker.order             (the order file this binary was linked with, if any)
 //           ├── bun-profile.pdb          (windows)
 //           └── bun-profile.dSYM         (mac)
 //
@@ -434,10 +437,10 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   } else if (cfg.darwin) {
     files.push(`${exeName}.dSYM`);
   }
-  // Linker map: posix non-asan (cmake gate: (APPLE OR LINUX) AND NOT ENABLE_ASAN).
-  if (cfg.unix && !cfg.asan) {
-    files.push(`${exeName}.linker-map`);
-  }
+  // Linker map(s). On windows they are also what the trace-order step
+  // (.buildkite/ci.mjs) resolves traced addresses against, the PE itself
+  // having no symbol table, so without them that step has nothing to work from.
+  files.push(...linkerMapOutputs(cfg).map(map => basename(map)));
   // The symbol ordering file this binary was linked with, next to the linker
   // map. Skip the seeded placeholder — it has no functions in it.
   const hasOrderFile = usesOrderFile(cfg) && orderFileFunctionCount(cfg) > 0;
@@ -993,24 +996,21 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
     return;
   }
 
-  // Same resolution as generate.ts: honor NM, else llvm-nm, else nm.
-  let nm = { status: null, stdout: "" } as { status: number | null; stdout: string };
-  for (const tool of [process.env.NM, "llvm-nm", "nm"].filter(Boolean) as string[]) {
-    nm = spawnSync(tool, ["--defined-only", exe], { encoding: "utf8", maxBuffer: 1 << 29 });
-    if (nm.status === 0) break;
-  }
-  if (nm.status !== 0) {
-    console.log("~ symbol order: no working nm — skipping verification");
+  // The same names the generator traces against: nm's, or on windows the link's maps'.
+  let symbols: Map<number, string[]>;
+  try {
+    symbols = readTextSymbols(exe);
+  } catch (error) {
+    console.log(
+      `~ symbol order: cannot read the binary's symbols — skipping verification (${(error as Error).message})`,
+    );
     return;
   }
 
   const addresses = new Map<string, number>();
   let textBase = Number.MAX_SAFE_INTEGER;
-  for (const line of nm.stdout.split("\n")) {
-    const m = /^([0-9a-f]+) ([tT]) (\S+)$/.exec(line);
-    if (!m) continue;
-    const address = parseInt(m[1]!, 16);
-    addresses.set(m[3]!, address);
+  for (const [address, names] of symbols) {
+    for (const name of names) addresses.set(name, address);
     if (address < textBase) textBase = address;
   }
 
@@ -1055,7 +1055,9 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
       `the order file had no effect: hot functions sit at ${mb(hot)}, a typical one at ${mb(control)}`,
       cfg.darwin
         ? "Apple ld ignored it — check -order_file and that the names match nm's"
-        : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
+        : cfg.windows
+          ? "lld-link ignored it — check /order and that /Gy survived"
+          : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
     );
     return;
   }

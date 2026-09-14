@@ -3,7 +3,7 @@ title: Routing
 description: Define routes in `Bun.serve` using static paths, parameters, and wildcards
 ---
 
-Add routes to `Bun.serve()` with the `routes` property (static paths, parameters, and wildcards), or handle unmatched requests with the [`fetch`](#fetch) method.
+Add routes to `Bun.serve()` with the `routes` property (static paths, parameters, and wildcards), or handle unmatched requests with the [`fetch`](#fetch-request-handler) method.
 
 `Bun.serve()`'s router builds on top of uWebSocket's [tree-based approach](https://github.com/oven-sh/bun/blob/0d1a00fa0f7830f8ecd99c027fce8096c9d459b6/packages/bun-uws/src/HttpRouter.h#L57-L64). The router adds [SIMD-accelerated route parameter decoding](https://github.com/oven-sh/bun/blob/main/src/jsc/bindings/decodeURIComponentSIMD.cpp#L21-L271) and [JavaScriptCore structure caching](https://github.com/oven-sh/bun/blob/main/src/jsc/bindings/ServerRouteList.cpp#L100-L101) to push the performance limits of what modern hardware allows.
 
@@ -208,9 +208,12 @@ Bun.serve({
 
 Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains `.`, `..`, empty segments, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`, so the kernel clamps symlinks that would escape `dir`.
 
-{% callout %}
-Routing is case-sensitive, but filesystems on macOS and Windows are case-insensitive by default. As a result, a case-varied URL (`/static/Admin/secret.txt`) routes to the directory wildcard rather than a sibling `/static/admin/*` handler and still opens `admin/secret.txt`. As with nginx, Caddy, and other static file servers, keep access-controlled content outside `dir` rather than relying on an overlapping route to gate it.
-{% /callout %}
+<Info>
+  Routing is case-sensitive, but filesystems on macOS and Windows are case-insensitive by default. As a result, a
+  case-varied URL (`/static/Admin/secret.txt`) routes to the directory wildcard rather than a sibling `/static/admin/*`
+  handler and still opens `admin/secret.txt`. As with nginx, Caddy, and other static file servers, keep
+  access-controlled content outside `dir` rather than relying on an overlapping route to gate it.
+</Info>
 
 Directory routes share the response path with file routes:
 

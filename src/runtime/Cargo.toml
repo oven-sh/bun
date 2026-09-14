@@ -5,6 +5,12 @@ edition.workspace = true
 
 [lib]
 path = "lib.rs"
+# The final Rust artifact: a staticlib the native build links together with the
+# C/C++ objects (see scripts/build/rust.ts). Being the leaf staticlib itself,
+# rather than an rlib consumed by a separate shim crate, means rustc never
+# encodes crate metadata for this (by far the largest) crate and cargo never
+# re-bundles every rlib into a second archive on each rebuild.
+crate-type = ["staticlib"]
 
 [lints]
 workspace = true
@@ -22,6 +28,7 @@ bytemuck = "1"
 thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true
+encoding_rs.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
 enum-map.workspace = true
@@ -35,6 +42,7 @@ bun_boringssl_sys.workspace = true
 bun_brotli.workspace = true
 bun_lsquic_sys.workspace = true
 bun_alloc.workspace = true
+bun_platform.workspace = true
 bun_errno.workspace = true
 bun_core.workspace = true
 bun_bundler.workspace = true
@@ -43,8 +51,8 @@ bun_clap.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_csrf.workspace = true
-bun_cares_sys.workspace = true
 bun_css.workspace = true
+bun_cares_sys.workspace = true
 bun_dns.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
@@ -93,7 +101,6 @@ bun_sys_jsc.workspace = true
 bun_libuv_sys.workspace = true
 bun_tcc_sys.workspace = true
 bun_threading.workspace = true
-bun_transpiler.workspace = true
 bun_url.workspace = true
 bun_uws.workspace = true
 bun_uws_sys.workspace = true

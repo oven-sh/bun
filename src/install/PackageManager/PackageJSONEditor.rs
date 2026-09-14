@@ -52,25 +52,21 @@ fn split_npm_alias(literal: &[u8]) -> Option<(&[u8], &[u8])> {
     ))
 }
 
-/// `version_literal` behind `from`'s `npm:<name>@` (if any), unless it already names a target.
-fn with_alias_of<'a>(
-    arena: &'a bun_alloc::Arena,
-    from: &[u8],
-    version_literal: &'a [u8],
-) -> &'a [u8] {
+/// `version` behind `from`'s `npm:<name>@` (if any), unless it already names a target.
+fn with_alias_of<'a>(arena: &'a bun_alloc::Arena, from: &[u8], version: &'a [u8]) -> &'a [u8] {
     match split_npm_alias(from) {
-        Some((alias, _)) if split_npm_alias(version_literal).is_none() => {
+        Some((alias, _)) if split_npm_alias(version).is_none() => {
             let mut v = Vec::new();
             write!(
                 &mut v,
                 "{}@{}",
                 bstr::BStr::new(alias),
-                bstr::BStr::new(version_literal)
+                bstr::BStr::new(version)
             )
             .expect("infallible: in-memory write");
             arena_str(arena, &v)
         }
-        _ => version_literal,
+        _ => version,
     }
 }
 
@@ -1216,6 +1212,36 @@ pub(crate) fn edit(
                         .as_ptr(),
                 );
                 break;
+            }
+
+            // For a non-aliased git/github/tarball/folder request, `get_name()` is the
+            // URL or path literal: the before-install edit keys its entry by that
+            // literal, and the slot above was just re-keyed to the resolved package
+            // name. If the list already declared this package under the resolved name
+            // with a different literal (e.g. a new commit hash), that stale entry is
+            // still present, so drop it or the file ends up with a duplicate key.
+            if !request.is_aliased && k < new_dependencies.len() {
+                let resolved_name = request.get_resolved_name(&manager.lockfile);
+                let mut j = new_dependencies.len();
+                while j > 0 {
+                    j -= 1;
+                    if j == k {
+                        continue;
+                    }
+                    if let Some(key) = &new_dependencies[j].key {
+                        if key
+                            .data
+                            .e_string()
+                            .expect("infallible: variant checked")
+                            .eql_bytes(resolved_name)
+                        {
+                            new_dependencies.remove(j);
+                            if j < k {
+                                k -= 1;
+                            }
+                        }
+                    }
+                }
             }
 
             // There are no early-exit

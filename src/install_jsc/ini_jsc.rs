@@ -1,7 +1,7 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc as _, StringJsc};
 
 /// Free-fn aliases of the [`IniTestingAPIs`] associated fns so
 /// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
@@ -33,7 +33,7 @@ impl IniTestingAPIs {
         use bun_install::npm::Registry;
 
         let arg = frame.argument(0);
-        let npmrc_contents = bun_core::OwnedString::new(arg.to_bun_string(global)?);
+        let npmrc_contents = arg.to_js_string_view(global)?;
         let npmrc_utf8 = npmrc_contents.to_utf8();
         let source = Source::init_path_string(b"<js>", npmrc_utf8.slice());
 
@@ -50,7 +50,7 @@ impl IniTestingAPIs {
             let Some(envobj) = envjs.get_object() else {
                 return Err(global.throw_type_error(format_args!("env must be an object")));
             };
-            let mut object_iter = bun_jsc::JSPropertyIterator::init(
+            let object_iter = bun_jsc::JSPropertyIterator::init(
                 global,
                 envobj,
                 bun_jsc::JSPropertyIteratorOptions::new(
@@ -60,15 +60,13 @@ impl IniTestingAPIs {
 
             envmap.ensure_total_capacity(object_iter.len)?;
 
-            while let Some(key) = object_iter.next()? {
+            while let Some((key, value)) = object_iter.next()? {
                 let keyslice = key.to_owned_slice();
-                let value = object_iter.value;
                 if value.is_undefined() {
                     continue;
                 }
 
-                let value_str = value.get_zig_string(global)?;
-                let slice = value_str.to_owned_slice();
+                let slice = value.to_bun_string(global)?.to_owned_slice();
 
                 envmap.put(
                     &keyslice,
@@ -84,7 +82,7 @@ impl IniTestingAPIs {
         let mut install = Box::new(BunInstall::default());
         let mut configs: Vec<RegistryAuth> = Vec::new();
         if load_npmrc(&mut install, env, &mut log, &source, &mut configs).is_err() {
-            return bun_ast_jsc::log_to_js(&log, global, b"error");
+            return log.to_js(global, format_args!("error"));
         }
 
         let (
@@ -97,10 +95,10 @@ impl IniTestingAPIs {
             let Some(default_registry) = install.default_registry.as_ref() else {
                 break 'brk (
                     BunString::static_(Registry::DEFAULT_URL),
-                    BunString::empty(),
-                    BunString::empty(),
-                    BunString::empty(),
-                    BunString::empty(),
+                    BunString::EMPTY,
+                    BunString::EMPTY,
+                    BunString::EMPTY,
+                    BunString::EMPTY,
                 );
             };
 
@@ -112,8 +110,6 @@ impl IniTestingAPIs {
                 BunString::from_bytes(&default_registry.email),
             )
         };
-        // `defer { *.deref() }` deleted — bun_core::String impls Drop.
-
         // Rust has no field reflection; mirror struct-literal object creation with
         // a local `PojoFields` impl (the bun_jsc-convention until `#[derive(PojoFields)]`
         // lands) so each `bun.String → JSValue` encoding interleaves with `put()` and
@@ -173,7 +169,7 @@ impl IniTestingAPIs {
         let arguments = frame.arguments();
 
         let jsstr = arguments[0];
-        let bunstr = bun_core::OwnedString::new(jsstr.to_bun_string(global)?);
+        let bunstr = jsstr.to_js_string_view(global)?;
         let utf8str = bunstr.to_utf8();
 
         let env = global.bun_vm().as_mut().transpiler.env();

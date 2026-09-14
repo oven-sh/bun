@@ -60,11 +60,13 @@ async function gitRepo(manifest: Record<string, unknown>) {
   return repoDir;
 }
 
+const HEADER = "bun pm licenses <version> (<revision>)";
+
 const emptyText = (checked: number) => `No packages to list (checked ${checked} packages in bun.lock)`;
 
 function expectEmptyText(stdout: string, checked: number) {
-  expect(normalizeBunSnapshot(stdout)).toBe(emptyText(checked));
-  expect(stdout).toMatch(/^No packages to list \(checked \d+ packages in bun\.lock\) \[\d+\.\d+m?s\]\n$/);
+  expect(normalizeBunSnapshot(stdout)).toBe(`${HEADER}\n\n${emptyText(checked)}`);
+  expect(stdout).toMatch(/\nNo packages to list \(checked \d+ packages in bun\.lock\) \[\d+\.\d+m?s\]\n$/);
 }
 
 const MISSING_NOTE = "note: run 'bun install' first";
@@ -269,7 +271,9 @@ describe("bun pm licenses", () => {
   test.concurrent("text output groups packages by license, Unknown last, dev-only packages marked", async () => {
     const [stdout, stderr, exitCode] = await licenses(hoistedDir);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-      "MIT (2)
+      "bun pm licenses <version> (<revision>)
+
+      MIT (2)
       ├── path-parse@1.0.6
       └── resolve@1.9.0
 
@@ -277,7 +281,9 @@ describe("bun pm licenses", () => {
       ├── a-dep@1.0.1 (dev)
       ├── no-deps@1.0.0
       ├── no-deps@1.0.1
-      └── one-dep@1.0.0"
+      └── one-dep@1.0.0
+
+      6 packages across 2 licenses (checked 6 packages in bun.lock)"
     `);
     expect(stdout.split("\n").filter(line => line.endsWith(" (dev)"))).toStrictEqual(["├── a-dep@1.0.1 (dev)"]);
     expect(stdout).not.toContain(hoistedDir);
@@ -355,7 +361,9 @@ describe("bun pm licenses", () => {
 
     const [stdout, stderr, exitCode] = await licenses(dir);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-      "BSD-3-Clause (1)
+      "bun pm licenses <version> (<revision>)
+
+      BSD-3-Clause (1)
       └── no-deps@1.0.1
 
       ISC (1)
@@ -377,7 +385,9 @@ describe("bun pm licenses", () => {
       └── a-dep@1.0.9
 
       Unknown (1)
-      └── uses-a-dep-9@1.0.0"
+      └── uses-a-dep-9@1.0.0
+
+      8 packages across 8 licenses (checked 8 packages in bun.lock)"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -491,11 +501,15 @@ describe("bun pm licenses", () => {
 
     const [stdout, stderr, exitCode] = await licenses(dir);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-      "Unknown (4)
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (4)
       ├── a-dep@1.0.9
       ├── a-dep@1.0.10
       ├── uses-a-dep-10@1.0.0
-      └── uses-a-dep-9@1.0.0"
+      └── uses-a-dep-9@1.0.0
+
+      4 packages across 1 license (checked 4 packages in bun.lock)"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -511,9 +525,13 @@ describe("bun pm licenses", () => {
 
     const [stdout, stderr, exitCode] = await licenses(dir);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-      "Unknown (2)
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (2)
       ├── a-dep@1.0.9
-      └── uses-a-dep-9@1.0.0 (dev)"
+      └── uses-a-dep-9@1.0.0 (dev)
+
+      2 packages across 1 license (checked 2 packages in bun.lock)"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -531,9 +549,13 @@ describe("bun pm licenses", () => {
       Unknown: [u("a-dep", "1.0.9"), u("uses-a-dep-9", "1.0.0")],
     });
     expect(normalizeBunSnapshot(await licensesText(dir, "--dev"))).toMatchInlineSnapshot(`
-      "Unknown (2)
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (2)
       ├── a-dep@1.0.9
-      └── uses-a-dep-9@1.0.0 (dev)"
+      └── uses-a-dep-9@1.0.0 (dev)
+
+      2 packages across 1 license (checked 2 packages in bun.lock)"
     `);
   });
 
@@ -547,21 +569,29 @@ describe("bun pm licenses", () => {
     });
 
     expect(normalizeBunSnapshot(await licensesText(dir))).toMatchInlineSnapshot(`
-      "Unknown (6)
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (6)
       ├── a-dep@1.0.9 (dev)
       ├── a-dep@1.0.10
       ├── no-deps@1.0.1
       ├── one-dep@1.0.0 (dev)
       ├── uses-a-dep-10@1.0.0
-      └── uses-a-dep-9@1.0.0 (dev)"
+      └── uses-a-dep-9@1.0.0 (dev)
+
+      6 packages across 1 license (checked 6 packages in bun.lock)"
     `);
 
     expect(normalizeBunSnapshot(await licensesText(dir, "--dev"))).toMatchInlineSnapshot(`
-      "Unknown (4)
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (4)
       ├── a-dep@1.0.9 (dev)
       ├── no-deps@1.0.1
       ├── one-dep@1.0.0 (dev)
-      └── uses-a-dep-9@1.0.0 (dev)"
+      └── uses-a-dep-9@1.0.0 (dev)
+
+      4 packages across 1 license (checked 4 packages in bun.lock)"
     `);
     expect(await licensesJson(dir, "--dev")).toStrictEqual({
       Unknown: [u("a-dep", "1.0.9"), u("no-deps", "1.0.1"), u("one-dep", "1.0.0"), u("uses-a-dep-9", "1.0.0")],
@@ -577,14 +607,22 @@ describe("bun pm licenses", () => {
     expect(await licensesJson(dir, "--dev")).toStrictEqual(expected);
     expect(await licensesJson(dir, "-D")).toStrictEqual(expected);
     expect(normalizeBunSnapshot(await licensesText(dir, "--dev"))).toMatchInlineSnapshot(`
-      "Unknown (2)
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (2)
       ├── no-deps@1.0.1 (dev)
-      └── one-dep@1.0.0 (dev)"
+      └── one-dep@1.0.0 (dev)
+
+      2 packages across 1 license (checked 2 packages in bun.lock)"
     `);
 
     expect(normalizeBunSnapshot(await licensesText(hoistedDir, "--dev"))).toMatchInlineSnapshot(`
-      "Unknown (1)
-      └── a-dep@1.0.1 (dev)"
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (1)
+      └── a-dep@1.0.1 (dev)
+
+      1 package across 1 license (checked 1 package in bun.lock)"
     `);
     expect(await licensesJson(hoistedDir, "--dev")).toStrictEqual({ Unknown: [u("a-dep", "1.0.1")] });
   });
@@ -620,14 +658,18 @@ describe("bun pm licenses", () => {
   test.concurrent("--prod omits devDependencies (text)", async () => {
     const [stdout, stderr, exitCode] = await licenses(hoistedDir, "--prod");
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-      "MIT (2)
+      "bun pm licenses <version> (<revision>)
+
+      MIT (2)
       ├── path-parse@1.0.6
       └── resolve@1.9.0
 
       Unknown (3)
       ├── no-deps@1.0.0
       ├── no-deps@1.0.1
-      └── one-dep@1.0.0"
+      └── one-dep@1.0.0
+
+      5 packages across 2 licenses (checked 5 packages in bun.lock)"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -669,7 +711,9 @@ describe("bun pm licenses", () => {
   test.concurrent("--long prints author, description and homepage under each entry", async () => {
     const [stdout, stderr, exitCode] = await licenses(hoistedDir, "--long");
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-      "MIT (2)
+      "bun pm licenses <version> (<revision>)
+
+      MIT (2)
       ├── path-parse@1.0.6
       │   Javier Blanco <http://jbgutierrez.info>
       │   Node.js path.parse() ponyfill
@@ -683,12 +727,14 @@ describe("bun pm licenses", () => {
       ├── a-dep@1.0.1 (dev)
       ├── no-deps@1.0.0
       ├── no-deps@1.0.1
-      └── one-dep@1.0.0"
+      └── one-dep@1.0.0
+
+      6 packages across 2 licenses (checked 6 packages in bun.lock)"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
 
-    expect(await licensesText(hoistedDir, "ls", "--long")).toBe(stdout);
+    expect(normalizeBunSnapshot(await licensesText(hoistedDir, "ls", "--long"))).toBe(normalizeBunSnapshot(stdout));
     expect(stdout).not.toContain(nm(hoistedDir));
 
     const [plainJson, longJson] = await Promise.all([
@@ -767,7 +813,9 @@ describe("bun pm licenses", () => {
       ],
     });
     expect(normalizeBunSnapshot(await licensesText(dir, "--long"))).toMatchInlineSnapshot(`
-      "MIT (2)
+      "bun pm licenses <version> (<revision>)
+
+      MIT (2)
       ├── path-parse@1.0.6
       │   Javier Blanco <http://jbgutierrez.info>
       │   Node.js path.parse() ponyfill
@@ -783,7 +831,9 @@ describe("bun pm licenses", () => {
       │   https://no-deps.example
       ├── no-deps@1.0.1
       └── one-dep@1.0.0
-          git+ssh://git@github.com/example/one-dep.git"
+          git+ssh://git@github.com/example/one-dep.git
+
+      6 packages across 2 licenses (checked 6 packages in bun.lock)"
     `);
   });
 
@@ -796,7 +846,9 @@ describe("bun pm licenses", () => {
       patchInstalledManifest(dir, "one-dep", { license: "ISC\nGPL-3.0" });
       patchInstalledManifest(dir, "no-deps", { license: "BSD\t2" });
 
-      const stdout = await licensesText(dir, "--long");
+      // --no-summary drops the "bun pm licenses v<version> (<short sha>)" banner. A short sha can be all
+      // digits, and the banner would then pass the group-header filter below.
+      const stdout = await licensesText(dir, "--long", "--no-summary");
       expect(stdout).not.toContain("\u001b");
       expect(stdout).not.toContain("\r");
       expect(stdout).not.toContain("\t");
@@ -850,9 +902,11 @@ describe("bun pm licenses", () => {
   test.concurrent("isolated linker matches hoisted: marker, --dev and --long", async () => {
     const dir = await setup("isolated");
     const [[expected], [stdout, stderr, exitCode]] = await Promise.all([licenses(hoistedDir), licenses(dir)]);
-    expect(stdout).toBe(expected);
+    expect(normalizeBunSnapshot(stdout)).toBe(normalizeBunSnapshot(expected));
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-      "MIT (2)
+      "bun pm licenses <version> (<revision>)
+
+      MIT (2)
       ├── path-parse@1.0.6
       └── resolve@1.9.0
 
@@ -860,7 +914,9 @@ describe("bun pm licenses", () => {
       ├── a-dep@1.0.1 (dev)
       ├── no-deps@1.0.0
       ├── no-deps@1.0.1
-      └── one-dep@1.0.0"
+      └── one-dep@1.0.0
+
+      6 packages across 2 licenses (checked 6 packages in bun.lock)"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -876,8 +932,8 @@ describe("bun pm licenses", () => {
         licensesJson(dir, "--long"),
         licensesJson(hoistedDir, "--long"),
       ]);
-    expect(isoLong).toBe(hoistedLong);
-    expect(isoDev).toBe(hoistedDev);
+    expect(normalizeBunSnapshot(isoLong)).toBe(normalizeBunSnapshot(hoistedLong));
+    expect(normalizeBunSnapshot(isoDev)).toBe(normalizeBunSnapshot(hoistedDev));
     expect(isoDevJson).toStrictEqual(hoistedDevJson);
     expect(isoLongJson).toStrictEqual(hoistedLongJson);
     expect(isoLong).toContain("│   Javier Blanco <http://jbgutierrez.info>\n");
@@ -1044,13 +1100,17 @@ describe("bun pm licenses", () => {
     });
 
     expect(normalizeBunSnapshot(await licensesText(dir))).toMatchInlineSnapshot(`
-      "MIT (2)
+      "bun pm licenses <version> (<revision>)
+
+      MIT (2)
       ├── path-parse@1.0.6
       └── resolve@1.9.0
 
       Unknown (2)
       ├── a-dep@1.0.1 (dev)
-      └── no-deps@1.0.0"
+      └── no-deps@1.0.0
+
+      4 packages across 2 licenses (checked 4 packages in bun.lock)"
     `);
     expect(await licensesText(join(dir, "packages", "foo"))).toContain("├── a-dep@1.0.1 (dev)\n└── no-deps@1.0.0\n");
   });
@@ -1097,9 +1157,13 @@ describe("bun pm licenses", () => {
     expect(packagesGlob).toStrictEqual(monoJson);
     expectEmptyText(rootOnly, 0);
     expect(normalizeBunSnapshot(fooText)).toMatchInlineSnapshot(`
-      "Unknown (2)
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (2)
       ├── a-dep@1.0.1 (dev)
-      └── no-deps@1.0.0"
+      └── no-deps@1.0.0
+
+      2 packages across 1 license (checked 2 packages in bun.lock)"
     `);
     expect(await licensesJson(monoDir, "--filter", "foo", "--prod")).toStrictEqual({
       Unknown: [u("no-deps", "1.0.0")],
@@ -1158,9 +1222,13 @@ describe("bun pm licenses", () => {
       `"warn: No workspace packages matched the filters "nomatch", "alsonone""`,
     );
     expect(normalizeBunSnapshot(text)).toMatchInlineSnapshot(`
-      "MIT (2)
+      "bun pm licenses <version> (<revision>)
+
+      MIT (2)
       ├── path-parse@1.0.6
-      └── resolve@1.9.0"
+      └── resolve@1.9.0
+
+      2 packages across 1 license (checked 2 packages in bun.lock)"
     `);
     expect(textExit).toBe(0);
   });
@@ -1209,6 +1277,30 @@ describe("bun pm licenses", () => {
     expect(jsonExit).toBe(0);
   });
 
+  test.concurrent("--no-summary prints the bare listing without banner or summary", async () => {
+    const [stdout, stderr, exitCode] = await licenses(hoistedDir, "--no-summary");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "MIT (2)
+      ├── path-parse@1.0.6
+      └── resolve@1.9.0
+
+      Unknown (4)
+      ├── a-dep@1.0.1 (dev)
+      ├── no-deps@1.0.0
+      ├── no-deps@1.0.1
+      └── one-dep@1.0.0"
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    // The empty listing keeps its message but drops the checked-count and timing.
+    const dir = await setup("hoisted", { "package.json": pkg({ devDependencies: { "no-deps": "1.0.0" } }) });
+    const [empty, emptyStderr, emptyExit] = await licenses(dir, "--prod", "--no-summary");
+    expect(empty).toBe("No packages to list\n");
+    expect(emptyStderr).toBe("");
+    expect(emptyExit).toBe(0);
+  });
+
   test.concurrent("--silent still prints the listing but no diagnostics", async () => {
     const dir = await setup();
     rmSync(nm(dir, "path-parse"), { recursive: true });
@@ -1220,7 +1312,9 @@ describe("bun pm licenses", () => {
       `warn: 1 package in bun.lock is not installed and was skipped\n${MISSING_NOTE}`,
     );
     expect(quietStderr).toBe("");
-    expect(quiet).toBe(loud);
+    // The loud run wraps the same listing in the banner and summary.
+    expect(loud).toContain(quiet);
+    expect(normalizeBunSnapshot(loud)).toStartWith(HEADER);
     expect(normalizeBunSnapshot(quiet)).toMatchInlineSnapshot(`
       "MIT (1)
       └── resolve@1.9.0
@@ -1279,8 +1373,8 @@ describe("bun pm licenses", () => {
       licenses(hoistedDir, "ls"),
     ]);
     expect(plain).toContain("MIT (2)");
-    expect(list).toBe(plain);
-    expect(ls).toBe(plain);
+    expect(normalizeBunSnapshot(list)).toBe(normalizeBunSnapshot(plain));
+    expect(normalizeBunSnapshot(ls)).toBe(normalizeBunSnapshot(plain));
     expect([plainExit, listExit, lsExit]).toStrictEqual([0, 0, 0]);
 
     const [stdout, stderr, exitCode] = await licenses(hoistedDir, "bogus");
@@ -1433,9 +1527,13 @@ describe("bun pm licenses", () => {
 
     const [stdout, stderr, exitCode] = await licenses(dir);
     expect(normalizeBunSnapshot(stdout).replace(/git\+file:\/\/\S+/, "git+file://<repo>")).toMatchInlineSnapshot(`
-      "Unknown (2)
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (2)
       ├── no-deps@1.0.0
-      └── no-deps@git+file://<repo>"
+      └── no-deps@git+file://<repo>
+
+      2 packages across 1 license (checked 2 packages in bun.lock)"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -1479,7 +1577,9 @@ describe("bun pm licenses", () => {
   test.concurrent("--omit=dev and bunfig install.production behave like --prod", async () => {
     expect(await licensesJson(hoistedDir, "--omit=dev")).toStrictEqual(prodJson);
     expect(await licensesText(hoistedDir, "--omit=dev")).not.toContain("(dev)");
-    expect(await licensesText(hoistedDir, "--omit", "dev")).toBe(await licensesText(hoistedDir, "--prod"));
+    expect(normalizeBunSnapshot(await licensesText(hoistedDir, "--omit", "dev"))).toBe(
+      normalizeBunSnapshot(await licensesText(hoistedDir, "--prod")),
+    );
 
     const dir = await setup();
     const bunfig = readFileSync(join(dir, "bunfig.toml"), "utf8");
@@ -1499,8 +1599,12 @@ describe("bun pm licenses", () => {
     expect(await licensesJson(dir)).toStrictEqual({ Unknown: [u("no-deps", "1.0.0", "1.0.1"), u("one-dep", "1.0.0")] });
     expect(await licensesJson(dir, "--omit=optional")).toStrictEqual({ Unknown: [u("no-deps", "1.0.0")] });
     expect(normalizeBunSnapshot(await licensesText(dir, "--omit=optional"))).toMatchInlineSnapshot(`
-      "Unknown (1)
-      └── no-deps@1.0.0"
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (1)
+      └── no-deps@1.0.0
+
+      1 package across 1 license (checked 1 package in bun.lock)"
     `);
   });
 
@@ -1510,8 +1614,12 @@ describe("bun pm licenses", () => {
 
     expect(await licensesJson(dir)).toStrictEqual({ Unknown: [u("no-deps", "1.0.0")] });
     expect(normalizeBunSnapshot(await licensesText(dir))).toMatchInlineSnapshot(`
-      "Unknown (1)
-      └── no-deps@1.0.0"
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (1)
+      └── no-deps@1.0.0
+
+      1 package across 1 license (checked 1 package in bun.lock)"
     `);
     expectEmptyText(await licensesText(dir, "--omit=peer"), 0);
     expect(await licensesJson(dir, "--omit=peer")).toStrictEqual({});
@@ -1634,7 +1742,9 @@ describe("bun pm licenses", () => {
       ],
     });
     expect(normalizeBunSnapshot(await licensesText(dir, "--long"))).toMatchInlineSnapshot(`
-      "MIT (2)
+      "bun pm licenses <version> (<revision>)
+
+      MIT (2)
       ├── path-parse@1.0.6
       │   Javier Blanco <http://jbgutierrez.info>
       │   Node.js path.parse() ponyfill
@@ -1650,7 +1760,9 @@ describe("bun pm licenses", () => {
       ├── no-deps@1.0.1
       │   (https://nd.example)
       └── one-dep@1.0.0
-          <one@example.com>"
+          <one@example.com>
+
+      6 packages across 2 licenses (checked 6 packages in bun.lock)"
     `);
   });
 

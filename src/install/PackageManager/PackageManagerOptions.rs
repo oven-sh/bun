@@ -1,12 +1,25 @@
 use crate::bun_schema::api as Api;
 use bun_core::ZStr;
 use bun_core::{Output, env_var};
-use bun_paths::PathBuffer;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
+
+/// Network policy for this install.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum OfflineMode {
+    /// Default: revalidate stale manifests, download what is missing.
+    #[default]
+    Online,
+    /// `--prefer-offline` / `install.prefer = "offline"`: a cached manifest of any age
+    /// satisfies resolution; only what is missing from the cache is fetched.
+    PreferOffline,
+    /// `--offline` / `install.offline = true`: never touch the network; anything not
+    /// in the cache is an error.
+    Offline,
+}
 
 // `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
 // which live for the process lifetime. There is no `deinit` on Options. Mapped to
@@ -80,6 +93,9 @@ pub struct Options {
     /// Isolated linker: `false` skips the `node_modules/.bun/node_modules`
     /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
     pub(crate) hoist: bool,
+
+    /// `--offline` / `--prefer-offline` (or `install.offline` / `install.prefer = "offline"`).
+    pub offline: OfflineMode,
 
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
@@ -156,6 +172,7 @@ impl Default for Options {
             public_hoist_pattern: None,
             hoist_pattern: None,
             hoist: true,
+            offline: OfflineMode::Online,
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -318,7 +335,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [b"install", b"global"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
@@ -331,7 +348,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
@@ -366,7 +383,7 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 1] = [b"bin"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
@@ -379,7 +396,7 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [b".bun", b"bin"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
@@ -473,6 +490,10 @@ impl Options {
 
             if let Some(hoist) = config.hoist {
                 self.hoist = hoist;
+            }
+
+            if config.offline == Some(true) {
+                self.offline = OfflineMode::Offline;
             }
 
             if let Some(security_scanner) = config.security_scanner.as_deref() {
@@ -607,26 +628,44 @@ impl Options {
                     if !registry_.is_empty()
                         && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
                     {
-                        let prev_scope = self.scope.clone();
-                        let prev_url = prev_scope.url.url();
-                        let new_url = bun_url::URL::parse(registry_);
-                        let token = if bun_core::without_trailing_slash(new_url.host)
-                            == bun_core::without_trailing_slash(prev_url.host)
-                            && (new_url.is_https() || !prev_url.is_https())
-                        {
-                            prev_scope.token
-                        } else {
-                            Box::default()
-                        };
-                        // Default (empty strings) is the zero value for Api::NpmRegistry.
-                        let api_registry = Api::NpmRegistry {
-                            url: registry_.into(),
-                            token,
-                            ..Default::default()
-                        };
+                        let mut api_registry = Api::NpmRegistry::from_url(registry_);
+                        // Credentials in the URL win, as they do for `registry=` in .npmrc.
+                        if !api_registry.has_credentials() {
+                            let prev_url = self.scope.url.url();
+                            let new_url = bun_url::URL::parse(&api_registry.url);
+                            if bun_core::without_trailing_slash(new_url.host)
+                                == bun_core::without_trailing_slash(prev_url.host)
+                                && (new_url.is_https() || !prev_url.is_https())
+                            {
+                                api_registry.token = core::mem::take(&mut self.scope.token);
+                            }
+                        }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                         break;
                     }
+                }
+            }
+        }
+
+        if let Some(cli) = &maybe_cli {
+            if !cli.registry.is_empty() {
+                let api_registry = Api::NpmRegistry::from_url(cli.registry);
+                if api_registry.has_credentials() {
+                    self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                } else {
+                    let new_url = bun_url::URL::parse(&api_registry.url);
+                    let same_origin = {
+                        let prev_url = self.scope.url.url();
+                        bun_core::without_trailing_slash(new_url.host)
+                            == bun_core::without_trailing_slash(prev_url.host)
+                            && (new_url.is_https() || !prev_url.is_https())
+                    };
+                    if !same_origin {
+                        self.scope.token = Box::default();
+                        self.scope.auth = Box::default();
+                        self.scope.user = Box::default();
+                    }
+                    self.scope.set_url(api_registry.url);
                 }
             }
         }
@@ -686,25 +725,6 @@ impl Options {
             self.do_.set(Do::ANALYZE, cli.analyze);
             self.enable
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
-
-            if !cli.registry.is_empty() {
-                let new_url = bun_url::URL::parse(cli.registry);
-                let same_origin = {
-                    let prev_url = self.scope.url.url();
-                    bun_core::without_trailing_slash(new_url.host)
-                        == bun_core::without_trailing_slash(prev_url.host)
-                        && (new_url.is_https() || !prev_url.is_https())
-                };
-                if !same_origin {
-                    self.scope.token = Box::default();
-                    self.scope.auth = Box::default();
-                    self.scope.user = Box::default();
-                }
-                let href: Box<[u8]> = cli.registry.into();
-                self.scope.url_hash =
-                    Npm::registry::Scope::hash(bun_core::without_trailing_slash(&href));
-                self.scope.url = bun_url::OwnedURL::from_href(href);
-            }
 
             if let Some(cache_dir) = cli.cache_dir {
                 self.cache_directory = cache_dir;
@@ -805,6 +825,11 @@ impl Options {
 
             if cli.no_verify {
                 self.do_.set(Do::VERIFY_INTEGRITY, false);
+            }
+            if cli.offline {
+                self.offline = OfflineMode::Offline;
+            } else if cli.prefer_offline && self.offline == OfflineMode::Online {
+                self.offline = OfflineMode::PreferOffline;
             }
 
             if cli.yarn {
@@ -909,6 +934,16 @@ impl Options {
         // moved from `defer { ... }` after scope assignment (see note above).
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
 
+        // The manifest cache is the data source for --prefer-offline/--offline; keep it on
+        // even where it is otherwise bypassed (`bun update`, `--no-cache`, `--force`).
+        if self.offline != OfflineMode::Online {
+            self.enable.set(Enable::MANIFEST_CACHE, true);
+        }
+        // Prefetching resolved tarballs is a latency optimisation for downloads; under
+        // --offline there is nothing to download and the install phase reports misses.
+        if self.offline == OfflineMode::Offline {
+            self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
+        }
         Ok(())
     }
 }

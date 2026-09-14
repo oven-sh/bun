@@ -1,8 +1,11 @@
 import { spawnSync, which } from "bun";
+import { CString, dlopen, ptr } from "bun:ffi";
+import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
+import { getHeapStatistics } from "v8";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 
@@ -491,6 +494,41 @@ it("ICU version does not regress", () => {
   expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(parseFloat(min, 10));
 });
 
+it("process.versions.icu and process.versions.unicode describe the ICU the process runs with", () => {
+  // macOS links the system libicucore, so the ICU the build compiled against
+  // can differ from the one the process runs with. String.prototype.toUpperCase
+  // goes through ICU's case mapping, and U+10D70 GARAY SMALL LETTER A only has
+  // an uppercase (U+10D50) from Unicode 16 (ICU 76) on.
+  const hasUnicode16 = "\u{10D70}".toUpperCase() === "\u{10D50}";
+  expect({
+    unicode16: parseFloat(process.versions.unicode) >= 16,
+    icu76: parseInt(process.versions.icu) >= 76,
+  }).toEqual({ unicode16: hasUnicode16, icu76: hasUnicode16 });
+  expect(process.versions.icu).toMatch(/^\d+\.\d+(\.\d+)*$/);
+  expect(process.versions.unicode).toMatch(/^\d+\.\d+(\.\d+)*$/);
+});
+
+it.skipIf(!isMacOS)("process.versions.icu and process.versions.unicode match the system libicucore", () => {
+  // dlopen returns the image bun itself links (-licucore), so these are the
+  // versions of the ICU that does the work in this process.
+  const { symbols } = dlopen("/usr/lib/libicucore.A.dylib", {
+    u_getVersion: { args: ["ptr"], returns: "void" },
+    u_getUnicodeVersion: { args: ["ptr"], returns: "void" },
+    u_versionToString: { args: ["ptr", "ptr"], returns: "void" },
+  });
+  const version = new Uint8Array(4);
+  const string = new Uint8Array(20);
+  const read = getVersion => {
+    getVersion(ptr(version));
+    symbols.u_versionToString(ptr(version), ptr(string));
+    return new CString(ptr(string)).toString();
+  };
+  expect({ icu: process.versions.icu, unicode: process.versions.unicode }).toEqual({
+    icu: read(symbols.u_getVersion),
+    unicode: read(symbols.u_getUnicodeVersion),
+  });
+});
+
 it("process.env.TZ", () => {
   var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -569,23 +607,33 @@ it("process.umask()", () => {
   expect(process.umask()).toBe(orig);
 });
 
-it("process.versions", () => {
-  // Expected dependency versions — must match scripts/build/deps/*.ts commits.
-  // These are the ACTUAL commits built into bun (not derived values, so
-  // bumping a dep requires updating this test too).
-  const expectedVersions = {
-    boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
-    libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "6e891cbe4790982ca9f3f9a60319a72e61b5d725",
-    picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
-    zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
-    tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
-    lolhtml: "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e",
-    ares: "c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab",
-    libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
-    zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
-    lshpack: "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
+it("process.versions", async () => {
+  // Verifies process.versions reports the same commits pinned in
+  // scripts/build/deps/*.ts. Reading the source files at test time keeps a
+  // single source of truth so dep bumps don't require touching this test.
+  const depsDir = resolve(import.meta.dir, "../../../../scripts/build/deps");
+  const deps = {
+    boringssl: "boringssl",
+    libarchive: "libarchive",
+    mimalloc: "mimalloc",
+    picohttpparser: "picohttpparser",
+    zlib: "zlib",
+    tinycc: "tinycc",
+    lolhtml: "lolhtml",
+    ares: "cares",
+    libdeflate: "libdeflate",
+    zstd: "zstd",
+    lshpack: "lshpack",
   };
+
+  const expectedVersions = {};
+  for (const [key, file] of Object.entries(deps)) {
+    const src = await Bun.file(join(depsDir, `${file}.ts`)).text();
+    // No $ anchor: some pins carry a trailing comment (zlib.ts: `"; // 2.3.3`)
+    const match = src.match(/^const [A-Z_]+_COMMIT = "([0-9a-f]{40})";/m);
+    expect(match, `failed to extract commit from ${file}.ts`).not.toBeNull();
+    expectedVersions[key] = match[1];
+  }
 
   for (const [name, expectedHash] of Object.entries(expectedVersions)) {
     expect(process.versions).toHaveProperty(name);
@@ -1018,6 +1066,151 @@ describe.concurrent(() => {
     expect(process.memoryUsage.rss()).toEqual(expect.any(Number));
   });
 
+  // Other threads (GC, JIT) allocate and free memory while these tests run, so
+  // they compare the closest of a few back-to-back reads.
+  function closestDelta(read, reference) {
+    let best = Infinity;
+    for (let i = 0; i < 8; i++) {
+      const value = read();
+      best = Math.min(best, Math.abs(value - reference()));
+    }
+    return best;
+  }
+
+  // On macOS, rss is the task's phys_footprint ledger: the "Memory" column in
+  // Activity Monitor, not resident_size. proc_pid_rusage() hands out the same
+  // ledger and its lifetime peak, so it is the independent reference here.
+  it.skipIf(!isMacOS)("process.memoryUsage().rss is the memory footprint on macOS", () => {
+    const { symbols } = dlopen("libSystem.B.dylib", {
+      proc_pid_rusage: { args: ["int", "int", "ptr"], returns: "int" },
+    });
+    const RUSAGE_INFO_V4 = 4;
+    // struct rusage_info_v4 (<sys/resource.h>): uint8_t ri_uuid[16], then uint64_t fields.
+    const info = new BigUint64Array(2 + 35);
+    const ri_phys_footprint = 2 + 7;
+    const ri_lifetime_max_phys_footprint = 2 + 28;
+    const kernel = field => () => {
+      expect(symbols.proc_pid_rusage(process.pid, RUSAGE_INFO_V4, ptr(info))).toBe(0);
+      return Number(info[field]);
+    };
+    const footprint = kernel(ri_phys_footprint);
+    const peakFootprint = kernel(ri_lifetime_max_phys_footprint);
+
+    const MB = 1024 * 1024;
+    expect(closestDelta(() => process.memoryUsage.rss(), footprint)).toBeLessThan(4 * MB);
+    expect(closestDelta(() => process.memoryUsage().rss, footprint)).toBeLessThan(4 * MB);
+    expect(closestDelta(() => jscMemoryUsage().current, footprint)).toBeLessThan(4 * MB);
+    expect(closestDelta(() => Bun.unsafe.memoryFootprint(), footprint)).toBeLessThan(4 * MB);
+    // maxRSS is kilobytes.
+    expect(closestDelta(() => process.resourceUsage().maxRSS * 1024, peakFootprint)).toBeLessThan(4 * MB);
+    expect(closestDelta(() => jscMemoryUsage().peak, peakFootprint)).toBeLessThan(4 * MB);
+    expect(closestDelta(() => process.report.getReport().resourceUsage.maxRss, peakFootprint)).toBeLessThan(4 * MB);
+    // node:v8 derives its physical size from the same peak.
+    expect(closestDelta(() => getHeapStatistics().total_physical_size, peakFootprint)).toBeLessThan(4 * MB);
+  });
+
+  it("bun:jsc memoryUsage() and process.report agree with process.memoryUsage() and resourceUsage()", () => {
+    // Everything is bytes except maxRSS (kilobytes). getReport() allocates
+    // between the two reads, hence the slack. A unit or source mix-up is off
+    // by far more: rss in kilobytes, or a peak where the current value belongs.
+    const slack = 16 * 1024 * 1024;
+    const rss = () => process.memoryUsage.rss();
+    const maxRSS = () => process.resourceUsage().maxRSS * 1024;
+    expect(closestDelta(() => jscMemoryUsage().current, rss)).toBeLessThan(slack);
+    expect(closestDelta(() => process.report.getReport().resourceUsage.rss, rss)).toBeLessThan(slack);
+    expect(closestDelta(() => jscMemoryUsage().peak, maxRSS)).toBeLessThan(slack);
+    expect(closestDelta(() => process.report.getReport().resourceUsage.maxRss, maxRSS)).toBeLessThan(slack);
+    expect(maxRSS() + slack).toBeGreaterThan(rss());
+  });
+
+  // JSC measures the live size of the heap at the end of each collection and
+  // keeps one figure per kind of collection, eden or full. heapUsed used to
+  // report the eden figure only, so it did not change when a full collection
+  // freed memory. Each child disables Bun's GC timer so that the only
+  // collections are the ones it requests. Bun.gc(true) and bun:jsc's edenGC()
+  // return the figure measured by the collection they ran, which is what
+  // heapUsed has to report afterwards.
+  describe("process.memoryUsage().heapUsed reports the most recent collection", () => {
+    async function reportedBy(script, env = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    it("after a full collection that follows an eden collection", async () => {
+      const { collections, heapUsed } = await reportedBy(`
+        const { edenGC } = require("bun:jsc");
+        const heapUsed = () => process.memoryUsage().heapUsed;
+
+        // The objects hang off the global object so that the eden collection
+        // counts them whatever the JIT keeps in registers. The array is built in
+        // a function of its own so that no frame that is still on the stack
+        // points at it when the last full collection runs.
+        function fill() {
+          const objects = [];
+          for (let i = 0; i < 50_000; i++) objects.push({ i });
+          globalThis.retained = objects;
+        }
+
+        const full = Bun.gc(true);
+        const heapUsedAfterFull = heapUsed();
+
+        fill();
+        const eden = edenGC();
+        const heapUsedAfterEden = heapUsed();
+
+        globalThis.retained = null;
+        const fullAfterEden = Bun.gc(true);
+        const heapUsedAfterFullAfterEden = heapUsed();
+
+        console.log(JSON.stringify({
+          collections: [full, eden, fullAfterEden],
+          heapUsed: [heapUsedAfterFull, heapUsedAfterEden, heapUsedAfterFullAfterEden],
+        }));
+      `);
+
+      const [full, eden, fullAfterEden] = collections;
+      // The eden collection counted the retained objects and the last full
+      // collection freed them, so a stale figure differs from the current one.
+      expect(full).toBeGreaterThan(0);
+      expect(eden).toBeGreaterThan(full);
+      expect(fullAfterEden).toBeLessThan(eden);
+      expect(heapUsed).toEqual(collections);
+    });
+
+    // Without the JIT, JSC turns off generational collection and runs every
+    // collection as a full one, so the eden figure stays 0 for the life of the
+    // process.
+    it("when every collection is a full collection", async () => {
+      const { full, heapUsed } = await reportedBy(
+        `
+          const full = Bun.gc(true);
+          console.log(JSON.stringify({ full, heapUsed: process.memoryUsage().heapUsed }));
+        `,
+        { BUN_JSC_useJIT: "false" },
+      );
+
+      expect(full).toBeGreaterThan(0);
+      expect(heapUsed).toBe(full);
+    });
+
+    // Nothing requests a collection while Bun starts up, so there is no figure
+    // yet. Nothing has been freed yet either, so the whole heap counts as used.
+    it("counts the whole heap as used before the first collection", async () => {
+      const { heapTotal, heapUsed } = await reportedBy(`console.log(JSON.stringify(process.memoryUsage()))`);
+
+      expect(heapTotal).toBeGreaterThan(0);
+      expect(heapUsed).toBe(heapTotal);
+    });
+  });
+
   describe("process.cpuUsage", () => {
     it("works", () => {
       expect(process.cpuUsage()).toEqual({
@@ -1382,6 +1575,41 @@ describe.concurrent(() => {
   it("process.report", () => {
     // TODO: write better tests
     JSON.stringify(process.report.getReport(), null, 2);
+  });
+
+  // A pending worker.terminate() is delivered at the exception checks inside the
+  // report builders, so a worker looping on getReport() is always interrupted in
+  // the middle of one. The host must see every worker exit, with no crash.
+  it("process.report.getReport() interrupted by worker.terminate()", async () => {
+    const workers = 3;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker } = require("worker_threads");
+          const source = 'require("worker_threads").parentPort.postMessage("busy"); for (;;) process.report.getReport();';
+          let exited = 0;
+          for (let i = 0; i < ${workers}; i++) {
+            const worker = new Worker(source, { eval: true });
+            worker.on("message", () => worker.terminate());
+            worker.on("exit", () => {
+              if (++exited === ${workers}) console.log("exited", exited);
+            });
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `exited ${workers}`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("process.exit with jsDoubleNumber that is an integer", async () => {

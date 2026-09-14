@@ -2923,6 +2923,38 @@ it("rejects a response with an unparseable Content-Length instead of treating it
   expect(await ok.text()).toBe("hello");
 });
 
+it("never sends the URL fragment in the request-target", async () => {
+  // The request-target is `new URL(s).pathname + search`. A fragment is never
+  // sent, even one that contains a `?`.
+  const targets: string[] = [];
+  await using server = net.createServer(socket => {
+    socket.once("data", data => {
+      targets.push(data.toString("utf8").split("\r\n")[0]);
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const tails = [
+    "/p#frag?x=1",
+    "/p#/route?id=7",
+    "/#?",
+    "/cb#access_token=abc&scope=x?y",
+    "/p?q=1#frag?x=2",
+    "/p#plain",
+    "/a//b?q=1#/c?d",
+  ];
+  const expected: string[] = [];
+  for (const tail of tails) {
+    const href = `http://localhost:${port}${tail}`;
+    const url = new URL(href);
+    expected.push(`GET ${url.pathname}${url.search} HTTP/1.1`);
+    await (await fetch(href)).text();
+  }
+  expect(targets).toEqual(expected);
+});
+
 it("combines duplicate response headers per the Fetch spec", async () => {
   // WHATWG Fetch requires repeated header fields to be combined with ", " when
   // read via Headers.get(), except Set-Cookie which is stored as separate
@@ -2968,8 +3000,7 @@ it("combines duplicate response headers per the Fetch spec", async () => {
 
 it("drops a custom Host header when following a cross-origin redirect", async () => {
   // A per-request Host override must not survive a change of origin: the
-  // follow-up request's Host header (and the TLS SNI / certificate identity
-  // derived from the same field) has to be re-computed from the redirect
+  // follow-up request's Host header has to be re-computed from the redirect
   // target's URL, not carried over from the previous origin.
   await using target = Bun.serve({
     port: 0,
@@ -3496,9 +3527,9 @@ it("the idle timer is an absolute deadline for the response header block (not re
       );
 
     // /h: DRIP_N bytes * DRIP_MS = ~20s of drip before the response would
-    // complete; the 5s idle deadline (uSockets 4s-tick sweep, so ~5-9s) must
-    // fire first. A build that re-arms on every partial header read resolves
-    // 200 after the full drip instead.
+    // complete; the 5s idle deadline (armed padded on uSockets' 4s-tick
+    // sweep, so it fires at ~8-12s) must fire first. A build that re-arms on
+    // every partial header read resolves 200 after the full drip instead.
     // /b: headers arrive in one write, then the 3-byte body trickles at
     // DRIP_MS/byte (~8s). Each body chunk re-arms the idle timer, so this
     // resolves despite taking longer than IDLE_MS overall.
@@ -3513,6 +3544,47 @@ it("the idle timer is an absolute deadline for the response header block (not re
     await new Promise<void>(r => server.close(() => r()));
   }
 }, 60_000);
+
+// https://github.com/oven-sh/bun/issues/39952
+it("a numeric `timeout` does not abort in-flight requests on the 4s sweep tick", async () => {
+  // Regression: a `timeout` of 4000ms or less was armed as a single tick of
+  // uSockets' 4s sweep timer, whose phase is unrelated to the request, so the
+  // next sweep aborted whichever request was in flight, no matter how long it
+  // had been running. Keep at least one request in flight for longer than one
+  // full sweep period: none may abort, because each request idles only
+  // ~SLEEP_MS against a 1000ms budget.
+  const SLEEP_MS = 600;
+  const WINDOW_MS = 5_500; // one full 4s sweep period at any phase, plus slop
+  await using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    async fetch() {
+      await Bun.sleep(SLEEP_MS);
+      return new Response("ok");
+    },
+  });
+  const errors: string[] = [];
+  const start = Date.now();
+  const worker = async (offsetMs: number) => {
+    // Stagger the start so the workers' request waves interleave: workers
+    // launched together stay phase-locked, and their inter-request gaps
+    // could all line up with the sweep tick.
+    await Bun.sleep(offsetMs);
+    while (Date.now() - start < WINDOW_MS && errors.length === 0) {
+      const t0 = Date.now();
+      try {
+        const res = await fetch(server.url, { timeout: 1000 });
+        await res.text();
+      } catch (e) {
+        errors.push(`${(e as Error).name} after ${Date.now() - t0}ms on the request started at t=${t0 - start}ms`);
+      }
+    }
+  };
+  // Three staggered workers so a sweep tick always lands on an in-flight
+  // request in the unfixed build.
+  await Promise.all([worker(0), worker(SLEEP_MS / 3), worker((2 * SLEEP_MS) / 3)]);
+  expect(errors).toEqual([]);
+}, 20_000);
 
 it.skipIf(isWindows)("sends the exact Content-Length for a file body of 100 GB", async () => {
   using dir = tempDir("fetch-large-file-body", { "large.bin": "" });

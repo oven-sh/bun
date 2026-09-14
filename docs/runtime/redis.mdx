@@ -191,10 +191,10 @@ Create a publisher in `publisher.ts`:
 ```typescript publisher.ts icon="/icons/typescript.svg"
 import { RedisClient } from "bun";
 
-const writer = new RedisClient("redis://localhost:6739");
+const writer = new RedisClient("redis://localhost:6379");
 await writer.connect();
 
-writer.publish("general", "Hello everyone!");
+await writer.publish("general", "Hello everyone!");
 
 writer.close();
 ```
@@ -204,7 +204,7 @@ In another file, create the subscriber in `subscriber.ts`:
 ```typescript subscriber.ts icon="/icons/typescript.svg"
 import { RedisClient } from "bun";
 
-const listener = new RedisClient("redis://localhost:6739");
+const listener = new RedisClient("redis://localhost:6379");
 await listener.connect();
 
 await listener.subscribe("general", (message, channel) => {
@@ -226,8 +226,9 @@ bun run publisher.ts
 
 <Note>
 Subscribing takes over the `RedisClient` connection: a client with
-subscriptions can only call `RedisClient.prototype.subscribe()`. To send other
-commands to Redis, create a separate connection with `.duplicate()`:
+subscriptions can only call the subscription methods (`subscribe()`,
+`psubscribe()`, `unsubscribe()`, `punsubscribe()`), `pubsub()`, and `ping()`. To
+send other commands to Redis, create a separate connection with `.duplicate()`:
 
 ```ts redis.ts icon="/icons/typescript.svg"
 import { RedisClient } from "bun";
@@ -339,8 +340,9 @@ The client automatically converts Redis responses to JavaScript values:
 - Integer responses are returned as JavaScript numbers
 - Bulk strings are returned as JavaScript strings
 - Simple strings are returned as JavaScript strings
-- Null bulk strings are returned as `null`
+- Null bulk strings and null arrays are returned as `null`
 - Array responses are returned as JavaScript arrays
+- Big number responses (RESP3) are returned as `BigInt`. A payload that is not an integer literal is returned as a string. `getBuffer` returns the payload as a `Buffer`.
 - Error responses throw JavaScript errors with appropriate error codes
 - Boolean responses (RESP3) are returned as JavaScript booleans
 - Map responses (RESP3) are returned as JavaScript objects
@@ -381,7 +383,10 @@ const client = new RedisClient("redis://localhost:6379", {
   // Connection timeout in milliseconds (default: 10000)
   connectionTimeout: 5000,
 
-  // Idle timeout in milliseconds (default: 0 = no timeout)
+  // Idle timeout in milliseconds (default: 0 = no timeout). Bun counts it
+  // from the last data the server sent. Sending does not reset it. When it
+  // fires, Bun closes the connection and runs onclose. Bun does not reconnect
+  // on its own, even with autoReconnect: true. Call connect() to reconnect.
   idleTimeout: 30000,
 
   // Whether to automatically reconnect on disconnection (default: true)
@@ -476,6 +481,7 @@ Common error codes:
 - `ERR_REDIS_CONNECTION_CLOSED` - Connection to the server was closed
 - `ERR_REDIS_AUTHENTICATION_FAILED` - Failed to authenticate with the server
 - `ERR_REDIS_INVALID_RESPONSE` - Received an invalid response from the server
+- `ERR_REDIS_SERVER_ERROR` - The server sent an error reply, either rejecting one command or, in subscriber mode, closing the connection
 
 ---
 

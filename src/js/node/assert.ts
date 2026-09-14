@@ -34,6 +34,7 @@ const nodePartialDeepStrictEqual = $newCppFunction("NodeUtilTypesModule.cpp", "j
 const NumberIsNaN = Number.isNaN;
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
@@ -139,6 +140,7 @@ function innerFail(obj) {
   const objMessage = obj.message;
   if (objMessage instanceof Error) throw objMessage;
 
+  if (AssertionError === undefined) loadAssertionError();
   throw new AssertionError(obj);
 }
 
@@ -208,7 +210,7 @@ Object.defineProperty(assert, "AssertionError", {
     return AssertionError;
   },
   set(value) {
-    AssertionError = value;
+    Object.defineProperty(this, "AssertionError", { value, writable: true, enumerable: true, configurable: true });
   },
   configurable: true,
   enumerable: true,
@@ -915,7 +917,7 @@ Object.defineProperty(assert, "CallTracker", {
     return CallTracker;
   },
   set(value) {
-    CallTracker = value;
+    Object.defineProperty(this, "CallTracker", { value, writable: true, enumerable: true, configurable: true });
   },
   configurable: true,
   enumerable: true,
@@ -954,7 +956,10 @@ for (const name of [
   assert[name] = Assert.prototype[name];
 }
 
-assert.strict = ObjectAssign(strict, assert, {
+for (const key of ObjectKeys(assert)) {
+  ObjectDefineProperty(strict, key, ObjectGetOwnPropertyDescriptor(assert, key));
+}
+assert.strict = ObjectAssign(strict, {
   equal: assert.strictEqual,
   deepEqual: assert.deepStrictEqual,
   notEqual: assert.notStrictEqual,

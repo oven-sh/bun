@@ -943,15 +943,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     #[inline]
-    pub fn get_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> Option<&V>
-    where
-        Ad: ArrayHashAdapter<Q, K>,
-    {
-        self.get_index_adapted(key, adapter)
-            .map(|i| &self.values[i])
-    }
-
-    #[inline]
     pub fn contains_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> bool
     where
         Ad: ArrayHashAdapter<Q, K>,
@@ -1712,22 +1703,6 @@ fn owned_key<A: Allocator + Default>(key: &[u8]) -> StringHashMapKey<A> {
 }
 
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
-    /// `const` constructor — empty map, no heap touch. Exists so aggregates
-    /// that embed a `StringHashMap` (e.g. `js_ast::Scope::EMPTY`) can be
-    /// spelled as a `const` and used with struct-update syntax in hot
-    /// allocation paths, instead of calling the `Default` chain at runtime
-    /// for every field. `hashbrown::HashMap::with_hasher_in` and
-    /// `BuildHasherDefault::new` are both `const fn`, so this is a true
-    /// compile-time value (all-zeros for ZST `A`).
-    #[inline]
-    pub const fn new_in(alloc: A) -> Self {
-        Self {
-            inner: hashbrown::HashMap::with_hasher_in(core::hash::BuildHasherDefault::new(), alloc),
-        }
-    }
-}
-
-impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -1742,11 +1717,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     #[inline]
     pub fn values(&self) -> hashbrown::hash_map::Values<'_, StringHashMapKey<A>, V> {
         self.inner.values()
-    }
-
-    #[inline]
-    pub fn values_mut(&mut self) -> hashbrown::hash_map::ValuesMut<'_, StringHashMapKey<A>, V> {
-        self.inner.values_mut()
     }
 
     pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
@@ -1836,30 +1806,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Ok(())
     }
 
-    /// Insert `value` under `key` **without copying the key bytes** — the
-    /// arena-lifetime twin of [`put_static_key`]. The safe [`put`] heap-boxes
-    /// the key, which profiling
-    /// flagged as the dominant `_mi_malloc_generic` caller in the parser
-    /// (`Scope::members` takes one box per declared identifier per scope).
-    /// This entry point provides zero-copy insertion for callers whose
-    /// key bytes already live in an arena that outlives the map.
-    ///
-    /// # Safety
-    /// The bytes behind `key` must remain alive and unmoved for as long as the
-    /// resulting entry stays in `self` (i.e. until the entry is removed or the
-    /// map is dropped/reset). For the parser this is satisfied because keys
-    /// point into source text or the lexer string-table, both of which outlive
-    /// the `AstAlloc` arena that owns the `Scope` holding this map.
-    #[inline]
-    pub unsafe fn put_borrowed(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        // SAFETY: caller contract above. Erase the borrow's lifetime so it can
-        // be stored as `Static` without a heap copy; the map never inspects the
-        // lifetime, only the (ptr, len) pair.
-        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
-        self.inner.insert(StringHashMapKey::borrowed(key), value);
-        Ok(())
-    }
-
     /// PERF: std::HashMap cannot skip the grow check, so this is
     /// just `put` without the `Result`.
     #[inline]
@@ -1917,38 +1863,6 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
                 }
             },
         )
-    }
-
-    /// Zero-allocation `getOrPut` — the arena-lifetime twin of
-    /// [`get_or_put`]. Looks up `key` and on
-    /// miss inserts `V::default()` keyed by the **borrowed slice itself** (no
-    /// `box_key`). Single hash + single probe via `hashbrown`'s `entry_ref`;
-    /// the `From<&'static [u8]>` impl above is what `VacantEntryRef::insert`
-    /// uses to turn the lifetime-erased slice into a `Static` key.
-    ///
-    /// This is the hot path for `Scope::members` (one call per declared
-    /// identifier in `declare_symbol` / scope hoisting), where
-    /// the previous owning shape was the parser's single largest
-    /// `mi_heap_malloc` source.
-    ///
-    /// # Safety
-    /// Same contract as [`put_borrowed`]: the bytes behind `key` must outlive
-    /// the entry's residency in `self`.
-    #[inline]
-    pub unsafe fn get_or_put_borrowed(&mut self, key: &[u8]) -> StringHashMapGetOrPut<'_, V> {
-        use hashbrown::hash_map::EntryRef;
-        // SAFETY: caller contract above; see `put_borrowed`.
-        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
-        match self.inner.entry_ref(key) {
-            EntryRef::Occupied(o) => StringHashMapGetOrPut {
-                found_existing: true,
-                value_ptr: o.into_mut(),
-            },
-            EntryRef::Vacant(v) => StringHashMapGetOrPut {
-                found_existing: false,
-                value_ptr: v.insert(V::default()),
-            },
-        }
     }
 }
 

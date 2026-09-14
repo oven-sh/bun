@@ -383,7 +383,7 @@ function validateResolverOptions(options) {
   return { timeout, tries };
 }
 
-var InternalResolver = class Resolver {
+class Resolver {
   #resolver;
 
   constructor(options) {
@@ -433,7 +433,7 @@ var InternalResolver = class Resolver {
   }
 
   resolve4(hostname, options, callback) {
-    if (typeof options == "function") {
+    if (arguments.length <= 2) {
       callback = options;
       options = null;
     }
@@ -453,7 +453,7 @@ var InternalResolver = class Resolver {
   }
 
   resolve6(hostname, options, callback) {
-    if (typeof options == "function") {
+    if (arguments.length <= 2) {
       callback = options;
       options = null;
     }
@@ -473,6 +473,9 @@ var InternalResolver = class Resolver {
   }
 
   resolveAny(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -488,6 +491,9 @@ var InternalResolver = class Resolver {
   }
 
   resolveCname(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -503,6 +509,9 @@ var InternalResolver = class Resolver {
   }
 
   resolveMx(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -518,6 +527,9 @@ var InternalResolver = class Resolver {
   }
 
   resolveNaptr(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -533,6 +545,9 @@ var InternalResolver = class Resolver {
   }
 
   resolveNs(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -548,6 +563,9 @@ var InternalResolver = class Resolver {
   }
 
   resolvePtr(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -563,6 +581,9 @@ var InternalResolver = class Resolver {
   }
 
   resolveSrv(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -578,6 +599,9 @@ var InternalResolver = class Resolver {
   }
 
   resolveCaa(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
@@ -596,6 +620,9 @@ var InternalResolver = class Resolver {
   }
 
   resolveTxt(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
@@ -613,6 +640,9 @@ var InternalResolver = class Resolver {
       );
   }
   resolveSoa(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
@@ -631,6 +661,9 @@ var InternalResolver = class Resolver {
   }
 
   reverse(ip, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
@@ -656,12 +689,7 @@ var InternalResolver = class Resolver {
   setServers(servers) {
     return setServersOn(servers, Resolver.#getResolver(this));
   }
-};
-
-function Resolver(options) {
-  return new InternalResolver(options);
 }
-$toClass(Resolver, "Resolver", InternalResolver);
 
 var {
   resolve,
@@ -678,7 +706,7 @@ var {
   resolveSrv,
   reverse,
   resolveTxt,
-} = InternalResolver.prototype;
+} = Resolver.prototype;
 
 const mapLookupAll = res => {
   const { address, family } = res;

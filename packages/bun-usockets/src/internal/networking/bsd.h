@@ -166,7 +166,6 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
 int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index);
-int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *ip);
 int bsd_udp_packet_buffer_truncated(struct udp_recvbuf *msgvec, int index);
 // int bsd_udp_packet_buffer_ecn(struct udp_recvbuf *msgvec, int index);
 
@@ -215,6 +214,9 @@ int bsd_addr_get_port(struct bsd_addr_t *addr);
 LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr);
 
 ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags);
+/* One of the LIBUS_QUEUED_INPUT_* codes. Peeks, so it consumes nothing and the
+ * next readable event still reports whatever it found. */
+int bsd_queued_input(LIBUS_SOCKET_DESCRIPTOR fd);
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags);
 #endif

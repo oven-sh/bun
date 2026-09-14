@@ -81,7 +81,7 @@ import { z } from "zod@^3.20.0"; // semver range
 
     </Accordion>
 
-    <Accordion title="How is this different from Yarn Plug'N'Play does?">
+    <Accordion title="How is this different from what Yarn Plug'N'Play does?">
     With Yarn, you must run `yarn install` before you run a script. By contrast, Bun resolves dependencies on the fly when you run a file; there's no need to run any `install` command ahead of time.
 
     Yarn Plug'N'Play also uses zip files to store dependencies. This makes dependency loading [slower at runtime](https://twitter.com/jarredsumner/status/1458207919636287490), as random access reads on zip files tend to be slower than the equivalent disk lookup.

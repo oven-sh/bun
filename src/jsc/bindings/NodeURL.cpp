@@ -1,4 +1,5 @@
 #include "NodeURL.h"
+#include "ASCIIHostPunycodeCheck.h"
 #include "ErrorCode.h"
 #include "wtf/URL.h"
 #include "wtf/URLParser.h"
@@ -106,6 +107,11 @@ bool hasValidPunycodeHost(WTF::StringView host)
 {
     if (!host.contains("xn--"_s))
         return true;
+    if (host.containsOnlyASCII()) {
+        auto verdict = host.is8Bit() ? checkASCIIHostPunycode(host.span8().data(), host.length()) : checkASCIIHostPunycode(host.span16().data(), host.length());
+        if (verdict != ASCIIHostPunycodeVerdict::NeedsFullCheck)
+            return verdict == ASCIIHostPunycodeVerdict::Valid;
+    }
     return !icuToASCII(host.toString(), IDNAMode::Default).isNull();
 }
 
@@ -263,16 +269,19 @@ JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
         (unsigned)0,
         domainToAsciiFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     binding->putByIndexInline(
         globalObject,
         (unsigned)1,
         domainToUnicodeFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     binding->putByIndexInline(
         globalObject,
         (unsigned)2,
         idnaToASCIIFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }
 

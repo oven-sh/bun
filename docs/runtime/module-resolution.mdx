@@ -179,29 +179,6 @@ import { stuff } from "foo";
 
 The full algorithm is specified in the [Node.js documentation](https://nodejs.org/api/modules.html). Briefly: if you import `from "foo"`, Bun scans up the file system for a `node_modules` directory containing the package `foo`.
 
-### NODE_PATH
-
-Bun supports `NODE_PATH` for additional module resolution directories:
-
-```bash
-NODE_PATH=./packages bun run src/index.js
-```
-
-```ts
-// packages/foo/index.js
-export const hello = "world";
-
-// src/index.js
-import { hello } from "foo";
-```
-
-Multiple paths use the platform's delimiter (`:` on Unix, `;` on Windows):
-
-```bash
-NODE_PATH=./packages:./lib bun run src/index.js  # Unix/macOS
-NODE_PATH=./packages;./lib bun run src/index.js  # Windows
-```
-
 Once it finds the `foo` package, Bun reads its `package.json` to determine the package's entrypoint. Bun first reads the `exports` field and checks for the following conditions.
 
 ```json package.json icon="file-json"
@@ -231,7 +208,7 @@ Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-
 }
 ```
 
-Subpath imports and conditional imports work together.
+Subpath exports and conditional exports work together.
 
 ```json package.json icon="file-json"
 {
@@ -268,6 +245,29 @@ If `exports` is not defined, Bun falls back to the legacy top-level entrypoint f
 }
 ```
 
+### NODE_PATH
+
+Bun supports `NODE_PATH` for additional module resolution directories:
+
+```bash
+NODE_PATH=./packages bun run src/index.js
+```
+
+```ts
+// packages/foo/index.js
+export const hello = "world";
+
+// src/index.js
+import { hello } from "foo";
+```
+
+Multiple paths use the platform's delimiter (`:` on Unix, `;` on Windows):
+
+```bash
+NODE_PATH=./packages:./lib bun run src/index.js  # Unix/macOS
+NODE_PATH="./packages;./lib" bun run src/index.js  # Windows
+```
+
 ### Custom conditions
 
 The `--conditions` flag specifies the conditions to use when resolving packages from `package.json` `"exports"`.
@@ -291,6 +291,27 @@ await Bun.build({
   entryPoints: ["./app/foo/route.js"],
 });
 ```
+
+### Built-in replacements for npm packages
+
+Bun includes its own implementation of a few npm packages. When you import one of the following specifiers, Bun loads the built-in module. Bun does this even when the package is installed in `node_modules`.
+
+| Specifier                                                                             | Built-in module                                                                                                                |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `undici`                                                                              | `fetch`, `Request`, `Response`, `Headers`, `FormData`, `File`, and `WebSocket` are Bun's own. `request()` calls Bun's `fetch`. |
+| `node-fetch`                                                                          | A wrapper around Bun's `fetch`. `response.body` is a Node.js `Readable` stream, as in `node-fetch`.                            |
+| `isomorphic-fetch`                                                                    | Bun's `fetch`.                                                                                                                 |
+| `@vercel/fetch`                                                                       | A wrapper around Bun's `fetch`.                                                                                                |
+| `ws`, `ws/lib/websocket`                                                              | `WebSocket` and `WebSocketServer`, built on Bun's native WebSocket client and server.                                          |
+| `utf-8-validate`                                                                      | The same native function as `isUtf8()` in `node:buffer`.                                                                       |
+| `abort-controller`, `abort-controller/polyfill`                                       | The global `AbortController` and `AbortSignal`.                                                                                |
+| `next/dist/compiled/undici`, `next/dist/compiled/node-fetch`, `next/dist/compiled/ws` | The same built-in modules as `undici`, `node-fetch`, and `ws`.                                                                 |
+
+A built-in module does not implement every API of the package it replaces. For example, the built-in `undici` exports `Agent`, `Pool`, `Client`, `ProxyAgent`, and `MockAgent` so that imports succeed. These classes do not manage connections, and `fetch` ignores the `dispatcher` option. `stream()`, `pipeline()`, `connect()`, and `upgrade()` throw an error. If your code needs an API that is missing, [open an issue](https://bun.com/issues).
+
+Bun matches the whole specifier. Any other subpath, such as `undici/package.json`, resolves to the installed package. For a replaced specifier, `require.resolve()` and `import.meta.resolve()` return the name of the built-in module instead of a file path. For example, both `"undici"` and `"next/dist/compiled/undici"` resolve to `"undici"`.
+
+[`bun build`](/bundler) applies the same replacement when the target is `bun`, and leaves the import in the bundle. With `--target=node` or `--target=browser`, `bun build` bundles the copy in `node_modules`.
 
 ---
 
@@ -367,5 +388,5 @@ import.meta.resolve("zod"); // => "file:///path/to/project/node_modules/zod/inde
 | `import.meta.path`     | Absolute path to the current file, e.g. `/path/to/project/index.ts`. Equivalent to `__filename` in CommonJS modules (and Node.js)                                                                                                                                                                                             |
 | `import.meta.filename` | An alias to `import.meta.path`, for Node.js compatibility                                                                                                                                                                                                                                                                     |
 | `import.meta.main`     | Indicates whether the current file is the entrypoint to the current `bun` process: `true` if `bun run` executes it directly, `false` if it's imported                                                                                                                                                                         |
-| `import.meta.resolve`  | Resolve a module specifier (e.g. `"zod"` or `"./file.tsx"`) to a url. Equivalent to [`import.meta.resolve` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#resolve). Example: `import.meta.resolve("zod")` returns `"file:///path/to/project/node_modules/zod/index.ts"` |
+| `import.meta.resolve`  | Resolve a module specifier (e.g. `"zod"` or `"./file.tsx"`) to a url. Equivalent to [`import.meta.resolve` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#resolve). Example: `import.meta.resolve("zod")` returns `"file:///path/to/project/node_modules/zod/index.js"` |
 | `import.meta.url`      | A `string` url to the current file, e.g. `file:///path/to/project/index.ts`. Equivalent to [`import.meta.url` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#url)                                                                                                       |

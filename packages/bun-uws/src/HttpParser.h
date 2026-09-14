@@ -32,13 +32,11 @@
 #include <climits>
 #include <string_view>
 #include <span>
-#include <map>
 #include <wtf/Vector.h>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
 
 #include "BloomFilter.h"
-#include "ProxyParser.h"
 #include "QueryParser.h"
 #include "HttpErrors.h"
 
@@ -152,11 +150,6 @@ struct HttpResponseData;
             return 0;
         }
 
-        bool isShortRead() {
-            return parserError == HTTP_PARSER_ERROR_NONE && errorStatusCodeOrConsumedBytes == 0;
-        }
-
-
         /* Returns true if there was an error */
         bool isError() {
             return parserError != HTTP_PARSER_ERROR_NONE;
@@ -198,10 +191,11 @@ struct HttpResponseData;
         } headers[UWS_HTTP_MAX_HEADERS_COUNT];
         bool ancientHttp;
         bool didYield;
+        /* Written right before the request handler runs; see getHasTransferEncoding(). */
+        bool hasTransferEncoding;
         unsigned int querySeparator;
         BloomFilter bf;
         std::pair<int, std::string_view *> currentParameters;
-        std::map<std::string, unsigned short, std::less<>> *currentParameterOffsets = nullptr;
 
     public:
         /* Any data pipelined after the HTTP headers (before response).
@@ -219,6 +213,18 @@ struct HttpResponseData;
         bool getYield()
         {
             return didYield;
+        }
+
+        /* The parser's verdict on the Transfer-Encoding header: the same one that
+         * selects chunked body framing, taken from every field of that name (in
+         * node:http mode a header whose values are all empty counts as absent).
+         * getHeader("transfer-encoding") returns only the first field's value,
+         * which is empty for "Transfer-Encoding:" followed by
+         * "Transfer-Encoding: chunked", so a has-body test on that value drops
+         * the chunked body. */
+        bool getHasTransferEncoding()
+        {
+            return hasTransferEncoding;
         }
 
         /* Iteration over headers (key, value) */
@@ -291,6 +297,12 @@ struct HttpResponseData;
              * the still-encoded body handed to the app; Bun.serve rejects it
              * (RFC 9112 6.1). node:http accepts it to match llhttp. */
             bool multipleCodings: 1 = false;
+            /* Some Transfer-Encoding field value holds a byte other than
+             * space/tab. llhttp flags Transfer-Encoding as present only once
+             * such a byte arrives, so node:http treats a request whose TE
+             * field values are all empty or whitespace-only as if the header
+             * were absent (no error, Content-Length framing applies). */
+            bool nonEmptyValue: 1 = false;
         };
 
         TransferEncoding getTransferEncoding()
@@ -321,6 +333,12 @@ struct HttpResponseData;
                         // Skip leading whitespace
                         while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
                             pos++;
+                        }
+
+                        /* Any byte left after the whitespace skip is non-whitespace:
+                         * a coding-token byte or a comma. */
+                        if (pos < value.length()) {
+                            te.nonEmptyValue = true;
                         }
 
                         // Remember start of this token
@@ -420,20 +438,6 @@ struct HttpResponseData;
             return headers->key;
         }
 
-        /* Returns the raw querystring as a whole, still encoded */
-        std::string_view getQuery()
-        {
-            if (querySeparator < headers->value.length())
-            {
-                /* Strip the initial ? */
-                return headers->value.substr(querySeparator + 1);
-            }
-            else
-            {
-                return std::string_view(nullptr, 0);
-            }
-        }
-
         /* Finds and decodes the URI component. */
         std::string_view getQuery(std::string_view key)
         {
@@ -444,22 +448,6 @@ struct HttpResponseData;
         void setParameters(std::pair<int, std::string_view *> parameters)
         {
             currentParameters = parameters;
-        }
-
-        void setParameterOffsets(std::map<std::string, unsigned short, std::less<>> *offsets)
-        {
-            currentParameterOffsets = offsets;
-        }
-
-        std::string_view getParameter(std::string_view name) {
-            if (!currentParameterOffsets) {
-                return {nullptr, 0};
-            }
-            auto it = currentParameterOffsets->find(name);
-            if (it == currentParameterOffsets->end()) {
-                return {nullptr, 0};
-            }
-            return getParameter(it->second);
         }
 
         std::string_view getParameter(unsigned short index) {
@@ -651,22 +639,6 @@ struct HttpResponseData;
 
         static inline uint64_t hasLess(uint64_t x, uint64_t n) {
             return (((x)-~0ULL/255*(n))&~(x)&~0ULL/255*128);
-        }
-
-        static inline uint64_t hasMore(uint64_t x, uint64_t n) {
-            return (( ((x)+~0ULL/255*(127-(n))) |(x))&~0ULL/255*128);
-        }
-
-        static inline uint64_t hasBetween(uint64_t x, uint64_t m, uint64_t n) {
-            return (( (~0ULL/255*(127+(n))-((x)&~0ULL/255*127)) &~(x)& (((x)&~0ULL/255*127)+~0ULL/255*(127-(m))) )&~0ULL/255*128);
-        }
-
-        static inline bool notFieldNameWord(uint64_t x) {
-            return hasLess(x, '-') |
-            hasBetween(x, '-', '0') |
-            hasBetween(x, '9', 'A') |
-            hasBetween(x, 'Z', 'a') |
-            hasMore(x, 'z');
         }
 
         /* RFC 9110 5.6.2. Tokens */
@@ -937,34 +909,12 @@ struct HttpResponseData;
             }
         }
 
-        /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize) {
+        /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
-            #ifdef UWS_WITH_PROXY
-                /* ProxyParser is passed as reserved parameter */
-                ProxyParser *pp = (ProxyParser *) reserved;
-
-                /* Parse PROXY protocol */
-                auto [done, offset] = pp->parse({postPaddedBuffer, (size_t) (end - postPaddedBuffer)});
-                if (!done) {
-                    /* We do not reset the ProxyParser (on filure) since it is tied to this
-                    * connection, which is really only supposed to ever get one PROXY frame
-                    * anyways. We do however allow multiple PROXY frames to be sent (overwrites former). */
-                    return 0;
-                } else {
-                    /* We have consumed this data so skip it */
-                    postPaddedBuffer += offset;
-                }
-            #else
-                /* This one is unused */
-                (void) reserved;
-                (void) end;
-            #endif
 
             /* It is critical for fallback buffering logic that we only return with success
-            * if we managed to parse a complete HTTP request (minus data). Returning success
-            * for PROXY means we can end up succeeding, yet leaving bytes in the fallback buffer
-            * which is then removed, and our counters to flip due to overflow and we end up with a crash */
+            * if we managed to parse a complete HTTP request (minus data). */
 
             /* The request line is different from the field names / field values */
             auto requestLineResult = consumeRequestLine(postPaddedBuffer, end, headers[0], useStrictMethodValidation, maxHeaderSize);
@@ -1142,7 +1092,7 @@ struct HttpResponseData;
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally, bool IsNodeHttp>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -1194,7 +1144,7 @@ struct HttpResponseData;
                     }
                 }
             }
-            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
+            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
             if(result.isError()) {
                 return result;
             }
@@ -1261,6 +1211,18 @@ struct HttpResponseData;
 
             /* Check Transfer-Encoding header validity and conflicts */
             HttpRequest::TransferEncoding transferEncoding = req->getTransferEncoding();
+
+            /* node:http compat: llhttp flags Transfer-Encoding as present only
+             * once a non-whitespace value byte arrives, so a TE field whose
+             * value is empty or whitespace-only is treated as if the header
+             * were absent: the body is framed by Content-Length (or has zero
+             * length) and no error is raised. Bun.serve keeps treating it as
+             * present and rejects below; treating it as absent is the
+             * Content-Length fallback that getTransferEncoding() guards
+             * against. */
+            if (IsNodeHttp && transferEncoding.has && !transferEncoding.nonEmptyValue) {
+                transferEncoding = {};
+            }
 
             /* RFC 9112 6.1: Transfer-Encoding was introduced in HTTP/1.1. A server that
              * receives an HTTP/1.0 message containing a Transfer-Encoding header field
@@ -1335,6 +1297,9 @@ struct HttpResponseData;
              * WebSockets or otherwise closed the socket. */
             /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
             req->head = std::span<const char>(data, length);
+            /* Same verdict that selects chunked framing below, so the handler's
+             * has-body decision cannot disagree with how the body is consumed. */
+            req->hasTransferEncoding = transferEncoding.has;
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */
@@ -1451,7 +1416,7 @@ struct HttpResponseData;
 
 public:
     template <bool IsNodeHttp>
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
         const size_t maxFallbackSize = maxHeaderSize ? (size_t) (maxHeaderSize + MAX_HEADER_FRAMING_SLACK) : MAX_FALLBACK_SIZE;
@@ -1527,7 +1492,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 return consumed;
@@ -1609,7 +1574,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, reserved, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             return consumed;

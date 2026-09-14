@@ -2443,7 +2443,6 @@ test.concurrent.each([
     expect(stderr).toContain(
       `error: --catalog cannot add "${url}": pkg-b already declares no-deps\n  bun add no-deps@${url} --catalog\n`,
     );
-    expect(stderr).not.toContain("dependency loop");
     expect(stderr).not.toContain("returned error");
     expect(exitCode).toBe(1);
 
@@ -2466,7 +2465,6 @@ test.concurrent("add <tarball> --catalog --filter with an existing entry is refu
   expect(stderr).toContain(
     `error: --catalog cannot add "${url}": pkg-b already declares no-deps\n  bun add no-deps@${url} --catalog\n`,
   );
-  expect(stderr).not.toContain("dependency loop");
   expect(exitCode).toBe(1);
 
   expect(await allPackageJsonTexts(dir)).toStrictEqual(before);

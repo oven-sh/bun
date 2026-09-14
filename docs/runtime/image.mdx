@@ -180,17 +180,18 @@ For a passive "image in clipboard, press ⌘V" hint, poll `clipboardChangeCount(
 
 ## Platform backends
 
-|                        | Linux                             | macOS             | Windows      |
-| ---------------------- | --------------------------------- | ----------------- | ------------ |
-| JPEG / PNG / WebP      | libjpeg-turbo · spng · libwebp    | same              | same         |
-| BMP / GIF (decode)     | built-in                          | ImageIO           | WIC          |
-| TIFF (decode)          | ❌                                | ImageIO           | WIC          |
-| Resize / rotate / flip | Highway SIMD                      | Accelerate vImage | Highway SIMD |
-| HEIC / AVIF            | ❌ `ERR_IMAGE_FORMAT_UNSUPPORTED` | ImageIO ²         | WIC ¹        |
-| Clipboard              | ❌ returns `null`                 | NSPasteboard      | Win32        |
+|                        | Linux                             | macOS               | Windows      |
+| ---------------------- | --------------------------------- | ------------------- | ------------ |
+| JPEG / PNG / WebP      | libjpeg-turbo · spng · libwebp    | same                | same         |
+| BMP / GIF (decode)     | built-in                          | ImageIO             | WIC          |
+| TIFF (decode)          | ❌                                | ImageIO             | WIC          |
+| Resize / rotate / flip | Highway SIMD                      | Accelerate vImage ³ | Highway SIMD |
+| HEIC / AVIF            | ❌ `ERR_IMAGE_FORMAT_UNSUPPORTED` | ImageIO ²           | WIC ¹        |
+| Clipboard              | ❌ returns `null`                 | NSPasteboard        | Win32        |
 
 ¹ Windows requires the **HEIF Image Extensions** / **AV1 Video Extension** from the Microsoft Store.
 ² AVIF _encode_ needs an OS AV1 encoder — Apple Silicon M3+ only. Intel Mac and M1/M2 reject with `ERR_IMAGE_FORMAT_UNSUPPORTED`; AVIF _decode_ works everywhere ImageIO does (macOS 13+).
+³ Resize uses vImage only with the default `lanczos3` filter; every other `filter` uses Highway SIMD on macOS too.
 
 When a system-backend format isn't available on the current machine, the terminal rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"`. Branch on that error code to fall back to a portable format:
 

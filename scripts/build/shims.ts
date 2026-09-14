@@ -120,22 +120,6 @@ export function elfDebugCompressPostlinkCommand(cfg: Config): string {
 }
 
 /**
- * macOS-from-Linux cross links resolve compiler-rt builtins from the SDK's
- * libSystem reexport (libcompiler_rt.tbd), which covers the generic builtins
- * (__divti3 …) but NOT the x86 `__builtin_cpu_supports` support globals
- * (___cpu_model / ___cpu_indicator_init / ___cpu_features2) — on native
- * builds those come from Apple clang's static libclang_rt.osx.a, which the
- * Linux LLVM toolchain doesn't ship. Compile compiler-rt's own cpu_model
- * sources (vendored under shims/cpu_model/, Apache-2.0 WITH LLVM-exception)
- * into the link so the cross binary behaves exactly like the native one.
- * Tracked in workarounds.ts ("darwin-cross-cpu-model") so it self-obsoletes
- * if the SDK ever exports these symbols.
- */
-function needsDarwinCpuModelShim(cfg: Config): boolean {
-  return cfg.darwin && cfg.crossTarget !== undefined && cfg.x64 && cfg.osxSysroot !== undefined;
-}
-
-/**
  * musl + rust-lld: Alpine ships the libc CRT objects (Scrt1.o, crti.o,
  * crtn.o) with ELFCOMPRESS_ZLIB debug sections, but rust-lang/llvm-project
  * builds lld without LLVM_ENABLE_ZLIB so rust-lld errors at input-section
@@ -162,21 +146,19 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
 
   if (cfg.darwin && cfg.asan) {
     // -install_name @rpath/<name> so dyld resolves it next to the
-    // executable via the -rpath @executable_path we add at link time.
-    // __DATA,__interpose only works from dylibs (not object files linked
-    // into the main binary), hence -dynamiclib.
+    // executable: clang's Darwin driver adds `-rpath @executable_path` to
+    // every -fsanitize=address link (for the ASan runtime), which is every
+    // link this shim goes into. __DATA,__interpose only works from dylibs
+    // (not object files linked into the main binary), hence -dynamiclib.
+    // Same deployment target as everything else, or ld warns the dylib was
+    // "built for newer version" than the executable loading it.
+    const minos =
+      cfg.osxDeploymentTarget !== undefined && cfg.osxSysroot !== undefined
+        ? ` -mmacosx-version-min=${cfg.osxDeploymentTarget} -isysroot ${q(cfg.osxSysroot)}`
+        : "";
     n.rule("shim_dylib", {
-      command: `${q(cfg.cc)} -dynamiclib -O2 -install_name @rpath/$name -o $out $in`,
+      command: `${q(cfg.cc)}${minos} -dynamiclib -O2 -install_name @rpath/$name -o $out $in`,
       description: "shim $name",
-    });
-  }
-
-  if (needsDarwinCpuModelShim(cfg)) {
-    // Plain object compiled for the cross target; $flags carries
-    // --target/-isysroot/-mmacosx-version-min from emitShims().
-    n.rule("shim_cc", {
-      command: `${q(cfg.cc)} $flags -O2 -c $in -o $out`,
-      description: "shim $out",
     });
   }
 
@@ -225,28 +207,6 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
     implicitInputs.push(...machoPostlinkImplicitInputs(cfg));
   }
 
-  if (needsDarwinCpuModelShim(cfg)) {
-    const src = resolve(cfg.cwd, "scripts", "build", "shims", "cpu_model", "x86.c");
-    const header = resolve(cfg.cwd, "scripts", "build", "shims", "cpu_model", "cpu_model.h");
-    const out = resolve(cfg.buildDir, "cpu_model_x86.o");
-    n.build({
-      outputs: [out],
-      rule: "shim_cc",
-      inputs: [src],
-      implicitInputs: [header],
-      vars: {
-        flags: [
-          `--target=${cfg.crossTarget!}`,
-          "-isysroot",
-          cfg.osxSysroot!,
-          `-mmacosx-version-min=${cfg.osxDeploymentTarget!}`,
-        ].join(" "),
-      },
-    });
-    ldflags.push(out);
-    implicitInputs.push(out);
-  }
-
   if (cfg.darwin && cfg.asan) {
     // macOS 26.4 ASAN dyld deadlock — see shims/asan-dyld-shim.c.
     const src = resolve(cfg.cwd, "scripts", "build", "shims", "asan-dyld-shim.c");
@@ -257,7 +217,9 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
       inputs: [src],
       vars: { name: ASAN_DYLD_SHIM },
     });
-    ldflags.push(out, "-Wl,-rpath,@executable_path");
+    // No -rpath of our own: the driver's ASan one (see shim_dylib) covers
+    // @rpath/<name>, and a second identical -rpath is an ld warning.
+    ldflags.push(out);
     implicitInputs.push(out);
   }
 

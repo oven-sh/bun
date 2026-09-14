@@ -8,6 +8,7 @@
 #define HWY_TARGET_INCLUDE "highway_xml.cpp"
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
+#include "highway_dispatch.h"
 
 #include <string.h>
 
@@ -210,13 +211,13 @@ HWY_EXPORT(XmlIndex16Impl);
 extern "C" size_t highway_xml_index_chunk(const uint8_t* input, size_t len, size_t base_offset,
     uint32_t* out_indices, uint64_t* inout_state)
 {
-    return HWY_DYNAMIC_DISPATCH(XmlIndexImpl)(input, len, base_offset, out_indices, inout_state);
+    return BUN_HWY_DISPATCH(XmlIndexImpl)(input, len, base_offset, out_indices, inout_state);
 }
 
 extern "C" size_t highway_xml_index16_chunk(const uint16_t* input, size_t len, size_t base_offset,
     uint32_t* out_indices, uint64_t* inout_state)
 {
-    return HWY_DYNAMIC_DISPATCH(XmlIndex16Impl)(input, len, base_offset, out_indices, inout_state);
+    return BUN_HWY_DISPATCH(XmlIndex16Impl)(input, len, base_offset, out_indices, inout_state);
 }
 } // namespace bun
 #endif

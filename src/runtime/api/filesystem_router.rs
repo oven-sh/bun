@@ -24,13 +24,12 @@ use core::cell::UnsafeCell;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
-use bun_core::{ZigString, ZigStringSlice};
+use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
@@ -51,15 +50,6 @@ use crate::webcore::{Request, Response};
 pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemRouter;
 
 const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
-
-// ── local shims ───────────────────────────────────────────────────────────
-// `to_js` lives on the `bun_jsc::ZigStringJsc` extension trait; `from_bytes`
-// auto-detects UTF-8.
-use bun_jsc::ZigStringJsc as _;
-#[inline]
-fn zs_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
-    jsc::zig_string::ZigString::from_bytes(bytes).to_js(global)
-}
 
 // ── ResolverLike bridge ───────────────────────────────────────────────────
 // `bun_router::ResolverLike` is the duck-typed seam for `Router::load_routes`;
@@ -130,14 +120,15 @@ impl FileSystemRouter {
         }
         let vm = global_this.bun_vm().as_mut();
 
-        let mut root_dir_path: ZigStringSlice =
-            ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
-        let mut origin_str: ZigStringSlice = ZigStringSlice::default();
-        let mut asset_prefix_slice: ZigStringSlice = ZigStringSlice::default();
-
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
+        let mut root_dir_path = Utf8Bytes::Borrowed(vm.top_level_dir());
+        let mut origin_str = Utf8Bytes::EMPTY;
+        let mut asset_prefix_slice = Utf8Bytes::EMPTY;
         if let Some(style_val) = argument.get(global_this, "style")? {
-            if !(style_val.get_zig_string(global_this)?).eql_comptime("nextjs") {
+            if !style_val
+                .to_js_string_view(global_this)?
+                .eq_ascii(b"nextjs")
+            {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Only 'nextjs' style is currently implemented"
                 )));
@@ -153,7 +144,7 @@ impl FileSystemRouter {
                 return Err(global_this
                     .throw_invalid_arguments(format_args!("Expected dir to be a string")));
             }
-            let root_dir_path_ = dir.to_slice(global_this)?;
+            let root_dir_path_ = dir.to_utf8(global_this)?;
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
                 // resolve relative path if needed
                 let path_ = root_dir_path_.slice();
@@ -161,13 +152,13 @@ impl FileSystemRouter {
                     root_dir_path = root_dir_path_;
                 } else {
                     let parts: [&[u8]; 1] = [path_];
-                    root_dir_path = ZigStringSlice::from_utf8_never_free(
-                        path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                            Fs::FileSystem::instance().top_level_dir,
-                            &mut out_buf,
-                            &parts,
-                        ),
-                    );
+                    root_dir_path = Utf8Bytes::Borrowed(path::resolve_path::join_abs_string_buf::<
+                        path::platform::Auto,
+                    >(
+                        Fs::FileSystem::instance().top_level_dir,
+                        &mut out_buf,
+                        &parts,
+                    ));
                 }
             }
         } else {
@@ -197,12 +188,12 @@ impl FileSystemRouter {
                 if val.get_length(global_this)? == 0 {
                     continue;
                 }
-                let bytes = val.to_slice(global_this)?.into_vec();
+                let utf8 = val.to_utf8(global_this)?;
                 // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`, so the
                 // backing allocation outlives this slice. Cast through raw ptr to detach the
                 // borrow from `arena` so it can be moved below.
                 let leaked: &'static [u8] =
-                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&bytes)) };
+                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(utf8.slice())) };
                 extensions.push(&leaked[1..]);
             }
         }
@@ -213,14 +204,7 @@ impl FileSystemRouter {
                     .throw_invalid_arguments(format_args!("Expected assetPrefix to be a string")));
             }
 
-            // Copy into the arena so the slice always owns stable bytes (ZigStringSlice
-            // has no clone-if-borrowed helper; the copy only happens at construction).
-            let s = asset_prefix.to_slice(global_this)?;
-            // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`; allocation
-            // outlives this slice. Detach borrow via raw ptr so `arena` can be moved below.
-            let leaked: &'static [u8] =
-                unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(s.slice())) };
-            asset_prefix_slice = ZigStringSlice::from_utf8_never_free(leaked);
+            asset_prefix_slice = asset_prefix.to_utf8(global_this)?;
         }
         let mut log = Log::Log::new();
         // `defer vm.transpiler.resolver.log = orig_log` — RAII guard restores on
@@ -253,7 +237,7 @@ impl FileSystemRouter {
                 )));
             }
             Err(_) => {
-                let err_value = log.to_js(global_this, "reading root directory");
+                let err_value = log.to_js(global_this, format_args!("reading root directory"));
                 return Err(global_this.throw_value(err_value?));
             }
         };
@@ -284,7 +268,7 @@ impl FileSystemRouter {
                 )
                 .is_err()
             {
-                let err_value = log.to_js(global_this, "loading routes");
+                let err_value = log.to_js(global_this, format_args!("loading routes"));
                 return Err(global_this.throw_value(err_value?));
             }
         }
@@ -294,11 +278,11 @@ impl FileSystemRouter {
                 return Err(global_this
                     .throw_invalid_arguments(format_args!("Expected origin to be a string")));
             }
-            origin_str = origin.to_slice(global_this)?;
+            origin_str = origin.to_utf8(global_this)?;
         }
 
         if log.errors + log.warnings > 0 {
-            let err_value = log.to_js(global_this, "loading routes");
+            let err_value = log.to_js(global_this, format_args!("loading routes"));
             return Err(global_this.throw_value(err_value?));
         }
 
@@ -491,7 +475,7 @@ impl FileSystemRouter {
                 )));
             }
             Err(_) => {
-                let err_value = log.to_js(global_this, "reading root directory");
+                let err_value = log.to_js(global_this, format_args!("reading root directory"));
                 return Err(global_this.throw_value(err_value?));
             }
         };
@@ -514,7 +498,7 @@ impl FileSystemRouter {
                 )
                 .is_err()
             {
-                let err_value = log.to_js(global_this, "loading routes");
+                let err_value = log.to_js(global_this, format_args!("loading routes"));
                 return Err(global_this.throw_value(err_value?));
             }
         }
@@ -546,24 +530,20 @@ impl FileSystemRouter {
                 .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
         }
 
-        let mut path: ZigStringSlice = 'brk: {
+        let mut path: Utf8Bytes = 'brk: {
+            // `path` is moved into the `MatchedRoute`, so every arm must own its bytes.
             if argument.is_string() {
-                // Force ownership via into_vec: ZigStringSlice has no clone-if-borrowed
-                // helper, and `path` must outlive the JS string rope it came from.
-                break 'brk ZigStringSlice::init_owned(argument.to_slice(global_this)?.into_vec());
+                break 'brk argument.to_utf8(global_this)?;
             }
 
             if argument.is_cell() {
-                // `as_class_ref` is the safe shared-borrow downcast (centralised
-                // deref proof in `JSValue`); the JS wrapper roots the payload
-                // while `argument` is on the stack.
                 if let Some(req) = argument.as_class_ref::<Request>() {
                     req.ensure_url().expect("unreachable");
-                    break 'brk req.url.get().to_utf8();
+                    break 'brk req.url.get().clone().into_utf8();
                 }
 
                 if let Some(resp) = argument.as_class_ref::<Response>() {
-                    break 'brk resp.get_utf8_url();
+                    break 'brk resp.url().clone().into_utf8();
                 }
             }
 
@@ -572,18 +552,14 @@ impl FileSystemRouter {
         };
 
         if path.slice().is_empty() || (path.slice().len() == 1 && path.slice()[0] == b'/') {
-            path = ZigStringSlice::from_utf8_never_free(b"/");
+            path = Utf8Bytes::Borrowed(b"/");
         }
 
         if strings::has_prefix(path.slice(), b"http://")
             || strings::has_prefix(path.slice(), b"https://")
             || strings::has_prefix(path.slice(), b"file://")
         {
-            let prev_path = path;
-            path = match ZigStringSlice::init_dupe(URL::parse(prev_path.slice()).pathname) {
-                Ok(p) => p,
-                Err(_) => return Err(global_this.throw_out_of_memory()),
-            };
+            path = Utf8Bytes::Owned(URL::parse(path.slice()).pathname.to_vec());
         }
 
         // URLPath::parse strips byte 0 and the route table is keyed without the
@@ -629,11 +605,11 @@ impl FileSystemRouter {
         // the param values borrow the decode buffer — not `path` — and that buffer would
         // be freed when `url_path` drops at the end of this call. Take ownership of it and
         // make it the backing allocation instead. (`Box<[u8]>` -> `Vec<u8>` ->
-        // `ZigStringSlice::Owned` reuses the same heap allocation, so the borrowed slices
+        // `Utf8Bytes::Owned` reuses the same heap allocation, so the borrowed slices
         // stay valid; nothing in `route` points into the original encoded `path` once a
         // decode happened.)
         if let Some(decoded) = url_path.take_decoded_storage() {
-            path = ZigStringSlice::init_owned(decoded.into_vec());
+            path = Utf8Bytes::Owned(decoded.into_vec());
         }
 
         // MOVE `path`
@@ -661,7 +637,7 @@ impl FileSystemRouter {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_origin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(ref origin) = this.origin {
-            return Ok(zs_to_js(origin.leak(), global_this));
+            return bun_string_jsc::create_utf8_for_js(global_this, origin.leak());
         }
 
         Ok(JSValue::NULL)
@@ -672,19 +648,13 @@ impl FileSystemRouter {
         let router = this.router.get();
         let paths = router.get_entry_points();
         let names = router.get_names();
-        let mut name_strings: Vec<ZigString> = vec![ZigString::default(); names.len() * 2];
-        // `defer free(name_strings)` → Drop
+        let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::EMPTY; names.len() * 2];
         let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
         for (i, name) in names.iter().enumerate() {
-            name_strings_slice[i] = ZigString::from_bytes(name);
-            paths_strings[i] = ZigString::from_bytes(paths[i]);
+            name_strings_slice[i] = EncodedSlice::from_bytes(name);
+            paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
         }
-        Ok(JSValue::from_entries(
-            global_this,
-            name_strings_slice,
-            paths_strings,
-            true,
-        ))
+        JSValue::from_entries(global_this, name_strings_slice, paths_strings, true)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -731,7 +701,7 @@ pub struct MatchedRoute {
     pub(crate) params_list_holder: UnsafeCell<route_param::List<'static>>,
     /// Owns the bytes that `route_holder.pathname`/`query_string` and the param values in
     /// `params_list_holder` borrow. Freed by Drop on finalize.
-    pub(crate) pathname_backing: ZigStringSlice,
+    pub(crate) pathname_backing: Utf8Bytes<'static>,
     // BACKREF — interned `RefString`s; we hold +1 (bumped in `init`, released in
     // `deinit`). The interned allocation outlives every `MatchedRoute`.
     pub(crate) origin: Option<BackRef<RefString>>,
@@ -761,12 +731,12 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_name(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().name, global_this))
+        bun_string_jsc::create_utf8_for_js(global_this, this.route().name)
     }
 
     pub(crate) fn init(
         match_: RouterMatch<'_>,
-        pathname_backing: ZigStringSlice,
+        pathname_backing: Utf8Bytes<'static>,
         origin: Option<BackRef<RefString>>,
         asset_prefix: Option<BackRef<RefString>>,
         base_dir: BackRef<RefString>,
@@ -843,7 +813,7 @@ impl MatchedRoute {
             // We own the `path` allocation from `match` as
             // `pathname_backing`; dropping it (and `params_list_holder`) here releases the
             // borrowed bytes BEFORE `route_holder`'s slices would dangle on Box drop.
-            this.pathname_backing = ZigStringSlice::EMPTY;
+            this.pathname_backing = Utf8Bytes::EMPTY;
             *this.params_list_holder.get_mut() = route_param::List::default();
         }
 
@@ -860,7 +830,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_file_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().file_path, global_this))
+        bun_string_jsc::create_utf8_for_js(global_this, this.route().file_path)
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -869,15 +839,12 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_pathname(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().pathname, global_this))
+        bun_string_jsc::create_utf8_for_js(global_this, this.route().pathname)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(
-            kind_enum::classify(this.route().name),
-            global_this,
-        ))
+        BunString::static_(kind_enum::classify(this.route().name)).to_js(global_this)
     }
 
     pub(crate) fn create_query_object(
@@ -898,22 +865,22 @@ impl MatchedRoute {
                 // inference tie the element lifetime to `iter` and dies with this
                 // frame.
                 let mut values_buf: [&[u8]; 256] = [b""; 256];
-                let mut refs_buf: [ZigString; 256] = [ZigString::EMPTY; 256];
+                let mut refs_buf: [EncodedSlice; 256] = [EncodedSlice::EMPTY; 256];
 
                 let mut iter = self.query.iter();
                 while let Some(entry) = iter.next(&mut values_buf) {
                     let entry_name = entry.name;
-                    let mut str = ZigString::from_bytes(entry_name);
+                    let mut str = EncodedSlice::from_bytes(entry_name);
 
                     debug_assert!(!entry.values.is_empty());
                     if entry.values.len() > 1 {
                         let values = &mut refs_buf[0..entry.values.len()];
                         for (i, value) in entry.values.iter().enumerate() {
-                            values[i] = ZigString::from_bytes(value);
+                            values[i] = EncodedSlice::from_bytes(value);
                         }
                         obj.put_record(global, &mut str, values)?;
                     } else {
-                        refs_buf[0] = ZigString::from_bytes(entry.values[0]);
+                        refs_buf[0] = EncodedSlice::from_bytes(entry.values[0]);
                         obj.put_record(global, &mut str, &mut refs_buf[0..1])?;
                     }
                 }
@@ -924,16 +891,12 @@ impl MatchedRoute {
         let count = map.get_name_count();
         let mut creator = QueryObjectCreator { query: map };
 
-        let value = JSObject::create_with_initializer(&mut creator, ctx, count);
-
-        Ok(value)
+        JSObject::create_with_initializer(&mut creator, ctx, count)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_script_src(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // `bun_object::get_public_path_with_asset_prefix` takes `core::fmt::Write`, so write
-        // into a `String` (path components are UTF-8 in practice).
-        let mut writer = String::with_capacity(MAX_PATH_BYTES);
+        let mut src: Vec<u8> = Vec::new();
         let origin_url = if let Some(ref origin) = this.origin {
             URL::parse(origin.leak())
         } else {
@@ -952,10 +915,10 @@ impl MatchedRoute {
             } else {
                 b""
             },
-            &mut writer,
+            &mut src,
             path::Platform::Posix,
         );
-        Ok(zs_to_js(writer.as_bytes(), global_this))
+        bun_string_jsc::create_utf8_for_js(global_this, &src)
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -123,6 +123,33 @@ fn is_id_used(state: &State, identifier_id: IdentifierId) -> bool {
     state.identifiers.contains(&identifier_id)
 }
 
+/// Keep the declaration of each variable that a retained reassignment assigns.
+///
+/// Not in upstream, which prunes a declaration once nothing reads the variable. A store
+/// to such a variable can still be retained: as the last instruction of a non-`Block`
+/// block (a catch handler, a `for..of` test), or for its own value (`f(v = 1)`).
+/// `rewrite_instruction_kinds_based_on_reassignment` then makes the first store left
+/// the declaration, in a scope that need not enclose the other stores.
+fn reference_reassigned_variables(
+    state: &mut State,
+    identifiers: &[crate::hir::Identifier],
+    value: &InstructionValue,
+) {
+    match value {
+        InstructionValue::StoreLocal { lvalue, .. } if lvalue.kind == InstructionKind::Reassign => {
+            reference(state, identifiers, lvalue.place.identifier);
+        }
+        InstructionValue::Destructure { lvalue, .. }
+            if lvalue.kind == InstructionKind::Reassign =>
+        {
+            for place in visitors::each_pattern_operand(&lvalue.pattern) {
+                reference(state, identifiers, place.identifier);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Phase 1: Find all referenced identifiers via fixed-point iteration.
 fn find_referenced_identifiers(func: &HirFunction, env: &Environment) -> State {
     let has_loop = has_back_edge(func);
@@ -157,6 +184,8 @@ fn find_referenced_identifiers(func: &HirFunction, env: &Environment) -> State {
                     for place in visitors::each_instruction_value_operand(&instr.value, env) {
                         reference(&mut state, &env.identifiers, place.identifier);
                     }
+                    // Nor is it rewritten, so every variable it reassigns stays assigned.
+                    reference_reassigned_variables(&mut state, &env.identifiers, &instr.value);
                 } else if is_id_or_name_used(&state, &env.identifiers, instr.lvalue.identifier)
                     || !pruneable_value(&instr.value, &state, env)
                 {
@@ -170,6 +199,9 @@ fn find_referenced_identifiers(func: &HirFunction, env: &Environment) -> State {
                         {
                             reference(&mut state, &env.identifiers, value.identifier);
                         }
+                        // A Destructure is left to rewrite_instruction, which prunes the
+                        // pattern entries that nothing reads.
+                        reference_reassigned_variables(&mut state, &env.identifiers, &instr.value);
                     } else {
                         for place in visitors::each_instruction_value_operand(&instr.value, env) {
                             reference(&mut state, &env.identifiers, place.identifier);

@@ -38,16 +38,13 @@ pub mod js_lexer {
 pub mod js_printer {
     use super::strings::Encoding;
     use core::fmt;
-    /// Minimal escape set for fmt.rs quoting.
-    /// bun_js_printer overrides with the full (ctrl-char, \u escape, encoding-aware) impl.
+    /// Always valid JSON and valid UTF-8: lone surrogates become `\u` escapes, malformed bytes U+FFFD.
     pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, enc: Encoding) -> fmt::Result {
         f.write_char('"')?;
-        match enc {
-            Encoding::Latin1 => super::encode_json_string_chars_latin1(f, input)?,
-            _ => super::encode_json_string_chars(f, input)?,
-        }
+        write_pre_quoted_string(input, f, b'"', false, enc)?;
         f.write_char('"')
     }
+    /// The escaped body without the quotes, in JSON mode (`json = true`).
     pub(crate) fn write_pre_quoted_string(
         input: &[u8],
         f: &mut impl fmt::Write,
@@ -55,17 +52,35 @@ pub mod js_printer {
         ascii_only: bool,
         enc: Encoding,
     ) -> fmt::Result {
-        // Writes the escaped body WITHOUT surrounding quotes. Delegate to the
-        // canonical impl in `string::printer` (a byte-sink writer) and bridge
-        // the result into the `fmt::Write`. In JSON mode (`json = true`) every
-        // non-printable scalar (including lone surrogates) is emitted as an
-        // ASCII escape.
-        let mut buf: Vec<u8> = Vec::with_capacity(input.len() + 8);
         crate::string::printer::write_pre_quoted_string(
-            input, &mut buf, quote, ascii_only, true, enc,
+            input,
+            &mut FmtSink(f),
+            quote,
+            ascii_only,
+            true,
+            enc,
         )
-        .map_err(|_| fmt::Error)?;
-        f.write_str(&String::from_utf8_lossy(&buf))
+        .map_err(|_| fmt::Error)
+    }
+
+    /// `string::printer` writes escapes, ASCII runs and whole code points, so each chunk is UTF-8 on its own.
+    struct FmtSink<'a, W: fmt::Write>(&'a mut W);
+
+    impl<W: fmt::Write> crate::io::Write for FmtSink<'_, W> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
+            match super::strings::str_utf8(buf) {
+                Some(s) => self.0.write_str(s),
+                None => buf.utf8_chunks().try_for_each(|chunk| {
+                    self.0.write_str(chunk.valid())?;
+                    if chunk.invalid().is_empty() {
+                        Ok(())
+                    } else {
+                        self.0.write_char(char::REPLACEMENT_CHARACTER)
+                    }
+                }),
+            }
+            .map_err(|_| crate::CrateError::FmtError)
+        }
     }
 }
 use strum::IntoStaticStr;
@@ -568,12 +583,7 @@ pub(crate) fn format_utf16_type_with_path_options(
         } else {
             let mut ptr = to_write;
             while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                let sep = match opts.path_sep {
-                    PathSep::Windows => b'\\',
-                    PathSep::Posix => b'/',
-                    PathSep::Auto => crate::SEP,
-                    PathSep::Any => ptr[i],
-                };
+                let sep = opts.path_sep.apply(ptr[i]);
                 write_bytes(writer, &ptr[..i])?;
                 writer.write_char(sep as char)?;
                 if opts.escape_backslashes && sep == b'\\' {
@@ -626,12 +636,7 @@ impl Display for FormatUTF8<'_> {
 
             let mut ptr = self.buf;
             while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                let sep = match opts.path_sep {
-                    PathSep::Windows => b'\\',
-                    PathSep::Posix => b'/',
-                    PathSep::Auto => crate::SEP,
-                    PathSep::Any => ptr[i],
-                };
+                let sep = opts.path_sep.apply(ptr[i]);
                 write!(f, "{}", bstr::BStr::new(&ptr[..i]))?;
                 f.write_char(sep as char)?;
                 if opts.escape_backslashes && sep == b'\\' {
@@ -674,6 +679,17 @@ pub enum PathSep {
     Posix,
     /// Replace all path separators with `\`.
     Windows,
+}
+
+impl PathSep {
+    fn apply(self, found: u8) -> u8 {
+        match self {
+            PathSep::Windows => b'\\',
+            PathSep::Posix => b'/',
+            PathSep::Auto => crate::SEP,
+            PathSep::Any => found,
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -728,11 +744,6 @@ impl fmt::Display for Raw<'_> {
         // npm package names, registry URLs, semver tags).
         f.write_str(unsafe { core::str::from_utf8_unchecked(self.0) })
     }
-}
-/// Shorthand constructor for [`Raw`]. Prefer [`s`] (same thing, shorter name).
-#[inline(always)]
-pub const fn raw(bytes: &[u8]) -> Raw<'_> {
-    Raw(bytes)
 }
 
 // Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
@@ -1177,19 +1188,32 @@ impl Display for URLFormatter<'_> {
 // HostFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Writes `host`, then `:port` unless `host` already carries one or `port` is the scheme default.
 pub struct HostFormatter<'a> {
+    /// `example.com`, `example.com:8080`, `[::1]` or `[::1]:8080`.
     pub host: &'a [u8],
     pub port: Option<u16>,
     pub is_https: bool,
 }
 
+impl HostFormatter<'_> {
+    fn host_has_port(&self) -> bool {
+        // The colons inside an IPv6 literal's brackets are not a port separator.
+        let after_brackets = match self.host.first() {
+            Some(b'[') => crate::strings::index_of_char_usize(self.host, b']')
+                .map_or(self.host, |end| &self.host[end + 1..]),
+            _ => self.host,
+        };
+        crate::strings::contains_char(after_brackets, b':')
+    }
+}
+
 impl Display for HostFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if crate::strings::index_of_char_usize(self.host, b':').is_some() {
-            return write_bytes(f, self.host);
-        }
-
         write_bytes(f, self.host)?;
+        if self.host_has_port() {
+            return Ok(());
+        }
 
         let is_port_optional = self.port.is_none()
             || (self.is_https && self.port == Some(443))
@@ -1408,6 +1432,20 @@ impl Display for GithubActionPropertyFormatter<'_> {
 
 pub fn github_action_property(self_: &[u8]) -> GithubActionPropertyFormatter<'_> {
     GithubActionPropertyFormatter { text: self_ }
+}
+
+pub struct GithubActionFormatter<'a> {
+    text: &'a [u8],
+}
+
+impl Display for GithubActionFormatter<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        github_action_writer(f, self.text)
+    }
+}
+
+pub fn github_action(utf8: &[u8]) -> GithubActionFormatter<'_> {
+    GithubActionFormatter { text: utf8 }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1863,9 +1901,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         prev_keyword = None;
                         let mut i: usize = 1;
-                        if text.len() > 1 && num == b'0' && text[1] == b'x' {
+                        if text.len() > 1 && num == b'0' && matches!(text[1], b'x' | b'X') {
                             i += 1;
-                            while i < text.len() && text[i].is_ascii_hexdigit() {
+                            while i < text.len() && (text[i].is_ascii_hexdigit() || text[i] == b'_')
+                            {
                                 i += 1;
                             }
                         } else {
@@ -1882,10 +1921,16 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                         | b'B'
                                         | b'o'
                                         | b'O'
+                                        | b'_'
                                 )
                             {
                                 i += 1;
                             }
+                        }
+
+                        // BigInt suffix
+                        if i < text.len() && text[i] == b'n' {
+                            i += 1;
                         }
 
                         write!(
@@ -2880,8 +2925,7 @@ pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
 }
 
 /// Format a 6-byte MAC address as `xx:xx:xx:xx:xx:xx` (lowercase hex,
-/// colon-separated). Returns a fixed 17-byte ASCII buffer; borrow as `&[u8]`
-/// for `ZigString::init`.
+/// colon-separated) into a fixed 17-byte ASCII buffer.
 #[inline]
 pub fn mac_address_lower(mac: [u8; 6]) -> [u8; 17] {
     let mut out = [b':'; 17];
@@ -3353,29 +3397,12 @@ impl OutOfRangeValue for i64 {
         "i64"
     }
 }
-impl OutOfRangeValue for i32 {
-    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", self)
-    }
-    fn type_name() -> &'static str {
-        "i32"
-    }
-}
 impl<'a> OutOfRangeValue for &'a [u8] {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", bstr::BStr::new(self))
     }
     fn type_name() -> &'static str {
         "[]const u8"
-    }
-}
-// MOVE_DOWN: bun_core::String → bun_alloc (T0). Re-import from there.
-impl OutOfRangeValue for bun_alloc::String {
-    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", self)
-    }
-    fn type_name() -> &'static str {
-        "bun.String"
     }
 }
 
@@ -3484,7 +3511,7 @@ fn truncated_hash32_impl(int: u64, writer: &mut impl fmt::Write) -> fmt::Result 
 
 /// Const-fn core of [`truncated_hash32`] / [`TruncatedHash32`]: the 8-byte
 /// base32-ish encoding (native-endian byte reinterpretation).
-const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
+pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
     let b = int.to_ne_bytes();
     [
@@ -3497,6 +3524,96 @@ const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
         CHARS[(b[6] & 31) as usize],
         CHARS[(b[7] & 31) as usize],
     ]
+}
+
+/// A 64-bit content hash as bundler output names print it: `[hash]` is the
+/// 8 characters of [`truncated_hash32`] (40 bits); `[hashN]` prints `N ≤ 13`,
+/// the first 8 identical to `[hash]` and the rest carrying the remaining 24
+/// bits, so `[hash13]` distinguishes any two distinct hashes. At 40 bits two
+/// of a few thousand chunks share a name about once per million builds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContentHash {
+    pub value: u64,
+    pub len: u8,
+}
+
+impl ContentHash {
+    pub const DEFAULT_LEN: usize = 8;
+    pub const MAX_LEN: usize = 13;
+
+    pub const fn new(value: u64, len: usize) -> ContentHash {
+        let len = if len == 0 {
+            1
+        } else if len > Self::MAX_LEN {
+            Self::MAX_LEN
+        } else {
+            len
+        };
+        ContentHash {
+            value,
+            len: len as u8,
+        }
+    }
+
+    pub const fn short(value: u64) -> ContentHash {
+        ContentHash::new(value, Self::DEFAULT_LEN)
+    }
+
+    pub const fn len(self) -> usize {
+        self.len as usize
+    }
+
+    pub const fn bytes(self) -> [u8; Self::MAX_LEN] {
+        const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+        let b = self.value.to_ne_bytes();
+        let mut out = [0u8; Self::MAX_LEN];
+        let mut rest: u32 = 0;
+        let mut i = 0;
+        while i < 8 {
+            out[i] = CHARS[(b[i] & 31) as usize];
+            rest |= ((b[i] >> 5) as u32) << (3 * i);
+            i += 1;
+        }
+        while i < Self::MAX_LEN {
+            out[i] = CHARS[(rest & 31) as usize];
+            rest >>= 5;
+            i += 1;
+        }
+        out
+    }
+}
+
+impl ContentHash {
+    /// Widen any two names that have different values but print the same, to
+    /// one character past their common prefix. Returns whether any changed.
+    pub fn widen_to_distinguish(names: &mut [ContentHash]) -> bool {
+        let mut order: Vec<usize> = (0..names.len()).collect();
+        // Only equal-width names can print the same; sorting by width first keeps them adjacent.
+        order.sort_unstable_by_key(|&i| (names[i].len(), names[i].bytes()));
+        let mut widened = false;
+        for pair in order.windows(2) {
+            let (a, b) = (names[pair[0]], names[pair[1]]);
+            if a.value == b.value || a.bytes()[..a.len()] != b.bytes()[..b.len()] {
+                continue;
+            }
+            let common = (a.bytes().iter().zip(b.bytes().iter()))
+                .take_while(|(x, y)| x == y)
+                .count();
+            for &i in pair {
+                if names[i].len() <= common {
+                    names[i] = ContentHash::new(names[i].value, common + 1);
+                    widened = true;
+                }
+            }
+        }
+        widened
+    }
+}
+
+impl Display for ContentHash {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_bytes(f, &self.bytes()[..self.len()])
+    }
 }
 
 /// Zero-validation `&[u8] -> impl Display` adapter — short alias of [`raw`]
@@ -3525,107 +3642,7 @@ fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Resul
     Ok(())
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// encode_json_string — single canonical impl.
-// Every duplicated copy of this JSON-string escaping logic funnels through
-// here.
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Writes the escaped body of a JSON string **without** surrounding quotes
-/// (`escape_unicode = false` semantics).
-///
-/// Escape set:
-///   - `\"` `\\` `\b` `\f` `\n` `\r` `\t`
-///   - other `0x00..=0x1F` → `\u00XX` (lowercase hex)
-///   - `0x20..=0xFF` → emitted verbatim in run-batched `write_str` calls
-///     (input is treated as UTF-8/Latin-1 bytes; no transcoding).
-pub(crate) fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
-    let mut run = 0;
-    for (i, &b) in s.iter().enumerate() {
-        let esc: &str = match b {
-            b'"' => "\\\"",
-            b'\\' => "\\\\",
-            0x08 => "\\b",
-            0x0C => "\\f",
-            b'\n' => "\\n",
-            b'\r' => "\\r",
-            b'\t' => "\\t",
-            0x00..=0x1F => {
-                if run < i {
-                    write_bytes(w, &s[run..i])?;
-                }
-                let hex = hex_u16::<true>(b as u16);
-                w.write_str("\\u")?;
-                write_bytes(w, &hex)?;
-                run = i + 1;
-                continue;
-            }
-            _ => continue,
-        };
-        if run < i {
-            write_bytes(w, &s[run..i])?;
-        }
-        w.write_str(esc)?;
-        run = i + 1;
-    }
-    if run < s.len() {
-        write_bytes(w, &s[run..])?;
-    }
-    Ok(())
-}
-
-/// Latin-1 sibling of [`encode_json_string_chars`]: same escape table, but
-/// non-escaped bytes are widened (`b as char`) so 0x80..=0xFF are emitted as
-/// their U+0080..U+00FF UTF-8 encodings rather than passed through as raw
-/// (invalid) single bytes. ASCII runs are still batched via `write_bytes`.
-pub(crate) fn encode_json_string_chars_latin1(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
-    let mut run = 0;
-    for (i, &b) in s.iter().enumerate() {
-        let esc: &str = match b {
-            b'"' => "\\\"",
-            b'\\' => "\\\\",
-            0x08 => "\\b",
-            0x0C => "\\f",
-            b'\n' => "\\n",
-            b'\r' => "\\r",
-            b'\t' => "\\t",
-            0x00..=0x1F => {
-                if run < i {
-                    write_bytes(w, &s[run..i])?;
-                }
-                let hex = hex_u16::<true>(b as u16);
-                w.write_str("\\u")?;
-                write_bytes(w, &hex)?;
-                run = i + 1;
-                continue;
-            }
-            0x80..=0xFF => {
-                if run < i {
-                    write_bytes(w, &s[run..i])?;
-                }
-                // Widen Latin-1 byte → Unicode scalar → UTF-8.
-                w.write_char(b as char)?;
-                run = i + 1;
-                continue;
-            }
-            _ => continue,
-        };
-        if run < i {
-            write_bytes(w, &s[run..i])?;
-        }
-        w.write_str(esc)?;
-        run = i + 1;
-    }
-    if run < s.len() {
-        write_bytes(w, &s[run..])?;
-    }
-    Ok(())
-}
-
-/// Surrounding `"` quotes around [`encode_json_string_chars`].
 #[inline]
 pub fn encode_json_string(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
-    w.write_char('"')?;
-    encode_json_string_chars(w, s)?;
-    w.write_char('"')
+    js_printer::write_json_string(s, w, strings::Encoding::Utf8)
 }

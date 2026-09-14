@@ -14,10 +14,10 @@
 // ─── pure-Rust leaf (no JSC) — always compiles ───────────────────────────
 pub mod diff {
     // mod-rs path rule: inline `mod diff` + `#[path]` → test_runner/diff/<file>
-    #[path = "diff_match_patch.rs"]
-    pub mod diff_match_patch;
     #[path = "printDiff.rs"]
     pub mod print_diff;
+    #[path = "text_diff.rs"]
+    pub mod text_diff;
 }
 
 // ─── JSC-heavy core ──────────────────────────────────────────────────────
@@ -237,9 +237,7 @@ pub mod expect {
             )?;
             // `FormatOptions.flush` is false, so the formatter does not flush
             // internally; a buffered `out` would otherwise drop trailing
-            // snapshot bytes. Propagate the writer error as a thrown JS error
-            // so the caller's `.is_err()` branch
-            // (expect.rs `to_match_snapshot_value_kind`) fires.
+            // snapshot bytes.
             out.flush().map_err(|e| global.throw_error(e, "snapshot writer flush failed"))?;
             Ok(())
         }

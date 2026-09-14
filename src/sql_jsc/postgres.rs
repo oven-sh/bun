@@ -24,7 +24,6 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
 
 #[path = "postgres/SASL.rs"]
 pub mod sasl;
-pub use sasl::SASL;
 
 #[path = "postgres/AuthenticationState.rs"]
 pub mod authentication_state;

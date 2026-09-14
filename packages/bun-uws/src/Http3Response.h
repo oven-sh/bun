@@ -4,6 +4,7 @@
 #include "quic.h"
 #include "Http3ResponseData.h"
 #include "HttpResponseData.h"
+#include "Utilities.h"
 
 #include <charconv>
 #include <optional>
@@ -31,13 +32,14 @@ struct Http3Response {
     }
 
     Http3Response *writeHeader(std::string_view key, std::string_view value) {
+        if (isConnectionSpecificResponseField(key, value)) return this;
         writeStatus("200 OK");
         appendHeader(getHttpResponseData(), key, value);
         return this;
     }
 
     Http3Response *writeHeader(std::string_view key, uint64_t value) {
-        char buf[24];
+        char buf[utils::U64_MAX_DIGITS];
         auto r = std::to_chars(buf, buf + sizeof(buf), value);
         return writeHeader(key, std::string_view{buf, (size_t)(r.ptr - buf)});
     }
@@ -133,23 +135,13 @@ struct Http3Response {
 
     uint64_t getWriteOffset() { return getHttpResponseData()->offset; }
     void overrideWriteOffset(uint64_t o) { getHttpResponseData()->offset = o; }
-    void setWriteOffset(uint64_t o) { getHttpResponseData()->offset = o; }
     size_t getBufferedAmount() { return getHttpResponseData()->backpressure.length(); }
 
     Http3Response *pause() { us_quic_stream_want_read((us_quic_stream_t *) this, 0); return this; }
     Http3Response *resume() { us_quic_stream_want_read((us_quic_stream_t *) this, 1); return this; }
 
     Http3Response *cork(MoveOnlyFunction<void()> &&fn) { fn(); return this; }
-    void uncork() {}
-    bool isCorked() { return false; }
-
-    void close() { us_quic_stream_close((us_quic_stream_t *) this); }
-    void *getNativeHandle() { return this; }
     void *getSocketData() { return getHttpResponseData()->socketData; }
-    bool isConnectRequest() { return false; }
-    void setTimeout(uint8_t) {}
-    void resetTimeout() {}
-    void prepareForSendfile() {}
 
     Http3Response *onWritable(void *userData, Http3ResponseData::OnWritableCallback h) {
         Http3ResponseData *d = getHttpResponseData();
@@ -226,7 +218,6 @@ private:
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional,
                      bool /*allowContentLength*/, bool /*closeConnection*/) {
         Http3ResponseData *d = getHttpResponseData();
-        d->totalSize = totalSize;
 
         if (!(d->state & Http3ResponseData::HTTP_WRITE_CALLED)) {
             writeStatus("200 OK");

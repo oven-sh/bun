@@ -89,13 +89,6 @@ pub struct ServerComponents {
 pub struct ReactFastRefresh {
     pub(crate) import_source: Cow<'static, [u8]>,
 }
-impl Default for ReactFastRefresh {
-    fn default() -> Self {
-        Self {
-            import_source: Cow::Borrowed(b"react-refresh/runtime"),
-        }
-    }
-}
 
 /// `bake.Framework.FileSystemRouterType`. Full body (with `Style` enum and
 /// `from_js`) lives in the gated `bake_body.rs` draft; only the field set
@@ -128,17 +121,6 @@ pub struct Framework {
     pub(crate) server_components: Option<ServerComponents>,
     pub(crate) react_fast_refresh: Option<ReactFastRefresh>,
     pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-}
-impl Default for Framework {
-    fn default() -> Self {
-        Self {
-            is_built_in_react: false,
-            file_system_router_types: Vec::new(),
-            server_components: None,
-            react_fast_refresh: None,
-            built_in_modules: bun_collections::StringArrayHashMap::new(),
-        }
-    }
 }
 
 impl Framework {
@@ -620,9 +602,8 @@ pub mod framework_router {
     /// the associated-fn path resolves.
     pub use super::framework_router_body::JSFrameworkRouter as js_framework_router;
     pub use super::framework_router_body::{
-        DynamicRouteMap, EncodedPattern, FileKind, FrameworkRouter, InsertionHandler,
-        JSFrameworkRouter, MatchedParams, OpaqueFileId, OpaqueFileIdOptional, Part, Route,
-        RouteIndex, StaticRouteMap, Style, TinyLog, Type, TypeIndex,
+        FileKind, FrameworkRouter, InsertionHandler, JSFrameworkRouter, MatchedParams,
+        OpaqueFileId, OpaqueFileIdOptional, Part, RouteIndex, Style, TinyLog, Type, TypeIndex,
     };
 
     /// `wrap` shim over the trait-object form (`&mut dyn InsertionHandler`),
@@ -636,13 +617,12 @@ pub mod framework_router {
         }
     }
 }
-pub use framework_router as FrameworkRouter;
 
 // ══════════════════════════════════════════════════════════════════════════
 // production
 // ══════════════════════════════════════════════════════════════════════════
 pub mod production {
-    pub use super::production_body::{EntryPointMap, PerThread, TypeAndFlags, build_command};
+    pub use super::production_body::{PerThread, build_command};
 }
 
 // ══════════════════════════════════════════════════════════════════════════

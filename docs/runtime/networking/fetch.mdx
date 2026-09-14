@@ -469,10 +469,10 @@ await write("output.txt", response);
 - Connection pooling is enabled by default. You can disable it per-request with `keepalive: false` or the `"Connection: close"` header.
 - Bun optimizes large file uploads using the operating system's `sendfile` syscall under specific conditions:
   - The file must be larger than 32KB
-  - The request must not be using a proxy
+  - The request must not be using a proxy or the `compress` option
   - On macOS, only regular files (not pipes, sockets, or devices) can use `sendfile`
   - When these conditions aren't met, or when using S3/streaming uploads, Bun falls back to reading the file into memory
-  - This optimization is particularly effective for HTTP (not HTTPS) requests where the file can be sent directly from the kernel to the network stack
+  - Bun only uses this optimization for HTTP (not HTTPS) requests, where the file can be sent directly from the kernel to the network stack; Bun does not use it on Windows
 - S3 operations automatically handle signing requests and merging authentication headers
 
 Many of these features are Bun-specific extensions to the standard fetch API.

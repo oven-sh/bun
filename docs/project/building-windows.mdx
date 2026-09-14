@@ -110,11 +110,11 @@ Add this folder to `$Env:PATH`: open the Start menu, type "Path", and use the en
 
 ## Extra paths
 
-- The build extracts WebKit to `build/debug/cache/webkit/`
+- The build extracts WebKit to `$Env:BUN_INSTALL\build-cache\webkit-<version>-debug` (`webkit-<version>-arm64-debug` on ARM64); `BUN_INSTALL` defaults to `~\.bun`
 
 ## Tests
 
-Run the test suite with `bun test <path>` or with the wrapper script `bun node:test <path>`. The `bun node:test` command runs every test file in a separate instance of `bun.exe`, so a crash in the test runner does not stop the entire suite.
+Run the test suite with `bun-debug test <path>` or with the wrapper script `bun run test <path>`. The `bun run test` command runs every test file in a separate instance of `bun-debug.exe`, so a crash in the test runner does not stop the entire suite.
 
 ```ps1
 # Run the entire test suite with reporter
@@ -179,17 +179,11 @@ The build does not run cross-compiled executables on the host (it skips the `--r
 
 ### LTO
 
-x64 release cross builds support ThinLTO with cross-language (Rust↔C++) LTO. It's opt-in:
+x64 release cross builds use ThinLTO with cross-language (Rust↔C++) LTO, like every release build (`--lto=off` for faster relinks):
 
-```bash
-bun run build --profile=windows-x64-release --lto=on
-```
+- Bun's C/C++ compiles with `-flto=thin`
+- rustc emits LLVM bitcode (`-Clinker-plugin-lto`)
+- the `bun-webkit-windows-amd64-lto` ThinLTO prebuilt is the WebKit that gets linked
+- everything links with rustc's bundled `lld-link` (its LLVM is new enough to read both compilers' bitcode)
 
-`--lto=on` does the following:
-
-- compiles Bun's C/C++ with `-flto=thin`
-- makes rustc emit LLVM bitcode (`-Clinker-plugin-lto`)
-- pulls the `bun-webkit-windows-amd64-lto` ThinLTO prebuilt
-- links everything with rustc's bundled `lld-link` (its LLVM is new enough to read both compilers' bitcode)
-
-There is no LTO for arm64, because there is no `-lto` WebKit prebuilt: LLVM's CodeView emitter can't handle ARM64 NEON tuple registers during LTO codegen. There is also no LTO for `--baseline`.
+There is no LTO for arm64, because there is no `-lto` WebKit prebuilt: LLVM's CodeView emitter can't handle ARM64 NEON tuple registers during LTO codegen.

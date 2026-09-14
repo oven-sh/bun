@@ -663,7 +663,62 @@ fn nest_cross_chunk_imports(
         });
         nested[chunk_index] = Some(order.iter().map(|&at| reached[at as usize]).collect());
     }
+    debug_assert!(nested_lists_run_the_same(chunks, &nested, &runs));
     Ok(nested)
+}
+
+/// The `import` statements as emitted run the chunks the unmoved ones run, in the same order, from every chunk.
+fn nested_lists_run_the_same(
+    chunks: &[Chunk],
+    nested: &[Option<Box<[u32]>>],
+    runs: &AutoBitSet,
+) -> bool {
+    let mut rank: Vec<u32> = vec![u32::MAX; chunks.len()];
+    let mut lists_by = |moved: bool| -> Vec<Vec<u32>> {
+        let mut lists = Vec::with_capacity(chunks.len());
+        for (chunk_index, chunk) in chunks.iter().enumerate() {
+            let chunk::Content::Javascript(js) = &chunk.content else {
+                lists.push(Vec::new());
+                continue;
+            };
+            let order: &[u32] = match &nested[chunk_index] {
+                Some(order) if moved => order,
+                _ => &js.reached_chunks_in_order,
+            };
+            for (at, &other) in order.iter().enumerate() {
+                rank[other as usize] = at as u32;
+            }
+            let mut list: Vec<u32> = js.imports_from_other_chunks.keys().to_vec();
+            list.sort_unstable_by_key(|&other| (rank[other as usize], other));
+            for &other in order.iter() {
+                rank[other as usize] = u32::MAX;
+            }
+            lists.push(list);
+        }
+        lists
+    };
+    let (unmoved, emitted) = (lists_by(false), lists_by(true));
+    let run_by = |lists: &[Vec<u32>], start: usize| -> Vec<u32> {
+        let mut ran = Vec::new();
+        let mut seen = vec![false; chunks.len()];
+        seen[start] = true;
+        let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+        while let Some((inside, next)) = stack.last_mut() {
+            if let Some(&import) = lists[*inside].get(*next) {
+                *next += 1;
+                if !core::mem::replace(&mut seen[import as usize], true) {
+                    stack.push((import as usize, 0));
+                }
+            } else {
+                if runs.is_set(*inside) {
+                    ran.push(*inside as u32);
+                }
+                stack.pop();
+            }
+        }
+        ran
+    };
+    (0..chunks.len()).all(|start| run_by(&unmoved, start) == run_by(&emitted, start))
 }
 
 fn compute_cross_chunk_dependencies_with_chunk_metas(

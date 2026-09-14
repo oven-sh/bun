@@ -1382,22 +1382,16 @@ pub mod js_bundler {
     }
 
     impl PendingBuild {
-        /// Runs each `setup()` that is left, then schedules the bundle. `Some` is a `setup()` promise that is still pending.
+        /// Runs each `setup()` that is left, then schedules the bundle. `Some` is a promise from `runSetupFunction` to park on.
         fn advance(
             &mut self,
             global_this: &JSGlobalObject,
             mut setup_result: JSValue,
         ) -> JsResult<Option<JSValue>> {
             loop {
-                if let Some(promise) = setup_result.as_any_promise() {
-                    promise.set_handled(global_this.vm());
-                    match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
-                        jsc::PromiseResult::Pending => return Ok(Some(setup_result)),
-                        jsc::PromiseResult::Fulfilled(value) => setup_result = value,
-                        jsc::PromiseResult::Rejected(err) => {
-                            return Err(global_this.throw_value(err));
-                        }
-                    }
+                // Settled or not, a promise goes to a reaction, so an error that it carries always rejects and never throws.
+                if setup_result.as_any_promise().is_some() {
+                    return Ok(Some(setup_result));
                 }
                 if let Some(err) = setup_result.to_error() {
                     return Err(global_this.throw_value(err));

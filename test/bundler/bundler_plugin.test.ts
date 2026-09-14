@@ -2062,7 +2062,7 @@ describe("bundler", () => {
       expect(await result.outputs[0].text()).toContain("after-await");
     });
 
-    test("an error after a pending setup() rejects the promise that Bun.build() returned", async () => {
+    test("an error in or after a setup() that returns a promise rejects the promise that Bun.build() returned", async () => {
       using dir = tempDir("bun-build-setup-rejects", { "entry.js": entry });
       const slow = { name: "slow", setup: () => nextTurn() };
       const build = (config: object) => Bun.build({ entrypoints: [`${dir}/entry.js`], ...config });
@@ -2104,21 +2104,45 @@ describe("bundler", () => {
       });
       const invalidPlugin = build({ plugins: [slow, { setup() {} }] });
       const invalidConfig = build({ plugins: [slow], format: "not-a-format" });
+      // A promise that is already rejected when setup() returns rejects too: it is never thrown by the call.
+      const alreadyRejected = build({
+        plugins: [{ name: "rejected", setup: () => Promise.reject(new Error("already rejected")) }],
+      });
+      const asyncThrow = build({
+        plugins: [
+          {
+            name: "throws",
+            async setup() {
+              throw new Error("async setup threw");
+            },
+          },
+        ],
+      });
 
       expect(
-        (await Promise.allSettled([rejectingSetup, rejectingOnStart, throwingSetup, invalidPlugin, invalidConfig])).map(
-          result => (result.status === "rejected" ? result.reason.message : result),
-        ),
+        (
+          await Promise.allSettled([
+            rejectingSetup,
+            rejectingOnStart,
+            throwingSetup,
+            invalidPlugin,
+            invalidConfig,
+            alreadyRejected,
+            asyncThrow,
+          ])
+        ).map(result => (result.status === "rejected" ? result.reason.message : result)),
       ).toEqual([
         "setup rejected",
         "onStart rejected",
         "second setup threw",
         "Expected plugin to have a name",
         expect.stringContaining("format"),
+        "already rejected",
+        "async setup threw",
       ]);
     });
 
-    test("an error before any pending setup() is still thrown by the Bun.build() call", () => {
+    test("an error before any setup() returns a promise is still thrown by the Bun.build() call", () => {
       const throws = {
         name: "throws",
         setup() {

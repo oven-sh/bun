@@ -1,3 +1,5 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -440,4 +442,46 @@ describe("css", () => {
       expect(css).toContain(`.${betaOwn}`);
     },
   });
+});
+
+// `bun build --no-bundle` prints a module file with no link step. Class
+// symbols have no final name there, so the printer hashes the original name
+// like it does for keyframes.
+test("css-module/NoBundleHashesClassSymbols", async () => {
+  using dir = tempDir("css-module-no-bundle", {
+    "styles.module.css": `
+      .card { view-transition-class: slide; animation-name: spin }
+      @keyframes spin { to { opacity: 0 } }
+      ::view-transition-old(.slide) { opacity: 0 }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "styles.module.css"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const card = stdout.match(/\.card_([A-Za-z0-9_-]+)\s*\{/);
+  expect(card, ".card should be scoped").not.toBeNull();
+  const hash = card![1];
+  expect(stdout).toEqualIgnoringWhitespace(`
+    .card_${hash} {
+      view-transition-class: slide_${hash};
+      animation-name: spin_${hash};
+    }
+
+    @keyframes spin_${hash} {
+      to {
+        opacity: 0;
+      }
+    }
+
+    ::view-transition-old(.slide_${hash}) {
+      opacity: 0;
+    }
+  `);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

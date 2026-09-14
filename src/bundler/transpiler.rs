@@ -3184,7 +3184,7 @@ impl<'a> Transpiler<'a> {
             entry.contents(),
             opts,
             None,
-            bun_ast::Index::INVALID,
+            bun_ast::Index::source(0u32),
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -3204,7 +3204,7 @@ impl<'a> Transpiler<'a> {
             );
             return None;
         }
-        let symbols = bun_ast::symbol::Map::init_list(Default::default());
+        let symbols = bun_ast::symbol::Map::init_list(vec![extra.symbols]);
         let result = match sheet.to_css(
             alloc,
             &bun_css::PrinterOptions {

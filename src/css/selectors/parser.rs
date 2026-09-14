@@ -4172,14 +4172,15 @@ impl ViewTransitionPartName {
         // Try to parse a class selector (.<custom-ident>)
         let loc = input.position();
         if input.try_parse(|i| i.expect_delim(b'.')).is_ok() {
-            let ident = CustomIdent::parse(input)?;
-            // SAFETY: `CustomIdent.v` borrows the parser arena which outlives
-            // the parse session (`'static` is a placeholder for the arena lifetime).
-            let raw: Str = unsafe { crate::arena_str(ident.v) };
+            let location = input.current_source_location();
+            let ident = input.expect_ident_cloned()?;
+            if crate::values::ident::is_reserved_custom_ident(ident) {
+                return Err(location.new_unexpected_token_error(Token::Ident(ident)));
+            }
             return Ok(Self::Class(parser.new_local_identifier(
                 input,
                 css::CssRefTag::CLASS,
-                raw,
+                ident,
                 loc,
             )));
         }

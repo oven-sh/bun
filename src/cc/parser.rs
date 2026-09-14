@@ -6052,11 +6052,11 @@ impl<S: TokenSource> Parser<S> {
             Some(u64::MAX) => true,
             Some(size) => constant(self, checked.length).is_some_and(|length| length <= size),
         };
-        // Only glibc has the format-checking `__printf_chk` family; nothing has any of them on
-        // Windows, whose headers never ask.
+        // Only glibc has the format-checking `__printf_chk` family, and only Apple's library a
+        // `__memccpy_chk`; nothing has any of them on Windows, whose headers never ask.
         let library_has_it = match target.os {
             crate::types::Os::Windows => false,
-            crate::types::Os::Linux => true,
+            crate::types::Os::Linux => checked.name != "__memccpy_chk",
             crate::types::Os::MacOs => checked.object_size.is_some(),
         };
         if library_has_it && !(enough && checked.object_size.is_some()) {

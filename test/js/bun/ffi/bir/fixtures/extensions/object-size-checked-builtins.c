@@ -1,6 +1,7 @@
 // The functions `_FORTIFY_SOURCE` turns the C library's into, called by their names: `__builtin___memcpy_chk(d, s, n,
 // size)` is memcpy when the object is `size` bytes and that is enough, or its size is not known ((size_t)-1), and the
 // library's checking function otherwise. And `__builtin_object_size`, which is where the headers get `size` from.
+// (Here are the functions every C library has; the others are in fixtures of their own.)
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -50,7 +51,6 @@ int main(void) {
   CHECK(__builtin___strcat_chk(other, " and more", UNKNOWN) == other && strcmp(other, "copied and more") == 0);
   CHECK(__builtin___strncpy_chk(buffer, "abcdef", 3, UNKNOWN) == buffer && memcmp(buffer, "abcllo", 6) == 0);
   CHECK(__builtin___strncat_chk(other, "!!!", 1, UNKNOWN) == other && strcmp(other, "copied and more!") == 0);
-  CHECK(__builtin___stpcpy_chk(buffer, "end", UNKNOWN) == buffer + 3);
   CHECK(__builtin___sprintf_chk(buffer, 0, UNKNOWN, "%d-%s", 7, "seven") == 7 && strcmp(buffer, "7-seven") == 0);
   CHECK(__builtin___snprintf_chk(buffer, 4, 0, UNKNOWN, "%d", 123456) == 6 && strcmp(buffer, "123") == 0);
   CHECK(formatted(buffer, sizeof buffer, "%s/%c", "va", 'l') == 4 && strcmp(buffer, "va/l") == 0);
@@ -62,7 +62,6 @@ int main(void) {
   CHECK(__builtin___strcpy_chk(buffer, "fits", sixty_four) == buffer && strcmp(buffer, "fits") == 0);
   CHECK(__builtin___strcat_chk(buffer, " too", 64) == buffer && strcmp(buffer, "fits too") == 0);
   CHECK(__builtin___strncpy_chk(other, "0123456789", 4, 64) == other && memcmp(other, "0123ed", 6) == 0);
-  CHECK(__builtin___stpcpy_chk(other, "xy", sixty_four) == other + 2);
   CHECK(__builtin___sprintf_chk(buffer, 0, 64, "%s", "plain") == 5 && strcmp(buffer, "plain") == 0);
   CHECK(__builtin___snprintf_chk(buffer, 64, 0, 64, "%05d", 42) == 5 && strcmp(buffer, "00042") == 0);
   CHECK(__builtin___snprintf_chk(buffer, 8, 1, sixty_four, "%s", "limit of eight") == 14 && strcmp(buffer, "limit o") == 0);

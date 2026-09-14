@@ -1,6 +1,8 @@
 import * as vercelFetch from "@vercel/fetch";
 import * as iso from "isomorphic-fetch";
 import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
+import { once } from "node:events";
+import http from "node:http";
 import * as stream from "stream";
 
 import { afterEach, expect, test } from "bun:test";
@@ -275,6 +277,42 @@ test("node-fetch body taken before clone() does not break the body after clone()
     original: Buffer.concat(await Array.fromAsync(res.body)).toString(),
     clone: Buffer.concat(await Array.fromAsync(cloned.body)).toString(),
   }).toEqual({ original: "hello world", clone: "hello world" });
+});
+
+// node-fetch's json() is JSON.parse(await this.text()), so a body with nothing to parse rejects.
+test.each([
+  ["a body with Content-Length: 0", "/empty"],
+  ["an empty chunked body", "/chunked"],
+  ["a 204", "/204"],
+])("node-fetch json() rejects on %s like JSON.parse('')", async (_, path) => {
+  // node:http sends an empty chunked body as such. Bun.serve turns it into Content-Length: 0.
+  await using server = http.createServer((req, res) => {
+    if (req.url === "/chunked") res.setHeader("transfer-encoding", "chunked");
+    else if (req.url === "/204") res.statusCode = 204;
+    else res.setHeader("content-length", "0");
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const url = `http://127.0.0.1:${server.address().port}${path}`;
+  const outcome = promise =>
+    promise.then(
+      value => ({ value }),
+      ({ name, message }) => ({ name, message }),
+    );
+  const expected = await outcome(Promise.try(JSON.parse, ""));
+  expect(expected.name).toBe("SyntaxError");
+
+  expect({
+    json: await outcome(fetch2(url).then(res => res.json())),
+    // The outcome does not depend on whether `body` was read before.
+    bodyThenJson: await outcome(fetch2(url).then(res => (void res.body, res.json()))),
+    cloneJson: await outcome(fetch2(url).then(res => res.clone().json())),
+  }).toEqual({ json: expected, bodyThenJson: expected, cloneJson: expected });
+});
+
+test("node-fetch json() resolves null for a body that is the JSON text null", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response("null") });
+  expect(await (await fetch2(server.url)).json()).toBeNull();
 });
 
 test("node-fetch request body streams properly", async () => {

@@ -231,7 +231,6 @@ impl IOReader {
             s.is_reading = true;
             if let Err(e) = self.reader().start_with_current_pipe() {
                 self.on_reader_error(&e);
-                return Yield::failed();
             }
             Yield::suspended()
         }

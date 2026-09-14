@@ -448,6 +448,13 @@ describe("react-compiler upstream fixtures", () => {
 
       const want = slotCounts(expected.code ?? "");
       const got = slotCounts(output);
+      // A component that `@enableJsxOutlining` outlines has memo slots of its
+      // own. Bun declares an outlined function ahead of the module's other
+      // statements, upstream after the function it came from.
+      if (pragmas.has("enableJsxOutlining")) {
+        want.sort((a, b) => a - b);
+        got.sort((a, b) => a - b);
+      }
 
       const wantRuntime = (expected.code ?? "").includes("react/compiler-runtime");
       const gotRuntime = output.includes("react/compiler-runtime");

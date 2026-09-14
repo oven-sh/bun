@@ -3567,11 +3567,7 @@ impl<'a> HTTPClient<'a> {
     ) {
         bun_core::scoped_log!(fetch, "startProxyHandshake");
         // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
-        let ssl_options = if let Some(tls) = &self.tls_props {
-            tls.get().clone()
-        } else {
-            crate::ssl_config::SSLConfig::ZERO
-        };
+        let ssl_options = self.tls_props.clone();
         // The sole caller (`handle_on_data_headers`) has already moved
         // `response_message_buffer` into a local, so the CONNECT envelope is
         // gone from `self` and `start_payload` borrows that caller local (or
@@ -3581,7 +3577,7 @@ impl<'a> HTTPClient<'a> {
         // synchronously fires on_close) that call close_and_fail -> fail -> the
         // result callback, which can free the AsyncHTTP that embeds `*self`.
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
-        ProxyTunnel::start::<IS_SSL>(self, socket, &ssl_options, start_payload);
+        ProxyTunnel::start::<IS_SSL>(self, socket, ssl_options.as_deref(), start_payload);
         // Must not reference `self` past this point — see comment above.
     }
 

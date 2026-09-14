@@ -128,7 +128,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     // the module's JSModuleEnvironment, which does not exist yet.
     LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
     SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
-    Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
+    Ref<CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(cachedData.span());
     if (decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode)))
         return ptr;
 

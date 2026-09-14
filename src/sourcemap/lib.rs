@@ -22,11 +22,11 @@ pub mod mapping;
 pub mod parsed_source_map;
 
 pub use bun_base64::vlq;
-pub use vlq::{VLQ, encode as encode_vlq};
+pub use vlq::VLQ;
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
 pub use line_offset_table::{LineOffsetTable, LineOffsetTableColumns};
-pub use mapping::{Lookup as MappingLookup, Mapping};
+pub use mapping::Mapping;
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
 // SAFETY: `ParsedSourceMap` is shared across threads via the thread-safe
@@ -64,20 +64,6 @@ pub struct SourceMapState {
     pub source_index: i32,
     pub original_line: i32,
     pub original_column: i32,
-}
-
-/// Top-level `SourceMap` struct.
-#[derive(Default)]
-pub struct SourceMap {
-    pub sources: Vec<Box<[u8]>>,
-    pub sources_content: Vec<Box<[u8]>>,
-    pub mapping: mapping::List,
-}
-
-impl SourceMap {
-    pub fn find(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        self.mapping.find(line, column)
-    }
 }
 
 /// For some sourcemap loading code, this enum is used as a hint if it should
@@ -119,27 +105,11 @@ pub struct ParseUrl {
     pub source_contents: Option<Box<[u8]>>,
 }
 
-pub enum ParseResult {
-    Fail(ParseResultFail),
-    Success(ParsedSourceMap),
-}
+pub type ParseResult = core::result::Result<ParsedSourceMap, ParseFail>;
 
-pub struct ParseResultFail {
+pub struct ParseFail {
     pub loc: bun_ast::Loc,
     pub err: crate::Error,
-    pub value: i32,
-    pub msg: &'static [u8],
-}
-
-impl Default for ParseResultFail {
-    fn default() -> Self {
-        Self {
-            loc: bun_ast::Loc::default(),
-            err: crate::Error::Unknown,
-            value: 0,
-            msg: b"",
-        }
-    }
 }
 
 /// The sourcemap spec says line and column offsets are zero-based.
@@ -179,17 +149,10 @@ impl LineColumnOffset {
         }
     }
 
-    pub fn comes_before(a: LineColumnOffset, b: LineColumnOffset) -> bool {
+    pub(crate) fn comes_before(a: LineColumnOffset, b: LineColumnOffset) -> bool {
         a.lines.zero_based() < b.lines.zero_based()
             || (a.lines.zero_based() == b.lines.zero_based()
                 && a.columns.zero_based() < b.columns.zero_based())
-    }
-
-    pub fn cmp(_ctx: (), a: LineColumnOffset, b: LineColumnOffset) -> core::cmp::Ordering {
-        if a.lines.zero_based() != b.lines.zero_based() {
-            return a.lines.zero_based().cmp(&b.lines.zero_based());
-        }
-        a.columns.zero_based().cmp(&b.columns.zero_based())
     }
 
     pub fn advance(&mut self, input: &[u8]) {
@@ -205,7 +168,7 @@ impl LineColumnOffset {
             debug_assert!(i >= offset);
             debug_assert!((i as usize) < input.len());
 
-            let iter = strings::CodepointIterator::init_offset(input, i as usize);
+            let iter = strings::CodepointIterator::init(input);
             let mut cursor = strings::Cursor {
                 i,
                 ..Default::default()
@@ -247,11 +210,9 @@ impl LineColumnOffset {
 
         let remain = &input[offset as usize..];
 
-        if cfg!(debug_assertions) {
-            debug_assert!(strings::is_all_ascii(remain));
-            debug_assert!(strings::index_of_char(remain, b'\n').is_none());
-            debug_assert!(strings::index_of_char(remain, b'\r').is_none());
-        }
+        debug_assert!(strings::is_all_ascii(remain));
+        debug_assert!(strings::index_of_char(remain, b'\n').is_none());
+        debug_assert!(strings::index_of_char(remain, b'\r').is_none());
 
         this.columns = this
             .columns
@@ -379,31 +340,23 @@ unsafe extern "C" {
     // bytes of it), so `&SourceProviderMap` carries no `readonly`/`noalias` —
     // the foreign side owns all state behind the handle and may mutate it. The
     // only param is that handle reference, so this is a `safe fn`.
-    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_core::String;
+    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap)
+    -> bun_core::StringView<'_>;
 }
 
 impl SourceProviderMap {
-    pub fn get_source_slice(&self) -> bun_core::String {
+    /// `Bun::toStringView` — a view into the provider's source.
+    pub(crate) fn get_source_slice(&self) -> bun_core::StringView<'_> {
         ZigSourceProvider__getSourceSlice(self)
     }
 
-    pub fn to_source_content_ptr(&self) -> SourceContentPtr {
+    pub(crate) fn to_source_content_ptr(&self) -> SourceContentPtr {
         SourceContentPtr::from_provider(self)
-    }
-
-    /// The last two arguments to this specify loading hints
-    pub fn get_source_map(
-        &self,
-        source_filename: &[u8],
-        load_hint: SourceMapLoadHint,
-        result: ParseUrlResultHint,
-    ) -> Option<ParseUrl> {
-        get_source_map_impl(self, source_filename, load_hint, result)
     }
 }
 
 impl SourceProvider for SourceProviderMap {
-    fn get_source_slice(&self) -> bun_core::String {
+    fn get_source_slice(&self) -> bun_core::StringView<'_> {
         SourceProviderMap::get_source_slice(self)
     }
     fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -419,7 +372,8 @@ impl SourceProvider for SourceProviderMap {
 /// default-`None` optional capabilities so each provider only overrides what
 /// it actually has.
 pub trait SourceProvider {
-    fn get_source_slice(&self) -> bun_core::String;
+    /// `Bun::toStringView`: a `StringView` into the provider's source.
+    fn get_source_slice(&self) -> bun_core::StringView<'_>;
     fn to_source_content_ptr(&self) -> SourceContentPtr;
 
     /// The provider's own in-memory sourcemap JSON for its source. Only
@@ -455,7 +409,7 @@ pub trait SourceProvider {
 }
 
 /// The last two arguments to this specify loading hints.
-pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
+pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
     provider: &P,
     source_filename: &[u8],
     load_hint: SourceMapLoadHint,
@@ -477,8 +431,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
         if load_hint != SourceMapLoadHint::IsExternalMap {
             'try_inline: {
                 let source = provider.get_source_slice();
-                // defer source.deref() → Drop on bun_core::String
-                debug_assert!(source.tag() == bun_core::Tag::ZigString);
+                debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
 
                 let maybe_found_url = if source.is_8bit() {
                     find_source_mapping_url_u8(source.latin1())
@@ -489,7 +442,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let Some(found_url) = maybe_found_url else {
                     break 'try_inline;
                 };
-                // defer found_url.deinit() → Drop
 
                 match parse_url(&arena, found_url.slice(), result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsInlineMap, parsed),
@@ -639,12 +591,8 @@ pub mod SavedSourceMap {
         static PATH: bun_core::Mutex<Option<Box<[u8]>>> = bun_core::Mutex::new(None);
 
         #[inline]
-        pub fn set_seen_invalid(v: bool) {
+        pub(crate) fn set_seen_invalid(v: bool) {
             SEEN_INVALID.store(v, Ordering::Relaxed);
-        }
-        #[inline]
-        pub fn seen_invalid() -> bool {
-            SEEN_INVALID.load(Ordering::Relaxed)
         }
 
         pub fn set_path(path: &[u8]) {
@@ -686,7 +634,7 @@ pub mod SerializedSourceMap {
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct Header {
-        pub source_files_count: u32,
+        pub(crate) source_files_count: u32,
         pub map_bytes_length: u32,
     }
 
@@ -694,12 +642,12 @@ pub mod SerializedSourceMap {
     /// it lives for the process — modelled as `'static`).
     #[derive(Clone, Copy)]
     pub struct SerializedSourceMap {
-        pub bytes: &'static [u8],
+        pub(crate) bytes: &'static [u8],
     }
 
     impl SerializedSourceMap {
         #[inline]
-        pub(crate) fn header(self) -> Header {
+        fn header(self) -> Header {
             // read_unaligned because the blob
             // sits at an arbitrary offset inside the executable.
             // SAFETY: callers guarantee `bytes.len() >= size_of::<Header>()`.
@@ -725,12 +673,12 @@ pub mod SerializedSourceMap {
     /// Once loaded, this map stores additional data for keeping track of
     /// source code. Held behind `ParsedSourceMap.underlying_provider` as a raw
     /// pointer (see `ParsedSourceMap::standalone_module_graph_data`).
-    pub struct Loaded {
-        pub map: SerializedSourceMap,
+    pub(crate) struct Loaded {
+        pub(crate) map: SerializedSourceMap,
         /// Only decompress source code once! Once a file is decompressed,
         /// it is stored here. Decompression failure is recorded as an empty
         /// `Vec`, which `source_file_contents` treats as "no contents".
-        pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
+        pub(crate) decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
     }
 
     impl Loaded {
@@ -738,22 +686,10 @@ pub mod SerializedSourceMap {
             let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
                 let compressed_file = sp.slice(self.map.bytes);
-                let size = bun_zstd::get_decompressed_size(compressed_file);
-
-                let mut bytes = vec![0u8; size];
-                match bun_zstd::decompress(&mut bytes, compressed_file) {
-                    bun_zstd::Result::Err(err) => {
-                        bun_core::warn!(
-                            "Source map decompression error: {}",
-                            ::bstr::BStr::new(err.as_bytes()),
-                        );
-                        Vec::new()
-                    }
-                    bun_zstd::Result::Success(n) => {
-                        bytes.truncate(n);
-                        bytes
-                    }
-                }
+                bun_zstd::decompress_alloc(compressed_file).unwrap_or_else(|err| {
+                    bun_core::warn!("Source map decompression error: {}", err);
+                    Vec::new()
+                })
             });
             if decompressed.is_empty() {
                 None
@@ -769,10 +705,6 @@ pub mod SerializedSourceMap {
 impl SourceMapPieces {
     pub fn init() -> SourceMapPieces {
         SourceMapPieces::default()
-    }
-
-    pub fn has_content(&self) -> bool {
-        (self.prefix.len() + self.mappings.len() + self.suffix.len()) > 0
     }
 
     pub fn finalize(
@@ -881,7 +813,7 @@ impl SourceMapPieces {
 /// The mappings are owned by the global allocator.
 /// Temporary allocations are made to the `arena` allocator, which
 /// should be an arena allocator (caller is assumed to call `reset`).
-pub fn parse_url(
+pub(crate) fn parse_url(
     arena: &bun_alloc::Arena,
     source: &[u8],
     hint: ParseUrlResultHint,
@@ -898,7 +830,8 @@ pub fn parse_url(
                 match source[DATA_PREFIX.len()] {
                     b';' => {
                         let after = &source[DATA_PREFIX.len() + 1..];
-                        let Some(comma) = after.iter().position(|&b| b == b',') else {
+                        let Some(comma) = bun_core::strings::index_of_char_usize(after, b',')
+                        else {
                             break 'try_data_url;
                         };
                         if &after[..comma] != b"base64" {
@@ -930,7 +863,7 @@ pub fn parse_url(
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
-pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
+pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
     use crate::mapping::SourceMap as SourceMapLog;
     use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
@@ -1022,8 +955,8 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
                 sort: true,
             },
         ) {
-            ParseResult::Success(x) => x,
-            ParseResult::Fail(fail) => return Err(fail.err),
+            Ok(x) => x,
+            Err(fail) => return Err(fail.err),
         };
 
         if let ParseUrlResultHint::All {
@@ -1181,26 +1114,20 @@ pub fn append_source_map_chunk<'a>(
 }
 
 /// Always returns UTF-8.
-fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::zig_string::Slice> {
+fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::Utf8Bytes<'_>> {
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
     let found = bun_core::strings::last_index_of(source, NEEDLE)?;
     let start = found + NEEDLE.len();
-    let end = source[start..]
-        .iter()
-        .position(|&b| b == b'\n')
-        .map(|p| start + p)
-        .unwrap_or(source.len());
+    let end = bun_core::strings::index_of_char_pos(source, b'\n', start).unwrap_or(source.len());
     let url = bun_core::strings::trim_right(&source[start..end], b" \r");
-    Some(bun_core::zig_string::Slice::from_utf8_never_free(url))
+    Some(bun_core::Utf8Bytes::Borrowed(url))
 }
 
-fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::Slice> {
+fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'static>> {
     let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
     let found = bun_core::strings::last_index_of_t(source, needle)?;
     let start = found + needle.len();
-    let end = source[start..]
-        .iter()
-        .position(|&c| c == b'\n' as u16)
+    let end = bun_core::strings::index_of_scalar(&source[start..], u16::from(b'\n'))
         .map(|p| start + p)
         .unwrap_or(source.len());
     let mut url = &source[start..end];
@@ -1211,26 +1138,7 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::S
             break;
         }
     }
-    Some(bun_core::zig_string::Slice::init_owned(
+    Some(bun_core::Utf8Bytes::Owned(
         bun_core::strings::to_utf8_alloc(url),
     ))
-}
-
-pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
-    origin: &bun_url::URL<'_>,
-    source: &bun_ast::Source,
-    asset_prefix_path: &[u8],
-    writer: &mut W,
-) -> bun_io::Result<()> {
-    writer.write_all(b"\n//# sourceMappingURL=")?;
-    writer.write_all(bun_core::strings::without_trailing_slash(origin.href))?;
-    if !asset_prefix_path.is_empty() {
-        writer.write_all(asset_prefix_path)?;
-    }
-    if !source.path.pretty.is_empty() && source.path.pretty[0] != b'/' {
-        writer.write_all(b"/")?;
-    }
-    writer.write_all(source.path.pretty)?;
-    writer.write_all(b".map")?;
-    Ok(())
 }

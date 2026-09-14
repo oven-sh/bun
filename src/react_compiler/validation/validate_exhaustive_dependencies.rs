@@ -13,8 +13,8 @@ use crate::hir::visitors::{
 use crate::hir::{
     ArrayElement, AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
     IdentifierId, InstructionKind, InstructionValue, ManualMemoDependency,
-    ManualMemoDependencyRoot, NonLocalBinding, ParamPattern, Place, PlaceOrSpread, PropertyLiteral,
-    StoreStr, Terminal, Type, hir_vec,
+    ManualMemoDependencyRoot, NonLocalBinding, Place, PlaceOrSpread, PropertyLiteral, StoreStr,
+    Terminal, Type, hir_vec,
 };
 use bun_core::BStr;
 use core::fmt::Write as _;
@@ -28,7 +28,7 @@ use core::fmt::Write as _;
 /// Note: takes `&mut HirFunction` (deviating from the read-only validation convention)
 /// because it sets `has_invalid_deps` on StartMemoize instructions when validation
 /// errors are found, so that ValidatePreservedManualMemoization can skip those blocks.
-pub fn validate_exhaustive_dependencies(
+pub(crate) fn validate_exhaustive_dependencies(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
@@ -38,10 +38,7 @@ pub fn validate_exhaustive_dependencies(
 
     let mut temporaries: IdMap<IdentifierId, Temporary> = IdMap::new();
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         temporaries.insert(
             place.identifier,
             Temporary::Local {
@@ -179,6 +176,15 @@ fn is_stable_type(ty: &Type) -> bool {
         ),
         Type::Object { shape_id: Some(id) } => matches!(*id, "BuiltInUseRefId"),
         _ => false,
+    }
+}
+
+fn effect_report_mode(mode: ExhaustiveEffectDepsMode) -> &'static str {
+    match mode {
+        ExhaustiveEffectDepsMode::All => "all",
+        ExhaustiveEffectDepsMode::MissingOnly => "missing-only",
+        ExhaustiveEffectDepsMode::ExtraOnly => "extra-only",
+        ExhaustiveEffectDepsMode::Off => unreachable!(),
     }
 }
 
@@ -469,10 +475,7 @@ fn collect_dependencies(
 
     if is_function_expression {
         for param in &func.params {
-            let place = match param {
-                ParamPattern::Place(p) => p,
-                ParamPattern::Spread(s) => &s.place,
-            };
+            let place = param.place();
             locals.insert(place.identifier);
         }
     }
@@ -489,14 +492,21 @@ fn collect_dependencies(
     for (_block_id, block) in &func.body.blocks {
         // Process phis
         for phi in &block.phis {
+            // TS tests `deps.length`, then stores `new Set(deps)`.
             let mut deps: Vec<InferredDependency> = Vec::new();
+            let mut deps_len: usize = 0;
             for (_pred_id, operand) in &phi.operands {
                 if let Some(dep) = temporaries.get(operand.identifier) {
                     match dep {
                         Temporary::Aggregate {
                             dependencies: agg, ..
                         } => {
-                            deps.extend(agg.iter().cloned());
+                            deps_len += agg.len();
+                            for dep in agg {
+                                if !contains_same_dependency(&deps, dep) {
+                                    deps.push(dep.clone());
+                                }
+                            }
                         }
                         Temporary::Local {
                             identifier,
@@ -504,24 +514,32 @@ fn collect_dependencies(
                             context,
                             loc,
                         } => {
-                            deps.push(InferredDependency::Local {
+                            deps_len += 1;
+                            let dep = InferredDependency::Local {
                                 identifier: *identifier,
                                 path: path.clone(),
                                 context: *context,
                                 loc: *loc,
-                            });
+                            };
+                            if !contains_same_dependency(&deps, &dep) {
+                                deps.push(dep);
+                            }
                         }
                         Temporary::Global { binding } => {
-                            deps.push(InferredDependency::Global {
+                            deps_len += 1;
+                            let dep = InferredDependency::Global {
                                 binding: binding.clone(),
-                            });
+                            };
+                            if !contains_same_dependency(&deps, &dep) {
+                                deps.push(dep);
+                            }
                         }
                     }
                 }
             }
-            if deps.is_empty() {
+            if deps_len == 0 {
                 continue;
-            } else if deps.len() == 1 {
+            } else if deps_len == 1 {
                 let dep = &deps[0];
                 match dep {
                     InferredDependency::Local {
@@ -897,12 +915,8 @@ fn collect_dependencies(
                                         }),
                                     ) = (fn_deps, manual_deps)
                                     {
-                                        let effect_report_mode = match &cb.validate_effect {
-                                            ExhaustiveEffectDepsMode::All => "all",
-                                            ExhaustiveEffectDepsMode::MissingOnly => "missing-only",
-                                            ExhaustiveEffectDepsMode::ExtraOnly => "extra-only",
-                                            ExhaustiveEffectDepsMode::Off => unreachable!(),
-                                        };
+                                        let effect_report_mode =
+                                            effect_report_mode(cb.validate_effect);
                                         // Convert manual deps to ManualMemoDependency format
                                         let manual_memo_deps: Vec<ManualMemoDependency> =
                                             manual_dep_list
@@ -1014,12 +1028,8 @@ fn collect_dependencies(
                                         }),
                                     ) = (fn_deps, manual_deps)
                                     {
-                                        let effect_report_mode = match &cb.validate_effect {
-                                            ExhaustiveEffectDepsMode::All => "all",
-                                            ExhaustiveEffectDepsMode::MissingOnly => "missing-only",
-                                            ExhaustiveEffectDepsMode::ExtraOnly => "extra-only",
-                                            ExhaustiveEffectDepsMode::Off => unreachable!(),
-                                        };
+                                        let effect_report_mode =
+                                            effect_report_mode(cb.validate_effect);
                                         let manual_memo_deps: Vec<ManualMemoDependency> =
                                             manual_dep_list
                                                 .iter()
@@ -1086,10 +1096,7 @@ fn collect_dependencies(
                     visit_candidate_dependency(receiver, temporaries, &mut dependencies, &locals);
                     // Skip property — matches TS behavior
                     for arg in args {
-                        let place = match arg {
-                            PlaceOrSpread::Place(p) => p,
-                            PlaceOrSpread::Spread(s) => &s.place,
-                        };
+                        let place = arg.place();
                         visit_candidate_dependency(place, temporaries, &mut dependencies, &locals);
                     }
                 }
@@ -1594,6 +1601,35 @@ fn is_optional_dependency_inferred(
 // =============================================================================
 // Equality check for temporaries
 // =============================================================================
+
+/// Stands in for object identity in the TS `Set<InferredDependency>` of a phi.
+fn is_same_dependency(a: &InferredDependency, b: &InferredDependency) -> bool {
+    match (a, b) {
+        (
+            InferredDependency::Global { binding: ab },
+            InferredDependency::Global { binding: bb },
+        ) => ab.name() == bb.name(),
+        (
+            InferredDependency::Local {
+                identifier: a_id,
+                path: a_path,
+                context: a_context,
+                loc: a_loc,
+            },
+            InferredDependency::Local {
+                identifier: b_id,
+                path: b_path,
+                context: b_context,
+                loc: b_loc,
+            },
+        ) => a_id == b_id && a_context == b_context && a_loc == b_loc && a_path == b_path,
+        _ => false,
+    }
+}
+
+fn contains_same_dependency(deps: &[InferredDependency], dep: &InferredDependency) -> bool {
+    deps.iter().any(|d| is_same_dependency(d, dep))
+}
 
 fn is_equal_temporary(a: &InferredDependency, b: &InferredDependency) -> bool {
     match (a, b) {

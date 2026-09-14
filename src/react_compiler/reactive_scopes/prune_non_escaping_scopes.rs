@@ -24,7 +24,6 @@ use crate::hir::JsxTag;
 use crate::hir::ObjectPropertyOrSpread;
 use crate::hir::Pattern;
 use crate::hir::Place;
-use crate::hir::PlaceOrSpread;
 use crate::hir::ReactiveFunction;
 use crate::hir::ReactiveInstruction;
 use crate::hir::ReactiveScopeBlock;
@@ -50,7 +49,7 @@ use crate::reactive_scopes::visitors::visit_reactive_function;
 
 /// Prunes reactive scopes whose outputs don't escape.
 /// TS: `pruneNonEscapingScopes`
-pub fn prune_non_escaping_scopes(
+pub(crate) fn prune_non_escaping_scopes(
     func: &mut ReactiveFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {
@@ -58,10 +57,7 @@ pub fn prune_non_escaping_scopes(
     // and which values are returned.
     let mut state = CollectState::new();
     for param in &func.params {
-        let place = match param {
-            crate::hir::ParamPattern::Place(p) => p,
-            crate::hir::ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];
         state.declare(identifier.declaration_id);
     }
@@ -963,10 +959,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                     let no_alias = env.has_no_alias_signature(callee.identifier);
                     if !no_alias {
                         for arg in args {
-                            let place = match arg {
-                                PlaceOrSpread::Spread(spread) => &spread.place,
-                                PlaceOrSpread::Place(place) => place,
-                            };
+                            let place = arg.place();
                             let decl = env.identifiers[place.identifier.0 as usize].declaration_id;
                             state.escaping_values.insert(decl);
                         }
@@ -988,10 +981,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                     let no_alias = env.has_no_alias_signature(property.identifier);
                     if !no_alias {
                         for arg in args {
-                            let place = match arg {
-                                PlaceOrSpread::Spread(spread) => &spread.place,
-                                PlaceOrSpread::Place(place) => place,
-                            };
+                            let place = arg.place();
                             let decl = env.identifiers[place.identifier.0 as usize].declaration_id;
                             state.escaping_values.insert(decl);
                         }
@@ -1001,10 +991,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                     let type_id = env.identifiers[receiver.identifier.0 as usize].type_;
                     if is_array_type(&env.types[type_id.0 as usize]) {
                         for arg in args {
-                            let place = match arg {
-                                PlaceOrSpread::Spread(spread) => &spread.place,
-                                PlaceOrSpread::Place(place) => place,
-                            };
+                            let place = arg.place();
                             let decl = env.identifiers[place.identifier.0 as usize].declaration_id;
                             state.escaping_values.insert(decl);
                         }

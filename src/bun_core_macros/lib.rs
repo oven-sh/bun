@@ -212,12 +212,9 @@ pub fn comptime_string_set_impl(input: TokenStream) -> TokenStream {
 // #[derive(CellRefCounted)] / #[derive(ThreadSafeRefCounted)]
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Replaces the former `impl_cell_ref_counted` declarative macro and
-// the ~80 hand-written `ref_count: Cell<u32>` + `unsafe impl` pairs. The
-// derive locates the intrusive refcount field and emits the trait impl, the
-// `AnyRefCounted` bridge (so `RefPtr`/`ScopedRef` accept the type), and
-// inherent `ref_()`/`deref()` forwarders so existing call sites keep working
-// without importing the trait.
+// Locates the intrusive refcount field and emits the trait impl, the
+// `AnyRefCounted` bridge (so `RefPtr` accepts the type), and inherent
+// `ref_()`/`deref()` forwarders so call sites don't need the trait in scope.
 //
 // Field selection (first match wins):
 //   1. a field annotated `#[ref_count]`
@@ -342,7 +339,6 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
             #destroy_impl
         }
         impl #impl_g ::bun_ptr::AnyRefCounted for #name #ty_g #where_g {
-            type DestructorCtx = ();
             #[inline]
             unsafe fn rc_ref(this: *mut Self) {
                 // SAFETY: caller contract — `this` is live. Raw field
@@ -351,7 +347,7 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
                 rc.set(rc.get() + 1);
             }
             #[inline]
-            unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+            unsafe fn rc_deref(this: *mut Self) {
                 // SAFETY: caller contract — `this` is live.
                 unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
             }
@@ -359,19 +355,6 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
             unsafe fn rc_has_one_ref(this: *const Self) -> bool {
                 // SAFETY: caller contract — `this` is live. Raw field projection.
                 unsafe { &*::core::ptr::addr_of!((*this).#field) }.get() == 1
-            }
-            #[inline]
-            unsafe fn rc_assert_no_refs(this: *const Self) {
-                debug_assert_eq!(
-                    // SAFETY: caller contract — `this` is live. Raw field projection.
-                    unsafe { &*::core::ptr::addr_of!((*this).#field) }.get(),
-                    0,
-                );
-            }
-            #[cfg(debug_assertions)]
-            #[inline]
-            unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn ::bun_ptr::ref_count::DebugDataOps {
-                ::bun_ptr::ref_count::noop_debug_data()
             }
         }
         // Inherent forwarders so callers don't need the trait in scope.
@@ -391,88 +374,6 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
         }
     };
     expanded.into()
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// #[derive(Anchored)]
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Locates the (unique) field of type `LiveMarker` / `bun_ptr::LiveMarker` /
-// `bun_ptr::parent_ref::LiveMarker` (or one annotated `#[live_marker]`) and
-// emits the trivial `Anchored` impl. Expands to `::bun_ptr::…` paths so the
-// canonical spelling is `#[derive(bun_ptr::Anchored)]`.
-
-fn find_live_marker_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
-    let named = match fields {
-        Fields::Named(n) => &n.named,
-        _ => {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                "Anchored derive: only named-field structs are supported",
-            ));
-        }
-    };
-    // 1. explicit #[live_marker] attr
-    for f in named {
-        if f.attrs.iter().any(|a| a.path().is_ident("live_marker")) {
-            return Ok(f.ident.as_ref().unwrap());
-        }
-    }
-    // 2. field whose type's last path segment is `LiveMarker`
-    let mut found: Option<&syn::Ident> = None;
-    for f in named {
-        if let syn::Type::Path(tp) = &f.ty {
-            if tp
-                .path
-                .segments
-                .last()
-                .is_some_and(|s| s.ident == "LiveMarker")
-            {
-                if found.is_some() {
-                    return Err(syn::Error::new_spanned(
-                        &f.ty,
-                        "Anchored derive: multiple LiveMarker fields; annotate one with #[live_marker]",
-                    ));
-                }
-                found = Some(f.ident.as_ref().unwrap());
-            }
-        }
-    }
-    found.ok_or_else(|| {
-        syn::Error::new(
-            Span::call_site(),
-            "Anchored derive: no `LiveMarker` field found; add one or annotate with #[live_marker]",
-        )
-    })
-}
-
-/// `#[derive(Anchored)]` — see `bun_ptr::parent_ref` module docs.
-#[proc_macro_derive(Anchored, attributes(live_marker))]
-pub fn derive_anchored(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    let name = &input.ident;
-    let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
-
-    let fields = match &input.data {
-        Data::Struct(s) => &s.fields,
-        _ => {
-            return syn::Error::new_spanned(name, "Anchored: only structs are supported")
-                .to_compile_error()
-                .into();
-        }
-    };
-    let field = match find_live_marker_field(fields) {
-        Ok(f) => f,
-        Err(e) => return e.to_compile_error().into(),
-    };
-
-    quote! {
-        impl #impl_g ::bun_ptr::Anchored for #name #ty_g #where_g {
-            #[inline]
-            fn live_marker(&self) -> &::bun_ptr::LiveMarker { &self.#field }
-        }
-    }
-    .into()
 }
 
 /// `#[derive(ThreadSafeRefCounted)]` — locates the embedded
@@ -526,14 +427,13 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
             #destroy_impl
         }
         impl #impl_g ::bun_ptr::AnyRefCounted for #name #ty_g #where_g {
-            type DestructorCtx = ();
             #[inline]
             unsafe fn rc_ref(this: *mut Self) {
                 // SAFETY: caller contract — `this` points to a live Self.
                 unsafe { ::bun_ptr::ThreadSafeRefCount::<Self>::ref_(this) }
             }
             #[inline]
-            unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+            unsafe fn rc_deref(this: *mut Self) {
                 // SAFETY: caller contract — `this` points to a live Self.
                 unsafe { ::bun_ptr::ThreadSafeRefCount::<Self>::deref(this) }
             }
@@ -546,19 +446,11 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
                 }
             }
             #[inline]
-            unsafe fn rc_assert_no_refs(this: *const Self) {
+            unsafe fn rc_assert_valid(this: *const Self) {
                 // SAFETY: caller contract — `this` points to a live Self.
                 unsafe {
                     (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
-                        .assert_no_refs()
-                }
-            }
-            #[cfg(debug_assertions)]
-            #[inline]
-            unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn ::bun_ptr::ref_count::DebugDataOps {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
-                    (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this)).debug_data_ptr()
+                        .assert_valid()
                 }
             }
         }
@@ -570,9 +462,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 // #[derive(RefCounted)]  — intrusive single-thread `RefCount<Self>` mixin
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Third sibling of CellRefCounted / ThreadSafeRefCounted — replaces the ~17
-// hand-rolls that all spell out `type DestructorCtx = (); get_ref_count =
-// &raw mut (*this).ref_count; destructor = drop(heap::take(this))`.
+// Third sibling of CellRefCounted / ThreadSafeRefCounted.
 //
 // Struct-level attribute:
 //   #[ref_count(destroy = <path>)]      — `unsafe fn(*mut Self)`; default is
@@ -663,7 +553,6 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
 
     quote! {
         impl #impl_g ::bun_ptr::RefCounted for #name #ty_g #where_g {
-            type DestructorCtx = ();
             #debug_name_impl
             #[inline]
             unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
@@ -671,7 +560,7 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
                 unsafe { &raw mut (*this).#field }
             }
             #[inline]
-            unsafe fn destructor(this: *mut Self, _ctx: ()) {
+            unsafe fn destructor(this: *mut Self) {
                 #destructor_body
             }
         }

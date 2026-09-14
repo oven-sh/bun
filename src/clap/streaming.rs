@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::Output;
+use bun_core::strings;
 
 use crate as clap;
 use crate::args::ArgIter;
@@ -16,8 +17,8 @@ pub(crate) struct Arg<'p, 'a, Id> {
 
 #[derive(Copy, Clone)]
 pub struct Chaining<'a> {
-    pub arg: &'a [u8],
-    pub index: usize,
+    pub(crate) arg: &'a [u8],
+    pub(crate) index: usize,
 }
 
 pub enum State<'a> {
@@ -57,10 +58,11 @@ struct ArgInfo<'a> {
 /// callers use a locally-borrowed param table with process-lifetime argv.
 pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub params: &'p [clap::Param<Id>],
-    pub iter: &'p mut ArgIterator,
-    pub state: State<'a>,
-    pub positional: Option<&'p clap::Param<Id>>,
-    pub diagnostic: Option<&'p mut clap::Diagnostic>,
+    pub(crate) iter: &'p mut ArgIterator,
+    pub(crate) state: State<'a>,
+    pub(crate) positional: Option<&'p clap::Param<Id>>,
+    pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
+    pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
 }
 
 // ArgIterator is the
@@ -95,7 +97,7 @@ where
 
         match arg_info.kind {
             ArgKind::Long => {
-                let eql_index = arg.iter().position(|&b| b == b'=');
+                let eql_index = strings::index_of_char_usize(arg, b'=');
                 let name: &[u8] = if let Some(i) = eql_index {
                     &arg[0..i]
                 } else {
@@ -300,9 +302,20 @@ where
     }
 
     fn parse_next_arg(&mut self) -> Result<Option<ArgInfo<'a>>, ArgError> {
-        let Some(full_arg) = self.iter.next() else {
+        let Some(mut full_arg) = self.iter.next() else {
             return Ok(None);
         };
+        // Only flag-shaped tokens reach here (option values and `--` targets are pulled straight
+        // off `iter`); restrict rewrites so a mapping never touches `-`/`--` or a positional,
+        // per the contract on `ParseOptions::short_aliases`.
+        if full_arg.starts_with(b"-") && full_arg != b"-" && full_arg != b"--" {
+            for (from, to) in self.short_aliases {
+                if full_arg == *from {
+                    full_arg = to;
+                    break;
+                }
+            }
+        }
         if full_arg == b"--" || full_arg == b"-" {
             return Ok(Some(ArgInfo {
                 arg: full_arg,
@@ -354,6 +367,7 @@ mod tests {
             remain: args_strings,
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
+            short_aliases: &[],
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -386,6 +400,7 @@ mod tests {
             remain: args_strings,
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
+            short_aliases: &[],
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -416,10 +431,11 @@ mod tests {
                     } else {
                         &diag.arg
                     };
+                    let quoted = [b"'".as_slice(), captured, b"'"].concat();
+                    // Naive search: `cargo test -p bun_clap` does not link the
+                    // highway kernels behind `bun_core::strings::contains`.
                     assert!(
-                        expected.windows(captured.len() + 2).any(|w| w[0] == b'\''
-                            && w[w.len() - 1] == b'\''
-                            && &w[1..w.len() - 1] == captured),
+                        (0..expected.len()).any(|i| expected[i..].starts_with(&quoted)),
                         "expected message {:?} does not name captured arg {:?}",
                         bstr::BStr::new(expected),
                         bstr::BStr::new(captured),
@@ -437,23 +453,35 @@ mod tests {
         let params: [clap::Param<u8>; 4] = [
             clap::Param {
                 id: 0,
-                names: clap::Names::short(b'a'),
+                names: clap::Names {
+                    short: Some(b'a'),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 1,
-                names: clap::Names::short(b'b'),
+                names: clap::Names {
+                    short: Some(b'b'),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 2,
-                names: clap::Names::short(b'c'),
+                names: clap::Names {
+                    short: Some(b'c'),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::One,
                 ..Default::default()
             },
             clap::Param {
                 id: 3,
-                names: clap::Names::short(b'd'),
+                names: clap::Names {
+                    short: Some(b'd'),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::Many,
                 ..Default::default()
             },
@@ -531,23 +559,35 @@ mod tests {
         let params: [clap::Param<u8>; 4] = [
             clap::Param {
                 id: 0,
-                names: clap::Names::long(b"aa"),
+                names: clap::Names {
+                    long: Some(b"aa"),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 1,
-                names: clap::Names::long(b"bb"),
+                names: clap::Names {
+                    long: Some(b"bb"),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 2,
-                names: clap::Names::long(b"cc"),
+                names: clap::Names {
+                    long: Some(b"cc"),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::One,
                 ..Default::default()
             },
             clap::Param {
                 id: 3,
-                names: clap::Names::long(b"dd"),
+                names: clap::Names {
+                    long: Some(b"dd"),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::Many,
                 ..Default::default()
             },

@@ -1,0 +1,34 @@
+send_batch: requeue every packet in an unsent coalesced datagram
+
+`off` is `unsigned`, so when the first unsent spec in a batch is at
+index 0 and coalesces multiple packets, `&batch->packets[off - 1]`
+indexes with UINT_MAX and `end` lands far past the array. The
+`--packet_out > end` condition is then false after the first iteration
+and only the last packet of the coalesced group is returned to the
+connection; the earlier ones (typically the INIT ACK and the HSK
+CRYPTO carrying the client Finished) are silently dropped and never
+retransmitted, so the peer never completes the handshake.
+
+Rewriting the bounds as [off, off+count) avoids the underflow while
+preserving the reverse iteration order that send_ctl_sched_prepend
+relies on.
+
+--- a/src/liblsquic/lsquic_engine.c
++++ b/src/liblsquic/lsquic_engine.c
+@@ -2739,12 +2739,12 @@
+         off = batch->pack_off[i];
+         count = batch->outs[i].iovlen;
+         assert(count > 0);
+-        packet_out = &batch->packets[off + count - 1];
+-        end = &batch->packets[off - 1];
++        packet_out = &batch->packets[off + count];
++        end = &batch->packets[off];
+         do
+             batch->conns[i]->cn_if->ci_packet_not_sent(batch->conns[i],
+-                                                                *packet_out);
+-        while (--packet_out > end);
++                                                                *--packet_out);
++        while (packet_out > end);
+         if (!(batch->conns[i]->cn_flags & (LSCONN_COI_ACTIVE|LSCONN_EVANESCENT)))
+             coi_reactivate(sb_ctx->conns_iter, batch->conns[i]);
+     }

@@ -83,8 +83,6 @@ pub enum Error {
     HTTP3HandshakeFailed,
     #[error("HTTP3ProtocolError")]
     HTTP3ProtocolError,
-    #[error("Clear")]
-    Clear,
     #[error("HTTP3HeaderEncodingError")]
     HTTP3HeaderEncodingError,
     #[error("DNSResolutionFailed")]
@@ -95,6 +93,8 @@ pub enum Error {
     HTTP3ContentLengthMismatch,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
+    #[error("InvalidCRL")]
+    InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
     #[error(transparent)]
@@ -301,12 +301,12 @@ impl Error {
             Self::WantWrite => "WantWrite",
             Self::HTTP3HandshakeFailed => "HTTP3HandshakeFailed",
             Self::HTTP3ProtocolError => "HTTP3ProtocolError",
-            Self::Clear => "Clear",
             Self::HTTP3HeaderEncodingError => "HTTP3HeaderEncodingError",
             Self::DNSResolutionFailed => "DNSResolutionFailed",
             Self::HTTP3StreamReset => "HTTP3StreamReset",
             Self::HTTP3ContentLengthMismatch => "HTTP3ContentLengthMismatch",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
+            Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",

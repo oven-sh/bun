@@ -1,6 +1,6 @@
 import fs from "fs";
 import { join } from "path";
-import { isASAN, tmpdirSync } from "harness";
+import { isASAN, rss, tmpdirSync } from "harness";
 import { heapStats } from "bun:jsc";
 
 const tmpdir = tmpdirSync();
@@ -35,7 +35,7 @@ if (numAbortSignalObjects > 10) {
 // ASAN's quarantine retains freed allocations (default 256 MB) and shadow
 // memory raises the absolute RSS floor; widen the cap to avoid false positives.
 const limitMB = isASAN ? 700 : 200;
-const rss = (process.memoryUsage().rss / 1024 / 1024) | 0;
-if (rss > limitMB) {
-  throw new Error(`Memory leak detected: ${rss} MB, expected < ${limitMB} MB`);
+const rssMB = (rss() / 1024 / 1024) | 0;
+if (rssMB > limitMB) {
+  throw new Error(`Memory leak detected: ${rssMB} MB, expected < ${limitMB} MB`);
 }

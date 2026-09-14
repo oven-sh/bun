@@ -95,7 +95,7 @@ JSVerify* JSVerify::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobal
 
 JSC::Structure* JSVerify::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 template<typename CellType, JSC::SubspaceAccess mode>
@@ -103,12 +103,7 @@ JSC::GCClient::IsoSubspace* JSVerify::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<JSVerify, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSVerify.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSVerify = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSVerify.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSVerify = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSVerify, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSVerify, m_subspaceForJSVerify));
 }
 
 // JSVerifyPrototype implementation
@@ -121,8 +116,8 @@ JSVerifyPrototype::JSVerifyPrototype(JSC::VM& vm, JSC::Structure* structure)
 void JSVerifyPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSVerify::info(), JSVerifyPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSVerify::info(), JSVerifyPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSVerifyPrototype* JSVerifyPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
@@ -134,7 +129,7 @@ JSVerifyPrototype* JSVerifyPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* g
 
 JSC::Structure* JSVerifyPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 // JSVerifyConstructor implementation
@@ -159,7 +154,7 @@ JSVerifyConstructor* JSVerifyConstructor::create(JSC::VM& vm, JSC::Structure* st
 
 JSC::Structure* JSVerifyConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
 // Function stubs for implementation later
@@ -284,32 +279,28 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         return JSValue::encode(wrappedVerify);
     }
 
-    if (!data.isCell() || !JSC::isTypedArrayTypeIncludingDataView(data.asCell()->type())) {
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data);
+    if (!view) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
     }
 
-    // Handle ArrayBufferView input
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
-        size_t byteLength = view->byteLength();
-        if (byteLength > INT_MAX) {
-            throwRangeError(globalObject, scope, "data is too long"_s);
-            return {};
-        }
-
-        auto buffer = ncrypto::Buffer<const void> {
-            .data = view->vector(),
-            .len = byteLength,
-        };
-
-        if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
-            return {};
-        }
-
-        return JSValue::encode(wrappedVerify);
+    size_t byteLength = view->byteLength();
+    if (byteLength > INT_MAX) {
+        throwRangeError(globalObject, scope, "data is too long"_s);
+        return {};
     }
 
-    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
+    auto buffer = ncrypto::Buffer<const void> {
+        .data = view->vector(),
+        .len = byteLength,
+    };
+
+    if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
+        return {};
+    }
+
+    return JSValue::encode(wrappedVerify);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -492,6 +483,8 @@ std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexica
         .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
         .len = keySpan.size(),
     };
+
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     auto publicRes = ncrypto::EVPKeyPointer::TryParsePublicKey(publicConfig, ncryptoBuf);
     if (publicRes) {

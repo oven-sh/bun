@@ -15,11 +15,4 @@ impl ResultSetHeader {
         self.field_count = reader.encoded_len_int()?;
         Ok(())
     }
-
-    pub fn decode<Context: ReaderContext>(
-        &mut self,
-        context: Context,
-    ) -> Result<(), AnyMySQLError> {
-        self.decode_internal(NewReader { wrapped: context })
-    }
 }

@@ -140,13 +140,13 @@ console.log(`Extracted ${count} entries`);
 
 `extract()` creates the target directory if it doesn't exist and overwrites existing files. The returned count includes files, directories, and symlinks (on POSIX systems).
 
-**Note**: On Windows, Bun always skips symbolic links during extraction, regardless of privilege level. On Linux and macOS, symlinks are extracted normally.
+**Note**: On Windows, Bun always skips symbolic links during extraction, regardless of privilege level. On Linux and macOS, Bun extracts symlinks normally.
 
-**Security note**: Bun.Archive validates paths during extraction. It rejects absolute paths (POSIX `/`, Windows drive letters like `C:\` or `C:/`, and UNC paths like `\\server\share`) and unsafe symlink targets. Path traversal components (`..`) are normalized away to prevent directory escape attacks: `dir/sub/../file` becomes `dir/file`.
+**Security note**: Bun.Archive validates paths during extraction. It rejects absolute paths (POSIX `/`, Windows drive letters like `C:\` or `C:/`, and UNC paths like `\\server\share`) and unsafe symlink targets. It normalizes away path traversal components (`..`) to prevent directory escape attacks: `dir/sub/../file` becomes `dir/file`.
 
 ### Filtering Extracted Files
 
-Use glob patterns to extract only specific files. Patterns are matched against archive entry paths normalized to use forward slashes (`/`). Positive patterns specify what to include, and negative patterns (prefixed with `!`) specify what to exclude. When only negative patterns are provided, all entries that don't match them are included:
+Use glob patterns to extract only specific files. Bun matches patterns against archive entry paths normalized to use forward slashes (`/`). Positive patterns specify what to include, and negative patterns (prefixed with `!`) specify what to exclude. When you pass only negative patterns, Bun includes all entries that don't match them:
 
 ```ts
 const tarball = await Bun.file("package.tar.gz").bytes();
@@ -229,7 +229,7 @@ try {
 
 Common error scenarios:
 
-- **Corrupted/truncated archives** - `new Archive()` loads the archive data; errors may be deferred until read/extract operations
+- **Corrupted/truncated archives** - `new Bun.Archive()` loads the archive data; Bun may defer errors until read/extract operations
 - **Permission denied** - `extract()` throws if the target directory is not writable
 - **Disk full** - `extract()` throws if there's insufficient space
 - **Invalid paths** - Operations throw for malformed file paths
@@ -283,16 +283,16 @@ const jsonFiles = await archive.files("**/*.json");
 const codeFiles = await archive.files(["**/*.ts", "**/*.js"]);
 ```
 
-Supported glob patterns (subset of [Bun.Glob](/docs/api/glob) syntax):
+Supported glob patterns (subset of [Bun.Glob](/runtime/glob) syntax):
 
 - `*` - Match any characters except `/`
 - `**` - Match any characters including `/`
 - `?` - Match single character
 - `[abc]` - Match character set
 - `{a,b}` - Match alternatives
-- `!pattern` - Exclude files matching pattern (negation). When only negative patterns are provided, all files not matching them are included.
+- `!pattern` - Exclude files matching pattern (negation). When you pass only negative patterns, Bun includes all files not matching them.
 
-See [Bun.Glob](/docs/api/glob) for the full glob syntax including escaping and advanced patterns.
+See [Bun.Glob](/runtime/glob) for the full glob syntax including escaping and advanced patterns.
 
 ## Compression
 

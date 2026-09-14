@@ -1,7 +1,7 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
-use bun_core::{OwnedString, String as BunString};
 use bun_css::targets::{Browsers, Targets};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
 use crate::JsResult;
@@ -61,8 +61,8 @@ pub fn _test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 /// Shared arg-validation for the test-only CSS internals: pulls the next arg,
 /// throws "{fn_name}: expected {expected_n} arguments, got {got_n}" if absent,
 /// throws "{fn_name}: expected {arg_label} to be a string" if not a string,
-/// otherwise returns the +1-ref BunString wrapped in `OwnedString` for RAII deref.
-/// Caller does `.to_utf8()` (borrows the OwnedString, so can't be returned here).
+/// otherwise returns the +1-ref `bun_core::String`.
+/// Caller does `.to_utf8()` (borrows the bun_core::String, so can't be returned here).
 fn eat_string_arg(
     arguments: &mut bun_jsc::ArgumentsSlice<'_>,
     global: &JSGlobalObject,
@@ -70,7 +70,7 @@ fn eat_string_arg(
     expected_n: u32,
     got_n: u32,
     arg_label: &str,
-) -> JsResult<OwnedString> {
+) -> JsResult<bun_core::String> {
     let Some(arg) = arguments.next_eat() else {
         return Err(global.throw(format_args!(
             "{fn_name}: expected {expected_n} arguments, got {got_n}"
@@ -81,10 +81,10 @@ fn eat_string_arg(
             "{fn_name}: expected {arg_label} to be a string"
         )));
     }
-    Ok(OwnedString::new(arg.to_bun_string(global)?))
+    arg.to_bun_string(global)
 }
 
-pub(crate) fn testing_impl(
+fn testing_impl(
     global: &JSGlobalObject,
     frame: &CallFrame,
     test_kind: TestKind,
@@ -95,7 +95,7 @@ pub(crate) fn testing_impl(
         DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
         PrinterOptions, StyleSheet,
     };
-    use bun_jsc::{LogJsc as _, StringJsc as _};
+    use bun_jsc::LogJsc as _;
 
     let arena = Arena::new();
     // The CSS parser allocates into this bump arena; freed when it drops.
@@ -106,10 +106,9 @@ pub(crate) fn testing_impl(
     // out of it below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
-    let arguments_ = frame.arguments_old::<3>();
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
     // raw `*mut VirtualMachine` as a shared ref for the slice's lifetime.
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
     let source_bunstr = eat_string_arg(
         &mut arguments,
         global,
@@ -182,9 +181,8 @@ pub(crate) fn testing_impl(
             match stylesheet.minify(alloc, &minify_options, &extra) {
                 Ok(_) => {}
                 Err(err) => {
-                    return Err(
-                        global.throw_value(crate::error_jsc::to_error_instance(&err, global)?)
-                    );
+                    return Err(global
+                        .throw_value(global.create_error_instance(format_args!("{}", err.kind))));
                 }
             }
 
@@ -212,17 +210,16 @@ pub(crate) fn testing_impl(
             ) {
                 Ok(result) => result,
                 Err(err) => {
-                    return Err(
-                        global.throw_value(crate::error_jsc::to_error_instance(&err, global)?)
-                    );
+                    return Err(global
+                        .throw_value(global.create_error_instance(format_args!("{}", err.kind))));
                 }
             };
 
-            BunString::from_bytes(&result.code).to_js(global)
+            bun_string_jsc::create_utf8_for_js(global, &result.code)
         }
         Err(err) => {
             if log.has_errors() {
-                return log.to_js(global, "parsing failed:");
+                return log.to_js(global, format_args!("parsing failed:"));
             }
             Err(global.throw(format_args!("parsing failed: {}", err.kind)))
         }
@@ -239,8 +236,7 @@ fn parser_options_from_js(
         if val.is_array() {
             let mut iter = val.array_iterator(global)?;
             while let Some(item) = iter.next()? {
-                // `OwnedString` releases the +1 ref at the end of each iteration.
-                let bunstr = OwnedString::new(item.to_bun_string(global)?);
+                let bunstr = item.to_bun_string(global)?;
                 let str = bunstr.to_utf8();
                 if str.slice() == b"DEEP_SELECTOR_COMBINATOR" {
                     opts.flags |= bun_css::ParserFlags::DEEP_SELECTOR_COMBINATOR;
@@ -255,17 +251,6 @@ fn parser_options_from_js(
             return Err(global.throw(format_args!("flags must be an array")));
         }
     }
-
-    // if (try jsobj.getTruthy(globalThis, "css_modules")) |val| {
-    //     opts.css_modules = bun.css.css_modules.Config{
-    //
-    //     };
-    //     if (val.isObject()) {
-    //         if (try val.getTruthy(globalThis, "pure")) |pure_val| {
-    //             opts.css_modules.pure = pure_val.toBoolean();
-    //         }
-    //     }
-    // }
 
     Ok(())
 }
@@ -304,7 +289,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     use bun_css::{
         ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute,
     };
-    use bun_jsc::{LogJsc as _, StringJsc as _};
+    use bun_jsc::LogJsc as _;
 
     let arena = Arena::new();
     // StyleAttribute::parse allocates its
@@ -316,9 +301,8 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // `stylesheet` below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
-    let arguments_ = frame.arguments_old::<4>();
     // SAFETY: bunVM() never returns null for a Bun-owned global.
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
     let source_bunstr = eat_string_arg(&mut arguments, global, "attrTest", 3, 0, "source")?;
     let source = source_bunstr.to_utf8();
 
@@ -376,11 +360,11 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
                 }
             };
 
-            BunString::from_bytes(&result.code).to_js(global)
+            bun_string_jsc::create_utf8_for_js(global, &result.code)
         }
         Err(err) => {
             if log.has_any() {
-                return log.to_js(global, "parsing failed:");
+                return log.to_js(global, format_args!("parsing failed:"));
             }
             Err(global.throw(format_args!("parsing failed: {}", err.kind)))
         }

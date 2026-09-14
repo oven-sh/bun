@@ -6,15 +6,18 @@
 // (ASAN: heap-use-after-free in uws_res_has_responded).
 
 import net from "node:net";
+import { once } from "node:events";
 
 let resolveStarted!: () => void;
 let resumeProducer!: Promise<void>;
 let resolveOutcome!: (late: string) => void;
+let currentSignal!: AbortSignal;
 
 const server = Bun.serve({
   port: 0,
   development: false,
-  fetch: async () => {
+  fetch: async req => {
+    currentSignal = req.signal;
     throw new Error("boom");
   },
   error() {
@@ -23,11 +26,12 @@ const server = Bun.serve({
         async pull(c) {
           c.enqueue("EB");
           resolveStarted();
-          // Park until the driver releases us (after the client has RST'd on
-          // the abort path), then yield once more so uSockets' post-tick
-          // closed-socket sweep has run before the late controller touch.
+          // Park until the driver releases us. On the abort path the driver
+          // waits for req.signal to fire (server observed the RST) before
+          // releasing, so the sink is already detached by the time we resume;
+          // one more event-loop turn lets the detach microtask settle.
           await resumeProducer;
-          await Bun.sleep(1);
+          await Bun.sleep(0);
           try {
             c.enqueue("MORE");
             c.close();
@@ -70,17 +74,17 @@ const closedMsg = "Controller is already closed";
 const lateCloseResults: string[] = [];
 for (let i = 0; i < 3; i++) {
   const { started, releaseProducer, outcome } = armRequest();
-  await new Promise<void>((resolve, reject) => {
-    const s = net.connect(server.port, "127.0.0.1", () => {
-      s.write("GET /x HTTP/1.1\r\nHost: x\r\n\r\n");
-    });
-    s.once("data", () => {
-      s.resetAndDestroy();
-      resolve();
-    });
-    s.once("error", reject);
+  const s = net.connect(server.port, "127.0.0.1", () => {
+    s.write("GET /x HTTP/1.1\r\nHost: x\r\n\r\n");
   });
+  s.on("error", () => {});
+  await once(s, "data");
+  s.resetAndDestroy();
   await started;
+  // Releasing before the server has processed the RST would let the late
+  // enqueue land on a still-live sink (fixture flake: first iteration reports
+  // "ok"). req.signal's abort event is the server-side observation point.
+  if (!currentSignal.aborted) await once(currentSignal, "abort");
   releaseProducer();
   lateCloseResults.push(await outcome);
 }

@@ -9,12 +9,12 @@ use crate::{JsResult, Task};
 pub struct ManagedTask {
     // Opaque userdata pointer round-tripped through `new`/`run`; raw by design.
     pub ctx: Option<NonNull<c_void>>,
-    pub callback: fn(*mut c_void) -> JsResult<()>,
+    pub(crate) callback: fn(*mut c_void) -> JsResult<()>,
     pub cleanup: Option<fn(*mut c_void)>,
 }
 
 impl ManagedTask {
-    pub fn task(this: *mut ManagedTask) -> Task {
+    pub(crate) fn task(this: *mut ManagedTask) -> Task {
         // Per §Dispatch (tag+ptr), name the tag explicitly.
         Task::new(crate::task_tag::ManagedTask, this.cast())
     }
@@ -33,11 +33,16 @@ impl ManagedTask {
         callback(ctx.unwrap().as_ptr())
     }
 
-    pub fn cancel(&mut self) {
-        fn noop(_: *mut c_void) -> JsResult<()> {
-            Ok(())
+    /// Free without running: the owned context (if `new_owned`) is dropped.
+    ///
+    /// # Safety
+    /// As [`run`](Self::run); the task is not queued anywhere.
+    pub unsafe fn release(this: *mut ManagedTask) {
+        // SAFETY: fn contract.
+        let this = unsafe { bun_core::heap::take(this) };
+        if let (Some(cleanup), Some(ctx)) = (this.cleanup, this.ctx) {
+            cleanup(ctx.as_ptr());
         }
-        self.callback = noop;
     }
 
     // A per-(Type, Callback) trampoline is folded away by storing

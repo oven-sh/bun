@@ -42,7 +42,7 @@ impl Error {
         }
     }
 
-    pub fn into_core(self) -> bun_core::Error {
+    pub(crate) fn into_core(self) -> bun_core::Error {
         match self {
             Self::Alloc(a) => bun_core::Error::Alloc(a),
             Self::Core(e) => e,

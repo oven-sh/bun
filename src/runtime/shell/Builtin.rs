@@ -2,6 +2,7 @@
 //! `NodeId` of its owning Cmd and every method takes `&Interpreter`.
 
 use bun_collections::VecExt;
+use bun_jsc::PinnedArrayBuffer;
 use core::ffi::c_char;
 use std::sync::Arc;
 
@@ -17,21 +18,16 @@ use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::Yield;
 
 pub struct Builtin {
-    /// Owning Cmd node.
-    pub cmd: NodeId,
-    pub kind: Kind,
+    pub(crate) kind: Kind,
     /// argv[1..] as NUL-terminated strings (argv[0] is the builtin name).
     /// Points into the Cmd's `args` storage.
     pub args: Vec<*const c_char>,
-    pub stdin: BuiltinInput,
-    pub stdout: BuiltinIO,
-    pub stderr: BuiltinIO,
-    /// Set by `done()` and stashed by `write_failing_error` so the async
-    /// `on_io_writer_chunk` path can recover the intended exit code.
-    pub exit_code: Option<ExitCode>,
+    pub(crate) stdin: BuiltinInput,
+    pub(crate) stdout: BuiltinIO,
+    pub(crate) stderr: BuiltinIO,
     /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
-    pub err_buf: Vec<u8>,
-    pub impl_: Impl,
+    pub(crate) err_buf: Vec<u8>,
+    pub(crate) impl_: Impl,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -210,7 +206,7 @@ impl Kind {
 
     /// Maps argv[0] to a builtin kind, or `None` to fall through to
     /// subprocess spawn.
-    pub fn from_argv0(s: &[u8]) -> Option<Kind> {
+    pub(crate) fn from_argv0(s: &[u8]) -> Option<Kind> {
         let result = Self::from_argv0_raw(s)?;
         if cfg!(windows) || Self::force_enable_on_posix() {
             return Some(result);
@@ -224,7 +220,6 @@ impl Kind {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum IoKind {
-    Stdin,
     Stdout,
     Stderr,
 }
@@ -252,7 +247,7 @@ pub enum BuiltinIO {
     /// stderr aimed at stdout's buffer.
     Buf(IoKind),
     ArrayBuf {
-        buf: PinnedArrayBuf,
+        buf: PinnedArrayBuffer,
         i: u32,
     },
     Blob(Arc<BuiltinBlob>),
@@ -262,48 +257,15 @@ pub enum BuiltinIO {
 /// Input stream of a builtin.
 pub enum BuiltinInput {
     Fd(Arc<IOReader>),
-    /// Buffer not owned by the builtin. No producer wires this yet; reserved
-    /// for pipeline-from-builtin.
-    Buf(Vec<u8>),
-    ArrayBuf {
-        buf: PinnedArrayBuf,
-        i: u32,
-    },
+    ArrayBuf { buf: PinnedArrayBuffer, i: u32 },
     Blob(Arc<BuiltinBlob>),
     Ignore,
-}
-
-pub struct PinnedArrayBuf {
-    buf: crate::jsc::array_buffer::ArrayBufferStrong,
-    pinned: bool,
-}
-
-impl core::ops::Deref for PinnedArrayBuf {
-    type Target = crate::jsc::array_buffer::ArrayBufferStrong;
-
-    fn deref(&self) -> &Self::Target {
-        &self.buf
-    }
-}
-
-impl core::ops::DerefMut for PinnedArrayBuf {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.buf
-    }
-}
-
-impl Drop for PinnedArrayBuf {
-    fn drop(&mut self) {
-        if self.pinned {
-            self.buf.array_buffer.unpin();
-        }
-    }
 }
 
 /// Refcounted wrapper around a `webcore.Blob`. `Arc` provides the refcount;
 /// `Drop` runs `Blob::deinit`.
 pub struct BuiltinBlob {
-    pub blob: crate::webcore::Blob,
+    pub(crate) blob: crate::webcore::Blob,
 }
 // `BuiltinBlob` is auto-`Send + Sync`: its sole field is `webcore::Blob`,
 // which already asserts `Send + Sync`. No `unsafe impl` needed.
@@ -381,7 +343,7 @@ impl BuiltinIO {
                 unsafe {
                     let captured = match *target {
                         IoKind::Stdout => (*shell).buffered_stdout(),
-                        IoKind::Stderr | IoKind::Stdin => (*shell).buffered_stderr(),
+                        IoKind::Stderr => (*shell).buffered_stderr(),
                     };
                     (*captured).append_slice(buf)
                 };
@@ -392,7 +354,7 @@ impl BuiltinIO {
                 // computed at usize width and cannot overflow; only the
                 // stored cursor is u32.
                 let idx = *i as usize;
-                let total = arraybuf.array_buffer.byte_len as usize;
+                let total = arraybuf.byte_len;
                 if idx >= total {
                     return Err(bun_sys::Error::from_code(
                         bun_sys::E::ENOSPC,
@@ -452,15 +414,32 @@ impl BuiltinInput {
     }
 
     #[inline]
-    pub fn needs_io(&self) -> bool {
+    pub(crate) fn needs_io(&self) -> bool {
         matches!(self, BuiltinInput::Fd(_))
     }
 }
 
 impl Builtin {
     #[inline]
-    pub fn args_slice(&self) -> &[*const c_char] {
+    pub(crate) fn args_slice(&self) -> &[*const c_char] {
         &self.args
+    }
+
+    /// `PinnedArrayBuffer::drop`'s unpin would write to a `JSC::ArrayBuffer`
+    /// impl the heap sweep already deleted; see
+    /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
+    /// only.
+    #[cfg(not(windows))]
+    pub(crate) fn defuse_array_buf_pins(&mut self) {
+        if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
+            buf.defuse();
+        }
+        if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stdout {
+            buf.defuse();
+        }
+        if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stderr {
+            buf.defuse();
+        }
     }
 
     /// Borrow `argv[1..][idx]` as `&[u8]` (NUL excluded).
@@ -480,7 +459,7 @@ impl Builtin {
     /// argv storage is a separate heap allocation that is not freed or
     /// reallocated while the `Builtin` is live — not on `'a`.
     #[inline]
-    pub fn arg_bytes<'a>(&self, idx: usize) -> &'a [u8] {
+    pub(crate) fn arg_bytes<'a>(&self, idx: usize) -> &'a [u8] {
         let p: *const c_char = self.args[idx];
         // SAFETY: see doc comment — `p` is a valid NUL-terminated pointer
         // into the Cmd's argv storage, live for the Builtin's lifetime.
@@ -493,7 +472,7 @@ impl Builtin {
     /// that need to pass the argument to a `&ZStr`-taking syscall wrapper
     /// without re-copying.
     #[inline]
-    pub fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
+    pub(crate) fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
         let p: *const c_char = self.args[idx];
         // SAFETY: see `arg_bytes` — valid NUL-terminated argv pointer.
         bun_core::ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(p) })
@@ -504,7 +483,7 @@ impl Builtin {
     /// `None` (meaning: caller should now call `Builtin::start`). A
     /// `Some(yield)` return means setup wrote a failing error (or threw) and
     /// the caller should propagate that yield instead.
-    pub fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+    pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         use crate::shell::states::cmd::Exec;
 
         // Borrow argv[1..] as `*const c_char` into the Cmd's `args` storage.
@@ -528,13 +507,11 @@ impl Builtin {
         };
 
         interp.as_cmd_mut(cmd).exec = Exec::Builtin(Box::new(Builtin {
-            cmd,
             kind,
             args,
             stdin,
             stdout,
             stderr,
-            exit_code: None,
             err_buf: Vec::new(),
             impl_: Self::make_impl(kind),
         }));
@@ -577,9 +554,6 @@ impl Builtin {
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
                 let evtloop = interp.event_loop;
-
-                // Regular files are not pollable on linux/macos.
-                let is_pollable_default: bool = cfg!(windows);
 
                 let mut pollable = false;
                 let mut is_socket = false;
@@ -671,15 +645,13 @@ impl Builtin {
                     return None;
                 }
 
-                // The IOWriter receives the hardcoded platform const
-                // `is_pollable` (false on POSIX, true on Windows); the
-                // `pollable` out-param populated by `open_for_writing_impl`
-                // is intentionally ignored.
-                let _ = pollable;
+                // Honor the `pollable` computed by `open_for_writing_impl` on
+                // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
+                // takes the pollable path; Windows keeps the async writer.
                 let redirect_writer = IOWriter::init(
                     redirfd,
                     io_writer::Flags {
-                        pollable: is_pollable_default,
+                        pollable: if cfg!(windows) { true } else { pollable },
                         nonblock: is_nonblocking,
                         is_socket,
                         ..Default::default()
@@ -721,28 +693,33 @@ impl Builtin {
                 };
                 let jsval = interp.jsobjs[idx];
 
-                if let Some(buf) = jsval.as_array_buffer(global) {
-                    // Each slot gets its own Strong (sharing one would
-                    // double-free on Drop).
-                    let mk = || {
-                        let pinned = jsval.as_pinned_arraybuffer(global);
-                        PinnedArrayBuf {
-                            buf: crate::jsc::array_buffer::ArrayBufferStrong {
-                                array_buffer: pinned.unwrap_or(buf),
-                                held: crate::jsc::StrongOptional::create(buf.value, global),
-                            },
-                            pinned: pinned.is_some(),
+                if jsval.js_type().is_array_buffer_like() {
+                    // Each slot gets its own pin + GC root; `None` has thrown OOM.
+                    let root = || {
+                        let buf = PinnedArrayBuffer::root(global, jsval);
+                        if buf.is_none() {
+                            let _ = global.throw_out_of_memory();
                         }
+                        buf
                     };
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
-                        me.stdin = BuiltinInput::ArrayBuf { buf: mk(), i: 0 };
+                        let Some(buf) = root() else {
+                            return Some(Yield::failed());
+                        };
+                        me.stdin = BuiltinInput::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stdout() {
-                        me.stdout = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
+                        let Some(buf) = root() else {
+                            return Some(Yield::failed());
+                        };
+                        me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stderr() {
-                        me.stderr = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
+                        let Some(buf) = root() else {
+                            return Some(Yield::failed());
+                        };
+                        me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)
@@ -862,8 +839,7 @@ impl Builtin {
     }
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
-    pub fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
-        Self::of_mut(interp, cmd).exit_code = Some(exit_code);
+    pub(crate) fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
         // Output is written through immediately in `write_no_io`, so there
         // is nothing to flush here.
         Cmd::on_exec_done(interp, cmd, exit_code)
@@ -872,7 +848,7 @@ impl Builtin {
     /// Look up the Builtin inside a Cmd's `exec` slot.
     #[inline]
     #[track_caller]
-    pub fn of<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Builtin {
+    pub(crate) fn of<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Builtin {
         match &interp.as_cmd(cmd).exec {
             crate::shell::states::cmd::Exec::Builtin(b) => b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
@@ -881,7 +857,7 @@ impl Builtin {
 
     #[inline]
     #[track_caller]
-    pub fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
+    pub(crate) fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
         match &mut interp.as_cmd_mut(cmd).exec {
             crate::shell::states::cmd::Exec::Builtin(b) => b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
@@ -895,10 +871,9 @@ impl Builtin {
 
     /// Returns the bytes available on stdin when it is *not* an async fd
     /// (arraybuf / piped buf / blob).
-    pub fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
+    pub(crate) fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
         match &Self::of(interp, cmd).stdin {
             BuiltinInput::ArrayBuf { buf, .. } => buf.slice(),
-            BuiltinInput::Buf(b) => &b[..],
             BuiltinInput::Blob(b) => b.blob.shared_view(),
             BuiltinInput::Fd(_) | BuiltinInput::Ignore => b"",
         }
@@ -909,7 +884,7 @@ impl Builtin {
     ///
     /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
-    pub fn write_no_io(
+    pub(crate) fn write_no_io(
         interp: &Interpreter,
         cmd: NodeId,
         io_kind: IoKind,
@@ -928,7 +903,6 @@ impl Builtin {
         let out: &mut BuiltinIO = match io_kind {
             IoKind::Stdout => &mut me.stdout,
             IoKind::Stderr => &mut me.stderr,
-            IoKind::Stdin => return Ok(0),
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
         unsafe { out.write_no_io_to(shell, buf) }
@@ -943,35 +917,18 @@ impl Builtin {
         interp.as_cmd(cmd).base.shell()
     }
 
-    /// The owning `Cmd` state node.
-    #[inline]
-    pub fn parent_cmd<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Cmd {
-        interp.as_cmd(cmd)
-    }
-
-    #[inline]
-    pub fn parent_cmd_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Cmd {
-        interp.as_cmd_mut(cmd)
-    }
-
     /// Event loop handle (forwarded from the interpreter).
     #[inline]
-    pub fn event_loop(
+    pub(crate) fn event_loop(
         interp: &Interpreter,
         _cmd: NodeId,
     ) -> crate::shell::interpreter::EventLoopHandle {
         interp.event_loop
     }
 
-    /// The interpreter owns the throw path directly.
-    #[inline]
-    pub fn throw(interp: &Interpreter, _cmd: NodeId, err: crate::shell::ShellErr) {
-        interp.throw(err);
-    }
-
     /// Cwd fd of the owning Cmd's shell env.
     #[inline]
-    pub fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
+    pub(crate) fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
         Self::shell(interp, cmd).cwd_fd
     }
 
@@ -979,7 +936,7 @@ impl Builtin {
     ///
     /// Stored on the `Builtin` so the returned `&[u8]` borrow stays valid
     /// across the immediate `write_no_io` / `enqueue` call.
-    pub fn fmt_error_arena<'a>(
+    pub(crate) fn fmt_error_arena<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,
         kind: Option<Kind>,
@@ -998,7 +955,7 @@ impl Builtin {
 
     /// Error messages formatted to match bash. Dispatches on the variant;
     /// `Sys` recurses into the system-error formatter.
-    pub fn shell_err_to_string<'a>(
+    pub(crate) fn shell_err_to_string<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,
         kind: Kind,
@@ -1034,18 +991,6 @@ impl Builtin {
                 Some(kind),
                 format_args!("{}\n", bstr::BStr::new(s)),
             ),
-            ShellErr::InvalidArguments { val } => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("{}\n", bstr::BStr::new(val)),
-            ),
-            ShellErr::Todo(s) => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("{}\n", bstr::BStr::new(s)),
-            ),
         }
     }
 
@@ -1053,7 +998,7 @@ impl Builtin {
     /// `bun_sys::coreutils_error_map` so output matches GNU coreutils
     /// (e.g. `ENOENT` → "No such file or directory"); falls back to
     /// `"unknown error {errno}"` when unmapped.
-    pub fn task_error_to_string<'a>(
+    pub(crate) fn task_error_to_string<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,
         kind: Kind,
@@ -1090,7 +1035,7 @@ impl Builtin {
     /// (`illegal option` / usage / `unsupported option`), runs `set_wait_err`
     /// so the per-builtin state machine can move to its `WaitingWriteErr`
     /// variant, then writes the message to stderr and finishes with exit 1.
-    pub fn fail_parse(
+    pub(crate) fn fail_parse(
         interp: &Interpreter,
         cmd: NodeId,
         kind: Kind,
@@ -1124,17 +1069,12 @@ impl Builtin {
     /// Write `buf` to stderr (async if needed) then finish with `exit_code`.
     /// Shared helper for builtins whose only failure path is "print error and
     /// exit", so each builtin doesn't repeat the needs_io branch.
-    ///
-    /// Stashes `exit_code` on the `Builtin` so the async path
-    /// (`on_io_writer_chunk`) can finish with it; callers that need to mark a
-    /// per-builtin `state = WaitingWriteErr` must still do so before calling.
-    pub fn write_failing_error(
+    pub(crate) fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
         exit_code: crate::shell::ExitCode,
     ) -> Yield {
-        Self::of_mut(interp, cmd).exit_code = Some(exit_code);
         if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
             // Clone buf so the &mut on
@@ -1151,6 +1091,6 @@ impl Builtin {
 
 // Cleanup: every `Impl` variant owns its state via `Box`/`Vec`/`Arc`, and
 // `BuiltinIO`/`BuiltinInput` hold `Arc<IOWriter>` / `Arc<IOReader>` /
-// `ArrayBufferStrong` / `Arc<BuiltinBlob>` whose `Drop` already decrements
+// `PinnedArrayBuffer` / `Arc<BuiltinBlob>` whose `Drop` already decrements
 // the refcount. So cleanup is fully covered by `Drop` on `Box<Builtin>`
 // (called from `Cmd::deinit`). No explicit deinit needed.

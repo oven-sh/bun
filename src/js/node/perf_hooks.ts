@@ -1,6 +1,5 @@
 // Hardcoded module "node:perf_hooks"
 const {
-  throwNotImplemented,
   kNodeEntryTypes,
   NodeEntryObserver,
   enqueueNodeEntry,
@@ -103,7 +102,10 @@ class PerformanceNodeTiming {
     };
   }
 }
-$toClass(PerformanceNodeTiming, "PerformanceNodeTiming", PerformanceEntry);
+if (PerformanceEntry) {
+  Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
+  Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
+}
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
@@ -122,13 +124,7 @@ function eventLoopUtilization(_utilization1, _utilization2) {
   };
 }
 
-// PerformanceEntry is not a valid constructor, so we have to fake it.
-class PerformanceResourceTiming {
-  constructor() {
-    throwNotImplemented("PerformanceResourceTiming");
-  }
-}
-$toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
+const { PerformanceResourceTiming } = globalThis;
 
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
@@ -210,8 +206,6 @@ class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
     return super.disconnect();
   }
 }
-// Not $toClass: that resets the prototype object and would drop the
-// observe/disconnect overrides above. Only the public name needs fixing.
 Object.defineProperty(PerformanceObserverForNodeTypes, "name", {
   value: "PerformanceObserver",
   configurable: true,
@@ -276,59 +270,40 @@ function processTimerifyComplete(name, start, args, histogram) {
   }
 }
 
+const nodeTiming = createPerformanceNodeTiming();
+
+// Node augments the real `performance` object (not a forwarding shim), so
+// timerify/eventLoopUtilization/nodeTiming go on Performance.prototype,
+// non-enumerable, per lib/internal/perf/performance.js.
+if (Performance) {
+  Object.defineProperties(Performance.prototype, {
+    nodeTiming: {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: nodeTiming,
+    },
+    timerify: {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: timerify,
+    },
+    eventLoopUtilization: {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: eventLoopUtilization,
+    },
+  });
+}
+
 export default {
   timerify,
-  performance: {
-    mark(_) {
-      return performance.mark(...arguments);
-    },
-    measure(_) {
-      return performance.measure(...arguments);
-    },
-    clearMarks(_) {
-      return performance.clearMarks(...arguments);
-    },
-    clearMeasures(_) {
-      return performance.clearMeasures(...arguments);
-    },
-    getEntries(_) {
-      return performance.getEntries(...arguments);
-    },
-    getEntriesByName(_) {
-      return performance.getEntriesByName(...arguments);
-    },
-    getEntriesByType(_) {
-      return performance.getEntriesByType(...arguments);
-    },
-    setResourceTimingBufferSize(_) {
-      return performance.setResourceTimingBufferSize(...arguments);
-    },
-    timeOrigin: performance.timeOrigin,
-    toJSON(_) {
-      return performance.toJSON(...arguments);
-    },
-    onresourcetimingbufferfull: performance.onresourcetimingbufferfull,
-    nodeTiming: createPerformanceNodeTiming(),
-    now: () => performance.now(),
-    timerify,
-    eventLoopUtilization: eventLoopUtilization,
-    clearResourceTimings: function () {},
-  },
-  // performance: {
-  //   clearMarks: [Function: clearMarks],
-  //   clearMeasures: [Function: clearMeasures],
-  //   clearResourceTimings: [Function: clearResourceTimings],
-  //   getEntries: [Function: getEntries],
-  //   getEntriesByName: [Function: getEntriesByName],
-  //   getEntriesByType: [Function: getEntriesByType],
-  //   mark: [Function: mark],
-  //   measure: [Function: measure],
-  //   now: performance.now,
-  //   setResourceTimingBufferSize: [Function: setResourceTimingBufferSize],
-  //   timeOrigin: performance.timeOrigin,
-  //   toJSON: [Function: toJSON],
-  //   onresourcetimingbufferfull: [Getter/Setter]
-  // },
+  performance,
   constants,
   Performance,
   PerformanceEntry,

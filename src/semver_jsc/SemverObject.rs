@@ -17,20 +17,17 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // `to_slice()` owns its buffer and frees it on Drop.
-
-    let arguments = frame.arguments_old::<2>();
-    let arguments = arguments.slice();
+fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arguments = frame.arguments();
     if arguments.len() < 2 {
         return Err(global.throw(format_args!("Expected two arguments")));
     }
 
-    let left_string = arguments[0].to_js_string(global)?;
-    let right_string = arguments[1].to_js_string(global)?;
+    let left_view = arguments[0].to_js_string_view(global)?;
+    let right_view = arguments[1].to_js_string_view(global)?;
 
-    let left = left_string.to_slice(global);
-    let right = right_string.to_slice(global);
+    let left = left_view.to_utf8();
+    let right = right_view.to_utf8();
 
     if !strings::is_all_ascii(left.slice()) {
         return Ok(JSValue::js_number_from_int32(0));
@@ -69,18 +66,17 @@ pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<2>();
-    let arguments = arguments.slice();
+fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arguments = frame.arguments();
     if arguments.len() < 2 {
         return Err(global.throw(format_args!("Expected two arguments")));
     }
 
-    let left_string = arguments[0].to_js_string(global)?;
-    let right_string = arguments[1].to_js_string(global)?;
+    let left_view = arguments[0].to_js_string_view(global)?;
+    let right_view = arguments[1].to_js_string_view(global)?;
 
-    let left = left_string.to_slice(global);
-    let right = right_string.to_slice(global);
+    let left = left_view.to_utf8();
+    let right = right_view.to_utf8();
 
     if !strings::is_all_ascii(left.slice()) {
         return Ok(JSValue::FALSE);

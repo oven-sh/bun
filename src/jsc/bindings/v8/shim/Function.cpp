@@ -50,7 +50,13 @@ Function* Function::create(VM& vm, Structure* structure, FunctionTemplate* funct
 
 void Function::finishCreation(VM& vm, FunctionTemplate* functionTemplate)
 {
-    Base::finishCreation(vm, 0, "Function"_s);
+    WTF::String name = "Function"_s;
+    if (JSC::JSString* className = functionTemplate->className()) {
+        auto resolved = className->tryGetValue();
+        if (const WTF::String& value = resolved; !value.isNull())
+            name = value;
+    }
+    Base::finishCreation(vm, 0, name);
     m_functionTemplate.set(vm, this, functionTemplate);
 }
 

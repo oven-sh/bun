@@ -56,7 +56,27 @@ struct JsonWebKey {
     String qi;
     std::optional<Vector<RsaOtherPrimesInfo>> oth;
     String k;
+    // JWK "AKP" key type (ML-DSA / ML-KEM), RFC draft-ietf-cose-dilithium.
+    String pub;
+    String priv;
 };
+
+// Node's validateKeyOps rejects a repeated key_ops entry for every algorithm
+// before the operations/usages mismatch check.
+inline bool hasDuplicateJwkKeyOps(const std::optional<Vector<CryptoKeyUsage>>& keyOps)
+{
+    if (!keyOps)
+        return false;
+    CryptoKeyUsageBitmap seenOps = 0;
+    for (auto op : *keyOps) {
+        // The binding enum order matches the bitmap bit order.
+        CryptoKeyUsageBitmap bit = 1 << static_cast<int>(op);
+        if (seenOps & bit)
+            return true;
+        seenOps |= bit;
+    }
+    return false;
+}
 
 } // namespace WebCore
 

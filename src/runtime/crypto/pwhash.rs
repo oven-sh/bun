@@ -1,8 +1,8 @@
 //! Password hashing for `Bun.password` (argon2 / bcrypt). Neither algorithm is
 //! provided by BoringSSL, so this module implements the API surface that
 //! `PasswordObject` consumes (`str_hash` / `str_verify` / `Params` / `Mode` /
-//! `Encoding`) and routes to the pure-Rust `rust-argon2` and `bcrypt` crates
-//! from crates.io.
+//! `Encoding`) and routes to the pure-Rust `rust-argon2` (vendored, patched to
+//! verify legacy `m < 8` hashes) and `bcrypt` crates.
 //!
 //!   * argon2: PHC string format only (`str_hash` rejects `.crypt`), 32-byte
 //!     random salt, 32-byte tag, version 0x13.
@@ -34,11 +34,9 @@ pub enum Encoding {
     Crypt,
 }
 
-/// callers compare against `crate::Error::PasswordVerificationFailed` etc.
-pub type PwhashError = Error;
-
 pub mod argon2 {
     use super::{Encoding, Error};
+    use bun_core::strings;
 
     // The `rust-argon2` package exports its lib as crate name `argon2`; refer to
     // it via the absolute `::argon2` path so it doesn't collide with this module.
@@ -73,7 +71,7 @@ pub mod argon2 {
     #[derive(Copy, Clone)]
     pub struct Params {
         /// Time cost (iterations).
-        pub t: u32,
+        pub(crate) t: u32,
         /// Memory cost in KiB.
         pub m: u32,
         /// Parallelism degree.
@@ -82,14 +80,8 @@ pub mod argon2 {
 
     impl Params {
         /// Interactive argon2id preset: `t=2`, `m=67108864/1024` KiB.
-        pub const INTERACTIVE_2ID_T: u32 = 2;
-        pub const INTERACTIVE_2ID_M: u32 = 67_108_864 / 1024;
-
-        pub const INTERACTIVE_2ID: Params = Params {
-            t: Self::INTERACTIVE_2ID_T,
-            m: Self::INTERACTIVE_2ID_M,
-            p: 1,
-        };
+        pub(crate) const INTERACTIVE_2ID_T: u32 = 2;
+        pub(crate) const INTERACTIVE_2ID_M: u32 = 67_108_864 / 1024;
     }
 
     /// Options for `str_hash`.
@@ -187,22 +179,24 @@ pub mod argon2 {
         // rust-argon2's `verify_encoded` instead accepts `v=16` (computing
         // with Version10) and defaults a missing segment to Version10, so
         // pre-scan and normalise here before delegating.
+        // `encoded` is 7-bit ASCII (checked above), so every byte index below
+        // is a char boundary.
         let normalised: std::borrow::Cow<'_, str> = 'norm: {
             // Encoded shape is `$<alg>$[v=N$]m=..,t=..,p=..$<salt>$<hash>`.
             // Locate the segment immediately after the alg-id.
-            let Some(after_dollar) = encoded.strip_prefix('$') else {
+            let Some(after_dollar) = encoded.as_bytes().strip_prefix(b"$") else {
                 // Malformed; let rust-argon2 reject it.
                 break 'norm std::borrow::Cow::Borrowed(encoded);
             };
-            let Some(sep) = after_dollar.find('$') else {
+            let Some(sep) = strings::index_of_char_usize(after_dollar, b'$') else {
                 break 'norm std::borrow::Cow::Borrowed(encoded);
             };
             // Absolute index of the '$' terminating the alg-id.
             let alg_end = 1 + sep;
             let rest = &encoded[alg_end + 1..];
-            if let Some(v) = rest.strip_prefix("v=") {
-                let end = v.find('$').unwrap_or(v.len());
-                if &v[..end] != "19" {
+            if let Some(v) = rest.as_bytes().strip_prefix(b"v=") {
+                let end = strings::index_of_char_usize(v, b'$').unwrap_or(v.len());
+                if &v[..end] != b"19" {
                     return Err(crate::Error::InvalidEncoding);
                 }
                 std::borrow::Cow::Borrowed(encoded)
@@ -217,28 +211,35 @@ pub mod argon2 {
             }
         };
 
-        if let Some(after_dollar) = normalised.strip_prefix('$') {
-            if let Some(sep) = after_dollar.find('$') {
+        if let Some(after_dollar) = normalised.as_bytes().strip_prefix(b"$") {
+            if let Some(sep) = strings::index_of_char_usize(after_dollar, b'$') {
                 let mut rest = &after_dollar[sep + 1..];
-                if let Some(after_version) = rest.strip_prefix("v=") {
-                    rest = match after_version.find('$') {
+                if let Some(after_version) = rest.strip_prefix(b"v=") {
+                    rest = match strings::index_of_char_usize(after_version, b'$') {
                         Some(end) => &after_version[end + 1..],
-                        None => "",
+                        None => b"",
                     };
                 }
-                let params = &rest[..rest.find('$').unwrap_or(rest.len())];
-                for pair in params.split(',') {
-                    let Some((key, value)) = pair.split_once('=') else {
-                        continue;
-                    };
-                    let Ok(value) = value.parse::<u32>() else {
+                let params =
+                    &rest[..strings::index_of_char_usize(rest, b'$').unwrap_or(rest.len())];
+                for pair in strings::split(params, b",") {
+                    let Some((key, value)) = strings::split_once_char(pair, b'=') else {
                         continue;
                     };
                     let limit = match key {
-                        "m" => MAX_VERIFY_MEMORY_COST,
-                        "t" => MAX_VERIFY_TIME_COST,
-                        "p" => MAX_VERIFY_PARALLELISM,
+                        b"m" => MAX_VERIFY_MEMORY_COST,
+                        b"t" => MAX_VERIFY_TIME_COST,
+                        b"p" => MAX_VERIFY_PARALLELISM,
                         _ => continue,
+                    };
+                    // Same grammar as rust-argon2's `decode_u32` (`str::parse`,
+                    // which accepts a leading `+`); anything it can't parse the
+                    // decoder can't either, so fail closed rather than skip the cap.
+                    let Some(value) = core::str::from_utf8(value)
+                        .ok()
+                        .and_then(|v| v.parse::<u32>().ok())
+                    else {
+                        return Err(crate::Error::InvalidEncoding);
                     };
                     if value > limit {
                         return Err(crate::Error::WeakParameters);
@@ -259,11 +260,12 @@ pub mod argon2 {
 
 pub mod bcrypt {
     use super::{Encoding, Error};
+    use bun_core::strings;
 
     use ::bcrypt as vendor;
 
     /// Length of a modular-crypt bcrypt hash string.
-    pub(crate) const HASH_LENGTH: usize = 60;
+    const HASH_LENGTH: usize = 60;
     const SALT_LENGTH: usize = 16;
     const DK_LENGTH: usize = 23;
 
@@ -271,8 +273,8 @@ pub mod bcrypt {
     #[derive(Copy, Clone)]
     pub struct Params {
         /// log2 rounds (clamped 4..=31 by caller).
-        pub rounds_log: u8,
-        pub silently_truncate_password: bool,
+        pub(crate) rounds_log: u8,
+        pub(crate) silently_truncate_password: bool,
     }
 
     /// Options for `str_hash`.
@@ -393,46 +395,45 @@ pub mod bcrypt {
         let invalid = || crate::Error::InvalidEncoding;
 
         // alg_id
-        let rest = encoded.strip_prefix('$').ok_or_else(invalid)?;
-        let (alg_id, rest) = rest.split_once('$').ok_or_else(invalid)?;
-        if alg_id != "bcrypt" {
+        let rest = encoded.as_bytes().strip_prefix(b"$").ok_or_else(invalid)?;
+        let (alg_id, rest) = strings::split_once_char(rest, b'$').ok_or_else(invalid)?;
+        if alg_id != b"bcrypt" {
             return Err(crate::Error::PasswordVerificationFailed);
         }
 
         // r=N (rounds must fit in 6 bits; checked below)
-        let (params, rest) = rest.split_once('$').ok_or_else(invalid)?;
-        let rounds_str = params.strip_prefix("r=").ok_or_else(invalid)?;
-        let rounds_log: u8 = rounds_str.parse().map_err(|_| invalid())?;
+        let (params, rest) = strings::split_once_char(rest, b'$').ok_or_else(invalid)?;
+        let rounds_str = params.strip_prefix(b"r=").ok_or_else(invalid)?;
+        let rounds_log: u8 =
+            bun_core::fmt::parse_unsigned(rounds_str, 10).map_err(|_| invalid())?;
         if rounds_log > 63 {
             return Err(invalid());
         }
 
         // salt / hash — standard no-pad base64.
-        let (salt_b64, hash_b64) = rest.split_once('$').ok_or_else(invalid)?;
+        let (salt_b64, hash_b64) = strings::split_once_char(rest, b'$').ok_or_else(invalid)?;
         let decoder = &bun_base64::zig_base64::STANDARD_NO_PAD.decoder;
 
         let mut salt = [0u8; SALT_LENGTH];
         if decoder
-            .calc_size_for_slice(salt_b64.as_bytes())
+            .calc_size_for_slice(salt_b64)
             .map_err(|_| invalid())?
             != SALT_LENGTH
         {
             return Err(invalid());
         }
-        decoder
-            .decode(&mut salt, salt_b64.as_bytes())
-            .map_err(|_| invalid())?;
+        decoder.decode(&mut salt, salt_b64).map_err(|_| invalid())?;
 
         let mut expected = [0u8; DK_LENGTH];
         if decoder
-            .calc_size_for_slice(hash_b64.as_bytes())
+            .calc_size_for_slice(hash_b64)
             .map_err(|_| invalid())?
             != DK_LENGTH
         {
             return Err(invalid());
         }
         decoder
-            .decode(&mut expected, hash_b64.as_bytes())
+            .decode(&mut expected, hash_b64)
             .map_err(|_| invalid())?;
 
         // The crate's raw `bcrypt()` asserts `cost < 32`, so reject the

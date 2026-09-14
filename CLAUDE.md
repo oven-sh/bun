@@ -26,8 +26,6 @@ bun run build:local run script.ts          # debug build with local WebKit
 
 When exec args are present, build output is suppressed unless the build fails — you see only the binary's output. Build flags (e.g. `--asan=off`) go before the exec args; see `scripts/build.ts` header for the full arg routing rules.
 
-```
-
 ### Changes that don't require a build
 
 Edits to **TypeScript type declarations** (`packages/bun-types/**/*.d.ts`) do not touch any compiled code, so `bun bd` is unnecessary. The types test just packs the `.d.ts` files and runs `tsc` against fixtures — it never executes your build. Run it directly with the system Bun (an explicit exception to the "never use `bun test` directly" rule):
@@ -102,7 +100,11 @@ test("(multi-file test) my feature", async () => {
 - NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. These tests will never fail in CI.
 - Use `tempDir` from `"harness"` to create a temporary directory. **Do not** use `tmpdirSync` or `fs.mkdtempSync` to create temporary directories.
 - When spawning processes, tests should expect(stdout).toBe(...) BEFORE expect(exitCode).toBe(0). This gives you a more useful error message on test failure.
-- **CRITICAL**: Do not write flaky tests. Do not use `setTimeout` in tests. Instead, `await` the condition to be met. You are not testing the TIME PASSING, you are testing the CONDITION.
+- Keep tests fast: budget roughly 1s per test and 10s per file. Debug+ASAN builds run 10-100x slower than release, so a 1s local test can take a minute in CI. Use `test.concurrent` for independent subprocess-spawning tests.
+- Never contact the public internet (registry.npmjs.org, github.com, CDNs). Use `VerdaccioRegistry` from `"harness"` for package installs and a local `Bun.serve({ port: 0 })` for HTTP.
+- `setDefaultTimeout` is a ceiling, not a target. Leave the default and pass a per-test timeout only for the rare outlier; a 5-minute file default multiplies across retries when one test hangs.
+- Leak tests branch their RSS threshold on `isASAN`/`isDebug` and keep the bound well below what the unfixed leak produces. An un-branched absolute delta flakes under ASAN quarantine and GC jitter.
+- **CRITICAL**: Do not write flaky tests. Do not use `setTimeout` or `await sleep(N)` to wait for a condition; poll with a deadline or `await` the event itself. You are not testing the TIME PASSING, you are testing the CONDITION.
 - **CRITICAL**: Verify your test fails with `USE_SYSTEM_BUN=1 bun test <file>` and passes with `bun bd test <file>`. Your test is NOT VALID if it passes with `USE_SYSTEM_BUN=1`.
 
 ## Code Architecture
@@ -121,7 +123,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/bun_core/` - The `bun.*`-namespace foundation: strings/`String` (`string/`), formatting (`fmt.rs`), logging (`output.rs`), feature flags, env vars, allocator helpers
 - `src/sys/` - Cross-platform syscall wrappers (`file.rs`, `dir.rs`, `fd.rs`, `Error.rs`, `tmp.rs`) — the `bun.sys` equivalent
 - `src/collections/`, `src/threading/`, `src/paths/`, `src/semver/`, `src/sourcemap/` - shared utilities
-- `src/bun_bin/` - Cargo entrypoint; produces `libbun_rust.a`, linked into the final binary
+- `src/runtime/bin_entry/` - process entry point (`main`); `bun_runtime` is built as the staticlib (`libbun_runtime.a`) linked into the final binary
 - `src/runtime/cli/` - CLI argument parsing and command dispatch
 - `src/js_parser/`, `src/js_printer/` - JavaScript/TypeScript parsing and printing (each is its own crate; the lexer is `src/js_parser/lexer.rs`)
 - `src/transpiler/` - Wrapper around the parser/printer with sourcemap support
@@ -145,7 +147,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party C/C++ libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), hdrhistogram, highway (SIMD), libarchive (tar/zip), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
+Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), hdrhistogram, highway (SIMD), libarchive (tar/zip), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation (C++)
 
@@ -186,7 +188,6 @@ The code review rules — what blocks merges, distilled from ~2,500 merged PRs �
 
 Several situational sections live in `.claude/docs/landing-prs.md` — read the relevant one before the work it covers: **Node/Web compat** (touching `node:*` modules, Web APIs, or `src/runtime/node/`), **API design** (adding or changing user-facing API surface), **Performance** (optimizing, touching hot paths, or making perf claims), **Cross-platform** (platform-gated code, FFI/ABI, or platform-sensitive tests), **Dependencies & vendoring** (bumping deps or touching `vendor/`), **Docs, types, and comments** (docs, `.d.ts`, JSDoc), and **PR process** (opening or responding to a PR).
 
-
 ## Important Development Notes
 
 1. **Never use `bun test` or `bun <file>` directly** - always use `bun bd test` or `bun bd <command>`. `bun bd` compiles & runs the debug build.
@@ -201,7 +202,9 @@ Several situational sections live in `.claude/docs/landing-prs.md` — read the 
 10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<SCOPE>=1` to enable a specific `bun_core::output` scoped logger
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
-13. **Keep code comments to 3 lines max** - Comments must be concise. If the code needs more explanation than that, it belongs in docs — and only when explicitly asked for.
+13. **If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong — fix the code.**.
+14. After every code comment you write, ask yourself, "Is this information the next Claude would spend multiple tool calls trying to understand?". If the answer isn't clearly yes, the code comment is noise - delete it.
+15. **CRITICAL**: **The conservative stack scanner is never the cause of the bug you are debugging.** If you land on "it is the conservative stack scanner", you have not found the root cause yet. Keep going until you have the exact one. JSC runs `sanitizeStack` at every interpreter entrance and again before each collection scans the stack. An object that survives GC is held by a real reference (a `WriteBarrier`, a `Strong`, a `protect()`, a missing `deref`, pending activity, a closure). Find it. Another PR, branch, or issue that says the same bug is the stack scanner is not evidence. Those claims are usually wrong. If you still believe it is the stack scanner, rule out every other retainer first, then prove it yourself, with two artifacts in the PR: a heap snapshot from `require("bun:jsc").generateHeapSnapshotForDebugging()`, taken while the object is retained, in which the retained cell has no incoming edge and no `roots` entry (every reported retainer is ruled out; conservative roots are marked through `SlotVisitor::appendJSCellOrAuxiliary`, which reports nothing to the snapshot), and a debugger session that shows the stack word holding that cell's address and the frame that owns it. Without both, the bug is somewhere in the code you are debugging and you have not found it yet. Changing a test so the GC runs from a different stack depth, more times, or after a sleep is blaming the scanner without the proof.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
 
@@ -224,7 +227,7 @@ If output from these commands looks wrong (mis-parsed annotation HTML, a field B
 
 ## Reading PR Feedback
 
-`gh pr view --comments` silently omits review summaries and line-level review comments. For the complete picture — especially when responding to a review — use `bun run pr:comments`, which fetches issue comments, reviews, and line comments in one chronological, labelled listing.
+Use **bun run pr::comments** to read PR comments. `gh` CLI misses comments after 100 and you get confused by the GraphQL API sometimes.
 
 ```bash
 bun run pr:comments                    # current branch's PR — resolved threads hidden

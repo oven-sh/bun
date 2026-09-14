@@ -110,11 +110,6 @@ pub fn can_receive_data(state: State) -> bool {
     matches!(state, State::Open | State::HalfClosedLocal)
 }
 
-/// §6.1/§5.1: DATA may only be sent in `open` or `half-closed (remote)`.
-pub fn can_send_data(state: State) -> bool {
-    matches!(state, State::Open | State::HalfClosedRemote)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

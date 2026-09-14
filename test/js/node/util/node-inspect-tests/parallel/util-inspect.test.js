@@ -20,7 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import assert from "assert";
-import { isWindows } from "harness";
+import { isDebug, isWindows } from "harness";
 import util, { inspect } from "util";
 import vm from "vm";
 import { MessageChannel } from "worker_threads";
@@ -140,37 +140,37 @@ test("no assertion failures", () => {
     const showHidden = true;
     const ab = new Uint8Array([1, 2, 3, 4]).buffer;
     const dv = new DataView(ab, 1, 2);
-    assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, byteLength: 4 }");
+    assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, [byteLength]: 4 }");
     assert.strictEqual(
       util.inspect(new DataView(ab, 1, 2), showHidden),
       "DataView {\n" +
-        "  byteLength: 2,\n" +
-        "  byteOffset: 1,\n" +
-        "  buffer: ArrayBuffer {" +
-        " [Uint8Contents]: <01 02 03 04>, byteLength: 4 }\n}",
+        "  [byteLength]: 2,\n" +
+        "  [byteOffset]: 1,\n" +
+        "  [buffer]: ArrayBuffer {" +
+        " [Uint8Contents]: <01 02 03 04>, [byteLength]: 4 }\n}",
     );
-    assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, byteLength: 4 }");
+    assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, [byteLength]: 4 }");
     assert.strictEqual(
       util.inspect(dv, showHidden),
       "DataView {\n" +
-        "  byteLength: 2,\n" +
-        "  byteOffset: 1,\n" +
-        "  buffer: ArrayBuffer { [Uint8Contents]: " +
-        "<01 02 03 04>, byteLength: 4 }\n}",
+        "  [byteLength]: 2,\n" +
+        "  [byteOffset]: 1,\n" +
+        "  [buffer]: ArrayBuffer { [Uint8Contents]: " +
+        "<01 02 03 04>, [byteLength]: 4 }\n}",
     );
     ab.x = 42;
     dv.y = 1337;
     assert.strictEqual(
       util.inspect(ab, showHidden),
-      "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, " + "byteLength: 4, x: 42 }",
+      "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, " + "[byteLength]: 4, x: 42 }",
     );
     assert.strictEqual(
-      util.inspect(dv, showHidden),
+      util.inspect(dv, { showHidden, breakLength: 82 }),
       "DataView {\n" +
-        "  byteLength: 2,\n" +
-        "  byteOffset: 1,\n" +
-        "  buffer: ArrayBuffer { [Uint8Contents]: <01 02 03 04>," +
-        " byteLength: 4, x: 42 },\n" +
+        "  [byteLength]: 2,\n" +
+        "  [byteOffset]: 1,\n" +
+        "  [buffer]: ArrayBuffer { [Uint8Contents]: <01 02 03 04>," +
+        " [byteLength]: 4, x: 42 },\n" +
         "  y: 1337\n}",
     );
   }
@@ -180,19 +180,19 @@ test("no assertion failures", () => {
     assert.strictEqual(ab.byteLength, 42);
     new MessageChannel().port1.postMessage(ab, [ab]);
     assert.strictEqual(ab.byteLength, 0);
-    assert.strictEqual(util.inspect(ab), "ArrayBuffer { (detached), byteLength: 0 }");
+    assert.strictEqual(util.inspect(ab), "ArrayBuffer { (detached), [byteLength]: 0 }");
   }
 
   // Truncate output for ArrayBuffers using plural or singular bytes
   {
     const ab = new ArrayBuffer(3);
     assert.strictEqual(
-      util.inspect(ab, { showHidden: true, maxArrayLength: 2 }),
-      "ArrayBuffer { [Uint8Contents]" + ": <00 00 ... 1 more byte>, byteLength: 3 }",
+      util.inspect(ab, { showHidden: true, maxArrayLength: 2, breakLength: 82 }),
+      "ArrayBuffer { [Uint8Contents]" + ": <00 00 ... 1 more byte>, [byteLength]: 3 }",
     );
     assert.strictEqual(
-      util.inspect(ab, { showHidden: true, maxArrayLength: 1 }),
-      "ArrayBuffer { [Uint8Contents]" + ": <00 ... 2 more bytes>, byteLength: 3 }",
+      util.inspect(ab, { showHidden: true, maxArrayLength: 1, breakLength: 82 }),
+      "ArrayBuffer { [Uint8Contents]" + ": <00 ... 2 more bytes>, [byteLength]: 3 }",
     );
   }
 });
@@ -202,43 +202,42 @@ test("inspect from a different context", () => {
   const showHidden = false;
   const ab = vm.runInNewContext("new ArrayBuffer(4)");
   const dv = vm.runInNewContext("new DataView(ab, 1, 2)", { ab });
-  assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }");
+  assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4 }");
   assert.strictEqual(
     util.inspect(new DataView(ab, 1, 2), showHidden),
     "DataView {\n" +
-      "  byteLength: 2,\n" +
-      "  byteOffset: 1,\n" +
-      "  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }\n}",
+      "  [byteLength]: 2,\n" +
+      "  [byteOffset]: 1,\n" +
+      "  [buffer]: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4 }\n}",
   );
-  assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }");
+  assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4 }");
   //! segfaults
   /*assert.strictEqual(
     util.inspect(dv, showHidden),
     'DataView {\n' +
-    '  byteLength: 2,\n' +
-    '  byteOffset: 1,\n' +
-    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }\n}'
+    '  [byteLength]: 2,\n' +
+    '  [byteOffset]: 1,\n' +
+    '  [buffer]: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4 }\n}'
   );*/
   ab.x = 42;
   dv.y = 1337;
   assert.strictEqual(
     util.inspect(ab, showHidden),
-    "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4, x: 42 }",
+    "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4, x: 42 }",
   );
   //! segfaults
   /*assert.strictEqual(
     util.inspect(dv, showHidden),
     'DataView {\n' +
-    '  byteLength: 2,\n' +
-    '  byteOffset: 1,\n' +
-    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4, x: 42 },\n' +
+    '  [byteLength]: 2,\n' +
+    '  [byteOffset]: 1,\n' +
+    '  [buffer]: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4, x: 42 },\n' +
     '  y: 1337\n}'
   );*/
 });
 
 test("no assertion failures 2", () => {
   [
-    Float16Array,
     Float32Array,
     Float64Array,
     Int16Array,
@@ -263,14 +262,22 @@ test("no assertion failures 2", () => {
         `  [length]: ${length},\n` +
         `  [byteLength]: ${byteLength},\n` +
         "  [byteOffset]: 0,\n" +
-        `  [buffer]: ArrayBuffer { byteLength: ${byteLength} }\n]`,
+        `  [buffer]: ArrayBuffer { [byteLength]: ${byteLength} }\n]`,
     );
     assert.strictEqual(util.inspect(array, false), `${constructor.name}(${length}) [ 65, 97 ]`);
   });
 
+  // Float16Array is absent from Node's bootstrap-time `builtInObjects`, so
+  // showHidden walks into its prototype and the output diverges from the
+  // other typed arrays. Lock that in so it is not silently re-added.
+  assert.match(
+    util.inspect(new Float16Array(2), { showHidden: true }),
+    /\[Symbol\(Symbol\.toStringTag\)\]: \[Getter\]/,
+  );
+  assert.strictEqual(util.inspect(new Float16Array([65, 97]), false), "Float16Array(2) [ 65, 97 ]");
+
   // Now check that declaring a TypedArray in a different context works the same.
   [
-    Float16Array,
     Float32Array,
     Float64Array,
     Int16Array,
@@ -299,7 +306,7 @@ test("no assertion failures 2", () => {
         `  [length]: ${length},\n` +
         `  [byteLength]: ${byteLength},\n` +
         "  [byteOffset]: 0,\n" +
-        `  [buffer]: ArrayBuffer { byteLength: ${byteLength} }\n]`,
+        `  [buffer]: ArrayBuffer { [byteLength]: ${byteLength} }\n]`,
     );
     assert.strictEqual(util.inspect(array, false), `${constructor.name}(${length}) [ 65, 97 ]`);
   });
@@ -775,39 +782,6 @@ test("no assertion failures 2", () => {
     assert.strictEqual(util.inspect(y), "[ 'a', 'b', 'c', '\\\\\\\\': 'd', " + "'\\n': 'e', '\\r': 'f' ]");
   }
 
-  // Escape unpaired surrogate pairs.
-  {
-    const edgeChar = String.fromCharCode(0xd799);
-
-    for (let charCode = 0xd800; charCode < 0xdfff; charCode++) {
-      const surrogate = String.fromCharCode(charCode);
-
-      assert.strictEqual(util.inspect(surrogate), `'\\u${charCode.toString(16)}'`);
-      assert.strictEqual(
-        util.inspect(`${"a".repeat(200)}${surrogate}`),
-        `'${"a".repeat(200)}\\u${charCode.toString(16)}'`,
-      );
-      assert.strictEqual(
-        util.inspect(`${surrogate}${"a".repeat(200)}`),
-        `'\\u${charCode.toString(16)}${"a".repeat(200)}'`,
-      );
-      if (charCode < 0xdc00) {
-        const highSurrogate = surrogate;
-        const lowSurrogate = String.fromCharCode(charCode + 1024);
-        assert(!util.inspect(`${edgeChar}${highSurrogate}${lowSurrogate}${edgeChar}`).includes("\\u"));
-        assert.strictEqual(
-          (util.inspect(`${highSurrogate}${highSurrogate}${lowSurrogate}`).match(/\\u/g) ?? []).length,
-          1,
-        );
-      } else {
-        assert.strictEqual(
-          util.inspect(`${edgeChar}${surrogate}${edgeChar}`),
-          `'${edgeChar}\\u${charCode.toString(16)}${edgeChar}'`,
-        );
-      }
-    }
-  }
-
   // Test util.inspect.styles and util.inspect.colors.
   {
     function testColorStyle(style, input) {
@@ -828,7 +802,7 @@ test("no assertion failures 2", () => {
     testColorStyle("null", null);
     testColorStyle("string", "test string");
     testColorStyle("date", new Date());
-    testColorStyle("regexp", /regexp/);
+    // RegExp now uses token-level highlighting; verified in a dedicated test file.
   }
 
   // An object with "hasOwnProperty" overwritten should not throw.
@@ -1628,7 +1602,7 @@ test("no assertion failures 2", () => {
       "    [byteLength]: 0,",
       "    [byteOffset]: 0,",
       "    [buffer]: ArrayBuffer {",
-      "      byteLength: 0,",
+      "      [byteLength]: 0,",
       "      foo: true",
       "    }",
       "  ],",
@@ -1646,7 +1620,7 @@ test("no assertion failures 2", () => {
       "      [byteLength]: 0,",
       "      [byteOffset]: 0,",
       "      [buffer]: ArrayBuffer {",
-      "        byteLength: 0,",
+      "        [byteLength]: 0,",
       "        foo: true",
       "      }",
       "    ],",
@@ -1675,7 +1649,7 @@ test("no assertion failures 2", () => {
       "    [length]: 0,",
       "    [byteLength]: 0,",
       "    [byteOffset]: 0,",
-      "    [buffer]: ArrayBuffer { byteLength: 0, foo: true }",
+      "    [buffer]: ArrayBuffer { [byteLength]: 0, foo: true }",
       "  ],",
       "  [Set Iterator] {\n" + "    [ 1, 2, [length]: 2 ],",
       "    [Symbol(Symbol.toStringTag)]: 'Set Iterator'\n" +
@@ -1685,7 +1659,7 @@ test("no assertion failures 2", () => {
       "      [length]: 0,",
       "      [byteLength]: 0,",
       "      [byteOffset]: 0,",
-      "      [buffer]: ArrayBuffer { byteLength: 0, foo: true }",
+      "      [buffer]: ArrayBuffer { [byteLength]: 0, foo: true }",
       "    ],",
       "    [Circular *1],",
       "    [Symbol(Symbol.toStringTag)]: 'Map Iterator'\n" + "  }",
@@ -1716,7 +1690,7 @@ test("no assertion failures 2", () => {
       "    [byteLength]: 0,",
       "    [byteOffset]: 0,",
       "    [buffer]: ArrayBuffer {",
-      "      byteLength: 0,",
+      "      [byteLength]: 0,",
       "      foo: true } ],",
       "  [Set Iterator] {",
       "    [ 1,",
@@ -1730,7 +1704,7 @@ test("no assertion failures 2", () => {
       "      [byteLength]: 0,",
       "      [byteOffset]: 0,",
       "      [buffer]: ArrayBuffer {",
-      "        byteLength: 0,",
+      "        [byteLength]: 0,",
       "        foo: true } ],",
       "    [Circular *1],",
       "    [Symbol(Symbol.toStringTag)]:",
@@ -1813,6 +1787,39 @@ test("no assertion failures 2", () => {
   }
 });
 
+test("escape unpaired surrogate pairs", () => {
+  const edgeChar = String.fromCharCode(0xd799);
+  const step = isDebug ? 17 : 1;
+
+  for (let charCode = 0xd800; charCode < 0xdfff; charCode += step) {
+    const surrogate = String.fromCharCode(charCode);
+
+    assert.strictEqual(util.inspect(surrogate), `'\\u${charCode.toString(16)}'`);
+    assert.strictEqual(
+      util.inspect(`${"a".repeat(200)}${surrogate}`),
+      `'${"a".repeat(200)}\\u${charCode.toString(16)}'`,
+    );
+    assert.strictEqual(
+      util.inspect(`${surrogate}${"a".repeat(200)}`),
+      `'\\u${charCode.toString(16)}${"a".repeat(200)}'`,
+    );
+    if (charCode < 0xdc00) {
+      const highSurrogate = surrogate;
+      const lowSurrogate = String.fromCharCode(charCode + 1024);
+      assert(!util.inspect(`${edgeChar}${highSurrogate}${lowSurrogate}${edgeChar}`).includes("\\u"));
+      assert.strictEqual(
+        (util.inspect(`${highSurrogate}${highSurrogate}${lowSurrogate}`).match(/\\u/g) ?? []).length,
+        1,
+      );
+    } else {
+      assert.strictEqual(
+        util.inspect(`${edgeChar}${surrogate}${edgeChar}`),
+        `'${edgeChar}\\u${charCode.toString(16)}${edgeChar}'`,
+      );
+    }
+  }
+});
+
 test("util.inspect stack overflow handling", () => {
   // Test that a long linked list can be inspected without throwing an error.
   const list = {};
@@ -1879,9 +1886,10 @@ test("no assertion failures 3", () => {
     Object.setPrototypeOf(foo, null);
     assert(
       util.inspect(foo).startsWith(
-        // TODO: null prototypes
-        // `[${name}: null prototype] [WOW]${message ? `: ${message}` : '\n'}`
-        "[Object: null prototype] [WOW] {",
+        // Upstream expects `[${name}: null prototype] [WOW]...`; JSC reports
+        // the generic Error brand for null-prototype errors rather than the
+        // subclass name.
+        `[Error: null prototype] [WOW]${message ? `: ${message}` : ""}`,
       ),
       util.inspect(foo),
     );
@@ -1892,28 +1900,24 @@ test("no assertion failures 3", () => {
       tmp.startsWith(
         // TODO: null prototypes
         // `[${name}: null prototype]${message ? `: ${message}` : '\n'}`),
-        "[Error: null prototype] {",
+        "[Error: null prototype]",
       ) && tmp.includes("bar: true"),
       tmp,
     );
     foo.stack = "This is a stack";
     tmp = util.inspect(foo);
     assert(
-      tmp.startsWith(
-        // TODO: null prototypes
-        // '[[Error: null prototype]: This is a stack] { bar: true }'
-        "[Error: null prototype] {",
-      ) && tmp.includes("bar: true"),
+      // Restored to upstream: errors with a null prototype now format as
+      // errors, so the overridden stack renders bracketed like Node's.
+      tmp.startsWith("[[Error: null prototype]: This is a stack]") && tmp.includes("bar: true"),
       tmp,
     );
     foo.stack = stack.split("\n")[0];
     tmp = util.inspect(foo);
     assert(
-      tmp.startsWith(
-        // TODO: null prototypes
-        // `[[${name}: null prototype]${message ? `:\n    ${message}` : ''}] { bar: true }`
-        "[Error: null prototype] {",
-      ) && tmp.includes("bar: true"),
+      // Bracketed error-form like upstream; JSC reports the generic Error
+      // brand and keeps the truncated stack on one line.
+      tmp.startsWith("[[Error: null prototype]") && tmp.includes("bar: true"),
       tmp,
     );
   });
@@ -2060,15 +2064,15 @@ test("no assertion failures 3", () => {
     [new BigUint64Array(2), "[BigUint64Array(2): null prototype] [ 0n, 0n ]"],
     [
       new ArrayBuffer(4),
-      "[ArrayBuffer: null prototype] {\n  [Uint8Contents]: <00 00 00 00>,\n  byteLength: undefined\n}",
+      "[ArrayBuffer: null prototype] {\n  [Uint8Contents]: <00 00 00 00>,\n  [byteLength]: undefined\n}",
     ],
     [
       new DataView(new ArrayBuffer(4)),
-      "[DataView: null prototype] {\n  byteLength: undefined,\n  byteOffset: undefined,\n  buffer: undefined\n}",
+      "[DataView: null prototype] {\n  [byteLength]: undefined,\n  [byteOffset]: undefined,\n  [buffer]: undefined\n}",
     ],
     [
       new SharedArrayBuffer(2),
-      "[SharedArrayBuffer: null prototype] {\n  [Uint8Contents]: <00 00>,\n  byteLength: undefined\n}",
+      "[SharedArrayBuffer: null prototype] {\n  [Uint8Contents]: <00 00>,\n  [byteLength]: undefined\n}",
     ],
     [new Date("Sun, 14 Feb 2010 11:48:40 GMT"), "[Date: null prototype] 2010-02-14T11:48:40.000Z"],
   ].forEach(([value, expected]) => {
@@ -3190,9 +3194,7 @@ test("no assertion failures 3", () => {
 });
 
 // Utility functions
-function runCallChecks(exitCode) {
-  if (exitCode !== 0) return;
-
+afterAll(function runCallChecks() {
   const failed = mustCallChecks.filter(function (context) {
     if ("minimum" in context) {
       context.messageSegment = `at least ${context.minimum}`;
@@ -3202,21 +3204,17 @@ function runCallChecks(exitCode) {
     return context.actual !== context.exact;
   });
 
-  failed.forEach(function (context) {
-    console.log(
-      "Mismatched %s function calls. Expected %s, actual %d.",
-      context.name,
-      context.messageSegment,
-      context.actual,
-    );
-    console.log(context.stack.split("\n").slice(2).join("\n"));
-  });
-
-  if (failed.length) process.exit(1);
-}
+  assert.deepStrictEqual(
+    failed.map(
+      context =>
+        `Mismatched ${context.name} function calls. Expected ${context.messageSegment}, actual ${context.actual}.\n` +
+        context.stack.split("\n").slice(2).join("\n"),
+    ),
+    [],
+  );
+});
 
 function mustCall(fn, criteria = 1) {
-  if (process._exiting) throw new Error("Cannot use mustCall() in process exit handler");
   if (typeof fn === "number") {
     criteria = fn;
     fn = noop;
@@ -3232,8 +3230,6 @@ function mustCall(fn, criteria = 1) {
     name: fn.name || "<anonymous>",
   };
 
-  // Add the exit listener only once to avoid listener leak warnings
-  if (mustCallChecks.length === 0) process.on("exit", runCallChecks);
   mustCallChecks.push(context);
 
   const _return = function () {

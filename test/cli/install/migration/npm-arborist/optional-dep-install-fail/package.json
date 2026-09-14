@@ -1,0 +1,9 @@
+{
+  "name": "optional-dep-install-fail",
+  "version": "1.0.0",
+  "description": "an optional dependency that fails to install",
+  "license": "ISC",
+  "optionalDependencies": {
+    "@isaacs/testing-fail-install": "^1.0.0"
+  }
+}

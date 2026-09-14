@@ -5,7 +5,7 @@ use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
 use crate::parser::{
-    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind, LexicalDecl,
+    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, LexicalDecl,
     ParseStatementOptions, TypeParameterFlag,
 };
 use bun_ast as js_ast;
@@ -16,7 +16,7 @@ type Error = crate::Error;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// This assumes the "function" token has already been parsed
-    pub fn parse_fn_stmt(
+    pub(crate) fn parse_fn_stmt(
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
@@ -35,13 +35,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         match opts.lexical_decl {
             LexicalDecl::Forbid => {
-                p.forbid_lexical_decl(loc)?;
+                p.forbid_lexical_decl(loc);
             }
 
             // Allow certain function statements in certain single-statement contexts
             LexicalDecl::AllowFnInsideIf | LexicalDecl::AllowFnInsideLabel => {
                 if opts.is_typescript_declare || is_generator || is_async {
-                    p.forbid_lexical_decl(loc)?;
+                    p.forbid_lexical_decl(loc);
                 }
             }
             _ => {}
@@ -56,7 +56,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name_text = p.lexer.identifier;
             p.lexer.expect(T::TIdentifier)?;
             // Difference
-            let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text)?;
+            let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text);
             name = Some(js_ast::LocRef {
                 loc: name_loc,
                 ref_,
@@ -82,8 +82,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name,
             FnOrArrowDataParse {
                 needs_async_loc: loc,
-                async_range: async_range.unwrap_or(bun_ast::Range::NONE),
-                has_async_range: async_range.is_some(),
                 allow_await: if is_async {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -119,7 +117,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.pop_and_discard_scope(if_stmt_scope_index);
                 }
 
-                if opts.is_typescript_declare && opts.is_namespace_scope && opts.is_export {
+                if opts.is_typescript_declare && opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
@@ -162,15 +160,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Function { func }, loc))
     }
 
-    pub fn parse_fn(
+    pub(crate) fn parse_fn(
         &mut self,
         name: Option<js_ast::LocRef>,
         opts: FnOrArrowDataParse,
     ) -> Result<G::Fn, Error> {
         let p = self;
-        // if data.allowAwait and data.allowYield {
-        //     p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
-        // }
 
         let mut initial_flags = Flags::FunctionSet::empty();
         if opts.allow_await == AwaitOrYield::AllowExpr {
@@ -417,11 +412,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(func)
     }
 
-    pub fn parse_fn_expr(
+    pub(crate) fn parse_fn_expr(
         &mut self,
         loc: bun_ast::Loc,
         is_async: bool,
-        async_range: bun_ast::Range,
     ) -> Result<Expr, Error> {
         let p = self;
         p.lexer.next()?;
@@ -448,7 +442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ref_ = if !text.is_empty() && text != arguments_str {
                 p.declare_symbol(js_ast::symbol::Kind::HoistedFunction, name_loc, text)?
             } else {
-                p.new_symbol(js_ast::symbol::Kind::HoistedFunction, text)?
+                p.new_symbol(js_ast::symbol::Kind::HoistedFunction, text)
             };
             name = Some(js_ast::LocRef {
                 loc: name_loc,
@@ -467,7 +461,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name,
             FnOrArrowDataParse {
                 needs_async_loc: loc,
-                async_range,
                 allow_await: if is_async {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -483,13 +476,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
-        p.validate_function_name(&func, FunctionKind::Expr);
+        p.validate_function_name(&func);
         p.pop_scope();
 
         Ok(p.new_expr(E::Function { func }, loc))
     }
 
-    pub fn parse_fn_body(&mut self, data: &mut FnOrArrowDataParse) -> Result<G::FnBody, Error> {
+    pub(crate) fn parse_fn_body(
+        &mut self,
+        data: &mut FnOrArrowDataParse,
+    ) -> Result<G::FnBody, Error> {
         let p = self;
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         let old_allow_in = p.allow_in;
@@ -521,7 +517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_arrow_body(
+    pub(crate) fn parse_arrow_body(
         &mut self,
         args: &'a mut [G::Arg],
         data: &mut FnOrArrowDataParse,

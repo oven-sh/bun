@@ -3,7 +3,7 @@ use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_contain_keys(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_contain_keys(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.contain_matcher(global, frame, "toContainKeys", ExpectedArray::AfterValue, ContainMsgs::CONTAIN,
             |g, value, expected| {
                 let count = expected.get_length(g)?;

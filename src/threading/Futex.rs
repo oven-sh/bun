@@ -18,12 +18,6 @@ pub enum TimeoutError {
     Timeout,
 }
 
-impl From<TimeoutError> for crate::Error {
-    fn from(_: TimeoutError) -> Self {
-        crate::Error::Timeout
-    }
-}
-
 /// Checks if `ptr` still contains the value `expect` and, if so, blocks the caller until either:
 /// - The value at `ptr` is no longer equal to `expect`.
 /// - The caller is unblocked by a matching `wake()`.
@@ -61,6 +55,13 @@ pub fn wait_forever(ptr: &AtomicU32, expect: u32) {
 /// Unblocks at most `max_waiters` callers blocked in a `wait()` call on `ptr`.
 #[cold]
 pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
+    wake_raw(core::ptr::from_ref(ptr), max_waiters);
+}
+
+/// [`wake`] for a word the woken side may already have freed (`Mutex::unlock_raw`): every
+/// backend keys on the address and never reads the word, so at worst this wakes spuriously.
+#[cold]
+pub(crate) fn wake_raw(ptr: *const AtomicU32, max_waiters: u32) {
     // Avoid calling into the OS if there's nothing to wake up.
     if max_waiters == 0 {
         return;
@@ -112,7 +113,7 @@ mod unsupported_impl {
         unsupported()
     }
 
-    pub(super) fn wake(_ptr: &AtomicU32, _max_waiters: u32) {
+    pub(super) fn wake(_ptr: *const AtomicU32, _max_waiters: u32) {
         unsupported()
     }
 
@@ -168,11 +169,11 @@ mod windows_impl {
         }
     }
 
-    pub(super) fn wake(ptr: &AtomicU32, max_waiters: u32) {
-        let address: *const c_void = ptr.as_ptr().cast();
+    pub(super) fn wake(ptr: *const AtomicU32, max_waiters: u32) {
+        let address: *const c_void = ptr.cast();
         debug_assert!(max_waiters != 0);
 
-        // SAFETY: address points at a live AtomicU32.
+        // SAFETY: RtlWakeAddress* only key on `address`; it need not be live (`super::wake_raw`).
         unsafe {
             match max_waiters {
                 1 => windows::ntdll::RtlWakeAddressSingle(address),
@@ -267,7 +268,7 @@ mod darwin_impl {
         }
     }
 
-    pub(super) fn wake(ptr: &AtomicU32, max_waiters: u32) {
+    pub(super) fn wake(ptr: *const AtomicU32, max_waiters: u32) {
         let flags = c::UL {
             op: c::ULOp::COMPARE_AND_WAIT,
             no_errno: true,
@@ -276,8 +277,8 @@ mod darwin_impl {
         };
 
         loop {
-            let addr: *const c_void = ptr.as_ptr().cast();
-            // SAFETY: addr points at a live AtomicU32.
+            let addr: *const c_void = ptr.cast();
+            // SAFETY: __ulock_wake only keys on `addr`; it need not be live (`super::wake_raw`).
             let status = unsafe { c::__ulock_wake(flags, addr, 0) };
 
             if status >= 0 {
@@ -352,16 +353,17 @@ mod linux_impl {
         }
     }
 
-    pub(super) fn wake(ptr: &AtomicU32, max_waiters: u32) {
+    pub(super) fn wake(ptr: *const AtomicU32, max_waiters: u32) {
         use bun_sys::linux;
         let val: u32 = match i32::try_from(max_waiters) {
             Ok(v) => v as u32,
             Err(_) => i32::MAX as u32,
         };
-        // SAFETY: ptr.as_ptr() is a valid *const u32 for the duration of the call.
+        // SAFETY: a private FUTEX_WAKE only keys on the address (`get_futex_key`); it
+        // need not be live (see `super::wake_raw`).
         let rc = unsafe {
             linux::futex_3arg(
-                ptr.as_ptr().cast(),
+                ptr.cast(),
                 linux::FutexOp {
                     cmd: linux::FutexCmd::WAKE,
                     private: true,
@@ -373,7 +375,7 @@ mod linux_impl {
         match linux::E::init(rc) {
             linux::E::SUCCESS => {} // successful wake up
             linux::E::INVAL => {}   // invalid futex_wait() on ptr done elsewhere
-            linux::E::FAULT => panic!("futex_wake() returned EFAULT unexpectedly"), // pointer became invalid while doing the wake
+            linux::E::FAULT => {}   // word already freed (Miri reports this; see `super::wake_raw`)
             _ => panic!("Unexpected futex_wake() return code"),
         }
     }
@@ -433,15 +435,15 @@ mod freebsd_impl {
         }
     }
 
-    pub(super) fn wake(ptr: &AtomicU32, max_waiters: u32) {
+    pub(super) fn wake(ptr: *const AtomicU32, max_waiters: u32) {
         // The kernel reads n_wake as `int`; passing maxInt(u32) truncates to
         // -1 and umtxq_signal_queue's `++ret >= n_wake` returns after one
         // wakeup. _umtx_op(2): "Specify INT_MAX to wake up all waiters."
         let n: c_ulong = max_waiters.min(c_int::MAX as u32) as c_ulong;
-        // SAFETY: ptr.as_ptr() is valid for the duration of the call.
+        // SAFETY: a private WAKE only keys on the address; it need not be live (`super::wake_raw`).
         let rc = unsafe {
             libc::_umtx_op(
-                ptr.as_ptr().cast::<c_void>(),
+                ptr.cast::<c_void>().cast_mut(),
                 libc::UMTX_OP_WAKE_PRIVATE,
                 n,
                 core::ptr::null_mut(), // there is no timeout struct
@@ -486,14 +488,15 @@ mod wasm_impl {
         }
     }
 
-    pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
+    pub fn wake(ptr: *const AtomicU32, max_waiters: u32) {
         #[cfg(not(target_feature = "atomics"))]
         compile_error!("WASI target missing cpu feature 'atomics'");
 
         debug_assert!(max_waiters != 0);
-        // SAFETY: ptr.as_ptr() is a valid aligned *mut i32 (AtomicU32 has the same layout).
+        // SAFETY: memory.atomic.notify only keys on the aligned address, and linear memory is
+        // never unmapped (see `super::wake_raw`); AtomicU32 has the layout of i32.
         let woken_count = unsafe {
-            core::arch::wasm32::memory_atomic_notify(ptr.as_ptr().cast::<i32>(), max_waiters)
+            core::arch::wasm32::memory_atomic_notify(ptr.cast::<i32>().cast_mut(), max_waiters)
         };
         let _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled
     }

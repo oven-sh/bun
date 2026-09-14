@@ -9,7 +9,7 @@
 //!
 //! `build_options.rs` is written at configure time by
 //! `scripts/build/buildOptionsRs.ts` from the resolved `Config` (sha,
-//! version, baseline, …). This script does NOT run the generator — it just
+//! version, …). This script does NOT run the generator — it just
 //! resolves the path and tells cargo to track the file so a sha/version
 //! change recompiles `bun_core`. Mirrors `src/{jsc,runtime}/build.rs`.
 

@@ -209,12 +209,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSWebView, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSWebView.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSWebView = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSWebView.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSWebView = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSWebView, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSWebView, m_subspaceForJSWebView));
     }
 
 private:
@@ -229,6 +224,9 @@ JSC::JSValue toJS(JSC::JSGlobalObject*, WebCore::JSDOMGlobalObject*, WebViewEven
 
 void setupJSWebViewClassStructure(JSC::LazyClassStructure::Initializer&);
 
+// `bun test --isolate` retires `global`: the transports bound to it close their views and let their browser go.
+void retireWebViewsForTestIsolation(Zig::GlobalObject* global);
+
 // Shared weak owner for HostClient.viewsById and Transport.m_pending/
 // .m_sessions. Roots a view while m_pendingActivityCount > 0.
 JSC::WeakHandleOwner& webViewWeakOwner();
@@ -239,6 +237,12 @@ JSC::WeakHandleOwner& webViewWeakOwner();
 // slot is benign — one extra mark cycle). Shared by all backends.
 void settleSlot(JSC::JSGlobalObject*, JSWebView*,
     JSC::WriteBarrier<JSC::JSPromise>& slot, bool ok, JSC::JSValue);
+
+// settleSlot's reject path, marking the promise handled first: a caller that
+// awaits it still gets the error, but an unheld promise never reports an
+// unhandled rejection. For user-initiated close() teardown (#40991).
+void rejectSlotAsHandled(JSC::JSGlobalObject*, JSWebView*,
+    JSC::WriteBarrier<JSC::JSPromise>& slot, JSC::JSValue);
 
 // Implemented in JSWebViewPrototype.cpp / JSWebViewConstructor.cpp.
 // setupJSWebViewClassStructure calls these.

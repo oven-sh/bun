@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Helper to enable echo on a terminal (echo is disabled by default to avoid duplication)
 function enableEcho(terminal: Bun.Terminal) {
@@ -316,6 +318,72 @@ describe("Bun.Terminal", () => {
         afterSecondRestored: { first: true, second: false },
       });
     });
+
+    // setRawMode used to apply termios with TCSADRAIN on the PTY master.
+    // Draining waits on the slave's write lock, and a child blocked in
+    // write() on a full PTY holds that lock until the master's owner (the
+    // very JS thread calling setRawMode) reads the master, freezing the
+    // whole runtime.
+    test.skipIf(isWindows)(
+      "does not deadlock while the child is blocked writing to a full PTY",
+      async () => {
+        using dir = tempDir("terminal-setrawmode-deadlock", {});
+        const pidFile = join(String(dir), "child.pid");
+        // The child floods the PTY and blocks in write(). The sync spin keeps
+        // the event loop from reading the master, so the PTY buffer is still
+        // full (and the child still blocked) when setRawMode runs.
+        const script = `
+          const fs = require("node:fs");
+          const proc = Bun.spawn(["head", "-c", "200000", "/dev/zero"], {
+            terminal: { cols: 80, rows: 24, data() {} },
+          });
+          fs.writeFileSync(process.env.PID_FILE, String(proc.pid));
+          const t0 = Date.now();
+          while (Date.now() - t0 < 500) {}
+          proc.terminal.setRawMode(true);
+          console.log("RETURNED");
+          proc.kill("SIGKILL");
+          await proc.exited;
+          process.exit(0);
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, PID_FILE: pidFile },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        // Watchdog, not a wait-for-time: on a broken build the spawned bun
+        // never exits on its own, and SIGKILL alone cannot reap it (the
+        // kernel retries the blocked termios ioctl with the signal pending
+        // until the PTY child dies). Kill the child's process group first to
+        // release the ioctl so the process can actually die.
+        let setRawModeDeadlocked = false;
+        const watchdog = setTimeout(() => {
+          setRawModeDeadlocked = true;
+          try {
+            const childPid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+            if (childPid > 0) {
+              // The PTY child is a session leader (setsid), so its pid is its
+              // process group id: kill the whole group.
+              process.kill(-childPid, "SIGKILL");
+            }
+          } catch {}
+          proc.kill("SIGKILL");
+        }, 10_000);
+
+        const [stdout, stderr, exitCode] = await Promise.all([
+          proc.stdout.text(),
+          proc.stderr.text(),
+          proc.exited,
+        ]).finally(() => clearTimeout(watchdog));
+
+        expect(setRawModeDeadlocked).toBe(false);
+        expect(stdout).toBe("RETURNED\n");
+        expect(exitCode).toBe(0);
+      },
+      20_000,
+    );
   });
 
   describe("termios flags", () => {
@@ -697,6 +765,98 @@ describe("Bun.Terminal", () => {
       terminal.close();
 
       expect(drainCount).toBeGreaterThan(0);
+    });
+
+    // Input the child never read can never drain once the last slave fd is
+    // gone, because a Linux pty master answers EAGAIN instead of EPIPE. The
+    // writer used to wait for that drain forever, which kept the wrapper (and
+    // the callbacks it roots) alive with its three pty fds for the rest of the
+    // process, and kept its poll re-arming on a permanent POLLHUP. PTY EOF now
+    // ends the writer and closes the reader, so `exit` is the last callback,
+    // a later write() is dropped instead of queued, and the wrapper becomes
+    // collectable. The children alternate two queue shapes: complete lines
+    // (the line discipline stops accepting once its line buffer is full) and
+    // one unterminated line (the kernel keeps discarding it, so an unfixed
+    // build delivers late echo and a late `drain` after `exit`).
+    // Linux-only: macOS fails the same write with EIO, which the writer
+    // reports as an error and which closes the whole terminal, so the queue
+    // never gets stuck and a post-EOF write throws there instead. The code
+    // under test is shared.
+    test.skipIf(!isLinux)("terminal is released after the child exits with input it never read", async () => {
+      const childSrc = /* js */ `
+        const { readdirSync } = require("node:fs");
+        const openFds = () => readdirSync("/dev/fd").length;
+        const N = 4;
+        let collected = 0;
+        const registry = new FinalizationRegistry(() => collected++);
+        let exits = 0;
+        let callbacksAfterExit = 0;
+        const big = { lines: Buffer.alloc(65536, "echo\\n"), unterminated: Buffer.alloc(65536, "a") };
+
+        async function one(i) {
+          const { promise: ptyClosed, resolve } = Promise.withResolvers();
+          let exited = false;
+          let proc = Bun.spawn(["sh", "-c", "exit 0"], {
+            terminal: {
+              data() {
+                if (exited) callbacksAfterExit++;
+              },
+              exit() {
+                exited = true;
+                exits++;
+                resolve();
+              },
+              drain() {
+                if (exited) callbacksAfterExit++;
+              },
+            },
+          });
+          let terminal = proc.terminal;
+          registry.register(terminal, i);
+          const input = i % 2 === 0 ? big.lines : big.unterminated;
+          for (let j = 0; j < 32; j++) terminal.write(input);
+          const procExited = proc.exited;
+          proc = null;
+          await procExited;
+          await ptyClosed;
+          // After PTY EOF a write is accepted and dropped; it must not queue
+          // (and so re-root the wrapper) behind input that can never drain.
+          for (let j = 0; j < 32; j++) terminal.write(input);
+          terminal = null;
+        }
+
+        // Spawn once first so any fd the spawn machinery opens lazily and
+        // keeps is part of the baseline.
+        await Bun.spawn(["sh", "-c", "exit 0"], { stdio: ["ignore", "ignore", "ignore"] }).exited;
+        const fdsBefore = openFds();
+        for (let i = 0; i < N; i++) await one(i);
+
+        let sink;
+        function churn() {
+          for (let i = 0; i < 500; i++) sink = { i, a: new Array(32).fill(i) };
+        }
+        // Collection runs the finalizer, which hands the remaining pty fds to
+        // a close thread; poll both conditions rather than a delay.
+        let fdsAfter = openFds();
+        for (let i = 0; i < 50 && (collected < N || fdsAfter > fdsBefore); i++) {
+          churn();
+          Bun.gc(true);
+          await new Promise(r => setImmediate(r));
+          fdsAfter = openFds();
+        }
+        console.log(JSON.stringify({ exits, collected, callbacksAfterExit, leakedFds: Math.max(0, fdsAfter - fdsBefore) }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childSrc],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ exits: 4, collected: 4, callbacksAfterExit: 0, leakedFds: 0 });
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -1278,10 +1438,14 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   });
 
   // An inline terminal must not keep the event loop alive after its subprocess
-  // exits: on_process_exit drives the reader to EOF and unrefs both polls, so a
-  // script that never calls terminal.close() still exits. Regression for #33882
-  // which deferred the reader's EOF to a later poll tick. POSIX-only: Windows
-  // delivers EOF via close_pseudoconsole off-thread and was not affected.
+  // exits: on POSIX on_process_exit drives the reader to EOF and unrefs both
+  // polls (drain_and_close_slave_fd); on Windows it unrefs only the writer
+  // (unref_after_inline_child_exit) and the reader stays ref'd until conhost
+  // self-exits and delivers EOF, so a script that never calls terminal.close()
+  // still exits. Regression for #33882 which deferred the reader's EOF to a
+  // later poll tick. POSIX-only assertions: on Windows EOF arrives
+  // asynchronously once conhost self-exits, so the exit callback may not have
+  // fired by the time child.exited resolves.
   test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1321,6 +1485,66 @@ describe.concurrent("Bun.spawn with terminal option", () => {
       stderr: expect.any(String),
       exitCode: 0,
     });
+  });
+
+  // On Windows, Subprocess::on_process_exit used to fire ClosePseudoConsole
+  // immediately; that routes teardown through conhost's PtySignalInputThread,
+  // which on Server 2019 races the ConsoleIoThread still processing the
+  // child's last WriteConsole and can drop the final render. The inline
+  // pseudoconsole now releases its ConDrv \Reference handle at spawn time so
+  // conhost exits via its IoThread (sequentially after the last write) and the
+  // reader sees every byte before EOF.
+  test("inline terminal: fast-exiting child's output is delivered before exit callback", async () => {
+    let output = "";
+    let outputAtExit = "";
+    const eof = Promise.withResolvers<void>();
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('LAST-FRAME', () => process.exit(0))"],
+      env: bunEnv,
+      terminal: {
+        data(_t, chunk) {
+          output += Buffer.from(chunk).toString();
+        },
+        exit() {
+          outputAtExit = output;
+          eof.resolve();
+        },
+      },
+    });
+    try {
+      await proc.exited;
+      await eof.promise;
+      // The exit callback fires on reader EOF: on Windows that is conhost closing
+      // the output pipe from its IoThread; on POSIX it is drain_and_close_slave_fd.
+      expect(outputAtExit).toContain("LAST-FRAME");
+      // After EOF conhost has exited; resize() must keep its no-throw contract
+      // (ResizePseudoConsole would fail on the broken signal pipe).
+      expect(() => proc.terminal!.resize(100, 40)).not.toThrow();
+    } finally {
+      proc.terminal?.close();
+    }
+  });
+
+  // Cross-platform loop-exit check: after an inline terminal's child exits,
+  // nothing else in the inner script refs the event loop. POSIX drains to EOF
+  // synchronously; on Windows the reader stays ref'd only until conhost
+  // self-exits and delivers EOF. Either way the inner process must not hang.
+  test("process exits after inline-terminal child exits without terminal.close()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `await Bun.spawn([process.execPath, "-e", "process.stdout.write('ok')"], {
+           env: process.env,
+           terminal: { data() {}, exit() {} },
+         }).exited;`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
   });
 
   // https://github.com/oven-sh/bun/issues/33187

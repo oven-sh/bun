@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, DirectoryTree, isDebug, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, DirectoryTree, isDebug, tempDir, tempDirWithFiles } from "harness";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -940,7 +940,7 @@ test("write snapshot from filter", async () => {
       expect(() => {throw new Error("${m}!")}).toThrowErrorMatchingInlineSnapshot(${a ? '`"' + m + '!"`' : ""});
     })
   `;
-  const dir = tempDirWithFiles("writesnapshotfromfilter", {
+  await using dir = tempDir("writesnapshotfromfilter", {
     "mytests": {
       "snap.test.ts": sver("a", false),
       "snap2.test.ts": sver("b", false),

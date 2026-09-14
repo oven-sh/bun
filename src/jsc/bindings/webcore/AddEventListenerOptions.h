@@ -43,6 +43,11 @@ struct AddEventListenerOptions : EventListenerOptions {
     std::optional<bool> passive;
     bool once { false };
     RefPtr<AbortSignal> signal;
+
+    // Not part of the DOM standard. Set through a private symbol by Bun's internal
+    // modules, mirroring Node.js's kResistStopPropagation: a listener registered
+    // with it still runs after another listener called stopImmediatePropagation().
+    bool resistStopPropagation { false };
 };
 
 } // namespace WebCore

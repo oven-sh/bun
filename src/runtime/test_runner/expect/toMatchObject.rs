@@ -10,8 +10,7 @@ pub(crate) fn to_match_object(
 ) -> JsResult<JSValue> {
     let (this, received_object, not) =
         this.matcher_prelude(global, frame.this(), "toMatchObject", "<green>expected<r>")?;
-    let args_buf = frame.arguments_old::<1>();
-    let args = args_buf.slice();
+    let args = frame.arguments();
 
     if !received_object.is_object() {
         let signature: &str = get_signature("toMatchObject", "<green>expected<r>", not);
@@ -41,14 +40,7 @@ pub(crate) fn to_match_object(
     }
 
     // handle failure
-    let diff_formatter = DiffFormatter {
-        received_string: None,
-        expected_string: None,
-        received: Some(received_object),
-        expected: Some(property_matchers),
-        global_this: Some(global),
-        not,
-    };
+    let diff_formatter = DiffFormatter::new(global, received_object, property_matchers, not)?;
 
     if not {
         let signature: &str = get_signature("toMatchObject", "<green>expected<r>", true);

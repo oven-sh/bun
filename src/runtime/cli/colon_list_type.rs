@@ -22,7 +22,7 @@ pub(crate) struct ColonListType<T: ColonListValue> {
 }
 
 impl<T: ColonListValue> ColonListType<T> {
-    pub(crate) fn init(count: usize) -> Self {
+    fn init(count: usize) -> Self {
         // `Vec::with_capacity` + `push`, which is infallible here.
         let keys = Vec::with_capacity(count);
         let values = Vec::with_capacity(count);
@@ -30,7 +30,7 @@ impl<T: ColonListValue> ColonListType<T> {
         ColonListType { keys, values }
     }
 
-    pub(crate) fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
+    fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
         for str in input.iter() {
             // Support either ":" or "=" as the separator, preferring whichever is first.
             // ":" is less confusing IMO because that syntax is used with flags

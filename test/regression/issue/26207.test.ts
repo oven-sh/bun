@@ -4,10 +4,10 @@
 
 import { expect, test } from "bun:test";
 import { chmodSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("bun run --workspaces creates node symlink when NODE env points to non-existent path", async () => {
-  const dir = tempDirWithFiles("workspaces-node-fallback", {
+  await using dir = tempDir("workspaces-node-fallback", {
     "package.json": JSON.stringify({
       name: "root",
       workspaces: ["packages/*"],
@@ -43,7 +43,7 @@ test("bun run --workspaces creates node symlink when NODE env points to non-exis
 });
 
 test("bun run --filter creates node symlink when NODE env points to non-existent path", async () => {
-  const dir = tempDirWithFiles("filter-node-fallback", {
+  await using dir = tempDir("filter-node-fallback", {
     "package.json": JSON.stringify({
       name: "root",
       workspaces: ["packages/*"],
@@ -80,7 +80,7 @@ test("bun run --filter creates node symlink when NODE env points to non-existent
 
 // Skip on Windows: shebang scripts (#!/usr/bin/env node) are Unix-specific
 test.skipIf(isWindows)("bun run --workspaces runs scripts that have #!/usr/bin/env node shebang", async () => {
-  const dir = tempDirWithFiles("workspaces-shebang", {
+  await using dir = tempDir("workspaces-shebang", {
     "package.json": JSON.stringify({
       name: "root",
       workspaces: ["packages/*"],

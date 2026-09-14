@@ -29,7 +29,7 @@ type IdentifierKinds = IdMap<IdentifierId, (Place, VarRefKind)>;
 /// Validates that context variable lvalues are used consistently.
 ///
 /// Port of ValidateContextVariableLValues.ts
-pub fn validate_context_variable_lvalues(
+pub(crate) fn validate_context_variable_lvalues(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
@@ -44,7 +44,7 @@ pub fn validate_context_variable_lvalues(
 /// Like [`validate_context_variable_lvalues`], but writes diagnostics into the
 /// provided `errors` instead of `env.errors`. Useful when the caller wants to
 /// discard the diagnostics (e.g. when lowering is incomplete).
-pub fn validate_context_variable_lvalues_with_errors(
+pub(crate) fn validate_context_variable_lvalues_with_errors(
     func: &HirFunction,
     functions: &[HirFunction],
     identifiers: &[Identifier],

@@ -346,7 +346,7 @@ new HTMLRewriter()
       console.log(element.getAttribute("src"));
     },
   })
-  .transform(new Blob(['<script src="/main.js"></script>']));
+  .transform(new Response('<script src="/main.js"></script>'));
 
 Buffer.from("foo").equals(Buffer.from("bar"));
 

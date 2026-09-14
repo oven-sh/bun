@@ -67,7 +67,7 @@ template<> CryptoAlgorithmX25519Params convertDictionary<CryptoAlgorithmX25519Pa
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "publicKey"_s, "X25519Params"_s, "CryptoKey"_s);
         return {};
     }
-    auto publicKeyConversionResult = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, publicKeyValue);
+    auto publicKeyConversionResult = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, publicKeyValue, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwDictionaryMemberTypeError(lexicalGlobalObject, scope, "publicKey"_s, "X25519Params"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     result.publicKey = publicKeyConversionResult;
     return result;

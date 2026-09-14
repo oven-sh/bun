@@ -55,11 +55,6 @@ ClearErrorOnReturn::~ClearErrorOnReturn()
     ERR_clear_error();
 }
 
-int ClearErrorOnReturn::peekError()
-{
-    return ERR_peek_error();
-}
-
 MarkPopErrorOnReturn::MarkPopErrorOnReturn(CryptoErrorList* errors)
     : errors_(errors)
 {
@@ -92,24 +87,11 @@ void CryptoErrorList::capture()
     }
 }
 
-void CryptoErrorList::add(WTF::String error)
-{
-    errors_.push_back(error);
-}
-
 std::optional<WTF::String> CryptoErrorList::pop_back()
 {
     if (errors_.empty()) return std::nullopt;
     WTF::String error = errors_.back();
     errors_.pop_back();
-    return error;
-}
-
-std::optional<WTF::String> CryptoErrorList::pop_front()
-{
-    if (errors_.empty()) return std::nullopt;
-    WTF::String error = errors_.front();
-    errors_.pop_front();
     return error;
 }
 
@@ -127,79 +109,29 @@ DataPointer DataPointer::Alloc(size_t len)
 #endif
 }
 
-DataPointer DataPointer::SecureAlloc(size_t len)
-{
-#ifndef OPENSSL_IS_BORINGSSL
-    auto ptr = OPENSSL_secure_zalloc(len);
-    if (ptr == nullptr) return {};
-    return DataPointer(ptr, len, true);
-#else
-    // BoringSSL does not implement the OPENSSL_secure_zalloc API.
-    auto ptr = OPENSSL_malloc(len);
-    if (ptr == nullptr) return {};
-    memset(ptr, 0, len);
-    return DataPointer(ptr, len);
-#endif
-}
-
-size_t DataPointer::GetSecureHeapUsed()
-{
-#ifndef OPENSSL_IS_BORINGSSL
-    return CRYPTO_secure_malloc_initialized() ? CRYPTO_secure_used() : 0;
-#else
-    // BoringSSL does not have the secure heap and therefore
-    // will always return 0.
-    return 0;
-#endif
-}
-
-DataPointer::InitSecureHeapResult DataPointer::TryInitSecureHeap(size_t amount,
-    size_t min)
-{
-#ifndef OPENSSL_IS_BORINGSSL
-    switch (CRYPTO_secure_malloc_init(amount, min)) {
-    case 0:
-        return InitSecureHeapResult::FAILED;
-    case 2:
-        return InitSecureHeapResult::UNABLE_TO_MEMORY_MAP;
-    case 1:
-        return InitSecureHeapResult::OK;
-    default:
-        return InitSecureHeapResult::FAILED;
-    }
-#else
-    // BoringSSL does not actually support the secure heap
-    return InitSecureHeapResult::FAILED;
-#endif
-}
-
 DataPointer DataPointer::Copy(const Buffer<const void>& buffer)
 {
     return DataPointer(OPENSSL_memdup(buffer.data, buffer.len), buffer.len);
 }
 
-DataPointer::DataPointer(void* data, size_t length, bool secure)
+DataPointer::DataPointer(void* data, size_t length)
     : data_(data)
     , len_(length)
-    , secure_(secure)
 {
 }
 
-DataPointer::DataPointer(const Buffer<void>& buffer, bool secure)
+DataPointer::DataPointer(const Buffer<void>& buffer)
     : data_(buffer.data)
     , len_(buffer.len)
-    , secure_(secure)
 {
 }
 
 DataPointer::DataPointer(DataPointer&& other) noexcept
     : data_(other.data_)
     , len_(other.len_)
-    , secure_(other.secure_)
 {
     other.data_ = nullptr;
     other.len_ = 0;
-    other.secure_ = false;
 }
 
 DataPointer& DataPointer::operator=(DataPointer&& other) noexcept
@@ -223,11 +155,7 @@ void DataPointer::zero()
 void DataPointer::reset(void* data, size_t length)
 {
     if (data_ != nullptr) {
-        if (secure_) {
-            OPENSSL_secure_clear_free(data_, len_);
-        } else {
-            OPENSSL_clear_free(data_, len_);
-        }
+        OPENSSL_clear_free(data_, len_);
     }
     data_ = data;
     len_ = length;
@@ -272,38 +200,6 @@ bool isFipsEnabled()
 #else
     return FIPS_mode() == 1;
 #endif
-}
-
-bool setFipsEnabled(bool enable, CryptoErrorList* errors)
-{
-    if (isFipsEnabled() == enable) return true;
-    ClearErrorOnReturn clearErrorOnReturn(errors);
-#if OPENSSL_VERSION_MAJOR >= 3
-    return EVP_default_properties_enable_fips(nullptr, enable ? 1 : 0) == 1;
-#else
-    return FIPS_mode_set(enable ? 1 : 0) == 1;
-#endif
-}
-
-bool testFipsEnabled()
-{
-#if OPENSSL_VERSION_MAJOR >= 3
-    OSSL_PROVIDER* fips_provider = nullptr;
-    if (OSSL_PROVIDER_available(nullptr, "fips")) {
-        fips_provider = OSSL_PROVIDER_load(nullptr, "fips");
-    }
-    const auto enabled = fips_provider == nullptr ? 0
-        : OSSL_PROVIDER_self_test(fips_provider)  ? 1
-                                                  : 0;
-#else
-#ifdef OPENSSL_FIPS
-    const auto enabled = FIPS_selftest() ? 1 : 0;
-#else // OPENSSL_FIPS
-    const auto enabled = 0;
-#endif // OPENSSL_FIPS
-#endif
-
-    return enabled;
 }
 
 // ============================================================================
@@ -369,28 +265,6 @@ size_t BignumPointer::byteLength() const
 {
     if (bn_ == nullptr) return 0;
     return BN_num_bytes(bn_.get());
-}
-
-DataPointer BignumPointer::encode() const
-{
-    return EncodePadded(bn_.get(), byteLength());
-}
-
-DataPointer BignumPointer::encodePadded(size_t size) const
-{
-    return EncodePadded(bn_.get(), size);
-}
-
-size_t BignumPointer::encodeInto(unsigned char* out) const
-{
-    if (!bn_) return 0;
-    return BN_bn2bin(bn_.get(), out);
-}
-
-size_t BignumPointer::encodePaddedInto(unsigned char* out, size_t size) const
-{
-    if (!bn_) return 0;
-    return BN_bn2binpad(bn_.get(), out, size);
 }
 
 DataPointer BignumPointer::Encode(const BIGNUM* bn)
@@ -475,16 +349,6 @@ int BignumPointer::GetByteCount(const BIGNUM* bn)
     return BN_num_bytes(bn);
 }
 
-bool BignumPointer::isZero() const
-{
-    return bn_ && BN_is_zero(bn_.get());
-}
-
-bool BignumPointer::isOne() const
-{
-    return bn_ && BN_is_one(bn_.get());
-}
-
 const BIGNUM* BignumPointer::One()
 {
     return BN_value_one();
@@ -518,16 +382,6 @@ int BignumPointer::isPrime(int nchecks,
     return BN_is_prime_ex(get(), nchecks, ctx.get(), cb.get());
 }
 
-BignumPointer BignumPointer::NewPrime(const PrimeConfig& params,
-    PrimeCheckCallback cb)
-{
-    BignumPointer prime(BN_new());
-    if (!prime || !prime.generate(params, WTF::move(cb))) {
-        return {};
-    }
-    return prime;
-}
-
 bool BignumPointer::generate(const PrimeConfig& params,
     PrimeCheckCallback innerCb) const
 {
@@ -558,27 +412,6 @@ bool BignumPointer::generate(const PrimeConfig& params,
     }
 
     return true;
-}
-
-BignumPointer BignumPointer::NewSub(const BignumPointer& a,
-    const BignumPointer& b)
-{
-    BignumPointer res = New();
-    if (!res) return {};
-    if (!BN_sub(res.get(), a.get(), b.get())) {
-        return {};
-    }
-    return res;
-}
-
-BignumPointer BignumPointer::NewLShift(size_t length)
-{
-    BignumPointer res = New();
-    if (!res) return {};
-    if (!BN_lshift(res.get(), One(), length)) {
-        return {};
-    }
-    return res;
 }
 
 // ============================================================================
@@ -637,38 +470,6 @@ int PasswordCallback(char* buf, int size, int rwflag, void* u)
 
     return -1;
 }
-
-// Algorithm: http://howardhinnant.github.io/date_algorithms.html
-constexpr int days_from_epoch(int y, unsigned m, unsigned d)
-{
-    y -= m <= 2;
-    const int era = (y >= 0 ? y : y - 399) / 400;
-    const unsigned yoe = static_cast<unsigned>(y - era * 400); // [0, 399]
-    const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1; // [0, 365]
-    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
-    return era * 146097 + static_cast<int>(doe) - 719468;
-}
-
-#ifndef OPENSSL_IS_BORINGSSL
-// tm must be in UTC
-// using time_t causes problems on 32-bit systems and windows x64.
-int64_t PortableTimeGM(struct tm* t)
-{
-    int year = t->tm_year + 1900;
-    int month = t->tm_mon;
-    if (month > 11) {
-        year += month / 12;
-        month %= 12;
-    } else if (month < 0) {
-        int years_diff = (11 - month) / 12;
-        year -= years_diff;
-        month += 12 * years_diff;
-    }
-    int days_since_epoch = days_from_epoch(year, month + 1, t->tm_mday);
-
-    return 60 * (60 * (24LL * static_cast<int64_t>(days_since_epoch) + t->tm_hour) + t->tm_min) + t->tm_sec;
-}
-#endif
 
 // ============================================================================
 // SPKAC
@@ -1095,20 +896,6 @@ BIOPointer X509View::toDER() const
     return bio;
 }
 
-const X509Name X509View::getSubjectName() const
-{
-    ClearErrorOnReturn clearErrorOnReturn;
-    if (cert_ == nullptr) return {};
-    return X509Name(X509_get_subject_name(cert_));
-}
-
-const X509Name X509View::getIssuerName() const
-{
-    ClearErrorOnReturn clearErrorOnReturn;
-    if (cert_ == nullptr) return {};
-    return X509Name(X509_get_issuer_name(cert_));
-}
-
 BIOPointer X509View::getSubject() const
 {
     ClearErrorOnReturn clearErrorOnReturn;
@@ -1211,36 +998,6 @@ std::optional<std::string> X509View::getSignatureAlgorithmOID() const
     return std::string(buf, static_cast<size_t>(len));
 }
 
-int64_t X509View::getValidToTime() const
-{
-#ifdef OPENSSL_IS_BORINGSSL
-    // Boringssl does not implement ASN1_TIME_to_tm in a public way,
-    // and only recently added ASN1_TIME_to_posix. Some boringssl
-    // users on older version may still need to patch around this
-    // or use a different implementation.
-    int64_t tp;
-    ASN1_TIME_to_posix(X509_get0_notAfter(cert_), &tp);
-    return tp;
-#else
-    struct tm tp;
-    ASN1_TIME_to_tm(X509_get0_notAfter(cert_), &tp);
-    return PortableTimeGM(&tp);
-#endif
-}
-
-int64_t X509View::getValidFromTime() const
-{
-#ifdef OPENSSL_IS_BORINGSSL
-    int64_t tp;
-    ASN1_TIME_to_posix(X509_get0_notBefore(cert_), &tp);
-    return tp;
-#else
-    struct tm tp;
-    ASN1_TIME_to_tm(X509_get0_notBefore(cert_), &tp);
-    return PortableTimeGM(&tp);
-#endif
-}
-
 DataPointer X509View::getSerialNumber() const
 {
     ClearErrorOnReturn clearErrorOnReturn;
@@ -1300,20 +1057,30 @@ bool X509View::checkPublicKey(const EVPKeyPointer& pkey) const
     return X509_verify(const_cast<X509*>(cert_), pkey.get()) == 1;
 }
 
+// Shared native certificate-name matcher (src/boringssl/lib.rs). BoringSSL's
+// X509_check_host hard-codes NO_PARTIAL_WILDCARDS and only falls back to the
+// Subject CN when the SAN extension is absent, so Node's documented checkHost
+// options were no-ops. This implements OpenSSL's semantics over the same
+// matcher fetch()/tls.connect use.
+extern "C" int Bun__X509__checkHost(X509* x509, const uint8_t* host, size_t host_len,
+    uint32_t flags, uint8_t** out_peer, size_t* out_len);
+
 X509View::CheckMatch X509View::checkHost(const std::span<const char> host,
     int flags,
     DataPointer* peerName) const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return CheckMatch::NO_MATCH;
-    char* peername;
-    switch (X509_check_host(
-        const_cast<X509*>(cert_), host.data(), host.size(), flags, &peername)) {
+    uint8_t* peer = nullptr;
+    size_t peerLen = 0;
+    switch (Bun__X509__checkHost(const_cast<X509*>(cert_),
+        reinterpret_cast<const uint8_t*>(host.data()), host.size(),
+        static_cast<uint32_t>(flags), &peer, &peerLen)) {
     case 0:
         return CheckMatch::NO_MATCH;
     case 1: {
-        if (peername != nullptr) {
-            DataPointer name(peername, strlen(peername));
+        if (peer != nullptr) {
+            DataPointer name(peer, peerLen);
             if (peerName != nullptr) *peerName = WTF::move(name);
         }
         return CheckMatch::MATCH;
@@ -1360,20 +1127,6 @@ X509View::CheckMatch X509View::checkIp(const char* ip,
     }
 }
 
-X509View X509View::From(const SSLPointer& ssl)
-{
-    ClearErrorOnReturn clear_error_on_return;
-    if (!ssl) return {};
-    return X509View(SSL_get_certificate(ssl.get()));
-}
-
-X509View X509View::From(const SSLCtxPointer& ctx)
-{
-    ClearErrorOnReturn clear_error_on_return;
-    if (!ctx) return {};
-    return X509View(SSL_CTX_get0_certificate(ctx.get()));
-}
-
 std::optional<WTF::String> X509View::getFingerprint(
     const Digest& method) const
 {
@@ -1406,13 +1159,6 @@ std::optional<WTF::String> X509View::getFingerprint(
     return std::nullopt;
 }
 
-X509Pointer X509View::clone() const
-{
-    ClearErrorOnReturn clear_error_on_return;
-    if (!cert_) return {};
-    return X509Pointer(X509_dup(const_cast<X509*>(cert_)));
-}
-
 Result<X509Pointer, int> X509Pointer::Parse(
     Buffer<const unsigned char> buffer)
 {
@@ -1429,75 +1175,6 @@ Result<X509Pointer, int> X509Pointer::Parse(
     if (der) return Result<X509Pointer, int>(WTF::move(der));
 
     return Result<X509Pointer, int>(ERR_get_error());
-}
-
-bool X509View::enumUsages(UsageCallback&& callback) const
-{
-    if (cert_ == nullptr) return false;
-    StackOfASN1 eku(static_cast<STACK_OF(ASN1_OBJECT)*>(
-        X509_get_ext_d2i(cert_, NID_ext_key_usage, nullptr, nullptr)));
-    if (!eku) return false;
-    const int count = sk_ASN1_OBJECT_num(eku.get());
-    char buf[256] {};
-
-    for (int i = 0; i < count; i++) {
-        if (OBJ_obj2txt(buf, sizeof(buf), sk_ASN1_OBJECT_value(eku.get(), i), 1) >= 0) {
-            callback(buf);
-        }
-    }
-    return true;
-}
-
-bool X509View::ifRsa(KeyCallback<Rsa>&& callback) const
-{
-    if (cert_ == nullptr) return true;
-    OSSL3_CONST EVP_PKEY* pkey = X509_get0_pubkey(cert_);
-    auto id = EVP_PKEY_id(pkey);
-    if (id == EVP_PKEY_RSA || id == EVP_PKEY_RSA2 || id == EVP_PKEY_RSA_PSS) {
-        Rsa rsa(EVP_PKEY_get0_RSA(pkey));
-        if (!rsa) [[unlikely]]
-            return true;
-        return callback(rsa);
-    }
-    return true;
-}
-
-bool X509View::ifEc(KeyCallback<Ec>&& callback) const
-{
-    if (cert_ == nullptr) return true;
-    OSSL3_CONST EVP_PKEY* pkey = X509_get0_pubkey(cert_);
-    auto id = EVP_PKEY_id(pkey);
-    if (id == EVP_PKEY_EC) {
-        Ec ec(EVP_PKEY_get0_EC_KEY(pkey));
-        if (!ec) [[unlikely]]
-            return true;
-        return callback(ec);
-    }
-    return true;
-}
-
-X509Pointer X509Pointer::IssuerFrom(const SSLPointer& ssl,
-    const X509View& view)
-{
-    return IssuerFrom(SSL_get_SSL_CTX(ssl.get()), view);
-}
-
-X509Pointer X509Pointer::IssuerFrom(const SSL_CTX* ctx, const X509View& cert)
-{
-    X509_STORE* store = SSL_CTX_get_cert_store(ctx);
-    DeleteFnPtr<X509_STORE_CTX, X509_STORE_CTX_free> store_ctx(
-        X509_STORE_CTX_new());
-    X509Pointer result;
-    X509* issuer;
-    if (store_ctx.get() != nullptr && X509_STORE_CTX_init(store_ctx.get(), store, nullptr, nullptr) == 1 && X509_STORE_CTX_get1_issuer(&issuer, store_ctx.get(), cert.get()) == 1) {
-        result.reset(issuer);
-    }
-    return result;
-}
-
-X509Pointer X509Pointer::PeerFrom(const SSLPointer& ssl)
-{
-    return X509Pointer(SSL_get_peer_certificate(ssl.get()));
 }
 
 // When adding or removing errors below, please also update the list in the API
@@ -1542,22 +1219,6 @@ WTF::ASCIILiteral X509Pointer::ErrorCode(int32_t err)
     return "UNSPECIFIED";
 }
 
-std::optional<WTF::ASCIILiteral> X509Pointer::ErrorReason(int32_t err)
-{
-    if (err == X509_V_OK) return std::nullopt;
-    // TODO(dylan-conway): delete this switch?
-    switch (err) {
-#define V(name, msg)        \
-    case X509_V_ERR_##name: \
-        return msg##_s;
-        V(HOSTNAME_MISMATCH, "Hostname does not match certificate")
-        V(EMAIL_MISMATCH, "Email address does not match certificate")
-        V(IP_ADDRESS_MISMATCH, "IP address does not match certificate")
-#undef V
-    }
-    return WTF::ASCIILiteral::fromLiteralUnsafe(X509_verify_cert_error_string(err));
-}
-
 // ============================================================================
 // BIOPointer
 
@@ -1569,13 +1230,6 @@ BIOPointer::BIOPointer(BIO* bio)
 BIOPointer::BIOPointer(BIOPointer&& other) noexcept
     : bio_(other.release())
 {
-}
-
-BIOPointer& BIOPointer::operator=(BIOPointer&& other) noexcept
-{
-    if (this == &other) return *this;
-    this->~BIOPointer();
-    return *new (this) BIOPointer(WTF::move(other));
 }
 
 BIOPointer::~BIOPointer()
@@ -1604,38 +1258,9 @@ BIOPointer BIOPointer::NewMem()
     return BIOPointer(BIO_new(BIO_s_mem()));
 }
 
-BIOPointer BIOPointer::NewSecMem()
-{
-#ifdef OPENSSL_IS_BORINGSSL
-    // Boringssl does not implement the BIO_s_secmem API.
-    return BIOPointer(BIO_new(BIO_s_mem()));
-#else
-    return BIOPointer(BIO_new(BIO_s_secmem()));
-#endif
-}
-
-BIOPointer BIOPointer::New(const BIO_METHOD* method)
-{
-    if (method == nullptr) return {};
-    return BIOPointer(BIO_new(method));
-}
-
 BIOPointer BIOPointer::New(const void* data, size_t len)
 {
     return BIOPointer(BIO_new_mem_buf(data, len));
-}
-
-BIOPointer BIOPointer::NewFile(WTF::StringView filename,
-    WTF::StringView mode)
-{
-    auto filenameUtf8 = filename.utf8();
-    auto modeUtf8 = mode.utf8();
-    return BIOPointer(BIO_new_file(filenameUtf8.data(), modeUtf8.data()));
-}
-
-BIOPointer BIOPointer::NewFp(FILE* fd, int close_flag)
-{
-    return BIOPointer(BIO_new_fp(fd, close_flag));
 }
 
 BIOPointer BIOPointer::New(const BIGNUM* bn)
@@ -1643,13 +1268,6 @@ BIOPointer BIOPointer::New(const BIGNUM* bn)
     auto res = NewMem();
     if (!res || !BN_print(res.get(), bn)) return {};
     return res;
-}
-
-int BIOPointer::Write(BIOPointer* bio, WTF::StringView message)
-{
-    if (bio == nullptr || !*bio) return 0;
-    auto messageUtf8 = message.utf8();
-    return BIO_write(bio->get(), messageUtf8.data(), messageUtf8.length());
 }
 
 // ============================================================================
@@ -2015,10 +1633,6 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         }
     }
 
-    // if (name == "ripemd160WithRSA"_s || name == "RSA-RIPEMD160"_s) {
-    //     return EVP_ripemd160();
-    // }
-
     auto nameUtf8 = name.utf8();
     return EVP_get_digestbyname(nameUtf8.data());
 }
@@ -2103,54 +1717,6 @@ DataPointer hkdf(const Digest& md,
     return buf;
 }
 
-bool checkScryptParams(uint64_t N, uint64_t r, uint64_t p, uint64_t maxmem)
-{
-    return EVP_PBE_scrypt(nullptr, 0, nullptr, 0, N, r, p, maxmem, nullptr, 0) == 1;
-}
-
-DataPointer scrypt(const Buffer<const char>& pass,
-    const Buffer<const unsigned char>& salt,
-    uint64_t N,
-    uint64_t r,
-    uint64_t p,
-    uint64_t maxmem,
-    size_t length)
-{
-    ClearErrorOnReturn clearErrorOnReturn;
-
-    if (pass.len > INT_MAX || salt.len > INT_MAX) {
-        return {};
-    }
-
-    auto dp = DataPointer::Alloc(length);
-    if (dp && EVP_PBE_scrypt(pass.data, pass.len, salt.data, salt.len, N, r, p, maxmem, reinterpret_cast<unsigned char*>(dp.get()), length)) {
-        return dp;
-    }
-
-    return {};
-}
-
-DataPointer pbkdf2(const Digest& md,
-    const Buffer<const char>& pass,
-    const Buffer<const unsigned char>& salt,
-    uint32_t iterations,
-    size_t length)
-{
-    ClearErrorOnReturn clearErrorOnReturn;
-
-    if (pass.len > INT_MAX || salt.len > INT_MAX || length > INT_MAX) {
-        return {};
-    }
-
-    auto dp = DataPointer::Alloc(length);
-    const EVP_MD* md_ptr = md;
-    if (dp && PKCS5_PBKDF2_HMAC(pass.data, pass.len, salt.data, salt.len, iterations, md_ptr, length, reinterpret_cast<unsigned char*>(dp.get()))) {
-        return dp;
-    }
-
-    return {};
-}
-
 // ============================================================================
 
 EVPKeyPointer::PrivateKeyEncodingConfig::PrivateKeyEncodingConfig(
@@ -2164,23 +1730,6 @@ EVPKeyPointer::PrivateKeyEncodingConfig::PrivateKeyEncodingConfig(
         memcpy(newPassphrase.get(), otherPassphrase.get(), otherPassphrase.size());
         passphrase = WTF::move(newPassphrase);
     }
-}
-
-EVPKeyPointer::AsymmetricKeyEncodingConfig::AsymmetricKeyEncodingConfig(
-    bool output_key_object, PKFormatType format, PKEncodingType type)
-    : output_key_object(output_key_object)
-    , format(format)
-    , type(type)
-{
-}
-
-EVPKeyPointer::PrivateKeyEncodingConfig&
-EVPKeyPointer::PrivateKeyEncodingConfig::operator=(
-    const PrivateKeyEncodingConfig& other)
-{
-    if (this == &other) return *this;
-    this->~PrivateKeyEncodingConfig();
-    return *new (this) PrivateKeyEncodingConfig(other);
 }
 
 EVPKeyPointer EVPKeyPointer::New()
@@ -2280,12 +1829,6 @@ int EVPKeyPointer::base_id() const
     return base_id(get());
 }
 
-int EVPKeyPointer::bits() const
-{
-    if (get() == nullptr) return 0;
-    return EVP_PKEY_bits(get());
-}
-
 size_t EVPKeyPointer::size() const
 {
     if (get() == nullptr) return 0;
@@ -2336,15 +1879,6 @@ DataPointer EVPKeyPointer::rawPrivateKey() const
         return data;
     }
     return {};
-}
-
-BIOPointer EVPKeyPointer::derPublicKey() const
-{
-    if (!pkey_) return {};
-    auto bio = BIOPointer::NewMem();
-    if (!bio) return {};
-    if (!i2d_PUBKEY_bio(bio.get(), get())) return {};
-    return bio;
 }
 
 bool EVPKeyPointer::assign(const ECKeyPointer& eckey)
@@ -2545,7 +2079,6 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
     const PrivateKeyEncodingConfig& config,
     const Buffer<const unsigned char>& buffer)
 {
-    ClearErrorOnReturn clear_error_on_return;
     static constexpr auto keyOrError = [](EVPKeyPointer pkey,
                                            bool had_passphrase = false) {
         if (int err = ERR_peek_error()) {
@@ -2799,7 +2332,9 @@ bool EVPKeyPointer::isOneShotVariant() const
 {
     if (!pkey_) return false;
     int type = id();
-    return type == EVP_PKEY_ED25519 || type == EVP_PKEY_ED448;
+    return type == EVP_PKEY_ED25519 || type == EVP_PKEY_ED448
+        || type == EVP_PKEY_ML_DSA_44 || type == EVP_PKEY_ML_DSA_65
+        || type == EVP_PKEY_ML_DSA_87;
 }
 
 bool EVPKeyPointer::isSigVariant() const
@@ -2883,305 +2418,6 @@ bool EVPKeyPointer::validateDsaParameters() const
 
 // ============================================================================
 
-SSLPointer::SSLPointer(SSL* ssl)
-    : ssl_(ssl)
-{
-}
-
-SSLPointer::SSLPointer(SSLPointer&& other) noexcept
-    : ssl_(other.release())
-{
-}
-
-SSLPointer& SSLPointer::operator=(SSLPointer&& other) noexcept
-{
-    if (this == &other) return *this;
-    this->~SSLPointer();
-    return *new (this) SSLPointer(WTF::move(other));
-}
-
-SSLPointer::~SSLPointer()
-{
-    reset();
-}
-
-void SSLPointer::reset(SSL* ssl)
-{
-    ssl_.reset(ssl);
-}
-
-SSL* SSLPointer::release()
-{
-    return ssl_.release();
-}
-
-SSLPointer SSLPointer::New(const SSLCtxPointer& ctx)
-{
-    if (!ctx) return {};
-    return SSLPointer(SSL_new(ctx.get()));
-}
-
-void SSLPointer::getCiphers(
-    WTF::Function<void(const WTF::StringView)>&& cb) const
-{
-    if (!ssl_) return;
-    STACK_OF(SSL_CIPHER)* ciphers = SSL_get_ciphers(get());
-
-    // TLSv1.3 ciphers aren't listed by EVP. There are only 5, we could just
-    // document them, but since there are only 5, easier to just add them manually
-    // and not have to explain their absence in the API docs. They are lower-cased
-    // because the docs say they will be.
-    static constexpr WTF::ASCIILiteral TLS13_CIPHERS[] = {
-        "tls_aes_256_gcm_sha384"_s,
-        "tls_chacha20_poly1305_sha256"_s,
-        "tls_aes_128_gcm_sha256"_s,
-        "tls_aes_128_ccm_8_sha256"_s,
-        "tls_aes_128_ccm_sha256"_s
-    };
-
-    const int n = sk_SSL_CIPHER_num(ciphers);
-
-    for (int i = 0; i < n; ++i) {
-        const SSL_CIPHER* cipher = sk_SSL_CIPHER_value(ciphers, i);
-        cb(WTF::ASCIILiteral::fromLiteralUnsafe(SSL_CIPHER_get_name(cipher)));
-    }
-
-    for (unsigned i = 0; i < 5; ++i) {
-        cb(TLS13_CIPHERS[i]);
-    }
-}
-
-bool SSLPointer::setSession(const SSLSessionPointer& session)
-{
-    if (!session || !ssl_) return false;
-    return SSL_set_session(get(), session.get()) == 1;
-}
-
-bool SSLPointer::setSniContext(const SSLCtxPointer& ctx) const
-{
-    if (!ctx) return false;
-    auto x509 = ncrypto::X509View::From(ctx);
-    if (!x509) return false;
-    EVP_PKEY* pkey = SSL_CTX_get0_privatekey(ctx.get());
-    STACK_OF(X509) * chain;
-    int err = SSL_CTX_get0_chain_certs(ctx.get(), &chain);
-    if (err == 1) err = SSL_use_certificate(get(), x509);
-    if (err == 1) err = SSL_use_PrivateKey(get(), pkey);
-    if (err == 1 && chain != nullptr) err = SSL_set1_chain(get(), chain);
-    return err == 1;
-}
-
-std::optional<uint32_t> SSLPointer::verifyPeerCertificate() const
-{
-    if (!ssl_) return std::nullopt;
-    if (X509Pointer::PeerFrom(*this)) {
-        return SSL_get_verify_result(get());
-    }
-
-    const SSL_CIPHER* curr_cipher = SSL_get_current_cipher(get());
-    const SSL_SESSION* sess = SSL_get_session(get());
-    // Allow no-cert for PSK authentication in TLS1.2 and lower.
-    // In TLS1.3 check that session was reused because TLS1.3 PSK
-    // looks like session resumption.
-    if (SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk || (SSL_SESSION_get_protocol_version(sess) == TLS1_3_VERSION && SSL_session_reused(get()))) {
-        return X509_V_OK;
-    }
-
-    return std::nullopt;
-}
-
-const WTF::StringView SSLPointer::getClientHelloAlpn() const
-{
-    if (ssl_ == nullptr) return {};
-#ifndef OPENSSL_IS_BORINGSSL
-    const unsigned char* buf;
-    size_t len;
-    size_t rem;
-
-    if (!SSL_client_hello_get0_ext(
-            get(),
-            TLSEXT_TYPE_application_layer_protocol_negotiation,
-            &buf,
-            &rem)
-        || rem < 2) {
-        return {};
-    }
-
-    len = (buf[0] << 8) | buf[1];
-    if (len + 2 != rem) return {};
-    return reinterpret_cast<const char*>(buf + 3);
-#else
-    // Boringssl doesn't have a public API for this.
-    return {};
-#endif
-}
-
-const WTF::StringView SSLPointer::getClientHelloServerName() const
-{
-    if (ssl_ == nullptr) return {};
-#ifndef OPENSSL_IS_BORINGSSL
-    const unsigned char* buf;
-    size_t len;
-    size_t rem;
-
-    if (!SSL_client_hello_get0_ext(get(), TLSEXT_TYPE_server_name, &buf, &rem) || rem <= 2) {
-        return {};
-    }
-
-    len = (*buf << 8) | *(buf + 1);
-    if (len + 2 != rem) return {};
-    rem = len;
-
-    if (rem == 0 || *(buf + 2) != TLSEXT_NAMETYPE_host_name) return {};
-    rem--;
-    if (rem <= 2) return {};
-    len = (*(buf + 3) << 8) | *(buf + 4);
-    if (len + 2 > rem) return {};
-    return reinterpret_cast<const char*>(buf + 5);
-#else
-    // Boringssl doesn't have a public API for this.
-    return {};
-#endif
-}
-
-std::optional<const WTF::String> SSLPointer::GetServerName(
-    const SSL* ssl)
-{
-    if (ssl == nullptr) return std::nullopt;
-    auto res = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
-    if (res == nullptr) return std::nullopt;
-    return WTF::String::fromUTF8(res);
-}
-
-std::optional<const WTF::String> SSLPointer::getServerName() const
-{
-    if (!ssl_) return std::nullopt;
-    return GetServerName(get());
-}
-
-X509View SSLPointer::getCertificate() const
-{
-    if (!ssl_) return {};
-    ClearErrorOnReturn clear_error_on_return;
-    return ncrypto::X509View(SSL_get_certificate(get()));
-}
-
-const SSL_CIPHER* SSLPointer::getCipher() const
-{
-    if (!ssl_) return nullptr;
-    return SSL_get_current_cipher(get());
-}
-
-bool SSLPointer::isServer() const
-{
-    return SSL_is_server(get()) != 0;
-}
-
-EVPKeyPointer SSLPointer::getPeerTempKey() const
-{
-    if (!ssl_) return {};
-    EVP_PKEY* raw_key = nullptr;
-#ifndef OPENSSL_IS_BORINGSSL
-    if (!SSL_get_peer_tmp_key(get(), &raw_key)) return {};
-#else
-    if (!SSL_get_server_tmp_key(get(), &raw_key)) return {};
-#endif
-    return EVPKeyPointer(raw_key);
-}
-
-std::optional<WTF::StringView> SSLPointer::getCipherName() const
-{
-    auto cipher = getCipher();
-    if (cipher == nullptr) return std::nullopt;
-    return WTF::StringView::fromLatin1(SSL_CIPHER_get_name(cipher));
-}
-
-std::optional<WTF::StringView> SSLPointer::getCipherStandardName() const
-{
-    auto cipher = getCipher();
-    if (cipher == nullptr) return std::nullopt;
-    return WTF::StringView::fromLatin1(SSL_CIPHER_standard_name(cipher));
-}
-
-std::optional<WTF::StringView> SSLPointer::getCipherVersion() const
-{
-    auto cipher = getCipher();
-    if (cipher == nullptr) return std::nullopt;
-    return WTF::StringView::fromLatin1(SSL_CIPHER_get_version(cipher));
-}
-
-SSLCtxPointer::SSLCtxPointer(SSL_CTX* ctx)
-    : ctx_(ctx)
-{
-}
-
-SSLCtxPointer::SSLCtxPointer(SSLCtxPointer&& other) noexcept
-    : ctx_(other.release())
-{
-}
-
-SSLCtxPointer& SSLCtxPointer::operator=(SSLCtxPointer&& other) noexcept
-{
-    if (this == &other) return *this;
-    this->~SSLCtxPointer();
-    return *new (this) SSLCtxPointer(WTF::move(other));
-}
-
-SSLCtxPointer::~SSLCtxPointer()
-{
-    reset();
-}
-
-void SSLCtxPointer::reset(SSL_CTX* ctx)
-{
-    ctx_.reset(ctx);
-}
-
-void SSLCtxPointer::reset(const SSL_METHOD* method)
-{
-    ctx_.reset(SSL_CTX_new(method));
-}
-
-SSL_CTX* SSLCtxPointer::release()
-{
-    return ctx_.release();
-}
-
-SSLCtxPointer SSLCtxPointer::NewServer()
-{
-    return SSLCtxPointer(SSL_CTX_new(TLS_server_method()));
-}
-
-SSLCtxPointer SSLCtxPointer::NewClient()
-{
-    return SSLCtxPointer(SSL_CTX_new(TLS_client_method()));
-}
-
-SSLCtxPointer SSLCtxPointer::New(const SSL_METHOD* method)
-{
-    return SSLCtxPointer(SSL_CTX_new(method));
-}
-
-bool SSLCtxPointer::setGroups(const char* groups)
-{
-    return SSL_CTX_set1_groups_list(get(), groups) == 1;
-}
-
-bool SSLCtxPointer::setCipherSuites(WTF::StringView ciphers)
-{
-#ifndef OPENSSL_IS_BORINGSSL
-    if (!ctx_) return false;
-    auto ciphersUtf8 = ciphers.utf8();
-    return SSL_CTX_set_ciphersuites(ctx_.get(), ciphersUtf8.data());
-#else
-    // BoringSSL does not allow API config of TLS 1.3 cipher suites.
-    // We treat this as a non-op.
-    return true;
-#endif
-}
-
-// ============================================================================
-
 const Cipher Cipher::FromName(WTF::StringView name)
 {
 
@@ -3206,11 +2442,6 @@ const Cipher Cipher::FromCtx(const CipherCtxPointer& ctx)
     return Cipher(EVP_CIPHER_CTX_cipher(ctx.get()));
 }
 
-const Cipher& Cipher::EMPTY()
-{
-    static const Cipher cipher = Cipher();
-    return cipher;
-}
 const Cipher& Cipher::AES_128_CBC()
 {
     static const Cipher cipher = Cipher::FromNid(NID_aes_128_cbc);
@@ -3226,51 +2457,6 @@ const Cipher& Cipher::AES_256_CBC()
     static const Cipher cipher = Cipher::FromNid(NID_aes_256_cbc);
     return cipher;
 }
-const Cipher& Cipher::AES_128_CTR()
-{
-    static const Cipher cipher = Cipher::FromNid(NID_aes_128_ctr);
-    return cipher;
-}
-const Cipher& Cipher::AES_192_CTR()
-{
-    static const Cipher cipher = Cipher::FromNid(NID_aes_192_ctr);
-    return cipher;
-}
-const Cipher& Cipher::AES_256_CTR()
-{
-    static const Cipher cipher = Cipher::FromNid(NID_aes_256_ctr);
-    return cipher;
-}
-const Cipher& Cipher::AES_128_GCM()
-{
-    static const Cipher cipher = Cipher::FromNid(NID_aes_128_gcm);
-    return cipher;
-}
-const Cipher& Cipher::AES_192_GCM()
-{
-    static const Cipher cipher = Cipher::FromNid(NID_aes_192_gcm);
-    return cipher;
-}
-const Cipher& Cipher::AES_256_GCM()
-{
-    static const Cipher cipher = Cipher::FromNid(NID_aes_256_gcm);
-    return cipher;
-}
-const Cipher& Cipher::AES_128_KW()
-{
-    static const Cipher cipher = Cipher::FromNid(NID_id_aes128_wrap);
-    return cipher;
-}
-const Cipher& Cipher::AES_192_KW()
-{
-    static const Cipher cipher = Cipher::FromNid(NID_id_aes192_wrap);
-    return cipher;
-}
-const Cipher& Cipher::AES_256_KW()
-{
-    static const Cipher cipher = Cipher::FromNid(NID_id_aes256_wrap);
-    return cipher;
-}
 
 bool Cipher::isGcmMode() const
 {
@@ -3282,12 +2468,6 @@ bool Cipher::isWrapMode() const
 {
     if (!cipher_) return false;
     return getMode() == EVP_CIPH_WRAP_MODE;
-}
-
-bool Cipher::isCtrMode() const
-{
-    if (!cipher_) return false;
-    return getMode() == EVP_CIPH_CTR_MODE;
 }
 
 bool Cipher::isCcmMode() const
@@ -3398,15 +2578,6 @@ bool Cipher::isSupportedAuthenticatedMode() const
     }
 }
 
-int Cipher::bytesToKey(const Digest& digest,
-    const Buffer<const unsigned char>& input,
-    unsigned char* key,
-    unsigned char* iv) const
-{
-    return EVP_BytesToKey(
-        *this, Digest::MD5(), nullptr, input.data, input.len, 1, key, iv);
-}
-
 // ============================================================================
 
 CipherCtxPointer CipherCtxPointer::New()
@@ -3425,14 +2596,6 @@ CipherCtxPointer::CipherCtxPointer(EVP_CIPHER_CTX* ctx)
 CipherCtxPointer::CipherCtxPointer(CipherCtxPointer&& other) noexcept
     : ctx_(other.release())
 {
-}
-
-CipherCtxPointer& CipherCtxPointer::operator=(
-    CipherCtxPointer&& other) noexcept
-{
-    if (this == &other) return *this;
-    this->~CipherCtxPointer();
-    return *new (this) CipherCtxPointer(WTF::move(other));
 }
 
 CipherCtxPointer::~CipherCtxPointer()
@@ -3578,15 +2741,6 @@ ECDSASigPointer::ECDSASigPointer(ECDSASigPointer&& other) noexcept
     }
 }
 
-ECDSASigPointer& ECDSASigPointer::operator=(ECDSASigPointer&& other) noexcept
-{
-    sig_.reset(other.release());
-    if (sig_) {
-        ECDSA_SIG_get0(sig_.get(), &pr_, &ps_);
-    }
-    return *this;
-}
-
 ECDSASigPointer::~ECDSASigPointer()
 {
     reset();
@@ -3652,12 +2806,6 @@ ECGroupPointer::ECGroupPointer(ECGroupPointer&& other) noexcept
 {
 }
 
-ECGroupPointer& ECGroupPointer::operator=(ECGroupPointer&& other) noexcept
-{
-    group_.reset(other.release());
-    return *this;
-}
-
 ECGroupPointer::~ECGroupPointer()
 {
     reset();
@@ -3693,12 +2841,6 @@ ECPointPointer::ECPointPointer(EC_POINT* point)
 ECPointPointer::ECPointPointer(ECPointPointer&& other) noexcept
     : point_(other.release())
 {
-}
-
-ECPointPointer& ECPointPointer::operator=(ECPointPointer&& other) noexcept
-{
-    point_.reset(other.release());
-    return *this;
 }
 
 ECPointPointer::~ECPointPointer()
@@ -3839,12 +2981,6 @@ const EC_GROUP* ECKeyPointer::GetGroup(const EC_KEY* key)
     return EC_KEY_get0_group(key);
 }
 
-int ECKeyPointer::GetGroupName(const EC_KEY* key)
-{
-    const EC_GROUP* group = GetGroup(key);
-    return group ? EC_GROUP_get_curve_name(group) : 0;
-}
-
 bool ECKeyPointer::Check(const EC_KEY* key)
 {
     return EC_KEY_check_key(key) == 1;
@@ -3859,14 +2995,6 @@ bool ECKeyPointer::checkKey() const
 ECKeyPointer ECKeyPointer::NewByCurveName(int nid)
 {
     return ECKeyPointer(EC_KEY_new_by_curve_name(nid));
-}
-
-ECKeyPointer ECKeyPointer::New(const EC_GROUP* group)
-{
-    auto ptr = ECKeyPointer(EC_KEY_new());
-    if (!ptr) return {};
-    if (!EC_KEY_set_group(ptr.get(), group)) return {};
-    return ptr;
 }
 
 // ============================================================================
@@ -3917,13 +3045,6 @@ EVPKeyCtxPointer EVPKeyCtxPointer::New(const EVPKeyPointer& key)
 EVPKeyCtxPointer EVPKeyCtxPointer::NewFromID(int id)
 {
     return EVPKeyCtxPointer(EVP_PKEY_CTX_new_id(id, nullptr));
-}
-
-bool EVPKeyCtxPointer::initForDerive(const EVPKeyPointer& peer)
-{
-    if (!ctx_) return false;
-    if (EVP_PKEY_derive_init(ctx_.get()) != 1) return false;
-    return EVP_PKEY_derive_set_peer(ctx_.get(), peer.get()) == 1;
 }
 
 bool EVPKeyCtxPointer::initForKeygen()
@@ -3988,13 +3109,6 @@ bool EVPKeyCtxPointer::setRsaOaepMd(const Digest& md)
     return EVP_PKEY_CTX_set_rsa_oaep_md(ctx_.get(), md_ptr) > 0;
 }
 
-bool EVPKeyCtxPointer::setRsaMgf1Md(const Digest& md)
-{
-    if (!md || !ctx_) return false;
-    const EVP_MD* md_ptr = md;
-    return EVP_PKEY_CTX_set_rsa_mgf1_md(ctx_.get(), md_ptr) > 0;
-}
-
 bool EVPKeyCtxPointer::setRsaPadding(int padding)
 {
     return setRsaPadding(ctx_.get(), padding, std::nullopt);
@@ -4052,27 +3166,6 @@ bool EVPKeyCtxPointer::setRsaPssSaltlen(int salt_len)
     return EVP_PKEY_CTX_set_rsa_pss_keygen_saltlen(ctx_.get(), salt_len) > 0;
 }
 
-bool EVPKeyCtxPointer::setRsaImplicitRejection()
-{
-#ifndef OPENSSL_IS_BORINGSSL
-    if (!ctx_) return false;
-    return EVP_PKEY_CTX_ctrl_str(
-               ctx_.get(), "rsa_pkcs1_implicit_rejection", "1")
-        > 0;
-    // From the doc -2 means that the option is not supported.
-    // The default for the option is enabled and if it has been
-    // specifically disabled we want to respect that so we will
-    // not throw an error if the option is supported regardless
-    // of how it is set. The call to set the value
-    // will not affect what is used since a different context is
-    // used in the call if the option is supported
-#else
-    // TODO(jasnell): Boringssl appears not to support this operation.
-    // Is there an alternative approach that Boringssl does support?
-    return true;
-#endif
-}
-
 bool EVPKeyCtxPointer::setRsaOaepLabel(DataPointer&& data)
 {
     if (!ctx_) return false;
@@ -4093,31 +3186,10 @@ bool EVPKeyCtxPointer::setSignatureMd(const EVPMDCtxPointer& md)
     return EVP_PKEY_CTX_set_signature_md(ctx_.get(), EVP_MD_CTX_md(md.get())) == 1;
 }
 
-bool EVPKeyCtxPointer::initForEncrypt()
-{
-    if (!ctx_) return false;
-    return EVP_PKEY_encrypt_init(ctx_.get()) == 1;
-}
-
 bool EVPKeyCtxPointer::initForDecrypt()
 {
     if (!ctx_) return false;
     return EVP_PKEY_decrypt_init(ctx_.get()) == 1;
-}
-
-DataPointer EVPKeyCtxPointer::derive() const
-{
-    if (!ctx_) return {};
-    size_t len = 0;
-    if (EVP_PKEY_derive(ctx_.get(), nullptr, &len) != 1) return {};
-    auto data = DataPointer::Alloc(len);
-    if (!data) return {};
-    if (EVP_PKEY_derive(
-            ctx_.get(), static_cast<unsigned char*>(data.get()), &len)
-        != 1) {
-        return {};
-    }
-    return data;
 }
 
 EVPKeyPointer EVPKeyCtxPointer::paramgen() const
@@ -4128,61 +3200,11 @@ EVPKeyPointer EVPKeyCtxPointer::paramgen() const
     return EVPKeyPointer(key);
 }
 
-bool EVPKeyCtxPointer::publicCheck() const
-{
-    if (!ctx_) return false;
-#ifndef OPENSSL_IS_BORINGSSL
-#if OPENSSL_VERSION_MAJOR >= 3
-    return EVP_PKEY_public_check_quick(ctx_.get()) == 1;
-#else
-    return EVP_PKEY_public_check(ctx_.get()) == 1;
-#endif
-#else // OPENSSL_IS_BORINGSSL
-    // Boringssl appears not to support this operation.
-    // TODO(jasnell): Is there an alternative approach that Boringssl does
-    // support?
-    return true;
-#endif
-}
-
-bool EVPKeyCtxPointer::privateCheck() const
-{
-    if (!ctx_) return false;
-#ifndef OPENSSL_IS_BORINGSSL
-    return EVP_PKEY_check(ctx_.get()) == 1;
-#else
-    // Boringssl appears not to support this operation.
-    // TODO(jasnell): Is there an alternative approach that Boringssl does
-    // support?
-    return true;
-#endif
-}
-
 bool EVPKeyCtxPointer::verify(const Buffer<const unsigned char>& sig,
     const Buffer<const unsigned char>& data)
 {
     if (!ctx_) return false;
     return EVP_PKEY_verify(ctx_.get(), sig.data, sig.len, data.data, data.len) == 1;
-}
-
-DataPointer EVPKeyCtxPointer::sign(const Buffer<const unsigned char>& data)
-{
-    if (!ctx_) return {};
-    size_t len = 0;
-    if (EVP_PKEY_sign(ctx_.get(), nullptr, &len, data.data, data.len) != 1) {
-        return {};
-    }
-    auto buf = DataPointer::Alloc(len);
-    if (!buf) return {};
-    if (EVP_PKEY_sign(ctx_.get(),
-            static_cast<unsigned char*>(buf.get()),
-            &len,
-            data.data,
-            data.len)
-        != 1) {
-        return {};
-    }
-    return buf.resize(len);
 }
 
 bool EVPKeyCtxPointer::signInto(const Buffer<const unsigned char>& data,
@@ -4207,47 +3229,6 @@ using EVP_PKEY_cipher_t = int(EVP_PKEY_CTX* ctx,
     size_t* outlen,
     const unsigned char* in,
     size_t inlen);
-
-template<EVP_PKEY_cipher_init_t init, EVP_PKEY_cipher_t cipher>
-DataPointer RSA_Cipher(const EVPKeyPointer& key,
-    const Rsa::CipherParams& params,
-    const Buffer<const void> in)
-{
-    if (!key) return {};
-    EVPKeyCtxPointer ctx = key.newCtx();
-
-    if (!ctx || init(ctx.get()) <= 0 || !ctx.setRsaPadding(params.padding) || (params.digest != nullptr && (!ctx.setRsaOaepMd(params.digest) || !ctx.setRsaMgf1Md(params.digest)))) {
-        return {};
-    }
-
-    if (params.label.len != 0 && params.label.data != nullptr && !ctx.setRsaOaepLabel(DataPointer::Copy(params.label))) {
-        return {};
-    }
-
-    size_t out_len = 0;
-    if (cipher(ctx.get(),
-            nullptr,
-            &out_len,
-            reinterpret_cast<const unsigned char*>(in.data),
-            in.len)
-        <= 0) {
-        return {};
-    }
-
-    auto buf = DataPointer::Alloc(out_len);
-    if (!buf) return {};
-
-    if (cipher(ctx.get(),
-            static_cast<unsigned char*>(buf.get()),
-            &out_len,
-            static_cast<const unsigned char*>(in.data),
-            in.len)
-        <= 0) {
-        return {};
-    }
-
-    return buf.resize(out_len);
-}
 
 template<EVP_PKEY_cipher_init_t init, EVP_PKEY_cipher_t cipher>
 DataPointer CipherImpl(const EVPKeyPointer& key,
@@ -4392,22 +3373,6 @@ bool Rsa::setPrivateKey(BignumPointer&& d,
     return true;
 }
 
-DataPointer Rsa::encrypt(const EVPKeyPointer& key,
-    const Rsa::CipherParams& params,
-    const Buffer<const void> in)
-{
-    if (!key) return {};
-    return RSA_Cipher<EVP_PKEY_encrypt_init, EVP_PKEY_encrypt>(key, params, in);
-}
-
-DataPointer Rsa::decrypt(const EVPKeyPointer& key,
-    const Rsa::CipherParams& params,
-    const Buffer<const void> in)
-{
-    if (!key) return {};
-    return RSA_Cipher<EVP_PKEY_decrypt_init, EVP_PKEY_decrypt>(key, params, in);
-}
-
 DataPointer Cipher::encrypt(const EVPKeyPointer& key,
     const CipherParams& params,
     const Buffer<const void> in)
@@ -4441,99 +3406,7 @@ DataPointer Cipher::recover(const EVPKeyPointer& key,
         key, params, in);
 }
 
-namespace {
-struct CipherCallbackContext {
-    Cipher::CipherNameCallback cb;
-    void operator()(WTF::StringView name) { cb(name); }
-};
-
-#if OPENSSL_VERSION_MAJOR >= 3
-template<class TypeName,
-    TypeName* fetch_type(OSSL_LIB_CTX*, const char*, const char*),
-    void free_type(TypeName*),
-    const TypeName* getbyname(const char*),
-    const char* getname(const TypeName*)>
-void array_push_back(const TypeName* evp_ref,
-    const char* from,
-    const char* to,
-    void* arg)
-{
-    if (from == nullptr) return;
-
-    const TypeName* real_instance = getbyname(from);
-    if (!real_instance) return;
-
-    const char* real_name = getname(real_instance);
-    if (!real_name) return;
-
-    // EVP_*_fetch() does not support alias names, so we need to pass it the
-    // real/original algorithm name.
-    // We use EVP_*_fetch() as a filter here because it will only return an
-    // instance if the algorithm is supported by the public OpenSSL APIs (some
-    // algorithms are used internally by OpenSSL and are also passed to this
-    // callback).
-    TypeName* fetched = fetch_type(nullptr, real_name, nullptr);
-    if (fetched == nullptr) return;
-
-    free_type(fetched);
-    auto& cb = *(static_cast<CipherCallbackContext*>(arg));
-    cb(from);
-}
-#else
-template<class TypeName>
-void array_push_back(const TypeName* evp_ref,
-    const char* from,
-    const char* to,
-    void* arg)
-{
-    if (!from) return;
-    auto fromView = WTF::StringView::fromLatin1(from);
-    auto& cb = *(static_cast<CipherCallbackContext*>(arg));
-    cb(fromView);
-}
-#endif
-} // namespace
-
-void Cipher::ForEach(Cipher::CipherNameCallback&& callback)
-{
-    ClearErrorOnReturn clearErrorOnReturn;
-    CipherCallbackContext context;
-    context.cb = WTF::move(callback);
-
-    EVP_CIPHER_do_all_sorted(
-#if OPENSSL_VERSION_MAJOR >= 3
-        array_push_back<EVP_CIPHER,
-            EVP_CIPHER_fetch,
-            EVP_CIPHER_free,
-            EVP_get_cipherbyname,
-            EVP_CIPHER_get0_name>,
-#else
-        array_push_back<EVP_CIPHER>,
-#endif
-        &context);
-}
-
 // ============================================================================
-
-Ec::Ec()
-    : ec_(nullptr)
-{
-}
-
-Ec::Ec(OSSL3_CONST EC_KEY* key)
-    : ec_(key)
-{
-}
-
-const EC_GROUP* Ec::getGroup() const
-{
-    return ECKeyPointer::GetGroup(ec_);
-}
-
-int Ec::getCurve() const
-{
-    return EC_GROUP_get_curve_name(getGroup());
-}
 
 int Ec::GetCurveIdFromName(const char* name)
 {
@@ -4796,15 +3669,6 @@ bool HMACCtxPointer::update(const Buffer<const void>& buf)
         == 1;
 }
 
-DataPointer HMACCtxPointer::digest()
-{
-    auto data = DataPointer::Alloc(EVP_MAX_MD_SIZE);
-    if (!data) return {};
-    Buffer<void> buf = data;
-    if (!digestInto(&buf)) return {};
-    return data.resize(buf.len);
-}
-
 bool HMACCtxPointer::digestInto(Buffer<void>* buf)
 {
     if (!ctx_) return false;
@@ -4820,107 +3684,6 @@ bool HMACCtxPointer::digestInto(Buffer<void>* buf)
 HMACCtxPointer HMACCtxPointer::New()
 {
     return HMACCtxPointer(HMAC_CTX_new());
-}
-
-DataPointer hashDigest(const Buffer<const unsigned char>& buf,
-    const EVP_MD* md)
-{
-    if (md == nullptr) return {};
-    size_t md_len = EVP_MD_size(md);
-    unsigned int result_size;
-    auto data = DataPointer::Alloc(md_len);
-    if (!data) return {};
-
-    if (!EVP_Digest(buf.data,
-            buf.len,
-            reinterpret_cast<unsigned char*>(data.get()),
-            &result_size,
-            md,
-            nullptr)) {
-        return {};
-    }
-
-    return data.resize(result_size);
-}
-
-// ============================================================================
-
-X509Name::X509Name()
-    : name_(nullptr)
-    , total_(0)
-{
-}
-
-X509Name::X509Name(const X509_NAME* name)
-    : name_(name)
-    , total_(X509_NAME_entry_count(name))
-{
-}
-
-X509Name::Iterator::Iterator(const X509Name& name, int pos)
-    : name_(name)
-    , loc_(pos)
-{
-}
-
-X509Name::Iterator& X509Name::Iterator::operator++()
-{
-    ++loc_;
-    return *this;
-}
-
-X509Name::Iterator::operator bool() const
-{
-    return loc_ < name_.total_;
-}
-
-bool X509Name::Iterator::operator==(const Iterator& other) const
-{
-    return loc_ == other.loc_;
-}
-
-bool X509Name::Iterator::operator!=(const Iterator& other) const
-{
-    return loc_ != other.loc_;
-}
-
-std::pair<WTF::String, WTF::String> X509Name::Iterator::operator*() const
-{
-    if (loc_ == name_.total_) return { {}, {} };
-
-    X509_NAME_ENTRY* entry = X509_NAME_get_entry(name_, loc_);
-    if (entry == nullptr) [[unlikely]]
-        return { {}, {} };
-
-    ASN1_OBJECT* name = X509_NAME_ENTRY_get_object(entry);
-    ASN1_STRING* value = X509_NAME_ENTRY_get_data(entry);
-
-    if (name == nullptr || value == nullptr) [[unlikely]] {
-        return { {}, {} };
-    }
-
-    int nid = OBJ_obj2nid(name);
-    WTF::String name_str;
-    if (nid != NID_undef) {
-        name_str = WTF::String::fromUTF8(OBJ_nid2sn(nid));
-    } else {
-        char buf[80];
-        OBJ_obj2txt(buf, sizeof(buf), name, 0);
-        name_str = WTF::String::fromUTF8(buf);
-    }
-
-    unsigned char* value_str = nullptr;
-    int value_str_size = ASN1_STRING_to_UTF8(&value_str, value);
-    if (value_str_size < 0) [[unlikely]] {
-        return { {}, {} };
-    }
-    // ASN1_STRING_to_UTF8 allocates; fromUTF8 copies, so release it here.
-    DataPointer free_value_str(value_str, static_cast<size_t>(value_str_size));
-
-    return {
-        WTF::move(name_str),
-        WTF::String::fromUTF8(std::span(value_str, static_cast<size_t>(value_str_size))),
-    };
 }
 
 // ============================================================================
@@ -4971,34 +3734,17 @@ size_t Digest::size() const
     return EVP_MD_size(md_);
 }
 
-const Digest& Digest::MD5()
-{
-    static const Digest digest = Digest(EVP_md5());
-    return digest;
-}
-const Digest& Digest::SHA1()
-{
-    static const Digest digest = Digest(EVP_sha1());
-    return digest;
-}
-const Digest& Digest::SHA256()
-{
-    static const Digest digest = Digest(EVP_sha256());
-    return digest;
-}
-const Digest& Digest::SHA384()
-{
-    static const Digest digest = Digest(EVP_sha384());
-    return digest;
-}
-const Digest& Digest::SHA512()
-{
-    static const Digest digest = Digest(EVP_sha512());
-    return digest;
-}
 const Digest Digest::FromName(WTF::StringView name)
 {
     return ncrypto::getDigestByName(name);
 }
 
 } // namespace ncrypto
+
+// `X509_V_ERR_*` -> the code name node reports for a peer-certificate
+// validation failure (crypto::GetValidationErrorCode -> X509Pointer::ErrorCode).
+// Every arm returns a string literal, so the pointer outlives any caller.
+extern "C" const char* Bun__X509__validationErrorCode(int32_t err)
+{
+    return ncrypto::X509Pointer::ErrorCode(err).characters();
+}

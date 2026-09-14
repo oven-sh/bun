@@ -14,7 +14,7 @@
 use crate::collections::IdMap;
 use crate::hir::{BlockId, BlockKind, GotoVariant, HirFunction, Terminal};
 
-pub fn prune_unused_labels_hir(func: &mut HirFunction) {
+pub(crate) fn prune_unused_labels_hir(func: &mut HirFunction) {
     // Phase 1: Identify label terminals whose body block immediately breaks
     // to the fallthrough, and both body and fallthrough are normal blocks.
     let mut merged: Vec<(BlockId, BlockId, BlockId)> = Vec::new(); // (label, next, fallthrough)

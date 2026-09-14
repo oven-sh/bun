@@ -17,14 +17,14 @@ use crate::bake::Side;
 /// key directly.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct OwnerPacked(pub u32);
+pub struct OwnerPacked(pub(crate) u32);
 impl OwnerPacked {
     #[inline]
-    pub fn new(side: Side, file: u32) -> Self {
+    pub(crate) fn new(side: Side, file: u32) -> Self {
         Self(file | ((side as u32) << 31))
     }
     #[inline]
-    pub fn side(self) -> Side {
+    pub(crate) fn side(self) -> Side {
         if self.0 >> 31 == 0 {
             Side::Client
         } else {
@@ -32,7 +32,7 @@ impl OwnerPacked {
         }
     }
     #[inline]
-    pub fn file(self) -> u32 {
+    pub(crate) fn file(self) -> u32 {
         self.0 & 0x7FFF_FFFF
     }
 }
@@ -48,7 +48,7 @@ pub enum Owner {
 }
 
 impl Owner {
-    pub fn encode(self) -> Packed {
+    pub(crate) fn encode(self) -> Packed {
         match self {
             Owner::None => Packed::new(PackedKind::None, 0),
             Owner::Client(data) => Packed::new(PackedKind::Client, data.get()),
@@ -76,16 +76,16 @@ impl Packed {
     const DATA_MASK: u32 = (1 << 30) - 1;
 
     #[inline]
-    pub const fn new(kind: PackedKind, data: u32) -> Self {
+    pub(crate) const fn new(kind: PackedKind, data: u32) -> Self {
         debug_assert!(data <= Self::DATA_MASK);
         Packed((data & Self::DATA_MASK) | ((kind as u32) << 30))
     }
     #[inline]
-    pub const fn data(self) -> u32 {
+    pub(crate) const fn data(self) -> u32 {
         self.0 & Self::DATA_MASK
     }
     #[inline]
-    pub const fn kind(self) -> PackedKind {
+    pub(crate) const fn kind(self) -> PackedKind {
         match (self.0 >> 30) as u8 {
             0 => PackedKind::None,
             1 => PackedKind::Route,
@@ -94,15 +94,15 @@ impl Packed {
         }
     }
     #[inline]
-    pub const fn bits(self) -> u32 {
+    pub(crate) const fn bits(self) -> u32 {
         self.0
     }
     #[inline]
-    pub const fn from_bits(bits: u32) -> Self {
+    pub(crate) const fn from_bits(bits: u32) -> Self {
         Packed(bits)
     }
 
-    pub fn decode(self) -> Owner {
+    pub(crate) fn decode(self) -> Owner {
         match self.kind() {
             PackedKind::None => Owner::None,
             PackedKind::Client => Owner::Client(ClientFileIndex::init(self.data())),
@@ -122,12 +122,12 @@ const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 #[derive(Clone, Default)]
 pub struct SerializedFailure {
     /// Wire-format bytes (length-prefixed; first 4 bytes encode `Owner.Packed`).
-    pub data: Box<[u8]>,
+    pub(crate) data: Box<[u8]>,
 }
 
 impl SerializedFailure {
     /// Decodes the leading 4-byte packed owner from `data`.
-    pub fn get_owner(&self) -> Owner {
+    pub(crate) fn get_owner(&self) -> Owner {
         let raw = u32::from_ne_bytes(
             self.data[0..4]
                 .try_into()
@@ -138,13 +138,13 @@ impl SerializedFailure {
 
     /// Releases `data`. `Box<[u8]>` drop suffices; the signature keeps a
     /// `_dev` parameter so call sites read uniformly.
-    pub fn deinit<D>(&self, _dev: &D) {
+    pub(crate) fn deinit<D>(&self, _dev: &D) {
         // Drop happens via owner; nothing to do for the borrow form used by
         // `index_failures` (which iterates `&SerializedFailure`).
     }
 
     /// `SerializedFailure.initFromLog`.
-    pub fn init_from_log(
+    pub(crate) fn init_from_log(
         owner: Owner,
         // for .client and .server, these are meant to be relative file paths
         owner_display_name: &[u8],
@@ -168,28 +168,6 @@ impl SerializedFailure {
         Ok(SerializedFailure {
             data: payload.into_boxed_slice(),
         })
-    }
-}
-
-/// This assumes the hash map contains only one SerializedFailure per owner.
-/// This is okay since SerializedFailure can contain more than one error.
-pub struct ArrayHashContextViaOwner;
-impl ArrayHashContextViaOwner {
-    pub fn hash(&self, k: &SerializedFailure) -> u32 {
-        bun_wyhash::hash_int(k.get_owner().encode().bits())
-    }
-    pub fn eql(&self, a: &SerializedFailure, b: &SerializedFailure, _: usize) -> bool {
-        a.get_owner().encode().bits() == b.get_owner().encode().bits()
-    }
-}
-
-pub struct ArrayHashAdapter;
-impl ArrayHashAdapter {
-    pub fn hash(&self, own: Owner) -> u32 {
-        bun_wyhash::hash_int(own.encode().bits())
-    }
-    pub fn eql(&self, a: Owner, b: &SerializedFailure, _: usize) -> bool {
-        a.encode().bits() == b.get_owner().encode().bits()
     }
 }
 
@@ -268,21 +246,3 @@ fn write_string32(data: &[u8], w: &mut Writer) {
     _ = w.write_int_le::<u32>(u32::try_from(data.len()).expect("int cast"));
     w.extend_from_slice(data);
 }
-
-// fn writeJsValue(value: JSValue, global: *jsc.JSGlobalObject, w: *Writer) !void {
-//     if (value.isAggregateError(global)) {
-//         //
-//     }
-//     if (value.jsType() == .DOMWrapper) {
-//         if (value.as(bun.api.BuildMessage)) |build_error| {
-//             _ = build_error; // autofix
-//             //
-//         } else if (value.as(bun.api.ResolveMessage)) |resolve_error| {
-//             _ = resolve_error; // autofix
-//             @panic("TODO");
-//         }
-//     }
-//     _ = w; // autofix
-//
-//     @panic("TODO");
-// }

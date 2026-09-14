@@ -1,6 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_core::fmt as bun_fmt;
-use bun_paths::PathBuffer;
 use bun_semver::ExternalString;
 use bun_semver::string::JsonFormatterOptions;
 
@@ -12,7 +11,7 @@ use crate::repository::Repository;
 use crate::{Dependency, DependencyID, Npm, Origin, PackageID, invalid_package_id};
 
 use super::package::scripts::Scripts as PackageScripts;
-use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
+use super::tree::IteratorPathStyle;
 use super::{FormatVersion, Lockfile, Package, package_index, tree};
 
 // Since this output is debug-only and an error mid-stream already yields malformed JSON,
@@ -229,8 +228,8 @@ where
         let dependencies = this.buffers.dependencies.as_slice();
         let hoisted_deps = this.buffers.hoisted_dependencies.as_slice();
         let resolutions = this.buffers.resolutions.as_slice();
-        let mut depth_buf: DepthBuf = [0; MAX_DEPTH];
-        let mut path_buf = PathBuffer::uninit();
+        let mut depth_buf = tree::depth_buf_uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 
         for tree_id in 0..this.buffers.trees.as_slice().len() {
@@ -635,15 +634,12 @@ pub struct WriteStreamOptions {
     /// would be `.minified`; the binding always passes `2`.
     pub indent: usize,
     pub emit_nonportable_numbers_as_strings: bool,
-    // `emit_null_optional_fields` is a no-op here: the stringifier is
-    // hand-rolled and emits `write_null()` explicitly.
-    pub emit_null_optional_fields: bool,
 }
 
 /// JSON write stream over an in-memory `Vec<u8>`, sufficient for
 /// `bun_install_js_bindings::jsParseLockfile`.
 pub struct WriteStream {
-    pub out: Vec<u8>,
+    pub(crate) out: Vec<u8>,
     opts: WriteStreamOptions,
     depth: usize,
     /// Per open container: have we emitted ≥1 element yet (i.e. does the next

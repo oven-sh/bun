@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 
-use crate::event_loop::ConcurrentTask;
 use crate::plugin_runner::PluginRunner;
 use crate::{
     CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
@@ -53,29 +52,13 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
 
 // HOST_EXPORT(Bun__readOriginTimerStart, c)
 pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
+    // Fake timers reset performance.now() to 0, so the origin moves with them.
+    if let Some(overridden) = vm.overridden_time_origin {
+        return overridden;
+    }
     // timespce to milliseconds
     ((vm.origin_timestamp as f64) + crate::virtual_machine::ORIGIN_RELATIVE_EPOCH as f64)
         / 1_000_000.0
-}
-
-// HOST_EXPORT(Bun__GlobalObject__connectedIPC, c)
-pub fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
-    use crate::virtual_machine::IPCInstanceUnion;
-    match &global.bun_vm().as_mut().ipc {
-        Some(IPCInstanceUnion::Initialized(inst)) => {
-            // SAFETY: `inst` was produced by `IPCInstance::new` (heap::alloc)
-            // and remains live until `handleIPCClose` swaps `vm.ipc` to `None`.
-            unsafe { (**inst).data.is_connected() }
-        }
-        Some(IPCInstanceUnion::Waiting { .. }) => true,
-        None => false,
-    }
-}
-
-// HOST_EXPORT(Bun__GlobalObject__hasIPC, c)
-pub fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
-    // JSGlobalObject::bun_vm contract.
-    global.bun_vm().as_mut().ipc.is_some()
 }
 
 // HOST_EXPORT(Bun__VirtualMachine__exitDuringUncaughtException, c)
@@ -86,59 +69,50 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
 // `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 
-// HOST_EXPORT(Bun__isBunMain, c)
-pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
-    // JSGlobalObject::bun_vm contract.
-    str.eql_utf8(global.bun_vm().as_mut().main())
-}
-
-/// When IPC environment variables are passed, the socket is not immediately opened,
-/// but rather we wait for process.on('message') or process.send() to be called, THEN
-/// we open the socket. This is to avoid missing messages at the start of the program.
-// HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
-pub fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
-    // getIPCInstance() will initialize a "waiting" ipc instance so this is enough.
-    // it will do nothing if IPC is not enabled.
-    let _ = global.bun_vm().as_mut().get_ipc_instance();
-}
-
-/// This function is called on the main thread
-/// The bunVM() call will assert this
-// HOST_EXPORT(Bun__queueTask, c)
-pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
-    crate::mark_binding!();
-    global
-        .bun_vm()
-        .event_loop_mut()
-        .enqueue_task(Task::init(task));
-}
-
 // HOST_EXPORT(Bun__reportUnhandledError, c)
-pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValue {
+pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     crate::mark_binding!();
 
+    // A TerminationException is not an error to report, and not this frame's to take: it stays pending for
+    // the frames still unwinding above the caller, up to the landing frame (WebCore::reportException alike).
     if !value.is_termination_exception() {
         let _ = global
             .bun_vm()
             .as_mut()
             .uncaught_exception(global, value, false);
     }
-    JSValue::UNDEFINED
 }
 
-/// This function is called on another thread
-/// The main difference: we need to allocate the task & wakeup the thread
-/// We can avoid that if we run it from the main thread.
-// HOST_EXPORT(Bun__queueTaskConcurrently, c)
-pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
+/// `ScriptExecutionContext::postTask` — the context addresses the thread's VM
+/// directly because it outlives the `Zig::GlobalObject` it was created with.
+// HOST_EXPORT(Bun__VM__queueTask, c)
+pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    // SAFETY: bun_vm_concurrently() yields the live VM; `event_loop()` never
-    // returns null for a Bun-owned global. Called off-thread but the loop
-    // wakeup is thread-safe.
-    unsafe {
-        (*(*global.bun_vm_concurrently()).event_loop())
-            .enqueue_task_concurrent(ConcurrentTask::create(Task::init(task)));
-    }
+    this.event_loop_mut().enqueue_task(Task::init(task));
+}
+
+/// [`vm_queue_task`] for a task that must let the loop poll I/O and timers
+/// first (a drain re-posting its own continuation).
+// HOST_EXPORT(Bun__VM__queueTaskAfterYield, c)
+pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
+    crate::mark_binding!();
+    this.event_loop_mut()
+        .enqueue_task_after_yield(Task::init(task));
+}
+
+/// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
+/// debugger and signal threads, work no script initiated), so it lands on the
+/// regular loop: see [`crate::VmHandle::post_cpp_task`].
+// HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // the C ABI boundary is the unsafe part
+pub fn vm_handle_queue_task_concurrently(
+    r: *const crate::vm_handle::Shared,
+    task: *mut crate::cpp_task::CppTask,
+) {
+    crate::mark_binding!();
+    // SAFETY: C++ passes the reference its ScriptExecutionContext holds, and
+    // hands over a live heap EventLoopTask.
+    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task) };
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
@@ -215,7 +189,7 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
 
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
+extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
     jsc_vm.uv_loop().cast()
 }
 
@@ -267,18 +241,20 @@ pub unsafe fn is_no_proxy(
 // HOST_EXPORT(Bun__setVerboseFetchValue, c)
 pub fn set_verbose_fetch_value(value: i32) {
     use bun_http::HTTPVerboseLevel;
-    VirtualMachine::get().as_mut().default_verbose_fetch = Some(match value {
-        1 => HTTPVerboseLevel::Headers as u8,
-        2 => HTTPVerboseLevel::Curl as u8,
-        _ => HTTPVerboseLevel::None as u8,
-    });
+    VirtualMachine::get()
+        .default_verbose_fetch
+        .set(Some(match value {
+            1 => HTTPVerboseLevel::Headers as u8,
+            2 => HTTPVerboseLevel::Curl as u8,
+            _ => HTTPVerboseLevel::None as u8,
+        }));
 }
 
 // HOST_EXPORT(Bun__getVerboseFetchValue, c)
 pub fn get_verbose_fetch_value() -> i32 {
     use bun_http::HTTPVerboseLevel;
     // SAFETY: VM singleton is process-lifetime.
-    match VirtualMachine::get().as_mut().get_verbose_fetch() {
+    match VirtualMachine::get().get_verbose_fetch() {
         HTTPVerboseLevel::None => 0,
         HTTPVerboseLevel::Headers => 1,
         HTTPVerboseLevel::Curl => 2,
@@ -323,23 +299,23 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = frame.arguments_old::<1>();
-    if args.len < 1 {
+    let [arg] = frame.arguments_as_array::<1>();
+    if frame.arguments_count() < 1 {
         return Err(global.throw_not_enough_arguments(
             "setSyntheticAllocationLimitForTesting",
             1,
-            args.len,
+            frame.arguments_count() as usize,
         ));
     }
 
-    if !args.ptr[0].is_number() {
+    if !arg.is_number() {
         return Err(global.throw_invalid_arguments(format_args!(
             "setSyntheticAllocationLimitForTesting expects a number"
         )));
     }
 
     let limit: usize =
-        usize::try_from(args.ptr[0].coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
+        usize::try_from(arg.coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
     let prev = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT
         .swap(limit, core::sync::atomic::Ordering::Relaxed);
     crate::virtual_machine::STRING_ALLOCATION_LIMIT

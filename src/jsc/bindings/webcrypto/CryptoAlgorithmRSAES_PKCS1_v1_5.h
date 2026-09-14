@@ -31,8 +31,8 @@
 
 namespace WebCore {
 
-class CryptoKeyRSA;
-
+// Registered so the algorithm name resolves; SubtleCrypto rejects every RSAES
+// operation as deprecated while normalizing parameters, so nothing else is needed.
 class CryptoAlgorithmRSAES_PKCS1_v1_5 final : public CryptoAlgorithm {
 public:
     static constexpr ASCIILiteral s_name = "RSAES-PKCS1-v1_5"_s;
@@ -42,15 +42,6 @@ public:
 private:
     CryptoAlgorithmRSAES_PKCS1_v1_5() = default;
     CryptoAlgorithmIdentifier identifier() const final;
-
-    void encrypt(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&) final;
-    void decrypt(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&) final;
-    void generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyOrKeyPairCallback&&, ExceptionCallback&&, ScriptExecutionContext&) final;
-    void importKey(CryptoKeyFormat, KeyData&&, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyCallback&&, ExceptionCallback&&) final;
-    void exportKey(CryptoKeyFormat, Ref<CryptoKey>&&, KeyDataCallback&&, ExceptionCallback&&) final;
-
-    static ExceptionOr<Vector<uint8_t>> platformEncrypt(const CryptoKeyRSA&, const Vector<uint8_t>&);
-    static ExceptionOr<Vector<uint8_t>> platformDecrypt(const CryptoKeyRSA&, const Vector<uint8_t>&);
 };
 
 } // namespace WebCore

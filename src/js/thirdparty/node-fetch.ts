@@ -33,11 +33,19 @@ class Headers extends WebHeaders {
 
 const kHeaders = Symbol("kHeaders");
 const kBody = Symbol("kBody");
+// A fetched response has a body stream even when it has no body (204, HEAD):
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L253-L286
+const kFetched = Symbol("kFetched");
 const HeadersPrototype = Headers.prototype;
+
+function closeEmptyBody(controller) {
+  controller.close();
+}
 
 class Response extends WebResponse {
   [kBody]: any;
   [kHeaders];
+  [kFetched]: boolean | undefined;
 
   constructor(body, init) {
     const { Readable, Stream } = require("node:stream");
@@ -52,8 +60,11 @@ class Response extends WebResponse {
     let body = this[kBody];
     if (!body) {
       var web = super.body;
-      if (!web) return null;
-      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({}, web);
+      if (!web) {
+        if (!this[kFetched]) return null;
+        web = new ReadableStream({ start: closeEmptyBody });
+      }
+      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({ responseBody: true }, web);
     }
 
     return body;
@@ -64,45 +75,17 @@ class Response extends WebResponse {
   }
 
   clone() {
-    return Object.setPrototypeOf(super.clone(this), ResponsePrototype);
-  }
-
-  async arrayBuffer() {
-    // load the getter
-    void this.body;
-    return await super.arrayBuffer();
-  }
-
-  async blob() {
-    // load the getter
-    void this.body;
-    return await super.blob();
-  }
-
-  async formData() {
-    // load the getter
-    void this.body;
-    return await super.formData();
-  }
-
-  async json() {
-    // load the getter
-    void this.body;
-    return await super.json();
+    const cloned = Object.setPrototypeOf(super.clone(this), ResponsePrototype);
+    // clone() moved the body to a new web stream, so `body` gets a new node stream, as in node-fetch.
+    this[kBody] = undefined;
+    if (this[kFetched]) cloned[kFetched] = true;
+    return cloned;
   }
 
   // This is a deprecated function in node-fetch
   // but is still used by some libraries and frameworks (like Astro)
   async buffer() {
-    // load the getter
-    void this.body;
     return new $Buffer(await super.arrayBuffer());
-  }
-
-  async text() {
-    // load the getter
-    void this.body;
-    return await super.text();
   }
 
   get type() {
@@ -172,6 +155,7 @@ async function fetch(
   }
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);
+  response[kFetched] = true;
   return response;
 }
 

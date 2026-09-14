@@ -32,6 +32,8 @@ const {
   validateFunction,
   validateString,
 } = require("internal/validators");
+const { addAbortListener } = require("internal/abort_listener");
+const { resistStopPropagation } = require("internal/shared");
 
 const types = require("node:util/types");
 let inspect: typeof import("node:util").inspect | undefined;
@@ -522,18 +524,23 @@ EventEmitterPrototype.rawListeners = function rawListeners(type) {
 };
 
 EventEmitterPrototype.listenerCount = function listenerCount(type, method) {
-  if (method == null) return listenerCountSlow(this, type);
   var handlers = this._events?.[type];
-  if (!handlers) return 0;
-  if (typeof handlers === "function") return handlers === method || handlers.listener === method ? 1 : 0;
-  var length = 0;
-  for (let i = 0; i < handlers.length; i++) {
-    const handler = handlers[i];
-    if (handler === method || handler.listener === method) {
-      length++;
-    }
+  if (handlers === undefined) return 0;
+  if (typeof handlers === "function") {
+    if (method != null) return handlers === method || handlers.listener === method ? 1 : 0;
+    return 1;
   }
-  return length;
+  if (method != null) {
+    var length = 0;
+    for (let i = 0; i < handlers.length; i++) {
+      const handler = handlers[i];
+      if (handler === method || handler.listener === method) {
+        length++;
+      }
+    }
+    return length;
+  }
+  return handlers.length;
 };
 Object.defineProperty(EventEmitterPrototype.listenerCount, "name", { value: "listenerCount" });
 
@@ -557,13 +564,13 @@ async function once(emitter, type, options = kEmptyObject) {
   if (signal?.aborted) {
     throw $makeAbortError(undefined, { cause: signal?.reason });
   }
-  const { resolve, reject, promise } = $newPromiseCapability(Promise);
+  const promise = $newPromise();
   const errorListener = err => {
     emitter.removeListener(type, resolver);
     if (signal != null) {
       eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
     }
-    reject(err);
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
   };
   const resolver = (...args) => {
     if (typeof emitter.removeListener === "function") {
@@ -572,9 +579,10 @@ async function once(emitter, type, options = kEmptyObject) {
     if (signal != null) {
       eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
     }
-    resolve(args);
+    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, args);
   };
-  eventTargetAgnosticAddListener(emitter, type, resolver, { once: true });
+  const opts = resistStopPropagation({ __proto__: null, once: true });
+  eventTargetAgnosticAddListener(emitter, type, resolver, opts);
   if (type !== "error" && typeof emitter.once === "function") {
     // EventTarget does not have `error` event semantics like Node
     // EventEmitters, we listen to `error` events only on EventEmitters.
@@ -583,10 +591,10 @@ async function once(emitter, type, options = kEmptyObject) {
   function abortListener() {
     eventTargetAgnosticRemoveListener(emitter, type, resolver);
     eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
-    reject($makeAbortError(undefined, { cause: signal?.reason }));
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, $makeAbortError(undefined, { cause: signal?.reason }));
   }
   if (signal != null) {
-    eventTargetAgnosticAddListener(signal, "abort", abortListener, { once: true });
+    eventTargetAgnosticAddListener(signal, "abort", abortListener, opts);
   }
 
   return promise;
@@ -811,23 +819,9 @@ function listenerCount(emitter, type) {
   const evt_count = jsEventTargetGetEventListenersCount(emitter, type);
   if (evt_count !== undefined) return evt_count;
 
-  // EventEmitter's with no `.listenerCount`
-  return listenerCountSlow(emitter, type);
+  throw $ERR_INVALID_ARG_TYPE("emitter", ["EventEmitter", "EventTarget"], emitter);
 }
 Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
-
-function listenerCountSlow(emitter, type) {
-  const events = emitter._events;
-  if (events !== undefined) {
-    const evlistener = events[type];
-    if (typeof evlistener === "function") {
-      return 1;
-    } else if (evlistener !== undefined) {
-      return evlistener.length;
-    }
-  }
-  return 0;
-}
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags?) {
   if (typeof emitter.removeListener === "function") {
@@ -873,34 +867,6 @@ function getMaxListeners(emitterOrTarget) {
   throw $ERR_INVALID_ARG_TYPE("emitter", ["EventEmitter", "EventTarget"], emitterOrTarget);
 }
 Object.defineProperty(getMaxListeners, "name", { value: "getMaxListeners" });
-
-// Copy-pasta from Node.js source code
-function addAbortListener(signal, listener) {
-  if (signal === undefined) {
-    throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
-  }
-
-  validateAbortSignal(signal, "signal");
-  if (typeof listener !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("listener", "function", listener);
-  }
-
-  let removeEventListener;
-  if (signal.aborted) {
-    queueMicrotask(() => listener());
-  } else {
-    signal.addEventListener("abort", listener, { __proto__: null, once: true });
-    removeEventListener = () => {
-      signal.removeEventListener("abort", listener);
-    };
-  }
-  return {
-    __proto__: null,
-    [Symbol.dispose]() {
-      removeEventListener?.();
-    },
-  };
-}
 
 let EventEmitterReferencingAsyncResource;
 function lazyLoadAsyncResource() {
@@ -1029,5 +995,22 @@ Object.assign(EventEmitter, {
   init: EventEmitter,
   listenerCount,
 });
+
+// Node: `Object.getPrototypeOf(process) instanceof EventEmitter` holds.
+// Link the native process prototype under this module's EventEmitter; the
+// native methods stay earlier in the chain and keep winning lookups.
+try {
+  const processPrototype = Object.getPrototypeOf(process);
+  if (
+    processPrototype !== null &&
+    processPrototype !== Object.prototype &&
+    !(processPrototype instanceof EventEmitter)
+  ) {
+    Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
+  }
+} catch {
+  // If the prototype is not relinkable, process simply keeps its native
+  // chain; everything else about this module still works.
+}
 
 export default EventEmitter as any as typeof import("node:events");

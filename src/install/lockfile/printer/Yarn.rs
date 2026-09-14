@@ -1,7 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 use core::cmp::Ordering;
 
-use bun_collections::HashMap;
+use bun_collections::{HashMap, index_sort};
 use bun_core::strings;
 use bun_semver::String as SemverString;
 
@@ -17,7 +17,10 @@ use bun_install::lockfile::package;
 use crate::integrity;
 use crate::lockfile_real::Printer;
 
-pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
+pub(crate) fn print(
+    this: &mut Printer,
+    writer: &mut impl bun_io::Write,
+) -> Result<(), crate::Error> {
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
     #[cfg(debug_assertions)]
@@ -27,7 +30,6 @@ pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), 
         };
         let mut stream = WriteStream::new(WriteStreamOptions {
             indent: 2,
-            emit_null_optional_fields: true,
             emit_nonportable_numbers_as_strings: true,
         });
         crate::lockfile_real::json_stringify(this.lockfile, &mut stream)?;
@@ -95,7 +97,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
 
             let dependency_versions = &mut all_requested_versions_buf[requested_version_start..];
             if dependency_versions.len() > 1 {
-                dependency_versions.sort_by(|a, b| {
+                index_sort::sort_slice_by(dependency_versions, |a, b| {
                     if dependency::Version::is_less_than_with_tag(string_buf, a, b) {
                         Ordering::Less
                     } else if dependency::Version::is_less_than_with_tag(string_buf, b, a) {
@@ -117,7 +119,9 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
             buf: string_buf.into(),
             resolutions: resolved.into(),
         };
-        alphabetized_names.sort_unstable_by(|&a, &b| alphabetizer.order(a, b));
+        index_sort::sort_indices_unstable(&mut alphabetized_names, &mut |a, b| {
+            alphabetizer.order(a, b)
+        });
     }
 
     // When printing, we start at 1
@@ -138,18 +142,19 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
             // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
             let always_needs_quote = strings::must_escape_yaml_string(name);
 
-            let mut prev_dependency_version: Option<&dependency::Version> = None;
             let mut needs_comma = false;
-            for dependency_version in dependency_versions {
+            for (nth, dependency_version) in dependency_versions.iter().enumerate() {
+                let version_name: &[u8] = dependency_version.literal.slice(string_buf);
+                // one key per requested spec as written
+                if dependency_versions[..nth]
+                    .iter()
+                    .any(|earlier| earlier.literal.slice(string_buf) == version_name)
+                {
+                    continue;
+                }
                 if needs_comma {
-                    if let Some(prev) = prev_dependency_version {
-                        if prev.eql(dependency_version, string_buf, string_buf) {
-                            continue;
-                        }
-                    }
                     writer.write_all(b", ")?;
                 }
-                let version_name: &[u8] = dependency_version.literal.slice(string_buf);
                 let needs_quote = always_needs_quote
                     || strings::index_of_any(version_name, b" |\t-/!:\"\\,\n\r").is_some()
                     || version_name.starts_with(b"npm:");
@@ -187,7 +192,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
                 if needs_quote {
                     writer.write_all(b"\"")?;
                 }
-                prev_dependency_version = Some(dependency_version);
                 needs_comma = true;
             }
 
@@ -252,9 +256,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
 
                         // assert its sorted. debug only because of a bug saving incorrect ordering
                         // of optional dependencies to lockfiles
-                        if cfg!(debug_assertions) {
-                            debug_assert!(dependency_behavior_change_count < 3);
-                        }
+                        debug_assert!(dependency_behavior_change_count < 3);
                     }
 
                     writer.write_all(b"    ")?;

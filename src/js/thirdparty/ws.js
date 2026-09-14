@@ -9,12 +9,26 @@ const ReadyState_CLOSING = 2;
 const ReadyState_CLOSED = 3;
 
 const EventEmitter = require("node:events");
-const http = require("node:http");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
+
+// node:http is almost the entire cost of require("ws"); load it on first use.
+let http;
+function lazyHttp() {
+  return (http ??= require("node:http"));
+}
+
+// npm ws's sendAfterClose: a ping/pong/send on a CLOSING/CLOSED socket delivers
+// a "not open" Error to the callback on the next tick and never throws.
+function sendAfterClose(state, cb) {
+  if (typeof cb === "function") {
+    const err = new Error(`WebSocket is not open: readyState ${state} (${readyStates[state]})`);
+    process.nextTick(cb, err);
+  }
+}
 
 /**
  * Extracts TLS and proxy options from an agent object.
@@ -83,6 +97,22 @@ const eventIds = {
   pong: 6,
 };
 
+// Identity-stable placeholder for `#armNativeBridge`.
+function noopBridgeListener() {}
+
+function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
+  const res = new (lazyHttp().IncomingMessage)(null);
+  res._addHeaderLines(rawHeaders, rawHeaders.length);
+  res.statusCode = statusCode;
+  res.statusMessage = statusMessage;
+  res.httpVersion = "1.1";
+  res.httpVersionMajor = 1;
+  res.httpVersionMinor = 1;
+  if (body && body.length) res.push(body);
+  res.push(null);
+  return res;
+}
+
 const emittedWarnings = new Set();
 function emitWarning(type, message) {
   if (emittedWarnings.has(type)) return;
@@ -108,6 +138,11 @@ function normalizeData(data, opts) {
   return data;
 }
 
+// npm ws emits ping and pong payloads as a Buffer. Only an ArrayBuffer can be wrapped synchronously.
+function controlPayload(binaryType, data) {
+  return binaryType === "arraybuffer" ? Buffer.from(data) : data;
+}
+
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 
@@ -125,6 +160,14 @@ class BunWebSocket extends EventEmitter {
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
+  // Gates the EventEmitter bridge so the native non-101 error isn't re-emitted.
+  #unexpectedResponseEmitted = false;
+  // Gates addEventListener('error')/onerror wrappers; set only when 'unexpected-response' fired.
+  #unexpectedResponseHandled = false;
+  // listener -> suppression wrapper, for removeEventListener('error', ...).
+  #errorListenerWrappers;
+  // User's onerror; the native slot holds a suppression wrapper.
+  #onerror;
   // Bitset to track whether event handlers are set.
   #eventId = 0;
 
@@ -272,9 +315,79 @@ class BunWebSocket extends EventEmitter {
     return ws;
   }
 
+  #handshakeListenerRegistered = false;
+  #ensureHandshakeListener() {
+    if (this.#handshakeListenerRegistered) return;
+    this.#handshakeListenerRegistered = true;
+    this.#ws.addEventListener("handshake", event => this.#onHandshake(event.data), onceObject);
+  }
+
+  // Minimal ClientRequest stub for the first 'unexpected-response' argument.
+  #syntheticRequest;
+  #getSyntheticRequest() {
+    let req = this.#syntheticRequest;
+    if (req) return req;
+    const url = this.#ws?.url;
+    let path = "/";
+    try {
+      if (url) {
+        const parsed = new URL(url);
+        path = (parsed.pathname || "/") + (parsed.search || "");
+      }
+    } catch {}
+    req = this.#syntheticRequest = {
+      __proto__: Object.create(EventEmitter.prototype),
+      method: "GET",
+      path,
+      url,
+      headers: { __proto__: null },
+      rawHeaders: [],
+      getHeader() {},
+      getHeaders() {
+        return { __proto__: null };
+      },
+      setHeader() {},
+      removeHeader() {},
+      hasHeader() {
+        return false;
+      },
+      abort() {},
+      end() {},
+      write() {},
+      writeHead() {},
+      headersSent: true,
+      finished: true,
+      socket: null,
+      [Symbol.toStringTag]: "ClientRequest",
+    };
+    EventEmitter.$call(req);
+    return req;
+  }
+
+  #onHandshake(data) {
+    const { statusCode, statusMessage, rawHeaders, body } = data;
+    const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders, statusCode === 101 ? null : body);
+    if (statusCode === 101) {
+      this.emit("upgrade", res);
+      return;
+    }
+    if (this.listenerCount("unexpected-response") > 0) {
+      this.#unexpectedResponseEmitted = true;
+      this.#unexpectedResponseHandled = true;
+      this.emit("unexpected-response", this.#getSyntheticRequest(), res);
+    } else if (this.listenerCount("error") > 0) {
+      this.#unexpectedResponseEmitted = true;
+      this.emit("error", new Error("Unexpected server response: " + statusCode));
+    }
+  }
+
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
+    }
+    if (event === "upgrade" || event === "unexpected-response") {
+      this.#ensureHandshakeListener();
+      return once ? super.once(event, listener) : super.on(event, listener);
     }
     const mask = 1 << eventIds[event];
     const hasPersistentListener = mask && (this.#eventId & mask) === mask;
@@ -324,6 +437,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "error",
           err => {
+            if (this.#unexpectedResponseEmitted) return;
             this.emit("error", err);
           },
           once,
@@ -332,7 +446,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "ping",
           ({ data }) => {
-            this.emit("ping", data);
+            this.emit("ping", controlPayload(this.#binaryType, data));
           },
           once,
         );
@@ -340,7 +454,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "pong",
           ({ data }) => {
-            this.emit("pong", data);
+            this.emit("pong", controlPayload(this.#binaryType, data));
           },
           once,
         );
@@ -355,6 +469,33 @@ class BunWebSocket extends EventEmitter {
 
   once(event, listener) {
     return this.#onOrOnce(event, listener, onceObject);
+  }
+
+  addListener(event, listener) {
+    return this.#onOrOnce(event, listener, undefined);
+  }
+
+  prependListener(event, listener) {
+    this.#armNativeBridge(event);
+    return super.prependListener(event, listener);
+  }
+
+  prependOnceListener(event, listener) {
+    this.#armNativeBridge(event);
+    return super.prependOnceListener(event, listener);
+  }
+
+  // Install the native forwarder for `event` without adding a listener.
+  #armNativeBridge(event) {
+    if (event === "upgrade" || event === "unexpected-response") {
+      this.#ensureHandshakeListener();
+      return;
+    }
+    if (eventIds[event] === undefined) return;
+    const mask = 1 << eventIds[event];
+    if ((this.#eventId & mask) === mask) return;
+    this.#onOrOnce(event, noopBridgeListener, undefined);
+    super.off(event, noopBridgeListener);
   }
 
   send(data, opts, cb) {
@@ -402,7 +543,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   set binaryType(value) {
-    if (value === "nodebuffer" || value === "arraybuffer") {
+    if (value === "nodebuffer" || value === "arraybuffer" || value === "blob") {
       this.#ws.binaryType = this.#binaryType = value;
       this.#fragments = false;
     } else if (value === "fragments") {
@@ -424,10 +565,48 @@ class BunWebSocket extends EventEmitter {
 
   // deviation: this does not support `message` with `binaryType = "fragments"`
   addEventListener(type, listener, options) {
+    // upgrade/unexpected-response are emitted on this EventEmitter, not #ws.
+    if (type === "upgrade" || type === "unexpected-response") {
+      this.#ensureHandshakeListener();
+      if (this.listeners(type).includes(listener)) return;
+      if (options && options.once) {
+        super.once(type, listener);
+      } else {
+        super.on(type, listener);
+      }
+      return;
+    }
+    if (type === "error" && typeof listener === "function") {
+      if (options?.signal?.aborted) return;
+      if (this.#errorListenerWrappers?.has(listener)) return;
+      const self = this;
+      const once = !!(options && options.once);
+      const wrapper = function (event) {
+        if (once) self.#errorListenerWrappers?.delete(listener);
+        if (self.#unexpectedResponseHandled) return;
+        return listener.$call(this, event);
+      };
+      (this.#errorListenerWrappers ??= new WeakMap()).set(listener, wrapper);
+      options?.signal?.addEventListener("abort", () => self.#errorListenerWrappers?.delete(listener), onceObject);
+      this.#ws.addEventListener(type, wrapper, options);
+      return;
+    }
     this.#ws.addEventListener(type, listener, options);
   }
 
   removeEventListener(type, listener) {
+    if (type === "upgrade" || type === "unexpected-response") {
+      super.off(type, listener);
+      return;
+    }
+    if (type === "error") {
+      const wrapper = this.#errorListenerWrappers?.get(listener);
+      if (wrapper !== undefined) {
+        this.#errorListenerWrappers.delete(listener);
+        this.#ws.removeEventListener(type, wrapper);
+        return;
+      }
+    }
     this.#ws.removeEventListener(type, listener);
   }
 
@@ -440,11 +619,21 @@ class BunWebSocket extends EventEmitter {
   }
 
   get onerror() {
-    return this.#ws.onerror;
+    return this.#onerror ?? this.#ws.onerror;
   }
 
   set onerror(value) {
-    this.#ws.onerror = value;
+    this.#onerror = typeof value === "function" ? value : undefined;
+    if (this.#onerror === undefined) {
+      this.#ws.onerror = value;
+      return;
+    }
+    const self = this;
+    const fn = this.#onerror;
+    this.#ws.onerror = function (event) {
+      if (self.#unexpectedResponseHandled) return;
+      return fn.$call(this, event);
+    };
   }
 
   get onclose() {
@@ -473,7 +662,8 @@ class BunWebSocket extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.#ws.readyState === 0) {
+    const state = this.#ws.readyState;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -485,25 +675,21 @@ class BunWebSocket extends EventEmitter {
       mask = undefined;
     }
 
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.ping();
-      else this.#ws.ping(data);
-    } catch (error) {
-      if (typeof cb === "function") {
-        cb(error);
-        return;
-      }
-      this.emit("error", error);
-      return;
-    }
+    // npm ws has no try/catch here: Sender.prototype.ping throws RangeError
+    // synchronously for a >125-byte payload and never reaches cb.
+    if (data === undefined) this.#ws.ping();
+    else this.#ws.ping(data);
 
     if (typeof cb === "function") cb();
   }
 
   pong(data, mask, cb) {
-    if (this.#ws.readyState === 0) {
+    const state = this.#ws.readyState;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -515,19 +701,12 @@ class BunWebSocket extends EventEmitter {
       mask = undefined;
     }
 
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.pong();
-      else this.#ws.pong(data);
-    } catch (error) {
-      if (typeof cb === "function") {
-        cb(error);
-        return;
-      }
-      this.emit("error", error);
-      return;
-    }
+    if (data === undefined) this.#ws.pong();
+    else this.#ws.pong(data);
 
     if (typeof cb === "function") cb();
   }
@@ -540,9 +719,7 @@ class BunWebSocket extends EventEmitter {
     }
 
     this.#paused = true;
-
-    // deviation: we dont support pause()
-    emitWarning("pause()", "ws.WebSocket.pause() is not implemented in bun");
+    this.#ws.pause();
   }
 
   resume() {
@@ -553,9 +730,7 @@ class BunWebSocket extends EventEmitter {
     }
 
     this.#paused = false;
-
-    // deviation: we dont support resume()
-    emitWarning("resume()", "ws.WebSocket.resume() is not implemented in bun");
+    this.#ws.resume();
   }
 }
 Object.defineProperty(BunWebSocket, "name", { value: "WebSocket" });
@@ -758,8 +933,13 @@ function wsEmitClose(server) {
   server.emit("close");
 }
 
-function abortHandshake(response, code, message, headers = {}) {
-  message = message || http.STATUS_CODES[code];
+function socketOnError() {
+  this.destroy();
+}
+
+function abortHandshake(socket, code, message, headers) {
+  const { STATUS_CODES } = lazyHttp();
+  message = message || STATUS_CODES[code];
   headers = {
     Connection: "close",
     "Content-Type": "text/html",
@@ -767,19 +947,38 @@ function abortHandshake(response, code, message, headers = {}) {
     ...headers,
   };
 
-  response.writeHead(code, headers);
-  response.write(message);
-  response.end();
+  // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
+  const response = socket._httpMessage;
+  if (response) {
+    response.writeHead(code, headers);
+    response.write(message);
+    response.end();
+    return;
+  }
+
+  // Another WebSocketServer on the same http.Server has already taken this connection.
+  if (socket[kBunInternals]?.upgraded) return;
+
+  socket.once("finish", socket.destroy);
+
+  socket.end(
+    `HTTP/1.1 ${code} ${STATUS_CODES[code]}\r\n` +
+      Object.keys(headers)
+        .map(h => `${h}: ${headers[h]}`)
+        .join("\r\n") +
+      "\r\n\r\n" +
+      message,
+  );
 }
 
-function abortHandshakeOrEmitwsClientError(server, req, response, socket, code, message) {
+function abortHandshakeOrEmitwsClientError(server, req, socket, code, message, headers) {
   if (server.listenerCount("wsClientError")) {
     const err = new Error(message);
     Error.captureStackTrace(err, abortHandshakeOrEmitwsClientError);
 
     server.emit("wsClientError", err, socket, req);
   } else {
-    abortHandshake(response, code, message);
+    abortHandshake(socket, code, message, headers);
   }
 }
 
@@ -795,24 +994,20 @@ class BunWebSocketMocked extends EventEmitter {
   #protocol;
   #extensions;
   #bufferedAmount = 0;
-  #binaryType = "arraybuffer";
+  // The default of the ServerWebSocket. The setter keeps both sides in sync.
+  #binaryType = "nodebuffer";
 
   #onclose;
   #onerror;
   #onmessage;
   #onopen;
 
-  constructor(url, protocol, extensions, binaryType) {
+  constructor(url, protocol, extensions) {
     super();
     this.#ws = null;
     this.#state = ReadyState_CONNECTING;
     this.#url = url;
     this.#bufferedAmount = 0;
-    binaryType = binaryType || "arraybuffer";
-    if (binaryType !== "nodebuffer" && binaryType !== "blob" && binaryType !== "arraybuffer") {
-      throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
-    }
-    this.#binaryType = binaryType;
     this.#protocol = protocol;
     this.#extensions = extensions;
 
@@ -835,12 +1030,12 @@ class BunWebSocketMocked extends EventEmitter {
 
   #ping(ws, data) {
     this.#ws = ws;
-    this.emit("ping", data);
+    this.emit("ping", controlPayload(this.#binaryType, data));
   }
 
   #pong(ws, data) {
     this.#ws = ws;
-    this.emit("pong", data);
+    this.emit("pong", controlPayload(this.#binaryType, data));
   }
 
   #message(ws, message) {
@@ -857,15 +1052,8 @@ class BunWebSocketMocked extends EventEmitter {
         message = Buffer.from(message);
       }
     } else {
-      //Buffer
+      // The ServerWebSocket already built the Buffer, ArrayBuffer or Blob that binaryType selects.
       isBinary = true;
-      if (this.#binaryType !== "nodebuffer") {
-        if (this.#binaryType === "arraybuffer") {
-          message = new Uint8Array(message);
-        } else if (this.#binaryType === "blob") {
-          message = new Blob([message]);
-        }
-      }
     }
 
     this.emit("message", message, isBinary);
@@ -904,7 +1092,8 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.#state === ReadyState_CONNECTING) {
+    const state = this.#state;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -916,21 +1105,19 @@ class BunWebSocketMocked extends EventEmitter {
       mask = undefined;
     }
 
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.ping();
-      else this.#ws.ping(data);
-    } catch (error) {
-      if (typeof cb === "function") cb(error);
-      return;
-    }
+    if (data === undefined) this.#ws.ping();
+    else this.#ws.ping(data);
 
     if (typeof cb === "function") cb();
   }
 
   pong(data, mask, cb) {
-    if (this.#state === ReadyState_CONNECTING) {
+    const state = this.#state;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -942,15 +1129,12 @@ class BunWebSocketMocked extends EventEmitter {
       mask = undefined;
     }
 
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.pong();
-      else this.#ws.pong(data);
-    } catch (error) {
-      if (typeof cb === "function") cb(error);
-      return;
-    }
+    if (data === undefined) this.#ws.pong();
+    else this.#ws.pong(data);
 
     if (typeof cb === "function") cb();
   }
@@ -1025,6 +1209,9 @@ class BunWebSocketMocked extends EventEmitter {
       throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
     }
     this.#binaryType = type;
+    // #ws is null before open and after close. The ServerWebSocket builds the selected type itself.
+    const ws = this.#ws;
+    if (ws) ws.binaryType = type;
   }
 
   get readyState() {
@@ -1182,6 +1369,7 @@ class WebSocketServer extends EventEmitter {
     }
 
     if (port != null) {
+      const http = lazyHttp();
       this._server = http.createServer((req, res) => {
         const body = http.STATUS_CODES[426];
 
@@ -1345,11 +1533,20 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const response = socket._httpMessage;
-    const server = socket.server[kBunInternals];
+    // Destroy the socket if the client has already sent a FIN packet.
+    if (!socket.readable || !socket.writable) return socket.destroy();
+
     const req = socket[kBunInternals];
 
-    if (this._state > RUNNING) return abortHandshake(response, 503);
+    if (req?.upgraded) {
+      throw new Error(
+        "server.handleUpgrade() was called more than once with the same socket, possibly due to a misconfiguration",
+      );
+    }
+
+    if (this._state > RUNNING) return abortHandshake(socket, 503);
+
+    const server = socket.server[kBunInternals];
 
     let protocol = "";
     if (protocols.size) {
@@ -1360,7 +1557,7 @@ class WebSocketServer extends EventEmitter {
         ? this.options.handleProtocols(protocols, request)
         : protocols.values().next().value;
     }
-    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer");
+    const ws = new BunWebSocketMocked(request.url, protocol, extensions);
 
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);
@@ -1384,7 +1581,7 @@ class WebSocketServer extends EventEmitter {
       }
       cb(ws, request);
     } else {
-      abortHandshake(response, 500);
+      abortHandshake(socket, 500);
     }
   }
   /**
@@ -1398,40 +1595,43 @@ class WebSocketServer extends EventEmitter {
    * @public
    */
   handleUpgrade(req, socket, head, cb) {
-    // socket is actually fake so we use internal http_res
-    const response = socket._httpMessage || socket[kBunInternals];
-
-    // socket.on("error", socketOnError);
+    // Every WebSocketServer on the http.Server sees this socket. Keep one copy.
+    socket.removeListener("error", socketOnError);
+    // Stays attached after the upgrade: node:http removed its own listener at the handoff.
+    socket.on("error", socketOnError);
 
     const key = req.headers["sec-websocket-key"];
     const version = +req.headers["sec-websocket-version"];
 
     if (req.method !== "GET") {
       const message = "Invalid HTTP method";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 405, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 405, message);
       return;
     }
 
-    if (req.headers.upgrade.toLowerCase() !== "websocket") {
+    const upgrade = req.headers.upgrade;
+    if (upgrade === undefined || upgrade.toLowerCase() !== "websocket") {
       const message = "Invalid Upgrade header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
       return;
     }
 
     if (!key || !wsKeyRegex.test(key)) {
       const message = "Missing or invalid Sec-WebSocket-Key header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
       return;
     }
 
     if (version !== 8 && version !== 13) {
       const message = "Missing or invalid Sec-WebSocket-Version header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message, {
+        "Sec-WebSocket-Version": "13, 8",
+      });
       return;
     }
 
     if (!this.shouldHandle(req)) {
-      abortHandshake(response, 400);
+      abortHandshake(socket, 400);
       return;
     }
 
@@ -1443,33 +1643,14 @@ class WebSocketServer extends EventEmitter {
         protocols = subprotocolParse(secWebSocketProtocol);
       } catch {
         const message = "Invalid Sec-WebSocket-Protocol header";
-        abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+        abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
         return;
       }
     }
 
     // TODO: add perMessageDeflate options
 
-    // const secWebSocketExtensions = req.headers["sec-websocket-extensions"];
     const extensions = {};
-
-    // if (secWebSocketExtensions !== undefined) {
-    // console.log(secWebSocketExtensions);
-    // const perMessageDeflate = new PerMessageDeflate(this.options.perMessageDeflate, true, this.options.maxPayload);
-
-    // try {
-    //   const offers = extension.parse(secWebSocketExtensions);
-
-    //   if (offers[PerMessageDeflate.extensionName]) {
-    //     perMessageDeflate.accept(offers[PerMessageDeflate.extensionName]);
-    //     extensions[PerMessageDeflate.extensionName] = perMessageDeflate;
-    //   }
-    // } catch (err) {
-    //   const message = "Invalid or unacceptable Sec-WebSocket-Extensions header";
-    //   abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
-    //   return;
-    // }
-    // }
 
     //
     // Optionally call external client verification handler.
@@ -1484,7 +1665,7 @@ class WebSocketServer extends EventEmitter {
       if (this.options.verifyClient.length === 2) {
         this.options.verifyClient(info, (verified, code, message, headers) => {
           if (!verified) {
-            return abortHandshake(response, code || 401, message, headers);
+            return abortHandshake(socket, code || 401, message, headers);
           }
 
           this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);
@@ -1492,7 +1673,7 @@ class WebSocketServer extends EventEmitter {
         return;
       }
 
-      if (!this.options.verifyClient(info)) return abortHandshake(response, 401);
+      if (!this.options.verifyClient(info)) return abortHandshake(socket, 401);
     }
 
     this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);

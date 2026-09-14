@@ -1,8 +1,8 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { unlinkSync } from "node:fs";
+import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -72,6 +72,14 @@ describe("Bun.file in serve routes", () => {
       }),
       "/partial.txt": new Response(Bun.file(join(tempDir, "partial.txt"))),
       "/partial-slice.txt": new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10)),
+      // Rendering a handler response built from an unread Bun.file() stream
+      // turns the stream back into the file Blob; the slice must survive that.
+      "/partial-slice-stream-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10).stream()),
+      "/partial-open-slice-stream-handler": () =>
+        new Response(Bun.file(join(tempDir, "partial.txt")).slice(10).stream()),
+      "/partial-empty-slice-stream-handler": () =>
+        new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 5).stream()),
+      "/partial-stream-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).stream()),
       "/fd-not-supported.txt": (() => {
         // This would test file descriptors, but they're not supported yet
         return new Response(Bun.file(join(tempDir, "hello.txt")));
@@ -469,6 +477,98 @@ describe("Bun.file in serve routes", () => {
       expect(await res.text()).toBe("Hello, World!");
     });
 
+    // RFC 9110 §13.2.2 steps 1–2: If-Match / If-Unmodified-Since evaluate
+    // first and short-circuit with 412 before If-None-Match / If-Modified-Since.
+    describe.each(["GET", "HEAD"])("If-Match / If-Unmodified-Since (%s)", method => {
+      it("If-Match: non-matching tag on a file route with ETag → 412", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"zz"' },
+        });
+        expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
+      });
+
+      it("If-Match: matching tag on a file route with ETag → 200", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"custom-etag"' },
+        });
+        expect(res.status).toBe(200);
+        if (method === "GET") expect(await res.text()).toBe("Hello, World!");
+      });
+
+      it("If-Match: * on a file route without a stored ETag → 200", async () => {
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Match": "*" },
+        });
+        expect(res.status).toBe(200);
+      });
+
+      it("If-Match: tag list on a file route without a stored ETag → 412", async () => {
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"anything"' },
+        });
+        expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
+      });
+
+      it('If-Match: W/"custom-etag" uses strong compare → 412', async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": 'W/"custom-etag"' },
+        });
+        expect(res.status).toBe(412);
+      });
+
+      it("If-Unmodified-Since earlier than mtime → 412", async () => {
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Unmodified-Since": "Mon, 01 Jan 2001 00:00:00 GMT" },
+        });
+        expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
+      });
+
+      it("If-Unmodified-Since at or after mtime → 200", async () => {
+        const lm = (await fetch(new URL(`/hello-blob.txt`, server.url))).headers.get("Last-Modified");
+        expect(lm).not.toBeEmpty();
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Unmodified-Since": lm! },
+        });
+        expect(res.status).toBe(200);
+      });
+
+      it("If-Match failure + If-None-Match match → 412 (not 304)", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"zz"', "If-None-Match": '"custom-etag"' },
+        });
+        expect(res.status).toBe(412);
+      });
+
+      it("If-Match failure + Range → 412 (no Content-Range)", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"zz"', "Range": "bytes=0-3" },
+        });
+        expect(res.status).toBe(412);
+        expect(res.headers.get("content-range")).toBeNull();
+        expect(await res.text()).toBe("");
+      });
+
+      it("If-Match present suppresses If-Unmodified-Since", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"custom-etag"', "If-Unmodified-Since": "Mon, 01 Jan 2001 00:00:00 GMT" },
+        });
+        expect(res.status).toBe(200);
+      });
+    });
+
     it.todo("handles ETag", async () => {
       const res1 = await fetch(new URL(`/hello.txt`, server.url));
       const etag = res1.headers.get("ETag");
@@ -527,7 +627,7 @@ describe("Bun.file in serve routes", () => {
       }
 
       Bun.gc(true);
-      const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+      const baseline = (rss() / 1024 / 1024) | 0;
 
       // Make many requests to large file
       for (let i = 0; i < 50; i++) {
@@ -537,7 +637,7 @@ describe("Bun.file in serve routes", () => {
       }
 
       Bun.gc(true);
-      const final = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+      const final = (rss() / 1024 / 1024) | 0;
       const delta = final - baseline;
 
       // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
@@ -619,6 +719,45 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("56789");
       expect(res.headers.get("Content-Length")).toBe("5");
+    });
+
+    it("serves the slice behind a sliced file's stream from a handler", async () => {
+      const serve = async (pathname: string) => {
+        const get = await fetch(new URL(pathname, server.url));
+        const head = await fetch(new URL(pathname, server.url), { method: "HEAD" });
+        return {
+          body: await get.text(),
+          contentLength: get.headers.get("Content-Length"),
+          headContentLength: head.headers.get("Content-Length"),
+        };
+      };
+      expect({
+        "slice(5, 10)": await serve("/partial-slice-stream-handler"),
+        "slice(10)": await serve("/partial-open-slice-stream-handler"),
+        "slice(5, 5)": await serve("/partial-empty-slice-stream-handler"),
+        "whole file": await serve("/partial-stream-handler"),
+      }).toEqual({
+        "slice(5, 10)": { body: "56789", contentLength: "5", headContentLength: "5" },
+        "slice(10)": { body: "ABCDEF", contentLength: "6", headContentLength: "6" },
+        "slice(5, 5)": { body: "", contentLength: "0", headContentLength: "0" },
+        "whole file": { body: "0123456789ABCDEF", contentLength: "16", headContentLength: "16" },
+      });
+    });
+
+    // The slice is shorter than the file, so the byte budget runs out before
+    // the reader reports EOF: the response completes inline while a deferred
+    // completion still hops through the event loop. Repeated requests must
+    // each deliver exactly the slice and recycle the request context cleanly.
+    it("truncated-length EOF path completes cleanly across repeated requests", async () => {
+      for (let i = 0; i < 32; i++) {
+        const res = await fetch(new URL(`/partial-slice.txt`, server.url));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("56789");
+        expect(res.headers.get("Content-Length")).toBe("5");
+      }
+      // The pool is still healthy afterwards: an unrelated route responds.
+      const check = await fetch(new URL(`/hello-blob.txt`, server.url));
+      expect(check.status).toBe(200);
     });
   });
 
@@ -776,6 +915,26 @@ describe("Bun.file in serve routes", () => {
       expect(await res.text()).toBe(body);
     });
 
+    // RFC 9110 §14.1.2: first-pos, last-pos and suffix-length are 1*DIGIT.
+    // A sign or a `_` separator makes the header unparseable, so it is ignored.
+    it.each([
+      "bytes=+0-+3",
+      "bytes=+5-",
+      "bytes=0-+3",
+      "bytes=-+4",
+      "bytes=0--0",
+      "bytes=--0",
+      "bytes=1_0-1_2",
+      "bytes=-1_0",
+    ])("ignores malformed position in %j and serves full body", async range => {
+      const res = await fetch(new URL(path, server.url), { headers: { Range: range } });
+      expect({
+        status: res.status,
+        contentRange: res.headers.get("content-range"),
+        body: await res.text(),
+      }).toEqual({ status: 200, contentRange: null, body });
+    });
+
     it("ignores Range for non-GET/HEAD methods", async () => {
       // RFC 9110 §14.2: Range is only defined for GET.
       const res = await fetch(new URL(path, server.url), { method: "POST", headers: { Range: "bytes=0-3" } });
@@ -839,27 +998,35 @@ describe("Bun.file in serve routes", () => {
   });
 });
 
-// FileResponseStream takes one in-flight-read reference before each
-// reader.read() and must release it exactly once. For pollable fds (FIFO,
-// character device, socket) the armed poll keeps delivering readable events
-// after a body write already returned backpressure; each extra chunk used to
-// release the same reference again, dropping the count to zero and freeing the
-// stream object while uWS still held it as callback userdata. Streaming a FIFO
-// to a client that refuses to read the response produces many reader callbacks
-// while the socket is backpressured, which is exactly that sequence.
-test.skipIf(isWindows)(
-  "pollable file response survives a client that stops reading and then disconnects",
-  async () => {
-    using dir = tempDir("serve-fifo-backpressure", {
-      "fixture.ts": `
+// A body write that returns backpressure must pause the reader until the
+// socket drains. For a pollable fd (FIFO, character device, socket) the read
+// loop re-arms its poll after EAGAIN, so a reader that is not paused keeps
+// moving the source into the response's backpressure buffer, without a bound,
+// while the client reads nothing. When the client reads again, on_writable
+// must unpause the reader, or the response stalls. A client that disconnects
+// frees the stream. If its poll is still armed, the next readable event reaches
+// the freed reader. Bun.file(fd) keeps the fd open after the response ends, so
+// that event comes as soon as the pipe has data.
+for (const [source, then] of [
+  ["path", "disconnect"],
+  ["fd", "disconnect"],
+  ["path", "resume"],
+] as const) {
+  test.concurrent.skipIf(isWindows)(
+    `pollable Bun.file(${source}) response stops reading while the client does not read, then ${then === "resume" ? "resumes when the client reads" : "survives the disconnect"}`,
+    async () => {
+      using dir = tempDir("serve-fifo-backpressure", {
+        "fixture.ts": `
 import { connect } from "node:net";
-import { openSync, write } from "node:fs";
+import { constants, openSync, writeSync } from "node:fs";
 
-const fifoPath = process.argv[2];
+const [fifoPath, limit, source, then] = process.argv.slice(2);
+const LIMIT = Number(limit);
 
 // Open the FIFO read+write so open() never blocks waiting for the other end
-// and the pipe never reports HUP/EOF while the test is still feeding it.
-const writerFd = openSync(fifoPath, "r+");
+// and the pipe never reports HUP/EOF. With O_NONBLOCK a write to a full pipe
+// fails with EAGAIN, so \`pumped\` grows only when the server reads the pipe.
+const writerFd = openSync(fifoPath, constants.O_RDWR | constants.O_NONBLOCK);
 
 const server = Bun.serve({
   port: 0,
@@ -867,115 +1034,275 @@ const server = Bun.serve({
     if (new URL(req.url).pathname === "/alive") {
       return new Response("alive");
     }
-    return new Response(Bun.file(fifoPath));
+    return new Response(source === "fd" ? Bun.file(writerFd) : Bun.file(fifoPath));
   },
 });
 
-// Keep the pipe full for the whole test so the reader-side poll always has
-// another readable event to deliver. A blocked write only completes once the
-// server drains the FIFO, so \`pumped\` tracks how far the server has read.
-// The chain is intentionally never awaited to completion: a correctly
-// backpressured server stops draining the pipe once the client stops reading.
-// 8 KiB stays under the 16 KiB macOS FIFO capacity while halving the number of
-// threadpool round-trips needed to fill the kernel socket buffers.
-const CHUNK = Buffer.alloc(8 * 1024, 120);
+const CHUNK = Buffer.alloc(64 * 1024, 120);
 let pumped = 0;
-let stopPumping = false;
-function pump(err, n) {
-  if (err || stopPumping) return;
-  pumped += n || 0;
-  write(writerFd, CHUNK, 0, CHUNK.length, null, pump);
-}
-pump(null, 0);
-
-// Let the pump fill the pipe to capacity before the request exists. The FIFO
-// buffer size is platform-dependent (16 KiB on macOS, 64 KiB on Linux), so
-// measure it instead of assuming it: with no reader, \`pumped\` stops growing
-// once the pipe is full.
-let prefill = -1;
-let prefillStable = 0;
-for (let i = 0; i < 500 && prefillStable < 3; i++) {
-  await Bun.sleep(10);
-  if (pumped > 0 && pumped === prefill) {
-    prefillStable++;
-  } else {
-    prefillStable = 0;
-    prefill = pumped;
+function fill() {
+  try {
+    for (;;) pumped += writeSync(writerFd, CHUNK);
+  } catch (err) {
+    if (err.code !== "EAGAIN") throw err;
   }
 }
 
-// Raw client that sends the request and then never reads the response, so
-// every body write on the server side ends up returning backpressure.
+// Fills the pipe, then makes one request to this server. The server shares
+// this event loop and must poll for I/O to answer. The full pipe is readable
+// during that poll, so a reader with an armed poll reads it before the answer
+// arrives. A paused reader leaves the pipe full. Returns the bytes that the
+// server read.
+async function fillAndPoll() {
+  fill();
+  const before = pumped;
+  const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+  await res.text();
+  fill();
+  return pumped - before;
+}
+
+// Waits for a request during which the server reads from the pipe. The bound
+// on the request count makes a broken build fail with a message, not a hang.
+async function waitForRead(label) {
+  for (let i = 0; i < 200; i++) {
+    if ((await fillAndPoll()) > 0) return console.log(label);
+  }
+  console.log("no read for " + label);
+}
+
+// Before the kernel socket buffers fill, each request shows a read. A paused
+// reader shows none. The buffers on loopback hold a few MiB, and LIMIT is far
+// above that.
+async function waitForStall() {
+  let read = 0;
+  while (read < LIMIT) {
+    const n = await fillAndPoll();
+    if (n === 0) return console.log("stalled");
+    read += n;
+  }
+  console.log("still reading after " + read + " bytes");
+}
+
+// Raw client that sends the request and then does not read the response, so
+// the body writes on the server side end up returning backpressure.
 const socket = connect({ port: server.port, host: "127.0.0.1", pauseOnConnect: true });
 socket.on("error", () => {});
 await new Promise(resolve => socket.once("connect", resolve));
 socket.write("GET /stream HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
 socket.pause();
 
-// Wait for the server to start draining the pipe: a blocked write can only
-// complete once the response stream consumes the FIFO, so any growth past the
-// prefill level proves the reader is running, regardless of the platform's
-// pipe capacity.
-for (let i = 0; i < 1000 && pumped <= prefill; i++) {
-  await Bun.sleep(5);
+await waitForRead("streaming");
+await waitForStall();
+
+if (then === "resume") {
+  // Read the response. The socket drains, and the server reads the pipe again.
+  socket.on("data", () => {});
+  socket.resume();
+  await waitForRead("resumed");
+
+  // Stop reading again before the disconnect. A stream that waits for pipe
+  // data when its client disconnects stays allocated while the pipe is open,
+  // and the leak check at exit reports it. A paused stream is freed.
+  socket.pause();
+  await waitForStall();
+  socket.destroy();
+  const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+  await res.text();
+} else {
+  // Disconnect the stalled client. The server must survive the abort of the
+  // backpressured file stream and still answer requests. The second request
+  // polls with a full pipe, so a poll that the aborted stream left armed fires.
+  socket.destroy();
+  let res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+  console.log(await res.text());
+  fill();
+  res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+  console.log(await res.text());
 }
-console.log(pumped > prefill ? "streaming" : "stuck at " + pumped + " (prefill " + prefill + ")");
-
-// Now wait for the drain to stall. The client never reads, so the body writes
-// must eventually report backpressure and the reader must park; the pump then
-// stops making progress. The extra readable events delivered between the first
-// backpressured write and the stall are what used to over-release the
-// in-flight-read reference. "Stalled" means the pump advanced by less than one
-// CHUNK across 5 consecutive samples, i.e. body writes are already returning
-// backpressure; waiting for byte-for-byte stability would mean waiting for the
-// kernel socket buffers to fill completely. Bounded poll so a broken build
-// fails instead of hanging.
-let last = -1;
-let stable = 0;
-for (let i = 0; i < 500 && stable < 5; i++) {
-  await Bun.sleep(10);
-  if (last >= 0 && pumped - last < CHUNK.length) {
-    stable++;
-  } else {
-    stable = 0;
-    last = pumped;
-  }
-}
-stopPumping = true;
-console.log("stalled");
-
-// Disconnect the stalled client; the server must survive the abort of the
-// backpressured file stream.
-socket.destroy();
-
-// The server must still answer ordinary requests afterwards.
-const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
-console.log(await res.text());
 
 server.stop(true);
 process.exit(0);
 `,
+      });
+
+      const fifoPath = join(String(dir), "stream.fifo");
+      mkfifo(fifoPath);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts", fifoPath, String(32 * 1024 * 1024), source, then],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout.trim()).toBe(
+        then === "resume" ? "streaming\nstalled\nresumed\nstalled" : "streaming\nstalled\nalive\nalive",
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+}
+
+// A FIFO's stat size is 0, but the body length is unknown until EOF. Writing
+// Content-Length from the stat size and then streaming the pipe to EOF puts
+// body bytes on the wire past the declared length; on a keep-alive connection
+// those bytes land where the client parses the next response's status line
+// (RFC 9112 6.3). The response must be chunk-framed instead.
+test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not Content-Length: 0", async () => {
+  using dir = tempDir("serve-fifo-framing", {});
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
+
+  // Hold the FIFO open read+write so the server's O_RDONLY|O_NONBLOCK open
+  // always finds a writer (its reads EAGAIN instead of reporting EOF before we
+  // write). The fd is released in `finally`; we do not close it mid-test to
+  // signal EOF because the server's FIFO-EOF handling is platform-dependent
+  // and not what this test is about.
+  const writerFd = openSync(fifoPath, "r+");
+  try {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file(fifoPath));
+      },
     });
 
-    const fifoPath = join(String(dir), "stream.fifo");
-    mkfifo(fifoPath);
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.ts", fifoPath],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
+    const { promise: wireDone, resolve: resolveWire } = Promise.withResolvers<string>();
+    let wire = "";
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          s.write("GET /fifo HTTP/1.1\r\nHost: x\r\n\r\n");
+        },
+        data(_s, d) {
+          wire += Buffer.from(d).toString("latin1");
+          if (wire.includes("PIPEBYTES!")) resolveWire(wire);
+        },
+        close() {
+          resolveWire(wire);
+        },
+        error() {
+          resolveWire(wire);
+        },
+      },
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The payload sits in the FIFO buffer (kept alive by writerFd) until the
+    // server opens its read end; the server's first body write then carries it
+    // to the wire together with whatever framing the head declared.
+    writeSync(writerFd, "PIPEBYTES!");
+    const captured = await wireDone;
+    client.end();
 
-    expect(stdout.trim()).toBe("streaming\nstalled\nalive");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+    const head = captured.split("\r\n\r\n")[0];
+    // The broken build wrote `content-length: 0` from the FIFO's stat size and
+    // then emitted the pipe bytes raw after the head (body past the declared
+    // length). With the fix the head carries no Content-Length and the first
+    // body write enters chunked mode.
+    expect({
+      status: head.split("\r\n")[0],
+      hasContentLength: /^content-length:/im.test(head),
+      isChunked: /^transfer-encoding:\s*chunked/im.test(head),
+      bodyDelivered: captured.includes("PIPEBYTES!"),
+      bodyBytesPastContentLengthZero: /^content-length:\s*0$/im.test(head) && captured.includes("PIPEBYTES!"),
+    }).toEqual({
+      status: "HTTP/1.1 200 OK",
+      hasContentLength: false,
+      isChunked: true,
+      bodyDelivered: true,
+      bodyBytesPastContentLengthZero: false,
+    });
+  } finally {
+    closeSync(writerFd);
+  }
+});
+
+// A file route serves the window of the Bun.file() slice it was built from,
+// given either the slice or its unread stream (which is turned back into the
+// slice). FileRoute used to clamp the window to the file size without taking
+// the offset off, and to send an empty window to EOF: on this 16-byte file
+// slice(10) declared Content-Length: 16 and sent 6 bytes, slice(5, 5) declared
+// 0 and sent 11. Only the wire shows that (RFC 9112 6.3); fetch() drops bytes
+// past the declared length and turns a short body into a connection error.
+test("file routes frame a slice that reaches or starts past EOF by the bytes they serve", async () => {
+  using dir = tempDir("serve-file-route-slice-framing", { "partial.txt": "0123456789ABCDEF" });
+  const file = () => Bun.file(join(String(dir), "partial.txt"));
+  const windows = {
+    "slice(5, 10)": () => file().slice(5, 10),
+    "slice(10)": () => file().slice(10),
+    "slice(10, 100)": () => file().slice(10, 100),
+    "slice(5, 5)": () => file().slice(5, 5),
+    "slice(100)": () => file().slice(100),
+    "whole file": () => file(),
+  };
+  const names = Object.keys(windows) as (keyof typeof windows)[];
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    routes: Object.fromEntries(
+      names.flatMap((name, i) => [
+        [`/blob/${i}`, new Response(windows[name]())],
+        [`/stream/${i}`, new Response(windows[name]().stream())],
+      ]),
+    ),
+    fetch: () => new Response("fallback", { status: 404 }),
+  });
+
+  // One GET on its own connection; `Connection: close` makes the server hang
+  // up once it considers the response finished, so `body` is every byte that
+  // followed the head, however many the head declared.
+  async function wire(path: string) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    let captured = "";
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(socket) {
+          socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+        },
+        data(_socket, chunk) {
+          captured += Buffer.from(chunk).toString("latin1");
+        },
+        close() {
+          resolve(captured);
+        },
+        error() {
+          resolve(captured);
+        },
+      },
+    });
+    const raw = await promise;
+    const headEnd = raw.indexOf("\r\n\r\n");
+    return {
+      contentLength: /^content-length:\s*(\d+)/im.exec(raw.slice(0, headEnd))?.[1] ?? null,
+      body: raw.slice(headEnd + 4),
+    };
+  }
+
+  const results: Record<string, unknown> = {};
+  for (const [i, name] of names.entries()) {
+    results[name] = { blob: await wire(`/blob/${i}`), stream: await wire(`/stream/${i}`) };
+  }
+
+  const exactly = (body: string) => ({ contentLength: String(body.length), body });
+  expect(results).toEqual({
+    "slice(5, 10)": { blob: exactly("56789"), stream: exactly("56789") },
+    "slice(10)": { blob: exactly("ABCDEF"), stream: exactly("ABCDEF") },
+    "slice(10, 100)": { blob: exactly("ABCDEF"), stream: exactly("ABCDEF") },
+    "slice(5, 5)": { blob: exactly(""), stream: exactly("") },
+    "slice(100)": { blob: exactly(""), stream: exactly("") },
+    "whole file": { blob: exactly("0123456789ABCDEF"), stream: exactly("0123456789ABCDEF") },
+  });
+});
 
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared
@@ -1138,3 +1465,293 @@ console.log("OK");
   },
   60_000,
 );
+
+// FileRoute borrows the blob store's path slice for the duration of the
+// request (no per-request copy). A burst of concurrent requests under ASAN
+// would surface a use-after-free if that borrow were unsound.
+test("file route serves a burst of concurrent requests after reloads", async () => {
+  using dir = tempDir("file-route-path-borrow", {
+    "hello.txt": "hello from file route",
+  });
+  const body = "hello from file route";
+  const file = () => new Response(Bun.file(join(String(dir), "hello.txt")));
+
+  await using server = Bun.serve({
+    port: 0,
+    routes: { "/f": file() },
+    fetch: () => new Response("fallback", { status: 404 }),
+  });
+
+  // Reload a few times so the file route's blob store is replaced between
+  // bursts; the last config wins.
+  for (let i = 0; i < 3; i++) {
+    server.reload({
+      routes: { "/a": new Response("a-old"), "/f": file(), "/b": new Response("b") },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+    server.reload({
+      routes: { "/a": new Response("a-new"), "/f": file(), "/b": new Response("b") },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+  }
+
+  const N = 64;
+  const bodies = await Promise.all(Array.from({ length: N }, () => fetch(`${server.url}f`).then(r => r.text())));
+  expect(bodies).toEqual(Array(N).fill(body));
+
+  // HEAD goes through FileRoute::on with the same borrowed path.
+  const headBodies = await Promise.all(
+    Array.from({ length: N }, () =>
+      fetch(`${server.url}f`, { method: "HEAD" }).then(async r => ({
+        status: r.status,
+        len: r.headers.get("content-length"),
+        body: await r.text(),
+      })),
+    ),
+  );
+  expect(headBodies).toEqual(Array(N).fill({ status: 200, len: String(body.length), body: "" }));
+
+  const a = await fetch(`${server.url}a`).then(r => r.text());
+  expect(a).toBe("a-new");
+});
+
+// Linux file responses >= 1MB go through sendfile(2), which writes straight to
+// the socket fd. When the response header block only partially reaches the
+// kernel (its tail parked in the userspace socket buffer), the first sendfile
+// round must wait for that tail to flush; otherwise file bytes overtake it and
+// the client sees file bytes interleaved before the end of the headers. The
+// big x-pad header makes the partial header send happen on most iterations,
+// and the separate client process supplies the concurrent reads that open
+// kernel buffer space between the header write and the sendfile call.
+test.skipIf(!isLinux)(
+  "sendfile does not overtake a buffered response header tail",
+  async () => {
+    const FILE_SIZE = 4 * 1024 * 1024;
+    const PAD_SIZE = 16 * 1024 * 1024;
+    // The race hinges on scheduler placement of the reader relative to the
+    // server thread, which is sticky per process; fresh client processes re-roll
+    // it, so several short-lived clients catch what one long-lived client can
+    // miss.
+    const ITERATIONS_PER_CLIENT = 16;
+    const CLIENTS_PER_WAVE = 3;
+    const WAVES = 3;
+
+    using dir = tempDir("serve-sendfile-tail", {
+      "client-fixture.ts": `
+      // One GET per fresh connection. Reads with plain blocking recv(2) via
+      // FFI: when response bytes land, the kernel wakes the parked task and
+      // sends the window-update ACK from kernel context within microseconds,
+      // which is what opens kernel send-buffer space right after the server's
+      // partial header write. The file is all 0xEE; headers are ASCII, so any
+      // 0xEE before the header terminator means sendfile bytes jumped ahead of
+      // the header tail.
+      import { dlopen, ptr } from "bun:ffi";
+
+      const port = Number(process.env.PORT);
+      const padSize = Number(process.env.PAD_SIZE);
+      const fileSize = Number(process.env.FILE_SIZE);
+      const iterations = Number(process.env.ITERATIONS);
+
+      const spec = {
+        socket: { args: ["i32", "i32", "i32"], returns: "i32" },
+        connect: { args: ["i32", "ptr", "u32"], returns: "i32" },
+        send: { args: ["i32", "ptr", "u64", "i32"], returns: "i64" },
+        recv: { args: ["i32", "ptr", "u64", "i32"], returns: "i64" },
+        setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+        close: { args: ["i32"], returns: "i32" },
+      } as const;
+      function openLibc() {
+        for (const name of ["libc.so.6", "libc.musl-x86_64.so.1", "libc.musl-aarch64.so.1"]) {
+          try {
+            return dlopen(name, spec).symbols;
+          } catch {}
+        }
+        throw new Error("could not dlopen libc");
+      }
+      const libc = openLibc();
+
+      // struct sockaddr_in { u16 family; u16 port (BE); u32 addr (BE); pad }
+      const addr = new Uint8Array(16);
+      new DataView(addr.buffer).setUint16(0, 2, true); // AF_INET
+      new DataView(addr.buffer).setUint16(2, port, false);
+      addr.set([127, 0, 0, 1], 4);
+
+      // struct timeval { i64 sec; i64 usec } for SO_RCVTIMEO (SOL_SOCKET=1, 20)
+      const timeo = new Uint8Array(16);
+      new DataView(timeo.buffer).setBigInt64(0, 10n, true);
+
+      const request = Buffer.from("GET /file HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+      const recvBuf = new Uint8Array(256 * 1024);
+
+      function iteration(): { kind: string; detail?: string } {
+        const fd = libc.socket(2, 1, 0); // AF_INET, SOCK_STREAM
+        if (fd < 0) return { kind: "socket-failed" };
+        try {
+          if (libc.setsockopt(fd, 1, 20, ptr(timeo), 16) !== 0) {
+            return { kind: "setsockopt-failed" };
+          }
+          if (libc.connect(fd, ptr(addr), 16) !== 0) {
+            return { kind: "connect-failed" };
+          }
+          if (libc.send(fd, ptr(request), request.length, 0) !== BigInt(request.length)) {
+            return { kind: "send-failed" };
+          }
+
+          // Read until header terminator + fileSize body bytes. The terminator
+          // is found incrementally (in corrupt runs it shows up after file
+          // bytes, but the byte count still adds up). The keep-alive socket
+          // never closes on its own, so an exact byte target is required.
+          const terminator = Buffer.from("\\r\\n\\r\\n");
+          const chunks: Buffer[] = [];
+          let total = 0;
+          let hdrEnd = -1;
+          let expected = padSize + fileSize; // lower bound until hdrEnd is known
+          let earlyFileByte = -1;
+          while (total < expected) {
+            const n = Number(libc.recv(fd, ptr(recvBuf), recvBuf.length, 0));
+            if (n <= 0) break; // EOF, error, or SO_RCVTIMEO after a 10s stall
+            const chunk = Buffer.from(recvBuf.subarray(0, n));
+            if (hdrEnd === -1) {
+              // A file byte before the header terminator already proves the
+              // corruption; stop here or the exact-length accounting below
+              // would wait out the receive timeout on the scrambled stream.
+              const fileByte = chunk.indexOf(0xee);
+              // Search for the terminator across the previous chunk boundary.
+              const prev = chunks.length > 0 ? chunks[chunks.length - 1] : Buffer.alloc(0);
+              const tail = prev.subarray(prev.length - Math.min(prev.length, 3));
+              const window = Buffer.concat([tail, chunk]);
+              const found = window.indexOf(terminator);
+              // Legit only when the body start (terminator end) is at or
+              // before the first file byte.
+              if (found !== -1 && (fileByte === -1 || found + 4 - tail.length <= fileByte)) {
+                hdrEnd = total - tail.length + found;
+                expected = hdrEnd + 4 + fileSize;
+              } else if (fileByte !== -1) {
+                earlyFileByte = total + fileByte;
+                chunks.push(chunk);
+                total += n;
+                break;
+              }
+            }
+            chunks.push(chunk);
+            total += n;
+          }
+
+          if (earlyFileByte !== -1) {
+            return {
+              kind: "corrupt",
+              detail: "file byte at " + earlyFileByte + " before the header terminator, read " + total,
+            };
+          }
+          const buf = Buffer.concat(chunks);
+          if (hdrEnd === -1) return { kind: "no-header-end", detail: "got " + total };
+          const firstFile = buf.indexOf(0xee);
+          if (firstFile !== -1 && firstFile < hdrEnd) {
+            return {
+              kind: "corrupt",
+              detail: "file byte at " + firstFile + " before header end at " + hdrEnd + ", total " + total,
+            };
+          }
+          const body = buf.subarray(hdrEnd + 4);
+          if (body.length !== fileSize) {
+            return { kind: "bad-body-length", detail: body.length + " of " + fileSize + ", total " + total };
+          }
+          for (let o = 0; o < body.length; o += 65536) {
+            if (body[o] !== 0xee) return { kind: "bad-body-byte", detail: "offset " + o + " is " + body[o] };
+          }
+          return { kind: "ok" };
+        } finally {
+          libc.close(fd);
+        }
+      }
+
+      const failures: { kind: string; detail?: string }[] = [];
+      let ok = 0;
+      for (let i = 0; i < iterations; i++) {
+        const r = iteration();
+        if (r.kind === "ok") ok++;
+        else failures.push(r);
+        if (r.kind === "corrupt") break; // one corruption decides the verdict
+      }
+      console.log(JSON.stringify({ ok, failures }));
+    `,
+    });
+    await Bun.write(join(String(dir), "file.bin"), Buffer.alloc(FILE_SIZE, 0xee));
+
+    const pad = Buffer.alloc(PAD_SIZE, "p").toString();
+    await using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch() {
+        return new Response(Bun.file(join(String(dir), "file.bin")), {
+          headers: { "x-pad": pad },
+        });
+      },
+    });
+
+    const problems: unknown[] = [];
+    let cleanClients = 0;
+    for (let wave = 0; wave < WAVES && problems.length === 0; wave++) {
+      const procs = Array.from({ length: CLIENTS_PER_WAVE }, () =>
+        Bun.spawn({
+          cmd: [bunExe(), join(String(dir), "client-fixture.ts")],
+          env: {
+            ...bunEnv,
+            PORT: String(server.port),
+            PAD_SIZE: String(PAD_SIZE),
+            FILE_SIZE: String(FILE_SIZE),
+            ITERATIONS: String(ITERATIONS_PER_CLIENT),
+          },
+          stderr: "pipe",
+        }),
+      );
+      const results = await Promise.all(
+        procs.map(async proc => {
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { stdout: stdout.trim(), stderr, exitCode };
+        }),
+      );
+      for (const { stdout, stderr, exitCode } of results) {
+        // Combined assert first, so a crashed client reports its exit code
+        // and raw output instead of a JSON parse error. stderr rides along
+        // for diagnostics but is not required to be empty.
+        expect({ exitCode, stdout, stderr }).toMatchObject({
+          exitCode: 0,
+          stdout: expect.stringContaining("{"),
+        });
+        const verdict = JSON.parse(stdout);
+        if (verdict.failures.length > 0 || verdict.ok !== ITERATIONS_PER_CLIENT) {
+          problems.push(verdict);
+        } else {
+          cleanClients++;
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+    expect(cleanClients).toBe(WAVES * CLIENTS_PER_WAVE);
+  },
+  90_000,
+);
+
+// Unix-socket listeners reach the same Linux sendfile path as TCP (the
+// response handle is transport-agnostic), so pin body integrity for a >=1MB
+// file over AF_UNIX too.
+test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket listener", async () => {
+  using dir = tempDir("serve-sendfile-unix", {});
+  const data = Buffer.alloc(2 * 1024 * 1024, 0xee);
+  await Bun.write(join(String(dir), "file.bin"), data);
+
+  const unix = join(String(dir), "s.sock");
+  await using server = Bun.serve({
+    unix,
+    fetch() {
+      return new Response(Bun.file(join(String(dir), "file.bin")));
+    },
+  });
+
+  const res = await fetch("http://localhost/file", { unix });
+  expect(res.status).toBe(200);
+  const body = Buffer.from(await res.arrayBuffer());
+  expect(body.length).toBe(data.length);
+  expect(body.compare(data)).toBe(0);
+});

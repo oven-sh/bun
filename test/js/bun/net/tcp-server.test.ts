@@ -312,3 +312,25 @@ it("should not leak memory", async () => {
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// stop(true) from alpnCallback or serverName closes the socket whose SSL call
+// is on the stack, so that close waits until the callback returns. The
+// force-drain in us_socket_group_close_all_ex took the same socket again and
+// again, and stop(true) never returned. The fixture runs in a child process,
+// because the spin also blocks the event loop that times a test out. The cases
+// are not concurrent: the runner kills a child that a timed-out test leaves
+// behind only when that test runs alone.
+describe("TLS listener: stop(true) from inside a selection callback", () => {
+  it.each(["alpnCallback", "serverName"])("%s: stop(true) returns and the connection closes", async hook => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tls-stop-from-selection-fixture.ts"), hook],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ events: ["returned", "handshake:false", "close"], clientConnected: false });
+    expect(exitCode).toBe(0);
+  });
+});

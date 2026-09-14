@@ -684,14 +684,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     if (!debuggerGlobalObject)
         return JSValue::encode(jsUndefined());
 
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ScriptExecutionContext* targetContext = ScriptExecutionContext::getScriptExecutionContext(static_cast<ScriptExecutionContextIdentifier>(callFrame->argument(0).toUInt32(globalObject)));
+    RETURN_IF_EXCEPTION(scope, {});
     bool shouldRef = !callFrame->argument(1).toBoolean(globalObject);
     JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(callFrame->argument(2).toObject(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!targetContext || !onMessageFn)
         return JSValue::encode(jsUndefined());
 
-    auto& vm = JSC::getVM(globalObject);
     auto connection = BunInspectorConnection::create(
         *targetContext,
         targetContext->jsGlobalObject(), shouldRef);
@@ -805,6 +808,7 @@ static bool postNodeInspectorControlMessage(const String& message)
         if (auto* exception = scope.exception()) [[unlikely]] {
             (void)scope.tryClearException();
             Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            RETURN_IF_EXCEPTION(scope, );
         }
     });
 
@@ -951,7 +955,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
+extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, const BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
 {
     if (!debuggerScriptExecutionContext)
         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
@@ -966,6 +970,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
 
     arguments.append(jsNumber(static_cast<unsigned int>(scriptId)));
     auto* portOrPathJS = Bun::toJS(debuggerGlobalObject, *portOrPathString);
+    RETURN_IF_EXCEPTION(scope, );
     if (!portOrPathJS) [[unlikely]] {
         return;
     }

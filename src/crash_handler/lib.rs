@@ -2262,6 +2262,10 @@ mod draft {
             )
             .map_err(fmt_err)?;
 
+            // Match process.memoryUsage().rss: mi_process_info reads resident_size on macOS.
+            let current_rss = bun_sys::self_process_memory_usage().unwrap_or(current_rss);
+            let peak_rss = bun_sys::self_process_peak_memory_usage().unwrap_or(peak_rss);
+
             // bun_fmt::bytes() — human-readable metadata, not the trace string.
             write!(
                 writer,
@@ -2774,9 +2778,6 @@ mod draft {
                 hStdInput: core::ptr::null_mut(),
                 hStdOutput: core::ptr::null_mut(),
                 hStdError: core::ptr::null_mut(),
-                // .hStdInput = bun.FD.stdin().native(),
-                // .hStdOutput = bun.FD.stdout().native(),
-                // .hStdError = bun.FD.stderr().native(),
             };
             let mut sysdir = [0u16; 300];
             // SAFETY: `sysdir` is valid for `sysdir.len()` u16 writes.
@@ -2863,8 +2864,8 @@ mod draft {
             target_os = "freebsd"
         ))]
         {
-            let mut buf = bun_core::PathBuffer::default();
-            let mut buf2 = bun_core::PathBuffer::default();
+            let mut buf = bun_core::PathBuffer::ZEROED;
+            let mut buf2 = bun_core::PathBuffer::ZEROED;
             let Some(path_env) = env_var::PATH::get() else {
                 return;
             };
@@ -3354,7 +3355,7 @@ mod draft {
     ) -> crate::Result<Option<SourceAtAddress>> {
         let module = match debug_info.get_module_for_address(address) {
             Ok(m) => m,
-            Err(crate::Error::MissingDebugInfo | crate::Error::InvalidDebugInfo) => {
+            Err(crate::Error::MissingDebugInfo) => {
                 return Ok(None);
             }
             Err(e) => return Err(e),
@@ -3362,7 +3363,7 @@ mod draft {
 
         let symbol_info = match module.get_symbol_at_address(address) {
             Ok(s) => s,
-            Err(crate::Error::MissingDebugInfo | crate::Error::InvalidDebugInfo) => {
+            Err(crate::Error::MissingDebugInfo) => {
                 return Ok(None);
             }
             Err(e) => return Err(e),

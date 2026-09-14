@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "6a14aee24315e503fa295a1fa90fe8b24ad91774";
+const MIMALLOC_COMMIT = "ab13501334a8da2b64ab2e5f4f552c3a39b96350";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -54,6 +54,12 @@ export const mimalloc: Dependency = {
       // tears down locks/TLS while other static destructors may still call
       // free(). MI_SKIP_COLLECT_ON_EXIT only skips the heap walk inside it.
       MI_NO_PROCESS_DETACH: 1,
+
+      // mi_free finds a block's page through the page map. Without this, page
+      // meta data sits at 256 MiB boundaries, every arena must start on one, and
+      // mi_manage_os_memory_ex refuses JSC's structure heap once its reservation
+      // is 256 MiB or less (JSC halves it under `ulimit -v`): abort on startup.
+      MI_FREE_USE_PAGEMAP: 1,
 
       ...(cfg.release && { MI_BUILD_RELEASE: true }),
     };

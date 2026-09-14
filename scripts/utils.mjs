@@ -1276,6 +1276,68 @@ export function escapePowershell(string) {
 }
 
 /**
+ * @param {string} string
+ * @returns {string}
+ */
+function unescapeXml(string) {
+  return string
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * @typedef {object} JunitFileSuite
+ * @property {number} failures failed tests in the whole file, describe blocks included
+ * @property {number} seconds wall clock of the whole file, loading it included
+ * @property {{ name: string, message: string }[]} cases the failed tests, in report order
+ */
+
+/**
+ * Reads the report written by `bun test --reporter=junit` into one entry per test file,
+ * keyed by the path the reporter printed (relative to the directory `bun test` ran in)
+ * with `/` separators.
+ *
+ * The reporter writes one `<testsuite>` named after each file and, nested inside it, one
+ * more `<testsuite>` per describe block. All of them carry the same `file` attribute, but
+ * only the file's own suite counts the failures of the whole file (the describe blocks'
+ * counts roll up into it) and times the file as a whole (a describe block's `time` is the
+ * sum of its tests, which over-counts `describe.concurrent`), so the nested suites are
+ * skipped.
+ *
+ * @param {string} xml
+ * @returns {Map<string, JunitFileSuite>}
+ */
+export function parseJunitFileSuites(xml) {
+  const attribute = (attributes, name) => new RegExp(`\\s${name}="([^"]*)"`).exec(attributes)?.[1];
+  const keyOf = file => unescapeXml(file).replaceAll("\\", "/");
+  /** @type {Map<string, JunitFileSuite>} */
+  const files = new Map();
+  for (const [, attributes] of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
+    const file = attribute(attributes, "file");
+    if (!file || attribute(attributes, "name") !== file) continue;
+    files.set(keyOf(file), {
+      failures: Number(attribute(attributes, "failures") ?? 0),
+      seconds: Number(attribute(attributes, "time") ?? 0),
+      cases: [],
+    });
+  }
+  for (const [, caseAttributes, failureAttributes] of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
+    const file = attribute(caseAttributes, "file");
+    const entry = file && files.get(keyOf(file));
+    if (!entry) continue;
+    entry.cases.push({
+      name: unescapeXml(attribute(caseAttributes, "name") ?? "(unnamed)"),
+      message: unescapeXml(attribute(failureAttributes, "message") ?? ""),
+    });
+  }
+  return files;
+}
+
+/**
  * @returns {string}
  */
 export function homedir() {
@@ -2722,6 +2784,86 @@ export function endGroup() {
   }
   // when a file exits with an ASAN error, there is no trailing newline so we add one here to make sure `console.group()` detection doesn't get broken in CI.
   console.log();
+}
+
+/**
+ * Creates a filter for the live output of one child process stream, for the CI log.
+ *
+ * The runner spawns every `bun test` with GITHUB_ACTIONS=true so that bun prints each
+ * failure as a `::error` workflow command it can parse, and the file headers as
+ * `::group::` commands. Those lines are for the parser, not for the log: GitHub renders
+ * them as annotations, Buildkite prints them verbatim. So outside GitHub Actions every
+ * line that starts with `::` is dropped. In GitHub Actions the group commands are dropped
+ * (the runner groups the log itself) and the rest is kept for GitHub to render. In
+ * Buildkite a line that starts with one of its group markers (`--- `) is defused too.
+ *
+ * The output arrives in pipe-sized chunks, and bun writes a `::error` line as many small
+ * writes, so a chunk usually ends in the middle of one. An incomplete last line that
+ * starts with `::`, or that is so far only the start of a marker, is held back until
+ * the rest of it arrives. `end()` returns what is still held back when the stream ends.
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.github] the runner itself runs in GitHub Actions
+ * @param {boolean} [options.buildkite] the runner itself runs in Buildkite
+ * @returns {((chunk: string) => string) & { end: () => string }} the text to write for each chunk
+ */
+export function createLiveOutputFilter({ github = isGithubAction, buildkite = isBuildkite } = {}) {
+  const ansi = /(?:\u001b\[[0-9;]*[a-zA-Z])*/.source;
+  const command = `^${ansi}::${github ? "(?:end)?group::" : ""}.*`;
+  const commands = new RegExp(`${command}(?:\r\n|\r|\n)`, "gm");
+  const lastCommand = new RegExp(`${command}\r?$`);
+  const groupMarkers = /^(?:---|\+\+\+|~~~|\^\^\^) /gm;
+  const markers = buildkite ? ["::", "--- ", "+++ ", "~~~ ", "^^^ "] : ["::"];
+
+  /** @param {string} line an incomplete line */
+  const holdBack = line => {
+    const visible = stripAnsi(line);
+    return (
+      visible.startsWith("::") || markers.some(marker => marker.length > visible.length && marker.startsWith(visible))
+    );
+  };
+
+  let pending = "";
+  let atLineStart = true;
+  const filter = chunk => {
+    let text = pending + chunk;
+    const startsLine = atLineStart;
+
+    // A trailing \r may be the first half of a \r\n, so the line it ends is not complete yet.
+    // Once written, the next chunk starts a line either way: the \n of a \r\n is an empty one.
+    const endsWithCR = text.endsWith("\r");
+    const searchEnd = endsWithCR ? text.length - 2 : text.length - 1;
+    const lastLineStart = Math.max(text.lastIndexOf("\n", searchEnd), text.lastIndexOf("\r", searchEnd)) + 1;
+    const lastLine = text.slice(lastLineStart);
+    if (lastLine && (lastLineStart > 0 || startsLine) && holdBack(lastLine)) {
+      pending = lastLine;
+      text = text.slice(0, lastLineStart);
+      atLineStart = true;
+    } else {
+      pending = "";
+      if (text) atLineStart = endsWithCR || lastLineStart === text.length;
+    }
+
+    // A chunk that starts in the middle of a line continues a line that was already written.
+    let head = "";
+    if (!startsLine) {
+      const end = /\r\n|\r|\n/.exec(text);
+      const split = end ? end.index + end[0].length : text.length;
+      head = text.slice(0, split);
+      text = text.slice(split);
+    }
+
+    text = text.replace(commands, "");
+    if (buildkite) text = text.replace(groupMarkers, " ");
+    return head + text;
+  };
+  filter.end = () => {
+    const text = pending;
+    pending = "";
+    atLineStart = true;
+    return text.replace(lastCommand, "");
+  };
+  return filter;
 }
 
 export function printEnvironment() {

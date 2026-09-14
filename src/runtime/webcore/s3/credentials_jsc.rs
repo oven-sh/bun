@@ -16,10 +16,10 @@ use bun_url::URL;
 /// JS string, and non-empty. Shared ladder for the S3 option parsers
 /// (`get_credentials_with_options`, `get_list_objects_options_from_js`):
 ///
-///   get_truthy → is_string → BunString::from_js → tag ∉ {Empty,Dead} → to_utf8
+///   get_truthy → is_string → BunString::from_js → tag ∉ {Empty,Dead} → into_utf8
 ///
-/// The intermediate `BunString` is `deref()`ed before return; the returned
-/// `ZigStringSlice` owns (or independently refs) its bytes.
+/// `into_utf8()` moves the string's ref into the returned `Utf8Bytes` (or
+/// transcodes into an owned buffer).
 ///
 /// * `strict = true`  — non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
 /// * `strict = false` — non-string is silently ignored.
@@ -28,7 +28,7 @@ pub(crate) fn get_truthy_string_utf8(
     global: &JSGlobalObject,
     key: &[u8],
     strict: bool,
-) -> JsResult<Option<bun_core::ZigStringSlice>> {
+) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
     let Some(js_value) = opts.get_truthy(global, key)? else {
         return Ok(None);
     };
@@ -43,21 +43,10 @@ pub(crate) fn get_truthy_string_utf8(
     }
     let str = BunString::from_js(js_value, global)?;
     if str.tag() == BunStringTag::Empty || str.tag() == BunStringTag::Dead {
-        str.deref();
         return Ok(None);
     }
-    let utf8 = str.to_utf8();
-    str.deref();
-    Ok(Some(utf8))
+    Ok(Some(str.into_utf8()))
 }
-
-// `S3Credentials` fields are owned `Box<[u8]>`, so credential strings are
-// deep-copied into the `Box` directly with no `_*_slice` ownership
-// indirection. For `content_disposition` / `content_type` / `content_encoding`
-// (typed `Option<*const [u8]>` in `S3CredentialsWithOptions`), `_*_slice` owns
-// the bytes and the raw fat-pointer borrows them. The underlying heap
-// allocation does not move when the struct is returned by value, so the
-// pointer remains valid for the struct's lifetime.
 
 const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \"aws-exec-read\", \
 \"authenticated-read\", \"bucket-owner-read\", \"bucket-owner-full-control\", \"log-delivery-write\"";
@@ -88,25 +77,21 @@ pub(crate) fn get_credentials_with_options(
         request_payer: default_request_payer,
         ..Default::default()
     };
-    // errdefer new_credentials.deinit() — handled by Drop on early return
 
     if let Some(opts) = options {
         if opts.is_object() {
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"accessKeyId", true)? {
-                new_credentials.credentials.access_key_id = Box::<[u8]>::from(utf8.slice());
-                new_credentials._access_key_id_slice = Some(utf8);
+                new_credentials.credentials.access_key_id = utf8.into_vec().into_boxed_slice();
                 new_credentials.changed_credentials = true;
             }
             if let Some(utf8) =
                 get_truthy_string_utf8(opts, global_object, b"secretAccessKey", true)?
             {
-                new_credentials.credentials.secret_access_key = Box::<[u8]>::from(utf8.slice());
-                new_credentials._secret_access_key_slice = Some(utf8);
+                new_credentials.credentials.secret_access_key = utf8.into_vec().into_boxed_slice();
                 new_credentials.changed_credentials = true;
             }
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"region", true)? {
-                new_credentials.credentials.region = Box::<[u8]>::from(utf8.slice());
-                new_credentials._region_slice = Some(utf8);
+                new_credentials.credentials.region = utf8.into_vec().into_boxed_slice();
                 new_credentials.changed_credentials = true;
             }
             if let Some(js_value) = opts.get_truthy(global_object, "endpoint")? {
@@ -114,7 +99,7 @@ pub(crate) fn get_credentials_with_options(
                     if js_value.is_string() {
                         let str = BunString::from_js(js_value, global_object)?;
                         if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            let utf8 = str.to_utf8();
+                            let utf8 = str.into_utf8();
                             let endpoint = utf8.slice();
                             if let Some(parsed) = URL::parse_s3_endpoint(endpoint) {
                                 new_credentials.credentials.endpoint = parsed.host_with_path;
@@ -126,16 +111,13 @@ pub(crate) fn get_credentials_with_options(
                                 new_credentials.changed_credentials = true;
                             } else if !endpoint.is_empty() {
                                 // endpoint is not a valid URL
-                                str.deref();
                                 return Err(global_object.throw_invalid_argument_type_value(
                                     b"endpoint",
                                     b"string",
                                     js_value,
                                 ));
                             }
-                            new_credentials._endpoint_slice = Some(utf8);
                         }
-                        str.deref();
                     } else {
                         return Err(global_object.throw_invalid_argument_type_value(
                             b"endpoint",
@@ -146,8 +128,7 @@ pub(crate) fn get_credentials_with_options(
                 }
             }
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"bucket", true)? {
-                new_credentials.credentials.bucket = Box::<[u8]>::from(utf8.slice());
-                new_credentials._bucket_slice = Some(utf8);
+                new_credentials.credentials.bucket = utf8.into_vec().into_boxed_slice();
                 new_credentials.changed_credentials = true;
             }
 
@@ -160,8 +141,7 @@ pub(crate) fn get_credentials_with_options(
 
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"sessionToken", true)?
             {
-                new_credentials.credentials.session_token = Box::<[u8]>::from(utf8.slice());
-                new_credentials._session_token_slice = Some(utf8);
+                new_credentials.credentials.session_token = utf8.into_vec().into_boxed_slice();
                 new_credentials.changed_credentials = true;
             }
 
@@ -253,8 +233,7 @@ pub(crate) fn get_credentials_with_options(
                         "contentDisposition must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_disposition = Some(bun_ptr::RawSlice::new(utf8.slice()));
-                new_credentials._content_disposition_slice = Some(utf8);
+                new_credentials.content_disposition = Some(utf8);
             }
 
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"type", true)? {
@@ -263,8 +242,7 @@ pub(crate) fn get_credentials_with_options(
                         "type must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_type = Some(bun_ptr::RawSlice::new(utf8.slice()));
-                new_credentials._content_type_slice = Some(utf8);
+                new_credentials.content_type = Some(utf8);
             }
 
             if let Some(utf8) =
@@ -275,8 +253,7 @@ pub(crate) fn get_credentials_with_options(
                         "contentEncoding must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_encoding = Some(bun_ptr::RawSlice::new(utf8.slice()));
-                new_credentials._content_encoding_slice = Some(utf8);
+                new_credentials.content_encoding = Some(utf8);
             }
 
             if let Some(request_payer) = opts.get_boolean_strict(global_object, "requestPayer")? {

@@ -32,6 +32,7 @@ exports[`pnpm-lock.yaml migration pnpm workspace lockfile migration: workspace-p
     },
     "apps/web": {
       "name": "@repo/web",
+      "version": "1.0.0",
       "dependencies": {
         "@repo/ui": "workspace:*",
         "@repo/utils": "workspace:*",
@@ -40,12 +41,14 @@ exports[`pnpm-lock.yaml migration pnpm workspace lockfile migration: workspace-p
     },
     "packages/ui": {
       "name": "@repo/ui",
+      "version": "1.0.0",
       "dependencies": {
         "react": "^18.2.0",
       },
     },
     "packages/utils": {
       "name": "@repo/utils",
+      "version": "1.0.0",
       "dependencies": {
         "lodash": "^4.17.21",
       },

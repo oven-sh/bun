@@ -592,12 +592,6 @@ impl QuicStream {
         self.this_value.with_mut(|r| r.downgrade());
     }
 
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicStream::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {}
-
     pub(crate) fn get_reader(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.with_state(|s| s.has_reader = 1);
         Ok(frame.this())

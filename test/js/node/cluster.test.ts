@@ -1115,6 +1115,55 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 }, 30_000);
 
+test("round-robin worker adopts a pauseOnConnect connection without reading from it", async () => {
+  using dir = tempDir("cluster-pauseonconnect-bytes", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => { console.log(JSON.stringify(m)); worker.kill(); process.exit(0); });
+  cluster.on("listening", (_w, addr) => {
+    // "early" is in the worker's receive buffer before the write callback runs.
+    const c = net.connect(addr.port, "127.0.0.1", () => c.write("early", () => worker.send("written")));
+    c.on("error", () => {});
+  });
+} else {
+  let sock, written = false, earlyData = false;
+  // The IPC message can be dispatched in the same poll as, and ahead of, the socket's
+  // readable event, so report after the poll between two immediates: a handle that
+  // reads has consumed "early" by then.
+  const report = () => {
+    if (!sock || !written) return;
+    setImmediate(() => setImmediate(() => {
+      process.send({ paused: sock.isPaused(), bytesRead: sock.bytesRead, earlyData, _server: sock._server === server });
+    }));
+  };
+  process.on("message", () => { written = true; report(); });
+  const server = net.createServer({ pauseOnConnect: true }, s => {
+    sock = s;
+    s.once("data", () => { earlyData = true; });
+    report();
+  });
+  server.listen(0, "127.0.0.1");
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: { paused: true, bytesRead: 0, earlyData: false, _server: true },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+}, 30_000);
+
 test("round-robin accepted socket buffers early bytes until a 'data' listener is attached", async () => {
   using dir = tempDir("cluster-early-bytes", {
     "main.ts": `

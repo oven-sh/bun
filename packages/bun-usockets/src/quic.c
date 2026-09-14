@@ -58,6 +58,9 @@ struct us_quic_socket_context_s {
     unsigned int sni_count, sni_cap;
     int processing;
     int closing;
+    /* us_quic_socket_context_shutdown ran while `processing` was set;
+     * us_quic_engine_leave finishes it. */
+    int shutdown_pending;
     int is_client;
     unsigned int conn_count;
     unsigned int conn_ext_size;
@@ -99,6 +102,9 @@ struct us_quic_listen_socket_s {
     us_quic_socket_context_t *ctx;
     struct sockaddr_storage local;
     struct us_quic_listen_socket_s *next; /* live list, then reused for closed list */
+    /* us_quic_listen_socket_close ran while `processing` was set;
+     * us_quic_engine_leave closes the fd. */
+    int close_pending;
 };
 
 struct us_quic_socket_s {
@@ -150,14 +156,28 @@ static void us_quic_on_timer(struct us_timer_t *t) {
 }
 #endif
 
+static void us_quic_after_engine_call(us_quic_socket_context_t *ctx);
+
+/* lsquic forbids entering the engine from a callback it made. Every engine
+ * call that can make callbacks sits between this pair. */
+static int us_quic_engine_enter(us_quic_socket_context_t *ctx) {
+    if (ctx->processing || !ctx->engine) return 0;
+    ctx->processing = 1;
+    return 1;
+}
+
+static void us_quic_engine_leave(us_quic_socket_context_t *ctx) {
+    ctx->processing = 0;
+    us_quic_after_engine_call(ctx);
+}
+
 void us_quic_loop_process(struct us_loop_t *loop) {
     int min_diff = 0, have_tick = 0;
     for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
-        if (ctx->processing || !ctx->engine) continue;
-        ctx->processing = 1;
+        if (!us_quic_engine_enter(ctx)) continue;
         ctx->pending_write_bytes = 0;
         lsquic_engine_process_conns(ctx->engine);
-        ctx->processing = 0;
+        us_quic_engine_leave(ctx);
         int diff;
         if (lsquic_engine_earliest_adv_tick(ctx->engine, &diff)) {
             if (!have_tick || diff < min_diff) min_diff = diff;
@@ -192,10 +212,15 @@ void us_quic_loop_flush_if_pending(struct us_loop_t *loop) {
 }
 
 static void us_quic_process(us_quic_socket_context_t *ctx) {
-    if (ctx->processing || !ctx->engine) return;
-    ctx->processing = 1;
+    if (!us_quic_engine_enter(ctx)) return;
     lsquic_engine_process_conns(ctx->engine);
-    ctx->processing = 0;
+    us_quic_engine_leave(ctx);
+}
+
+static void us_quic_send_unsent(us_quic_socket_context_t *ctx) {
+    if (!us_quic_engine_enter(ctx)) return;
+    lsquic_engine_send_unsent_packets(ctx->engine);
+    us_quic_engine_leave(ctx);
 }
 
 /* ───── packets out ───── */
@@ -352,7 +377,7 @@ static void us_quic_udp_on_data(struct us_udp_socket_t *u, void *recvbuf, int np
 
 static void us_quic_udp_on_drain(struct us_udp_socket_t *u) {
     us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) us_udp_socket_user(u);
-    if (ls->ctx->engine) lsquic_engine_send_unsent_packets(ls->ctx->engine);
+    us_quic_send_unsent(ls->ctx);
 }
 
 static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
@@ -811,18 +836,27 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     return 0;
 }
 
-void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
-    if (!ctx || ctx->closing || !ctx->engine) return;
-    ctx->closing = 1;
+static void us_quic_socket_context_finish_shutdown(us_quic_socket_context_t *ctx) {
     /* GOAWAY every conn and flush; loop_post keeps ticking so in-flight
      * streams drain. New conns are rejected in on_new_conn while closing. */
     lsquic_engine_cooldown(ctx->engine);
-    lsquic_engine_send_unsent_packets(ctx->engine);
+    us_quic_send_unsent(ctx);
     us_quic_process(ctx);
     /* Nothing to drain — release the UDP fd now so the loop can exit. */
     if (ctx->conn_count == 0) {
         while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
     }
+}
+
+void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
+    if (!ctx || ctx->closing || !ctx->engine) return;
+    ctx->closing = 1;
+    /* stop() from a request handler, or from a microtask it resolved. */
+    if (ctx->processing) {
+        ctx->shutdown_pending = 1;
+        return;
+    }
+    us_quic_socket_context_finish_shutdown(ctx);
 }
 
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
@@ -888,11 +922,29 @@ static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
     (void) on;
 }
 
+/* A listener whose close is still pending holds its UDP port, and stop(true)
+ * promises that the port is free when it returns. Release it before a bind to
+ * that port. Its closing conns then go silent. */
+static void us_quic_release_pending_port(struct us_loop_t *loop, int port) {
+    if (port == 0) return;
+    for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
+        for (us_quic_listen_socket_t *ls = ctx->listeners; ls; ) {
+            if (!ls->close_pending || us_quic_listen_socket_port(ls) != port) { ls = ls->next; continue; }
+            ls->close_pending = 0;
+            us_udp_socket_close(ls->udp);
+            /* udp_on_close unlinked `ls`; restart from the head. */
+            ls = ctx->listeners;
+        }
+    }
+}
+
 us_quic_listen_socket_t *us_quic_socket_context_listen(
     us_quic_socket_context_t *ctx, const char *host, int port, int flags,
     unsigned int stream_ext_size)
 {
     ctx->stream_ext_size = stream_ext_size;
+
+    us_quic_release_pending_port(ctx->loop, port);
 
     us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) us_calloc(1, sizeof(*ls));
     if (!ls) return NULL;
@@ -914,6 +966,16 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
     return ls;
 }
 
+static void us_quic_listen_socket_finish_close(us_quic_listen_socket_t *ls) {
+    if (ls->ctx->engine) {
+        lsquic_engine_cooldown(ls->ctx->engine);
+        us_quic_process(ls->ctx);
+        us_quic_send_unsent(ls->ctx);
+    }
+    /* on_conn_closed releases every fd when the last conn of a closing ctx goes. */
+    if (ls->udp) us_udp_socket_close(ls->udp);
+}
+
 void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
     if (!ls || !ls->udp) return;
     /* Send CONNECTION_CLOSE on every live conn before the fd disappears;
@@ -933,11 +995,35 @@ void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
         for (us_quic_socket_t *qs = ls->ctx->conns; qs; qs = qs->next) {
             if (qs->conn) lsquic_conn_abort(qs->conn);
         }
-        lsquic_engine_cooldown(ls->ctx->engine);
-        us_quic_process(ls->ctx);
-        lsquic_engine_send_unsent_packets(ls->ctx->engine);
+        /* stop(true) from a request handler, or from a microtask it resolved.
+         * The aborted conns only pack their CONNECTION_CLOSE once the running
+         * tick resumes, so the fd has to outlive that call. */
+        if (ls->ctx->processing) {
+            ls->close_pending = 1;
+            return;
+        }
     }
-    us_udp_socket_close(ls->udp);
+    us_quic_listen_socket_finish_close(ls);
+}
+
+static void us_quic_finish_pending_closes(us_quic_socket_context_t *ctx) {
+    for (us_quic_listen_socket_t *ls = ctx->listeners; ls; ) {
+        if (!ls->close_pending) { ls = ls->next; continue; }
+        ls->close_pending = 0;
+        us_quic_listen_socket_finish_close(ls);
+        /* udp_on_close unlinked `ls`; restart from the head. */
+        ls = ctx->listeners;
+    }
+}
+
+/* The engine has left the stack: do what a callback asked for while it could
+ * not be entered. */
+static void us_quic_after_engine_call(us_quic_socket_context_t *ctx) {
+    if (ctx->shutdown_pending) {
+        ctx->shutdown_pending = 0;
+        us_quic_socket_context_finish_shutdown(ctx);
+    }
+    us_quic_finish_pending_closes(ctx);
 }
 
 int us_quic_listen_socket_port(us_quic_listen_socket_t *ls) {
@@ -1193,6 +1279,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     if (!ssl) return NULL;
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
+    X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(ssl), X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
     /* Same root store the H1/H2 client uses (bundled Mozilla roots + platform
      * CAs + NODE_EXTRA_CA_CERTS); set_default_verify_paths alone doesn't find
      * the system store on macOS/Windows. */

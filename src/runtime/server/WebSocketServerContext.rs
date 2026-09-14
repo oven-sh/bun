@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use bun_core::comptime_string_map::ComptimeStringMap as _;
 use bun_uws as uws;
 
 pub struct WebSocketServerContext {
@@ -214,17 +215,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-// The key may be a possibly-UTF-16 ZigString. Derive a UTF-8 view
-// first (`to_slice_fast` allocates only for 16-bit-backed strings) so
-// UTF-16-backed option strings like `compression: "16KB"` still match.
-fn lookup_zig_string<M: bun_core::comptime_string_map::ComptimeStringMap<Value = i32>>(
-    table: &M,
-    key: &bun_core::ZigString,
-) -> Option<i32> {
-    let utf8 = key.to_slice_fast();
-    table.lookup(utf8.slice()).copied()
-}
-
 pub(crate) fn on_create(
     global_object: &JSGlobalObject,
     object: JSValue,
@@ -272,8 +262,8 @@ pub(crate) fn on_create(
                         0
                     };
                 } else if compression.is_string() {
-                    let key = compression.get_zig_string(global_object)?;
-                    let Some(v) = lookup_zig_string(&COMPRESS_TABLE, &key) else {
+                    let key = compression.to_js_string_view(global_object)?;
+                    let Some(&v) = COMPRESS_TABLE.lookup(key.to_utf8().slice()) else {
                         return Err(global_object.throw_invalid_arguments(format_args!(
                             "WebSocketServerContext expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));
@@ -296,8 +286,8 @@ pub(crate) fn on_create(
                         0
                     };
                 } else if compression.is_string() {
-                    let key = compression.get_zig_string(global_object)?;
-                    let Some(v) = lookup_zig_string(&DECOMPRESS_TABLE, &key) else {
+                    let key = compression.to_js_string_view(global_object)?;
+                    let Some(&v) = DECOMPRESS_TABLE.lookup(key.to_utf8().slice()) else {
                         return Err(global_object.throw_invalid_arguments(format_args!(
                             "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));

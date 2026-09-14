@@ -12,17 +12,22 @@ pub struct Signals {
     pub body_receive_mode: Option<NonNull<AtomicU8>>,
 }
 
+/// Receive backpressure high-water mark: bytes no consumer has taken, on either side of the
+/// HTTP→JS hop. A body shorter than this completes unread, which frees its connection.
+pub const BODY_HIGH_WATER_MARK: usize = 256 * 1024;
+
+/// Receive backpressure for a body handed to JS. Whichever side holds bytes no consumer has
+/// taken moves `Flowing -> Paused` once they reach the high-water mark; whoever takes them
+/// moves `Paused -> Flowing` and schedules a resume. The transport applies `Paused` after the
+/// next read. Two terminal states: `BufferAll` (a consumer wants the whole body) and
+/// `Abandoned` (nothing will read it; the transport is being shut down, drop what arrives).
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum BodyReceiveMode {
-    /// Pause the transport after each delivered body chunk until JS pulls.
-    AutoPause = 0,
-    /// `callback` won the CAS; transport should be paused until JS pulls.
+    Flowing = 0,
     Paused = 1,
-    /// `.arrayBuffer()`/`.text()`/etc attached — never pause.
     BufferAll = 2,
-    /// Cancelled or abandoned — never pause, callback discards bytes.
-    Ignore = 3,
+    Abandoned = 3,
 }
 
 impl BodyReceiveMode {
@@ -31,8 +36,8 @@ impl BodyReceiveMode {
         match v {
             1 => Self::Paused,
             2 => Self::BufferAll,
-            3 => Self::Ignore,
-            _ => Self::AutoPause,
+            3 => Self::Abandoned,
+            _ => Self::Flowing,
         }
     }
 }
@@ -96,7 +101,7 @@ impl Default for Store {
             response_body_streaming: AtomicBool::new(false),
             aborted: AtomicBool::new(false),
             cert_errors: AtomicBool::new(false),
-            body_receive_mode: AtomicU8::new(BodyReceiveMode::AutoPause as u8),
+            body_receive_mode: AtomicU8::new(BodyReceiveMode::Flowing as u8),
         }
     }
 }
@@ -125,21 +130,38 @@ impl Store {
     }
 
     #[inline]
-    pub fn try_transition_receive_mode(&self, from: BodyReceiveMode, to: BodyReceiveMode) -> bool {
+    fn try_transition_receive_mode(&self, from: BodyReceiveMode, to: BodyReceiveMode) -> bool {
         self.body_receive_mode
             .compare_exchange(from as u8, to as u8, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
     }
 
-    /// Unconditionally move to a terminal mode (`BufferAll`/`Ignore`).
-    /// Returns whether the previous state was `Paused`.
+    /// `Flowing -> Paused`. No-op in the other states.
     #[inline]
-    pub fn set_receive_mode_terminal(&self, mode: BodyReceiveMode) -> bool {
-        debug_assert!(matches!(
-            mode,
-            BodyReceiveMode::BufferAll | BodyReceiveMode::Ignore
-        ));
-        self.body_receive_mode.swap(mode as u8, Ordering::AcqRel) == BodyReceiveMode::Paused as u8
+    pub fn pause_receive(&self) {
+        let _ = self.try_transition_receive_mode(BodyReceiveMode::Flowing, BodyReceiveMode::Paused);
+    }
+
+    /// `Paused -> Flowing`. Returns whether it was paused, i.e. whether the caller has to
+    /// schedule the transport's resume.
+    #[inline]
+    pub fn unpause_receive(&self) -> bool {
+        self.try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::Flowing)
+    }
+
+    /// Terminal: never pause again. Returns whether it was paused.
+    #[inline]
+    pub fn receive_all(&self) -> bool {
+        self.body_receive_mode
+            .swap(BodyReceiveMode::BufferAll as u8, Ordering::AcqRel)
+            == BodyReceiveMode::Paused as u8
+    }
+
+    /// Terminal.
+    #[inline]
+    pub fn abandon(&self) {
+        self.body_receive_mode
+            .store(BodyReceiveMode::Abandoned as u8, Ordering::Release);
     }
 }
 

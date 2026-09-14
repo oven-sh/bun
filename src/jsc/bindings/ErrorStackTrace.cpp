@@ -116,6 +116,7 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
     UNUSED_PARAM(callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Delegate to Interpreter::getStackTrace which includes async stack frames
     // (from the await chain via getAsyncStackTrace). The previous hand-rolled
@@ -153,6 +154,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     JSC::JSObject* callerObject = caller.getObject();
     auto* globalObject = callerObject->globalObject();
     WTF::String callerName = Zig::functionName(vm, globalObject, callerObject);
+    RETURN_IF_EXCEPTION(scope, );
 
     // Match V8: remove all frames up to and including the caller. If the caller
     // is not found anywhere in the sync portion of the stack, remove everything.
@@ -169,9 +171,13 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             removeCount = i + 1;
             break;
         }
-        if (!callerName.isEmpty() && Zig::functionName(vm, globalObject, frame, FinalizerSafety::NotInFinalizer, nullptr) == callerName) {
-            removeCount = i + 1;
-            break;
+        if (!callerName.isEmpty()) {
+            WTF::String frameName = Zig::functionName(vm, globalObject, frame, FinalizerSafety::NotInFinalizer, nullptr);
+            RETURN_IF_EXCEPTION(scope, );
+            if (frameName == callerName) {
+                removeCount = i + 1;
+                break;
+            }
         }
     }
 
@@ -256,15 +262,6 @@ JSC::JSString* JSCStackFrame::functionName()
     return jsString(this->m_vm, m_functionName);
 }
 
-JSC::JSString* JSCStackFrame::typeName()
-{
-    if (!m_typeName) {
-        m_typeName = retrieveTypeName();
-    }
-
-    return jsString(this->m_vm, m_typeName);
-}
-
 JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
 {
     if (SourcePositionsState::NotCalculated == m_sourcePositionsState) {
@@ -336,12 +333,6 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
     }
 
     return emptyString();
-}
-
-ALWAYS_INLINE String JSCStackFrame::retrieveTypeName()
-{
-    JSC::JSObject* calleeObject = uncheckedDowncast<JSC::JSObject>(m_callee);
-    return calleeObject->className();
 }
 
 // General flow here is based on JSC's appendSourceToError (ErrorInstance.cpp)
@@ -465,7 +456,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName().string();
+        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaNameWithoutGC();
     }
 
     return String();
@@ -477,24 +468,23 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     auto jstype = object->type();
     if (jstype == JSC::ProxyObjectType) return {};
 
-    // First try the "name" property.
+    // First try the "name" property. This names a frame for error output, so a
+    // custom getter that throws, or a rope that fails to resolve, is not an
+    // error to report here: clear it and fall through to the next strategy.
     {
-        WTF::String name;
         auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        if (object->getOwnNonIndexPropertySlot(vm, object->structure(), vm.propertyNames->name, slot)) {
-            if (!slot.isAccessor()) {
-                JSValue functionNameValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->name);
-                if (functionNameValue && functionNameValue.isString()) {
-                    name = functionNameValue.toWTFString(lexicalGlobalObject);
-                    if (!name.isEmpty()) {
-                        return name;
-                    }
-                }
+        if (object->getOwnNonIndexPropertySlot(vm, object->structure(), vm.propertyNames->name, slot) && !slot.isAccessor()) {
+            JSValue functionNameValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->name);
+            if (topExceptionScope.exception()) [[unlikely]]
+                (void)topExceptionScope.tryClearException();
+            else if (functionNameValue && functionNameValue.isString()) {
+                WTF::String name = functionNameValue.toWTFString(lexicalGlobalObject);
+                if (topExceptionScope.exception()) [[unlikely]]
+                    (void)topExceptionScope.tryClearException();
+                else if (!name.isEmpty())
+                    return name;
             }
-        }
-        if (topExceptionScope.exception()) [[unlikely]] {
-            (void)topExceptionScope.tryClearException();
         }
     }
 
@@ -513,7 +503,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
                 auto* function = uncheckedDowncast<JSC::JSFunction>(object);
                 functionName = function->nameWithoutGC(vm);
                 if (functionName.isEmpty() && !function->isHostFunction()) {
-                    functionName = function->jsExecutable()->ecmaName().string();
+                    functionName = function->jsExecutable()->ecmaNameWithoutGC();
                 }
             } else if (jstype == JSC::InternalFunctionType) {
                 functionName = uncheckedDowncast<JSC::InternalFunction>(object)->name();
@@ -580,7 +570,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                     auto str = function->nameWithoutGC(vm);
                     if (str.isEmpty() && !function->isHostFunction()) {
                         setTypeFlagsIfNecessary();
-                        return function->jsExecutable()->ecmaName().string();
+                        return function->jsExecutable()->ecmaNameWithoutGC();
                     }
                     setTypeFlagsIfNecessary();
                     return str;

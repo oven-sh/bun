@@ -95,7 +95,7 @@ impl Script {
             let ScriptState::Normal { idx } = me.state;
             (idx, Self::stmt_count_of(me))
         };
-        if idx >= len {
+        if idx >= len || interp.interrupted(this) {
             return Self::finish(interp, this, exit_code);
         }
         Self::next(interp, this)

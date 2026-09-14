@@ -15,7 +15,7 @@ pub use http_method::{Method, Optional as MethodOptional};
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
-use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult, Strong};
+use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
 pub use crate::socket::ssl_config::SSLConfig;
@@ -63,6 +63,7 @@ pub struct ServerConfig {
     pub(crate) allow_hot: bool,
     pub(crate) ipv6_only: bool,
     pub(crate) http3: bool,
+    pub(crate) http2: bool,
     pub(crate) http1: bool,
 
     pub(crate) had_routes_object: bool,
@@ -97,6 +98,7 @@ impl Default for ServerConfig {
             allow_hot: true,
             ipv6_only: false,
             http3: false,
+            http2: false,
             http1: true,
             had_routes_object: false,
             static_routes: Vec::new(),
@@ -209,13 +211,6 @@ impl StaticRouteEntry {
     }
 }
 
-impl Drop for StaticRouteEntry {
-    fn drop(&mut self) {
-        // path: Box<[u8]> drops automatically
-        self.route.deref_();
-    }
-}
-
 impl ServerConfig {
     fn normalize_static_routes_list(&mut self) -> Result<(), crate::Error> {
         fn hash(route: &StaticRouteEntry) -> u64 {
@@ -295,6 +290,7 @@ impl ServerConfig {
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
             http3: self.http3,
+            http2: self.http2,
             http1: self.http1,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
@@ -362,9 +358,43 @@ fn serves_head(method: &http_method::Optional) -> bool {
     }
 }
 
-pub(crate) fn apply_static_route_h3<T: StaticRouteLike>(
+/// The route-registration surface shared by `uws::h2::App` and
+/// `uws::h3::App`; both hand the handler type-erased `AnyRequest`/`AnyResponse`.
+pub(crate) trait MuxApp {
+    fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+    fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+}
+
+macro_rules! impl_mux_app {
+    ($app:ty) => {
+        impl MuxApp for $app {
+            #[inline]
+            fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+            where
+                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+            {
+                <$app>::method_this(self, m, p, h, this)
+            }
+            #[inline]
+            fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+            where
+                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+            {
+                <$app>::any_this(self, p, h, this)
+            }
+        }
+    };
+}
+impl_mux_app!(uws::h2::App);
+impl_mux_app!(uws::h3::App);
+
+pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
     server: AnyServer,
-    app: &mut uws::h3::App,
+    app: &mut A,
     entry: ThisPtr<T>,
     path: &[u8],
     method: http_method::Optional,
@@ -386,7 +416,7 @@ pub(crate) fn apply_static_route_h3<T: StaticRouteLike>(
     }
 }
 
-/// Per-route trait that `apply_static_route{,_h3}` monomorphizes over
+/// Per-route trait that `apply_static_route{,_mux}` monomorphizes over
 /// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`). The route
 /// is the uWS route userdata; the route table holds a ref on it for as long as
 /// it is registered.
@@ -690,9 +720,6 @@ impl ServerConfig {
             }
             args.reuse_port = args.development == DevelopmentOption::Production;
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(static_) = get_routes_object(global, arg)? {
             let Some(static_obj) = static_.get_object() else {
@@ -713,7 +740,7 @@ impl ServerConfig {
 
             // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
             let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
-            let mut iter = JSPropertyIterator::init(
+            let iter = JSPropertyIterator::init(
                 global,
                 static_obj,
                 bun_jsc::JSPropertyIteratorOptions {
@@ -741,15 +768,13 @@ impl ServerConfig {
             // Vec<StaticRouteEntry> drops elements (which deref route)
             // automatically on error.
 
-            while let Some(key) = iter.next()? {
+            while let Some((key, value)) = iter.next()? {
                 // NOTE: `to_owned_slice_returning_all_ascii` not yet on
                 // `bun_core::String`; split into `to_owned_slice()` + `is_all_ascii`.
                 let path_vec = key.to_owned_slice();
                 let is_ascii = strings::is_all_ascii(&path_vec);
                 let path: Box<[u8]> = path_vec.into_boxed_slice();
                 // The path Box drops on error.
-
-                let value: JSValue = iter.value;
 
                 if value.is_undefined() {
                     continue;
@@ -991,10 +1016,6 @@ impl ServerConfig {
             }
         }
 
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
-
         if let Some(value) = arg.get(global, "idleTimeout")? {
             if !value.is_undefined_or_null() {
                 if !value.is_any_int() {
@@ -1033,9 +1054,6 @@ impl ServerConfig {
                 websocket_object,
             )?);
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(port_) = arg.get_truthy(global, "port")? {
             let number = port_.to_number(global)?;
@@ -1066,20 +1084,13 @@ impl ServerConfig {
             }
             port = p;
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
-            let sliced = base_uri.to_slice(global)?;
+            let utf8 = base_uri.to_utf8(global)?;
 
-            if !sliced.slice().is_empty() {
-                // sliced drops at scope end
-                args.base_uri = Box::<[u8]>::from(sliced.slice());
+            if !utf8.slice().is_empty() {
+                args.base_uri = Box::<[u8]>::from(utf8.slice());
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         let host = if let Some(h) = arg.get_stringish(global, "hostname")? {
@@ -1088,7 +1099,6 @@ impl ServerConfig {
             arg.get_stringish(global, "host")?
         };
         if let Some(host) = host {
-            let host = bun_core::OwnedString::new(host);
             let host_str = host.to_utf8();
 
             if !host_str.slice().is_empty() {
@@ -1100,9 +1110,6 @@ impl ServerConfig {
                 }
                 has_hostname = true;
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(unix) = arg.get_stringish(global, "unix")? {
@@ -1117,24 +1124,18 @@ impl ServerConfig {
                 args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
             }
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(id) = arg.get(global, "id")? {
             if id.is_undefined_or_null() {
                 args.allow_hot = false;
             } else {
-                let id_str = id.to_slice(global)?;
+                let id_str = id.to_utf8(global)?;
                 if !id_str.slice().is_empty() {
                     args.id = Box::<[u8]>::from(id_str.slice());
                 } else {
                     args.allow_hot = false;
                 }
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if opts.allow_bake_config {
@@ -1164,29 +1165,21 @@ impl ServerConfig {
         if let Some(dev) = arg.get(global, "reusePort")? {
             args.reuse_port = dev.to_boolean();
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(dev) = arg.get(global, "ipv6Only")? {
             args.ipv6_only = dev.to_boolean();
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(v) = arg.get(global, "http3")? {
             args.http3 = v.to_boolean();
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
+
+        if let Some(v) = arg.get(global, "http2")? {
+            args.http2 = v.to_boolean();
         }
 
         if let Some(v) = arg.get(global, "http1")? {
             args.http1 = v.to_boolean();
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(max_request_body_size) = arg.get_truthy(global, "maxRequestBodySize")? {
@@ -1194,9 +1187,6 @@ impl ServerConfig {
                 args.max_request_body_size = u64::try_from(max_request_body_size.to_int64().max(0))
                     .expect("int cast") as usize;
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(on_error) = arg.get_truthy(global, "error")? {
@@ -1209,9 +1199,6 @@ impl ServerConfig {
             // site (`serve_with!` / `on_reload_from_zig`) so the wrapped fn is
             // rooted by the wrapper's WriteBarrier slot the moment it exists.
             args.on_error = on_error;
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "onNodeHTTPRequest")? {
@@ -1237,9 +1224,6 @@ impl ServerConfig {
             && !(opts.previous_routes && !args.had_routes_object)
             && opts.is_fetch_required
         {
-            if global.has_exception() {
-                return Err(JsError::Thrown);
-            }
             return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.serve() needs either:\n\n\
                  \x20 - A routes object:\n\
@@ -1254,10 +1238,6 @@ impl ServerConfig {
                  \x20    }}\n\n\
                  Learn more at https://bun.com/docs/api/http",
             )));
-        } else {
-            if global.has_exception() {
-                return Err(JsError::Thrown);
-            }
         }
 
         if let Some(tls) = arg.get_truthy(global, "tls")? {
@@ -1269,15 +1249,9 @@ impl ServerConfig {
                     // Empty TLS array means no TLS - this is valid
                 } else {
                     while let Some(item) = value_iter.next()? {
-                        let ssl_config = match SSLConfig::from_js(vm, global, item)? {
-                            Some(c) => c,
-                            None => {
-                                if global.has_exception() {
-                                    return Err(JsError::Thrown);
-                                }
-                                // Backwards-compatibility; we ignored empty tls objects.
-                                continue;
-                            }
+                        let Some(ssl_config) = SSLConfig::from_js(vm, global, item)? else {
+                            // Backwards-compatibility; we ignored empty tls objects.
+                            continue;
                         };
 
                         if args.ssl_config.is_none() {
@@ -1301,13 +1275,7 @@ impl ServerConfig {
                 if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? {
                     args.ssl_config = Some(ssl_config);
                 }
-                if global.has_exception() {
-                    return Err(JsError::Thrown);
-                }
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         // @compatibility Bun v0.x - v0.2.1
@@ -1316,23 +1284,19 @@ impl ServerConfig {
             if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
                 args.ssl_config = Some(ssl_config);
             }
-            if global.has_exception() {
-                return Err(JsError::Thrown);
-            }
         }
 
-        if args.http3 {
-            if args.ssl_config.is_none() {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
-                );
-            }
-        } else if !args.http1 {
+        if args.http3 && args.ssl_config.is_none() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
+            );
+        }
+        if !args.http1 && !args.http2 && !args.http3 {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Cannot disable http1 without enabling http3"
+                "Cannot disable http1 without enabling http2 or http3"
             )));
         }
-        if !args.http1 && matches!(args.address, Address::Unix(_)) {
+        if !args.http1 && !args.http2 && matches!(args.address, Address::Unix(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));

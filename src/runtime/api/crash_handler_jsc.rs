@@ -225,8 +225,7 @@ pub(crate) mod js_bindings {
         crash_handler::write_u64_as_two_vlqs(buf.writer(), bits.bits() as usize)
             // there is definitely enough space in the bounded array
             .expect("unreachable");
-        let mut str = BunString::clone_latin1(buf.slice());
-        str.transfer_to_js(global)
+        BunString::clone_latin1(buf.slice()).into_js(global)
     }
 
     #[bun_jsc::host_fn]
@@ -240,7 +239,7 @@ pub(crate) mod js_bindings {
         obj.put(
             global,
             "version",
-            BunString::init(Global::package_json_version).to_js(global)?,
+            BunString::static_(Global::package_json_version).to_js(global)?,
         );
         obj.put(
             global,
@@ -253,7 +252,7 @@ pub(crate) mod js_bindings {
         obj.put(
             global,
             "revision",
-            BunString::init(Environment::GIT_SHA).to_js(global)?,
+            BunString::static_(Environment::GIT_SHA).to_js(global)?,
         );
 
         obj.put(

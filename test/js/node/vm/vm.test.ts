@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import {
   compileFunction,
   constants,
@@ -1315,6 +1315,63 @@ describe("DONT_CONTEXTIFY", () => {
 
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/42331
+describe("a Proxy in the prototype chain of the context global", () => {
+  // jsdom 28+ puts a Proxy (WindowProperties) in the prototype chain of its
+  // window. V8 runs a program against such a global, so node:vm must too.
+  function installProxy(ctx: object) {
+    const target = { fromProxy: 7 };
+    const g = runInContext("this", ctx);
+    Object.setPrototypeOf(g, Object.create(new Proxy(target, {})));
+    return target;
+  }
+
+  test.each([
+    ["DONT_CONTEXTIFY", () => createContext(constants.DONT_CONTEXTIFY)],
+    ["contextified sandbox", () => createContext({})],
+  ])("%s: programs run and resolve names through the Proxy", (_, makeContext) => {
+    const ctx = makeContext();
+    const target = installProxy(ctx);
+
+    expect(runInContext("1 + 1", ctx)).toBe(2);
+    expect(new Script("2 + 2").runInContext(ctx)).toBe(4);
+    expect(runInContext("fromProxy", ctx)).toBe(7);
+    expect(runInContext("typeof missingName", ctx)).toBe("undefined");
+    expect(runInContext("undeclaredAssign = 9; undeclaredAssign", ctx)).toBe(9);
+    expect(runInContext("fromProxy = 8; fromProxy", ctx)).toBe(8);
+    expect(target.fromProxy).toBe(7);
+  });
+
+  test("contextified sandbox: declarations land on the global, not on the Proxy", () => {
+    const ctx = createContext({});
+    const target = installProxy(ctx);
+
+    expect(runInContext("var declared = 5; function fn() { return 6 } declared + fn()", ctx)).toBe(11);
+    expect(new Script("declared * 2").runInContext(ctx)).toBe(10);
+    expect(target).toEqual({ fromProxy: 7 });
+  });
+
+  test("main realm: runInThisContext and require() run with a Proxy in the chain of globalThis", async () => {
+    using dir = tempDir("vm-proxy-global", { "dep.cjs": "module.exports = 42;" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const vm = require("node:vm");
+         Object.setPrototypeOf(globalThis, Object.create(new Proxy({ viaProxy: 3 }, {})));
+         console.log(vm.runInThisContext("1 + 1"), vm.runInThisContext("viaProxy"), require("./dep.cjs"));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("2 3 42\n");
+    expect(exitCode).toBe(0);
   });
 });
 

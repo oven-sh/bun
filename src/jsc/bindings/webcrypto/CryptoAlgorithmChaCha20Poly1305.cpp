@@ -40,7 +40,7 @@ namespace WebCore {
 
 namespace CryptoAlgorithmChaCha20Poly1305Internal {
 static constexpr auto ALG = "C20P"_s;
-static constexpr uint8_t TagLength = 128;
+static constexpr uint8_t TagLength = CryptoAlgorithmChaCha20Poly1305::s_tagLengthBits;
 }
 
 static inline bool usagesAreInvalidForChaCha20Poly1305(CryptoKeyUsageBitmap usages)
@@ -65,7 +65,7 @@ static bool validateTagLength(std::optional<uint8_t>& tagLength, const CryptoAlg
 // length up front instead of surfacing BoringSSL's generic AEAD failure.
 static bool validateIvLength(const CryptoAlgorithmAeadParams& parameters, const CryptoAlgorithm::ExceptionCallback& exceptionCallback)
 {
-    if (parameters.ivVector().size() != 12) {
+    if (parameters.ivVector().size() != CryptoAlgorithmChaCha20Poly1305::s_ivLength) {
         exceptionCallback(OperationError, "algorithm.iv must contain exactly 12 bytes"_s);
         return false;
     }

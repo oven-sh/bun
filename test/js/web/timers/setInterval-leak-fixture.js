@@ -1,20 +1,13 @@
+// Arms intervals in batches, clears each batch, and reports what the cleared timers left behind.
+//
+// usage: bun setInterval-leak-fixture.js [warmupBatches] [measuredBatches] [runsPerTimer]
+//
+// The defaults are the full workload. setInterval.test.js gives a smaller one to the slow builds.
+const [warmupBatches = 50, measuredBatches = 300, runsPerTimer = 10] = process.argv.slice(2).map(Number);
+const timersPerBatch = 1_000;
 const delta = 1;
-const initialRuns = 10_000;
-let runs = initialRuns;
-// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
 
 const usage = process.memoryUsage.rss;
-
-Promise.withResolvers ??= () => {
-  let promise, resolve, reject;
-  promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-};
 
 function gc() {
   if (typeof Bun !== "undefined") {
@@ -24,11 +17,16 @@ function gc() {
   }
 }
 
+let timers = 0;
+let callbacks = 0;
+// The number of callbacks that the current batch still has to run.
+let runs = 0;
 var resolve, promise;
 
 // Attaches large allocated data to the current timer. Decrements the number of remaining iterations.
-// When invoked the last time, resolves promise with the memory usage at the end of this batch.
+// When invoked the last time, resolves promise.
 function iterate() {
+  callbacks++;
   this.bigLeakyObject = {
     huge: {
       wow: {
@@ -39,59 +37,41 @@ function iterate() {
     },
   };
 
-  if (runs-- === 1) {
-    const rss = usage();
-    resolve(rss);
-  }
+  if (runs-- === 1) resolve();
 }
 
-// Resets the global run counter. Creates `iterations` new timers with iterate as the callback.
-// Waits for them all to finish, then clears all the timers, triggers garbage collection, and
-// returns the final memory usage measured by a timer.
-async function batch(iterations) {
-  let result;
-  runs = initialRuns;
+// Resets the global run counter. Creates `timersPerBatch` new timers with iterate as the callback.
+// Waits for them all to finish, then clears all the timers and triggers garbage collection.
+async function batch() {
+  runs = timersPerBatch * runsPerTimer;
   ({ promise, resolve } = Promise.withResolvers());
   {
-    const timers = [];
-    for (let i = 0; i < iterations; i++) timers.push(setInterval(iterate, delta));
-    result = await promise;
-    timers.forEach(clearInterval);
+    const batchTimers = [];
+    for (let i = 0; i < timersPerBatch; i++) batchTimers.push(setInterval(iterate, delta));
+    timers += batchTimers.length;
+    await promise;
+    batchTimers.forEach(clearInterval);
   }
   gc();
-  return result;
 }
 
-{
-  // Warmup
-  for (let i = 0; i < 50; i++) {
-    await batch(1_000);
-  }
-  // Measure memory usage after the warmup
-  const initial = usage();
-  // Run batch 300 more times, each time creating 1,000 timers, waiting for them to finish, and
-  // clearing them.
-  for (let i = 0; i < 300; i++) {
-    await batch(1_000);
-  }
-  // Measure memory usage again, to check that cleared timers and the objects allocated inside each
-  // callback have not bloated it
-  const result = usage();
-  {
-    const delta = ((result - initial) / 1024 / 1024) | 0;
-    console.log("RSS", (result / 1024 / 1024) | 0, "MB");
-    console.log("Delta", delta, "MB");
+for (let i = 0; i < warmupBatches; i++) await batch();
+// Measure memory usage after the warmup
+const initial = usage();
+for (let i = 0; i < measuredBatches; i++) await batch();
+// Measure memory usage again, to check that cleared timers and the objects allocated inside each
+// callback have not bloated it
+const rssDeltaMB = ((usage() - initial) / 1024 / 1024) | 0;
 
-    if (globalThis.Bun) {
-      const heapStats = require("bun:jsc").heapStats();
-      console.log("Timeout object count:", heapStats.objectTypeCounts.Timeout || 0);
-      if (heapStats.protectedObjectTypeCounts.Timeout) {
-        throw new Error("Expected 0 protected Timeout but received " + heapStats.protectedObjectTypeCounts.Timeout);
-      }
-    }
+// The `batchTimers` array of the last batch() call stays reachable until the event loop turns. Yield
+// to the event loop once, so that no cleared timer is reachable when the count is taken.
+await new Promise(resolve => setImmediate(resolve));
+gc();
 
-    if (delta > (isASAN ? 256 : 20)) {
-      throw new Error("Memory leak detected");
-    }
-  }
+const report = { timers, callbacks, rssDeltaMB };
+if (typeof Bun !== "undefined") {
+  const { objectTypeCounts, protectedObjectTypeCounts } = require("bun:jsc").heapStats();
+  report.liveTimeouts = objectTypeCounts.Timeout ?? 0;
+  report.protectedTimeouts = protectedObjectTypeCounts.Timeout ?? 0;
 }
+console.log(JSON.stringify(report));

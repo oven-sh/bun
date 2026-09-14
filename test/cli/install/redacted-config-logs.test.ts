@@ -243,3 +243,134 @@ describe.concurrent("redact", async () => {
     });
   }
 });
+
+// Covers the URL bun reports when a manifest or tarball request fails: the
+// manifest URL (after redirects) and the manifest's dist.tarball. Those come
+// from the registry, so a password or token in them is not something the user
+// wrote down themselves. The registry URL bun is configured with below carries
+// no secret; the secrets only enter through the redirect and dist.tarball.
+describe.concurrent("bun install masks secrets in the registry-supplied URL it prints after a failed download", () => {
+  const password = "s3cret";
+  const token = "npm_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8";
+
+  function startRegistry() {
+    return Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        const secretOrigin = `http://carol:${password}@${url.host}`;
+        switch (url.pathname) {
+          case "/redirected-pkg":
+            return Response.redirect(`${secretOrigin}/private/redirected-pkg?token=${token}`, 302);
+          case "/tarball-pkg":
+            return Response.json({
+              name: "tarball-pkg",
+              "dist-tags": { latest: "1.0.0" },
+              versions: {
+                "1.0.0": {
+                  name: "tarball-pkg",
+                  version: "1.0.0",
+                  dist: { tarball: `${secretOrigin}/cdn/tarball-pkg-1.0.0.tgz?token=${token}` },
+                },
+              },
+            });
+          default:
+            // Every other request, in particular the redirect target and the tarball, fails.
+            return new Response("not found", { status: 404 });
+        }
+      },
+    });
+  }
+
+  type Registry = ReturnType<typeof startRegistry>;
+
+  async function install(server: Registry, args: string[], files: Record<string, string>) {
+    using dir = tempDir("redacted-install-url", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--registry", `http://${server.hostname}:${server.port}/`, ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(out).not.toContain(password);
+    expect(out).not.toContain(token);
+    expect(err).not.toContain(password);
+    expect(err).not.toContain(token);
+    return { err, exitCode };
+  }
+
+  const masked = (server: Registry) => `http://carol:******@${server.hostname}:${server.port}`;
+
+  test("manifest request redirected to a URL with secrets (required dependency)", async () => {
+    await using server = startRegistry();
+    const { err, exitCode } = await install(server, [], {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "redirected-pkg": "1.0.0" } }),
+    });
+    expect(err).toContain(`error: GET ${masked(server)}/private/redirected-pkg?token=*** - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("manifest request redirected to a URL with secrets (optional dependency)", async () => {
+    await using server = startRegistry();
+    const { err, exitCode } = await install(server, [], {
+      "package.json": JSON.stringify({ name: "app", optionalDependencies: { "redirected-pkg": "1.0.0" } }),
+    });
+    expect(err).toContain(`warn: GET ${masked(server)}/private/redirected-pkg?token=*** - 404`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("dist.tarball URL with secrets (required dependency)", async () => {
+    await using server = startRegistry();
+    const { err, exitCode } = await install(server, [], {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "tarball-pkg": "1.0.0" } }),
+    });
+    expect(err).toContain(`error: GET ${masked(server)}/cdn/tarball-pkg-1.0.0.tgz?token=*** - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("dist.tarball URL with secrets (optional dependency)", async () => {
+    await using server = startRegistry();
+    const { err, exitCode } = await install(server, [], {
+      "package.json": JSON.stringify({ name: "app", optionalDependencies: { "tarball-pkg": "1.0.0" } }),
+    });
+    expect(err).toContain(`warn: GET ${masked(server)}/cdn/tarball-pkg-1.0.0.tgz?token=*** - 404`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("dist.tarball URL recorded in the lockfile, downloaded by the isolated linker", async () => {
+    await using server = startRegistry();
+    // What a previous install writes to bun.lock for an npm package whose
+    // dist.tarball is not the registry's default tarball location.
+    const tarball = `http://carol:${password}@${server.hostname}:${server.port}/cdn/tarball-pkg-1.0.0.tgz?token=${token}`;
+    const { err, exitCode } = await install(server, ["--linker", "isolated"], {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "tarball-pkg": "1.0.0" } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app", dependencies: { "tarball-pkg": "1.0.0" } } },
+        packages: { "tarball-pkg": ["tarball-pkg@1.0.0", tarball, {}, ""] },
+      }),
+    });
+    expect(err).toContain(
+      `error: failed to download tarball-pkg@1.0.0: 404 Not Found\n  ${masked(server)}/cdn/tarball-pkg-1.0.0.tgz?token=***`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  // A tarball URL written directly into package.json is printed as the
+  // dependency's resolution by other lines ("<name>@<url> failed to resolve",
+  // and the "failed to download <name>@<url>" prefix of the isolated linker
+  // message checked above), and those still print it verbatim.
+  test.todo("tarball URL written in package.json is masked wherever it is echoed", async () => {
+    await using server = startRegistry();
+    const spec = `http://carol:${password}@${server.hostname}:${server.port}/cdn/direct-1.0.0.tgz?token=${token}`;
+    for (const linker of ["hoisted", "isolated"]) {
+      const { err, exitCode } = await install(server, ["--linker", linker], {
+        "package.json": JSON.stringify({ name: "app", dependencies: { direct: spec } }),
+      });
+      expect(err).toContain(`error: GET ${masked(server)}/cdn/direct-1.0.0.tgz?token=*** - 404`);
+      expect(exitCode).toBe(1);
+    }
+  });
+});

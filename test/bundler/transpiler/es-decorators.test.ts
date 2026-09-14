@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // ES standard decorators are used for .js files (always) and for .ts files
 // when experimentalDecorators is NOT set in tsconfig.
@@ -1583,6 +1584,37 @@ describe("ES Decorators", () => {
       );
       expect(exitCode).toBe(0);
     });
+
+    // Output that does not start with "// @bun" goes through the transpiler
+    // again when bun runs it.
+    test.concurrent.each([
+      ["bun build --no-bundle", ["build", "--no-bundle", "test.js", "--outfile=out.js"]],
+      ["bun build --target=node", ["build", "--target=node", "test.js", "--outfile=out.js"]],
+      ["Bun.Transpiler", null],
+    ])(
+      "a field that carries the effects of its neighbors keeps naming its function when bun runs the output of %s",
+      async (_, buildArgs) => {
+        const source = `
+          const dec = (v, ctx) => {};
+          class A { @dec x = 1; afterField = () => {}; plain = () => {}; accessor a = 1; afterAccessor = class {}; @dec #p = 1; afterPrivate = function () {}; }
+          class B { @dec m() {} first = async () => {}; }
+          class C { accessor a = 1; #q = () => {}; privateName() { return this.#q.name } }
+          const a = new A();
+          console.log(JSON.stringify([a.afterField.name, a.plain.name, a.afterAccessor.name, a.afterPrivate.name, new B().first.name, new C().privateName()]));
+        `;
+        using dir = tempDir("es-dec-twice", { "test.js": source });
+        if (buildArgs) {
+          const build = await runIn(String(dir), buildArgs);
+          expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+        } else {
+          await Bun.write(join(String(dir), "out.js"), new Bun.Transpiler({ loader: "js" }).transformSync(source));
+        }
+        const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+        expect(filterStderr(stderr)).toBe("");
+        expect(stdout).toBe('["afterField","plain","afterAccessor","afterPrivate","first","#q"]\n');
+        expect(exitCode).toBe(0);
+      },
+    );
 
     test.concurrent(
       "a class with no key for its decorator lists: private names, extends and the inner name",

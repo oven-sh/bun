@@ -549,13 +549,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if FeatureFlags::INLINE_PROPERTIES_IN_TRANSPILER {
                         if p.options.features.minify_syntax {
                             // Rewrite a property access like this:
-                            //   { f: () => {} }.f
+                            //   { f: x }.f
                             // To:
-                            //   () => {}
+                            //   x
                             //
                             // To avoid thinking too much about edgecases, only do this for:
                             //   1) Objects with a single property
                             //   2) Not a method, not a computed property
+                            //   3) Not an anonymous function or class: `{ f: () => {} }.f.name` is "f"
                             if obj.properties.len_u32() == 1
                                 && !identifier_opts.is_delete_target()
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::None
@@ -573,6 +574,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         )
                                         && name != b"__proto__"
                                         && value.can_be_inlined_from_property_access()
+                                        && !value.is_anonymous_named()
                                     {
                                         return Some(value);
                                     }

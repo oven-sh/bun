@@ -966,6 +966,36 @@ test("--parallel writes new snapshots from every worker", async () => {
   expect(code2).toBe(0);
 });
 
+test("--parallel: a worker numbers each file's snapshots the same way a single-file run does", async () => {
+  // Each file takes an inline snapshot (number 1) and then a file snapshot, so on its
+  // own it writes `t 2`. Six files on two workers means most files are not the first
+  // file their worker runs; their keys must not depend on that.
+  const body = (n: number) =>
+    `import {test,expect} from "bun:test"; test("t",()=>{ expect("x").toMatchInlineSnapshot(\`"x"\`); expect(${n}).toMatchSnapshot(); });`;
+  const snap = (n: number) =>
+    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n" + `\nexports[\`t 2\`] = \`${n}\`;\n`;
+  const files: Record<string, string> = {};
+  for (let n = 1; n <= 6; n++) {
+    files[`f${n}.test.js`] = body(n);
+    files[`__snapshots__/f${n}.test.js.snap`] = snap(n);
+  }
+  using dir = tempDir("parallel-snapshot-numbering", files);
+
+  // CI: looking up a key that is missing from the .snap file fails instead of adding it.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", CI: "true" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout + stderr).not.toContain("Snapshot creation is disabled");
+  expect(stderr).toContain("6 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel: a test producing a >64MB result line is truncated, not treated as a crash", async () => {
   // Test name just over the 64MB IPC frame limit → the per-test status line
   // itself exceeds it. The encoder must truncate so the receiver doesn't drop

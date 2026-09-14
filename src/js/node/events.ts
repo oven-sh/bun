@@ -59,6 +59,8 @@ let FixedQueue;
 const kEmptyObject = Object.freeze(Object.create(null));
 
 var defaultMaxListeners = 10;
+// `process` is a native EventEmitter, so the default lives in C++ too.
+const setDefaultMaxListenersNative = $newCppFunction("JSEventEmitter.cpp", "jsEventEmitterSetDefaultMaxListeners", 1);
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(opts) {
@@ -788,6 +790,7 @@ function setMaxListeners(n = defaultMaxListeners, ...eventTargets) {
   validateNumber(n, "setMaxListeners", 0);
   if (eventTargets.length === 0) {
     defaultMaxListeners = n;
+    setDefaultMaxListenersNative(n);
   } else {
     for (let i = 0; i < eventTargets.length; i++) {
       const target = eventTargets[i];
@@ -965,6 +968,7 @@ Object.defineProperties(EventEmitter, {
     set: arg => {
       validateNumber(arg, "defaultMaxListeners", 0);
       defaultMaxListeners = arg;
+      setDefaultMaxListenersNative(arg);
     },
   },
   kMaxEventTargetListeners: {

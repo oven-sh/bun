@@ -958,6 +958,11 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     auto arg_name = jsString->view(globalObject);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
+    RELEASE_AND_RETURN(throwScope, OUT_OF_RANGE(throwScope, globalObject, arg_name->toString(), bound_num, bound, actual));
+}
+
+JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, double bound_num, Bound bound, JSC::JSValue actual)
+{
     WTF::StringBuilder builder;
     builder.append("The value of \""_s);
     builder.append(arg_name);

@@ -57,6 +57,27 @@ pub struct PendingImport {
     pub(crate) import_record_index: u32,
 }
 
+/// `bun build main.c parser.c util.c`: entry points that are all C files are one program in several
+/// files, as they are to `cc`, not several programs. Each is an entry point as far as finding and
+/// reading it goes (`Bun.build`'s `files`, `onResolve` and `onLoad` plugins, the file system: what
+/// any input goes through). The task of the first compiles the program, so it is held back until
+/// the others' tasks have handed their contents to the graph; those then stop being entry points
+/// and their contents are compiled and linked with the first's.
+#[derive(Default)]
+pub(crate) struct CProgram {
+    /// Every entry point is a C file, and there is more than one.
+    pub(crate) is_one: bool,
+    /// While an entry point is being enqueued: its place among them (`ParseTask::c_program_file`).
+    pub(crate) enqueueing: Option<u32>,
+    /// The program's files that have a task: (place, source index).
+    pub(crate) files: Vec<(u32, IndexInt)>,
+    /// The first file's task, until nothing else is pending.
+    pub(crate) held: Option<NonNull<ParseTask>>,
+    /// The other files, in their order: each one's path and contents. Set before the first
+    /// file's task is scheduled, which reads it.
+    pub(crate) link_sources: Vec<(Box<[u8]>, &'static [u8])>,
+}
+
 pub struct BundleV2<'a> {
     // `ssr_transpiler` may alias this same transpiler when the SSR graph
     // isn't separate, so it stays `*mut`; `transpiler` is `&'a mut` for
@@ -114,9 +135,8 @@ pub struct BundleV2<'a> {
 
     /// See the comment in `Chunk.OutputPiece`.
     pub(crate) unique_key: u64,
-    /// When every entry point is a C file they are one program: the first stays the entry point and
-    /// these (absolute paths) are compiled and linked with it, as `cc a.c b.c c.c` would.
-    pub(crate) c_link_sources: Vec<Box<[u8]>>,
+    /// When every entry point is a C file they are one program. See [`CProgram`].
+    pub(crate) c_program: CProgram,
     pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
@@ -1063,6 +1083,8 @@ pub mod bv2_impl {
                 pub(crate) original_target: Target,
                 /// Set for the html file of a dev server route, see `BundleV2::requested_file_loader`.
                 pub(crate) loader: Option<Loader>,
+                /// For an entry point that is one of a C program's files: `ParseTask::c_program_file`.
+                pub(crate) c_program_file: Option<u32>,
             }
 
             /// Mirrors `JSBundler.Resolve.Value.success` payload.
@@ -2213,6 +2235,9 @@ pub mod bv2_impl {
             }
 
             if self.graph.pending_items == 0 {
+                if self.compile_c_program() {
+                    return false;
+                }
                 let this: *mut Self = self;
                 // reshaped for borrowck — `&self.graph` and
                 // `self` go to the same call. Take a raw ptr so the two `&mut` don't
@@ -2778,11 +2803,8 @@ pub mod bv2_impl {
                             [source_index.get() as usize];
                     additional_files
                         .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    if loader.is_pure_data() {
-                        self.graph.input_files.items_side_effects_mut()
-                            [source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
-                    }
+                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
+                        bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -2879,6 +2901,7 @@ pub mod bv2_impl {
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
             task.is_entry_point = is_entry_point;
+            task.c_program_file = self.c_program.enqueueing.filter(|_| is_entry_point);
             task.known_target = target;
             task.jsx.development = self
                 .transpiler_for_target(target)
@@ -2893,15 +2916,12 @@ pub mod bv2_impl {
                             [source_index.get() as usize];
                     additional_files
                         .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    if loader.is_pure_data() {
-                        self.graph.input_files.items_side_effects_mut()
-                            [source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
-                    }
+                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
+                        bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
                 }
 
-                self.graph.pool().schedule(task);
+                self.schedule_entry_point(task);
             }
 
             self.graph
@@ -2909,6 +2929,60 @@ pub mod bv2_impl {
                 .push(bun_ast::Index::init(source_index.get()));
 
             Ok(Some(source_index.get()))
+        }
+
+        /// Schedules the task of an entry point; the one that compiles a C program
+        /// (`CProgram`) only once the program's other files have been read: `is_done` lets it go.
+        fn schedule_entry_point(&mut self, task: &mut ParseTask) {
+            if let Some(place) = task.c_program_file {
+                self.c_program.files.push((place, task.source_index.get()));
+                if place == 0 {
+                    self.c_program.held = Some(NonNull::from(task));
+                    // Not pending while it waits: the wait is for nothing else to be.
+                    self.graph.pending_items -= 1;
+                    return;
+                }
+            }
+            self.graph.pool().schedule(task);
+        }
+
+        /// What `is_done` does when nothing is pending and a C program's own task is waiting: the
+        /// other entry points have been read (or have failed, and said so), the way any input is;
+        /// they stop being entry points, and the program is compiled with their contents.
+        fn compile_c_program(&mut self) -> bool {
+            let Some(mut task) = self.c_program.held.take() else {
+                return false;
+            };
+            let files = core::mem::take(&mut self.c_program.files);
+            self.graph.entry_points.retain(|entry_point| {
+                !files
+                    .iter()
+                    .any(|&(place, file)| place > 0 && file == entry_point.get())
+            });
+            // A file that could not be read has been reported.
+            if self.transpiler.log_mut().errors > 0 {
+                return false;
+            }
+            let mut others: Vec<(u32, IndexInt)> =
+                files.into_iter().filter(|&(place, _)| place > 0).collect();
+            others.sort_unstable();
+            let sources = self.graph.input_files.items_source();
+            self.c_program.link_sources = others
+                .into_iter()
+                .map(|(_, file)| {
+                    let source = &sources[file as usize];
+                    // SAFETY: what the file's own task read, which the graph keeps for as long as
+                    // the bundle lasts; nothing replaces it while the program is compiled.
+                    let contents: &'static [u8] =
+                        unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(&source.contents) };
+                    (Box::<[u8]>::from(source.path.text), contents)
+                })
+                .collect();
+            self.graph.pending_items += 1;
+            // SAFETY: the task is arena-owned and was held back, unscheduled, by
+            // `schedule_entry_point`; nothing else refers to it.
+            self.graph.pool().schedule(unsafe { task.as_mut() });
+            true
         }
 
         /// `heap` is not freed when `deinit`ing the BundleV2
@@ -2966,7 +3040,7 @@ pub mod bv2_impl {
                 resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
                 free_list: Vec::new(),
                 unique_key: 0,
-                c_link_sources: Vec::new(),
+                c_program: super::CProgram::default(),
                 dynamic_import_entry_points: ArrayHashMap::new(),
                 finalizers: Vec::new(),
                 drain_defer_task: DeferredBatchTask::default(),
@@ -3182,30 +3256,14 @@ pub mod bv2_impl {
             self.reserve_source_indexes_for_bake()?;
 
             // `bun build main.c parser.c util.c`: entry points that are all C files are one program
-            // in several files, as they are to `cc`, not several programs. The first stays the
-            // entry point; the others are compiled and linked with it.
-            self.c_link_sources.clear();
+            // in several files, as they are to `cc`, not several programs. See `CProgram`.
             let loaders = &self.transpiler.options.loaders;
-            let is_c_program = data.len() > 1
-                && data.iter().all(|entry_point| {
-                    Fs::Path::init(entry_point.as_ref()).loader(loaders) == Some(Loader::C)
-                });
-            let data = if is_c_program {
-                let (first, others) = data.split_at(1);
-                for entry_point in others {
-                    // A file that cannot be found has been reported.
-                    let Ok(resolved) = self.transpiler.resolve_entry_point(entry_point.as_ref())
-                    else {
-                        continue;
-                    };
-                    let Some(path) = resolved.path_const() else {
-                        continue;
-                    };
-                    self.c_link_sources.push(Box::from(path.text));
-                }
-                first
-            } else {
-                data
+            self.c_program = super::CProgram {
+                is_one: data.len() > 1
+                    && data.iter().all(|entry_point| {
+                        Fs::Path::init(entry_point.as_ref()).loader(loaders) == Some(Loader::C)
+                    }),
+                ..Default::default()
             };
 
             // Setup entry points
@@ -3215,8 +3273,9 @@ pub mod bv2_impl {
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
-            for entry_point in data {
+            for (place, entry_point) in data.iter().enumerate() {
                 let entry_point: &[u8] = entry_point.as_ref();
+                self.c_program.enqueueing = self.c_program.is_one.then_some(place as u32);
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(
                     entry_point,
                     self.transpiler.options.target,
@@ -3261,6 +3320,7 @@ pub mod bv2_impl {
                 };
                 let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
             }
+            self.c_program.enqueueing = None;
             Ok(())
         }
 
@@ -3796,11 +3856,8 @@ pub mod bv2_impl {
                             [source_index.get() as usize];
                     additional_files
                         .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    if loader.is_pure_data() {
-                        self.graph.input_files.items_side_effects_mut()
-                            [source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
-                    }
+                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
+                        bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -3897,11 +3954,8 @@ pub mod bv2_impl {
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                    if loader.is_pure_data() {
-                        self.graph.input_files.items_side_effects_mut()
-                            [source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
-                    }
+                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
+                        bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -4675,7 +4729,7 @@ pub mod bv2_impl {
                     // If it's a file namespace, we should run it through the parser like normal.
                     // The file could be on disk.
                     if source.path.is_file() {
-                        this.graph.pool().schedule(load.parse_task_mut());
+                        this.schedule_entry_point(load.parse_task_mut());
                         return;
                     }
 
@@ -4705,11 +4759,9 @@ pub mod bv2_impl {
                                 [source_index.get() as usize];
                         let _ = additional_files
                             .push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                        if code.loader.is_pure_data() {
-                            this.graph.input_files.items_side_effects_mut()
-                                [source_index.get() as usize] =
-                                bun_ast::SideEffects::NoSideEffectsPureData;
-                        }
+                        this.graph.input_files.items_side_effects_mut()
+                            [source_index.get() as usize] =
+                            bun_ast::SideEffects::NoSideEffectsPureData;
                         this.graph.estimated_file_loader_count += 1;
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
@@ -4734,7 +4786,7 @@ pub mod bv2_impl {
                     let parse_task = load.parse_task_mut();
                     parse_task.loader = Some(code.loader);
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
-                    this.graph.pool().schedule(parse_task);
+                    this.schedule_entry_point(parse_task);
 
                     if this.bun_watcher.is_some() {
                         'add_watchers: {
@@ -4900,12 +4952,15 @@ pub mod bv2_impl {
                                 return;
                             };
                             let mut resolved = resolved;
-                            let Ok(source_index) = this.enqueue_entry_item(
+                            this.c_program.enqueueing = resolve.import_record.c_program_file;
+                            let enqueued = this.enqueue_entry_item(
                                 &mut resolved,
                                 true,
                                 target,
                                 resolve.import_record.loader,
-                            ) else {
+                            );
+                            this.c_program.enqueueing = None;
+                            let Ok(source_index) = enqueued else {
                                 return;
                             };
 
@@ -5076,6 +5131,7 @@ pub mod bv2_impl {
                                 known_target: resolve.import_record.original_target,
                                 is_entry_point: resolve.import_record.kind
                                     == ImportKind::EntryPointBuild,
+                                c_program_file: resolve.import_record.c_program_file,
                                 ..Default::default()
                             };
                             // Arena-owned.
@@ -5094,15 +5150,13 @@ pub mod bv2_impl {
                                     additional_files.push(crate::AdditionalFile::SourceIndex(
                                         task.source_index.get(),
                                     ));
-                                    if loader.is_pure_data() {
-                                        this.graph.input_files.items_side_effects_mut()
-                                            [source_index.get() as usize] =
-                                            bun_ast::SideEffects::NoSideEffectsPureData;
-                                    }
+                                    this.graph.input_files.items_side_effects_mut()
+                                        [source_index.get() as usize] =
+                                        bun_ast::SideEffects::NoSideEffectsPureData;
                                     this.graph.estimated_file_loader_count += 1;
                                 }
 
-                                this.graph.pool().schedule(task);
+                                this.schedule_entry_point(task);
                             }
                         } else {
                             // SAFETY: map slot from `get_or_put` above; map not mutated since.
@@ -5920,6 +5974,7 @@ pub mod bv2_impl {
                             range: import_record.range,
                             original_target,
                             loader: None,
+                            c_program_file: None,
                         },
                     );
 
@@ -5966,6 +6021,7 @@ pub mod bv2_impl {
                             range: bun_ast::Range::NONE,
                             original_target: target,
                             loader,
+                            c_program_file: self.c_program.enqueueing,
                         },
                     );
 
@@ -7019,11 +7075,9 @@ pub mod bv2_impl {
                         additional_files.push(crate::AdditionalFile::SourceIndex(
                             new_task.source_index.get(),
                         ));
-                        if loader.is_pure_data() {
-                            self.graph.input_files.items_side_effects_mut()
-                                [new_task.source_index.get() as usize] =
-                                bun_ast::SideEffects::NoSideEffectsPureData;
-                        }
+                        self.graph.input_files.items_side_effects_mut()
+                            [new_task.source_index.get() as usize] =
+                            bun_ast::SideEffects::NoSideEffectsPureData;
                         self.graph.estimated_file_loader_count += 1;
                     }
 
@@ -7309,10 +7363,9 @@ pub mod bv2_impl {
                         };
                     }
                 }
-                // Taken, so that the list is freed here: nothing drops a parse result's fields.
-                for path in core::mem::take(&mut parse_result.also_depends_on) {
-                    if this.should_add_watcher(&path) {
-                        let _ = this.bun_watcher_mut().unwrap().add_file_by_path_slow(&path);
+                for path in &parse_result.also_depends_on {
+                    if this.should_add_watcher(path) {
+                        let _ = this.bun_watcher_mut().unwrap().add_file_by_path_slow(path);
                     }
                 }
             }
@@ -7392,8 +7445,9 @@ pub mod bv2_impl {
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
                         result.content_hash_for_additional_file;
                     if !result.unique_key_for_additional_file.is_empty()
-                        && result.loader == Loader::Text
+                        && !result.loader.should_copy_for_bundling()
                     {
+                        // An asset the loader made from its input (compiled text, compiled C).
                         // `process_resolve_queue` only counts `should_copy_for_bundling()`
                         // loaders, and a zero count skips `process_files_to_copy`.
                         this.graph.estimated_file_loader_count += 1;

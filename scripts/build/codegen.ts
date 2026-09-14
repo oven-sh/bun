@@ -32,7 +32,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
@@ -458,7 +458,7 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
  * alone is 350 KB of the 450.
  * Output: `<codegenDir>/compressed/<name>.zst`.
  */
-function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
+function emitCompressedEmbeds({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "compress-embed.ts");
   const assets: { input: string; name: string }[] = [
     // Repo files, named by repo-relative path.
@@ -467,9 +467,7 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
       "completions/bun.zsh",
       "completions/bun.fish",
       "src/runtime/bake/bun-framework-react/client.tsx",
-      ...readdirSync(resolve(cfg.cwd, "src/cc/include"))
-        .sort()
-        .map(header => `src/cc/include/${header}`),
+      ...sources.ccHeaders.map(header => relative(cfg.cwd, header).replace(/\\/g, "/")),
     ].map(rel => ({ input: resolve(cfg.cwd, rel), name: rel })),
     // Codegen outputs (browser bundles), named `codegen/<path in codegenDir>`.
     ...[

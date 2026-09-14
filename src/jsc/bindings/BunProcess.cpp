@@ -869,11 +869,16 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
+extern "C" void Bun__CModule__flushStdoutOfAProgram();
+
 extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
         return;
     }
+
+    // What a C program that is the entry point printed before it ended comes before what the listeners print.
+    Bun__CModule__flushStdoutOfAProgram();
 
     auto* process = globalObject->processObject();
     if (exitCode > 0)

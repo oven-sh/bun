@@ -43,6 +43,38 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      // `export *` of a file whose exports the bundler makes from its value, whichever of the two it visits first.
+      itBundled("bun/loader-json-export-star", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import * as direct from "./star.ts";
+        import * as through from "./through.ts";
+        import * as named from "./named.ts";
+        import * as mixed from "./mixed.ts";
+        console.write(JSON.stringify([direct, through, named, mixed].map(ns => Object.keys(ns).sort().join()).concat(String(mixed.a))));
+      `,
+          "/star.ts": `export * from "./data.json";`,
+          "/through.ts": `export * from "./star.ts";`,
+          "/named.ts": `export { a as first } from "./data.json"; export * as all from "./data.json";`,
+          // An export of the file's own shadows the star's.
+          "/mixed.ts": `export * from "./data.json"; export * from "./config.toml"; export const a = "own";`,
+          "/data.json": JSON.stringify({ a: 1, b: 2, default: 3 }),
+          "/config.toml": `c = 3`,
+        },
+        run: { stdout: '["a,b","a,b","all,first","a,b,c","own"]' },
+      });
+      itBundled("bun/loader-json-export-star-entry-point", {
+        target,
+        files: {
+          "/entry.ts": `export * from "./data.json";`,
+          "/data.json": JSON.stringify({ a: 1, b: 2 }),
+        },
+        runtimeFiles: {
+          "/use.mjs": `import * as ns from "./out.js"; console.write(Object.keys(ns).sort().join() + " " + ns.a);`,
+        },
+        run: { file: "/use.mjs", stdout: "a,b 1" },
+      });
       itBundled("bun/loader-toml-file", {
         target,
         files: {

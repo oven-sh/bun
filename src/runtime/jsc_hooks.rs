@@ -3367,7 +3367,7 @@ fn transpile_source_code_inner(
         L::C => {
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             // The file and every header it includes, including when it fails to compile.
-            let exports = crate::ffi::c_module::load(
+            let loaded = crate::ffi::c_module::load(
                 global_object,
                 path.text,
                 args.virtual_source.map(|source| &*source.contents),
@@ -3376,10 +3376,18 @@ fn transpile_source_code_inner(
             // SAFETY: `jsc_vm` is the live per-thread VM.
             let vm = unsafe { &*jsc_vm };
             if vm.main() == path.text && vm.worker_ref().is_none() {
-                crate::ffi::c_module::run_main_if_any(global_object, exports, path.text, &vm.argv)?;
+                // The program: nothing is imported before the entry point, so it is evaluated now.
+                crate::ffi::c_module::evaluate(loaded.module);
+                crate::ffi::c_module::run_main_if_any(
+                    global_object,
+                    loaded.exports,
+                    path.text,
+                    &vm.argv,
+                )?;
             }
             Ok(ResolvedSource {
-                jsvalue_for_export: exports,
+                jsvalue_for_export: loaded.exports,
+                c_module: Some(loaded.module),
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::ExportsObject,
                 ..Default::default()
@@ -3685,11 +3693,12 @@ fn __bun_load_compiled_c(
     path: &[u8],
     compiled: bun_jsc::module_loader::CompiledC<'static>,
 ) -> bun_jsc::JsResult<ResolvedSource> {
-    let exports = crate::ffi::c_module::finish(global, path, compiled, &mut |file| {
+    let loaded = crate::ffi::c_module::finish(global, path, compiled, &mut |file| {
         auto_watch_path(jsc_vm, file)
     })?;
     Ok(ResolvedSource {
-        jsvalue_for_export: exports,
+        jsvalue_for_export: loaded.exports,
+        c_module: Some(loaded.module),
         tag: bun_jsc::resolved_source::Tag::ExportsObject,
         ..Default::default()
     })
@@ -3811,14 +3820,15 @@ export default db;
 
         if file.loader == Loader::C {
             // `bun build` embedded the C file's BIR under its name.
-            let exports = crate::ffi::c_module::load(
+            let loaded = crate::ffi::c_module::load(
                 global,
                 spec,
                 Some(file.contents.as_bytes()),
                 &mut |_| {},
             )?;
             return Ok(Some(ResolvedSource {
-                jsvalue_for_export: exports,
+                jsvalue_for_export: loaded.exports,
+                c_module: Some(loaded.module),
                 source_url: specifier.clone(),
                 tag: bun_jsc::resolved_source::Tag::ExportsObject,
                 ..ResolvedSource::default()

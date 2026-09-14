@@ -919,3 +919,43 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+
+// A C file is compiled with its headers into a module of machine code: the development server has no way to
+// serve that to the running server, or to know a header changed, so it says so rather than fail at the first request.
+devTest("importing a .c file on the server is one error that names the file", {
+  framework: minimalFramework,
+  files: {
+    "add.c": `#include "value.h"\nint add(int a, int b) { return a + b + VALUE; }\n`,
+    "value.h": "#define VALUE 0\n",
+    "routes/index.ts": `
+      import { add } from "../add.c";
+      export default function (req, meta) {
+        return new Response("sum " + add(1, 2));
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ['add.c: error: Importing a ".c" file is not supported by the development server yet'],
+    });
+    expect((await dev.fetch("/")).status).toBe(500);
+  },
+});
+devTest("importing a .c file on the client is the error it is to any build for a browser", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { add } from "./add.c";
+      console.log(add(1, 2));
+    `,
+    "add.c": "int add(int a, int b) { return a + b; }\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ['add.c: error: To import a ".c" file, set target to "bun"'],
+    });
+  },
+});

@@ -462,25 +462,5 @@ impl fmt::Display for CompileTarget {
     }
 }
 
-/// `bun-linux-x64-musl`: a target's os, arch and libc, as `--target` spells them.
-pub struct Platform<'a>(&'a CompileTarget);
-
-impl CompileTarget {
-    pub fn platform(&self) -> Platform<'_> {
-        Platform(self)
-    }
-}
-
-impl fmt::Display for Platform<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let arch = match self.0.arch {
-            Architecture::X64 => "x64",
-            Architecture::Arm64 => "arm64",
-            Architecture::Wasm => "wasm",
-        };
-        write!(f, "bun-{}-{}{}", self.0.os.npm_name(), arch, self.0.libc)
-    }
-}
-
 // `fromJS` / `fromSlice` re-exports from bundler_jsc deleted — see PORTING.md §Idiom map.
 // In Rust these are extension-trait methods living in bun_bundler_jsc.

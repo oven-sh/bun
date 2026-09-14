@@ -116,6 +116,10 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// When every entry point is a C file they are one program (`BundleV2::c_program`): this
+    /// file's place among them. The first is the program, compiled once the others' contents are
+    /// in; the task of any other hands back its contents and an empty module.
+    pub(crate) c_program_file: Option<u32>,
     /// Other files whose contents went into this one's output (what a C file `#include`s): a
     /// change to any of them is a change to this file.
     pub(crate) also_depends_on: Vec<Box<[u8]>>,
@@ -294,6 +298,7 @@ impl ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            c_program_file: None,
             also_depends_on: Vec::new(),
         }
     }
@@ -335,6 +340,7 @@ impl Default for ParseTask {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            c_program_file: None,
             also_depends_on: Vec::new(),
         }
     }
@@ -615,6 +621,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            c_program_file: None,
             also_depends_on: Vec::new(),
         };
         let source = Source {
@@ -727,7 +734,7 @@ pub mod parse_worker {
     /// asset's name does not imply: the name is the input file's and the `--asset-naming` template's.
     /// Unlike `import.meta.require`, the call target prints per output format, so `--bytecode`
     /// (CommonJS) can compile it.
-    fn require_embedded_asset(
+    pub(crate) fn require_embedded_asset(
         bump: &Bump,
         unique_key: &[u8],
         type_attribute: Option<&'static [u8]>,
@@ -1288,7 +1295,11 @@ pub mod parse_worker {
                     ),
                     ..Default::default()
                 });
-                return Ok(JSAst::init(ast));
+                let mut ast = JSAst::init(ast);
+                if names.iter().any(|name| name == "main") {
+                    ast.flags.insert(crate::bundled_ast::Flags::C_PROGRAM);
+                }
+                return Ok(ast);
             }
             Loader::Napi => {
                 // (dap-eval-cb "source.contents.ptr")
@@ -1576,7 +1587,7 @@ pub mod parse_worker {
         resolver: *mut Resolver,
         bump: &Bump,
         file_path: &mut Fs::Path,
-        _loader: Loader,
+        loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -1634,6 +1645,23 @@ pub mod parse_worker {
                             fd: Fd::INVALID,
                             ..Default::default()
                         });
+                    }
+                }
+
+                // A C file the compiler would refuse for its size is not read to find that out.
+                if loader == Loader::C {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let too_large = file_path.text.len() < buf.len()
+                        && bun_sys::stat(bun_paths::resolve_path::z(file_path.text, &mut buf))
+                            .is_ok_and(|stat| stat.st_size as u64 > options::C_MAX_SOURCE_BYTES);
+                    if too_large {
+                        // logger OOM-only
+                        let _ = log.add_error_fmt(
+                            None,
+                            Loc::EMPTY,
+                            format_args!("{}", options::c_source_too_large(file_path.text)),
+                        );
+                        return Err(AnyError::ParserError);
                     }
                 }
 
@@ -2423,24 +2451,37 @@ pub mod parse_worker {
         exports: Vec<String>,
     }
 
-    /// Compiles the C file at `path` (and, when it is the entry point of a program in several
-    /// files, `link_sources` with it) for the platform the bundle is for. `also_depends_on`, when
-    /// there is a use for it, gets every other file that was read, whether or not compiling
-    /// succeeded: fixing a header is how a header's error gets fixed.
+    /// Compiles the C file `source` names (and, when it is a program in several files, the others,
+    /// `link_sources`: each file's path and contents, with it) for the platform the bundle is for.
+    /// `also_depends_on`, when there is a use for it, gets every other file that was read, whether
+    /// or not compiling succeeded: fixing a header is how a header's error gets fixed.
     fn compile_c(
         topts: &options::BundleOptions<'_>,
         log: &mut Log,
-        path: &[u8],
+        source: &Source,
         contents: &[u8],
-        link_sources: &[Box<[u8]>],
+        link_sources: &[(Box<[u8]>, &'static [u8])],
         also_depends_on: Option<&mut Vec<Box<[u8]>>>,
     ) -> core::result::Result<CompiledC, AnyError> {
+        let path: &[u8] = source.path.text;
         if !topts.target.is_bun() {
             // logger OOM-only
             let _ = log.add_error(
-                None,
+                Some(source),
                 Loc::EMPTY,
                 b"To import a \".c\" file, set target to \"bun\"",
+            );
+            return Err(AnyError::ParserError);
+        }
+        // The development server's modules are served to a running process one at a time, and what
+        // a C module is made of (its compiled form, and the headers that change it) has no place in
+        // that yet.
+        if topts.has_dev_server() {
+            // logger OOM-only
+            let _ = log.add_error(
+                Some(source),
+                Loc::EMPTY,
+                b"Importing a \".c\" file is not supported by the development server yet",
             );
             return Err(AnyError::ParserError);
         }
@@ -2448,14 +2489,14 @@ pub mod parse_worker {
             Ok(c_target) => c_target,
             Err(unsupported) => {
                 // logger OOM-only
-                let _ = log.add_error_fmt(None, Loc::EMPTY, format_args!("{unsupported}"));
+                let _ = log.add_error_fmt(Some(source), Loc::EMPTY, format_args!("{unsupported}"));
                 return Err(AnyError::ParserError);
             }
         };
-        // What the files are called in `__FILE__` and in messages: relative to the directory the
-        // build runs in, which is also what the compiler reads files relative to. What is compiled,
-        // and the name its hash gives the asset, then does not depend on where the project is
-        // checked out.
+        // What the compiler is told the files are called, which is what `__FILE__` is: relative to
+        // the directory the build runs in, which is also what the compiler reads files relative
+        // to. What is compiled, and the name its hash gives the asset, then does not depend on
+        // where the project is checked out.
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd: &[u8] = bun_sys::getcwd_z(&mut cwd_buf).map_or(b"", |cwd| cwd.as_bytes());
         // The compiler names files with `str`s (they end up in `#include` lookups and diagnostics).
@@ -2470,7 +2511,7 @@ pub mod parse_worker {
                 Err(_) => {
                     // logger OOM-only
                     let _ = log.add_error(
-                        None,
+                        Some(source),
                         Loc::EMPTY,
                         b"Cannot compile a C file whose path is not valid UTF-8",
                     );
@@ -2480,29 +2521,9 @@ pub mod parse_worker {
         };
         let name = name_of(log, path)?;
         // The other C entry points of `bun build a.c b.c ...`, linked into this one.
-        let mut linked: Vec<(Vec<u8>, String)> = Vec::with_capacity(link_sources.len());
-        for (i, link_source) in link_sources.iter().enumerate() {
-            // Naming a file twice is not defining everything in it twice.
-            if **link_source == *path || link_sources[..i].contains(link_source) {
-                continue;
-            }
-            let link_name = name_of(log, link_source)?;
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), link_source) {
-                Ok(contents) => linked.push((contents, link_name)),
-                Err(error) => {
-                    // logger OOM-only
-                    let _ = log.add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "Cannot read \"{}\": {}",
-                            link_name,
-                            bstr::BStr::new(error.name())
-                        ),
-                    );
-                    return Err(AnyError::ParserError);
-                }
-            }
+        let mut linked: Vec<(&[u8], String)> = Vec::with_capacity(link_sources.len());
+        for (link_source, contents) in link_sources {
+            linked.push((contents, name_of(log, link_source)?));
         }
         let mut units = vec![bun_cc::Unit {
             path: &name,
@@ -2512,7 +2533,29 @@ pub mod parse_worker {
             path: name,
             contents,
         }));
+        let messages_before = log.msgs.len();
         let compilation = bun_cc::compile(&units, c_target, log);
+        // The compiler says where in the files as it was given them; a message of the bundler's
+        // names a file by its absolute path, whatever kind of file it is.
+        let absolute = |location: &mut Option<bun_ast::Location>| {
+            if let Some(location) = location {
+                if !cwd.is_empty() && !bun_paths::is_absolute(&location.file) {
+                    location.file = std::borrow::Cow::Owned(
+                        bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
+                            cwd,
+                            &location.file,
+                        )
+                        .to_vec(),
+                    );
+                }
+            }
+        };
+        for msg in &mut log.msgs[messages_before..] {
+            absolute(&mut msg.data.location);
+            for note in msg.notes.iter_mut() {
+                absolute(&mut note.location);
+            }
+        }
         if let Some(also_depends_on) = also_depends_on {
             *also_depends_on =
                 compilation
@@ -2673,18 +2716,38 @@ pub mod parse_worker {
         // reassigned above); reborrow only the disjoint `options` field.
         let topts = unsafe { &(*transpiler).options };
 
+        // `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
+        // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
+        // field-by-field across the type boundary.
+        let source_path = bun_paths::fs::Path {
+            text: file_path.text,
+            namespace: file_path.namespace,
+            pretty: file_path.pretty,
+            is_disabled: file_path.is_disabled,
+            is_symlink: file_path.is_symlink,
+        };
+
         // A C file is compiled now; what the bundle carries (and a standalone executable embeds)
         // is its BIR, which the runtime turns into machine code without a C parser or headers.
-        let compiled_c: Option<CompiledC> = if loader == Loader::C && !is_empty {
-            let link_sources: &[Box<[u8]>] = if task.is_entry_point {
-                &worker_ctx.c_link_sources
+        // One of a C program's files that is not the program itself: the task that compiles the
+        // program is given what this one read, by way of the graph.
+        let c_link_unit = task.c_program_file.is_some_and(|place| place > 0);
+        let compiled_c: Option<CompiledC> = if loader == Loader::C && !is_empty && !c_link_unit {
+            let link_sources: &[(Box<[u8]>, &'static [u8])] = if task.c_program_file == Some(0) {
+                &worker_ctx.c_program.link_sources
             } else {
                 &[]
+            };
+            // What a message that is about the file as a whole, not a place in it, names.
+            let named = Source {
+                path: source_path,
+                index: bun_ast::Index(task.source_index.get()),
+                ..Default::default()
             };
             match compile_c(
                 topts,
                 log,
-                file_path.text,
+                &named,
                 entry_contents,
                 link_sources,
                 // Only a build that watches files has a use for the list.
@@ -2710,16 +2773,7 @@ pub mod parse_worker {
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
         // `&'bump Source` parameter is satisfied (`bump` is the same arena).
         let source: &'static Source = bump.alloc(Source {
-            // `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
-            // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
-            // field-by-field across the type boundary.
-            path: bun_paths::fs::Path {
-                text: file_path.text,
-                namespace: file_path.namespace,
-                pretty: file_path.pretty,
-                is_disabled: file_path.is_disabled,
-                is_symlink: file_path.is_symlink,
-            },
+            path: source_path,
             index: bun_ast::Index(task.source_index.get()),
             // `entry.contents` is owned by `task.stage` (written back by
             // the caller after parse — see `ParseTask::run`). `Source` is stored in
@@ -2961,30 +3015,31 @@ pub mod parse_worker {
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
-        let ast_result: core::result::Result<JSAst, AnyError> =
-            if !is_empty || loader.handles_empty_file() {
-                get_ast(
-                    log,
-                    transpiler,
-                    opts,
-                    bump,
-                    resolver,
-                    source,
-                    loader,
-                    task_ctx.unique_key,
-                    &mut unique_key_for_additional_file,
-                    &task_ctx.linker.has_any_css_locals,
-                    compiled_c
-                        .as_ref()
-                        .map_or(&[], |compiled| &compiled.exports),
-                )
-            } else if loader.is_css() {
-                get_empty_css_ast(log, transpiler, opts, bump, source)
-            } else if module_type == options::ModuleType::Esm {
-                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
-            } else {
-                get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
-            };
+        let ast_result: core::result::Result<JSAst, AnyError> = if c_link_unit {
+            get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
+        } else if !is_empty || loader.handles_empty_file() {
+            get_ast(
+                log,
+                transpiler,
+                opts,
+                bump,
+                resolver,
+                source,
+                loader,
+                task_ctx.unique_key,
+                &mut unique_key_for_additional_file,
+                &task_ctx.linker.has_any_css_locals,
+                compiled_c
+                    .as_ref()
+                    .map_or(&[], |compiled| &compiled.exports),
+            )
+        } else if loader.is_css() {
+            get_empty_css_ast(log, transpiler, opts, bump, source)
+        } else if module_type == options::ModuleType::Esm {
+            get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
+        } else {
+            get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
+        };
         let mut ast = match ast_result {
             Ok(a) => a,
             Err(e) => {
@@ -3225,9 +3280,10 @@ pub mod parse_worker {
         worker.unget();
     }
 
-    // The struct-only `dealloc` below skips field Drop; the `Log` is the only
-    // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
+    // The struct-only `dealloc` below skips field Drop; the `Log` and the list of other files
+    // read are the heap-owning fields `on_parse_task_complete` doesn't move out, so take them here.
     fn drop_result_owned_fields(result: &mut Result) {
+        drop(core::mem::take(&mut result.also_depends_on));
         match &mut result.value {
             ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
             ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),

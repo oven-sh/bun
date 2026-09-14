@@ -288,6 +288,74 @@ describe("vm", () => {
         expect(e).toBeTruthy();
       }
     });
+
+    // Top-level let/const/class declared by a script live in the context's
+    // global lexical environment, not on its global object. Like Node, the
+    // compiled function resolves names through it, whether it is compiled in
+    // the caller's context or in a parsingContext.
+    describe.each([
+      [
+        "this context",
+        () => ({
+          run: (code: string) => runInThisContext(code),
+          options: {},
+          globalObject: globalThis as object,
+        }),
+      ],
+      [
+        "a parsingContext",
+        () => {
+          // Undeclared sloppy-mode assignments made inside the context land on
+          // the contextified object, the way they land on globalThis above.
+          const context = createContext({});
+          return {
+            run: (code: string) => runInContext(code, context),
+            options: { parsingContext: context },
+            globalObject: context as object,
+          };
+        },
+      ],
+    ])("global lexical bindings of %s", (_label, setup) => {
+      test("are visible to the compiled function", () => {
+        const { run, options } = setup();
+        const [v, l, c, k] = randomProps(4);
+        run(`var ${v} = "var"; let ${l} = "let"; const ${c} = "const"; class ${k} {}`);
+        const fn = compileFunction(`return [${v}, ${l}, ${c}, typeof ${k}];`, [], options);
+        expect(fn()).toEqual(["var", "let", "const", "function"]);
+      });
+
+      test("are visible once declared, even after the function was compiled and called", () => {
+        const { run, options } = setup();
+        const [name] = randomProps(1);
+        const fn = compileFunction(`return ${name};`, [], options);
+        expect(fn).toThrow(`${name} is not defined`);
+        run(`let ${name} = "declared later";`);
+        expect(fn()).toBe("declared later");
+      });
+
+      test("receive assignments instead of a new global property being created", () => {
+        const { run, options, globalObject } = setup();
+        const [name] = randomProps(1);
+        run(`let ${name} = "initial";`);
+        compileFunction(`${name} = "assigned";`, [], options)();
+        expect(run(name)).toBe("assigned");
+        expect(Object.hasOwn(globalObject, name)).toBe(false);
+      });
+
+      test("are shadowed by contextExtensions, which only the compiled function sees", () => {
+        const { run, options } = setup();
+        const [shadowed, visible, extensionOnly] = randomProps(3);
+        run(`let ${shadowed} = "lexical"; let ${visible} = "lexical";`);
+        const fn = compileFunction(`return [${shadowed}, ${visible}, ${extensionOnly}];`, [], {
+          ...options,
+          contextExtensions: [{ [shadowed]: "extension", [extensionOnly]: "extension" }],
+        });
+        expect(fn()).toEqual(["extension", "lexical", "extension"]);
+        // The scope chain built for fn must not be installed on the context itself.
+        expect(run(`[${shadowed}, typeof ${extensionOnly}]`)).toEqual(["lexical", "undefined"]);
+        expect(compileFunction(`return typeof ${extensionOnly};`, [], options)()).toBe("undefined");
+      });
+    });
   });
 });
 

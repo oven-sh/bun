@@ -336,6 +336,85 @@ devTest("css file that the page links and another linked stylesheet imports come
     expect((await stylesheets()).map(css => css.includes(".two"))).toEqual([true, true]);
   },
 });
+devTest("css import repaired after a failed build follows every later edit", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `<h1>hello</h1><h2>world</h2>`,
+    }),
+    "styles.css": `
+      @import "./second.css";
+      body {
+        color: red;
+      }
+    `,
+    "second.css": `
+      @import "./third.css";
+      h1 {
+        color: blue;
+      }
+    `,
+    "third.css": `
+      h2 {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("#00f");
+    await c.style("h2").color.expect.toBe("#00f");
+
+    // A syntax error in a file that the root imports through another file.
+    await dev.write(
+      "third.css",
+      `
+        h2 {
+          color: green;
+        }}
+      `,
+      {
+        errors: ["third.css:3:3: error: Unexpected end of input"],
+      },
+    );
+    await dev.write("third.css", `h2 { color: green; }`);
+    await c.style("h2").color.expect.toBe("green");
+    await c.style("h1").color.expect.toBe("#00f");
+    // The root keeps its edge to the repaired file: more than one later save reaches the page.
+    for (const color of ["purple", "orange", "teal"]) {
+      await dev.write("third.css", `h2 { color: ${color}; }`);
+      await c.style("h2").color.expect.toBe(color);
+    }
+
+    // An @import that does not resolve in a file that the root imports directly.
+    await dev.write(
+      "second.css",
+      `
+        @import "./third.css";
+        @import "./missing.css";
+        h1 {
+          color: green;
+        }
+      `,
+      {
+        errors: ['second.css:2:1: error: Could not resolve: "./missing.css"'],
+      },
+    );
+    await dev.write("second.css", `@import "./third.css"; h1 { color: green; }`);
+    await c.style("h1").color.expect.toBe("green");
+    await c.style("h2").color.expect.toBe("teal");
+    for (const color of ["purple", "orange", "teal"]) {
+      await dev.write("second.css", `@import "./third.css"; h1 { color: ${color}; }`);
+      await c.style("h1").color.expect.toBe(color);
+    }
+    await c.style("body").color.expect.toBe("red");
+
+    await c.hardReload();
+    await c.style("h1").color.expect.toBe("teal");
+    await c.style("h2").color.expect.toBe("teal");
+    await c.style("body").color.expect.toBe("red");
+  },
+});
 devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({

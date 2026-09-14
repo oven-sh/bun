@@ -3147,6 +3147,11 @@ uint8_t GlobalObject::drainMicrotasks()
         this->reportUncaughtExceptionAtEventLoop(this, exception);
     }
 
+    // The last exception thrown says whose error a native rejection in the same turn carries
+    // (Bun::moduleGraphRejecting); past the turn it says nothing, and would keep its thrower alive.
+    if (m_moduleGraphs && !vm.entryScope)
+        vm.clearLastException();
+
     return 0;
 }
 

@@ -4,7 +4,7 @@
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/JSSet.h>
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/SymbolTable.h>
 #include <JavaScriptCore/WeakGCMap.h>
@@ -44,7 +44,13 @@ public:
     JSC::JSMap* requireMap() const { return m_requireMap.get(); }
     JSC::JSObject* onError() const { return m_onError.get(); } // null if the host gave none
     // Key of the first module import()ed: import.meta.main / require.main. Undefined before.
-    JSC::JSValue mainPath() const { return m_mainPath ? JSC::JSValue(m_mainPath.get()) : JSC::jsUndefined(); }
+    // The first module import()ed, unless that import failed.
+    JSC::JSValue mainPath() const
+    {
+        if (!m_mainPath || (m_mainImport && m_mainImport->status() == JSC::JSPromise::Status::Rejected))
+            return JSC::jsUndefined();
+        return m_mainPath.get();
+    }
     bool disposed() const { return m_disposed; }
     // The context that owns what the graph's script opens: a JSIsolatedModuleGraph's, else null.
     inline WebCore::ScriptExecutionContext* context() const;
@@ -55,8 +61,6 @@ public:
 
     JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier);
     void dispose(Zig::GlobalObject*);
-    // The loader's promise for a graph.import() settled: `result` follows.
-    void importSettled(Zig::GlobalObject*, JSC::JSPromise* result, JSC::JSValue settlement, bool rejected, bool madeMain);
 
 protected:
     JSModuleGraph(JSC::VM&, JSC::Structure*, JSC::JSModuleLoader*, JSC::JSObject* onError);
@@ -68,8 +72,8 @@ private:
     JSC::WriteBarrier<JSC::Unknown> m_requireCache;
     JSC::WriteBarrier<JSC::JSObject> m_onError;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
-    // Promises graph.import() returned that have not settled: dispose() rejects them.
-    JSC::WriteBarrier<JSC::JSSet> m_pendingImports;
+    // The loader's promise for the import that made m_mainPath main.
+    JSC::WriteBarrier<JSC::JSPromise> m_mainImport;
     bool m_disposed { false };
 };
 
@@ -117,9 +121,6 @@ public:
     bool hasIsolatedGraphs { false };
     // A graph's onError is running: what it throws synchronously is the host's.
     bool inOnError { false };
-    // graph.import() / dispose() is rejecting an import() promise: the caller's to handle,
-    // not the graph's whose module threw.
-    bool rejectingImport { false };
     // Native code is telling a graph that something of its own closed.
     unsigned teardownNotificationDepth { 0 };
     // The async context native code entered from the top of the event loop

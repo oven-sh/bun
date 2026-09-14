@@ -54,9 +54,8 @@ fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
 }
 
 /// Generates the JSON fragment for a single output chunk.
-/// Called during parallel chunk generation in postProcessJSChunk/postProcessCSSChunk.
-/// The result is stored in chunk.metafile_chunk_json and assembled later.
-pub(crate) fn generate_chunk_json(
+/// Runs after the chunk's output is emitted: "bytes" is only known then.
+fn generate_chunk_json(
     c: &LinkerContext,
     chunk: &Chunk,
     chunks: &[Chunk],
@@ -71,9 +70,7 @@ pub(crate) fn generate_chunk_json(
     write_json_string(&mut json, &chunk.final_rel_path)?;
     json.extend_from_slice(b": {");
 
-    // Write bytes
-    let chunk_bytes = chunk.intermediate_output.get_size();
-    write!(json, "\n      \"bytes\": {}", chunk_bytes)?;
+    write!(json, "\n      \"bytes\": {}", chunk.final_output_size)?;
 
     // Write inputs for this output (bytesInOutput is pre-computed during chunk generation)
     json.extend_from_slice(b",\n      \"inputs\": {");
@@ -199,8 +196,8 @@ pub(crate) fn generate_chunk_json(
     Ok(json.into_boxed_slice())
 }
 
-/// Assembles the final metafile JSON from pre-built chunk fragments.
-/// Called after all chunks have been generated in parallel.
+/// Assembles the final metafile JSON.
+/// Called after `generate_chunks_in_parallel` has emitted every chunk's output.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
 pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
@@ -426,7 +423,6 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     j.push_static(b"\n  },\n  \"outputs\": {");
 
-    // Write outputs by joining pre-built chunk JSON fragments
     let mut first_output = true;
     for chunk in chunks.iter() {
         if chunk.final_rel_path.is_empty() {
@@ -439,9 +435,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         first_output = false;
 
         j.push_static(b"\n    ");
-        // `push_static` borrows for the
-        // lifetime of the joiner (`chunk.metafile_chunk_json: Box<[u8]>` outlives `j`).
-        j.push_static(&chunk.metafile_chunk_json);
+        j.push_owned(generate_chunk_json(c, chunk, chunks)?);
     }
 
     j.push_static(b"\n  }\n}\n");
@@ -453,11 +447,6 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     // Break output into pieces and resolve chunk references to final paths
     let alloc = c.arena();
-    // SAFETY: every borrowed node in `j` points into `chunk.metafile_chunk_json`,
-    // parse-graph data (import-record kind labels), or `'static` literals, all of
-    // which outlive `intermediate` — it is consumed by `code()` below while `chunks`
-    // and `c` are still alive.
-    let mut j = unsafe { j.detach_lifetime() };
     let mut intermediate = c.break_output_into_pieces(
         alloc,
         &mut j,

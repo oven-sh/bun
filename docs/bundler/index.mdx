@@ -1444,7 +1444,9 @@ Default `true`. The bundler emits top-level `const` and `let` declarations as `v
 
 Set this to `false` to keep the declared kind. A module the bundler merges into the output scope then throws the same `ReferenceError: Cannot access 'x' before initialization` as the unbundled code. The binding the bundler creates for `export default <expr>` becomes a `const` as well. With `minify.syntax`, a `const` becomes `let`, which keeps the temporal dead zone.
 
-An ES module that the bundler wraps in a lazy `__esm` closure is not affected. The bundler wraps an ES module that is `require()`d, an ES module that is `import()`ed without code splitting, and the modules those import. It hoists their declarations out of the closure as `var`, so a read before initialization still gets `undefined`. A CommonJS module keeps the declared kind inside its `__commonJS` wrapper, as in Node.
+Only a module that the bundler merges into the output scope keeps the declared kind. An ES module that the bundler wraps in a lazy `__esm` closure is not affected. The bundler wraps an ES module when it cannot merge it: an ES module that is `require()`d, one that is `import()`ed without code splitting, one that a CommonJS module imports, and every module those import statically, which can include the entry point. The bundler hoists the declarations of a wrapped module out of the closure as `var`. A read before the module has run never throws. It gets the value when the bundler can hoist the initializer too (a function, an arrow, a plain class, or a literal) and `undefined` otherwise. A CommonJS module keeps the declared kind inside its `__commonJS` wrapper, as in Node.
+
+A module with a top-level `using` or `await using` is also not affected when the target lowers `using` (every target except `bun`). The bundler moves its body into a `try` block, so its declarations become `var`.
 
 <Tabs>
   <Tab title="JavaScript">

@@ -3398,11 +3398,14 @@ declare module "bun" {
      * import cycle) then throws a `ReferenceError` like the unbundled code.
      * With `minify.syntax`, a `const` becomes `let`. The TDZ stays.
      *
-     * An ES module that the bundler wraps in a lazy `__esm` closure still
-     * hoists its declarations as `var` and reads `undefined` before
-     * initialization. The bundler wraps an ES module that is `require()`d, one
-     * that is `import()`ed without code splitting, and the modules those
-     * import. A CommonJS module keeps the declared kind inside its wrapper.
+     * Only a module the bundler merges into the output scope keeps the kind.
+     * An ES module the bundler wraps in a lazy `__esm` closure (one that is
+     * `require()`d, `import()`ed without code splitting, imported by a
+     * CommonJS module, or imported by one of those) still hoists its
+     * declarations out of the closure as `var`. A read before it has run
+     * never throws. A module with a top-level `using` keeps `var` too when
+     * the target lowers `using`. A CommonJS module keeps the declared kind
+     * inside its wrapper.
      *
      * @default true
      */

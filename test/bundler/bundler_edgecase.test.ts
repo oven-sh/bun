@@ -4307,6 +4307,45 @@ for (const backend of ["api", "cli"] as const) {
         },
       },
     });
+    // The kept const gives the same ReferenceError under Node.
+    itBundled("edgecase/TopLevelVarOffKeepsTDZAcrossCycleNode", {
+      files: tdzAcrossCycleFiles,
+      backend,
+      target: "node",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("const searchNode = ");
+      },
+      run: {
+        runtime: "node",
+        error: "ReferenceError: Cannot access 'searchNode' before initialization",
+        validate({ stderr }) {
+          expect(stderr).toContain("ReferenceError: Cannot access 'searchNode' before initialization");
+        },
+      },
+    });
+    // A top-level `using` on a target that lowers it moves the module body into a try block. The
+    // parser keeps emitting var for that module, so the option does not reach it.
+    itBundled("edgecase/TopLevelVarOffUsingLoweredStillVar", {
+      files: {
+        ...tdzAcrossCycleFiles,
+        "/search.ts": /* ts */ `
+          export * as Search from "./search";
+          import { FileSystem } from "./filesystem";
+          using guard = { [Symbol.dispose]() {} };
+          export const find = () => FileSystem.Entry.make("hit");
+          export const searchNode = { name: "Search", deps: ["ripgrep"] };
+        `,
+      },
+      backend,
+      target: "node",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("var searchNode");
+        api.expectFile("/out.js").toContain("const fileSystemNode = ");
+      },
+      run: { stdout: "deps[1] = undefined" },
+    });
     // With the option off and minifySyntax on, const still becomes let (shorter) and keeps the TDZ.
     itBundled("edgecase/TopLevelVarOffMinifySyntaxKeepsTDZ", {
       files: tdzAcrossCycleFiles,

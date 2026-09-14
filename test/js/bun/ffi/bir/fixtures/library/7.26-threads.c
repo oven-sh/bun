@@ -11,7 +11,7 @@ static int arrived;
 static once_flag once = ONCE_FLAG_INIT;
 static int initialized;
 static tss_t slot;
-static int destroyed;
+static _Atomic int destroyed; // written by every thread as it ends, and two can end at once
 static _Thread_local int mine = 100;
 
 static void initialize(void) { initialized++; }

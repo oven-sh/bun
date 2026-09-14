@@ -228,10 +228,14 @@ static int us_quic_send_one(LIBUS_SOCKET_DESCRIPTOR fd, const struct lsquic_out_
     }
     int r = sendto(fd, buf, len, 0, spec->dest_sa, sa_len(spec->dest_sa));
     if (r < 0) {
-        /* EMSGSIZE has to keep its identity: packets_out passes it to lsquic,
-         * which retires the datagram and feeds DPLPMTUD with it. */
+        /* Keep the errnos that packets_out tells apart. EAGAIN and ENOBUFS are
+         * backpressure. EMSGSIZE goes to lsquic, which retires the datagram
+         * and feeds DPLPMTUD with it. */
         int wsa = WSAGetLastError();
-        errno = wsa == WSAEWOULDBLOCK ? EAGAIN : wsa == WSAEMSGSIZE ? EMSGSIZE : EIO;
+        errno = wsa == WSAEWOULDBLOCK ? EAGAIN
+              : wsa == WSAENOBUFS ? ENOBUFS
+              : wsa == WSAEMSGSIZE ? EMSGSIZE
+              : EIO;
         return -1;
     }
     return 1;

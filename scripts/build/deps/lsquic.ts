@@ -127,6 +127,12 @@ export const lsquic: Dependency = {
     // never be encrypted and the peer idled out instead of learning of the
     // close. Select the PNS by handshake progress, as ngtcp2 does.
     "patches/lsquic/connection-close-pns.patch",
+    // RFC 9114 sec 4.1.2: a malformed HTTP/3 message (content-length mismatch,
+    // rejected header, undecodable field section) is a *stream* error; the
+    // stock library routes every one to ci_abort_error() = CONNECTION_CLOSE,
+    // so one bad request nuked every innocent request sharing the connection.
+    // Applies after node-quic-accessors.patch (uses ss_error_code).
+    "patches/lsquic/message-error-stream-reset.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

@@ -17,7 +17,7 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
-import { join, resolve, sep } from "path";
+import { join, parse, resolve, sep } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -119,6 +119,121 @@ function serveDirectory(root: string) {
     },
   });
 }
+
+test.skipIf(!isWindows)("generated Windows uninstaller validates TEMP before cleanup", async () => {
+  using dir = tempDir("bun-windows-uninstaller", {
+    "verify-uninstaller.ps1": String.raw`
+      param([string]$Uninstaller, [string]$CasesBase64)
+
+      $Tokens = $null
+      $ParseErrors = $null
+      $Ast = [Management.Automation.Language.Parser]::ParseFile($Uninstaller, [ref]$Tokens, [ref]$ParseErrors)
+      if ($ParseErrors.Count -gt 0) { throw $ParseErrors[0] }
+      $FunctionAst = $Ast.Find({
+        param($Node)
+        $Node -is [Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq "Remove-BunTempFiles"
+      }, $true)
+      if ($null -eq $FunctionAst) { throw "Remove-BunTempFiles was not found" }
+      $InvocationAst = $Ast.Find({
+        param($Node)
+        if ($Node -isnot [Management.Automation.Language.CommandAst] -or $Node.GetCommandName() -ne "Remove-BunTempFiles") {
+          return $false
+        }
+        for ($Parent = $Node.Parent; $null -ne $Parent -and $Parent -ne $Ast; $Parent = $Parent.Parent) {
+          if ($Parent -is [Management.Automation.Language.FunctionDefinitionAst]) { return $false }
+        }
+        return $Parent -eq $Ast
+      }, $true)
+      if ($null -eq $InvocationAst) { throw "Remove-BunTempFiles is not invoked at script scope" }
+      Invoke-Expression $FunctionAst.Extent.Text
+
+      function Remove-Item {
+        param([string]$Path, [switch]$Recurse, [switch]$Force)
+        $script:RemovedPaths += $Path
+      }
+
+      $CasesJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($CasesBase64))
+      $Result = @{}
+      foreach ($Case in ($CasesJson | ConvertFrom-Json)) {
+        [Environment]::SetEnvironmentVariable("TEMP", $Case.temp, "Process")
+        $script:RemovedPaths = @()
+        Remove-BunTempFiles
+        $Result[$Case.name] = @($script:RemovedPaths)
+      }
+      $Result | ConvertTo-Json -Compress
+    `,
+  });
+  const bunRoot = join(String(dir), "bun");
+  const bunBin = join(bunRoot, "bin");
+  const installedBun = join(bunBin, "bun.exe");
+  const uninstaller = join(bunRoot, "uninstall.ps1");
+  const cleanupFixture = join(String(dir), "verify-uninstaller.ps1");
+
+  await mkdir(bunBin, { recursive: true });
+  await cp(bunExe(), installedBun);
+
+  await using proc = spawn({
+    cmd: [installedBun, "completions"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  expect(await proc.exited).toBe(0);
+
+  const validTemp = join(String(dir), "valid-temp");
+  const wildcardTemp = join(String(dir), "temp[x]");
+  const driveRoot = parse(String(dir)).root;
+  const cases = [
+    { name: "unset", temp: null },
+    { name: "blank", temp: " \t" },
+    { name: "relative", temp: "relative" },
+    { name: "rootRelative", temp: "\\relative" },
+    { name: "driveRelative", temp: `${driveRoot.slice(0, 2)}relative` },
+    { name: "driveRoot", temp: driveRoot },
+    { name: "uncRoot", temp: "\\\\server\\share" },
+    { name: "canonicalRoot", temp: `${driveRoot}temp\\..` },
+    { name: "invalid", temp: join(driveRoot, "temp*") },
+    { name: "valid", temp: validTemp },
+    { name: "wildcard", temp: wildcardTemp },
+  ];
+
+  await using cleanup = spawn({
+    cmd: [
+      "powershell.exe",
+      "-NoProfile",
+      "-File",
+      cleanupFixture,
+      "-Uninstaller",
+      uninstaller,
+      "-CasesBase64",
+      Buffer.from(JSON.stringify(cases)).toString("base64"),
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([cleanup.stdout.text(), cleanup.stderr.text(), cleanup.exited]);
+  const escapedWildcardTemp = wildcardTemp.replaceAll("[", "`[").replaceAll("]", "`]");
+  expect(stdout).toMatch(/^\{.*\}\r?\n$/s);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect(JSON.parse(stdout)).toEqual({
+    unset: [],
+    blank: [],
+    relative: [],
+    rootRelative: [],
+    driveRelative: [],
+    driveRoot: [],
+    uncRoot: [],
+    canonicalRoot: [],
+    invalid: [],
+    valid: [join(validTemp, "bun-*"), join(validTemp, "bunx-*")],
+    wildcard: [join(escapedWildcardTemp, "bun-*"), join(escapedWildcardTemp, "bunx-*")],
+  });
+});
 
 describe.concurrent("bun-install", () => {
   for (let input of ["abcdef", "65537", "-1"]) {

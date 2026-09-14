@@ -307,14 +307,41 @@ const interceptors = {
 };
 
 // Error classes
-class UndiciError extends Error {}
+class UndiciError extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "UndiciError";
+    this.code = "UND_ERR";
+  }
+}
 class AbortError extends UndiciError {}
 class HTTPParserError extends Error {}
-class HeadersTimeoutError extends UndiciError {}
+class HeadersTimeoutError extends UndiciError {
+  constructor(message) {
+    super(message);
+    this.name = "HeadersTimeoutError";
+    this.message = message || "Headers Timeout Error";
+    this.code = "UND_ERR_HEADERS_TIMEOUT";
+  }
+}
 class HeadersOverflowError extends UndiciError {}
-class BodyTimeoutError extends UndiciError {}
+class BodyTimeoutError extends UndiciError {
+  constructor(message) {
+    super(message);
+    this.name = "BodyTimeoutError";
+    this.message = message || "Body Timeout Error";
+    this.code = "UND_ERR_BODY_TIMEOUT";
+  }
+}
 class RequestContentLengthMismatchError extends UndiciError {}
-class ConnectTimeoutError extends UndiciError {}
+class ConnectTimeoutError extends UndiciError {
+  constructor(message) {
+    super(message);
+    this.name = "ConnectTimeoutError";
+    this.message = message || "Connect Timeout Error";
+    this.code = "UND_ERR_CONNECT_TIMEOUT";
+  }
+}
 class ResponseStatusCodeError extends UndiciError {}
 class InvalidArgumentError extends UndiciError {}
 class InvalidReturnValueError extends UndiciError {}

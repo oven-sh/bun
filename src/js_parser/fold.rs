@@ -9,31 +9,15 @@ use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with
-// overlapping inherent methods, so calls like `EString::init`/`javascript_length`
-// /`eql_bytes` are E0034-ambiguous from here. These thin wrappers go through
-// public fields directly and are removed once E.rs is deduped.
+// overlapping inherent methods, so calls like `EString::init`/`eql_bytes` are
+// E0034-ambiguous from here. These thin wrappers go through public fields
+// directly and are removed once E.rs is deduped.
 #[inline]
 fn e_string_init(data: &[u8]) -> E::EString {
     E::EString {
         data: data.into(),
         ..Default::default()
     }
-}
-
-#[inline]
-fn e_string_javascript_length(s: &E::EString) -> Option<u32> {
-    if s.rope_len > 0 {
-        // We only support ascii ropes for now
-        return Some(s.rope_len);
-    }
-    if !s.is_utf16 {
-        if !s.data.iter().all(|&b| b < 128) {
-            return None;
-        }
-        return Some(s.data.len() as u32);
-    }
-    // UTF-16: `data.len()` stores the u16 element count (see EString::init_utf16).
-    Some(s.data.len() as u32)
 }
 
 #[inline]
@@ -535,7 +519,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.options.features.minify_syntax {
                         // minify "long-string".length to 11
                         if name == b"length" {
-                            if let Some(len) = e_string_javascript_length(&str_) {
+                            if let Some(len) = str_.javascript_length() {
                                 return Some(p.new_expr(E::Number::new(len as f64), loc));
                             }
                         }

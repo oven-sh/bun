@@ -72,6 +72,7 @@ struct WebCore::Converter<Bun::IDLStrictInteger<T>>
             if constexpr (maxInt < std::numeric_limits<Largest>::max()) {
                 if (auto result = Bun::Detail::tryBigIntToInt<Largest>(value)) {
                     ctx.throwIntegerOutOfRange(globalObject, scope, *result, minInt, maxInt);
+                    return {};
                 }
             }
             ctx.throwBigIntOutOfRange(globalObject, scope, minInt, maxInt);

@@ -7,7 +7,7 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { Arch, OS, Toolchain } from "./config.ts";
@@ -216,6 +216,32 @@ export function clangTargetArch(clang: string): Arch | undefined {
   // aarch64-pc-windows-msvc, arm64-apple-darwin, x86_64-unknown-linux-gnu, ...
   if (/^(aarch64|arm64)/.test(triple)) return "aarch64";
   if (/^(x86_64|x64|amd64)/i.test(triple)) return "x64";
+  return undefined;
+}
+
+/**
+ * Root of the LLVM install `clang` belongs to, when it carries the clang
+ * development headers and libclang-cpp (what a compiler plugin is built
+ * against). The binary is usually a symlink chain (/usr/bin/clang++-21 →
+ * /usr/lib/llvm-21/bin/clang-21, /opt/homebrew/opt/llvm/bin/clang++ →
+ * Cellar/llvm/<ver>/bin/clang), so the real path is tried first; the
+ * resource dir (<root>/lib/clang/<major>) is the fallback.
+ */
+export function findLlvmDevDir(clang: string, resourceDir: string | undefined): string | undefined {
+  const candidates: string[] = [];
+  try {
+    candidates.push(join(realpathSync(clang), "..", ".."));
+  } catch {
+    // not found: the toolchain check reports it
+  }
+  candidates.push(join(clang, "..", ".."));
+  if (resourceDir !== undefined) candidates.push(join(resourceDir, "..", "..", ".."));
+  for (const root of candidates) {
+    if (!existsSync(join(root, "include", "clang", "Frontend", "FrontendPluginRegistry.h"))) continue;
+    const lib = join(root, "lib");
+    if (!existsSync(lib)) continue;
+    if (readdirSync(lib).some(f => f.startsWith("libclang-cpp."))) return root;
+  }
   return undefined;
 }
 

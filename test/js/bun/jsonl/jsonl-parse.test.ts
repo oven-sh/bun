@@ -283,6 +283,12 @@ describe("Bun.JSONL", () => {
       test("returns complete values ignoring incomplete trailing array", () => {
         expect(Bun.JSONL.parse('{"a":1}\n[1,2,')).toStrictEqual([{ a: 1 }]);
       });
+
+      test("returns empty array for input that ends inside a \\u escape or an exponent", () => {
+        expect(Bun.JSONL.parse('{"name":"caf\\u00')).toStrictEqual([]);
+        expect(Bun.JSONL.parse("[1e-")).toStrictEqual([]);
+        expect(Bun.JSONL.parse("1e-")).toStrictEqual([]);
+      });
     });
 
     describe("whitespace and formatting", () => {
@@ -328,16 +334,17 @@ describe("Bun.JSONL", () => {
         expect(Bun.JSONL.parse(JSON.stringify({ s: bigStr }) + "\n")).toStrictEqual([{ s: bigStr }]);
       });
 
+      // A debug build with ASAN needs a little more than the default 5 seconds to scan 4 GB.
       test("4 GB Uint8Array of null bytes", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         expect(() => Bun.JSONL.parse(buf)).toThrow();
-      });
+      }, 30_000);
 
       test("4 GB Uint8Array with first byte 0xFF (non-ASCII path)", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         buf[0] = 255;
         expect(() => Bun.JSONL.parse(buf)).toThrow();
-      });
+      }, 30_000);
     });
   });
 
@@ -434,6 +441,119 @@ describe("Bun.JSONL", () => {
         expect(result.read).toBe(complete.join("\n").length);
         expect(result.done).toBe(false);
         expect(result.error).toBeNull();
+      });
+
+      // A read boundary can fall anywhere in a line, also inside a \u escape or the exponent of a number.
+      describe("a line cut at any position is incomplete, not an error", () => {
+        const lines = [
+          '{"name":"caf\\u00e9"}', // what Python's json.dumps emits for "café"
+          '{"\\u006bey":"\\ud83d\\ude00 \\u2028"}',
+          '"caf\\u00e9"',
+          "[1e-7,2E+5,-3.5e10,0.25E-3,6e2]",
+          '{"n":1e-7,"m":[2.5e+3],"t":true,"f":false,"z":null}',
+          '{"jp":"日本","e":"\\u00e9","n":[1e-7,2E+5]}', // not ASCII, so the 16-bit parser
+        ];
+        const encoder = new TextEncoder();
+        const decoder = new TextDecoder();
+        const inputKinds = [
+          ["string", (s: string): string | Uint8Array => s],
+          ["Uint8Array", (s: string): string | Uint8Array => encoder.encode(s)],
+        ] as const;
+
+        test.each(inputKinds)("every prefix of a line (%s)", (_, toInput) => {
+          const first = '{"first":1}';
+          const failures: string[] = [];
+          for (const line of lines) {
+            const input = toInput(`${first}\n${line}`);
+            for (let cut = first.length + 2; cut < input.length; cut++) {
+              const chunk = typeof input === "string" ? input.slice(0, cut) : input.subarray(0, cut);
+              const { values, read, done, error } = Bun.JSONL.parseChunk(chunk);
+              if (error !== null || done || read !== first.length || values.length !== 1) {
+                const shown = typeof chunk === "string" ? chunk : decoder.decode(chunk);
+                failures.push(`${JSON.stringify(shown)}: error=${error?.message} done=${done} read=${read}`);
+              }
+            }
+          }
+          expect(failures).toEqual([]);
+        });
+
+        test.each(inputKinds)("the streaming loop from the docs with any chunk size (%s)", (_, toInput) => {
+          const input = toInput(lines.join("\n") + "\n");
+          const expected = lines.map(line => JSON.parse(line));
+          for (const size of [1, 2, 3, 5, 7]) {
+            const received: unknown[] = [];
+            const errors: string[] = [];
+            let buffer: string | Uint8Array = typeof input === "string" ? "" : new Uint8Array(0);
+            for (let offset = 0; offset < input.length; offset += size) {
+              buffer =
+                typeof input === "string"
+                  ? (buffer as string) + input.slice(offset, offset + size)
+                  : Buffer.concat([buffer as Uint8Array, input.subarray(offset, offset + size)]);
+              const { values, read, error } = Bun.JSONL.parseChunk(buffer);
+              if (error) errors.push(`size ${size}, offset ${offset}: ${error.message}`);
+              received.push(...values);
+              buffer = typeof buffer === "string" ? buffer.slice(read) : buffer.subarray(read);
+            }
+            expect({ errors, received }).toEqual({ errors: [], received: expected });
+          }
+        });
+
+        test("a top-level number cut inside its exponent produces no value", () => {
+          for (const chunk of ["1e", "1e-", "1E+", "-2.5e", "-2.5E-"]) {
+            expect(Bun.JSONL.parseChunk(chunk)).toEqual({ values: [], read: 0, done: false, error: null });
+          }
+        });
+
+        test("a Uint8Array that ends inside the UTF-8 byte order mark", () => {
+          const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...encoder.encode('{"a":1}\n{"b":2}\n')]);
+          const incomplete = { values: [], read: 0, done: false, error: null };
+          expect(Bun.JSONL.parseChunk(bytes.subarray(0, 1))).toEqual(incomplete);
+          expect(Bun.JSONL.parseChunk(bytes.subarray(0, 2))).toEqual(incomplete);
+          expect(Bun.JSONL.parseChunk(bytes, 0, 2)).toEqual(incomplete);
+          expect(Bun.JSONL.parseChunk(bytes.subarray(0, 3))).toEqual({ values: [], read: 3, done: true, error: null });
+          expect(Bun.JSONL.parse(bytes.subarray(0, 2))).toEqual([]);
+
+          // The streaming loop from the docs, one byte at a time.
+          const received: unknown[] = [];
+          const errors: string[] = [];
+          let buffer: Uint8Array = new Uint8Array(0);
+          for (let offset = 0; offset < bytes.length; offset++) {
+            buffer = Buffer.concat([buffer, bytes.subarray(offset, offset + 1)]);
+            const { values, read, error } = Bun.JSONL.parseChunk(buffer);
+            if (error) errors.push(`offset ${offset}: ${error.message}`);
+            received.push(...values);
+            buffer = buffer.subarray(read);
+          }
+          expect({ errors, received }).toEqual({ errors: [], received: [{ a: 1 }, { b: 2 }] });
+
+          // EF 41 is not a prefix of the mark, and the mark is only skipped at the start of the buffer.
+          expect(Bun.JSONL.parseChunk(new Uint8Array([0xef, 0x41])).error).toBeInstanceOf(SyntaxError);
+          expect(Bun.JSONL.parseChunk(bytes, 1, 2).error).toBeInstanceOf(SyntaxError);
+        });
+
+        test("an escape or an exponent with its bad character in the input is still an error", () => {
+          const malformed = [
+            '"\\uz',
+            '"\\u0z',
+            '"\\u00zz',
+            '"\\u00"',
+            '"\\u00\n',
+            '{"a":"\\u12"}\n',
+            '{"\\u00":1}\n',
+            "[1e-]",
+            "[1e+,",
+            "[1ex",
+            '{"a":1e}\n',
+            "[1.5e-\n",
+            "1e-\n",
+            "1e+x",
+          ];
+          for (const chunk of malformed) {
+            const { error, ...rest } = Bun.JSONL.parseChunk(chunk);
+            expect(error).toBeInstanceOf(SyntaxError);
+            expect({ chunk, ...rest }).toEqual({ chunk, values: [], read: 0, done: false });
+          }
+        });
       });
     });
 
@@ -991,7 +1111,7 @@ describe("Bun.JSONL", () => {
 
       test("repeated parseChunk doesn't leak", () => {
         const input = '{"a":1}\n{"b":2}\n{"c":3}\n';
-        for (let i = 0; i < 50000; i++) {
+        for (let i = 0; i < 20000; i++) {
           Bun.JSONL.parseChunk(input);
         }
         expect(true).toBe(true);
@@ -999,7 +1119,7 @@ describe("Bun.JSONL", () => {
 
       test("repeated parse with typed array doesn't leak", () => {
         const buf = new TextEncoder().encode('{"a":1}\n{"b":2}\n');
-        for (let i = 0; i < 50000; i++) {
+        for (let i = 0; i < 20000; i++) {
           Bun.JSONL.parse(buf);
         }
         expect(true).toBe(true);

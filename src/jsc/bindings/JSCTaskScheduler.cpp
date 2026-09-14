@@ -6,6 +6,8 @@
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
+#include "ScriptExecutionContext.h"
+#include <JavaScriptCore/MutatorState.h>
 
 using Ticket = JSC::DeferredWorkTimer::Ticket;
 using Task = JSC::DeferredWorkTimer::Task;
@@ -53,15 +55,22 @@ static bool dropPendingTicketLocked(Bun::JSCTaskScheduler& scheduler, Ticket* ti
 void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
 {
     auto& scheduler = clientData->deferredWorkTimer;
-    BunLoopKind loopKind = Bun__VM__currentLoopKind(clientData->bunVM);
+    JSCTaskScheduler::PendingWork pending { Bun__VM__currentLoopKind(clientData->bunVM), 0 };
+    // Script is asking (WebAssembly.compile, Atomics.waitAsync) unless the collector is: a
+    // FinalizationRegistry's work is registered from a collection, whatever context that ran in.
+    if (ticket->scriptExecutionOwner()->vm().heap.mutatorState() == JSC::MutatorState::Running) {
+        auto* context = defaultGlobalObject(ticket->target()->globalObject())->currentScriptExecutionContext();
+        if (context->isForModuleGraph())
+            pending.graphContext = context->identifier();
+    }
     Locker<Lock> holder { scheduler.m_lock };
     if (scheduler.m_isShuttingDown) [[unlikely]]
         return;
     if (kind == DeferredWorkTimer::WorkType::ImminentlyScheduled) {
         Bun__eventLoop__refKeepAlive(clientData->bunVM, 1);
-        scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(ticket), loopKind);
+        scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(ticket), pending);
     } else {
-        scheduler.m_pendingTicketsOther.add(WTF::move(ticket), loopKind);
+        scheduler.m_pendingTicketsOther.add(WTF::move(ticket), pending);
     }
 }
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, Task&& task)
@@ -83,7 +92,7 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, R
             return;
         }
         auto it = scheduler.m_pendingTicketsKeepingEventLoopAlive.find(ticket.ptr());
-        loopKind = it != scheduler.m_pendingTicketsKeepingEventLoopAlive.end() ? it->value : scheduler.m_pendingTicketsOther.get(ticket.ptr());
+        loopKind = (it != scheduler.m_pendingTicketsKeepingEventLoopAlive.end() ? it->value : scheduler.m_pendingTicketsOther.get(ticket.ptr())).loopKind;
     }
     // Outside m_lock (markShuttingDown, on the VM's thread, needs it): a post that
     // still races the shutdown lands on the VM handle, which either queues it for
@@ -107,13 +116,27 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
 static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
 {
     Locker<Lock> holder { scheduler.m_lock };
-    bool wasPending = scheduler.m_pendingTicketsKeepingEventLoopAlive.remove(job->ticket.ptr());
-    if (!wasPending) {
-        wasPending = scheduler.m_pendingTicketsOther.remove(job->ticket.ptr());
-    } else {
+    bool wasPending = false;
+    uint32_t graphContext = 0;
+    if (auto it = scheduler.m_pendingTicketsKeepingEventLoopAlive.find(job->ticket.ptr()); it != scheduler.m_pendingTicketsKeepingEventLoopAlive.end()) {
+        graphContext = it->value.graphContext;
+        scheduler.m_pendingTicketsKeepingEventLoopAlive.remove(it);
+        wasPending = true;
         Bun__VmHandle__refKeepAlive(vmHandle, BunLoopKind::Regular, -1);
+    } else if (auto it = scheduler.m_pendingTicketsOther.find(job->ticket.ptr()); it != scheduler.m_pendingTicketsOther.end()) {
+        graphContext = it->value.graphContext;
+        scheduler.m_pendingTicketsOther.remove(it);
+        wasPending = true;
     }
     holder.unlockEarly();
+
+    // The Bun.ModuleGraph whose script asked for the work was disposed (or collected) since: like its
+    // other callbacks, this one is not called.
+    if (graphContext) {
+        auto* context = WebCore::ScriptExecutionContext::getScriptExecutionContext(graphContext);
+        if (!context || context->isStopped())
+            wasPending = false;
+    }
 
     // Deferred work runs script (FinalizationRegistry callbacks, wasm
     // completions); not once the VM's stop was requested. Like any other

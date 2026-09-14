@@ -48,6 +48,7 @@ const dir = String(
       import childProcess from "node:child_process";
       import timersPromises from "node:timers/promises";
       import { promisify } from "node:util";
+      import { pipeline } from "node:stream/promises";
       export const open = {
         interval(state) {
           const interval = setInterval(() => state.ticks++, 1);
@@ -395,6 +396,41 @@ const dir = String(
         "MessageChannel": () => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(1); }),
         "Worker": () => new Promise(resolve => { const worker = new Worker("data:text/javascript,postMessage(1)"); worker.onmessage = () => resolve(); }),
         "child_process.exec": () => promisify(childProcess.exec)("echo hi"),
+        "fs.promises.writeFile": () => fs.promises.writeFile(dataFile + ".written", "x"),
+        "fs.promises.appendFile": () => fs.promises.appendFile(dataFile + ".appended", "x"),
+        "fs.promises.copyFile": () => fs.promises.copyFile(dataFile, dataFile + ".copied"),
+        "fs.promises.mkdir": () => fs.promises.mkdir(dataFile + ".dir/a/b", { recursive: true }),
+        "fs.promises.access": () => fs.promises.access(dataFile),
+        "fs.promises.open": () => fs.promises.open(dataFile).then(handle => handle.close()),
+        "fs.stat callback": () => new Promise(resolve => fs.stat(dataFile, resolve)),
+        "fs.createWriteStream": () => new Promise(resolve => fs.createWriteStream(dataFile + ".streamed").end("x", resolve)),
+        "stream pipeline through gzip": () => pipeline(fs.createReadStream(dataFile), zlib.createGzip(), fs.createWriteStream(dataFile + ".gz")),
+        "zlib.createGzip stream": () => new Promise(resolve => { const gzip = zlib.createGzip(); gzip.on("data", () => {}).on("end", resolve); gzip.end("hello"); }),
+        "zlib.deflate": () => promisify(zlib.deflate)("hello"),
+        "zlib.gunzip": () => promisify(zlib.gunzip)(zlib.gzipSync("hello")),
+        "Bun.zstdDecompress": () => Bun.zstdDecompress(Bun.zstdCompressSync("hello")),
+        "Bun.password.verify": () => Bun.password.verify("pw", "$2b$04$abcdefghijklmnopqrstuuJ5vQp8uC8yM8Ck3m5qvJ3T0Y0wL0ZbW").catch(() => {}),
+        "crypto.hkdf": () => promisify(crypto.hkdf)("sha256", "key", "salt", "info", 32),
+        "crypto.randomFill": () => promisify(crypto.randomFill)(new Uint8Array(16)),
+        "crypto.randomInt": () => promisify(crypto.randomInt)(100),
+        "crypto.generatePrime": () => promisify(crypto.generatePrime)(64),
+        "crypto.generateKey": () => promisify(crypto.generateKey)("hmac", { length: 256 }),
+        "crypto.subtle.generateKey": () => crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]),
+        "Bun.file().json()": () => Bun.file(dataFile).json().catch(() => {}),
+        "Bun.file().bytes()": () => Bun.file(dataFile).bytes(),
+        "Bun.file().exists()": () => Bun.file(dataFile).exists(),
+        "Bun.file().stat()": () => Bun.file(dataFile).stat(),
+        "Bun.write(file, string)": () => Bun.write(dataFile + ".string", "x"),
+        "Bun.write(file, Response)": () => Bun.write(dataFile + ".response", new Response("x")),
+        "new Bun.Transpiler().transform": () => new Bun.Transpiler({ loader: "ts" }).transform("const a: number = 1;"),
+        "fetch(blob:)": () => { const url = URL.createObjectURL(new Blob(["hi"])); return fetch(url).then(response => response.text()).finally(() => URL.revokeObjectURL(url)); },
+        "AbortSignal.timeout": () => new Promise(resolve => AbortSignal.timeout(1).addEventListener("abort", resolve)),
+        "scheduler.wait": () => timersPromises.scheduler.wait(1),
+        "setImmediate": () => new Promise(resolve => setImmediate(resolve)),
+        "WebAssembly.compile": () => WebAssembly.compile(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
+        "WebAssembly.instantiate": () => WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
+        "Atomics.waitAsync": () => Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1).value,
+        "Bun.spawn().exited": () => Bun.spawn({ cmd: [process.execPath, "-e", "1"], stdio: ["ignore", "ignore", "ignore"] }).exited,
       };
 
       // One compressed chunk that expands to many times the stream's step size: decoded on the
@@ -1649,10 +1685,13 @@ test("ModuleGraph isolation: background work of a disposed graph does not settle
     "crypto.subtle.digest",
     "Bun.build",
     "fetch(data:)",
+    "fetch(blob:)",
     "CompressionStream",
+    // Computed inside the call; the callback is a process.nextTick, and what a graph had queued still runs.
+    "crypto.randomInt",
   ];
   // The exit of a child the graph started is a close notification: its code hears of it.
-  const mustSettle = ["child_process.exec"];
+  const mustSettle = ["child_process.exec", "Bun.spawn().exited"];
 
   using made = await newGraph();
   const names = Object.keys(hostApp.background);

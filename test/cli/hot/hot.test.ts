@@ -777,114 +777,168 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   longTimeout,
 );
 
-it(
-  "timers keep firing after a failed reload is fixed",
-  async () => {
-    const root = join(cwd, "hot-timer-entry.ts");
-    // Every write is padded to the same width so a reload that races the write
-    // (cached-fd read mid-overwrite) never sees a stale tail from a longer
-    // previous generation.
-    const PAD = 256;
-    const pad = (s: string) => s + Buffer.alloc(PAD - s.length, " ").toString() + "\n";
-    const src = (gen: number, extra = "") =>
-      pad(
-        `const GEN = ${gen};\n` +
-          `setInterval(() => console.log("TICK " + GEN), 16);\n` +
-          `console.log("EVAL " + GEN);\n` +
-          extra,
-      );
-    let lastWrite = src(1);
-    const save = (content: string) => writeFileSync(root, (lastWrite = content));
-    save(src(1));
+// Pads a source to a fixed width so a reload that reads the file while
+// writeFileSync overwrites it never sees the tail of a longer previous save.
+const padSource = (s: string) => s + Buffer.alloc(256 - s.length, " ").toString() + "\n";
 
-    await using runner = spawn({
-      cmd: [bunExe(), "--hot", "run", root],
-      env: bunEnv,
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
+// Runs `bun --hot <entry>` for the recovery tests below. `waitFor` awaits a
+// condition on the child's output and throws if the child exits first.
+function spawnHotChild(entry: string) {
+  const runner = spawn({
+    cmd: [bunExe(), "--hot", "run", entry],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
 
-    let out = "";
-    let err = "";
-    let exited = false;
-    let waiters: Array<() => void> = [];
-    const notify = () => {
-      for (const w of waiters.splice(0)) w();
-    };
-    (async () => {
-      for await (const chunk of runner.stdout) {
-        out += new TextDecoder().decode(chunk);
-        notify();
-      }
-    })();
-    (async () => {
-      for await (const chunk of runner.stderr) {
-        err += new TextDecoder().decode(chunk);
-        notify();
-      }
-    })();
-    runner.exited.then(() => {
-      exited = true;
+  let out = "";
+  let err = "";
+  let exited = false;
+  let waiters: Array<() => void> = [];
+  const notify = () => {
+    for (const w of waiters.splice(0)) w();
+  };
+  (async () => {
+    for await (const chunk of runner.stdout) {
+      out += new TextDecoder().decode(chunk);
       notify();
-    });
-
-    // Re-save periodically in case the watcher coalesced or raced the edit
-    // (same pattern driveErrorReloadCycle uses above).
-    const resave = setInterval(() => {
-      writeFileSync(root, lastWrite);
+    }
+  })();
+  (async () => {
+    for await (const chunk of runner.stderr) {
+      err += new TextDecoder().decode(chunk);
       notify();
-    }, 1000);
+    }
+  })();
+  runner.exited.then(() => {
+    exited = true;
+    notify();
+  });
 
-    const waitFor = async (pred: () => boolean, what: string) => {
+  // Re-save periodically in case the watcher coalesced or raced the edit
+  // (same pattern driveErrorReloadCycle uses above).
+  let lastSave: (() => void) | undefined;
+  const resave = setInterval(() => {
+    lastSave?.();
+    notify();
+  }, 1000);
+
+  return {
+    get out() {
+      return out;
+    },
+    get err() {
+      return err;
+    },
+    get exited() {
+      return exited;
+    },
+    save(path: string, content: string) {
+      lastSave = () => writeFileSync(path, content);
+      lastSave();
+    },
+    async waitFor(pred: () => boolean, what: string) {
       while (!pred()) {
         if (exited) {
           throw new Error(`child exited before "${what}"\nstdout:\n${out}\nstderr:\n${err}`);
         }
         await new Promise<void>(r => waiters.push(r));
       }
-    };
-    const countTicks = (gen: number) => (out.match(new RegExp(`TICK ${gen}\\b`, "g")) ?? []).length;
-
-    try {
-      // Generation 1 evaluates and its interval fires.
-      await waitFor(() => out.includes("EVAL 1"), "EVAL 1");
-      await waitFor(() => countTicks(1) >= 3, "gen 1 ticks");
-
-      // Break the file with a syntax error; wait for the error on stderr.
-      save(pad("const GEN = ((;\n"));
-      await waitFor(() => /error/i.test(err), "syntax error on stderr");
-
-      // Fix the file. The new generation must evaluate AND its interval must fire.
-      save(src(2));
-      await waitFor(() => out.includes("EVAL 2"), "EVAL 2 after fix");
-      // Without the fix the run loop is wedged in tick_possibly_forever()
-      // (which never drains timers) and this never resolves.
-      await waitFor(() => countTicks(2) >= 3, "gen 2 ticks after fix");
-
-      // on_before_exit() on the wedged path armed exit_on_uncaught_exception;
-      // without the matching reset the next uncaught exception would exit the
-      // process instead of surviving like a fresh --hot run. Guard on a global
-      // so duplicate reloads of this generation schedule at most one throw.
-      save(
-        src(
-          3,
-          `if (!globalThis.__thrown) { globalThis.__thrown = 1; ` +
-            `setTimeout(() => { throw new Error("post-recovery-throw"); }, 0); }\n`,
-        ),
-      );
-      await waitFor(() => err.includes("post-recovery-throw"), "post-recovery uncaught exception on stderr");
-      expect(exited).toBe(false);
-
-      // Recovery is durable: one more good edit's timers fire.
-      save(src(4));
-      await waitFor(() => out.includes("EVAL 4"), "EVAL 4");
-      await waitFor(() => countTicks(4) >= 3, "gen 4 ticks");
-    } finally {
+    },
+    async [Symbol.asyncDispose]() {
       clearInterval(resave);
       runner.kill();
-    }
+      await runner.exited;
+    },
+  };
+}
+
+it(
+  "timers keep firing after a failed reload is fixed",
+  async () => {
+    const root = join(cwd, "hot-timer-entry.ts");
+    const src = (gen: number, extra = "") =>
+      padSource(
+        `const GEN = ${gen};\n` +
+          `setInterval(() => console.log("TICK " + GEN), 16);\n` +
+          `console.log("EVAL " + GEN);\n` +
+          extra,
+      );
+    writeFileSync(root, src(1));
+
+    await using child = spawnHotChild(root);
+    const countTicks = (gen: number) => (child.out.match(new RegExp(`TICK ${gen}\\b`, "g")) ?? []).length;
+
+    // Generation 1 evaluates and its interval fires.
+    await child.waitFor(() => child.out.includes("EVAL 1"), "EVAL 1");
+    await child.waitFor(() => countTicks(1) >= 3, "gen 1 ticks");
+
+    // Break the file with a syntax error; wait for the error on stderr.
+    child.save(root, padSource("const GEN = ((;\n"));
+    await child.waitFor(() => /error/i.test(child.err), "syntax error on stderr");
+
+    // Fix the file. The new generation must evaluate AND its interval must fire.
+    child.save(root, src(2));
+    await child.waitFor(() => child.out.includes("EVAL 2"), "EVAL 2 after fix");
+    // Without the fix the run loop is wedged in tick_possibly_forever()
+    // (which never drains timers) and this never resolves.
+    await child.waitFor(() => countTicks(2) >= 3, "gen 2 ticks after fix");
+
+    // on_before_exit() on the wedged path armed exit_on_uncaught_exception;
+    // without the matching reset the next uncaught exception would exit the
+    // process instead of surviving like a fresh --hot run. Guard on a global
+    // so duplicate reloads of this generation schedule at most one throw.
+    child.save(
+      root,
+      src(
+        3,
+        `if (!globalThis.__thrown) { globalThis.__thrown = 1; ` +
+          `setTimeout(() => { throw new Error("post-recovery-throw"); }, 0); }\n`,
+      ),
+    );
+    await child.waitFor(() => child.err.includes("post-recovery-throw"), "post-recovery uncaught exception on stderr");
+    expect(child.exited).toBe(false);
+
+    // Recovery is durable: one more good edit's timers fire.
+    child.save(root, src(4));
+    await child.waitFor(() => child.out.includes("EVAL 4"), "EVAL 4");
+    await child.waitFor(() => countTicks(4) >= 3, "gen 4 ticks");
+  },
+  timeout,
+);
+
+// A module that awaits a timer at top level turns the dead timers into a dead
+// hot reload: the fixing generation stops at its await, the entry promise stays
+// pending, and reload() defers every later save behind it.
+it.each([
+  ["a syntax error", "export const v = ;\n", "Unexpected"],
+  ["a top-level throw", `throw new Error("dep-threw");\nexport const v = 0;\n`, "dep-threw"],
+])(
+  "keeps reloading after %s when a module awaits a timer at top level",
+  async (_, broken, marker) => {
+    const entry = join(cwd, "hot-tla-entry.ts");
+    const dep = join(cwd, "hot-tla-dep.ts");
+    const depSrc = (v: number) =>
+      padSource(`await new Promise(resolve => setTimeout(resolve, 30));\nexport const v = ${v};\n`);
+    writeFileSync(entry, `import { v } from "./hot-tla-dep";\nconsole.log("GEN v=" + v);\n`);
+    writeFileSync(dep, depSrc(1));
+
+    await using child = spawnHotChild(entry);
+    await child.waitFor(() => child.out.includes("GEN v=1"), "GEN v=1");
+
+    child.save(dep, padSource(broken));
+    await child.waitFor(() => child.err.includes(marker), `"${marker}" on stderr`);
+
+    // The fixing save: this generation reaches its console.log only if the
+    // timer behind its top-level await fires.
+    child.save(dep, depSrc(2));
+    await child.waitFor(() => child.out.includes("GEN v=2"), "GEN v=2 after fix");
+
+    // Later saves still reload.
+    child.save(dep, depSrc(3));
+    await child.waitFor(() => child.out.includes("GEN v=3"), "GEN v=3");
   },
   timeout,
 );

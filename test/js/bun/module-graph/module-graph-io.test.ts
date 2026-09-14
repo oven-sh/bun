@@ -2,7 +2,7 @@
 // for timers and I/O: what its code opens belongs to it, and dispose() closes all of it.
 import { afterAll, describe, expect, test } from "bun:test";
 import fs, { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import nodeTls from "node:tls";
@@ -242,7 +242,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     const graph = new Bun.unsafe.ModuleGraph({ isolateIO: true });
     const app = await graph.import(join(dir, "stubborn.mjs"));
-    // The child ignores the SIGTERM dispose() sends and keeps talking.
+    // The child ignores the SIGTERM dispose() sends and keeps talking (on Windows it is terminated).
     const child = await graph.run(() => app.start(listener.port, join(dir, "child.mjs")));
     try {
       graph.dispose();
@@ -256,7 +256,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         settled = now;
         return same;
       });
-      expect(settled.exited).toBe(0);
+      if (!isWindows) expect(settled.exited).toBe(0);
       child.kill("SIGKILL");
       await child.exited;
       // Its exit is a close notification.

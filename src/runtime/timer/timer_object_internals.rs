@@ -432,12 +432,12 @@ impl TimerObjectInternals {
         let exception_thrown = {
             s.ref_();
             let async_id = s.async_id();
-            // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
-            // above pins the parent across re-entrancy.
             // An immediate set while its context was closing tells the graph of what closed.
             let _notification = (s.interval.get() != 0)
                 // SAFETY: `global_this` is the VM's live global.
                 .then(|| bun_jsc::TeardownNotification::enter(unsafe { &*global_this }));
+            // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
+            // above pins the parent across re-entrancy.
             let result =
                 unsafe { Self::run(this, global_this, timer, callback, arguments, async_id, vm) };
             // `Self::run` has no early return so the deref ordering below is

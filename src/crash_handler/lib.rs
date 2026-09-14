@@ -80,11 +80,12 @@ pub mod debug {
         bun_core::return_address()
     }
 
-    /// Thin re-export of the canonical safe
-    /// wrapper in bun_core so this crate's internal callers don't churn.
+    /// Every capture in this crate is for a report of the current crash (or
+    /// an on-demand dump), so all of them take the thorough variant; the cheap
+    /// `bun_core::capture_stack_trace` is for `StoredTrace`.
     #[inline]
     pub(crate) fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
-        bun_core::capture_stack_trace(begin, addrs)
+        bun_core::capture_crash_stack_trace(begin, addrs)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]

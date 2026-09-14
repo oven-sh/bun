@@ -127,7 +127,10 @@ impl Loader {
     }
 
     pub fn handles_empty_file(self) -> bool {
-        matches!(self, Loader::Wasm | Loader::File | Loader::Text)
+        matches!(
+            self,
+            Loader::Wasm | Loader::File | Loader::Text | Loader::Sqlite | Loader::SqliteEmbedded
+        )
     }
 
     // `to_mime_type` / `from_mime_type` stay in bun_http_types as extension

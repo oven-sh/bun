@@ -7,6 +7,7 @@ import { bunExe, isWindows, tempDir, tls as tlsCertificate } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 import http2 from "node:http2";
+import { builtinModules } from "node:module";
 import { join } from "path";
 
 const ModuleGraph = Bun.ModuleGraph;
@@ -39,6 +40,7 @@ const dir = String(
       import net from "node:net";
       import http from "node:http";
       import http2 from "node:http2";
+      import https from "node:https";
       import nodeTls from "node:tls";
       import dgram from "node:dgram";
       import fs from "node:fs";
@@ -181,6 +183,14 @@ const dir = String(
           state.port = server.port;
           state.close = () => server.stop(true);
         },
+        httpsServer(state, tls) {
+          const server = https.createServer(tls, (req, res) => res.end(state.tag));
+          return new Promise(resolve => server.listen(0, "127.0.0.1", () => {
+            state.port = server.address().port;
+            state.close = () => { server.closeAllConnections(); server.close(); };
+            resolve();
+          }));
+        },
         http2Server(state) {
           const server = http2.createServer();
           server.on("stream", stream => { stream.respond({ ":status": 200 }); stream.end(state.tag); });
@@ -258,6 +268,16 @@ const dir = String(
         postgres(state, hostPort) {
           // The host's server never answers the startup message, which names the user: the tag.
           const sql = new Bun.SQL("postgres://tag%3A" + state.tag + "@127.0.0.1:" + hostPort + "/db?sslmode=disable", { max: 1, connectionTimeout: 60 });
+          sql\`select 1\`.then(() => { state.settled = "fulfilled"; }, error => { state.settled = String(error?.code ?? error); });
+          // (close() does not drop a connection that is still in its handshake: the host's end does.)
+          state.close = () => {
+            sql.close({ timeout: 0 }).catch(() => {});
+            Bun.connect({ hostname: "127.0.0.1", port: hostPort, socket: { open(socket) { socket.write("drop:" + state.tag + "\\n"); }, data() {} } }).catch(() => {});
+          };
+        },
+        mysql(state, hostPort) {
+          // The host's server greets and then never answers the login, which names the user: the tag.
+          const sql = new Bun.SQL("mysql://tag%3A" + state.tag + "@127.0.0.1:" + hostPort + "/db", { max: 1, connectionTimeout: 60, tls: false });
           sql\`select 1\`.then(() => { state.settled = "fulfilled"; }, error => { state.settled = String(error?.code ?? error); });
           // (close() does not drop a connection that is still in its handshake: the host's end does.)
           state.close = () => {
@@ -642,9 +662,30 @@ const tracksTags = (prefix: string) => {
     },
   };
 };
+/** A MySQL protocol v10 greeting (no TLS, mysql_native_password): what a server says first. */
+function mysqlGreeting(): Buffer {
+  const payload = Buffer.concat([
+    Buffer.from([0x0a]),
+    Buffer.from("8.0.0-host\0"),
+    Buffer.from([1, 0, 0, 0]), // connection id
+    Buffer.from("abcdefgh\0"), // auth plugin data, part 1
+    Buffer.from([0xff, 0xf7]), // capabilities, low 16 bits: everything but CLIENT_SSL
+    Buffer.from([0x21]), // utf8_general_ci
+    Buffer.from([2, 0]), // status: autocommit
+    Buffer.from([0x0f, 0x00]), // capabilities, high 16 bits: CLIENT_PLUGIN_AUTH
+    Buffer.from([21]), // length of the auth plugin data
+    Buffer.alloc(10),
+    Buffer.from("ijklmnopqrst\0"), // auth plugin data, part 2
+    Buffer.from("mysql_native_password\0"),
+  ]);
+  const header = Buffer.alloc(4);
+  header.writeUIntLE(payload.length, 0, 3);
+  return Buffer.concat([header, payload]);
+}
 const hostUnixPath = join(dir, "host.sock");
 let hostTcp: Bun.TCPSocketListener<{ tag?: string }>;
 let hostTls: Bun.TCPSocketListener<{ tag?: string }>;
+let hostMysql: Bun.TCPSocketListener<{ tag?: string }>;
 let hostUnix: Bun.UnixSocketListener<{ tag?: string }> | undefined;
 let hostHttp2: http2.Http2Server;
 let hostHttp: Bun.Server;
@@ -657,6 +698,18 @@ beforeAll(async () => {
     socket: tracksTags("tls:"),
   });
   if (!isWindows) hostUnix = Bun.listen<{ tag?: string }>({ unix: hostUnixPath, socket: tracksTags("unix:") });
+  const mysqlClients = tracksTags("mysql:");
+  hostMysql = Bun.listen<{ tag?: string }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      ...mysqlClients,
+      open(socket) {
+        mysqlClients.open(socket);
+        socket.write(mysqlGreeting());
+      },
+    },
+  });
   // A stream is never answered: it is open until the client goes away.
   hostHttp2 = http2.createServer();
   hostHttp2.on("stream", (stream, headers) => {
@@ -702,6 +755,7 @@ beforeAll(async () => {
 afterAll(() => {
   hostTcp.stop(true);
   hostTls.stop(true);
+  hostMysql.stop(true);
   hostUnix?.stop(true);
   hostHttp2.close();
   hostHttp.stop(true);
@@ -788,6 +842,7 @@ const kinds: Record<string, Kind> = {
     alive: async state => connected.has("h2:" + state.tag),
   },
   postgres: { args: () => [hostTcp.port], alive: async state => connected.has("tcp:" + state.tag) },
+  mysql: { args: () => [hostMysql.port], alive: async state => connected.has("mysql:" + state.tag) },
   timersPromisesInterval: { alive: state => ticks(state) },
   childProcessSpawn: {
     args: () => [bunExe()],
@@ -804,6 +859,14 @@ const kinds: Record<string, Kind> = {
     args: () => [tlsCertificate],
     alive: state =>
       greetsThrough({ hostname: "127.0.0.1", port: state.port, tls: { rejectUnauthorized: false } }, state.tag),
+  },
+  httpsServer: {
+    args: () => [tlsCertificate],
+    alive: async state =>
+      (await fetch(`https://127.0.0.1:${state.port}/`, { tls: { rejectUnauthorized: false } }).then(
+        response => response.text(),
+        () => "",
+      )) === state.tag,
   },
   http2Server: { alive: servesTagOverHttp2 },
   dgram: { alive: countsDatagrams },
@@ -1573,10 +1636,123 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
     redis: "redis",
     S3Client: "s3",
     s3: "s3",
+    SQL: "postgres", // and "mysql"
+    sql: "postgres",
+    postgres: "postgres",
   };
-  const elsewhere = ["Terminal", "SQL", "sql", "postgres", "ModuleGraph"]; // module-graph-io.test.ts, module-graph.test.ts
+  const elsewhere = ["Terminal", "ModuleGraph"]; // module-graph-io.test.ts, module-graph.test.ts
   const owned = Object.keys(classified).filter(name => classified[name] === "owned");
   expect(owned.filter(name => !elsewhere.includes(name) && !(kindOf[name] in kinds))).toEqual([]);
+});
+
+// The same forcing function for node: whoever adds a builtin module has to say here what a graph's
+// dispose() does with what it opens. "owned": it opens things that outlive the call, and the kinds
+// named for it are in the matrix above. "job": its work completes later, and the background-work
+// test has entries whose names start with what is named for it. "pure" and "host" as for Bun.
+test("ModuleGraph isolation: every node: builtin module is classified", () => {
+  const owned = (...names: string[]) => ({ owned: names });
+  const job = (...prefixes: string[]) => ({ job: prefixes });
+  const http = owned("httpServer", "httpRequest");
+  const tls = owned("tlsServer", "nodeTlsConnect");
+  const classified: Record<string, "pure" | "host" | { owned: string[] } | { job: string[] }> = {
+    _http_agent: http,
+    _http_client: http,
+    _http_common: http,
+    _http_incoming: http,
+    _http_outgoing: http,
+    _http_server: http,
+    http,
+    https: owned("httpsServer"),
+    http2: owned("http2Server", "http2Session"),
+    net: owned("netServer", "netConnect", ...(isWindows ? [] : ["netUnixServer", "netUnixConnect"])),
+    tls,
+    _tls_common: tls,
+    _tls_wrap: tls,
+    dgram: owned("dgram"),
+    child_process: owned("childProcessSpawn"),
+    worker_threads: owned("worker"),
+    timers: owned("interval", "immediateLoop"),
+    "timers/promises": owned("timersPromisesInterval"),
+    // Watchers are owned; everything else of fs is a job.
+    fs: owned("watch", "watchFile"),
+    "fs/promises": job("fs.promises."),
+    undici: owned("fetchInFlight"),
+    ws: owned("webSocket"),
+    // dns.lookup is a job; a Resolver's queries have a test of their own (c-ares).
+    dns: job("dns.lookup"),
+    "dns/promises": job("dns.lookup"),
+    crypto: job("crypto."),
+    zlib: job("zlib."),
+    // The `Bun` object: classified property by property above.
+    bun: "pure",
+    // Process-wide on purpose.
+    cluster: "host", // forks the whole process
+    inspector: "host",
+    "inspector/promises": "host",
+    process: "host",
+    readline: "host", // process.stdin
+    "readline/promises": "host",
+    repl: "host",
+    trace_events: "host",
+    tty: "host",
+    v8: "host",
+    ...Object.fromEntries(
+      [
+        "_stream_duplex",
+        "_stream_passthrough",
+        "_stream_readable",
+        "_stream_transform",
+        "_stream_wrap",
+        "_stream_writable",
+        "assert",
+        "assert/strict",
+        "async_hooks",
+        "buffer",
+        "console",
+        "constants",
+        "diagnostics_channel",
+        "domain",
+        "events",
+        "module",
+        "node:sqlite",
+        "os",
+        "path",
+        "path/posix",
+        "path/win32",
+        "perf_hooks",
+        "punycode",
+        "querystring",
+        "stream",
+        "stream/consumers",
+        "stream/promises",
+        "stream/web",
+        "string_decoder",
+        "sys",
+        "url",
+        "util",
+        "util/types",
+        "vm",
+        "wasi",
+      ].map(name => [name, "pure"] as const),
+    ),
+  };
+  const modules = builtinModules.filter(name => !name.startsWith("bun:"));
+  expect(modules.filter(name => !(name in classified))).toEqual([]);
+
+  const missing: string[] = [];
+  const backgroundNames = Object.keys(hostApp.background);
+  for (const [name, how] of Object.entries(classified)) {
+    if (typeof how === "string") continue;
+    if ("owned" in how)
+      missing.push(...how.owned.filter(kind => !(kind in kinds)).map(kind => name + ": kind " + kind));
+    else
+      missing.push(
+        ...how.job
+          .filter(prefix => !backgroundNames.some(entry => entry.startsWith(prefix)))
+          .map(prefix => name + ": background " + prefix),
+      );
+  }
+  expect(missing).toEqual([]);
 });
 
 test("ModuleGraph isolation: a Bun.$ script of a disposed graph stops: the running command is killed, later commands and builtins do not run, and its promise never settles", async () => {

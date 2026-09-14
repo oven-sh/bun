@@ -501,4 +501,51 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
   });
+
+  // The agent rule ends by pointing at the docs that bun-types ships. bun-types is
+  // only a transitive dependency (of @types/bun), so where `bun install` puts it
+  // depends on the linker: top-level node_modules/bun-types when hoisted, the
+  // node_modules/.bun store when isolated. The rule has to name a path that exists
+  // either way.
+  test.each(["hoisted", "isolated"])(
+    "agent rule points at the installed bun-types docs (%s linker)",
+    async linker => {
+      await using temp = tempDir(`bun-init-agent-rule-docs-${linker}`, {
+        "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", "-y"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        // CURSOR_TRACE_ID makes `bun init` write the cursor rule on every platform
+        // (CLAUDE.md additionally needs a `claude` binary, which CI machines may not have).
+        env: { ...bunEnv, CURSOR_TRACE_ID: "1", CLAUDE_CODE_AGENT_RULE_DISABLED: "1" },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+      const rule = fs.readFileSync(path.join(temp, ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc"), "utf8");
+      const docGlobs = Array.from(rule.matchAll(/`([^`]*\.mdx)`/g), m => m[1]);
+      expect(docGlobs.length).toBeGreaterThan(0);
+
+      // Identify a doc by its path inside docs/ so the comparison does not depend on
+      // which node_modules directory the linker installed the package into.
+      const docName = (file: string) => file.replaceAll("\\", "/").replace(/^.*\/docs\//, "");
+      const hinted = new Set(
+        docGlobs.flatMap(glob => Array.from(new Bun.Glob(glob).scanSync({ cwd: String(temp) }), docName)),
+      );
+      const installed = new Set(
+        Array.from(
+          new Bun.Glob("node_modules/**/bun-types/docs/**/*.mdx").scanSync({ cwd: String(temp), dot: true }),
+          docName,
+        ),
+      );
+
+      expect(installed.size).toBeGreaterThan(0);
+      expect(hinted.size).toBe(installed.size);
+      expect(hinted).toEqual(installed);
+    },
+    30_000,
+  );
 });

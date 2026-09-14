@@ -1968,7 +1968,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("zeroExitWithUncaughtHandler", async () => {
+  it("zeroExitWithUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {
@@ -1989,7 +1989,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("changeCodeInUncaughtHandler", async () => {
+  it("changeCodeInUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {

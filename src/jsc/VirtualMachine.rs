@@ -688,8 +688,8 @@ pub struct ExitHandler {
     pub exit_code: u8,
     /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
     pub skip_exit_listeners: bool,
-    /// `process.exit()` or a fatal error, as opposed to the event loop running dry.
-    /// See `VirtualMachine::exit_tears_down_napi_envs`.
+    /// `process.exit()`, a fatal error, or the end of a `bun test` run, as opposed to the
+    /// event loop running dry. See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
 }
 
@@ -1908,9 +1908,11 @@ impl VirtualMachine {
     /// Whether `on_exit()` runs `RareData::cleanup_hooks`, i.e. `NapiEnv::cleanup` for
     /// each addon. Node does this when it frees an environment: a worker's on any exit,
     /// the main thread's only once its loop ran dry (`process.exit()` and a fatal error
-    /// call `exit()` instead). `BUN_DESTRUCT_VM_ON_EXIT` destroys the main thread's VM
-    /// like a worker's, and that teardown expects the envs to be gone, so it tears them
-    /// down on every exit too.
+    /// call `exit()` instead). `bun test` ends a run like `process.exit()`: it does not
+    /// wait for the loop, so an addon's finalizers would run with its work still in
+    /// flight. `BUN_DESTRUCT_VM_ON_EXIT` destroys the main thread's VM like a worker's,
+    /// and that teardown expects the envs to be gone, so it tears them down on every
+    /// exit too.
     fn exit_tears_down_napi_envs(&self) -> bool {
         !self.is_main_thread()
             || !self.exit_handler.requested

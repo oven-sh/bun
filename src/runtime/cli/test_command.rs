@@ -943,6 +943,13 @@ pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
 }
 
+/// `ExitHandler::requested` for the end of a run. The runner exits when the last test settles,
+/// with whatever the tests left in flight on the event loop still in flight: `process.exit()`,
+/// not a loop that ran dry.
+pub(crate) fn exit_is_requested() -> bool {
+    !should_drain_event_loop()
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -2672,6 +2679,7 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        vm.exit_handler.requested = exit_is_requested();
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;

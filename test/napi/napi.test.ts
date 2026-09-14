@@ -1842,6 +1842,65 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(exitCode).toBe(1);
     });
 
+    // `bun test` ends the process when the last test settles. It does not wait
+    // for the event loop, so what the tests started can still be in flight: that
+    // is process.exit(), not a loop that ran dry. node-sqlite3's Statement
+    // finalizer emits an 'error' event for every call still queued behind a
+    // running one, nothing listens, and node-addon-api turns the throw into
+    // "NAPI FATAL ERROR: Error::ThrowAsJavaScriptException napi_throw" (#34663).
+    const testFile = (name: string) => `
+      ${setup}
+      test(${JSON.stringify(name)}, () => {});
+    `;
+
+    // stdout starts with the "bun test v1.x" banner; the rest is what the addons printed.
+    async function runBunTest(args: string[], files: Record<string, string>, env: Record<string, string>) {
+      using dir = tempDir("napi-bun-test-teardown", files);
+      await using proc = spawn({
+        cmd: [bunExe(), "test", ...args, ...Object.keys(files).map(file => `./${file}`)],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split(/\r?\n/)
+        .filter(line => line && !line.startsWith("bun test "))
+        .sort();
+      return { lines, stdout, stderr, exitCode };
+    }
+
+    it("the end of a `bun test` run skips it", async () => {
+      const files = { "addon.test.js": testFile("loads the addons") };
+      const { lines, stderr, exitCode } = await runBunTest([], files, noDestruct);
+      expect(stderr).toContain("1 pass");
+      expect(lines).toEqual(setupLines.toSorted());
+      expect(exitCode).toBe(0);
+    });
+
+    it("the end of a `bun test --parallel` worker skips it", async () => {
+      const files = { "a.test.js": testFile("loads the addons in a"), "b.test.js": testFile("loads the addons in b") };
+      const { stdout, stderr, exitCode } = await runBunTest(["--parallel=2"], files, noDestruct);
+      // The coordinator relays what a worker prints on its own stderr.
+      const output = stdout + stderr;
+      expect(output).toContain("2 pass");
+      expect(output).not.toContain("executed at position");
+      expect(output).not.toContain("finalize order");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a `bun test` run that drained the event loop first tears it down", async () => {
+      const files = { "addon.test.js": testFile("loads the addons") };
+      const { lines, stderr, exitCode } = await runBunTest([], files, {
+        ...noDestruct,
+        BUN_TEST_DRAIN_EVENT_LOOP: "1",
+      });
+      expect(stderr).toContain("1 pass");
+      expect(lines).toEqual(teardownLines.toSorted());
+      expect(exitCode).toBe(0);
+    });
+
     it("an event loop that runs dry tears it down", async () => {
       const { lines, stderr, exitCode } = await run(setup, noDestruct);
       expect(stderr).toBe("");

@@ -155,7 +155,8 @@ describe.concurrent("process.env keys with native state", () => {
       server.stop(true);
       console.log(JSON.stringify({ before, out, after }));
       `,
-      {},
+      // The other three keys are not set. TZ is, so that the first offset does not depend on the machine.
+      { TZ: "Etc/UTC" },
       { TEST_TLS: JSON.stringify(tls) },
     );
 

@@ -1707,7 +1707,7 @@ impl<S: TokenSource> Parser<S> {
                         let ty = if self.is_type_start() {
                             self.parse_type_name()?
                         } else {
-                            self.parse_expr()?.ty
+                            self.parse_expr()?.ty.clone()
                         };
                         self.expect(Punct::RParen)?;
                         other = Some(if unqualified {
@@ -4592,22 +4592,39 @@ impl<S: TokenSource> Parser<S> {
     }
 
     fn parse_conditional(&mut self) -> Res<Expr> {
-        let cond = self.parse_binary(1)?;
+        let mut cond = self.parse_binary(1)?;
         if !self.at(Punct::Question) {
             return Ok(cond);
         }
+        // `p ? a : q ? b : ...` goes on in the last operand, as far as the program likes: the
+        // conditions and the middle operands are gathered by a loop, and put together from the end.
         self.enter()?;
-        let loc = self.bump()?.loc;
-        if self.eat(Punct::Colon)? {
-            let otherwise = self.parse_conditional()?;
-            self.leave();
-            return self.sema.elvis(cond, otherwise, loc);
-        }
-        let then = self.parse_expr()?;
-        self.expect(Punct::Colon)?;
-        let otherwise = self.parse_conditional()?;
+        let mut before: Vec<(Expr, Option<Expr>, Loc)> = Vec::new();
+        let mut last = loop {
+            let loc = self.bump()?.loc;
+            // (GNU C: without a middle operand, the condition's value is the result.)
+            let then = if self.eat(Punct::Colon)? {
+                None
+            } else {
+                let then = self.parse_expr()?;
+                self.expect(Punct::Colon)?;
+                Some(then)
+            };
+            before.push((cond, then, loc));
+            let next = self.parse_binary(1)?;
+            if !self.at(Punct::Question) {
+                break next;
+            }
+            cond = next;
+        };
         self.leave();
-        self.sema.conditional(cond, then, otherwise, loc)
+        while let Some((cond, then, loc)) = before.pop() {
+            last = match then {
+                Some(then) => self.sema.conditional(cond, then, last, loc)?,
+                None => self.sema.elvis(cond, last, loc)?,
+            };
+        }
+        Ok(last)
     }
 
     fn parse_binary(&mut self, min_prec: u32) -> Res<Expr> {
@@ -4768,7 +4785,7 @@ impl<S: TokenSource> Parser<S> {
             self.expect(Punct::RParen)?;
             if self.at(Punct::LBrace) {
                 let literal = self.parse_compound_literal(&ty, loc)?;
-                self.parse_postfix_suffixes(literal)?.ty
+                self.parse_postfix_suffixes(literal)?.ty.clone()
             } else {
                 ty
             }
@@ -4794,7 +4811,7 @@ impl<S: TokenSource> Parser<S> {
                     .and_then(|l| l.align),
                 _ => None,
             };
-            operand.ty
+            operand.ty.clone()
         };
         self.leave();
         if is_alignof {

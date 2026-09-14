@@ -194,17 +194,53 @@ fn eval_addr(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
     }
 }
 
-pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
-    if !tcx.stack_check.is_safe_to_recurse() {
-        return err(e.loc, "expression is nested too deeply");
-    }
+/// Whether `e` is computed in 128 bits, which `eval_int128` does.
+fn is_wide(e: &Expr) -> bool {
     let ty = &e.ty;
     // 128-bit values other than literals are not folded.
     let mut wide = ty.is_int128() && !matches!(e.kind, ExprKind::IntLit(_));
     // (An address or a member of a 128-bit object is not a 128-bit computation; a conversion
-    // from one to a floating type has an arm of its own below.)
+    // from one to a floating type has an arm of its own in `eval_one`.)
     e.for_each_child(|c| wide |= ty.is_integer() && c.ty.is_int128());
-    if wide {
+    wide
+}
+
+pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
+    if !tcx.stack_check.is_safe_to_recurse() {
+        return err(e.loc, "expression is nested too deeply");
+    }
+    // `p ? a : q ? b : ...`: on to the operand that is chosen, by a loop.
+    let mut e = e;
+    while let ExprKind::Cond(c, a, b) = &e.kind {
+        if is_wide(e) {
+            break;
+        }
+        e = if truthy(eval(c, tcx)?) { a } else { b };
+    }
+    // `a + b + c + ...` is `((a + b) + c) + ...`: down the left operands by a loop, and up again
+    // with the values.
+    let mut chain: Vec<&Expr> = Vec::new();
+    let mut innermost = e;
+    while let ExprKind::Binary(_, a, _) | ExprKind::LogAnd(a, _) | ExprKind::LogOr(a, _) =
+        &innermost.kind
+    {
+        if is_wide(innermost) {
+            break;
+        }
+        chain.push(innermost);
+        innermost = a;
+    }
+    let mut value = eval_one(innermost, tcx, None)?;
+    while let Some(link) = chain.pop() {
+        value = eval_one(link, tcx, Some(value))?;
+    }
+    Ok(value)
+}
+
+/// `e`, of which the left operand is `left` if that is known already.
+fn eval_one(e: &Expr, tcx: &TypeCtx, left: Option<Const>) -> Res<Const> {
+    let ty = &e.ty;
+    if is_wide(e) {
         // Computed in 128 bits; a result that is not itself 128 bits wide, or fits in 64,
         // is an ordinary integer constant (`(__int128)-1 < 0`, `sizeof(x) * (__int128)2`).
         return match eval_int128(e, tcx) {
@@ -322,13 +358,13 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
         },
         ExprKind::LogNot(a) => Ok(Const::Int(i64::from(!truthy(eval(a, tcx)?)))),
         ExprKind::LogAnd(a, b) => {
-            if !truthy(eval(a, tcx)?) {
+            if !truthy(left.map_or_else(|| eval(a, tcx), Ok)?) {
                 return Ok(Const::Int(0));
             }
             Ok(Const::Int(i64::from(truthy(eval(b, tcx)?))))
         }
         ExprKind::LogOr(a, b) => {
-            if truthy(eval(a, tcx)?) {
+            if truthy(left.map_or_else(|| eval(a, tcx), Ok)?) {
                 return Ok(Const::Int(1));
             }
             Ok(Const::Int(i64::from(truthy(eval(b, tcx)?))))
@@ -341,7 +377,8 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
             }
         }
         ExprKind::Binary(op, a, b) => {
-            let (va, vb) = (eval(a, tcx)?, eval(b, tcx)?);
+            let va = left.map_or_else(|| eval(a, tcx), Ok)?;
+            let vb = eval(b, tcx)?;
             match (va, vb) {
                 (Const::Int(x), Const::Int(y)) => eval_int_binary(*op, x, y, &a.ty, ty, tcx, e.loc),
                 (Const::Float(x), Const::Float(y)) => Ok(match op {

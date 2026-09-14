@@ -1,5 +1,6 @@
 // A function can be given any name with an assembler label. Whatever it is, JavaScript finds the function under that
 // name: one that reads as an array index, the names every object already has, an empty one.
+// (`__proto__` is not among them: a bundle loses an export of that name, whatever language it was written in.)
 int seven(void) __asm__("7");
 int seven(void) { return 7; }
 int zero(void) __asm__("0");

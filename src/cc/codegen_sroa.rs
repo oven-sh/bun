@@ -164,6 +164,16 @@ impl Scan<'_> {
     }
 
     fn expr(&mut self, e: &Expr, is_statement: bool) {
+        // (Down a chain of operators by a loop.)
+        let mut next = Some((e, is_statement));
+        while let Some((e, is_statement)) = next {
+            next = self.expr_here(e, is_statement);
+        }
+    }
+
+    /// Looks at `e` and what is under it, but for its `spine_child`, which is handed back with
+    /// what it is to be looked at as.
+    fn expr_here<'e>(&mut self, e: &'e Expr, is_statement: bool) -> Option<(&'e Expr, bool)> {
         // A whole path from a local to something: an element, or a misuse.
         if let Some((id, offset)) = local_path(e, self.tcx) {
             let element = self.candidate(id).is_some_and(|leaves| {
@@ -174,14 +184,14 @@ impl Scan<'_> {
             if !element {
                 self.reject(id);
             }
-            return;
+            return None;
         }
         match &e.kind {
             ExprKind::Intrinsic(op @ (Intrinsic::MemCopy | Intrinsic::MemSet), args)
                 if e.ty.is_void() =>
             {
                 let [dst, second, n] = args.as_slice() else {
-                    return;
+                    return None;
                 };
                 let bytes = match constexpr::eval(n, self.tcx) {
                     Ok(Const::Int(n)) => u64::try_from(n).ok(),
@@ -240,12 +250,21 @@ impl Scan<'_> {
                 None => self.expr(inner, false),
             },
             ExprKind::Comma(a, b) => {
-                self.expr(a, true);
                 self.expr(b, is_statement);
+                return Some((a, true));
             }
             ExprKind::Cast(inner) if e.ty.is_void() => self.expr(inner, true),
-            _ => e.for_each_child(|c| self.expr(c, false)),
+            _ => {
+                let spine = e.spine_child();
+                e.for_each_child(|c| {
+                    if !spine.is_some_and(|next| std::ptr::eq(next, c)) {
+                        self.expr(c, false);
+                    }
+                });
+                return spine.map(|next| (next, false));
+            }
         }
+        None
     }
 
     /// The items of an initializer; `target` is the local they initialize.

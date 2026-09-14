@@ -34,7 +34,9 @@ int main(void) {
   read_list("1", one);
   read_list("i1i", 1, one, 2);
   read_list("2m", two, mixed);
-  read_list("iv1d2", 3, plain, one, 0.25, two);
+  // (Not the two-vector structure after the `double`: Apple's own compiler reads that one wrongly at -O0 and crashes
+  // at -O1, so there is nothing to agree with.)
+  read_list("iv1d", 3, plain, one, 0.25);
   read_list("iiiiiiiii1v", 1, 2, 3, 4, 5, 6, 7, 8, 9, one, plain);
   read_list("ddddddddd1m", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, one, mixed);
   return 0;

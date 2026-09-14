@@ -325,6 +325,9 @@ impl Sema {
 
     /// Whether every lane of `e` is known to be all ones or all zeros.
     fn is_lane_mask(e: &Expr) -> bool {
+        if e.depth > TALLEST_ANALYSED {
+            return false;
+        }
         match &e.kind {
             ExprKind::Binary(op, a, b) => {
                 op.is_compare()
@@ -793,9 +796,13 @@ impl Sema {
     /// The address of an `_Atomic` lvalue. Atomic locals always live in memory.
     fn atomic_address(&self, lvalue: Expr) -> Res<Expr> {
         let loc = lvalue.loc;
-        if let ExprKind::Deref(inner) = lvalue.kind {
-            return Ok(*inner);
-        }
+        let lvalue = match lvalue.unwrap_kind(|kind| match kind {
+            ExprKind::Deref(inner) => Ok(*inner),
+            other => Err(other),
+        }) {
+            Ok(address) => return Ok(address),
+            Err(lvalue) => lvalue,
+        };
         let ty = lvalue.ty.clone().ptr_to();
         self.mk(ExprKind::AddrOf(Box::new(lvalue)), ty, loc)
     }

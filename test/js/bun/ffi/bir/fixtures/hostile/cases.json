@@ -411,11 +411,14 @@
     }
   },
   {
-    "name": "a sum of 5000 terms",
-    "source": ["int f(int x) { return x", [" + x", 5000], "; }\n", "int main(void) { return 0; }\n"],
-    "error": {
-      "contains": "is nested too deeply"
-    }
+    "name": "a sum of 100000 terms",
+    "source": [
+      "#include <stdio.h>\nint f(int x) { return x",
+      [" + x", 100000],
+      "; }\nint main(void) { printf(\"%d\\n\", f(2)); return 0; }\n"
+    ],
+    "output": "200002\n",
+    "status": 0
   },
   {
     "name": "5000 nested conditional expressions",
@@ -699,6 +702,50 @@
       ";\n#include <stdio.h>\nint main(void) { printf(\"%d\\n\", v); return 0; }\n"
     ],
     "output": "1\n",
+    "status": 0
+  },
+  {
+    "name": "100000 flags or-ed together",
+    "source": [
+      "#include <stdio.h>\nunsigned f(unsigned a, unsigned b) { return a",
+      [" | b", 100000],
+      "; }\nint main(void) { printf(\"%u\\n\", f(1, 6)); return 0; }\n"
+    ],
+    "output": "7\n",
+    "status": 0
+  },
+  {
+    "name": "a comma expression of 100000 operands",
+    "source": [
+      "#include <stdio.h>\nint f(void) { int n = 0; return (",
+      ["n++, ", 100000],
+      "n); }\nint main(void) { printf(\"%d\\n\", f()); return 0; }\n"
+    ],
+    "output": "100000\n",
+    "status": 0
+  },
+  {
+    "name": "20000 conditions joined by &&",
+    "source": [
+      "#include <stdio.h>\nint f(int x) { return x",
+      [" && x", 20000],
+      "; }\nint main(void) { printf(\"%d %d\\n\", f(3), f(0)); return 0; }\n"
+    ],
+    "output": "1 0\n",
+    "status": 0
+  },
+  {
+    "name": "a conditional chain of 5000 links",
+    "source": [
+      "#include <stdio.h>\nint f(int k) { return ",
+      {
+        "each": "k == {i} ? {i+1} : ",
+        "count": 5000,
+        "from": 0
+      },
+      "-1; }\nint main(void) { printf(\"%d %d %d\\n\", f(0), f(4999), f(5000)); return 0; }\n"
+    ],
+    "output": "1 5000 -1\n",
     "status": 0
   }
 ]

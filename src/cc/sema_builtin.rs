@@ -10,7 +10,7 @@ use crate::types::Type;
 /// Whether `a` and `b` are the same expression, one without side effects that reads no
 /// volatile object: evaluating it once is as good as twice.
 pub(crate) fn same_pure(a: &Expr, b: &Expr) -> bool {
-    if a.ty != b.ty || a.ty.is_volatile() || a.ty.is_atomic() {
+    if a.ty != b.ty || a.ty.is_volatile() || a.ty.is_atomic() || a.depth > TALLEST_ANALYSED {
         return false;
     }
     match (&a.kind, &b.kind) {

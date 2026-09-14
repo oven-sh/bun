@@ -1119,31 +1119,44 @@ impl<'a> FnGen<'a, '_> {
         if !self.tcx.stack_check.is_safe_to_recurse() {
             return err(e.loc, "expression is nested too deeply");
         }
-        match &e.kind {
-            ExprKind::LogAnd(a, b) => {
-                let mid = self.b.new_block();
-                self.gen_cond(
-                    a,
-                    Targets {
+        // `a && b && c` is `(a && b) && c`: down the left operands by a loop. Each right operand is
+        // reached through a block of its own, from where the operand on its left was decided.
+        let mut rights: Vec<(&Expr, u32, Targets)> = Vec::new();
+        let (mut e, mut to) = (e, to);
+        loop {
+            match &e.kind {
+                ExprKind::LogAnd(a, b) => {
+                    let mid = self.b.new_block();
+                    rights.push((b, mid, to));
+                    to = Targets {
                         when_true: mid,
                         ..to
-                    },
-                )?;
-                self.b.switch_to(mid);
-                self.gen_cond(b, to)
-            }
-            ExprKind::LogOr(a, b) => {
-                let mid = self.b.new_block();
-                self.gen_cond(
-                    a,
-                    Targets {
+                    };
+                    e = a;
+                }
+                ExprKind::LogOr(a, b) => {
+                    let mid = self.b.new_block();
+                    rights.push((b, mid, to));
+                    to = Targets {
                         when_false: mid,
                         ..to
-                    },
-                )?;
-                self.b.switch_to(mid);
-                self.gen_cond(b, to)
+                    };
+                    e = a;
+                }
+                _ => break,
             }
+        }
+        self.gen_cond_of_one(e, to)?;
+        while let Some((right, mid, to)) = rights.pop() {
+            self.b.switch_to(mid);
+            self.gen_cond(right, to)?;
+        }
+        Ok(())
+    }
+
+    /// `gen_cond` of what is not `&&` or `||`.
+    fn gen_cond_of_one(&mut self, e: &Expr, to: Targets) -> Res<()> {
+        match &e.kind {
             ExprKind::LogNot(a) => self.gen_cond(a, to.negated()),
             ExprKind::IntLit(v) => {
                 self.b.terminate(Inst::Jump(if *v != 0 {
@@ -1327,6 +1340,7 @@ impl<'a> FnGen<'a, '_> {
                 ty,
                 loc: e.loc,
                 has_control_flow: false,
+                nesting: 1,
                 depth: 1,
             };
             let base = match target {
@@ -1646,6 +1660,14 @@ impl<'a> FnGen<'a, '_> {
                     }
                 }
                 ArgPass::Pieces(pieces) => {
+                    // (The pieces of a vector are read from a copy of it in memory.)
+                    let handle = if self.mty(arg_ty) == Ty::V128 {
+                        let copy = self.temp_object(arg_ty);
+                        self.b.effect(Inst::Store(MemKind::V128, handle, copy, 0));
+                        copy
+                    } else {
+                        handle
+                    };
                     for piece in pieces {
                         let v = self.load_piece(handle, piece);
                         values.push(v);
@@ -1889,37 +1911,30 @@ impl<'a> FnGen<'a, '_> {
                 self.store_wide(object, wide);
                 object
             }
-            ExprKind::Binary(op, a, b) => {
-                if matches!(op, BinOp::Or | BinOp::Add | BinOp::Xor)
-                    && e.ty.is_integer()
-                    && !e.ty.is_pair()
-                {
-                    if let Some(run) = self.byte_run(e) {
-                        return Ok(Some(self.gen_byte_run(&run, &e.ty)?));
+            ExprKind::Binary(..) => {
+                // `a + b + c + ...` is `((a + b) + c) + ...`: down the left operands by a loop, as
+                // far as they are computed the way this one is, and up again with the values.
+                let mut links: Vec<&Expr> = Vec::new();
+                let mut innermost = e;
+                while let ExprKind::Binary(_, a, _) = &innermost.kind {
+                    if !self.is_plain_binary(innermost) {
+                        break;
                     }
+                    links.push(innermost);
+                    innermost = a;
                 }
-                let va = self.gen_value(a)?;
-                let ha = self.hold(va, b.has_control_flow);
-                let vb = self.gen_value(b)?;
-                let va = self.release(ha);
-                if a.ty.is_vector() {
-                    self.gen_vec_binary(*op, &a.ty, va, vb, &b.ty, loc)?
-                } else if a.ty.is_long_double() {
-                    self.long_double_binary(*op, va, vb, loc)?
-                } else if a.ty.is_complex() || b.ty.is_complex() {
-                    let ty = if a.ty.is_complex() { &a.ty } else { &b.ty };
-                    self.gen_complex_mixed(
-                        *op,
-                        ty,
-                        (va, a.ty.is_complex()),
-                        (vb, b.ty.is_complex()),
-                        loc,
-                    )?
-                } else if a.ty.is_pair() {
-                    self.gen_pair_binary(*op, &a.ty, va, vb, loc)?
-                } else {
-                    self.b.bin(self.arith_op(*op, &a.ty), va, vb)
+                if links.is_empty() {
+                    // Shifted bytes that are one load.
+                    let Some(run) = self.byte_run(e) else {
+                        return internal(loc, "a binary operator with no way to compute it");
+                    };
+                    return Ok(Some(self.gen_byte_run(&run, &e.ty)?));
                 }
+                let mut value = self.gen_value(innermost)?;
+                while let Some(link) = links.pop() {
+                    value = self.gen_binary_with(link, value)?;
+                }
+                value
             }
             ExprKind::PtrAdd {
                 ptr,
@@ -2276,9 +2291,24 @@ impl<'a> FnGen<'a, '_> {
                 let stored = self.store_place(place, &lhs.ty, new, loc)?;
                 if *post { old } else { stored }
             }
-            ExprKind::Comma(a, b) => {
-                self.gen_discard(a)?;
-                return self.gen_expr(b);
+            ExprKind::Comma(..) => {
+                // `a, b, c` is `(a, b), c`: down the left operands by a loop.
+                let mut later: Vec<&Expr> = Vec::new();
+                let mut first = e;
+                while let ExprKind::Comma(a, b) = &first.kind {
+                    later.push(b);
+                    first = a;
+                }
+                self.gen_discard(first)?;
+                while later.len() > 1 {
+                    if let Some(next) = later.pop() {
+                        self.gen_discard(next)?;
+                    }
+                }
+                return match later.pop() {
+                    Some(last) => self.gen_expr(last),
+                    None => internal(loc, "a comma operator without a right operand"),
+                };
             }
             ExprKind::Cast(inner) => {
                 if e.ty.is_void() {
@@ -2344,6 +2374,11 @@ impl<'a> FnGen<'a, '_> {
                 let list = self.gen_value(ap)?;
                 self.gen_va_arg_aggregate(list, &e.ty, loc)?
             }
+            ExprKind::VaArg(ap) if self.mty(&e.ty) == Ty::V128 => {
+                let list = self.gen_value(ap)?;
+                let address = self.gen_va_arg_vector_address(list, loc)?;
+                self.b.load(MemKind::V128, address, 0)
+            }
             ExprKind::VaArg(ap) => {
                 let list = self.gen_value(ap)?;
                 let in_float_register = e.ty.is_float()
@@ -2364,22 +2399,80 @@ impl<'a> FnGen<'a, '_> {
         }))
     }
 
+    /// Whether binary operator `e` is computed from the values of its two operands by
+    /// `gen_binary_with`, and not some other way `gen_expr` has.
+    fn is_plain_binary(&self, e: &Expr) -> bool {
+        let ExprKind::Binary(op, a, _) = &e.kind else {
+            return false;
+        };
+        if op.is_compare() && a.ty.is_int128() && !e.has_control_flow {
+            return false;
+        }
+        if Self::is_wide_operation(e) {
+            return false;
+        }
+        let bytes_put_together = matches!(op, BinOp::Or | BinOp::Add | BinOp::Xor)
+            && e.ty.is_integer()
+            && !e.ty.is_pair()
+            && self.byte_run(e).is_some();
+        !bytes_put_together
+    }
+
+    /// Binary operator `e` of which the left operand's value is `va`.
+    fn gen_binary_with(&mut self, e: &Expr, va: V) -> Res<V> {
+        let ExprKind::Binary(op, a, b) = &e.kind else {
+            return internal(e.loc, "not a binary operator");
+        };
+        let loc = e.loc;
+        let ha = self.hold(va, b.has_control_flow);
+        let vb = self.gen_value(b)?;
+        let va = self.release(ha);
+        Ok(if a.ty.is_vector() {
+            self.gen_vec_binary(*op, &a.ty, va, vb, &b.ty, loc)?
+        } else if a.ty.is_long_double() {
+            self.long_double_binary(*op, va, vb, loc)?
+        } else if a.ty.is_complex() || b.ty.is_complex() {
+            let ty = if a.ty.is_complex() { &a.ty } else { &b.ty };
+            self.gen_complex_mixed(
+                *op,
+                ty,
+                (va, a.ty.is_complex()),
+                (vb, b.ty.is_complex()),
+                loc,
+            )?
+        } else if a.ty.is_pair() {
+            self.gen_pair_binary(*op, &a.ty, va, vb, loc)?
+        } else {
+            self.b.bin(self.arith_op(*op, &a.ty), va, vb)
+        })
+    }
+
+    /// `c ? a : b`, which is `e`. (`p ? x : q ? y : ...` goes on in the last operand: down those by
+    /// a loop, with one place for the value and one block where all of them meet.)
     fn gen_conditional(&mut self, e: &Expr, c: &Expr, a: &Expr, b: &Expr) -> Res<Option<V>> {
         if e.ty.is_void() {
-            let (then_block, else_block, end) =
-                (self.b.new_block(), self.b.new_block(), self.b.new_block());
-            self.gen_cond(
-                c,
-                Targets {
-                    when_true: then_block,
-                    when_false: else_block,
-                },
-            )?;
-            for (block, arm) in [(then_block, a), (else_block, b)] {
-                self.b.switch_to(block);
-                self.gen_discard(arm)?;
+            let end = self.b.new_block();
+            let mut rest = e;
+            while let ExprKind::Cond(c, a, b) = &rest.kind {
+                if !rest.ty.is_void() {
+                    break;
+                }
+                let (then_block, else_block) = (self.b.new_block(), self.b.new_block());
+                self.gen_cond(
+                    c,
+                    Targets {
+                        when_true: then_block,
+                        when_false: else_block,
+                    },
+                )?;
+                self.b.switch_to(then_block);
+                self.gen_discard(a)?;
                 self.b.terminate(Inst::Jump(end));
+                self.b.switch_to(else_block);
+                rest = b;
             }
+            self.gen_discard(rest)?;
+            self.b.terminate(Inst::Jump(end));
             self.b.switch_to(end);
             return Ok(None);
         }
@@ -2390,22 +2483,38 @@ impl<'a> FnGen<'a, '_> {
             return Ok(Some(self.b.def(Inst::Select(vc, va, vb), self.mty(&e.ty))));
         }
         let mty = self.mty(&e.ty);
-        let (then_block, else_block, end) =
-            (self.b.new_block(), self.b.new_block(), self.b.new_block());
+        let end = self.b.new_block();
         let temp = self.alloc_temp(mty);
-        self.gen_cond(
-            c,
-            Targets {
-                when_true: then_block,
-                when_false: else_block,
-            },
-        )?;
-        for (block, arm) in [(then_block, a), (else_block, b)] {
-            self.b.switch_to(block);
-            let v = self.gen_value(arm)?;
+        let mut rest = e;
+        while let ExprKind::Cond(c, a, b) = &rest.kind {
+            // (One that is a `Select`, or has a value of another kind, is an operand like any.)
+            let goes_on = std::ptr::eq(rest, e)
+                || (self.mty(&rest.ty) == mty
+                    && !(rest.ty.is_value()
+                        && !c.has_control_flow
+                        && self.is_trivial(a)
+                        && self.is_trivial(b)));
+            if !goes_on {
+                break;
+            }
+            let (then_block, else_block) = (self.b.new_block(), self.b.new_block());
+            self.gen_cond(
+                c,
+                Targets {
+                    when_true: then_block,
+                    when_false: else_block,
+                },
+            )?;
+            self.b.switch_to(then_block);
+            let v = self.gen_value(a)?;
             self.b.effect(Inst::LocalSet(temp, v));
             self.b.terminate(Inst::Jump(end));
+            self.b.switch_to(else_block);
+            rest = b;
         }
+        let v = self.gen_value(rest)?;
+        self.b.effect(Inst::LocalSet(temp, v));
+        self.b.terminate(Inst::Jump(end));
         self.b.switch_to(end);
         let v = self.b.local_get(temp);
         self.free_temp(temp, mty);
@@ -3135,6 +3244,30 @@ impl<'a> FnGen<'a, '_> {
 
     /// `va_arg`: the address of the next variable argument of class `float`, advancing the
     /// va_list at `ap`. Each target's layout is the one `VaStart` fills in (see BIR.h).
+    /// Where the next argument of the list at `ap` is, a 16-byte vector, advancing the list.
+    fn gen_va_arg_vector_address(&mut self, ap: V, loc: Loc) -> Res<V> {
+        use crate::types::{Arch, Os};
+        let target = self.tcx.target;
+        if target.os == Os::Windows {
+            // Passed by address, which is in the slot.
+            let slot = self.gen_va_arg_address(ap, false);
+            return Ok(self.b.load(MemKind::I64, slot, 0));
+        }
+        if target.arch == Arch::Aarch64 && target.os == Os::MacOs {
+            // On the stack, at the next multiple of 16 bytes.
+            let cursor = self.b.load(MemKind::I64, ap, 0);
+            let round = self.b.const_i64(15);
+            let mask = self.b.const_i64(-16);
+            let bumped = self.b.bin(CBin::Add, cursor, round);
+            let aligned = self.b.bin(CBin::And, bumped, mask);
+            let sixteen = self.b.const_i64(16);
+            let next = self.b.bin(CBin::Add, aligned, sixteen);
+            self.b.effect(Inst::Store(MemKind::I64, next, ap, 0));
+            return Ok(aligned);
+        }
+        err(loc, "va_arg of a vector is not supported yet")
+    }
+
     fn gen_va_arg_address(&mut self, ap: V, float: bool) -> V {
         use crate::types::{Arch, Os};
         let target = self.tcx.target;
@@ -3927,15 +4060,15 @@ fn is_exported(f: &Function) -> bool {
 }
 
 fn functions_in_expr(e: &Expr, out: &mut Vec<FuncId>) {
-    if let ExprKind::Func(id) = e.kind {
-        out.push(id);
-    }
-    if let ExprKind::StmtExpr { stmts, .. } = &e.kind {
-        for s in stmts {
-            functions_in_stmt(s, out);
+    e.for_each_descendant(&mut |at| match &at.kind {
+        ExprKind::Func(id) => out.push(*id),
+        ExprKind::StmtExpr { stmts, .. } => {
+            for s in stmts {
+                functions_in_stmt(s, out);
+            }
         }
-    }
-    e.for_each_child(|c| functions_in_expr(c, out));
+        _ => {}
+    });
 }
 
 fn functions_in_stmt(stmt: &Stmt, out: &mut Vec<FuncId>) {

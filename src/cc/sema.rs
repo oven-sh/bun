@@ -23,9 +23,10 @@ pub(crate) mod simd;
 #[path = "sema_vla.rs"]
 mod vla;
 
-/// Maximum height of an expression tree: a limit of this implementation, which bounds every
-/// pass that walks one (constant evaluation, code generation, dropping it).
-const MAX_EXPR_DEPTH: u32 = 1000;
+/// The most an expression nests (`Expr::nesting`): a limit of this implementation, which bounds
+/// the recursion of every pass that walks one. A chain of operators is not nesting, however
+/// long it is.
+const MAX_EXPR_NESTING: u16 = 1000;
 
 #[derive(Clone, Debug)]
 pub(crate) enum Symbol {
@@ -1168,21 +1169,27 @@ impl Sema {
             ty,
             loc,
             has_control_flow: false,
+            nesting: 1,
             depth: 1,
         };
         let mut cf = matches!(
             e.kind,
             ExprKind::LogAnd(..) | ExprKind::LogOr(..) | ExprKind::Cond(..)
         );
-        let mut depth = 0;
+        let (mut depth, mut nesting) = (0u32, 1u16);
+        let spine = e.spine_child();
         e.for_each_child(|c| {
             cf |= c.has_control_flow;
             depth = depth.max(c.depth);
+            let down_the_spine = spine.is_some_and(|next| std::ptr::eq(next, c));
+            nesting = nesting.max(c.nesting.saturating_add(u16::from(!down_the_spine)));
         });
         e.has_control_flow = cf;
-        e.depth = depth + 1;
-        self.deepest_expr.set(self.deepest_expr.get().max(e.depth));
-        if e.depth > MAX_EXPR_DEPTH {
+        e.depth = depth.saturating_add(1);
+        e.nesting = nesting;
+        self.deepest_expr
+            .set(self.deepest_expr.get().max(u32::from(nesting)));
+        if nesting > MAX_EXPR_NESTING {
             return err(loc, "expression is nested too deeply");
         }
         Ok(e)
@@ -1869,14 +1876,15 @@ impl Sema {
     /// a compiler it does not know, and means the quiet NaN `__builtin_nan("")` is (positive),
     /// not what the processor's division makes (negative, on x86).
     fn fold(&self, e: Expr) -> Expr {
+        let literal = |mut e: Expr, kind: ExprKind| {
+            e.kind = kind;
+            (e.nesting, e.depth) = (1, 1);
+            e
+        };
         if let ExprKind::Binary(BinOp::Div, a, b) = &e.kind {
             if let (ExprKind::FloatLit(x), ExprKind::FloatLit(y)) = (&a.kind, &b.kind) {
                 if *x == 0.0 && *y == 0.0 {
-                    return Expr {
-                        kind: ExprKind::FloatLit(f64::NAN),
-                        depth: 1,
-                        ..e
-                    };
+                    return literal(e, ExprKind::FloatLit(f64::NAN));
                 }
             }
         }
@@ -1891,11 +1899,7 @@ impl Sema {
             return e;
         }
         match constexpr::eval(&e, &self.tcx) {
-            Ok(Const::Int(v)) => Expr {
-                kind: ExprKind::IntLit(v),
-                depth: 1,
-                ..e
-            },
+            Ok(Const::Int(v)) => literal(e, ExprKind::IntLit(v)),
             _ => e,
         }
     }
@@ -2170,17 +2174,21 @@ impl Sema {
         let typed = self.conditional_unfolded(c, a, b, loc)?;
         // With a constant condition only the chosen arm is kept, so the dead arms of
         // type-generic header macros never reach code generation.
-        match typed.kind {
-            ExprKind::Cond(c, a, b) => match c.kind {
-                ExprKind::IntLit(v) if c.ty.is_integer() => {
-                    self.not_an_lvalue(if v != 0 { *a } else { *b })
-                }
-                _ => Ok(Expr {
-                    kind: ExprKind::Cond(c, a, b),
-                    ..typed
-                }),
-            },
-            _ => Ok(typed),
+        let chosen = typed.unwrap_kind(|kind| match kind {
+            ExprKind::Cond(c, a, b)
+                if c.ty.is_integer() && matches!(c.kind, ExprKind::IntLit(_)) =>
+            {
+                Ok(if matches!(c.kind, ExprKind::IntLit(0)) {
+                    *b
+                } else {
+                    *a
+                })
+            }
+            other => Err(other),
+        });
+        match chosen {
+            Ok(arm) => self.not_an_lvalue(arm),
+            Err(typed) => Ok(typed),
         }
     }
 
@@ -2199,7 +2207,7 @@ impl Sema {
             // Both arms take the complex type `a + b` would have.
             let (aloc, bloc) = (a.loc, b.loc);
             let sum = self.complex_binary(BinOp::Add, a.clone(), b.clone(), "?:", loc)?;
-            let ty = sum.ty;
+            let ty = sum.ty.clone();
             (
                 self.to_complex(a, &ty, aloc)?,
                 self.to_complex(b, &ty, bloc)?,
@@ -2351,7 +2359,10 @@ impl Sema {
             // Type-check `lhs op rhs` on a stand-in for the old value to find the operand's form.
             let old = self.vec_zero(&ty, loc)?;
             let checked = self.vec_binary(op, old, rhs, "compound assignment", loc)?;
-            let ExprKind::Binary(_, _, rhs) = checked.kind else {
+            let Ok(rhs) = checked.unwrap_kind(|kind| match kind {
+                ExprKind::Binary(_, _, rhs) => Ok(rhs),
+                other => Err(other),
+            }) else {
                 return err(loc, "internal error: vector compound assignment");
             };
             if op.is_compare() {
@@ -2532,9 +2543,13 @@ impl Sema {
             return self.rvalue(e);
         }
         // `&*p` is just `p`.
-        if let ExprKind::Deref(inner) = e.kind {
-            return Ok(*inner);
-        }
+        let e = match e.unwrap_kind(|kind| match kind {
+            ExprKind::Deref(inner) => Ok(*inner),
+            other => Err(other),
+        }) {
+            Ok(pointer) => return Ok(pointer),
+            Err(e) => e,
+        };
         if matches!(e.kind, ExprKind::BitField { .. }) {
             return err(loc, "cannot take the address of a bit-field");
         }
@@ -2561,9 +2576,13 @@ impl Sema {
             );
         };
         // `*&x` is just `x`.
-        if let ExprKind::AddrOf(inner) = e.kind {
-            return Ok(*inner);
-        }
+        let e = match e.unwrap_kind(|kind| match kind {
+            ExprKind::AddrOf(inner) => Ok(*inner),
+            other => Err(other),
+        }) {
+            Ok(object) => return Ok(object),
+            Err(e) => e,
+        };
         self.mk(ExprKind::Deref(Box::new(e)), pointee, loc)
     }
 
@@ -2818,10 +2837,13 @@ impl Sema {
             )
         };
         // `(void)memcpy(...)`.
-        if matches!(&e.kind, ExprKind::Cast(inner) if e.ty.is_void() && is_copy(inner)) {
-            if let ExprKind::Cast(inner) = e.kind {
-                e = *inner;
-            }
+        if e.ty.is_void() {
+            e = match e.unwrap_kind(|kind| match kind {
+                ExprKind::Cast(inner) if is_copy(&inner) => Ok(*inner),
+                other => Err(other),
+            }) {
+                Ok(copy) | Err(copy) => copy,
+            };
         }
         if !is_copy(&e) {
             return e;
@@ -3206,7 +3228,7 @@ impl Sema {
         if ty.is_struct() && !self.tcx.is_complete(&ty) {
             return err(loc, "va_arg of an incomplete type");
         }
-        if !ty.is_scalar() && !ty.is_struct() && !ty.is_complex() && !self.tcx.is_half_vector(&ty) {
+        if !ty.is_scalar() && !ty.is_struct() && !ty.is_complex() && !ty.is_vector() {
             return err(
                 loc,
                 format!("invalid type '{}' for va_arg", self.tcx.display(&ty)),

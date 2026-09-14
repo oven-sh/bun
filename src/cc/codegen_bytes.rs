@@ -170,6 +170,9 @@ impl FnGen<'_, '_> {
     /// Whether `e` is computed from register variables and constants alone: storing to
     /// memory cannot change it, and it has no side effects.
     fn register_pure(&self, e: &Expr) -> bool {
+        if e.depth > TALLEST_ANALYSED {
+            return false;
+        }
         match &e.kind {
             ExprKind::IntLit(_) => true,
             ExprKind::Local(id) => {
@@ -201,11 +204,13 @@ impl FnGen<'_, '_> {
     }
 
     fn mentions_replaced(&self, e: &Expr) -> bool {
-        let mut found = matches!(
-            e.kind,
-            ExprKind::Local(id) if matches!(self.locals.get(id as usize), Some(LocalPlace::Scalars(_)))
-        );
-        e.for_each_child(|c| found |= self.mentions_replaced(c));
+        let mut found = false;
+        e.for_each_descendant(&mut |at| {
+            found |= matches!(
+                at.kind,
+                ExprKind::Local(id) if matches!(self.locals.get(id as usize), Some(LocalPlace::Scalars(_)))
+            );
+        });
         found
     }
 
@@ -412,14 +417,24 @@ impl FnGen<'_, '_> {
 
     /// Generates a list of statements, looking at adjacent expression statements together.
     pub(super) fn gen_stmts(&mut self, stmts: &[Stmt], loc: crate::token::Loc) -> Res<()> {
+        // The expressions of `a, b, (void)c`, in order. (Down the left operands by a loop: that is
+        // where a long one goes on.)
         fn flatten<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
-            match &e.kind {
-                ExprKind::Comma(a, b) => {
-                    flatten(a, out);
-                    flatten(b, out);
+            let mut after: Vec<&'e Expr> = Vec::new();
+            let mut at = e;
+            loop {
+                match &at.kind {
+                    ExprKind::Comma(a, b) => {
+                        after.push(b);
+                        at = a;
+                    }
+                    ExprKind::Cast(inner) if at.ty.is_void() => at = inner,
+                    _ => break,
                 }
-                ExprKind::Cast(inner) if e.ty.is_void() => flatten(inner, out),
-                _ => out.push(e),
+            }
+            out.push(at);
+            for later in after.into_iter().rev() {
+                flatten(later, out);
             }
         }
         let mut at = 0;

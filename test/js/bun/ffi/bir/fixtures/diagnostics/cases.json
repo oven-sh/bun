@@ -638,8 +638,8 @@
     "source": "#include <stdarg.h>\ntypedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(int n, ...) { va_list ap; va_start(ap, n); V v = va_arg(ap, V); va_end(ap); return v; }",
     "line": 2,
     "column": 152,
-    "message": "invalid type 'int __attribute__((vector_size(16)))' for va_arg",
-    "requires": "posix"
+    "message": "va_arg of a vector is not supported yet",
+    "requires": "x64-sysv"
   },
   {
     "about": "atomic diagnostics",

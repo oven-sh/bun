@@ -18,7 +18,8 @@ int main(void) {
   for (unsigned i = 0; i < sizeof values / sizeof *values; i++) {
     double x = values[i];
     float f = (float)x;
-    printf("%a: %016llx %016llx %016llx %016llx %016llx | %08x %08x %08x %08x %08x\n", x, bits(fabs(x)), bits(floor(x)), bits(ceil(x)), bits(trunc(x)), x < 0 ? 0 : bits(sqrt(x)),
+    // (Labelled by its bits: C libraries write a subnormal number two ways with %a.)
+    printf("%016llx: %016llx %016llx %016llx %016llx %016llx | %08x %08x %08x %08x %08x\n", bits(x), bits(fabs(x)), bits(floor(x)), bits(ceil(x)), bits(trunc(x)), x < 0 ? 0 : bits(sqrt(x)),
       bitsf(fabsf(f)), bitsf(floorf(f)), bitsf(ceilf(f)), bitsf(truncf(f)), f < 0 ? 0 : bitsf(sqrtf(f)));
   }
   volatile double negative = -1.0, four = 4.0, nan = NAN;

@@ -52,14 +52,19 @@ pub(crate) enum CompoundOp {
     PtrAdd { scale: u64, sub: bool },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct Expr {
     pub(crate) kind: ExprKind,
     pub(crate) ty: Type,
     pub(crate) loc: Loc,
     /// Evaluating this expression creates new basic blocks (`&&`, `||`, `?:`).
     pub(crate) has_control_flow: bool,
-    /// Height of the expression tree; bounded so recursive walks cannot overflow the stack.
+    /// How deep a walk of the expression recurses: one for every operand on the way down that is
+    /// not its parent's `spine_child`, which every walk goes on to by a loop. Bounded
+    /// (`MAX_EXPR_NESTING`), so that the walks that cannot fail have room.
+    pub(crate) nesting: u16,
+    /// Height of the expression tree, which a sum of ten thousand terms has ten thousand of: for
+    /// the analyses that would rather give up on a tall expression than walk it.
     pub(crate) depth: u32,
 }
 
@@ -305,7 +310,7 @@ pub(crate) enum AtomicExpr {
 }
 
 impl AtomicExpr {
-    pub(crate) fn for_each_child(&self, mut f: impl FnMut(&Expr)) {
+    pub(crate) fn for_each_child<'e>(&'e self, mut f: impl FnMut(&'e Expr)) {
         match self {
             AtomicExpr::Load { addr, .. } => f(addr),
             AtomicExpr::Store { addr, value, .. } | AtomicExpr::Rmw { addr, value, .. } => {
@@ -391,8 +396,52 @@ pub(crate) struct AsmBlock {
     pub(crate) clobbers: Vec<u8>,
 }
 
+/// The tallest expression the analyses that compare or classify whole expressions look into
+/// (`Expr::depth`); of a taller one they say what is always safe to say.
+pub(crate) const TALLEST_ANALYSED: u32 = 64;
+
 impl Expr {
-    pub(crate) fn for_each_child(&self, mut f: impl FnMut(&Expr)) {
+    /// The operand that a long chain goes on in: the left one of a binary operator, of `,`, `&&`
+    /// and `||` (`a + b + c` is `(a + b) + c`), the last one of `?:` (`p ? x : q ? y : z`). A chain
+    /// is as long as the program likes, so a walk goes down this operand by a loop and recurses
+    /// into the others only.
+    pub(crate) fn spine_child(&self) -> Option<&Expr> {
+        match &self.kind {
+            ExprKind::Binary(_, a, _)
+            | ExprKind::Comma(a, _)
+            | ExprKind::LogAnd(a, _)
+            | ExprKind::LogOr(a, _) => Some(a),
+            ExprKind::Cond(_, _, otherwise) => Some(otherwise),
+            _ => None,
+        }
+    }
+
+    /// `self` and the expressions down its spine, outermost first.
+    pub(crate) fn spine(&self) -> Vec<&Expr> {
+        let mut spine = vec![self];
+        let mut at = self;
+        while let Some(next) = at.spine_child() {
+            spine.push(next);
+            at = next;
+        }
+        spine
+    }
+
+    /// Calls `f` with `self` and with every expression under it (statement expressions' bodies
+    /// apart), in no particular order.
+    pub(crate) fn for_each_descendant<'e>(&'e self, f: &mut impl FnMut(&'e Expr)) {
+        for at in self.spine() {
+            f(at);
+            let spine = at.spine_child();
+            at.for_each_child(|child| {
+                if !spine.is_some_and(|next| std::ptr::eq(next, child)) {
+                    child.for_each_descendant(f);
+                }
+            });
+        }
+    }
+
+    pub(crate) fn for_each_child<'e>(&'e self, mut f: impl FnMut(&'e Expr)) {
         match &self.kind {
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
@@ -719,4 +768,94 @@ pub(crate) struct Program {
     /// Other external names of functions: `__attribute__((alias("target")))`.
     pub(crate) function_aliases: Vec<(Rc<str>, FuncId)>,
     pub(crate) asm_blocks: Vec<AsmBlock>,
+}
+
+impl ExprKind {
+    /// Takes the `spine_child` out, leaving a leaf behind (the other operands go with it).
+    fn take_spine_child(&mut self) -> Option<Box<Expr>> {
+        if !matches!(
+            self,
+            ExprKind::Binary(..)
+                | ExprKind::Comma(..)
+                | ExprKind::LogAnd(..)
+                | ExprKind::LogOr(..)
+                | ExprKind::Cond(..)
+        ) {
+            return None;
+        }
+        match std::mem::replace(self, ExprKind::IntLit(0)) {
+            ExprKind::Binary(_, next, _)
+            | ExprKind::Comma(next, _)
+            | ExprKind::LogAnd(next, _)
+            | ExprKind::LogOr(next, _)
+            | ExprKind::Cond(_, _, next) => Some(next),
+            _ => None,
+        }
+    }
+}
+
+/// A chain is dropped link by link, not by a recursion as deep as it is long.
+impl Drop for Expr {
+    fn drop(&mut self) {
+        let mut next = self.kind.take_spine_child();
+        while let Some(mut link) = next {
+            next = link.kind.take_spine_child();
+        }
+    }
+}
+
+/// And copied likewise.
+impl Clone for Expr {
+    fn clone(&self) -> Expr {
+        let mut above = Vec::new();
+        let mut at = self;
+        while let Some(next) = at.spine_child() {
+            above.push(at);
+            at = next;
+        }
+        let mut copy = at.with_kind(at.kind.clone());
+        for parent in above.into_iter().rev() {
+            let next = Box::new(copy);
+            copy = parent.with_kind(match &parent.kind {
+                ExprKind::Binary(op, _, b) => ExprKind::Binary(*op, next, b.clone()),
+                ExprKind::Comma(_, b) => ExprKind::Comma(next, b.clone()),
+                ExprKind::LogAnd(_, b) => ExprKind::LogAnd(next, b.clone()),
+                ExprKind::LogOr(_, b) => ExprKind::LogOr(next, b.clone()),
+                ExprKind::Cond(c, a, _) => ExprKind::Cond(c.clone(), a.clone(), next),
+                // (Nothing else has a `spine_child`.)
+                other => other.clone(),
+            });
+        }
+        copy
+    }
+}
+
+impl Expr {
+    /// What `pick` makes of the kind of expression this is, or the expression back if it makes
+    /// nothing of it. (An `Expr` is dropped by a function of its own, so its parts are not moved
+    /// out of it by a pattern.)
+    pub(crate) fn unwrap_kind<T>(
+        mut self,
+        pick: impl FnOnce(ExprKind) -> Result<T, ExprKind>,
+    ) -> Result<T, Expr> {
+        match pick(std::mem::replace(&mut self.kind, ExprKind::IntLit(0))) {
+            Ok(picked) => Ok(picked),
+            Err(kind) => {
+                self.kind = kind;
+                Err(self)
+            }
+        }
+    }
+
+    /// `self` with another `kind`.
+    fn with_kind(&self, kind: ExprKind) -> Expr {
+        Expr {
+            kind,
+            ty: self.ty.clone(),
+            loc: self.loc,
+            has_control_flow: self.has_control_flow,
+            nesting: self.nesting,
+            depth: self.depth,
+        }
+    }
 }

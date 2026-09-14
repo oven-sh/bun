@@ -524,6 +524,24 @@ pub(crate) fn lower_call(
         let align = tcx.align_of(arg).unwrap_or(1);
         let pass = if windows && !arm && arg.is_vector() && !tcx.is_half_vector(arg) {
             ArgPass::Reference
+        } else if apple_arm && anonymous && tcx.machine_ty(arg) == Ty::V128 {
+            // Through an ellipsis Apple passes a vector on the stack like everything else, at a
+            // multiple of 16 bytes: two of the 8-byte slots the backend hands out, after one that
+            // is left empty if need be.
+            let mut pieces = int_pieces(16);
+            let slot = apple_named_stack_bytes.div_ceil(8) + apple_anonymous_slots;
+            if slot % 2 == 1 {
+                pieces.insert(
+                    0,
+                    Piece {
+                        offset: 0,
+                        bytes: 0,
+                        ty: Ty::I64,
+                    },
+                );
+            }
+            apple_anonymous_slots += pieces.len() as u64;
+            ArgPass::Pieces(pieces)
         } else if !is_aggregate(arg) {
             let ty = tcx.machine_ty(arg);
             if apple_arm {

@@ -156,10 +156,25 @@ impl FnGen<'_, '_> {
                         high: High::Value(high),
                     });
                 }
-                ExprKind::Binary(op, a, b) => {
-                    let x = self.gen_wide(a)?;
-                    let y = self.gen_wide(b)?;
-                    return Ok(self.wide_binary(*op, x, y));
+                ExprKind::Binary(..) => {
+                    // A chain of them: down the left operands by a loop.
+                    let mut links: Vec<(BinOp, &Expr)> = Vec::new();
+                    let mut innermost = e;
+                    while let ExprKind::Binary(op, a, b) = &innermost.kind {
+                        if matches!(op, BinOp::Shl | BinOp::Shr)
+                            || !Self::is_wide_operation(innermost)
+                        {
+                            break;
+                        }
+                        links.push((*op, b));
+                        innermost = a;
+                    }
+                    let mut x = self.gen_wide(innermost)?;
+                    while let Some((op, right)) = links.pop() {
+                        let y = self.gen_wide(right)?;
+                        x = self.wide_binary(op, x, y);
+                    }
+                    return Ok(x);
                 }
                 ExprKind::Neg(a) => {
                     let zero = Wide {

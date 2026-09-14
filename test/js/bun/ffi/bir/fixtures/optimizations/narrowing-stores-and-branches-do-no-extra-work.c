@@ -1,8 +1,8 @@
 typedef unsigned short u16; typedef unsigned char u8;
-         void stores(u16 *p, u8 *q, int x, long y) { *p = (u16)x; *q = (u8)y; p[1] = x; (*q)++; q[1] += 3; p[2] -= x; }
+         void stores(u16 *p, u8 *q, int x, long long y) { *p = (u16)x; *q = (u8)y; p[1] = x; (*q)++; q[1] += 3; p[2] -= x; }
          int chain(u8 *q, int x) { int kept = (*q = x); return kept + (q[1] += 1) + q[2]++; }
          _Bool flags(_Bool *b, int x) { *b = x; return *b; }
-         int branches(int a, long b, double c) { if (a) return 1; if (!b) return 2; if (c) return 3; while (a & 4) a++; return a ? 5 : 6; }
+         int branches(int a, long long b, double c) { if (a) return 1; if (!b) return 2; if (c) return 3; while (a & 4) a++; return a ? 5 : 6; }
 
 int printf(const char *, ...);
 static void bun_test_fill(unsigned char *to, const unsigned char *from, int n) {

@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <tgmath.h>
 
-#define KIND(x) _Generic((x), float: "f", double: "d", long double: "l", int: "int", long: "long", long long: "llong", default: "?")
+#define KIND(x) _Generic((x), float: "f", double: "d", long double: "l", int: "int", long: "long", long long: "llong", default: "?") /* long: any width */
 
 int main(void) {
   float f = 2.25f; double d = 2.25; long double l = 2.25L; int i = 4; long long ll = 9;

@@ -9,7 +9,7 @@ struct record { char tag; int values[4]; struct { short a, b; } inner; };
 enum { ONE = 1, FROM_SIZEOF = sizeof(int), FROM_CAST = (int)3.9, FROM_CHAR = 'a' - 'A', FROM_CONDITIONAL = 1 ? 10 : 20,
        FROM_OFFSETOF = offsetof(struct record, inner), FROM_ALIGNOF = _Alignof(double), FROM_SHIFT = 1 << 10,
        FROM_LOGIC = (3 > 2) && !0 || 0, FROM_UNEVALUATED = 0 && (1 / 1), FROM_ENUM = ONE + FROM_SHIFT, NEGATIVE = -5 % 3,
-       FROM_GENERIC = _Generic(1L, long: 7, default: 8), FROM_NESTED_SIZEOF = sizeof(char[sizeof(short) + 1]) };
+       FROM_GENERIC = _Generic(1L, long: 7, default: 8), FROM_NESTED_SIZEOF = sizeof(char[sizeof(short) + 1]) }; /* long: any width */
 
 // Integer constant expressions: array sizes, bit-field widths, enumerators, case labels, _Static_assert, alignas.
 static int sized[FROM_SHIFT / 256 + 1];

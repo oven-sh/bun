@@ -1,5 +1,5 @@
-int memcmp(const void *, const void *, unsigned long);
-static void scribble(void *p, unsigned long n) { unsigned char *b = p; while (n--) *b++ ^= 0x5a; }
+int memcmp(const void *, const void *, __SIZE_TYPE__);
+static void scribble(void *p, unsigned long long n) { unsigned char *b = p; while (n--) *b++ ^= 0x5a; }
 struct T0 { int a; };
 static struct T0 id0(struct T0 x) { struct T0 copy = x; scribble(&x, sizeof x); return copy; }
 static struct T0 (*const indirect0)(struct T0) = id0;
@@ -36,16 +36,16 @@ struct T3 back = id3(original);
 struct T3 again = indirect3(id3(back));
 return memcmp(&back, &before, sizeof back) == 0 && memcmp(&original, &before, sizeof before) == 0 && memcmp(&again, &before, sizeof again) == 0;
 }
-struct T4 { long a, b; };
+struct T4 { long long a, b; };
 static struct T4 id4(struct T4 x) { struct T4 copy = x; scribble(&x, sizeof x); return copy; }
 static struct T4 (*const indirect4)(struct T4) = id4;
 int check4(void) {
-struct T4 original = { 1L << 40, -5 }, before = original;
+struct T4 original = { 1LL << 40, -5 }, before = original;
 struct T4 back = id4(original);
 struct T4 again = indirect4(id4(back));
 return memcmp(&back, &before, sizeof back) == 0 && memcmp(&original, &before, sizeof before) == 0 && memcmp(&again, &before, sizeof again) == 0;
 }
-struct T5 { long a, b, c; };
+struct T5 { long long a, b, c; };
 static struct T5 id5(struct T5 x) { struct T5 copy = x; scribble(&x, sizeof x); return copy; }
 static struct T5 (*const indirect5)(struct T5) = id5;
 int check5(void) {

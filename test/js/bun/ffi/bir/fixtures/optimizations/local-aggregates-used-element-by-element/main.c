@@ -1,5 +1,5 @@
 typedef unsigned int u32; typedef unsigned long long u64;
-         void *memcpy(void *, const void *, unsigned long); void *memset(void *, int, unsigned long);
+         void *memcpy(void *, const void *, __SIZE_TYPE__); void *memset(void *, int, __SIZE_TYPE__);
          typedef union { u32 u[16]; unsigned char c[64]; } block;
          #define ROTATE(v, n) (((v) << (n)) | ((v) >> (32 - (n))))
          #define QR(a, b, c, d) (x[a] += x[b], x[d] = ROTATE((x[d] ^ x[a]), 16), x[c] += x[d], x[b] = ROTATE((x[b] ^ x[c]), 12))

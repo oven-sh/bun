@@ -45,26 +45,31 @@ describe.skipIf(!supported || !meets("x64"))("the x86-64 encoder against GNU as"
     expect(exitCode).toBe(0);
   });
 
+  // One process imports a file per instruction and says what importing each came to: a file is refused for its first
+  // error, and a process per file is more than five hundred of them.
   test.concurrent("refuses what as refuses", async () => {
-    using dir = tempDir(
-      "bir-refused",
-      Object.fromEntries(
+    using dir = tempDir("bir-refused", {
+      ...Object.fromEntries(
         reference.refused.map((instruction, index) => [
           `refused-${index}.c`,
-          `void f(void) { __asm__ volatile("${inTemplate(instruction)}" ::: "memory"); }\nint main(void) { return 0; }\n`,
+          `void f(void) { __asm__ volatile("${inTemplate(instruction)}" ::: "memory"); }\n`,
         ]),
       ),
-    );
-    const accepted: string[] = [];
-    const next = reference.refused.entries();
-    await Promise.all(
-      Array.from({ length: 16 }, async () => {
-        for (const [index, instruction] of next) {
-          const { stderr, exitCode } = await run(String(dir), [`refused-${index}.c`]);
-          if (exitCode === 0 || !stderr.includes("error: inline assembly")) accepted.push(instruction);
+      "import-each.ts": `
+        for (let index = 0; index < ${reference.refused.length}; index++) {
+          try {
+            await import("./refused-" + index + ".c");
+            console.log("accepted");
+          } catch (error) {
+            console.log(String(error.message).split("\\n")[0]);
+          }
         }
-      }),
-    );
-    expect(accepted).toEqual([]);
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["import-each.ts"]);
+    expect(stderr).toBe("");
+    const said = lines(stdout).split("\n");
+    expect(reference.refused.filter((_, index) => !said[index]?.startsWith("inline assembly: "))).toEqual([]);
+    expect(exitCode).toBe(0);
   });
 });

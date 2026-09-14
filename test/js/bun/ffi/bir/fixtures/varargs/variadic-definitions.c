@@ -9,7 +9,7 @@
                for (; *kinds; kinds++) {
                    switch (*kinds) {
                    case 'i': total += va_arg(ap, int); break;
-                   case 'l': total += (double)va_arg(ap, long); break;
+                   case 'l': total += (double)va_arg(ap, long long); break;
                    case 'u': total += va_arg(ap, unsigned long long) >> 32; break;
                    case 'd': total += va_arg(ap, double); break;
                    case 's': total += (double)(va_arg(ap, const char *))[0]; break;
@@ -19,14 +19,14 @@
                va_end(ap);
                return total;
            }
-           double mixed_small(void) { int seven = 7; return mixed("idlsp", 1, 2.5, -3L, "A", &seven); }
+           double mixed_small(void) { int seven = 7; return mixed("idlsp", 1, 2.5, -3LL, "A", &seven); }
            double mixed_promotions(void) { char c = 5; short s = -6; float f = 0.25f; unsigned char u = 200; return mixed("iidiu", c, s, f, u, 0xabcdef0100000000ull); }
            double many_doubles(void) { return mixed("dddddddddddd", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0); }
            double interleaved(void) { return mixed("ididididididididididid", 1, 0.5, 2, 0.5, 3, 0.5, 4, 0.5, 5, 0.5, 6, 0.5, 7, 0.5, 8, 0.5, 9, 0.5, 10, 0.5, 11, 0.5); }
            static double after_floats(double a, float b, int n, ...) { va_list ap; va_start(ap, n); double s = a + b; while (n--) s += va_arg(ap, double); va_end(ap); return s; }
            double named_floats(void) { return after_floats(100.0, 10.0f, 8, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5); }
-           static long after_ints(long a, long b, long c, long d, long e, long f, long g, int n, ...) { va_list ap; va_start(ap, n); long s = a + b + c + d + e + f + g; while (n--) s += va_arg(ap, long); va_end(ap); return s; }
-           long named_on_stack(void) { return after_ints(1, 2, 3, 4, 5, 6, 7, 3, 100L, 200L, 300L); }
+           static long long after_ints(long long a, long long b, long long c, long long d, long long e, long long f, long long g, int n, ...) { va_list ap; va_start(ap, n); long long s = a + b + c + d + e + f + g; while (n--) s += va_arg(ap, long long); va_end(ap); return s; }
+           long long named_on_stack(void) { return after_ints(1, 2, 3, 4, 5, 6, 7, 3, 100LL, 200LL, 300LL); }
            static int twice(int n, ...) {
                va_list ap, copy; va_start(ap, n); va_copy(copy, ap);
                int a = 0, b = 0;

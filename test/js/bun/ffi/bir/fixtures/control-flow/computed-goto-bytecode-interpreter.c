@@ -1,7 +1,7 @@
 enum { PUSH, ADD, MUL, DUP, JNZ, DEC, SWAP, HALT };
-         long run(const signed char *code) {
+         long long run(const signed char *code) {
              static void *const dispatch[] = { &&op_push, &&op_add, &&op_mul, &&op_dup, &&op_jnz, &&op_dec, &&op_swap, &&op_halt };
-             long stack[16];
+             long long stack[16];
              int sp = 0;
              const signed char *pc = code;
          #define NEXT goto *dispatch[*pc++]
@@ -12,7 +12,7 @@ enum { PUSH, ADD, MUL, DUP, JNZ, DEC, SWAP, HALT };
          op_dup: stack[sp] = stack[sp - 1]; sp++; NEXT;
          op_jnz: { int offset = *pc++; if (stack[--sp]) pc += offset; } NEXT;
          op_dec: stack[sp - 1]--; NEXT;
-         op_swap: { long t = stack[sp - 1]; stack[sp - 1] = stack[sp - 2]; stack[sp - 2] = t; } NEXT;
+         op_swap: { long long t = stack[sp - 1]; stack[sp - 1] = stack[sp - 2]; stack[sp - 2] = t; } NEXT;
          op_halt: return stack[sp - 1];
          }
          /* Offsets from a base label: the table holds plain integers. */

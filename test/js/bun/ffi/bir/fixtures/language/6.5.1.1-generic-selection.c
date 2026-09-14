@@ -1,7 +1,7 @@
 // C11 6.5.1.1: _Generic picks by the type of an expression it does not evaluate.
 #include <stdio.h>
 
-#define NAME(x) _Generic((x), int: "int", long: "long", char: "char", char *: "char *", const char *: "const char *", \
+#define NAME(x) _Generic((x), int: "int", long: "long", char: "char", char *: "char *", const char *: "const char *", /* long: any width */ \
   int *: "int *", double: "double", float: "float", void *: "void *", int (*)(void): "function", default: "something else")
 #define ABS(x) _Generic((x), int: abs_int, double: abs_double, long long: abs_wide)(x)
 

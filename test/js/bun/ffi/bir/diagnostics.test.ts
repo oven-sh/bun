@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { sep } from "node:path";
 import cases from "./fixtures/diagnostics/cases.json";
-import { lines, meets, repeated, run, supported } from "./run-fixtures";
+import { lines, longsOfUnstatedWidth, meets, repeated, run, supported } from "./run-fixtures";
 
 // What the compiler refuses, and what it says, the way Bun says what is wrong with a TypeScript file: the line, a
 // caret, `error: message` and `at file:line:column`. The first error only. (Here without the directory.)
@@ -11,6 +11,16 @@ async function firstError(source: string) {
   const { stdout, stderr, exitCode } = await run(String(dir), ["test.c"]);
   return { stdout, stderr: lines(stderr).replaceAll(String(dir) + sep, ""), exitCode };
 }
+
+test("`long` alone is only in a case that says how wide it is, or that either width will do", () => {
+  const withLong = cases
+    .map((entry: (typeof cases)[number] & { requires?: string }, index) => ({
+      index,
+      lines: longsOfUnstatedWidth(entry.source, entry.requires),
+    }))
+    .filter(({ lines }) => lines.length);
+  expect(withLong).toEqual([]);
+});
 
 describe.skipIf(!supported)("diagnostics", () => {
   cases.forEach(

@@ -3,7 +3,7 @@ import { chmodSync, linkSync, mkdirSync, symlinkSync, truncateSync, writeFileSyn
 import { bunExe, isPosix, tempDir } from "harness";
 import { dirname, join, sep } from "path";
 import cases from "./fixtures/hostile/cases.json";
-import { cEnv, lines, meets, repeated, run, supported } from "./run-fixtures";
+import { cEnv, lines, longsOfUnstatedWidth, meets, repeated, run, supported } from "./run-fixtures";
 
 // Input no program looks like: nested, repeated or grown far past what a person writes, and files that are not
 // files. Each ends in what `cases.json` says: the program's output, or one diagnostic and status 1. Never a crash,
@@ -81,6 +81,18 @@ function check(entry: Case, root: string, result: { stdout: string; stderr: stri
 // A file nobody may read can be read by root.
 const isRoot = isPosix && process.getuid?.() === 0;
 const applies = (entry: Case) => meets(entry.requires) && !(entry.unreadable?.length && isRoot);
+
+test("`long` alone is only in a case that says how wide it is, or that either width will do", () => {
+  // (Of what a case is made of, each piece once: what is repeated says nothing new.)
+  const once = (parts: Part[]) =>
+    parts.map(part => (typeof part === "string" ? part : Array.isArray(part) ? part[0] : part.each)).join("\n");
+  const withLong = (cases as Case[]).filter(entry =>
+    [entry.source, ...Object.values(entry.files ?? {})].some(
+      parts => longsOfUnstatedWidth(once(parts), entry.requires).length,
+    ),
+  );
+  expect(withLong.map(entry => entry.name)).toEqual([]);
+});
 
 describe.skipIf(!supported)("hostile input", () => {
   for (const entry of cases as Case[]) {

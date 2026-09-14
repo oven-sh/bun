@@ -34,7 +34,7 @@ int main(void) {
 #if defined __BUN_CC__ || defined _MSC_VER
     CHECK(_rotl(x32, n) == rotated_left(x32, n, 32) && _rotr(x32, n) == rotated_right(x32, n, 32));
     CHECK(_rotl64(x64, n) == rotated_left(x64, n, 64) && _rotr64(x64, n) == rotated_right(x64, n, 64));
-    CHECK(_lrotl(x32, n) == rotated_left(x32, n, 8 * sizeof(long)) && _lrotr(x32, n) == rotated_right(x32, n, 8 * sizeof(long)));
+    CHECK(_lrotl(x32, n) == rotated_left(x32, n, 8 * sizeof(long)) && _lrotr(x32, n) == rotated_right(x32, n, 8 * sizeof(long))); /* long: any width */
 #endif
   }
 #ifdef __BUN_CC__

@@ -66,7 +66,7 @@ struct checked { A(warn_if_not_aligned(4)) int member; };
 static int cleaned;
 static void cleaner(int *p) { cleaned += *p; }
 static int with_cleanup(void) { A(cleanup(cleaner)) int local = 5; A(uninitialized) int junk; (void)junk; return local; }
-static A(mode(QI)) int one_byte; static A(mode(HI)) int two_bytes; static A(mode(SI)) long four_bytes; static A(mode(DI)) int eight_bytes; static A(__mode__(__word__)) int word; static A(mode(pointer)) int pointer_sized;
+static A(mode(QI)) int one_byte; static A(mode(HI)) int two_bytes; static A(mode(SI)) long four_bytes; static A(mode(DI)) int eight_bytes; static A(__mode__(__word__)) int word; static A(mode(pointer)) int pointer_sized; /* long: any width */
 
 // On types: layout.
 struct A(packed) packed { char c; int i; };

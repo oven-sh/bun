@@ -2,7 +2,7 @@ typedef unsigned char u8; typedef unsigned int u32; typedef unsigned long long u
          #define B(x, j) (((SHA_LONG64)(*(((const unsigned char *)(&x)) + j))) << ((7 - j) * 8))
          #define PULL64(x) (B(x, 0) | B(x, 1) | B(x, 2) | B(x, 3) | B(x, 4) | B(x, 5) | B(x, 6) | B(x, 7))
          u64 pull64(const u64 *w) { return PULL64(w[1]); }
-         #define HOST_c2l_fixed(c, l) (l = (((unsigned long)((c)[0])) << 24), l |= (((unsigned long)((c)[1])) << 16), l |= (((unsigned long)((c)[2])) << 8), l |= (((unsigned long)((c)[3]))))
+         #define HOST_c2l_fixed(c, l) (l = (((unsigned long)((c)[0])) << 24), l |= (((unsigned long)((c)[1])) << 16), l |= (((unsigned long)((c)[2])) << 8), l |= (((unsigned long)((c)[3])))) /* long: any width */
          u32 sqlite3Get4byte(const u8 *p) { return ((unsigned)p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]; }
          void sqlite3Put4byte(unsigned char *p, u32 v) { p[0] = (u8)(v >> 24); p[1] = (u8)(v >> 16); p[2] = (u8)(v >> 8); p[3] = (u8)v; }
          #define get2byte(x) ((x)[0] << 8 | (x)[1])

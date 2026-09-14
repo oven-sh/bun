@@ -1,5 +1,5 @@
-void qsort(void *base, unsigned long n, unsigned long size, int (*cmp)(const void *, const void *));
-         static void swap_bytes(void *a, void *b, unsigned long size) {
+void qsort(void *base, __SIZE_TYPE__ n, __SIZE_TYPE__ size, int (*cmp)(const void *, const void *));
+         static void swap_bytes(void *a, void *b, unsigned long long size) {
              char *p = a, *q = b;
              while (size--) { char t = *p; *p++ = *q; *q++ = t; }
          }

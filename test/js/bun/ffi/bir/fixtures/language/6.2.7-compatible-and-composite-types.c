@@ -34,7 +34,7 @@ int main(void) {
   printf("%d %d\n", (int)(sizeof table / sizeof table[0]), old_and_new(1, 2.5));
   int row[3] = {7, 8, 9};
   printf("%d %d\n", takes_array(&row, 2), adjusted(4, row, add_one));
-  printf("%d %d %d %d\n", SAME(struct first, also_first), SAME(struct first, struct second), SAME(int, signed int), SAME(int, long));
+  printf("%d %d %d %d\n", SAME(struct first, also_first), SAME(struct first, struct second), SAME(int, signed int), SAME(int, long)); /* long: any width */
   printf("%d %d %d\n", SAME(three_ints, three_ints), SAME(three_ints, four_ints), SAME(function_of_int, function_of_const_int));
   printf("%d %d %d\n", SAME(const int, int), SAME(pointer, const_pointer), SAME(unsigned char, char));
   // A pointer to an array of unknown size is compatible with a pointer to one of any size.

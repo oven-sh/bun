@@ -2,11 +2,11 @@
 
 int printf(const char *fmt, ...);
 int puts(const char *s);
-unsigned long strlen(const char *s);
+__SIZE_TYPE__ strlen(const char *s);
 int abs(int);
 
 int greet(const char *name) {
-    return printf("hello, %s! (%lu chars)\n", name, strlen(name));
+    return printf("hello, %s! (%zu chars)\n", name, strlen(name));
 }
 
 int print_table(int n) {

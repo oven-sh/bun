@@ -11,7 +11,7 @@ typedef const int cint;
                   + _Generic(pp, const int *: 1000, int *: 2000)
                   + _Generic(cp, int *: 10000, default: 0)
                   + _Generic(0 ? pc : pp, const int *: 100000, int *: 200000)
-                  + _Generic(0 ? (volatile long *)0 : (const long *)0, const volatile long *: 1000000, default: 0)
+                  + _Generic(0 ? (volatile long *)0 : (const long *)0, const volatile long *: 1000000, default: 0) /* long: any width */
                   + _Generic("text", char *: 10000000, const char *: 20000000)
                   + _Generic((const int)plain, int: 100000000, default: 0);
          }

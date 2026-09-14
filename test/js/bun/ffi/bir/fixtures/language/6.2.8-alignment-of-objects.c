@@ -15,7 +15,7 @@ static alignas(0) int zero_has_no_effect;
 
 int main(void) {
   // Alignments are powers of two, those of the character types are the weakest, max_align_t the strongest fundamental.
-  size_t all[] = {alignof(char), alignof(short), alignof(int), alignof(long), alignof(long long), alignof(float), alignof(double),
+  size_t all[] = {alignof(char), alignof(short), alignof(int), alignof(long), alignof(long long), alignof(float), alignof(double), /* long: any width */
                   alignof(long double), alignof(void *), alignof(max_align_t), alignof(struct mixed), alignof(struct over)};
   int powers = 1, ordered = 1;
   for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) powers &= all[i] != 0 && (all[i] & (all[i] - 1)) == 0;

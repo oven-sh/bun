@@ -7,14 +7,14 @@
 
 static void where(const char *name, const void *object, size_t size) {
   const unsigned char *bytes = object;
-  long first = -1, count = 0;
+  long long first = -1, count = 0;
   for (size_t bit = 0; bit < size * 8; bit++) {
     if (bytes[bit / 8] >> (bit % 8) & 1) {
-      if (first < 0) first = (long)bit;
+      if (first < 0) first = (long long)bit;
       count++;
     }
   }
-  printf("  %s: %ld bits at %ld\n", name, count, first);
+  printf("  %s: %lld bits at %lld\n", name, count, first);
 }
 #define STRUCT(T) printf(#T ": %zu bytes, aligned to %zu\n", sizeof(T), _Alignof(T))
 #define MEMBER(T, member)       \

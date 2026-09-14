@@ -15,7 +15,7 @@
              for (; i < n; i++) if (s[i] == c) return s + i;
              return 0;
          }
-         long find_index(const unsigned char *s, size_t n, unsigned char c) {
+         long long find_index(const unsigned char *s, size_t n, unsigned char c) {
              const unsigned char *p = find_byte(s, n, c);
              return p ? p - s : -1;
          }

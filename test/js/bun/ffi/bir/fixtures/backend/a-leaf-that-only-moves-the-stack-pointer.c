@@ -63,7 +63,7 @@ static NOINLINE int jumps_out(int n, int where) {
     first[n - 1] = 5;
     if (where == 0) { result = first[n - 1]; goto out; }
     for (int i = 0; i < 4; i++) {
-      long second[n + i];
+      long long second[n + i];
       second[n + i - 1] = 50 + i;
       if (where == i + 1) { result = (int)second[n + i - 1] + first[n - 1]; goto out; }
     }

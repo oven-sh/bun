@@ -12,11 +12,11 @@ int classes(double x) { return __builtin_isnan(x) + __builtin_isinf(x) * 2 + __b
          typedef unsigned long long u64;
          u64 divide(u64 high, u64 low, u64 by, u64 *remainder) { u64 q; __asm__("divq %[v]" : "=a"(q), "=d"(*remainder) : [v] "r"(by), "a"(low), "d"(high)); return q; }
          u64 multiply(u64 x, u64 y, u64 *high) { u64 low; __asm__("mulq %3" : "=a"(low), "=d"(*high) : "%0"(x), "rm"(y)); return low; }
-         _Atomic long counter; _Atomic(int *) slot;
-         long atomics(void) { long expected = 5; int value = 0;
+         _Atomic long long counter; _Atomic(int *) slot;
+         long long atomics(void) { long long expected = 5; int value = 0;
              __c11_atomic_init(&counter, 5); __c11_atomic_store(&counter, 5, __ATOMIC_RELEASE);
              int swapped = __c11_atomic_compare_exchange_strong(&counter, &expected, 9, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED);
-             long old = __c11_atomic_exchange(&counter, 20, __ATOMIC_ACQ_REL);
+             long long old = __c11_atomic_exchange(&counter, 20, __ATOMIC_ACQ_REL);
              old += __c11_atomic_fetch_or(&counter, 3, __ATOMIC_SEQ_CST);
              __c11_atomic_store(&slot, &value, __ATOMIC_SEQ_CST); __c11_atomic_thread_fence(__ATOMIC_SEQ_CST);
              return old * 100 + __c11_atomic_load(&counter, __ATOMIC_ACQUIRE) + swapped * 10000 + (__c11_atomic_load(&slot, __ATOMIC_RELAXED) == &value) * 100000; }

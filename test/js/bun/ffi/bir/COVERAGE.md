@@ -9,6 +9,12 @@ why); the tests taken from other
 compilers, and our own table-driven ones, also print every value they check, and the test compares them one by one
 with `<name>.values.json` (one `toEqual` over the whole list, so a failure names the expressions that differ).
 
+`long` has 32 bits on Windows and 64 on the other systems, so a fixture says `long long` (or `int`, or `__SIZE_TYPE__`)
+for what it means, and `long` alone only where its `.requires` says how wide that is (`lp64`, `sysv`, `x87`,
+`x64-sysv`, `glibc`, `posix`, `arm64`, `windows`), on a line that says `/* long: any width */`, or in one of the files
+about `long` itself that run-fixtures.ts lists with the reason. Every area's test, and the diagnostics and hostile
+cases, check that.
+
 Status: **covered** (a fixture exists and passes), **not yet** (planned, no fixture), **not supported** (the
 compiler refuses it on purpose; the diagnostic is asserted by a case in `fixtures/diagnostics/cases.json`).
 

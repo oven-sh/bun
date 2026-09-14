@@ -24,7 +24,7 @@ static _Atomic long long wide_counter;
 static atomic_uchar narrow_counter;
 static _Atomic unsigned maximum;
 static atomic_flag lock = ATOMIC_FLAG_INIT;
-static long guarded;                 // only touched with the flag held
+static long long guarded;                 // only touched with the flag held
 static int plain_builtin_counter;    // through the __atomic builtins
 static _Thread_local int mine = 100; // one per thread, each starting from the initializer
 static int seen_by[THREADS];
@@ -67,7 +67,7 @@ int main(void) {
 #endif
   }
   printf("%d %lld %d %d\n", counter, (long long)wide_counter, narrow_counter, plain_builtin_counter);
-  printf("%u %ld\n", maximum, guarded);
+  printf("%u %lld\n", maximum, guarded);
   printf("%d %d %d %d %d\n", seen_by[0], seen_by[1], seen_by[2], seen_by[3], mine);
   return 0;
 }

@@ -5,7 +5,7 @@
          int sub_i64(long long a, long long b) { long long r; int o = __builtin_sub_overflow(a, b, &r); return o * 2 + (r == (long long)((unsigned long long)a - (unsigned long long)b)); }
          int mul_size(size_t a, size_t b) { size_t r; int o = __builtin_mul_overflow(a, b, &r); return o * 2 + (r == a * b); }
          int mul_i64(long long a, long long b) { long long r; return __builtin_smulll_overflow(a, b, &r) * 2 + (r == (long long)((unsigned long long)a * (unsigned long long)b)); }
-         int mixed(int a, unsigned long b) { unsigned char r; int o = __builtin_add_overflow(a, b, &r); return o * 1000 + r; }
+         int mixed(int a, unsigned long long b) { unsigned char r; int o = __builtin_add_overflow(a, b, &r); return o * 1000 + r; }
          int mixed_sign(long long a, unsigned long long b) { long long r; return __builtin_sub_overflow(a, b, &r); }
          int into_wider(unsigned a, unsigned b) { unsigned long long r; return __builtin_mul_overflow(a, b, &r) * 2 + (r == (unsigned long long)a * b); }
          int calls; int next(void) { return ++calls; }
@@ -15,7 +15,7 @@
          int rot8(int x, int n) { return __builtin_rotateleft8(x, n) * 1000 + __builtin_rotateright16(x, n); }
          int bits(unsigned x, unsigned long long y) { return __builtin_ffs(x) * 10000 + __builtin_ffsll(y) * 100 + __builtin_parity(x) * 10 + __builtin_parityll(y); }
          static char table[64] __attribute__((aligned(16)));
-         long misc(char *p) {
+         long long misc(char *p) {
              __builtin_prefetch(p); __builtin_prefetch(p + 64, 0, 3);
              char *q = __builtin_assume_aligned(table, 16);
              __builtin_cpu_init();

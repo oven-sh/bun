@@ -74,6 +74,113 @@ export function meets(requirement: string | undefined): boolean {
   }
 }
 
+// `long` has 32 bits on Windows and 64 everywhere else this compiler runs, and a fixture that says `long` where it
+// means 64 bits is right on the machine it was written on and wrong on Windows: an operand that was to be wider than
+// the instruction is not, a structure that was to have 24 bytes has 12. So `long` alone is for fixtures that say how
+// wide it is (one of these requirements), and anywhere else it is `long long` or `int`, or the line says that either
+// width will do.
+const saysHowWideLongIs = ["lp64", "sysv", "x87", "x64-sysv", "glibc", "posix", "arm64", "windows"];
+const eitherWidthWillDo = /\/[*/].*\blong: any width\b/;
+
+// Files that are about `long`: all of their lines are as if marked.
+const aboutLong: Record<string, string> = Object.fromEntries(
+  (
+    [
+      [
+        "every arithmetic type is named, `long` among them, and what is printed is the same for either width",
+        [
+          "language/6.2.5-types.c",
+          "language/6.3.1-arithmetic-conversions.c",
+          "language/6.4.4-constants.c",
+          "language/6.5-operators-on-every-arithmetic-type.c",
+          "language/6.5.4-cast-operators.c",
+          "language/6.7.2-type-specifiers-in-every-order.c",
+        ],
+      ],
+      [
+        "the `l` forms of the builtins and the macros that describe `long`, held to `sizeof(long)`",
+        [
+          "basics/bit-manipulation-ops.c",
+          "extensions/builtins-by-name.c",
+          "extensions/builtins-fold-and-evaluate-their-operands.c",
+          "extensions/has-queries-and-predefined-macros.c",
+        ],
+      ],
+      [
+        "the C library's own `long`s (`strtol`, `ftell`, `ldiv`), of values that fit 32 bits",
+        [
+          "libc-interop/programs-using-system-headers-run.c",
+          "libc-interop/real-program-roundtrip.c",
+          "library/7.21-stdio.c",
+          "library/7.5-errno.c",
+          "structs-and-abi/div-and-ldiv-return-structs-by-value.c",
+        ],
+      ],
+      [
+        "`long` spelled across a line splice is what is tested",
+        ["preprocessor/splices-inside-comments-literals-and-numbers.c"],
+      ],
+    ] as [string, string[]][]
+  ).flatMap(([why, files]) => files.map(file => [file, why])),
+);
+
+/** `text` with its comments and the insides of its literals blanked: the same lines, and only what is code. */
+function codeOf(text: string) {
+  const blank = (from: number, to: number) => text.slice(from, to).replace(/[^\n]/g, " ");
+  const pieces: string[] = [];
+  for (let at = 0; at < text.length; ) {
+    let end = at + 1;
+    if (text.startsWith("//", at)) {
+      end = text.indexOf("\n", at);
+      if (end < 0) end = text.length;
+      pieces.push(blank(at, end));
+    } else if (text.startsWith("/*", at)) {
+      end = text.indexOf("*/", at + 2);
+      end = end < 0 ? text.length : end + 2;
+      pieces.push(blank(at, end));
+    } else if (text[at] === '"' || text[at] === "'") {
+      while (end < text.length && text[end] !== text[at] && text[end] !== "\n") end += text[end] === "\\" ? 2 : 1;
+      end = Math.min(end + 1, text.length);
+      pieces.push(blank(at, end));
+    } else {
+      end = text.slice(at).search(/["'/]/);
+      end = end < 0 ? text.length : Math.max(at + end, at + 1);
+      pieces.push(text.slice(at, end));
+    }
+    at = end;
+  }
+  return pieces.join("");
+}
+
+/**
+ * The lines of the C in `text` (from 1) that say `long` alone, not `long long` and not `long double`, without a
+ * comment that says `long: any width`. None, where `requirement` says how wide `long` is.
+ */
+export function longsOfUnstatedWidth(text: string, requirement?: string): number[] {
+  if (requirement?.split(/\s+/).some(tag => saysHowWideLongIs.includes(tag))) return [];
+  const written = text.split("\n");
+  return codeOf(text)
+    .split("\n")
+    .map((line, index) => ({ line: line.replace(/\blong\s+(long|double)\b|\bdouble\s+long\b/g, ""), index }))
+    .filter(({ line, index }) => /\blong\b/.test(line) && !eitherWidthWillDo.test(written[index]))
+    .map(({ index }) => index + 1);
+}
+
+/** `file:line` for each such line in the C files and headers of `dir`, whose requirement `requirementOf` gives. */
+function longsIn(area: string, dir: string, requirementOf: (file: string) => string | undefined) {
+  if (area.startsWith("borrowed/")) return []; // (Other people's programs, as they wrote them.)
+  return readdirSync(dir)
+    .filter(file => /\.[ch]$/.test(file))
+    .sort()
+    .flatMap(file =>
+      `${area}/${file}` in aboutLong
+        ? []
+        : longsOfUnstatedWidth(readFileSync(join(dir, file), "utf8"), requirementOf(file)).map(
+            line => `${area}/${file}:${line}`,
+          ),
+    );
+}
+
 // C_INCLUDE_PATH is searched before the system's directories, so a developer's own setting would put other headers
 // in front of the ones these tests were written against. Only on Windows, where there may be no system headers of the
 // machine's own to find, is it how the tests are told where a C library's are.
@@ -244,6 +351,9 @@ export function runFixtures(area: string) {
     test("every file belongs to a fixture", () => {
       expect(strays(dir, new Set(names.filter(isFixture)))).toEqual([]);
     });
+    test("`long` alone is only where a fixture says how wide it is, or that either width will do", () => {
+      expect(longsIn(area, dir, file => requirementIn(join(dir, file.replace(/\.[ch]$/, ".requires"))))).toEqual([]);
+    });
     let compiled = 0;
     for (const name of names) {
       const expectedPath = join(dir, `${name}.expected`);
@@ -340,6 +450,7 @@ export function runProjects(area: string) {
         expect(others).toEqual([]);
         expect(existsSync(join(dir, "main.c"))).toBe(true);
         expect(existsSync(join(dir, "expected")) || existsSync(join(dir, "values.json"))).toBe(true);
+        expect(longsIn(`${area}/${name}`, dir, () => requirementIn(join(dir, "requires")))).toEqual([]);
       });
       const units = () => [
         "main.c",

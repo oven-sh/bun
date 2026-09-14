@@ -23,19 +23,19 @@ typedef __SIZE_TYPE__ size_t;
          }
          static void fill(int n, int m[n][n], int v) { for (int i = 0; i < n; i++) for (int j = 0; j < n; j++) m[i][j] = v + i * n + j; }
          static int trace(int n, int m[static n][n]);
-         static long total(size_t rows, size_t cols, long grid[*][*]);
+         static long long total(size_t rows, size_t cols, long long grid[*][*]);
          int square(int n) {
              int m[n][n];
              fill(n, m, 1);
-             long grid[2][n];
+             long long grid[2][n];
              for (int j = 0; j < n; j++) { grid[0][j] = j; grid[1][j] = 100 * j; }
              return trace(n, m) + (int)total(2, n, grid) * 1000;
          }
          static int trace(int n, int m[n][n]) { int t = 0; for (int i = 0; i < n; i++) t += m[i][i]; return t + (int)sizeof(m[0]) * 0; }
-         static long total(size_t rows, size_t cols, long grid[rows][cols]) {
-             long t = 0;
+         static long long total(size_t rows, size_t cols, long long grid[rows][cols]) {
+             long long t = 0;
              for (size_t i = 0; i < rows; i++) for (size_t j = 0; j < cols; j++) t += grid[i][j];
-             return t + (long)(sizeof(*grid) / sizeof(long)) * 0;
+             return t + (long long)(sizeof(*grid) / sizeof(long long)) * 0;
          }
          int typedefs(int n) {
              typedef int row_t[n];

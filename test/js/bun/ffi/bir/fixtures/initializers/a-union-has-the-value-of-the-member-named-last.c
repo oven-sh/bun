@@ -6,7 +6,7 @@
 
 union U { int a[3]; int b; char c; };
 struct N { union U u; int t; };
-union P { int *p; long n; };
+union P { int *p; long long n; };
 union W { struct { int x, y; } first; struct { int x, y, z; } second; };
 struct anonymous { int before; union { int y; float f; int several[2]; }; int after; };
 
@@ -42,7 +42,7 @@ int main(void) {
   SHOW(after_the_first);
   SHOW(nested);
   SHOW(nested_the_same);
-  printf("%-28s %ld\n", "no_relocation_left", no_relocation_left.n);
+  printf("%-28s %lld\n", "no_relocation_left", no_relocation_left.n);
   printf("%-28s %d\n", "a_relocation_in_the_end", a_relocation_in_the_end.p == &x);
   SHOW(a_larger_second);
   SHOW(a_smaller_second);

@@ -1037,7 +1037,7 @@
   {
     "name": "a call with 20000 arguments",
     "source": [
-      "#include <stdarg.h>\n#include <stdio.h>\nstatic long sum(int n, ...) { va_list ap; va_start(ap, n); long total = 0; for (int i = 0; i < n; i++) total += va_arg(ap, int); va_end(ap); return total; }\nint main(void) { printf(\"%ld\\n\", sum(20000",
+      "#include <stdarg.h>\n#include <stdio.h>\nstatic long long sum(int n, ...) { va_list ap; va_start(ap, n); long long total = 0; for (int i = 0; i < n; i++) total += va_arg(ap, int); va_end(ap); return total; }\nint main(void) { printf(\"%lld\\n\", sum(20000",
       [", 3", 20000],
       ")); return 0; }\n"
     ],
@@ -1080,7 +1080,7 @@
         "count": 100000,
         "from": 0
       },
-      "};\nint main(void) { struct big *p = 0; printf(\"%d %d\\n\", (int)sizeof(struct big), (int)(long)&p->m99999); return 0; }\n"
+      "};\nint main(void) { struct big *p = 0; printf(\"%d %d\\n\", (int)sizeof(struct big), (int)(__INTPTR_TYPE__)&p->m99999); return 0; }\n"
     ],
     "output": "100000 99999\n",
     "status": 0

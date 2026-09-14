@@ -26,7 +26,7 @@ int main(void) {
   // Numeric conversions: bases, prefixes, where parsing stops, saturation.
   char *end;
   printf("%d %ld %lld %lu %llu\n", atoi("  -42abc"), atol("123456789"), atoll("-9000000000"), strtoul("4294967295", 0, 10), strtoull("18446744073709551615", 0, 10));
-  long hex = strtol("0x7fQ", &end, 0);
+  long hex = strtol("0x7fQ", &end, 0); /* long: any width */
   printf("%ld %c %ld %ld %ld\n", hex, *end, strtol("0777", 0, 0), strtol("-zz", 0, 36), strtol("101", 0, 2));
   printf("%d %d\n", strtol("99999999999999999999", 0, 10) == LONG_MAX, strtoll("-99999999999999999999", 0, 10) == LLONG_MIN);
   double parsed = strtod("  -1.5e2xyz", &end);

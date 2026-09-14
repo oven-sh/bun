@@ -5,7 +5,7 @@ long long mul(long long a, long long b) { return a * b; }
          unsigned long long fnv_offset(void) { return 14695981039346656037ULL; }
          int high(unsigned long long v) { return (int)(v >> 32); }
          long long neg(long long v) { return -v; }
-         int sizes(void) { return (sizeof(long) == sizeof(1L)) * 800 + sizeof(long long) * 10 + sizeof(void *) + sizeof(1LL) * 1000 + sizeof(1u) * 10000; }
+         int sizes(void) { return (sizeof(long) == sizeof(1L)) * 800 + sizeof(long long) * 10 + sizeof(void *) + sizeof(1LL) * 1000 + sizeof(1u) * 10000; } /* long: any width */
          long long literal_types(void) { return sizeof(2147483647) + sizeof(2147483648) * 10 + sizeof(0x7fffffff) * 100 + sizeof(0xffffffff) * 1000 + sizeof(0x100000000) * 10000; }
          int unsigned_literal(void) { return 0xffffffff > 0; }
          long long udiv64(unsigned long long a, unsigned long long b) { return a / b; }

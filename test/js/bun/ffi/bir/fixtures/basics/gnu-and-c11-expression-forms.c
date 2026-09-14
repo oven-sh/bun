@@ -12,11 +12,11 @@
          int elvis(int a, int b) { return a ?: b; }
          int elvis_once(void) { int n = 0; int v = (++n, n) ?: 100; const char *s = (const char *)0 ?: "x"; return v * 10 + n + s[0]; }
          int ranges(int c) { switch (c) { case 'a' ... 'z': return 1; case 'A' ... 'Z': return 2; case '0' ... '9': return 3; case 1000 ... 100000: return 4; case -5 ... -1: return 5; default: return 0; } }
-         #define kind(x) _Generic((x), int: 1, unsigned: 2, long: 3, double: 4, float: 5, char *: 6, const char *: 7, struct P: 8, default: 9)
+         #define kind(x) _Generic((x), int: 1, unsigned: 2, long: 3, double: 4, float: 5, char *: 6, const char *: 7, struct P: 8, default: 9) /* long: any width */
          int generic(void) { char buf[2]; struct P p; short s = 0; return kind(1) + kind(1u) * 10 + kind(1L) * 100 + kind(1.0) * 1000 + kind(1.0f) * 10000 + kind(buf) * 100000 + kind("s") * 1000000 + kind(p) * 10000000 + kind(s) * 100000000; }
          typedef __typeof__(sizeof 0) my_size; typeof(int *) ip; __typeof__(origin) other_origin;
          int typeofs(void) { int x = 3; typeof(x) y = x + 1; __typeof__(&x) px = &y; typeof(int[4]) arr; return *px + sizeof(my_size) + sizeof arr + sizeof other_origin; }
-         int builtins(unsigned v) { return __builtin_expect(v > 3, 0) + __builtin_constant_p(5) * 10 + __builtin_constant_p(v) * 100 + (int)__builtin_offsetof(struct P, y) * 1000 + __builtin_types_compatible_p(int, signed int) * 10000 + __builtin_types_compatible_p(int, long) * 100000; }
+         int builtins(unsigned v) { return __builtin_expect(v > 3, 0) + __builtin_constant_p(5) * 10 + __builtin_constant_p(v) * 100 + (int)__builtin_offsetof(struct P, y) * 1000 + __builtin_types_compatible_p(int, signed int) * 10000 + __builtin_types_compatible_p(int, long) * 100000; } /* long: any width */
          int offsets(void) { struct N { char c; struct { short s; int a[5]; } in; }; return offsetof(struct N, in.a[3]) + offsetof(struct N, in.s) * 100; }
          int bits(unsigned v, unsigned long long w) { return __builtin_popcount(v) + __builtin_clz(v) * 100 + __builtin_ctz(v) * 10000 + __builtin_popcountll(w) * 1000000 + __builtin_clzll(w) * 10000000; }
          int bits2(unsigned long long w) { return __builtin_ctzll(w) + __builtin_ctzl(w) * 100; }

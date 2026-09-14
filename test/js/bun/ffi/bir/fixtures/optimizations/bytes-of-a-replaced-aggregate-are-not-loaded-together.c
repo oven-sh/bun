@@ -1,4 +1,4 @@
-void *memcpy(void *, const void *, unsigned long);
+void *memcpy(void *, const void *, __SIZE_TYPE__);
          int format(const unsigned char *data) { unsigned char params[4]; memcpy(params, data, sizeof(params)); return params[2] | (params[1] << 8); }
 
 int printf(const char *, ...);

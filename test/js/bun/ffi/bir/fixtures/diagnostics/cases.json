@@ -422,7 +422,7 @@
   },
   {
     "about": "gnu and c11 expression forms",
-    "source": "int f(int x) { return _Generic(x, long: 1); }",
+    "source": "int f(int x) { return _Generic(x, long: 1); } /* long: any width */",
     "line": 1,
     "column": 23,
     "message": "_Generic selector of type 'int' is not compatible with any association"
@@ -2199,7 +2199,7 @@
   },
   {
     "about": "6.7p4: all declarations of one object or function in a scope have compatible types",
-    "source": "extern int x;\nextern long x;\nint main(void) { return 0; }",
+    "source": "extern int x;\nextern long x; /* long: any width */\nint main(void) { return 0; }",
     "line": 2,
     "column": 13,
     "message": "conflicting types for 'x'"
@@ -2283,7 +2283,7 @@
   },
   {
     "about": "6.7.2p2: the type specifiers form one of the listed multisets",
-    "source": "long short x;\nint main(void) { return 0; }",
+    "source": "long short x; /* long: any width */\nint main(void) { return 0; }",
     "line": 1,
     "column": 1,
     "message": "invalid combination of type specifiers"
@@ -2297,7 +2297,7 @@
   },
   {
     "about": "6.7.2p2: the type specifiers form one of the listed multisets",
-    "source": "long long long x;\nint main(void) { return 0; }",
+    "source": "long long long x; /* long: any width */\nint main(void) { return 0; }",
     "line": 1,
     "column": 1,
     "message": "invalid combination of type specifiers"
@@ -2780,7 +2780,7 @@
   },
   {
     "about": "6.7.8: a typedef name is redefined in a scope only to the same type",
-    "source": "typedef int t;\ntypedef long t;\nint main(void) { return 0; }",
+    "source": "typedef int t;\ntypedef long t; /* long: any width */\nint main(void) { return 0; }",
     "line": 2,
     "column": 14,
     "message": "redefinition of 't'"
@@ -4430,14 +4430,6 @@
   },
   {
     "about": "inline assembly: the registers have the size the instruction works on",
-    "source": "long f(long a) { __asm__(\"movl %0, %%ebx\" : : \"r\"(a) : \"ebx\"); return a; }",
-    "line": 1,
-    "column": 18,
-    "message": "inline assembly: 'movl' works on 32 bits and one of its registers has 64",
-    "requires": "x64"
-  },
-  {
-    "about": "inline assembly: the registers have the size the instruction works on",
     "source": "int f(int a) { __asm__(\"addq %1, %0\" : \"+r\"(a) : \"r\"(a)); return a; }",
     "line": 1,
     "column": 16,
@@ -4446,34 +4438,10 @@
   },
   {
     "about": "inline assembly: the registers have the size the instruction works on",
-    "source": "int f(int a) { long b = 1; __asm__(\"add %1, %0\" : \"+r\"(a) : \"r\"(b)); return a; }",
-    "line": 1,
-    "column": 28,
-    "message": "inline assembly: 'add' works on 64 bits and one of its registers has 32",
-    "requires": "x64"
-  },
-  {
-    "about": "inline assembly: the registers have the size the instruction works on",
     "source": "int f(short a) { int r; __asm__(\"movzbl %1, %0\" : \"=r\"(r) : \"r\"(a)); return r; }",
     "line": 1,
     "column": 25,
     "message": "inline assembly: 'movzbl' widens 1 bytes to 4, and its registers are of other sizes",
-    "requires": "x64"
-  },
-  {
-    "about": "inline assembly: the registers have the size the instruction works on",
-    "source": "long f(char a) { long r; __asm__(\"movslq %1, %0\" : \"=r\"(r) : \"q\"(a)); return r; }",
-    "line": 1,
-    "column": 26,
-    "message": "inline assembly: 'movslq' widens 4 bytes to 8, and its registers are of other sizes",
-    "requires": "x64"
-  },
-  {
-    "about": "inline assembly: the registers have the size the instruction works on",
-    "source": "int f(long a) { int r; __asm__(\"popcntl %1, %0\" : \"=r\"(r) : \"r\"(a)); return r; }",
-    "line": 1,
-    "column": 24,
-    "message": "inline assembly: 'popcntl' works on 32 bits and one of its registers has 64",
     "requires": "x64"
   },
   {
@@ -4493,26 +4461,58 @@
     "requires": "x64"
   },
   {
-    "about": "inline assembly: the registers have the size the instruction works on",
-    "source": "int f(long a) { int r = 0; __asm__(\"cmovzl %1, %0\" : \"+r\"(r) : \"r\"(a)); return r; }",
-    "line": 1,
-    "column": 28,
-    "message": "inline assembly: 'cmovzl' moves 4 bytes and one of its registers is of another size",
-    "requires": "x64"
-  },
-  {
-    "about": "inline assembly: the registers have the size the instruction works on",
-    "source": "long f(int a) { long r = 0; __asm__(\"crc32l %1, %0\" : \"+r\"(r) : \"r\"(a)); return r; }",
-    "line": 1,
-    "column": 29,
-    "message": "inline assembly: 'crc32l' adds 4 bytes, and its registers are of other sizes",
-    "requires": "x64"
-  },
-  {
     "about": "6.10.4: the line after #line 0 is line 0 and a place like any other",
     "source": "#line 0\nint x = ;\nint main(void) { return 0; }\n",
     "line": 2,
     "column": 9,
     "message": "expected an expression before ';'"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "long long f(long long a) { __asm__(\"movl %0, %%ebx\" : : \"r\"(a) : \"ebx\"); return a; }",
+    "line": 1,
+    "column": 28,
+    "message": "inline assembly: 'movl' works on 32 bits and one of its registers has 64",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "int f(int a) { long long b = 1; __asm__(\"add %1, %0\" : \"+r\"(a) : \"r\"(b)); return a; }",
+    "line": 1,
+    "column": 33,
+    "message": "inline assembly: 'add' works on 64 bits and one of its registers has 32",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "long long f(char a) { long long r; __asm__(\"movslq %1, %0\" : \"=r\"(r) : \"q\"(a)); return r; }",
+    "line": 1,
+    "column": 36,
+    "message": "inline assembly: 'movslq' widens 4 bytes to 8, and its registers are of other sizes",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "int f(long long a) { int r; __asm__(\"popcntl %1, %0\" : \"=r\"(r) : \"r\"(a)); return r; }",
+    "line": 1,
+    "column": 29,
+    "message": "inline assembly: 'popcntl' works on 32 bits and one of its registers has 64",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "int f(long long a) { int r = 0; __asm__(\"cmovzl %1, %0\" : \"+r\"(r) : \"r\"(a)); return r; }",
+    "line": 1,
+    "column": 33,
+    "message": "inline assembly: 'cmovzl' moves 4 bytes and one of its registers is of another size",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly: the registers have the size the instruction works on",
+    "source": "long long f(int a) { long long r = 0; __asm__(\"crc32l %1, %0\" : \"+r\"(r) : \"r\"(a)); return r; }",
+    "line": 1,
+    "column": 39,
+    "message": "inline assembly: 'crc32l' adds 4 bytes, and its registers are of other sizes",
+    "requires": "x64"
   }
 ]

@@ -1,4 +1,4 @@
-unsigned long hide(unsigned long acc) { __asm__("" : "+r"(acc)); return acc * 3; }
+unsigned long long hide(unsigned long long acc) { __asm__("" : "+r"(acc)); return acc * 3; }
          int copy(int *in) { int out; __asm__ volatile("" : "=r"(out) : "0"(*in)); return out + 1; }
          int memory(int *p) { __asm__ volatile("" : "+m"(*p) : : "memory"); return *p; }
          int loop(int n) { int total = 0; __asm__(".p2align 6"); __asm__ volatile(".balign 16\n.align 32");

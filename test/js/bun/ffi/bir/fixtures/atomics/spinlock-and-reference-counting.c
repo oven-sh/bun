@@ -1,5 +1,5 @@
 #include <stdatomic.h>
-         void *malloc(unsigned long);
+         void *malloc(__SIZE_TYPE__);
          void free(void *);
          typedef struct { atomic_flag held; int owner; } spinlock;
          static spinlock lock = { ATOMIC_FLAG_INIT, -1 };

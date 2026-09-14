@@ -28,7 +28,7 @@ int loop(int rounds, int n) {
          int retry(int n) {
              int attempts = 0;
          again:;
-             { long scratch[n]; scratch[n - 1] = attempts; attempts++; if (attempts < 500) goto again; return (int)scratch[n - 1]; }
+             { long long scratch[n]; scratch[n - 1] = attempts; attempts++; if (attempts < 500) goto again; return (int)scratch[n - 1]; }
          }
          int in_switch(int k, int n) {
              int r = 0;
@@ -37,7 +37,7 @@ int loop(int rounds, int n) {
              }
              return r;
          }
-         extern void *alloca(unsigned long);
+         extern void *alloca(__SIZE_TYPE__);
          int alloca_inside(int n) {
              int s = 0;
              for (int i = 0; i < 2000; i++) { char tag[n]; char *p = alloca(256); p[0] = tag[0] = (char)i; s += p[0] == tag[0]; }

@@ -12,7 +12,7 @@ extern _Thread_local int thread_declared;
 _Thread_local int thread_declared = 4;
 // A storage-class specifier may come anywhere among the declaration specifiers.
 int static odd_order = 5;
-const static int long unsigned very_odd_order = 6;
+const static int long unsigned very_odd_order = 6; /* long: any width */
 int typedef late_typedef;
 
 static int counter(void) {

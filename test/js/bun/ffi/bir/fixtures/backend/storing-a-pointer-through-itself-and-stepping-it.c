@@ -33,7 +33,7 @@ static int checks, wrong;
 NODE(8) NODE(16) NODE(120) NODE(256) NODE(24) NODE(4096)
 
 // Steps that are no multiple of the element size, through byte arithmetic.
-static NOINLINE char *step_by(char *p, long step, int count) {
+static NOINLINE char *step_by(char *p, long long step, int count) {
   for (int i = 0; i < count; i++) {
     char *self = p;
     memcpy(p, &self, sizeof self);        // *(char **)p = p
@@ -41,7 +41,7 @@ static NOINLINE char *step_by(char *p, long step, int count) {
   }
   return p;
 }
-static NOINLINE int stepped(long step) {
+static NOINLINE int stepped(long long step) {
   static char buffer[8192];
   memset(buffer, 0, sizeof buffer);
   char *start = step > 0 ? buffer : buffer + sizeof buffer - 64;
@@ -75,7 +75,7 @@ static NOINLINE uintptr_t chase(uintptr_t *p, int count) {
   return total;
 }
 // A list threaded through an array: every node's link is the next node, stored while stepping.
-struct link { struct link *next; long payload; };
+struct link { struct link *next; long long payload; };
 static NOINLINE struct link *thread(struct link *p, int count) {
   for (int i = 0; i < count; i++) { p->next = p + 1; p->payload = i; p++; }
   p[-1].next = 0;

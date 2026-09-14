@@ -11,20 +11,20 @@ static _Thread_local unsigned char for_each_thread[N] = { [0] = 7, [N / 3] = 8, 
 // And one that is nothing but zeros, after them all.
 static unsigned char zeros[N];
 
-static unsigned long sum(const volatile unsigned char *bytes) {
-  unsigned long total = 0;
-  for (unsigned long i = 0; i < N; i++) total += bytes[i] * (i % 251 + 1);
+static unsigned long long sum(const volatile unsigned char *bytes) {
+  unsigned long long total = 0;
+  for (unsigned long long i = 0; i < N; i++) total += bytes[i] * (i % 251 + 1);
   return total;
 }
 
 int main(void) {
-  volatile unsigned long middle = N / 2;
-  printf("%d %d %d %lu\n", constants[0], constants[middle], constants[N - 1], sum(constants));
-  printf("%d %d %d %lu\n", written[0], written[middle + 1], written[N - 1], sum(written));
-  printf("%d %d %d %lu\n", for_each_thread[0], for_each_thread[N / 3], for_each_thread[N - 1], sum(for_each_thread));
+  volatile unsigned long long middle = N / 2;
+  printf("%d %d %d %llu\n", constants[0], constants[middle], constants[N - 1], sum(constants));
+  printf("%d %d %d %llu\n", written[0], written[middle + 1], written[N - 1], sum(written));
+  printf("%d %d %d %llu\n", for_each_thread[0], for_each_thread[N / 3], for_each_thread[N - 1], sum(for_each_thread));
   written[middle] = 10;
   for_each_thread[middle] = 11;
   zeros[N - 1] = 12;
-  printf("%lu %lu %lu\n", sum(written), sum(for_each_thread), sum(zeros));
+  printf("%llu %llu %llu\n", sum(written), sum(for_each_thread), sum(zeros));
   return 0;
 }

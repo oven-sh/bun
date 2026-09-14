@@ -3,14 +3,14 @@
 // ordinary function, called as it is declared. (GCC and Clang warn, and do the same.)
 #include <stdio.h>
 
-static long memcpy(double d, long b, long n) { return (long)(d * 2) + b + n; }
-static long memset(int d, int b, long n) { return d * 100 + b * 10 + n; }
+static long long memcpy(double d, long long b, long long n) { return (long long)(d * 2) + b + n; }
+static long long memset(int d, int b, long long n) { return d * 100 + b * 10 + n; }
 static double memmove(double a, double b) { return a - b; }
 static int memcmp(int only) { return only + 1; }
 static int strlen(int a, int b) { return a * b; }
 
 int main(int argc, char **argv) {
   (void)argv;
-  printf("%ld %ld %g %d %d\n", memcpy(1.5, argc, 8), memset(7, argc, 8), memmove(3.5, argc), memcmp(argc), strlen(argc + 2, 5));
+  printf("%lld %lld %g %d %d\n", memcpy(1.5, argc, 8), memset(7, argc, 8), memmove(3.5, argc), memcmp(argc), strlen(argc + 2, 5));
   return 0;
 }

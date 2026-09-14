@@ -1,5 +1,5 @@
-long diff(void) { int a[10]; int *p = &a[2], *q = &a[9]; return q - p; }
-         long diff_struct(void) { struct S { int a; double b; } s[5]; return &s[4] - &s[1]; }
+long long diff(void) { int a[10]; int *p = &a[2], *q = &a[9]; return q - p; }
+         long long diff_struct(void) { struct S { int a; double b; } s[5]; return &s[4] - &s[1]; }
          int walk(void) {
              int a[5] = { 10, 20, 30, 40, 50 };
              int *p = a;

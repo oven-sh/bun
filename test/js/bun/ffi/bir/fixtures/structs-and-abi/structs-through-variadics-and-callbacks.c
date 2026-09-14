@@ -1,8 +1,8 @@
 #include <stdarg.h>
-         void qsort(void *base, unsigned long n, unsigned long size, int (*cmp)(const void *, const void *));
+         void qsort(void *base, __SIZE_TYPE__ n, __SIZE_TYPE__ size, int (*cmp)(const void *, const void *));
          struct pair { double a, b; };
-         struct ipair { int a; long b; };
-         struct big { long v[4]; };
+         struct ipair { int a; long long b; };
+         struct big { long long v[4]; };
          struct small { char c[3]; };
          static double sum_pairs(int count, ...) { va_list ap; va_start(ap, count); double total = 0; for (int i = 0; i < count; i++) { struct pair p = va_arg(ap, struct pair); total += p.a + p.b; } va_end(ap); return total; }
          double pairs(void) {
@@ -29,7 +29,7 @@
          double split_case(void) { struct pair p = { 1, 2 }; return odd_registers(4, 0.5, p, p, p, p); }
          struct item { int key; char name[12]; };
          static int by_key(const void *a, const void *b) { struct item x = *(const struct item *)a, y = *(const struct item *)b; return x.key - y.key; }
-         static struct item smallest(struct item *items, int n) { qsort(items, (unsigned long)n, sizeof *items, by_key); return items[0]; }
+         static struct item smallest(struct item *items, int n) { qsort(items, (unsigned long long)n, sizeof *items, by_key); return items[0]; }
          int sorted(void) { struct item items[4] = { { 30, "c" }, { 10, "a" }, { 40, "d" }, { 20, "b" } }; struct item first = smallest(items, 4); return first.key + first.name[0] + items[3].key * 1000; }
 
 int printf(const char *, ...);

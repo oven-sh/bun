@@ -16,7 +16,7 @@ static int checks, wrong;
   static NOINLINE struct name make_##name(int seed) { struct name s; unsigned char *p = (unsigned char *)&s; memset(&s, 0, sizeof s); for (unsigned i = 0; i < sizeof s; i++) p[i] = (unsigned char)(seed * 31 + i * 7 + sizeof s); fix_##name(&s, seed); return s; } \
   static NOINLINE int same_##name(struct name a, struct name b) { return fields_##name(&a, &b); } \
   static NOINLINE struct name first_##name(struct name s) { return s; } \
-  static NOINLINE struct name after_the_registers_##name(long a, double x, long b, double y, long c, double z, long d, double w, long e, long f, double v, double u, double t, double r, struct name s, int tail) { (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)x; (void)y; (void)z; (void)w; (void)v; (void)u; (void)t; (void)r; CHECK(tail == 77); return s; } \
+  static NOINLINE struct name after_the_registers_##name(long long a, double x, long long b, double y, long long c, double z, long long d, double w, long long e, long long f, double v, double u, double t, double r, struct name s, int tail) { (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)x; (void)y; (void)z; (void)w; (void)v; (void)u; (void)t; (void)r; CHECK(tail == 77); return s; } \
   static NOINLINE struct name between_##name(char lead, struct name s, double middle, struct name t, int which) { CHECK(lead == 'k' && middle == 2.5); return which ? t : s; } \
   static NOINLINE struct name variadic_##name(int count, ...) { va_list ap; va_start(ap, count); struct name last; memset(&last, 0, sizeof last); for (int i = 0; i < count; i++) { CHECK(va_arg(ap, int) == i); last = va_arg(ap, struct name); CHECK(va_arg(ap, double) == i + 0.5); } va_end(ap); return last; } \
   static void test_##name(void) { \

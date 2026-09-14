@@ -184,6 +184,58 @@ mod windows_runtime {
         Bun__CModule__at_quick_exit
     );
 
+    pub(super) const IOFBF: core::ffi::c_int = 0x0000;
+    pub(super) const IONBF: core::ffi::c_int = 0x0004;
+
+    /// `setvbuf(stdout, NULL, mode, size)` in the C runtime compiled C uses.
+    pub(super) fn buffer_stdout(mode: core::ffi::c_int, size: usize) {
+        let (Some(stream_of), Some(setvbuf)) = (
+            super::windows_libraries(bun_core::zstr!("__acrt_iob_func")),
+            super::windows_libraries(bun_core::zstr!("setvbuf")),
+        ) else {
+            return;
+        };
+        // SAFETY: `FILE *__acrt_iob_func(unsigned)` and `int setvbuf(FILE *, char *, int, size_t)`
+        // of ucrtbase.dll; stream 1 is `stdout`, and a null buffer has the runtime allocate one.
+        unsafe {
+            let stream_of: unsafe extern "C" fn(core::ffi::c_uint) -> *mut c_void =
+                core::mem::transmute(stream_of);
+            let setvbuf: unsafe extern "C" fn(
+                *mut c_void,
+                *mut core::ffi::c_char,
+                core::ffi::c_int,
+                usize,
+            ) -> core::ffi::c_int = core::mem::transmute(setvbuf);
+            setvbuf(stream_of(1), core::ptr::null_mut(), mode, size);
+        }
+    }
+
+    /// Puts `handler` on the list that runtime's `exit` runs.
+    pub(super) fn at_exit_of_the_runtime(handler: extern "C" fn()) {
+        let Some(register) = super::windows_libraries(bun_core::zstr!("_crt_atexit")) else {
+            return;
+        };
+        // SAFETY: `int _crt_atexit(void (*)(void))` of ucrtbase.dll.
+        unsafe {
+            let register: unsafe extern "C" fn(extern "C" fn()) -> core::ffi::c_int =
+                core::mem::transmute(register);
+            register(handler);
+        }
+    }
+
+    /// Whether descriptor 1 of that runtime is a console.
+    pub(super) fn stdout_is_a_console() -> bool {
+        let Some(isatty) = super::windows_libraries(bun_core::zstr!("_isatty")) else {
+            return false;
+        };
+        // SAFETY: `int _isatty(int)` of ucrtbase.dll.
+        unsafe {
+            let isatty: unsafe extern "C" fn(core::ffi::c_int) -> core::ffi::c_int =
+                core::mem::transmute(isatty);
+            isatty(1) != 0
+        }
+    }
+
     pub(super) fn find(name: &[u8]) -> Option<*mut c_void> {
         Some(match name {
             b"__udivti3" => udivti3 as *mut c_void,
@@ -343,6 +395,13 @@ mod at_exit {
                     Bun__CModule__runExitHandlers();
                 }
                 bun_core::Global::add_exit_callback(run);
+                // C that calls `exit` itself calls that runtime's, which ends the process without
+                // Bun's exit callbacks: the hook is on its list as well.
+                super::windows_runtime::at_exit_of_the_runtime(at_process_exit);
+                // That runtime's `stdout` is its own too, and gets what Bun gives its own when it
+                // starts: no buffer, so that what C prints and what JavaScript prints come out
+                // in the order they were printed.
+                super::windows_runtime::buffer_stdout(super::windows_runtime::IONBF, 0);
             }
         });
     }
@@ -727,10 +786,20 @@ fn environment() -> *const *const c_char {
 
 /// Bun turns buffering off for C's `stdout` when it starts, because it writes to the descriptor
 /// itself. A C program that is the entry point has `stdout` to itself and gets what it would have
-/// in an executable of its own: a line at a time to a terminal, a block at a time otherwise. What is
-/// buffered when the program ends is written by the exit hook.
+/// in an executable of its own: a line at a time to a terminal (as it is printed, on Windows), a block
+/// at a time otherwise. What is buffered when the program ends is written by the exit hook.
 fn give_stdout_a_buffer() {
-    // Where C programs run (`bun_cc::Target::host`); Windows' C runtime buffers its own `stdout`.
+    // The console is written as it is printed to; anything else a block at a time.
+    #[cfg(windows)]
+    {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            if !windows_runtime::stdout_is_a_console() {
+                windows_runtime::buffer_stdout(windows_runtime::IOFBF, 8192);
+            }
+        });
+    }
+    // The other places C programs run (`bun_cc::Target::host`).
     #[cfg(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"))]
     {
         unsafe extern "C" {

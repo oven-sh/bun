@@ -1036,7 +1036,9 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
     expect(stderr).toContain("a C program's main() was running");
     expect(stderr).toContain("c_module");
     expect(stderr).not.toContain("This indicates a bug in Bun, not your code");
-    expect(exitCode === 0 || signalCode === null).toBe(false);
+    // A signal where there are signals; on Windows the status the system gives a faulting process.
+    if (isPosix) expect(signalCode).not.toBeNull();
+    else expect(exitCode).not.toBe(0);
   });
 });
 
@@ -1431,11 +1433,12 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     using dir = tempDir("c-compile-main", {
       "hello.c": /* c */ `
         #include <stdio.h>
-        #include <unistd.h>
         int main(int argc, char **argv) {
           printf("%d:", argc - 1);
           for (int i = 1; i < argc; i++) printf(" [%s]", argv[i]);
-          printf(" %s\\n", access(argv[0], 0) == 0 ? "argv[0] is a file" : argv[0]);
+          // The executable itself can be opened by the name it was given.
+          FILE *self = fopen(argv[0], "rb");
+          printf(" %s\\n", self ? "argv[0] is a file" : argv[0]);
           return 7;
         }
       `,

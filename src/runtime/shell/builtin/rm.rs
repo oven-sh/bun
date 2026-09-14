@@ -134,14 +134,15 @@ impl Rm {
                         panic!("Invalid");
                     }
                     let argc = Builtin::of(interp, cmd).args_slice().len();
-                    // No args / only flags → print usage and exit 1.
-                    if (idx as usize) >= argc {
-                        let usage = Kind::Rm.usage_string();
-                        return Self::write_err_literal(interp, cmd, idx, usage);
-                    }
-
-                    let arg = Builtin::of(interp, cmd).arg_bytes(idx as usize).to_vec();
-                    match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, &arg) {
+                    // Out of arguments: the operand list starts here, empty.
+                    let (arg, parsed) = if (idx as usize) < argc {
+                        let arg = Builtin::of(interp, cmd).arg_bytes(idx as usize).to_vec();
+                        let parsed = Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, &arg);
+                        (arg, parsed)
+                    } else {
+                        (Vec::new(), RmParseFlag::Done)
+                    };
+                    match parsed {
                         RmParseFlag::ContinueParsing => {
                             if let RmState::ParseOpts { idx: i, .. } =
                                 &mut Self::state_mut(interp, cmd).state
@@ -151,6 +152,16 @@ impl Rm {
                             continue;
                         }
                         RmParseFlag::Done => {
+                            let args_start = idx as usize;
+                            // POSIX: with `-f`, no operands is not an error.
+                            if args_start >= argc {
+                                if Self::state_mut(interp, cmd).opts.force {
+                                    return Builtin::done(interp, cmd, 0);
+                                }
+                                let usage = Kind::Rm.usage_string();
+                                return Self::write_err_literal(interp, cmd, idx, usage);
+                            }
+
                             // `-r` implies `-d`.
                             {
                                 let opts = &mut Self::state_mut(interp, cmd).opts;
@@ -165,8 +176,6 @@ impl Rm {
                                 let buf: &[u8] = b"rm: \"-i\" is not supported yet";
                                 return Self::write_err_literal(interp, cmd, idx, buf);
                             }
-
-                            let args_start = idx as usize;
 
                             // Check that none of the paths will delete the root.
                             {

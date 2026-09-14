@@ -607,6 +607,29 @@ impl IntermediateOutput {
         dst
     }
 
+    /// `path` copied into `buf` with Windows separators turned into `/`.
+    fn to_posix_separators<'b>(buf: &'b mut [u8], path: &[u8]) -> &'b [u8] {
+        let dst = &mut buf[..path.len()];
+        dst.copy_from_slice(path);
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
+        dst
+    }
+
+    /// In a CSS chunk every placeholder is printed inside a double-quoted string.
+    fn css_string_escaped_len(path: &[u8]) -> usize {
+        let mut counter = bun_io::DiscardingWriter::new();
+        let _ = bun_css::css_parser::serializer::serialize_string_contents(path, &mut counter);
+        counter.count
+    }
+
+    /// Caller must ensure `dest` has room for `css_string_escaped_len(path)` bytes.
+    fn memcpy_css_string_escaped(dest: &mut [u8], path: &[u8]) -> usize {
+        let mut stream = bun_io::FixedBufferStream::new_mut(dest);
+        bun_css::css_parser::serializer::serialize_string_contents(path, &mut stream)
+            .expect("unreachable: sized by css_string_escaped_len");
+        stream.pos
+    }
+
     pub(crate) fn get_size(&self) -> usize {
         match self {
             IntermediateOutput::Pieces(pieces) => {
@@ -737,6 +760,7 @@ impl IntermediateOutput {
             graph.input_files.items_unique_key_for_additional_file();
         let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
         let mut file_path_buf = bun_paths::path_buffer_pool::get();
+        let escape_for_css = chunk.content.is_css();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -852,6 +876,8 @@ impl IntermediateOutput {
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
+                            let file_path =
+                                Self::to_posix_separators(&mut file_path_buf[..], file_path);
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {
@@ -865,7 +891,13 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
-                            count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
+                            for part in cheap_normalizer {
+                                count += if escape_for_css {
+                                    Self::css_string_escaped_len(part)
+                                } else {
+                                    part.len()
+                                };
+                            }
                         }
                         QueryKind::None => {}
                     }
@@ -1038,18 +1070,8 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // normalize windows paths to '/'
-                            // The source slices are reachable only
-                            // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
-                            // shared-provenance pointer is UB regardless of whether the write
-                            // happens. Copy into a pooled scratch buffer and normalise that.
-                            let file_path: &[u8] = {
-                                let n = file_path.len();
-                                let dst = &mut file_path_buf[..n];
-                                dst.copy_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
-                                dst
-                            };
+                            let file_path =
+                                Self::to_posix_separators(&mut file_path_buf[..], file_path);
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {
@@ -1064,22 +1086,20 @@ impl IntermediateOutput {
                                 },
                             );
 
-                            if !cheap_normalizer[0].is_empty() {
-                                remain[..cheap_normalizer[0].len()]
-                                    .copy_from_slice(cheap_normalizer[0]);
-                                remain = &mut remain[cheap_normalizer[0].len()..];
-                                if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[0]);
+                            for part in cheap_normalizer {
+                                if part.is_empty() {
+                                    continue;
                                 }
-                            }
-
-                            if !cheap_normalizer[1].is_empty() {
-                                remain[..cheap_normalizer[1].len()]
-                                    .copy_from_slice(cheap_normalizer[1]);
-                                remain = &mut remain[cheap_normalizer[1].len()..];
+                                let written = if escape_for_css {
+                                    Self::memcpy_css_string_escaped(remain, part)
+                                } else {
+                                    remain[..part.len()].copy_from_slice(part);
+                                    part.len()
+                                };
                                 if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[1]);
+                                    shift.after.advance(&remain[..written]);
                                 }
+                                remain = &mut remain[written..];
                             }
 
                             if ENABLE_SOURCE_MAP_SHIFTS {

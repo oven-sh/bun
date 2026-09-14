@@ -2863,10 +2863,7 @@ impl DevServer {
             return resp.corked(move || on_outdated_js_corked(resp));
         }
 
-        // A bundle in flight frees the code of each file it fails, and unlinks
-        // the imports of each file it finds deleted, before `finalize_bundle`
-        // settles the route's state and generation. A script generated in
-        // between lacks those modules.
+        // The bundle in flight has already freed the code of each file it failed: wait for it.
         if route_bundle.client_bundle.is_none()
             && let Some(current_bundle) = &mut self.current_bundle
         {
@@ -3131,8 +3128,7 @@ pub struct ResponseAndMethod {
     pub method: Method,
 }
 
-/// A request for a route's client script that arrived while a bundle was in
-/// flight. It is not tied to that bundle's routes, so it is not a `DeferredRequest`.
+/// A client script request that waits for the bundle in flight, whichever routes that bundle has.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct DeferredScriptRequest {
     ref_count: ::core::cell::Cell<u32>,

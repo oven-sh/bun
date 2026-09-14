@@ -23,26 +23,28 @@ Using your system's package manager, install Bun's dependencies:
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rustup-init ruby
+$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool nasm ninja pkg-config rustup-init ruby
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config ruby-full xz-utils
+$ sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool nasm ninja-build pkg-config ruby-full xz-utils
 ```
 
 ```bash#Arch
-$ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rustup sed unzip ruby
+$ sudo pacman -S base-devel cmake git go libiconv libtool make nasm ninja pkg-config python rustup sed unzip ruby
 ```
 
 ```bash#Fedora
-$ sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+$ sudo dnf install clang21 llvm21 lld21 cmake git golang libtool nasm ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install go cmake ninja automake git icu rustup
+$ sudo zypper install go cmake nasm ninja automake git icu rustup
 ```
 
 {% /codetabs %}
+
+`nasm` assembles libjpeg-turbo's x86_64 SIMD kernels. Windows x64 builds also use it for BoringSSL's assembly.
 
 Bun is written in Rust and requires a specific nightly toolchain (pinned in [`rust-toolchain.toml`](/rust-toolchain.toml)). Install Rust via [rustup](https://rustup.rs) rather than your distro's `rust`/`cargo` packages — the build scripts use rustup to automatically install and update the pinned nightly:
 

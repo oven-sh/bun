@@ -1149,6 +1149,48 @@ describe("codeGeneration options", () => {
     const evalResult = runInContext("eval('5 + 5');", context);
     expect(evalResult).toBe(10);
   });
+
+  describe("strings/wasm set to undefined", () => {
+    // In Node an undefined strings/wasm is the same as an omitted one:
+    // createContext() destructures them with `= true` defaults, and
+    // getContextOptions() only validates them when `!== undefined` (it then
+    // hands createContext() a `{ strings, wasm }` object with undefined holes).
+    const WASM_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    // Evaluated inside the context: reports which kinds of code generation it allows.
+    const probe = `
+      let strings = true, wasm = true;
+      try { eval("1"); } catch { strings = false; }
+      try { new WebAssembly.Module(WASM_BYTES); } catch { wasm = false; }
+      "strings=" + strings + " wasm=" + wasm;
+    `;
+
+    // createContext reads options.codeGeneration; vm.runInNewContext and
+    // Script#runInNewContext read options.contextCodeGeneration.
+    const entryPoints: Record<string, (codeGeneration: object) => string> = {
+      "createContext()": codeGeneration => runInContext(probe, createContext({ WASM_BYTES }, { codeGeneration })),
+      "runInNewContext()": contextCodeGeneration => runInNewContext(probe, { WASM_BYTES }, { contextCodeGeneration }),
+      "Script#runInNewContext()": contextCodeGeneration =>
+        new Script(probe).runInNewContext({ WASM_BYTES }, { contextCodeGeneration }),
+    };
+
+    describe.each(Object.entries(entryPoints))("%s", (_, run) => {
+      test("undefined is accepted and means the default (allowed)", () => {
+        expect(run({ strings: undefined })).toBe("strings=true wasm=true");
+        expect(run({ wasm: undefined })).toBe("strings=true wasm=true");
+        expect(run({ strings: undefined, wasm: undefined })).toBe("strings=true wasm=true");
+      });
+
+      test("undefined next to an explicit false leaves the false in effect", () => {
+        expect(run({ strings: false, wasm: undefined })).toBe("strings=false wasm=true");
+        expect(run({ strings: undefined, wasm: false })).toBe("strings=true wasm=false");
+      });
+
+      test.each([null, 0, 1, "false"])("%p is still rejected", value => {
+        expect(() => run({ strings: value })).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+        expect(() => run({ wasm: value })).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+      });
+    });
+  });
 });
 
 describe("the options argument", () => {

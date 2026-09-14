@@ -764,3 +764,60 @@ describe("conversions between color spaces", () => {
     );
   });
 });
+
+// rgb(), hsl() and hwb() cannot hold an origin outside the sRGB gamut. Browsers compute the
+// unclamped color and clip it when painting (w3c/csswg-drafts#8444): the display-p3 green
+// below paints as #00ff00, the lab() one as #ff96ff. These used to be resolved by gamut
+// mapping the origin, to #00f942 and #ffffff, so now they are not resolved at all.
+describe("relative colors with an origin outside the sRGB gamut", () => {
+  test.each([
+    "rgb(from lab(100% 104.3 -50.9) r g b)",
+    "hsl(from color(display-p3 0 1 0) h s l)",
+    "hwb(from oklch(100% 0.399 336.3) h w b)",
+    "rgb(from light-dark(red, color(display-p3 0 1 0)) r g b)",
+    "color-mix(in srgb, rgb(from lab(100% 104.3 -50.9) r g b), red)",
+  ])("%s is not resolved", input => {
+    expect([color(input, "css"), color(input, "hex")]).toEqual([null, null]);
+  });
+
+  test.each([
+    // In-gamut origins resolve as before.
+    ["rgb(from lab(50% 40 -50) r g b)", "#965dcd"],
+    ["hsl(from oklch(50% 0.1 120) h s l)", "#5c6b21"],
+    ["hwb(from color(display-p3 0.4 0.4 0.4) h w b)", "#666"],
+    // The unbounded functions hold any origin, so they still resolve out-of-gamut ones.
+    ["lab(from oklch(100% 0.399 336.3) l a b)", "lab(94.0205% 119.644 -57.6823)"],
+    ["color(from lab(100% 104.3 -50.9) srgb r g b)", "color(srgb 1.5935 .587758 1.40555)"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // A boundary color written in another space converts back a few 1e-7 outside the gamut.
+  // That is conversion noise, not an out-of-gamut origin: every color on the faces of the
+  // sRGB cube, written as the lab() Bun.color prints for it, still resolves to itself.
+  test("boundary colors written as lab() still resolve", () => {
+    withoutAggressiveGC(() => {
+      const steps = [0, 51, 102, 153, 204, 255];
+      for (const face of [0, 255]) {
+        for (let axis = 0; axis < 3; axis++) {
+          for (const x of steps) {
+            for (const y of steps) {
+              const rgb = [0, 0, 0];
+              rgb[axis] = face;
+              rgb[(axis + 1) % 3] = x;
+              rgb[(axis + 2) % 3] = y;
+              const hex = color({ r: rgb[0], g: rgb[1], b: rgb[2] }, "hex");
+              const lab = color(hex!, "lab");
+              for (const relative of [`rgb(from ${lab} r g b)`, `hsl(from ${lab} h s l)`, `hwb(from ${lab} h w b)`]) {
+                const resolved = color(relative, "hex");
+                if (resolved !== hex) {
+                  throw new Error(`${relative} resolved to ${resolved}, expected ${hex}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+  });
+});

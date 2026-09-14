@@ -1321,6 +1321,14 @@ impl<'a> Parser<'a> {
             install.default_registry = Some(self.parse_registry(&registry)?);
         }
 
+        if let Some(registry) = install_obj.get(b"forceRegistry") {
+            // First writer wins, unlike every other key. The global `~/.bunfig.toml` is parsed
+            // before the project bunfig, so the project cannot change a machine-level value.
+            if install.force_registry.is_none() {
+                install.force_registry = Some(self.parse_registry(&registry)?);
+            }
+        }
+
         if let Some(scopes) = install_obj.get(b"scopes") {
             let mut registry_map = install.scoped.take().unwrap_or_default();
             self.expect(&scopes, ExprTag::EObject)?;

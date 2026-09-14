@@ -579,6 +579,34 @@ registry = { url = "https://registry.npmjs.org", token = "123456" }
 registry = "https://username:password@registry.npmjs.org"
 ```
 
+### `install.forceRegistry`
+
+Force **every** package to resolve through one registry. This setting overrides all other registry configuration on the machine: `install.registry`, `install.scopes`, `.npmrc`, `NPM_CONFIG_REGISTRY`, and the `--registry` flag.
+
+Use it on centrally managed devices. Set it once in the global `~/.bunfig.toml`, or in the `BUN_CONFIG_FORCE_REGISTRY` environment variable. `bun install` then sends every registry request to that registry, whatever a project configures.
+
+```toml title="~/.bunfig.toml" icon="settings"
+[install]
+forceRegistry = "https://npm.corp.example.com/"
+# or with auth
+forceRegistry = { url = "https://npm.corp.example.com/", token = "$CORP_NPM_TOKEN" }
+```
+
+A project-level `bunfig.toml` cannot change or unset a value that the global bunfig sets. When the forced registry overrides a registry that a project, an `.npmrc`, or `--registry` configures, `bun install` prints a note that names the forced registry.
+
+Bun takes the credentials for the forced registry from the first of these that is set:
+
+1. The `forceRegistry` value itself: `token`, `username` and `password`, or `user:pass@` in the URL.
+2. `--token`, then `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN`.
+3. An `.npmrc` entry for its host, for example `//npm.corp.example.com/:_authToken=...`.
+4. The token of the registry it replaces, if that registry is on the same host and the forced registry does not change `https` to `http`.
+
+Bun never sends a token that is configured for a different host to the forced registry.
+
+For device-wide enforcement, **prefer the `BUN_CONFIG_FORCE_REGISTRY` environment variable** over the global bunfig. `bun run` and `bun <file>` do not read the global `~/.bunfig.toml` (see [`bun run`](#bun-run) below). The runtime auto-installer, which runs when a script imports a package that is not on disk, therefore sees only the project bunfig. The package manager itself reads the environment variable, so it covers every code path, auto-install included.
+
+`forceRegistry` controls where Bun resolves package manifests and tarballs. It does not rewrite dependency specifiers that name no registry (`git:`, `github:`, direct URLs). It also does not rewrite a full tarball URL that an existing `bun.lock` records for a package from a non-default registry. Delete the lockfile to resolve those packages again through the forced registry.
+
 ### `install.linkWorkspacePackages`
 
 Whether to link workspace packages from the monorepo root to their respective `node_modules` directories. Default `true`.

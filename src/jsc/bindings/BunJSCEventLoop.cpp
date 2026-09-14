@@ -23,6 +23,28 @@ extern "C" uint64_t us_internal_monotonic_ns(void);
 // it as an atomic rather than through a plain `int`.
 extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 
+// Called once per tick of the JS thread's event loop, whether or not the tick
+// is going to park.
+//
+// sanitizeStackForVM zeroes the stack between the deepest point JSC last
+// sanitized at and the current stack pointer. Called between turns, that is
+// the region the previous turn's frames occupied, which the GC scans
+// conservatively. JSC's own sanitize sites (allocation slow paths, call
+// linking, the collector itself) all run inside JS, below the frames holding a
+// turn's JSValues, so they never clear it. Bun__JSC_onBeforeWait used to do
+// this on every tick as a side effect (heap.stopIfNecessary() sanitizes while
+// the mutator holds the GC conn); since it only runs on ticks that park, a loop
+// kept busy by setImmediate found the same stale pointers on every GC, and dead
+// objects survived until unrelated code happened to overwrite those slots.
+extern "C" void Bun__JSC_onLoopTick(JSC::VM* _Nonnull vm)
+{
+    ASSERT(vm);
+    // use-after-free sanity check, as in Bun__JSC_onBeforeWait
+    ASSERT(vm->refCount() > 0);
+    JSC::sanitizeStackForVM(*vm);
+}
+
+// Called only on ticks that are about to park.
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
 {
     ASSERT(vm);

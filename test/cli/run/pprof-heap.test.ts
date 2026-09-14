@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { decode } from "../../js/bun/pprof/pprof-decode";
@@ -45,6 +45,21 @@ function expectHeapProfile(path: string, period: number) {
   }
   return [];
 }
+
+async function findPprofTool() {
+  const go = Bun.which("go");
+  if (!go) return null;
+  await using proc = Bun.spawn({
+    cmd: [go, "env", "GOTOOLDIR"],
+    env: { ...bunEnv, GOTOOLCHAIN: "local" },
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const tool = join(stdout.trim(), isWindows ? "pprof.exe" : "pprof");
+  return exitCode === 0 && existsSync(tool) ? tool : null;
+}
+const pprofTool = await findPprofTool();
 
 describe.concurrent("--pprof-heap", () => {
   test("writes the profile of the whole run to the given path on exit", async () => {
@@ -95,16 +110,16 @@ describe.concurrent("--pprof-heap", () => {
   });
 
   // The decoder these tests use was written with the encoder. pprof's own reader
-  // (`profile.Parse`, which also checks every id and string index) comes with Go.
-  const go = Bun.which("go");
-  test.skipIf(!go)("go tool pprof reads the file", async () => {
+  // (`profile.Parse`, which also checks every id and string index) comes with Go: run it
+  // where the distribution has it prebuilt (`go tool pprof` would compile it otherwise).
+  test.skipIf(!pprofTool)("pprof reads the file", async () => {
     using dir = tempDir("pprof-heap-go", { "script.js": script });
     const result = await run(String(dir), ["--pprof-heap=heap.pb.gz", "script.js"]);
     expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
     await using proc = Bun.spawn({
-      cmd: [go!, "tool", "pprof", "-raw", "heap.pb.gz"],
+      cmd: [pprofTool!, "-raw", "heap.pb.gz"],
       cwd: String(dir),
-      env: { ...bunEnv, GOTOOLCHAIN: "local" },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });

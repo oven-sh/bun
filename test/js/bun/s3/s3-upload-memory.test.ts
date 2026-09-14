@@ -96,8 +96,9 @@ async function uploadRssDeltaMiB(upload: string, totalMiB: number): Promise<numb
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr.trim()).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim().split("\n").at(-1)!);
   expect(exitCode).toBe(0);
-  return JSON.parse(stdout.trim().split("\n").at(-1)!).deltaMiB;
+  return deltaMiB;
 }
 
 // The steady state of an upload holds a few parts: the buffered tail, the

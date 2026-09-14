@@ -1288,7 +1288,6 @@ impl SendQueue {
         self.queue.with_mut(|queue| {
             // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
             // this is rare. it will only happen if messages stack up after sending a handle.
-            // a partially sent item (cursor != 0) keeps its cursor, so it is never appended to.
             let use_last = if handle.is_none() && !queue.is_empty() {
                 let len = queue.len();
                 let last = &queue[len - 1];

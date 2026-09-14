@@ -292,6 +292,27 @@ await Bun.build({
 });
 ```
 
+### Built-in replacements for npm packages
+
+Bun includes its own implementation of a few npm packages. When you import one of the following specifiers, Bun loads the built-in module. Bun does this even when the package is installed in `node_modules`.
+
+| Specifier                                                                             | Built-in module                                                                                                                |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `undici`                                                                              | `fetch`, `Request`, `Response`, `Headers`, `FormData`, `File`, and `WebSocket` are Bun's own. `request()` calls Bun's `fetch`. |
+| `node-fetch`                                                                          | A wrapper around Bun's `fetch`. `response.body` is a Node.js `Readable` stream, as in `node-fetch`.                            |
+| `isomorphic-fetch`                                                                    | Bun's `fetch`.                                                                                                                 |
+| `@vercel/fetch`                                                                       | A wrapper around Bun's `fetch`.                                                                                                |
+| `ws`, `ws/lib/websocket`                                                              | `WebSocket` and `WebSocketServer`, built on Bun's native WebSocket client and server.                                          |
+| `utf-8-validate`                                                                      | The same native function as `isUtf8()` in `node:buffer`.                                                                       |
+| `abort-controller`, `abort-controller/polyfill`                                       | The global `AbortController` and `AbortSignal`.                                                                                |
+| `next/dist/compiled/undici`, `next/dist/compiled/node-fetch`, `next/dist/compiled/ws` | The same built-in modules as `undici`, `node-fetch`, and `ws`.                                                                 |
+
+A built-in module does not implement every API of the package it replaces. For example, the built-in `undici` exports `Agent`, `Pool`, `Client`, `ProxyAgent`, and `MockAgent` so that imports succeed. These classes do not manage connections, and `fetch` ignores the `dispatcher` option. `stream()`, `pipeline()`, `connect()`, and `upgrade()` throw an error. If your code needs an API that is missing, [open an issue](https://bun.com/issues).
+
+Bun matches the whole specifier. Any other subpath, such as `undici/package.json`, resolves to the installed package. For a replaced package, `require.resolve()` and `import.meta.resolve()` return the specifier itself, for example `"undici"`, instead of a file path.
+
+[`bun build`](/bundler) applies the same replacement when the target is `bun`, and leaves the import in the bundle. With `--target=node` or `--target=browser`, `bun build` bundles the copy in `node_modules`.
+
 ---
 
 ## Path re-mapping

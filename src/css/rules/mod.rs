@@ -503,6 +503,8 @@ impl<R> CssRuleList<R> {
 
             'arm: {
                 match rule {
+                    // Left by the duplicate check below when this list was minified before.
+                    CssRule::Ignored => break 'arm,
                     CssRule::Keyframes(_keyframez) => {
                         // KeyframesRule minify (unused-symbol drop + same-name
                         // merge + vendor-prefix downlevel + fallbacks) is

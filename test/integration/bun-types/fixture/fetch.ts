@@ -348,3 +348,14 @@ if (typeof process !== "undefined") {
   // @ts-expect-error - Not a protocol the runtime accepts
   fetch("https://example.com", { protocol: "spdy" });
 }
+
+// Response.clone() and Request.clone() preserve Bun types (fixes #41860)
+{
+  const res = new Response("hello");
+  const clonedRes: Response = res.clone();
+  clonedRes.textStream();
+
+  const req = new Request("https://example.com");
+  const clonedReq: Request = req.clone();
+  clonedReq.textStream();
+}

@@ -7668,6 +7668,146 @@ describe("css tests", () => {
     );
   });
 
+  // color-mix() in srgb (and hsl/hwb) folds to an 8-bit color. css-color-4 interpolates
+  // out-of-gamut channels as they are, so wide-gamut operands can leave the result outside the
+  // sRGB gamut; an sRGB screen shows such a result with each channel clipped (a wider screen shows
+  // it as is, which an 8-bit fold cannot express), so the fold clips. It used to gamut map the
+  // result (the chroma reduction used for the #rrggbb fallback of a wide-gamut color), which is a
+  // different color on every screen: #00f942 for display-p3 green, plain white for the bright
+  // magentas below. The display-p3 green, lab() and oklch() operands are the ones
+  // of WPT css/css-color/parsing/color-mix-out-of-gamut.html; the expected colors are the
+  // computed values it lists (color(srgb 1.59343 0.58802 1.40564) for lab(100% 104.3 -50.9))
+  // clipped to 8 bits. The other unclipped results are noted inline.
+  describe("color-mix() results outside the sRGB gamut are clipped", () => {
+    // color(display-p3 0 1 0) is color(srgb -0.5116 1.0183 -0.3107).
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0)) }",
+      ".foo{color:#0f0}",
+    );
+    minify_test(".foo { color: color-mix(in srgb, color(display-p3 0 1 0) 100%, red) }", ".foo{color:#0f0}");
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(display-p3 0 1 0 / 0.5), color(display-p3 0 1 0 / 0.5)) }",
+      ".foo{color:#00ff0080}",
+    );
+    // color(srgb 1 1 -0.346) and color(srgb 1.093 -0.227 -0.150); used to be #fdfe00 and #ff0f0e.
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(display-p3 1 1 0), color(display-p3 1 1 0)) }",
+      ".foo{color:#ff0}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(display-p3 1 0 0), color(display-p3 1 0 0)) }",
+      ".foo{color:red}",
+    );
+    // color(srgb 1.593 0.359 1.386) and color(srgb 1.593 0.588 1.406): the oklch lightness of these
+    // is above 1, which the gamut mapping turned into plain white.
+    minify_test(
+      ".foo { color: color-mix(in srgb, oklch(100% 0.399 336.3), oklch(100% 0.399 336.3)) }",
+      ".foo{color:#ff5bff}",
+    );
+    minify_test(".foo { color: color-mix(in srgb, oklch(100% 0.399 336.3) 80%, white) }", ".foo{color:#ff7cff}");
+    minify_test(".foo { color: color-mix(in srgb, oklch(100% 0.399 336.3) 50%, white) }", ".foo{color:#ffadff}");
+    minify_test(
+      ".foo { color: color-mix(in srgb, lab(100% 104.3 -50.9), lab(100% 104.3 -50.9)) }",
+      ".foo{color:#ff96ff}",
+    );
+    minify_test(".foo { color: color-mix(in srgb, lab(100% 104.3 -50.9), red) }", ".foo{color:#ff4bb3}");
+    // color(srgb 0.351 -0.214 0.300); used to be #2a0022.
+    minify_test(".foo { color: color-mix(in srgb, lab(0% 104.3 -50.9), lab(0% 104.3 -50.9)) }", ".foo{color:#5a004c}");
+    // color(srgb -1.207 1.316 -0.489); used to be #a7ffc3 and #d5ffd4.
+    minify_test(".foo { color: color-mix(in srgb, color(xyz 0 1 0) 75%, lime) }", ".foo{color:#0f0}");
+    minify_test(".foo { color: color-mix(in srgb, color(xyz 0 1 0) 50%, white) }", ".foo{color:#00ff41}");
+    // color(srgb 0 1.194 0) and color(srgb 1.353 1.353 0); used to be #edffea and white.
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(srgb-linear 0 1.5 0), color(srgb-linear 0 1.5 0)) }",
+      ".foo{color:#0f0}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(srgb-linear 0 1.5 0 / 0.5), color(srgb-linear 0 1.5 0 / 0.5)) }",
+      ".foo{color:#00ff0080}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(srgb-linear 2 2 0), color(srgb-linear 2 2 0)) }",
+      ".foo{color:#ff0}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in srgb, light-dark(color(display-p3 0 1 0), red), light-dark(color(display-p3 0 1 0), blue)) }",
+      ".foo{color:light-dark(#0f0,purple)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0)), red) }",
+      ".foo{background:linear-gradient(#0f0,red)}",
+    );
+    // The inner mix is folded to 8 bits before the outer one uses it, as an in-gamut inner mix is
+    // too; browsers mix the unclipped inner result and get rgb(0, 130, 0) here.
+    minify_test(
+      ".foo { color: color-mix(in srgb, color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0)), black) }",
+      ".foo{color:green}",
+    );
+    // The fold is still one 8-bit declaration, whatever the targets are.
+    prefix_test(
+      ".foo { color: color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0)) }",
+      `.foo {
+        color: #0f0;
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color: color-mix(in srgb, light-dark(color(display-p3 0 1 0), red), light-dark(color(display-p3 0 1 0), blue)) }",
+      `.foo {
+        color: var(--buncss-light, #0f0) var(--buncss-dark, purple);
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // The gamut mapping already clipped a result whose clipped color is within its just-noticeable
+    // difference, so results that are only slightly out of gamut fold to the same color as before.
+    // The oklch() operands are Tailwind v4 palette entries in the shape of its color-mix() fallback
+    // declarations.
+    describe("results inside or close to the gamut fold to the same color as before", () => {
+      minify_test(
+        ".foo { color: color-mix(in srgb, oklch(57.7% 0.245 27.325) 50%, transparent) }",
+        ".foo{color:#e7000b80}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, oklch(69.6% 0.17 162.48) 30%, transparent) }",
+        ".foo{color:#00bc7d4d}",
+      );
+      minify_test(".foo { color: color-mix(in srgb, color(display-p3 0 1 0) 75%, white) }", ".foo{color:#00ff04}");
+      minify_test(".foo { color: color-mix(in srgb, color(display-p3 0 1 0) 25%, white) }", ".foo{color:#9fffab}");
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 0 1), color(display-p3 0 0 1)) }",
+        ".foo{color:#00f}",
+      );
+      // Converting this lab() red back to srgb leaves g and b around -1e-6.
+      minify_test(
+        ".foo { color: color-mix(in srgb, lab(54.2905% 80.8049 69.891), lab(54.2905% 80.8049 69.891)) }",
+        ".foo{color:red}",
+      );
+      minify_test(".foo { color: color-mix(in srgb, red, blue) }", ".foo{color:purple}");
+      minify_test(".foo { color: color-mix(in srgb, red 25%, blue) }", ".foo{color:#4000bf}");
+      minify_test(".foo { color: color-mix(in srgb, rgb(255 0 0 / 0.5), blue) }", ".foo{color:#5500aac0}");
+      minify_test(".foo { color: color-mix(in srgb, rgb(none 0 0), rgb(none 0 0)) }", ".foo{color:#000}");
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb-linear 1 0.2 0.001), color(srgb-linear 1 0.2 0.001)) }",
+        ".foo{color:#ff7c03}",
+      );
+      minify_test(".foo { color: color-mix(in hsl, red, blue) }", ".foo{color:#f0f}");
+      minify_test(
+        ".foo { color: color-mix(in hsl, hsl(120 100% 50% / 0.5), hsl(240 100% 50%)) }",
+        ".foo{color:#00ffffc0}",
+      );
+      minify_test(".foo { color: color-mix(in hsl, hsl(none 100% 50%), hsl(none 100% 50%)) }", ".foo{color:red}");
+      minify_test(".foo { color: color-mix(in hwb, red, blue) }", ".foo{color:#f0f}");
+      minify_test(".foo { color: color-mix(in hwb, hwb(120 0% 0% / 0.5), hwb(240 0% 0%)) }", ".foo{color:#00ffffc0}");
+      // rgb()/hsl()/hwb() with a none channel are printed through the same code.
+      minify_test(".foo { color: rgb(none 0 0) }", ".foo{color:#000}");
+      minify_test(".foo { color: hsl(none 100% 50%) }", ".foo{color:red}");
+      minify_test(".foo { color: hwb(120 none 0%) }", ".foo{color:#0f0}");
+    });
+  });
+
   describe("font-palette-values", () => {
     minify_test(
       "@font-palette-values --x{font-family:Foo;base-palette:2}",

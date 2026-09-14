@@ -1925,7 +1925,6 @@ impl TestCommand {
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
-                store_fd: ctx.debug.hot_reload != jsc::virtual_machine::HotReload::None,
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
                 ..Default::default()

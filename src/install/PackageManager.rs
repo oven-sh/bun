@@ -1431,6 +1431,12 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         }
     }
 
+    // `ca` + `cafile` are one setting: bunfig replaces both or neither.
+    if ca.is_some() || cafile.is_some() {
+        install.ca = ca;
+        install.cafile = cafile;
+    }
+
     macro_rules! overlay {
         ($($field:ident),* $(,)?) => {
             $( if $field.is_some() { install.$field = $field; } )*
@@ -1455,9 +1461,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         frozen_lockfile,
         exact,
         concurrent_scripts,
-        cafile,
         save_text_lockfile,
-        ca,
         ignore_scripts,
         link_workspace_packages,
         node_linker,

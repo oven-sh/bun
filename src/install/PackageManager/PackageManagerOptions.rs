@@ -898,10 +898,9 @@ impl Options {
             }
             self.publish_config.tolerate_republish = cli.tolerate_republish;
 
-            if !cli.ca.is_empty() {
+            // `--ca` / `--cafile` replace the config file's `ca` + `cafile` as a whole.
+            if !cli.ca.is_empty() || !cli.ca_file_name.is_empty() {
                 self.ca = cli.ca.iter().map(|s| Box::<[u8]>::from(*s)).collect();
-            }
-            if !cli.ca_file_name.is_empty() {
                 self.ca_file_name = cli.ca_file_name;
             }
 

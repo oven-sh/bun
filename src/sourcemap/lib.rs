@@ -168,6 +168,11 @@ impl LineColumnOffset {
             debug_assert!(i >= offset);
             debug_assert!((i as usize) < input.len());
 
+            // `input[offset..i]` is the ASCII run the search skipped over.
+            this.columns = this
+                .columns
+                .add_scalar(i32::try_from(i - offset).expect("int cast"));
+
             let iter = strings::CodepointIterator::init(input);
             let mut cursor = strings::Cursor {
                 i,

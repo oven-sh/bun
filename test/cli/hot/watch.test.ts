@@ -22,7 +22,10 @@ test.skipIf(isWindows)("--watch does not keep an fd per symlink path under node_
     }),
     "node_modules/.bun/shared@1.0.0/node_modules/shared/dist/esm/index.js": "export const shared = 1;",
   };
+  // The main thread imports the first half. A worker imports the second
+  // half, so its resolver walks paths the main thread has not cached.
   let entry = "";
+  let worker = "";
   for (let i = 0; i < N; i++) {
     files[`node_modules/.bun/dep${i}@1.0.0/node_modules/dep${i}/package.json`] = JSON.stringify({
       name: `dep${i}`,
@@ -32,14 +35,23 @@ test.skipIf(isWindows)("--watch does not keep an fd per symlink path under node_
     });
     files[`node_modules/.bun/dep${i}@1.0.0/node_modules/dep${i}/index.js`] =
       'import { shared } from "shared"; export const v = shared;';
-    entry += `import "dep${i}";\n`;
+    if (i < N / 2) {
+      entry += `import "dep${i}";\n`;
+    } else {
+      worker += `import "dep${i}";\n`;
+    }
   }
   entry += `
     import { readdirSync } from "node:fs";
-    console.log("OPEN_FDS=" + readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length);
-    process.exit(0);
+    const worker = new Worker("./worker.ts");
+    worker.onmessage = () => {
+      console.log("OPEN_FDS=" + readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length);
+      process.exit(0);
+    };
   `;
+  worker += `postMessage("done");\n`;
   files["index.ts"] = entry;
+  files["worker.ts"] = worker;
   using dir = tempDir("watch-isolated-fds", files);
   for (let i = 0; i < N; i++) {
     symlinkSync(

@@ -3382,7 +3382,6 @@ pub struct Options {
     // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
     // outlives the VM, so the inner lifetime is erased to `'static`.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
-    pub store_fd: bool,
     pub smol: bool,
     // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
@@ -4191,7 +4190,8 @@ impl VirtualMachine {
             graph: opts.graph,
             log: opts.log,
             env_loader: opts.env_loader,
-            store_fd: opts.store_fd,
+            // A worker VM has no watcher to adopt cached fds.
+            store_fd: false,
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
@@ -4219,7 +4219,6 @@ impl VirtualMachine {
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
         vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
-        vm_ref.transpiler.resolver.store_fd = opts.store_fd;
         if opts.graph.is_none() {
             vm_ref.transpiler.configure_linker();
         } else {

@@ -6,6 +6,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/42701
+// Windows: no /proc/self/fd to count from, and the resolver does not keep fds there.
 test.skipIf(isWindows)("--watch does not keep an fd per symlink path under node_modules", async () => {
   // The layout of `bun install --linker=isolated`: N dependents that each
   // reach one shared package through their own

@@ -94,7 +94,15 @@ public:
 
     /* Shutdown+close when the connection is marked to close (Connection:
      * close, peer FIN, close-when-idle), the response is complete and every
-     * outgoing byte has been flushed. Returns true when the socket was closed. */
+     * outgoing byte has been flushed. Returns true when the socket was closed.
+     *
+     * Where it runs: HttpContext::onData's tail for the socket being parsed;
+     * cork() after its handler, for everything rendered through it (the only
+     * gate an end that does not gate itself, uws_res_end_without_body, gets);
+     * internalEnd, for ends reached outside cork() on a socket uws_res_write
+     * corked by itself (the loop's leftover-cork drain flushes but never
+     * closes); HttpContext::onWritable once a backpressured tail drains; and
+     * uws_res_close_if_done_and_marked after the uncorked ends on Bun's side. */
     bool closeIfDoneAndMarked(HttpResponseData<SSL> *httpResponseData) {
         if (httpResponseData->shouldCloseConnection()) {
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
@@ -219,13 +227,14 @@ public:
                 }
             } else {
                 this->uncork();
-                /* That uncork released our cork slot, so the cork() wrapper's
-                 * post-uncork close gate will not run. When THIS socket is the
-                 * one being parsed, onData's post-parse gate closes it once
-                 * the buffer is fully consumed; any other socket (an async
-                 * handler completing, possibly inside another socket's parse
-                 * window via a drained microtask) gets no later gate, so close
-                 * here. */
+                /* The cork we just released may not be cork()'s at all: a
+                 * streaming body's uws_res_write corks the socket by itself,
+                 * and an end on such a socket (an async handler completing,
+                 * possibly inside another socket's parse window via a drained
+                 * microtask) gets no later gate unless THIS socket is the one
+                 * being parsed, which onData's tail closes once the buffer is
+                 * consumed. Inside cork() this just closes first; the wrapper
+                 * then finds the socket closed. */
                 if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this
                     && closeIfDoneAndMarked(httpResponseData)) {
                     return true;
@@ -293,9 +302,9 @@ public:
                     closeIfDoneAndMarked(httpResponseData);
                 } else {
                     this->uncork();
-                    /* Same as the chunked arm above: the cork slot is gone, so
-                     * run the close gate here unless THIS socket is the one
-                     * being parsed (then onData's post-parse gate handles it). */
+                    /* Same as the chunked arm above: the cork may have been the
+                     * socket's own, so gate here unless THIS socket is the one
+                     * being parsed (then onData's tail handles it). */
                     if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
                         closeIfDoneAndMarked(httpResponseData);
                     }
@@ -854,22 +863,22 @@ public:
      /* Corks the response if possible. Leaves already corked socket be. */
     HttpResponse *cork(MoveOnlyFunction<void()> &&handler) {
         if (!Super::isCorked()) {
-            LoopData *loopData = Super::getLoopData();
             Super::cork();
             handler();
 
-            /* If we're no longer in a cork slot, either: (a) the handler wrote
-             * large data that triggered an internal uncork, (b) our empty slot
-             * was stolen by another request during an await, or (c) we were
-             * upgraded to a WebSocket (upgrade path transferred the slot). In
-             * all cases our data (if any) was already flushed; nothing to do.
-             * The upgrade case is handled by HttpContext's uncork or the drain
-             * loop. */
-            if (loopData->findCorkSlot(this) == LoopData::INVALID_CORK_SLOT) {
+            /* The handler may have closed this socket (an end that reached a
+             * close gate, an abort, an upgrade that relocated the socket); its
+             * ext is destructed then, so there is nothing to flush or to gate. */
+            if (us_socket_is_closed((us_socket_t *) this)) {
                 return this;
             }
 
-            /* Timeout on uncork failure, since most writes will succeed while corked */
+            /* uncork() is a no-op if the handler cost us our slot: a write
+             * larger than the cork buffer uncorked us, another socket borrowed
+             * the still-empty slot, or JS run by the handler corked two other
+             * sockets and AsyncSocket::cork() force-flushed ours as the LRU
+             * slot. Our bytes are out in every case. Otherwise, timeout on
+             * uncork failure, since most writes will succeed while corked. */
             auto [written, failed] = Super::uncork();
 
             if (written > 0 || failed) {
@@ -878,18 +887,11 @@ public:
                 this->resetTimeout();
             }
 
-            /* If we have no backbuffer and we are connection close and we responded fully then close */
-            HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-            if (httpResponseData->shouldCloseConnection()) {
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                        ((AsyncSocket<SSL> *) this)->shutdown();
-                        /* We need to force close after sending FIN since we want to hinder
-                        * clients from keeping to send their huge data */
-                        ((AsyncSocket<SSL> *) this)->close();
-                    }
-                }
-            }
+            /* Whether or not the slot survived: for an end that does not gate
+             * itself (uws_res_end_without_body) this is the only gate outside
+             * the parser. A forced flush that hit backpressure is left to
+             * HttpContext::onWritable. */
+            closeIfDoneAndMarked(getHttpResponseData());
         } else {
             /* We are already corked, or can't cork so let's just call the handler */
             handler();

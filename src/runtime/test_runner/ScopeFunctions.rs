@@ -699,14 +699,10 @@ pub(crate) fn parse_arguments(
         return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
     }
 
-    let default_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
-        if runner.default_timeout_ms != 0 { Some(runner.default_timeout_ms) } else { None }
-    });
-    let override_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
-        if runner.default_timeout_override != u32::MAX { Some(runner.default_timeout_override) } else { None }
-    });
-    let timeout_option_ms: Option<u32> = timeout_option.map(|timeout| timeout as u32);
-    result.options.timeout = timeout_option_ms.or(override_timeout_ms).or(default_timeout_ms).unwrap_or(0);
+    result.options.timeout = match timeout_option {
+        Some(timeout) => timeout as u32,
+        None => jest::Jest::runner().map_or(0, |runner| runner.default_timeout()),
+    };
 
     Ok(result)
 }

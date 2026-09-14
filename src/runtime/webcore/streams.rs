@@ -1498,7 +1498,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 uws::WriteResult::Backpressure(_)
             );
         }
-        self.handle_wrote(buf_len);
+        // uWS took the `from` bytes in an earlier partial `try_end`; it now owns the whole slice.
+        self.handle_wrote(from + buf_len);
         bun_core::scoped_log!(
             HTTPServerWritableLog,
             "send: {} bytes (backpressure: {})",

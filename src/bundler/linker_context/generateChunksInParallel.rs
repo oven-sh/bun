@@ -14,7 +14,6 @@ use crate::BundleV2;
 use crate::Chunk;
 use crate::Index;
 use crate::analyze_transpiled_module;
-use crate::analyze_transpiled_module::StringIDExt as _;
 use crate::cheap_prefix_normalizer;
 use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
@@ -568,6 +567,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Fix up each chunk's module_info; every chunk's strings go into one
         // table (`OutputKind::ModuleInfoStringTable`) their bodies index into.
         let mut table_ids: Vec<Vec<u32>> = Vec::new();
+        let unique_key_prefix: &[u8] = &c.unique_key_prefix;
+        let paths = &unique_key_to_path;
         for chunk in chunks.iter_mut() {
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
                 continue;
@@ -576,35 +577,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 continue;
             };
 
-            // Collect replacements first (can't modify string table while iterating)
-            struct Replacement {
-                old_id: analyze_transpiled_module::StringID,
-                resolved_path: Box<[u8]>,
-            }
-            let mut replacements: Vec<Replacement> = Vec::new();
-
-            // `as_deserialized()` debug-asserts `finalized`; this runs pre-finalize
-            // so `replace_string_id` (asserts `!finalized`) can still mutate.
-            let (strings_buf, strings_lens): (&[u8], &[u32]) = mi.strings();
-            let mut offset: usize = 0;
-            for (string_index, &slen) in strings_lens.iter().enumerate() {
-                let len: usize = usize::try_from(slen).expect("int cast");
-                let s = &strings_buf[offset..][..len];
-                if let Some(resolved_path) = unique_key_to_path.get(s) {
-                    replacements.push(Replacement {
-                        old_id: analyze_transpiled_module::StringID::from_raw(
-                            u32::try_from(string_index).expect("int cast"),
-                        ),
-                        resolved_path: resolved_path.clone(),
-                    });
+            // In place, so the per-build placeholder does not survive as an extra string.
+            mi.rewrite_strings(move |s| {
+                if !s.starts_with(unique_key_prefix) {
+                    return None;
                 }
-                offset += len;
-            }
-
-            for rep in replacements.iter() {
-                let new_id = mi.str(&rep.resolved_path);
-                mi.replace_string_id(rep.old_id, new_id);
-            }
+                paths.get(s).map(|path| &path[..])
+            });
 
             if mi.finalize().is_err() {
                 js.module_info = None;
@@ -1402,6 +1381,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // else: item at `i` will be dropped by truncate below (impl Drop handles deinit)
         }
         result.truncate(write_idx);
+        debug_assert_no_placeholder_left(c, &result);
         return Ok(result);
     }
 
@@ -1485,7 +1465,24 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             ..Default::default()
         }));
     }
+    debug_assert_no_placeholder_left(c, &result);
     Ok(result)
+}
+
+/// Debug check: no in-memory output may still contain the per-build `unique_key` placeholder prefix.
+fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputFile]) {
+    if !cfg!(debug_assertions) || c.unique_key_prefix.is_empty() {
+        return;
+    }
+    for file in files {
+        debug_assert!(
+            !strings::contains(file.value.as_slice(), &c.unique_key_prefix),
+            "{} ({:?}) still contains the chunk placeholder prefix {}",
+            bstr::BStr::new(&file.dest_path),
+            file.output_kind,
+            bstr::BStr::new(&c.unique_key_prefix),
+        );
+    }
 }
 
 /// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the

@@ -1,0 +1,16 @@
+hdr_value_at_percentile()'s AVX2 path is chosen with __builtin_cpu_supports(),
+which links compiler-rt's cpu-model constructor (runs before main, and is not
+on clang-cl's default link line). Let the embedder compile it out.
+
+--- a/src/hdr_histogram.c
++++ b/src/hdr_histogram.c
+@@ -37,7 +37,8 @@
+ /* Runtime-dispatched AVX2 path: keep the rest of this TU at the project's
+    baseline ISA so the shipped binary does not silently require AVX2. */
+ #if (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)) \
+-    && (defined(__GNUC__) || defined(__clang__)) && !defined(__INTEL_COMPILER)
++    && (defined(__GNUC__) || defined(__clang__)) && !defined(__INTEL_COMPILER) \
++    && !defined(HDR_NO_AVX2_DISPATCH)
+ #  define HDR_HAS_AVX2_DISPATCH 1
+ #  include <immintrin.h>
+ #endif

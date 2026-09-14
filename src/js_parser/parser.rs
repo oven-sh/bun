@@ -540,6 +540,18 @@ impl JSXImportSymbols {
         }
     }
 
+    pub(crate) fn tag_of(&self, ref_: Ref) -> Option<JSXImport> {
+        [
+            JSXImport::Jsx,
+            JSXImport::JsxDEV,
+            JSXImport::Jsxs,
+            JSXImport::Fragment,
+            JSXImport::CreateElement,
+        ]
+        .into_iter()
+        .find(|&tag| self.get_with_tag(tag) == Some(ref_))
+    }
+
     pub(crate) fn set(&mut self, tag: JSXImport, loc_ref: LocRef) {
         match tag {
             JSXImport::Jsx => self.jsx = Some(loc_ref),

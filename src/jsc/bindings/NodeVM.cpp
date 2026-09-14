@@ -958,6 +958,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
         nullptr, // shouldInterruptScriptBeforeTimeout,
+        nullptr, // moduleTypeIsAllowed
         &moduleLoaderImportModule,
         nullptr, // moduleLoaderResolve
         nullptr, // moduleLoaderFetch

@@ -2411,16 +2411,22 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
 
         getrusage(RUSAGE_SELF, &usage);
 
+        // Bytes, like Node's report: rss is the current value, maxRss the peak.
+        size_t rss = 0;
+        size_t maxRss = 0;
+        getRSS(&rss);
+        getPeakRSS(&maxRss);
+
         putDirectNamed(vm, resourceUsage, "free_memory"_s, JSC::jsNumber(usage.ru_maxrss));
         putDirectNamed(vm, resourceUsage, "total_memory"_s, JSC::jsNumber(usage.ru_maxrss));
-        putDirectNamed(vm, resourceUsage, "rss"_s, JSC::jsNumber(usage.ru_maxrss));
+        putDirectNamed(vm, resourceUsage, "rss"_s, JSC::jsNumber(rss));
         putDirectNamed(vm, resourceUsage, "available_memory"_s, JSC::jsNumber(usage.ru_maxrss));
         putDirectNamed(vm, resourceUsage, "userCpuSeconds"_s, JSC::jsNumber(usage.ru_utime.tv_sec));
         putDirectNamed(vm, resourceUsage, "kernelCpuSeconds"_s, JSC::jsNumber(usage.ru_stime.tv_sec));
         putDirectNamed(vm, resourceUsage, "cpuConsumptionPercent"_s, JSC::jsNumber(usage.ru_utime.tv_sec));
         putDirectNamed(vm, resourceUsage, "userCpuConsumptionPercent"_s, JSC::jsNumber(usage.ru_utime.tv_sec));
         putDirectNamed(vm, resourceUsage, "kernelCpuConsumptionPercent"_s, JSC::jsNumber(usage.ru_utime.tv_sec));
-        putDirectNamed(vm, resourceUsage, "maxRss"_s, JSC::jsNumber(usage.ru_maxrss));
+        putDirectNamed(vm, resourceUsage, "maxRss"_s, JSC::jsNumber(maxRss));
 
         JSC::JSObject* pageFaults = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3883,8 +3889,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
     result->putDirectOffset(vm, 0, jsNumber(std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec));
     result->putDirectOffset(vm, 1, jsNumber(std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec));
 #if OS(DARWIN)
-    // ru_maxrss is bytes on darwin; Node reports kilobytes everywhere.
-    result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss / 1024));
+    // getPeakRSS and ru_maxrss (the fallback) are bytes on darwin; Node reports kilobytes.
+    size_t maxRSS = 0;
+    if (getPeakRSS(&maxRSS) != 0)
+        maxRSS = static_cast<size_t>(rusage.ru_maxrss);
+    result->putDirectOffset(vm, 2, jsNumber(maxRSS / 1024));
 #else
     result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss));
 #endif
@@ -4070,25 +4079,23 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
 
+#if defined(__APPLE__)
+static bool readTaskVMInfo(task_vm_info_data_t& info)
+{
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    return task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS;
+}
+#endif
+
 extern "C" int getRSS(size_t* rss)
 {
 #if defined(__APPLE__)
-    mach_msg_type_number_t count;
-    task_basic_info_data_t info;
-    kern_return_t err;
-
-    count = TASK_BASIC_INFO_COUNT;
-    err = task_info(mach_task_self(),
-        TASK_BASIC_INFO,
-        reinterpret_cast<task_info_t>(&info),
-        &count);
-
-    if (err == KERN_SUCCESS) {
-        *rss = (size_t)info.resident_size;
-        return 0;
-    }
-
-    return -1;
+    // Same as libuv since https://github.com/libuv/libuv/pull/5217 (Node on libuv <= 1.52.1 reports resident_size).
+    task_vm_info_data_t info = {};
+    if (!readTaskVMInfo(info))
+        return -1;
+    *rss = static_cast<size_t>(info.phys_footprint);
+    return 0;
 #elif defined(__linux__)
     // Taken from libuv.
     char buf[1024];
@@ -4162,6 +4169,34 @@ err:
     return uv_resident_set_memory(rss);
 #else
 #error "Unknown platform"
+#endif
+}
+
+// High-water mark of the number getRSS() reports, in bytes.
+extern "C" int getPeakRSS(size_t* peak)
+{
+#if defined(__APPLE__)
+    // Not Node's ru_maxrss (peak resident_size): with compressed memory that can be lower than getRSS().
+    task_vm_info_data_t info = {};
+    if (!readTaskVMInfo(info))
+        return -1;
+    *peak = static_cast<size_t>(info.ledger_phys_footprint_peak);
+    return 0;
+#elif OS(WINDOWS)
+    uv_rusage_t rusage;
+    int err = uv_getrusage(&rusage);
+    if (err)
+        return err;
+    // libuv converts PeakWorkingSetSize to kilobytes.
+    *peak = static_cast<size_t>(rusage.ru_maxrss) * 1024;
+    return 0;
+#else
+    struct rusage rusage;
+    if (getrusage(RUSAGE_SELF, &rusage) != 0)
+        return errno;
+    // ru_maxrss is kilobytes on Linux and FreeBSD.
+    *peak = static_cast<size_t>(rusage.ru_maxrss) * 1024;
+    return 0;
 #endif
 }
 

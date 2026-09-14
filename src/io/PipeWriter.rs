@@ -1812,6 +1812,7 @@ impl StreamBuffer {
     }
 
     pub fn write(&mut self, buffer: &[u8]) -> Result<(), OOM> {
+        self.compact();
         self.list.extend_from_slice(buffer);
         Ok(())
     }
@@ -1820,11 +1821,25 @@ impl StreamBuffer {
         self.cursor += amount;
     }
 
+    /// Drops the consumed prefix once it is at least as large as the unread
+    /// tail. `wrote` only moves the cursor and `reset` runs only on a full
+    /// drain, so a buffer that is refilled before it drains would otherwise
+    /// keep every consumed byte (#42722). The threshold keeps the memmove cost
+    /// linear when a large backlog is consumed a piece at a time.
+    fn compact(&mut self) {
+        if self.cursor == 0 || self.cursor < self.size() {
+            return;
+        }
+        self.list.drain(..self.cursor);
+        self.cursor = 0;
+    }
+
     pub fn write_assume_capacity(&mut self, buffer: &[u8]) {
         self.list.extend_from_slice(buffer);
     }
 
     pub fn ensure_unused_capacity(&mut self, capacity: usize) -> Result<(), OOM> {
+        self.compact();
         self.list.reserve(capacity);
         Ok(())
     }
@@ -1866,6 +1881,7 @@ impl StreamBuffer {
             }
         }
 
+        self.compact();
         let len = self.list.len();
         let list = mem::take(&mut self.list);
         self.list = bun_core::strings::allocate_latin1_into_utf8_with_list(list, len, buffer);
@@ -1878,6 +1894,7 @@ impl StreamBuffer {
         // calling
         // `convert_utf16_to_utf8_append` directly (its old shortcut) handed
         // simdutf a `Vec::new()` dangling pointer (`0x1`) and segfaulted.
+        self.compact();
         ByteVecExt::write_utf16(&mut self.list, buffer)?;
         Ok(())
     }

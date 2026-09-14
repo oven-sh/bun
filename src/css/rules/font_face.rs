@@ -429,18 +429,19 @@ impl FontFormat {
     }
 
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        let format: &[u8] = match self {
+            FontFormat::Woff => b"woff",
+            FontFormat::Woff2 => b"woff2",
+            FontFormat::Truetype => b"truetype",
+            FontFormat::Opentype => b"opentype",
+            FontFormat::EmbeddedOpentype => b"embedded-opentype",
+            FontFormat::Collection => b"collection",
+            FontFormat::Svg => b"svg",
+            FontFormat::String(s) => s,
+        };
         // Browser support for keywords rather than strings is very limited.
         // https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/src
-        match self {
-            FontFormat::Woff => dest.write_str("woff"),
-            FontFormat::Woff2 => dest.write_str("woff2"),
-            FontFormat::Truetype => dest.write_str("truetype"),
-            FontFormat::Opentype => dest.write_str("opentype"),
-            FontFormat::EmbeddedOpentype => dest.write_str("embedded-opentype"),
-            FontFormat::Collection => dest.write_str("collection"),
-            FontFormat::Svg => dest.write_str("svg"),
-            FontFormat::String(s) => dest.serialize_string(*s),
-        }
+        dest.serialize_string(format)
     }
 
     fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {

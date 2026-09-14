@@ -14,6 +14,8 @@
 //! 4. Mutation with reactive operands
 //! 5. Conditional assignment based on reactive control flow
 
+use bun_collections::AutoBitSet;
+
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::CompilerDiagnostic;
@@ -510,8 +512,9 @@ fn for_each_branch_target(terminal: &Terminal, mut f: impl FnMut(BlockId)) {
 
 /// `try` / `catch` control flow: a `MaybeThrow` with a handler is a branch that has no test operand.
 struct ReactiveThrows {
-    /// By `BlockId`: a reactive throw decides whether the block runs. Empty without a handler.
-    controlled: Vec<bool>,
+    /// By `BlockId`: a reactive throw decides whether the block runs. No bits without a handler.
+    controlled: AutoBitSet,
+    block_count: usize,
     /// Reactive handler bindings. Only reads count: a binding is declared before its `try`, out of scope.
     caught_values: HashSet<IdentifierId>,
     has_changes: bool,
@@ -520,7 +523,8 @@ struct ReactiveThrows {
 impl ReactiveThrows {
     fn new(block_count: usize) -> Self {
         ReactiveThrows {
-            controlled: vec![false; block_count],
+            controlled: bun_core::handle_oom(AutoBitSet::init_empty(block_count)),
+            block_count,
             caught_values: HashSet::default(),
             has_changes: false,
         }
@@ -528,10 +532,8 @@ impl ReactiveThrows {
 
     /// Transitive, because in a `try` the frontier of a block is mostly just the block before it.
     fn controls(&self, block_id: BlockId) -> bool {
-        self.controlled
-            .get(block_id.0 as usize)
-            .copied()
-            .unwrap_or(false)
+        let index = block_id.0 as usize;
+        index < self.block_count && self.controlled.is_set(index)
     }
 
     /// Marks the blocks control-dependent on `block`: each branch target, then up the post-dominator tree.
@@ -540,11 +542,12 @@ impl ReactiveThrows {
         for_each_branch_target(&block.terminal, |target| {
             let mut current = target;
             while Some(current) != stop {
-                let Some(controlled) = self.controlled.get_mut(current.0 as usize) else {
+                let index = current.0 as usize;
+                if index >= self.block_count {
                     break;
-                };
-                if !*controlled {
-                    *controlled = true;
+                }
+                if !self.controlled.is_set(index) {
+                    self.controlled.set(index);
                     self.has_changes = true;
                 }
                 let Some(next) = post_dominators.get(current) else {

@@ -1,16 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, tempDir } from "harness";
+import { chmodSync, symlinkSync, truncateSync } from "fs";
+import { bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
-import { supported } from "./bir/run-fixtures";
+import { cEnv as env, lines, supported } from "./bir/run-fixtures";
 
 // `import … from "./x.c"` compiles the file with Bun's own C compiler (bun_cc + JavaScriptCore's B3).
 // C's stdout is in text mode on Windows: "\r\n" there.
-const text = async (stream: ReadableStream<Uint8Array>) => (await stream.text()).replaceAll("\r\n", "\n");
+const text = async (stream: ReadableStream<Uint8Array>) => lines(await stream.text());
 // What `bun build --compile --outfile name` makes.
 const executable = (name: string) => (isWindows ? name + ".exe" : name);
-// A developer's own C_INCLUDE_PATH would put other headers in front of the system's.
-const env: Record<string, string | undefined> = { ...bunEnv, C_INCLUDE_PATH: undefined };
 
 async function spawned(cmd: string[], cwd: string, extra: Record<string, string | undefined> = {}) {
   await using proc = Bun.spawn({
@@ -432,6 +430,52 @@ describe.skipIf(!supported)("importing a .c file", () => {
     expect(exitCode).toBe(0);
   });
 
+  // perf(1) reads /tmp/perf-<pid>.map for the names of code made at run time.
+  test.concurrent.skipIf(!isLinux)("BUN_JSC_writeCModulePerfMap names each C function for perf", async () => {
+    using dir = tempDir("c-import-perf-map", {
+      "math.c": mathC,
+      "index.ts": `import { add } from "./math.c"; console.log(process.pid, add(1, 2));`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["index.ts"], { BUN_JSC_writeCModulePerfMap: "1" });
+    expect(stderr).toBe("");
+    const [pid, sum] = stdout.trim().split(" ");
+    expect(sum).toBe("3");
+    const map = Bun.file(`/tmp/perf-${pid}.map`);
+    const symbols = await map.text();
+    await map.delete();
+    for (const name of ["add", "mix", "length2", "sum_bytes", "uses_hidden", "hidden", "add2"])
+      expect(symbols).toMatch(new RegExp(`^[0-9a-f]+ [0-9a-f]+ C:${name}$`, "m"));
+    expect(exitCode).toBe(0);
+  });
+
+  // Said of the file's size: a file of zeros that takes no room on the disk is not read to be refused.
+  test.concurrent(
+    "a C file of more than a gibibyte is refused without being read, however it is asked for",
+    async () => {
+      using dir = tempDir("c-import-too-large", {
+        "big.c": "",
+        "imported.mjs": `try { await import("./big.c"); } catch (e) { console.log(e.name, e.message); }`,
+        "required.cjs": `try { require("./big.c"); } catch (e) { console.log(e.name, e.message); }`,
+        "entry.ts": `import "./big.c";`,
+      });
+      const big = join(String(dir), "big.c");
+      truncateSync(big, 2 ** 30 + 1);
+      const refused = `'${big}' cannot be read: larger than 1073741824 bytes`;
+      for (const entry of ["imported.mjs", "required.cjs"]) {
+        const { stdout, stderr, exitCode } = await run(String(dir), [entry]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(`BuildMessage ${refused}\n`);
+        expect(exitCode).toBe(0);
+      }
+      const program = await run(String(dir), ["big.c"]);
+      expect(program.stderr).toContain(`error: ${refused}`);
+      expect(program.exitCode).toBe(1);
+      const build = await run(String(dir), ["build", "entry.ts", "--target=bun", "--outdir", "out"]);
+      expect(build.stderr).toContain(`error: ${refused}`);
+      expect(build.exitCode).toBe(1);
+    },
+  );
+
   test.concurrent("bun test imports C too", async () => {
     using dir = tempDir("c-import-bun-test", {
       "math.c": mathC,
@@ -649,30 +693,6 @@ describe.skipIf(!supported)("a .c file is compiled where JavaScript would be tra
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("Workers importing the same file at the same time each get their own module", async () => {
-    using dir = tempDir("c-import-workers", {
-      "counter.c": "static int calls;\nint next(void) { return ++calls; }\n",
-      "worker.mjs": `
-        const { next } = await import("./counter.c");
-        let last = 0;
-        for (let i = 0; i < 1000; i++) last = next();
-        postMessage(last);
-      `,
-      "index.mjs": `
-        const results = await Promise.all(Array.from({ length: 8 }, () => new Promise((resolve, reject) => {
-          const worker = new Worker(new URL("./worker.mjs", import.meta.url).href);
-          worker.onmessage = event => resolve(event.data);
-          worker.onerror = reject;
-        })));
-        console.log(results.join());
-      `,
-    });
-    const { stdout, stderr, exitCode } = await run(String(dir), ["index.mjs"]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe(Array(8).fill(1000).join() + "\n");
-    expect(exitCode).toBe(0);
-  });
-
   // The bytes the "where C is not supported" tests load are what this build makes; where they are for, they load.
   test.concurrent(
     "what bun build made of a C file for Linux x64 loads there, and is for a different target anywhere else",
@@ -723,6 +743,218 @@ describe.skipIf(!supported)("a .c file is compiled where JavaScript would be tra
 
 // What C hands to the process (an exit or signal handler, a thread's start routine) is an address inside the
 // module: it stays loaded for as long as the process runs, whether or not JavaScript still holds its functions.
+// A C file is loaded into the process once, like a library a program was linked with: whichever way, how often and
+// from however many threads it is asked for, there is one set of its static objects, its constructors run once (when
+// a module that imports it is first evaluated, in the order of the imports) and its destructors once.
+describe.skipIf(!supported)("a C file is one module in the process", () => {
+  const counted = /* c */ `
+    #include <stdio.h>
+    static int counter;
+    __attribute__((constructor)) static void constructed(void) { puts("constructor"); }
+    __attribute__((destructor)) static void destroyed(void) { printf("destructor %d\\n", counter); }
+    int bump(void) { return ++counter; }
+  `;
+  const routes: Record<string, string> = {
+    // Several at once.
+    "together.mjs": `
+      const [a, b, c] = await Promise.all([import("./counted.c"), import("./counted.c"), import("./counted.c")]);
+      console.log(a === b && b === c, a.bump(), b.bump(), c.bump());
+    `,
+    "eight.mjs": `
+      const all = await Promise.all(Array.from({ length: 8 }, () => import("./counted.c")));
+      console.log(all.every(module => module === all[0]), all.map(module => module.bump()).join());
+    `,
+    // From two modules in the same tick.
+    "two-importers.mjs": `
+      const [one, other] = await Promise.all([import("./importer-one.mjs"), import("./importer-other.mjs")]);
+      console.log(one.bump(), other.bump(), one.bump());
+    `,
+    "importer-one.mjs": `export { bump } from "./counted.c";`,
+    "importer-other.mjs": `const { bump } = await import("./counted.c"); export { bump };`,
+    // require() and import, in every order, and at once.
+    "require-then-import.mjs": `
+      const required = require("./counted.c");
+      const imported = await import("./counted.c");
+      console.log(required.bump(), imported.bump(), required.bump(), imported.bump());
+    `,
+    "import-then-require.mjs": `
+      const imported = await import("./counted.c");
+      const required = require("./counted.c");
+      console.log(required.bump(), imported.bump(), required.bump(), imported.bump());
+    `,
+    "import-racing-require.mjs": `
+      const pending = import("./counted.c");
+      const required = require("./counted.c");
+      const imported = await pending;
+      console.log(required.bump(), imported.bump(), required.bump(), imported.bump());
+      const again = require("./counted.c"), againImported = await import("./counted.c");
+      console.log(again.bump(), againImported.bump());
+    `,
+    "import-racing-require.cjs": `
+      const pending = import("./counted.c");
+      const required = require("./counted.c");
+      pending.then(imported => console.log(required.bump(), imported.bump(), required.bump(), imported.bump()));
+    `,
+    // With and without the attribute that says what the file is anyway.
+    "attribute.mjs": `
+      import * as plain from "./counted.c";
+      const attributed = await import("./counted.c", { with: { type: "c" } });
+      console.log(plain.bump(), attributed.bump(), plain.bump());
+    `,
+    // Through another name for the file.
+    "symlink.mjs": `
+      require("fs").symlinkSync("counted.c", "linked.c");
+      const [real, linked] = await Promise.all([import("./counted.c"), import("./linked.c")]);
+      console.log(real.bump(), linked.bump(), real.bump());
+    `,
+    // Forgotten by require() and asked for again: the JavaScript objects are new, the module is the one there is.
+    "forgotten.cjs": `
+      const first = require("./counted.c");
+      delete require.cache[require.resolve("./counted.c")];
+      const second = require("./counted.c");
+      console.log(first.bump(), second.bump(), first.bump());
+    `,
+  };
+  const expected: Record<string, string> = {
+    "together.mjs": "true 1 2 3\n",
+    "eight.mjs": "true 1,2,3,4,5,6,7,8\n",
+    "two-importers.mjs": "1 2 3\n",
+    "require-then-import.mjs": "1 2 3 4\n",
+    "import-then-require.mjs": "1 2 3 4\n",
+    "import-racing-require.mjs": "1 2 3 4\n5 6\n",
+    "import-racing-require.cjs": "1 2 3 4\n",
+    "attribute.mjs": "1 2 3\n",
+    "symlink.mjs": "1 2 3\n",
+    "forgotten.cjs": "1 2 3\n",
+  };
+
+  test.concurrent.each(Object.keys(expected))("%s: one constructor, one counter, one destructor", async entry => {
+    using dir = tempDir("c-one-module", { ...routes, "counted.c": counted });
+    const { stdout, stderr, exitCode } = await run(String(dir), [entry]);
+    expect(stderr).toBe("");
+    const printed = expected[entry];
+    const calls = printed
+      .trim()
+      .split(/[ ,\n]/)
+      .filter(word => /^\d+$/.test(word)).length;
+    expect(stdout).toBe(`constructor\n${printed}destructor ${calls}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("C a plugin supplies is one module too, imported and then required", async () => {
+    using dir = tempDir("c-one-module-plugin", {
+      "plugin.ts": `
+        Bun.plugin({
+          name: "c",
+          setup(build) {
+            build.onLoad({ filter: /\\.generated$/ }, () => ({ contents: ${JSON.stringify(counted)}, loader: "c" }));
+          },
+        });
+      `,
+      "counted.generated": "",
+      "index.mjs": `
+        import { bump } from "./counted.generated";
+        const required = require("./counted.generated");
+        const dynamic = await import("./counted.generated");
+        console.log(bump(), required.bump(), dynamic.bump());
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--preload", "./plugin.ts", "index.mjs"]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("constructor\n1 2 3\ndestructor 3\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "Workers and the thread that started them share it: nothing runs its constructors twice",
+    async () => {
+      using dir = tempDir("c-one-module-workers", {
+        "counted.c": /* c */ `
+        #include <stdio.h>
+        #include <stdatomic.h>
+        static atomic_int counter, constructed;
+        __attribute__((constructor)) static void construct(void) { atomic_fetch_add(&constructed, 1); puts("constructor"); }
+        __attribute__((destructor)) static void destroy(void) { printf("destructor %d\\n", atomic_load(&counter)); }
+        int bump(void) { return atomic_fetch_add(&counter, 1) + 1; }
+        int constructions(void) { return atomic_load(&constructed); }
+      `,
+        "worker.mjs": `
+        const { bump, constructions } = await import("./counted.c");
+        for (let i = 0; i < 1000; i++) bump();
+        postMessage(constructions());
+      `,
+        "index.mjs": `
+        import { bump, constructions } from "./counted.c";
+        bump();
+        const seen = await Promise.all(Array.from({ length: 8 }, () => new Promise((resolve, reject) => {
+          const worker = new Worker(new URL("./worker.mjs", import.meta.url).href);
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = reject;
+        })));
+        console.log(seen.join(), constructions(), bump());
+      `,
+        // A Worker first: the thread that started it finds the module there.
+        "worker-first.mjs": `
+        const worker = new Worker(new URL("./worker.mjs", import.meta.url).href);
+        const seen = await new Promise((resolve, reject) => { worker.onmessage = event => resolve(event.data); worker.onerror = reject; });
+        const { bump, constructions } = await import("./counted.c");
+        console.log(seen, constructions(), bump());
+      `,
+      });
+      const together = await run(String(dir), ["index.mjs"]);
+      expect(together.stderr).toBe("");
+      expect(together.stdout).toBe(`constructor\n${Array(8).fill(1).join()} 1 8002\ndestructor 8002\n`);
+      expect(together.exitCode).toBe(0);
+      const first = await run(String(dir), ["worker-first.mjs"]);
+      expect(first.stderr).toBe("");
+      expect(first.stdout).toBe("constructor\n1 1 1001\ndestructor 1001\n");
+      expect(first.exitCode).toBe(0);
+    },
+  );
+
+  // Evaluation, not fetching, is when a module has its effects: in the order of the imports.
+  test.concurrent(
+    "constructors run when the module is evaluated: after what was imported before it, and not at all if that threw",
+    async () => {
+      using dir = tempDir("c-one-module-order", {
+        "counted.c": counted,
+        "second.c": `#include <stdio.h>\n__attribute__((constructor)) static void constructed(void) { puts("second constructor"); }\nint second(void) { return 2; }\n`,
+        "first.js": `console.log("first.js evaluated");`,
+        "throws.js": `throw new Error("stop");`,
+        "order.mjs": `import "./first.js"; import "./counted.c"; import "./second.c"; console.log("entry evaluated");`,
+        "never.mjs": `import "./throws.js"; import "./counted.c";`,
+        "after-await.mjs": `console.log("before"); await 0; const { bump } = await import("./counted.c"); console.log(bump());`,
+        "required.cjs": `console.log("before"); const { bump } = require("./counted.c"); console.log(bump());`,
+        "worker-order.mjs": `new Worker(new URL("./order.mjs", import.meta.url).href);`,
+      });
+      const order = await run(String(dir), ["order.mjs"]);
+      expect(order.stderr).toBe("");
+      expect(order.stdout).toBe("first.js evaluated\nconstructor\nsecond constructor\nentry evaluated\ndestructor 0\n");
+      const never = await run(String(dir), ["never.mjs"]);
+      expect(never.stderr).toContain("stop");
+      expect(never.stdout).toBe("");
+      expect(never.exitCode).toBe(1);
+      for (const entry of ["after-await.mjs", "required.cjs"]) {
+        const { stdout, stderr } = await run(String(dir), [entry]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("before\nconstructor\n1\ndestructor 1\n");
+      }
+      const worker = await run(String(dir), ["worker-order.mjs"]);
+      expect(worker.stderr).toBe("");
+      expect(worker.stdout).toBe(
+        "first.js evaluated\nconstructor\nsecond constructor\nentry evaluated\ndestructor 0\n",
+      );
+      // The same from a bundle, and from an executable.
+      const build = await run(String(dir), ["build", "order.mjs", "--target=bun", "--outdir", "out"]);
+      expect(build.exitCode).toBe(0);
+      expect((await run(join(String(dir), "out"), ["order.js"])).stdout).toBe(order.stdout);
+      const compile = await run(String(dir), ["build", "--compile", "order.mjs", "--outfile", "app"]);
+      expect(compile.exitCode).toBe(0);
+      expect((await spawned([join(String(dir), executable("app"))], String(dir))).stdout).toBe(order.stdout);
+    },
+  );
+});
+
 describe.skipIf(!supported)("a C module stays loaded", () => {
   // Collects what can be collected and makes the JIT allocate over what was freed.
   const churn = `
@@ -775,21 +1007,23 @@ describe.skipIf(!supported)("a C module stays loaded", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A file that has changed is another module; the one that was in its place stays, with what it registered.
   test.concurrent(
-    "one that require() forgot: its atexit handler runs, and so does the one loaded in its place",
+    "one that require() forgot and whose file then changed: its atexit handler runs, and so does the one loaded in its place",
     async () => {
       using dir = tempDir("c-module-lifetime", {
-        "lib.c": /* c */ `
-        #include <stdio.h>
-        #include <stdlib.h>
-        static int loads;
-        static void bye(void) { printf("bye %d\\n", loads); }
-        int install(int n) { loads = n; atexit(bye); return n; }
-      `,
         "main.cjs": `
         ${churn}
+        const source = n => \`
+          #include <stdio.h>
+          #include <stdlib.h>
+          static int loads;
+          static void bye(void) { printf("bye %d of generation ${"${n}"}\\\\n", loads); }
+          int install(int n) { loads = n; atexit(bye); return n; }
+        \`;
         (async () => {
           for (let n = 1; n <= 3; n++) {
+            require("fs").writeFileSync("lib.c", source(n));
             require("./lib.c").install(n);
             delete require.cache[require.resolve("./lib.c")];
             await churn();
@@ -800,7 +1034,7 @@ describe.skipIf(!supported)("a C module stays loaded", () => {
       });
       const { stdout, stderr, exitCode } = await run(String(dir), ["main.cjs"]);
       expect(stderr).toBe("");
-      expect(stdout).toBe("done\nbye 3\nbye 2\nbye 1\n");
+      expect(stdout).toBe("done\nbye 3 of generation 3\nbye 2 of generation 2\nbye 1 of generation 1\n");
       expect(exitCode).toBe(0);
     },
   );
@@ -879,7 +1113,35 @@ describe.skipIf(!supported)("a C module stays loaded", () => {
     },
   );
 
-  test("bun --hot loads the file again each time it changes; every copy's atexit handler runs at exit", async () => {
+  // Modules stay, so a file that keeps changing (under --hot, or here) ends by filling the memory there is for code.
+  test.concurrent("when the memory for machine code runs out, importing C is an error like any other", async () => {
+    using dir = tempDir("c-module-memory", {
+      "index.cjs": `
+        const { writeFileSync } = require("fs");
+        const body = n => Array.from({ length: 400 }, (_, i) => "int f" + n + "_" + i + "(int x) { int t = x; for (int k = 0; k < 8; k++) t = t * " + (i + 3) + " + k; return t; }").join("\\n");
+        let loaded = 0;
+        try {
+          for (;;) {
+            writeFileSync("changing.c", body(loaded));
+            if (require("./changing.c")["f" + loaded + "_1"](1) === undefined) throw new Error("not loaded");
+            delete require.cache[require.resolve("./changing.c")];
+            loaded++;
+          }
+        } catch (e) {
+          console.log(e.name, e.message.replace(/f\\d+_\\d+/, "f"), loaded > 1);
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["index.cjs"], {
+      BUN_JSC_jitMemoryReservationSize: String(1 << 20),
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("TypeError changing.c: out of executable memory for 'f' true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // What is loaded again is a file that compiles to something else: the module it was stays, with its handlers.
+  test("bun --hot loads the file again each time what it compiles to changes; every copy's atexit handler runs at exit", async () => {
     const source = /* c */ `
       #include <stdio.h>
       #include <stdlib.h>
@@ -887,10 +1149,11 @@ describe.skipIf(!supported)("a C module stays loaded", () => {
       static int id;
       static void bye(void) { printf("bye %d\\n", id); }
       void reg(int n) { id = n; atexit(bye); }
+      int generation(void) { return GENERATION; }
     `;
     using dir = tempDir("c-module-hot", {
       "a.c": source,
-      "edited.h": "// 0\n",
+      "edited.h": "#define GENERATION 0\n",
       "index.ts": `
         import { reg } from "./a.c";
         ${churn}
@@ -908,13 +1171,15 @@ describe.skipIf(!supported)("a C module stays loaded", () => {
       stderr: "pipe",
     });
     const waitFor = follow(proc.stdout);
-    // The file itself, then a header it includes.
-    for (let n = 1; n <= 3; n++) {
-      await waitFor(`run ${n}\n`);
-      if (n === 2) await Bun.write(join(String(dir), "edited.h"), `// ${n}\n`);
-      else await Bun.write(join(String(dir), "a.c"), source + `// ${n}\n`);
-    }
-    await waitFor("run 4\nbye 4\nbye 3\nbye 2\nbye 1\n");
+    // The file itself, then a header it includes, then a comment, which changes nothing of what is loaded.
+    await waitFor("run 1\n");
+    await Bun.write(join(String(dir), "a.c"), source + "int added(void) { return 1; }\n");
+    await waitFor("run 2\n");
+    await Bun.write(join(String(dir), "edited.h"), "#define GENERATION 2\n");
+    await waitFor("run 3\n");
+    await Bun.write(join(String(dir), "edited.h"), "#define GENERATION 2 // still\n");
+    // The third module is there twice over: what it registered on the third run and on the fourth.
+    await waitFor("run 4\nbye 4\nbye 4\nbye 2\nbye 1\n");
     expect(await proc.exited).toBe(0);
   });
 });
@@ -1052,6 +1317,79 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
     expect(exitCode).toBe(0);
   });
 
+  // What is C is said by a file's name, an import's attribute or --loader: standard input has none of them.
+  test.concurrent("`bun -` reads TypeScript, as ever: C given there is not compiled", async () => {
+    using dir = tempDir("c-main-dash", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-"],
+      env,
+      cwd: String(dir),
+      stdin: Buffer.from("int main(void) { return 3; }\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([text(proc.stdout), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("[stdin]:1:");
+    expect(exitCode).toBe(1);
+  });
+
+  // glibc has no `pthread_atfork` in libc.so: a C compiler links a stub that passes the program's `__dso_handle`.
+  test.concurrent.skipIf(!isLinux)("pthread_atfork handlers run around fork()", async () => {
+    using dir = tempDir("c-main-atfork", {
+      "program.c": /* c */ `
+        #include <pthread.h>
+        #include <stdio.h>
+        #include <sys/wait.h>
+        #include <unistd.h>
+        static int ran;
+        static void prepare(void) { ran |= 1; }
+        static void parent(void) { ran |= 2; }
+        static void child(void) { ran |= 4; }
+        int main(void) {
+          if (pthread_atfork(prepare, parent, child) != 0) return 1;
+          pid_t pid = fork();
+          if (pid == 0) _exit(ran);
+          int status = 0;
+          waitpid(pid, &status, 0);
+          printf("parent %d child %d\\n", ran, WEXITSTATUS(status));
+          return 0;
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["program.c"]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("parent 3 child 5\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // What every program made with Microsoft's toolchain is linked with: the C runtime and kernel32. Another library
+  // is one the program names, as it names it to Microsoft's linker.
+  test.concurrent.skipIf(!isWindows)(
+    "on Windows a function of user32 is found when the program names the library, and not otherwise",
+    async () => {
+      const program = (pragma: string) => /* c */ `
+        ${pragma}
+        int printf(const char *format, ...);
+        __declspec(dllimport) int __stdcall GetSystemMetrics(int index);
+        __declspec(dllimport) unsigned long __stdcall GetCurrentProcessId(void);
+        int main(void) { printf("%d %d\\n", GetSystemMetrics(0) > 0, GetCurrentProcessId() != 0); return 0; }
+      `;
+      using dir = tempDir("c-main-windows-libraries", {
+        "named.c": program(`#pragma comment(lib, "user32.lib")`),
+        "unnamed.c": program(""),
+      });
+      const named = await run(String(dir), ["named.c"]);
+      expect(named.stderr).toBe("");
+      expect(named.stdout).toBe("1 1\n");
+      expect(named.exitCode).toBe(0);
+      const unnamed = await run(String(dir), ["unnamed.c"]);
+      expect(unnamed.stderr).toContain("undefined symbol 'GetSystemMetrics'");
+      expect(unnamed.stdout).toBe("");
+      expect(unnamed.exitCode).toBe(1);
+    },
+  );
+
   // As `bun module.ts` of a file that only exports is: the module is evaluated, and that is the program.
   test.concurrent(
     "a file without a main is a module that gets loaded: its constructors run, and the process ends",
@@ -1185,6 +1523,85 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
     expect(imported.stderr).toBe("ef");
   });
 
+  // As a program GCC or Clang built ends: what `atexit` was given runs last registered first, and a module's
+  // destructors are on that list from before its constructors run.
+  const endings: [string, string, string][] = [
+    [
+      "a handler a constructor registered runs before the destructors",
+      /* c */ `
+        static void from_constructor(void) { puts("handler the constructor registered"); }
+        static void from_main(void) { puts("handler main registered"); }
+        __attribute__((constructor)) static void construct(void) { atexit(from_constructor); }
+        __attribute__((destructor)) static void destroy(void) { puts("destructor"); }
+        int main(void) { atexit(from_main); return 0; }
+      `,
+      "handler main registered\nhandler the constructor registered\ndestructor\n",
+    ],
+    [
+      "constructors and destructors with priorities, each constructor registering a handler",
+      /* c */ `
+        static void first(void) { puts("handler of the constructor with priority 101"); }
+        static void second(void) { puts("handler of the constructor with priority 102"); }
+        static void from_main(void) { puts("handler main registered"); }
+        __attribute__((constructor(101))) static void construct_first(void) { puts("constructor 101"); atexit(first); }
+        __attribute__((constructor(102))) static void construct_second(void) { puts("constructor 102"); atexit(second); }
+        __attribute__((destructor(101))) static void destroy_first(void) { puts("destructor 101"); }
+        __attribute__((destructor(102))) static void destroy_second(void) { puts("destructor 102"); }
+        int main(void) { atexit(from_main); return 0; }
+      `,
+      "constructor 101\nconstructor 102\nhandler main registered\nhandler of the constructor with priority 102\nhandler of the constructor with priority 101\ndestructor 102\ndestructor 101\n",
+    ],
+    [
+      "a handler registered by a handler, and one registered by a destructor, run next",
+      /* c */ `
+        static void late(void) { puts("handler a handler registered"); }
+        static void from_destructor(void) { puts("handler the destructor registered"); }
+        static void from_constructor(void) { puts("handler the constructor registered"); atexit(late); }
+        static void from_main(void) { puts("handler main registered"); }
+        __attribute__((constructor)) static void construct(void) { atexit(from_constructor); }
+        __attribute__((destructor)) static void destroy(void) { puts("destructor"); atexit(from_destructor); }
+        int main(void) { atexit(from_main); return 0; }
+      `,
+      "handler main registered\nhandler the constructor registered\nhandler a handler registered\ndestructor\nhandler the destructor registered\n",
+    ],
+  ];
+  test.concurrent.each(endings)("at the end %s", async (_, source, printed) => {
+    using dir = tempDir("c-main-endings", {
+      "program.c": `#include <stdio.h>\n#include <stdlib.h>\n${source}`,
+      // Imported, the module's part of the list is the same; nothing calls main.
+      "imported.ts": `import "./program.c";`,
+    });
+    const program = await run(String(dir), ["program.c"]);
+    expect(program.stderr).toBe("");
+    expect(program.stdout).toBe(printed);
+    expect(program.exitCode).toBe(0);
+    const imported = await run(String(dir), ["imported.ts"]);
+    expect(imported.stderr).toBe("");
+    expect(imported.stdout).toBe(printed.replace("handler main registered\n", ""));
+    expect(imported.exitCode).toBe(0);
+  });
+
+  test.concurrent("two modules: the one loaded later is done with first", async () => {
+    const module = (name: string) => /* c */ `
+      #include <stdio.h>
+      #include <stdlib.h>
+      static void handler(void) { puts("handler of ${name}'s constructor"); }
+      __attribute__((constructor)) static void construct(void) { atexit(handler); }
+      __attribute__((destructor)) static void destroy(void) { puts("destructor of ${name}"); }
+    `;
+    using dir = tempDir("c-main-endings-two", {
+      "first.c": module("first"),
+      "second.c": module("second"),
+      "index.ts": `import "./first.c"; import "./second.c";`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["index.ts"]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      "handler of second's constructor\ndestructor of second\nhandler of first's constructor\ndestructor of first\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
   // Bun keeps both lists for compiled C, on every platform.
   test.concurrent(
     "quick_exit runs at_quick_exit handlers and not atexit ones; any other end the other way round",
@@ -1259,7 +1676,6 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
     const { stdout, stderr, exitCode, signalCode } = await spawned(
       isPosix ? ["/bin/sh", "-c", 'ulimit -c 0 && exec "$@"', "--", ...cmd] : cmd,
       String(dir),
-      { BUN_ENABLE_CRASH_REPORTING: "0" },
     );
     expect(stdout).toBe("before\n");
     expect(stderr).not.toContain("This indicates a bug in Bun, not your code");
@@ -1290,7 +1706,6 @@ describe.skipIf(!supported)("a crash in imported C", () => {
     const { stdout, stderr, exitCode, signalCode } = await spawned(
       ["/bin/sh", "-c", 'ulimit -c 0 && exec "$@"', "--", bunExe(), "index.ts"],
       String(dir),
-      { BUN_ENABLE_CRASH_REPORTING: "0" },
     );
     expect(stdout).toBe("before\n");
     expect(stderr).toMatch(/Features:.* c_module/);
@@ -1938,6 +2353,24 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     expect(exitCode).toBe(7);
   });
 
+  // With --bytecode the entry point is compiled ahead of time, as CommonJS or as an ES module: the statement that
+  // runs main is part of it.
+  test.each([[["--bytecode", "--format=cjs"]], [["--bytecode", "--format=esm"]], [["--format=cjs"]], [["--minify"]]])(
+    "bun build --compile %j of a C file with main() is that program",
+    async flags => {
+      using dir = tempDir("c-compile-main-flags", {
+        "hello.c": `#include <stdio.h>\nint main(int argc, char **argv) { printf("%d %s\\n", argc, argc > 1 ? argv[1] : ""); return 4; }\n`,
+      });
+      const build = await run(String(dir), ["build", "--compile", ...flags, "hello.c", "--outfile", "hello"]);
+      expect(build.stderr).not.toContain("error");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await spawned([join(String(dir), executable("hello")), "one"], String(dir));
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2 one\n");
+      expect(exitCode).toBe(4);
+    },
+  );
+
   test("bun build --compile of several C files links them into one program", async () => {
     using dir = tempDir("c-compile-multi", {
       "shared.h": "extern int calls;\nint twice(int);\nint counted(void);\n",
@@ -2006,6 +2439,101 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     expect(missing.stderr).toContain("nowhere.c");
     expect(missing.exitCode).not.toBe(0);
   });
+
+  // Each of a program's files is found and read the way any input of a build is.
+  test.concurrent(
+    "the files of a C program come from Bun.build's files and from plugins as any input does",
+    async () => {
+      const main = `#include <stdio.h>\nint helper(int);\nint main(void) { printf("%d\\n", helper(20)); return 0; }\n`;
+      using dir = tempDir("c-bundle-multi-sources", {
+        "main.c": main,
+        "helper.c": `int helper(int x) { return x + 1; }\n`,
+        "sub/unused.txt": "",
+        "build.ts": `
+        import { join } from "path";
+        const root = import.meta.dir;
+        const main = ${JSON.stringify(main)};
+        const builds = {
+          files: {
+            entrypoints: ["/virtual/main.c", "/virtual/helper.c"],
+            files: { "/virtual/main.c": main, "/virtual/helper.c": "int helper(int x) { return x * 2 + 2; }" },
+          },
+          "one from files": {
+            entrypoints: ["./main.c", "/virtual/helper.c"],
+            files: { "/virtual/helper.c": "int helper(int x) { return x * 3; }" },
+          },
+          onLoad: {
+            entrypoints: ["./main.c", "./helper.c"],
+            plugins: [{ name: "rewrite", setup(builder) {
+              builder.onLoad({ filter: /helper\\.c$/ }, async args => ({ contents: (await Bun.file(args.path).text()).replace("x + 1", "x + 100"), loader: "c" }));
+            } }],
+          },
+          "onLoad of the program": {
+            entrypoints: ["./main.c", "./helper.c"],
+            plugins: [{ name: "rewrite", setup(builder) {
+              builder.onLoad({ filter: /main\\.c$/ }, async args => ({ contents: (await Bun.file(args.path).text()).replace("helper(20)", "helper(50)") }));
+            } }],
+          },
+          onResolve: {
+            entrypoints: ["./main.c", "./elsewhere.c"],
+            plugins: [{ name: "redirect", setup(builder) {
+              builder.onResolve({ filter: /elsewhere\\.c$/ }, () => ({ path: join(root, "helper.c") }));
+            } }],
+          },
+          "another spelling": { entrypoints: ["./main.c", "./sub/../helper.c", "./helper.c"] },
+          "one that is not there": { entrypoints: ["./main.c", "./helper.c", "./nowhere.c"] },
+        };
+        for (const [name, options] of Object.entries(builds)) {
+          const result = await Bun.build({ ...options, target: "bun", outdir: join(root, "out", name), throw: false });
+          const program = result.outputs.find(output => output.kind === "entry-point")?.path ?? "";
+          console.log(name + ":", result.success, result.outputs.map(output => output.kind).sort().join(), result.logs.map(log => log.message).join("|"), "#" + program);
+        }
+      `,
+      });
+      const build = await run(String(dir), ["build.ts"]);
+      expect(build.stderr).toBe("");
+      const builds = build.stdout
+        .trimEnd()
+        .split("\n")
+        .map(line => line.split("#"));
+      expect(builds.slice(0, 6).map(([said]) => said)).toEqual(
+        ["files", "one from files", "onLoad", "onLoad of the program", "onResolve", "another spelling"].map(
+          name => `${name}: true asset,entry-point  `,
+        ),
+      );
+      expect(builds[6][0]).toStartWith("one that is not there: false ");
+      expect(builds[6][0]).toContain("nowhere.c");
+      const printed = ["42\n", "60\n", "120\n", "51\n", "21\n", "21\n"];
+      for (let i = 0; i < printed.length; i++) {
+        const { stdout, stderr, exitCode } = await run(String(dir), [builds[i][1]]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(printed[i]);
+        expect(exitCode).toBe(0);
+      }
+    },
+  );
+
+  test.concurrent.skipIf(!isPosix)(
+    "a file of a C program may be a symbolic link, also to another of its files",
+    async () => {
+      using dir = tempDir("c-bundle-multi-symlink", {
+        "main.c": `#include <stdio.h>\nint helper(int);\nint main(void) { printf("%d\\n", helper(20)); return 0; }\n`,
+        "helper.c": `int helper(int x) { return x + 1; }\n`,
+      });
+      symlinkSync("helper.c", join(String(dir), "linked.c"));
+      for (const entries of [
+        ["main.c", "linked.c"],
+        ["main.c", "helper.c", "linked.c"],
+      ]) {
+        const build = await run(String(dir), ["build", ...entries, "--target=bun", "--outdir", "out"]);
+        expect(build.stderr).toBe("");
+        expect(build.exitCode).toBe(0);
+        const { stdout, exitCode } = await run(join(String(dir), "out"), ["main.js"]);
+        expect(stdout).toBe("21\n");
+        expect(exitCode).toBe(0);
+      }
+    },
+  );
 
   test("bun build --compile embeds the compiled form; the executable needs neither the source nor a C parser", async () => {
     using dir = tempDir("c-compile", files);
@@ -2087,6 +2615,50 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     },
   );
 
+  // The other platforms C is compiled for. What shows which one a file was compiled for is in the file; the build
+  // then stops where it would fetch that platform's runtime.
+  const host = isWindows ? "bun-windows-x64" : isLinux ? "bun-linux-x64" : "bun-darwin-arm64";
+  const macros: Record<string, [string, number]> = {
+    "bun-windows-x64": ["_WIN32", 4],
+    "bun-darwin-arm64": ["__APPLE__", 8],
+    "bun-linux-x64": ["__linux__", 8],
+  };
+  test.concurrent.each(Object.keys(macros).filter(target => target !== host))(
+    "--compile --target=%s: C is compiled for that platform, with headers from C_INCLUDE_PATH",
+    async target => {
+      const [macro, long] = macros[target];
+      const program = (size: number) =>
+        `#ifndef ${macro}\n#error compiled for another platform\n#endif\n_Static_assert(sizeof(long) == ${size}, "the size of long");\nint main(void) { return 0; }\n`;
+      using dir = tempDir("c-compile-cross", {
+        "right.c": program(long),
+        "wrong.c": program(12 - long),
+        "header.c": "#include <widget.h>\nint main(void) { return WIDGET; }\n",
+        "include/widget.h": "#define WIDGET 3\n",
+      });
+      const build = (file: string, extra: Record<string, string> = {}) =>
+        run(String(dir), ["build", "--compile", `--target=${target}`, file, "--outfile", "app"], {
+          ...elsewhere,
+          ...extra,
+        });
+      const right = await build("right.c");
+      expect(right.stderr).not.toContain("error:");
+      expect(right.stderr).toContain("Failed to download");
+      const wrong = await build("wrong.c");
+      expect(wrong.stderr).toContain("error: static assertion failed: the size of long");
+      expect(wrong.stderr).not.toContain("compiled for another platform");
+      // This machine's headers are not that platform's: only what C_INCLUDE_PATH names is searched, and a header
+      // that is not there is one error that says so.
+      const missing = await build("header.c");
+      expect(missing.stderr).toContain("error: 'widget.h' file not found");
+      expect(missing.stderr).toContain(
+        "note: the headers of a target that is not this machine are looked for in the directories of C_INCLUDE_PATH only",
+      );
+      const found = await build("header.c", { C_INCLUDE_PATH: join(String(dir), "include") });
+      expect(found.stderr).not.toContain("error:");
+      expect(found.stderr).toContain("Failed to download");
+    },
+  );
+
   test.concurrent(
     "Bun.build({ compile: { target } }) compiles C for that target as bun build --compile --target does",
     async () => {
@@ -2139,7 +2711,7 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     expect(build.exitCode).toBe(0);
     const [asset] = [...new Bun.Glob("program-*.c").scanSync(join(String(dir), "out"))];
     const size = (await Bun.file(join(String(dir), "out", asset)).bytes()).length;
-    const { stdout, stderr, exitCode } = await run(String(dir), ["damage.ts"], { BUN_ENABLE_CRASH_REPORTING: "0" });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["damage.ts"]);
     expect(stderr).toBe("");
     expect(stdout).toBe(`tried ${size * 2} refused some: true\n`);
     expect(exitCode).toBe(0);

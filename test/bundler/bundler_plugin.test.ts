@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import path, { dirname, join, resolve } from "node:path";
-import { supported as compilesC } from "../js/bun/ffi/bir/run-fixtures";
+import { supported } from "../js/bun/ffi/bir/run-fixtures";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -102,7 +102,7 @@ describe("bundler", () => {
   // A C file reports "c" as its default loader and a plugin may rely on it implicitly, give the file another, or
   // answer with C for a file that is not one. What the bundle carries of C a plugin supplied is what it carries of
   // any C: the compiled form, which needs neither the source's headers nor a compiler where the bundle runs.
-  (compilesC ? itBundled : itBundled.skip)("plugin/LoadCLoader", {
+  (supported ? itBundled : itBundled.skip)("plugin/LoadCLoader", {
     target: "bun",
     outdir: "/out",
     files: {

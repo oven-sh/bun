@@ -129,6 +129,63 @@ setInterval(() => {}, 1000);
   10000,
 );
 
+// While one thread is inside execve(2), Linux fails every clone(CLONE_FS) in
+// the process with EAGAIN until the exec has killed the other threads
+// (fs/exec.c check_unsafe_exec, kernel/fork.c copy_fs). The --watch reload
+// runs execve on the watcher thread, so a GC marker or worker thread that the
+// JS thread spawned at that moment failed, and WTF::Thread::create aborted the
+// process. The fixture keeps the JS thread inside pthread_create for the whole
+// run and records the first failure in a file that outlives each exec'd image.
+it.skipIf(!isLinux)(
+  "a --watch reload does not fail pthread_create on the other threads",
+  async () => {
+    using dir = tempDir("watch-reload-pthread-create", {
+      "spinner.js": `import { spawnThreadsForTesting } from "bun:internal-for-testing";
+import { openSync } from "node:fs";
+const fd = openSync("failures.txt", "a");
+console.log("started");
+for (;;) spawnThreadsForTesting(1000, fd, 2);
+`,
+    });
+    const cwd = String(dir);
+    const path = join(cwd, "spinner.js");
+    const proc = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "spinner.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    watchee = proc;
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    const waitForStarts = async (count: number) => {
+      while (output.split("started\n").length - 1 < count) {
+        const { value, done } = await reader.read();
+        // stdout survives the exec, so a closed pipe means the process died
+        // instead of reloading.
+        if (done) throw new Error(`watchee exited after ${count - 1} reload(s): ${JSON.stringify(output)}`);
+        output += decoder.decode(value, { stream: true });
+      }
+    };
+
+    const reloads = 8;
+    await waitForStarts(1);
+    for (let i = 1; i <= reloads; i++) {
+      await Bun.write(path, (await Bun.file(path).text()) + `// touch ${i}\n`);
+      await waitForStarts(i + 1);
+    }
+    reader.releaseLock();
+    proc.kill("SIGKILL");
+    await proc.exited;
+
+    expect(await Bun.file(join(cwd, "failures.txt")).text()).toBe("");
+  },
+  30000,
+);
+
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An
 // LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux

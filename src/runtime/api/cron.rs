@@ -27,9 +27,7 @@ use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction,
     JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult,
 };
-#[cfg(not(target_os = "macos"))]
-use bun_paths::PathBuffer;
-use bun_paths::{self as path};
+use bun_paths as path;
 use bun_ptr::{BackRef, RefPtr, ThisPtr};
 use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
@@ -189,7 +187,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
             let _ = write!(
                 &mut msg,
                 "Failed to read process output: {}",
-                <&'static str>::from(err.get_errno())
+                bstr::BStr::new(err.name())
             );
             self.err_msg().set(Some(msg));
         }
@@ -393,7 +391,7 @@ impl CronJobBase for CronRegisterJob {
             Status::Err(err) => {
                 self.set_err(format_args!(
                     "Process error: {}",
-                    <&'static str>::from(err.get_errno())
+                    bstr::BStr::new(err.name())
                 ));
                 return JobAction::Finish;
             }
@@ -1125,7 +1123,7 @@ impl CronJobBase for CronRemoveJob {
             Status::Err(err) => {
                 self.set_err(format_args!(
                     "Process error: {}",
-                    <&'static str>::from(err.get_errno())
+                    bstr::BStr::new(err.name())
                 ));
                 return JobAction::Finish;
             }
@@ -1370,7 +1368,6 @@ impl Drop for CronRemoveJob {
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::destroy_impl)]
 pub struct CronJob {
     ref_count: Cell<u32>,
     /// Set from the allocating `RefPtr` so `&self` host fns can reach the
@@ -1413,19 +1410,6 @@ pub mod js {
 pub enum ClearMode {
     Reload,
     Teardown,
-}
-
-impl CronJob {
-    /// `CellRefCounted::destroy` target (refcount hit zero).
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract.
-    fn destroy_impl(this: *mut Self) {
-        // deinit: this_value.deinit() then destroy.
-        // Note: `JsRef::deinit()` was dropped — Strong's Drop on
-        // reassignment handles teardown (JSRef.rs trailer).
-        bun_ptr::destroy_box_with(this, |job| job.this_value.set(JsRef::empty()));
-    }
 }
 
 impl CronJob {
@@ -1516,8 +1500,8 @@ impl CronJob {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
+    pub fn finalize(&self) {
+        self.this_value.with_mut(|v| v.finalize());
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
@@ -2017,7 +2001,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     // Hoisted to function scope: `resolved_argv0` borrows into this buffer on
     // Windows and must outlive the spawn below.
     #[cfg(windows)]
-    let mut path_buf = PathBuffer::uninit();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     {
         // Resolve the executable via bun.which, matching Bun.spawn's behavior.
@@ -2203,7 +2187,7 @@ fn find_crontab() -> Option<ZString> {
     #[cfg(not(windows))]
     {
         let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let found = bun_which::which(&mut buf, path_env, b"", b"crontab")?;
         Some(ZString::from_bytes(found.as_bytes()))
     }
@@ -2238,7 +2222,7 @@ fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::A
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
 #[cfg(not(target_os = "macos"))]
 fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
-    let mut name_buf = PathBuffer::uninit();
+    let mut name_buf = bun_paths::path_buffer_pool::get();
     let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
     full_prefix.extend_from_slice(prefix.as_bytes());
     full_prefix.extend_from_slice(b"tmp");

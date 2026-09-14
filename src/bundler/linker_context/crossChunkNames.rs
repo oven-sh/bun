@@ -180,12 +180,12 @@ pub(crate) fn assign_minified(
 
     // One name sequence for the bundle, tuned to its overall character mix.
     let mut freq = bun_ast::CharFreq { freqs: [0i32; 64] };
-    let (flags, char_freqs) = (c.graph.ast.items_flags(), c.graph.ast.items_char_freq());
+    let char_freqs = c.graph.ast.items_char_freq();
     for chunk in chunks.iter() {
         if let Content::Javascript(js) = &chunk.content {
             for &source_index in js.files_in_chunk_order.iter() {
-                if flags[source_index as usize].contains(crate::bundled_ast::Flags::HAS_CHAR_FREQ) {
-                    freq.include(&char_freqs[source_index as usize]);
+                if let Some(char_freq) = &char_freqs[source_index as usize] {
+                    freq.include(char_freq);
                 }
             }
         }

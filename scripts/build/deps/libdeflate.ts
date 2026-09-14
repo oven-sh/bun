@@ -9,7 +9,7 @@
 
 import type { Dependency } from "../source.ts";
 
-const LIBDEFLATE_COMMIT = "c8c56a20f8f621e6a966b716b31f1dedab6a41e3";
+const LIBDEFLATE_COMMIT = "92e6a0db9fa848d742f9eb286c92afc60f2c3dda";
 
 export const libdeflate: Dependency = {
   name: "libdeflate",

@@ -339,6 +339,33 @@ describe("ConnectionsList", () => {
   });
 });
 
+test("subclasses of HTTPParser and ConnectionsList return instances of the subclass", () => {
+  class RequestParser extends HTTPParser {
+    start(list) {
+      this.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+      return this;
+    }
+  }
+  class ParserList extends ConnectionsList {
+    count() {
+      return this.all().length;
+    }
+  }
+
+  const list = new ParserList();
+  expect(Object.getPrototypeOf(list)).toBe(ParserList.prototype);
+  expect(list).toBeInstanceOf(ConnectionsList);
+
+  const parser = new RequestParser().start(list);
+  expect(Object.getPrototypeOf(parser)).toBe(RequestParser.prototype);
+  expect(parser).toBeInstanceOf(HTTPParser);
+
+  expect(list.count()).toBe(1);
+  expect(list.all()).toEqual([parser]);
+  parser.execute(Buffer.from("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"));
+  expect(parser.headersCompleted()).toBe(true);
+});
+
 describe("parserOnHeaders maxHeaderPairs clamp (nodejs/node#61285)", () => {
   test("only fills remaining capacity instead of pushing the whole batch", () => {
     const parser = parsers.alloc();

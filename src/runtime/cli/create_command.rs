@@ -490,7 +490,6 @@ impl CreateCommand {
 
                 let mut archive_context = archiver::Context {
                     pluckers,
-                    all_files: Default::default(),
                     overwrite_list: bun_collections::StringArrayHashMap::<()>::default(),
                 };
 
@@ -615,7 +614,7 @@ impl CreateCommand {
                 };
 
                 #[cfg(windows)]
-                let mut destination_buf: bun_paths::WPathBuffer = bun_paths::WPathBuffer::uninit();
+                let mut destination_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
                 let dst_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(destination);
@@ -626,8 +625,7 @@ impl CreateCommand {
                 }
 
                 #[cfg(windows)]
-                let mut template_path_buf: bun_paths::WPathBuffer =
-                    bun_paths::WPathBuffer::uninit();
+                let mut template_path_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
                 let src_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(abs_template_path);
@@ -1536,25 +1534,14 @@ fn file_copier_copy(
                             }
                         }
 
-                        use bun_sys::windows::Win32ErrorExt as _;
-                        if let Some(err) = bun_sys::windows::Win32Error::get().to_system_errno() {
-                            Output::err(
-                                err,
-                                "failed to copy file {}",
-                                format_args!(
-                                    "{}",
-                                    bun_core::fmt::fmt_os_path(entry.path, Default::default())
-                                ),
-                            );
-                        } else {
-                            Output::err_generic(
-                                "failed to copy file {}",
-                                format_args!(
-                                    "{}",
-                                    bun_core::fmt::fmt_os_path(entry.path, Default::default())
-                                ),
-                            );
-                        }
+                        Output::err(
+                            bun_sys::windows::last_system_errno(),
+                            "failed to copy file {}",
+                            format_args!(
+                                "{}",
+                                bun_core::fmt::fmt_os_path(entry.path, Default::default())
+                            ),
+                        );
                         node_.end();
                         progress_.refresh();
                         Global::crash();

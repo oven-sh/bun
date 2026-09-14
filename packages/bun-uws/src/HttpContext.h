@@ -583,6 +583,7 @@ private:
                     auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
                     nodeHttpResponseData->lastMessageStartMs = 0;
                     nodeHttpResponseData->headersCompleted = false;
+                    nodeHttpResponseData->requestTimeoutReported = false;
                 }
             }
 

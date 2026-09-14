@@ -118,8 +118,16 @@ bitflags::bitflags! {
 
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
-        /// Used in HMR to decide when live binding code is needed.
+        /// The file assigns this variable after its declaration (or a mapped
+        /// `arguments` object can). Set on the root of the symbol's link
+        /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
+
+        /// An import item (`ns.name`) or a lifted export that a use calls as a method.
+        const CALLED_AS_METHOD = 1 << 6;
+
+        /// A call of this function declaration or lifted export ignores `this`.
+        const CALL_IGNORES_THIS = 1 << 7;
     }
 }
 
@@ -145,6 +153,8 @@ symbol_flag_accessors! {
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
+    called_as_method, set_called_as_method => CALLED_AS_METHOD;
+    call_ignores_this, set_call_ignores_this => CALL_IGNORES_THIS;
 }
 
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);
@@ -224,6 +234,13 @@ impl Symbol {
     #[inline]
     pub fn has_link(&self) -> bool {
         self.link.get().is_valid()
+    }
+
+    /// An import item the linker merged into the export it names. A local
+    /// that a hoisting merge links has no import item status.
+    #[inline]
+    pub fn is_bound_import_item(&self) -> bool {
+        self.import_item_status != ImportItemStatus::None && self.has_link()
     }
 }
 
@@ -341,9 +358,52 @@ impl Kind {
     }
 }
 
+/// A part's uses of one symbol: an estimated count, plus whether any of them
+/// was added without its scope being recorded in `Ast::scope_uses` (by the
+/// linker or a transform), in which case the renamer must assume the symbol
+/// may be printed in any scope of the part. Packed into one word because
+/// every part holds one per referenced symbol.
 #[derive(Default, Clone, Copy)]
-pub struct Use {
-    pub count_estimate: u32,
+pub struct Use(u32);
+
+impl Use {
+    const UNSCOPED: u32 = 1 << 31;
+
+    /// `count` uses whose scope is not on record.
+    pub const fn unscoped(count: u32) -> Use {
+        Use(if count >= Self::UNSCOPED {
+            u32::MAX
+        } else {
+            count | Self::UNSCOPED
+        })
+    }
+
+    #[inline]
+    pub const fn count_estimate(self) -> u32 {
+        self.0 & !Self::UNSCOPED
+    }
+
+    #[inline]
+    pub const fn has_unscoped(self) -> bool {
+        self.0 & Self::UNSCOPED != 0
+    }
+
+    /// The parser's `record_usage`: the use's scope is on record.
+    #[inline]
+    pub fn add_scoped(&mut self, count: u32) {
+        debug_assert!(self.count_estimate() + count < Self::UNSCOPED);
+        self.0 += count;
+    }
+
+    #[inline]
+    pub fn subtract(&mut self, count: u32) {
+        self.0 = self.count_estimate().saturating_sub(count) | (self.0 & Self::UNSCOPED);
+    }
+
+    pub fn merge(&mut self, other: Use) {
+        let count = self.count_estimate().saturating_add(other.count_estimate());
+        self.0 = count.min(Self::UNSCOPED - 1) | ((self.0 | other.0) & Self::UNSCOPED);
+    }
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
@@ -588,6 +648,21 @@ impl Map {
                 symbol.link.set(resolved);
             }
         }
+    }
+
+    /// The symbol whose name the printer writes for a reference to `ref_`:
+    /// `follow`, then through `namespace_alias` (an import that prints as a
+    /// property of its namespace object prints that object's symbol).
+    pub fn follow_printed(&self, ref_: Ref) -> Ref {
+        let mut ref_ = self.follow(ref_);
+        while let Some(alias) = &self.get_const(ref_).unwrap().namespace_alias {
+            let next = self.follow(alias.namespace_ref);
+            if next == ref_ {
+                break;
+            }
+            ref_ = next;
+        }
+        ref_
     }
 
     /// Equivalent to followSymbols in esbuild.

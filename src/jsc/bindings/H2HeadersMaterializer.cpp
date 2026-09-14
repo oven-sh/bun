@@ -18,7 +18,6 @@
 #include <wtf/text/StringView.h>
 #include "HTTPHeaderIdentifiers.h"
 #include "HTTPHeaderNames.h"
-#include "wtf/SIMDUTF.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -50,17 +49,12 @@ static bool h2IsSingleValueHeader(WTF::StringView name)
         || name == "x-content-type-options"_s;
 }
 
-// Mirrors BunString__createUTF8ForJS: ASCII fast path, lossy UTF-8 otherwise.
+// Latin-1, one code unit per wire byte, like node (node_http2.cc). Not UTF-8.
 static JSString* h2ValueToJS(VM& vm, const uint8_t* ptr, size_t length)
 {
     if (length == 0)
         return jsEmptyString(vm);
-    if (simdutf::validate_ascii(reinterpret_cast<const char*>(ptr), length))
-        return jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length)));
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(ptr), length });
-    if (str.isNull()) [[unlikely]]
-        return nullptr;
-    return jsString(vm, WTF::move(str));
+    return jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length)));
 }
 
 // meta layout: per field, two u32s: [nameLen | (sensitive << 31), valueLen].
@@ -122,10 +116,6 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
         }
 
         JSString* valueStr = h2ValueToJS(vm, valueBytes, valueLen);
-        if (!valueStr) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return {};
-        }
 
         raw->putDirectIndex(globalObject, rawIndex++, nameStr);
         RETURN_IF_EXCEPTION(scope, {});

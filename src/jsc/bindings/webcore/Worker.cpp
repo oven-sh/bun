@@ -172,6 +172,11 @@ extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
     CLEAR_IF_EXCEPTION(scope);
 }
 
+extern "C" void WebWorker__workerThreadStarted(WorkerMessagingProxy* proxy)
+{
+    proxy->workerThreadStarted();
+}
+
 extern "C" void WebWorker__workerGlobalScopeStarted(WorkerMessagingProxy* proxy, Zig::GlobalObject* globalObject)
 {
     WebWorker__entrySettled(globalObject);

@@ -28,10 +28,6 @@ pub mod c_thunks;
 pub struct Alignment(pub u8); // log2 of byte alignment
 impl Alignment {
     #[inline]
-    pub(crate) const fn to_byte_units(self) -> usize {
-        1usize << self.0
-    }
-    #[inline]
     pub(crate) const fn from_byte_units(b: usize) -> Self {
         Self(b.trailing_zeros() as u8)
     }
@@ -62,48 +58,14 @@ pub(crate) const MAX_ALIGN_T: usize = 16;
 pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<libc::max_align_t>();
 
 pub struct AllocatorVTable {
-    pub alloc: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8,
-    pub resize: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> bool,
-    pub remap: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> *mut u8,
     pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
 }
 impl AllocatorVTable {
-    /// `alloc` impl that always fails. For vtables that only ever `free` an
-    /// externally-produced buffer (mmap region, plugin-owned memory, refcounted
-    /// foreign string) and never allocate or grow it.
-    pub(crate) const NO_ALLOC: unsafe fn(
-        *mut core::ffi::c_void,
-        usize,
-        Alignment,
-        usize,
-    ) -> *mut u8 = |_, _, _, _| core::ptr::null_mut();
-    pub(crate) const NO_RESIZE: unsafe fn(
-        *mut core::ffi::c_void,
-        &mut [u8],
-        Alignment,
-        usize,
-        usize,
-    ) -> bool = |_, _, _, _, _| false;
-    pub(crate) const NO_REMAP: unsafe fn(
-        *mut core::ffi::c_void,
-        &mut [u8],
-        Alignment,
-        usize,
-        usize,
-    ) -> *mut u8 = |_, _, _, _, _| core::ptr::null_mut();
-
-    /// Build a "free-only" vtable: `alloc`/`resize`/`remap` all no-op/fail and
-    /// only `free` is meaningful. Each call site still gets its own `static`
-    /// (vtable address is an identity tag for `is_instance`).
+    /// Each call site keeps its own `static`: the vtable address is the `is_instance` tag.
     pub const fn free_only(
         free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
     ) -> Self {
-        Self {
-            alloc: Self::NO_ALLOC,
-            resize: Self::NO_RESIZE,
-            remap: Self::NO_REMAP,
-            free,
-        }
+        Self { free }
     }
 }
 
@@ -288,69 +250,6 @@ pub mod default_alloc {
         // non-null check above already handled null).
         #[cfg(not(any(all(bun_asan, target_os = "linux"), all(bun_asan, target_os = "macos"))))]
         return unsafe { crate::mimalloc::mi_usable_size(ptr) };
-    }
-
-    // The aligned variants are `#[cfg]`-split (not `if cfg!()`) because the
-    // posix_memalign/malloc_usable_size symbols don't exist on Windows.
-
-    #[cfg(not(bun_asan))]
-    #[inline]
-    pub(crate) fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
-        crate::mimalloc::mi_malloc_auto_align(size, align)
-    }
-
-    #[cfg(bun_asan)]
-    #[inline]
-    pub(crate) fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
-        if align <= crate::MAX_ALIGN_T {
-            return unsafe { libc::malloc(size) };
-        }
-        let mut p: *mut c_void = core::ptr::null_mut();
-        let align = align.max(core::mem::size_of::<*mut c_void>());
-        if unsafe { libc::posix_memalign(&mut p, align, size) } != 0 {
-            return core::ptr::null_mut();
-        }
-        p
-    }
-
-    /// # Safety
-    /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
-    #[cfg(not(bun_asan))]
-    #[inline]
-    pub(crate) unsafe fn realloc_aligned(
-        ptr: *mut c_void,
-        new_size: usize,
-        align: usize,
-    ) -> *mut c_void {
-        // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation
-        // with alignment `align`.
-        unsafe { crate::mimalloc::mi_realloc_aligned(ptr, new_size, align) }
-    }
-
-    /// # Safety
-    /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
-    #[cfg(bun_asan)]
-    #[inline]
-    pub(crate) unsafe fn realloc_aligned(
-        ptr: *mut c_void,
-        new_size: usize,
-        align: usize,
-    ) -> *mut c_void {
-        if align <= crate::MAX_ALIGN_T {
-            return unsafe { libc::realloc(ptr, new_size) };
-        }
-        let new_ptr = malloc_aligned(new_size, align);
-        if new_ptr.is_null() {
-            return core::ptr::null_mut();
-        }
-        if !ptr.is_null() {
-            unsafe {
-                let copy = usable_size(ptr).min(new_size);
-                core::ptr::copy_nonoverlapping(ptr.cast::<u8>(), new_ptr.cast::<u8>(), copy);
-                libc::free(ptr);
-            }
-        }
-        new_ptr
     }
 }
 
@@ -2014,6 +1913,19 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         let end = base + self.backing_buf.len();
         let p = value.as_ptr() as usize;
         base <= p && p + value.len() <= end
+    }
+
+    /// `value` with the store's lifetime, if it already points into the store.
+    pub fn as_interned(&'static self, value: &[u8]) -> Option<&'static [u8]> {
+        if !self.exists(value) {
+            return None;
+        }
+        // SAFETY: `exists` proved `value` lies inside `backing_buf`, which is
+        // never freed or moved (process-lifetime singleton). The caller already
+        // holds these bytes as a `&[u8]`, so they are past construction: the only
+        // `&mut` into the buffer (`append_mutable`, crate-private) covers freshly
+        // reserved bytes and ends before `append`/`print` return them shared.
+        Some(unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) })
     }
 
     /// Append `value` and return a mutable slice over the freshly-reserved bytes.

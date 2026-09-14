@@ -170,9 +170,15 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       if (!this.#hasRun) {
         this.#hasRun = true;
 
-        let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
-        this.#args = undefined;
-        interp.run();
+        // `then()` calls this, so a setup failure must reject, not throw.
+        try {
+          let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
+          this.#args = undefined;
+          interp.run();
+        } catch (e) {
+          this.#args = undefined;
+          this.#reject(e);
+        }
       }
     }
 
@@ -335,7 +341,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       return new ShellPromise(parsed_shell_script, throws);
     };
 
-    Object.setPrototypeOf(Shell, ShellPrototype.prototype);
+    const prototype = new.target.prototype;
+    Object.setPrototypeOf(Shell, $isObject(prototype) ? prototype : ShellPrototype.prototype);
     Object.defineProperty(Shell, "name", { value: "Shell", configurable: true, enumerable: true });
 
     Shell[cwdSymbol] = defaultCwd;

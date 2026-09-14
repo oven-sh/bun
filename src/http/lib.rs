@@ -1674,6 +1674,16 @@ impl<'a> HTTPClient<'a> {
             .max(self.socket_verification())
     }
 
+    /// `PooledSocket::target_hostname` for a TLS unix entry. Read from
+    /// `connected_url`: `do_redirect` releases after `url` has moved on.
+    pub(crate) fn unix_tls_hostname<const IS_SSL: bool>(&self) -> &[u8] {
+        if IS_SSL && !self.unix_socket_path.is_empty() {
+            self.connected_url.hostname
+        } else {
+            b""
+        }
+    }
+
     pub(crate) fn check_server_identity<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -1862,6 +1872,7 @@ impl<'a> HTTPClient<'a> {
                             } else {
                                 0
                             },
+                            self.unix_socket_path,
                         );
                     }
                 }
@@ -2214,10 +2225,6 @@ impl<'a> HTTPClient<'a> {
 
     pub(crate) fn is_keep_alive_possible(&self) -> bool {
         if FeatureFlags::ENABLE_KEEPALIVE {
-            // TODO keepalive for unix sockets
-            if !self.unix_socket_path.is_empty() {
-                return false;
-            }
             // check state
             if self.state.flags.allow_keepalive && !self.flags.disable_keepalive {
                 return true;
@@ -2319,11 +2326,8 @@ impl<'a> HTTPClient<'a> {
         unsafe { &mut *ctx }
     }
 
-    pub(crate) fn set_custom_ssl_ctx(&mut self, ctx: NonNull<HttpsContext>) {
-        // Intrusive-refcounted: this fn takes ownership of one strong ref by
-        // bumping it here. Callers do NOT pre-bump.
-        // SAFETY: ctx points at a live HttpsContext.
-        self.custom_ssl_ctx = Some(unsafe { RefPtr::init_ref(ctx.as_ptr()) });
+    pub(crate) fn set_custom_ssl_ctx(&mut self, ctx: RefPtr<HttpsContext>) {
+        self.custom_ssl_ctx = Some(ctx);
     }
 
     pub(crate) fn header_str(&self, ptr: StringPointer) -> &'a [u8] {
@@ -2558,9 +2562,6 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        // Decided before unix_socket_path is cleared below: a unix-socket connection must not be pooled.
-        let keep_alive_possible = self.is_keep_alive_possible();
-        self.unix_socket_path = b"";
         // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2589,7 +2590,7 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "close the tunnel");
             self.close_proxy_tunnel(true);
             GenHttpContext::<IS_SSL>::close_socket(socket);
-        } else if keep_alive_possible
+        } else if self.is_keep_alive_possible()
             && self.is_request_fully_sent()
             && !socket.is_closed_or_has_error()
         {
@@ -2603,14 +2604,17 @@ impl<'a> HTTPClient<'a> {
                 self.connected_url.get_port_auto(),
                 self.tls_props.as_ref(),
                 None,
-                b"",
+                self.unix_tls_hostname::<IS_SSL>(),
                 0,
                 0,
                 None,
+                self.unix_socket_path,
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
         }
+        // Cleared after `release_socket` above, which keys the pool entry on it.
+        self.unix_socket_path = b"";
         self.connected_url = URL::default();
         // connected_url was the last borrower of the previous hop's URL buffer
         // (handleResponseMetadata already repointed this.url at the new one).
@@ -4156,7 +4160,11 @@ impl<'a> HTTPClient<'a> {
                     self.connected_url.get_port_auto(),
                     self.tls_props.as_ref(),
                     tunnel,
-                    if had_tunnel { self.url.hostname } else { b"" },
+                    if had_tunnel {
+                        self.url.hostname
+                    } else {
+                        self.unix_tls_hostname::<IS_SSL>()
+                    },
                     if had_tunnel {
                         self.url.get_port_auto()
                     } else {
@@ -4168,6 +4176,7 @@ impl<'a> HTTPClient<'a> {
                         0
                     },
                     None,
+                    self.unix_socket_path,
                 );
             } else {
                 if self.proxy_tunnel.is_some() {
@@ -4330,6 +4339,7 @@ impl<'a> HTTPClient<'a> {
             0,
             0,
             None,
+            b"",
         );
 
         self.state.reset();

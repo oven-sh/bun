@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+  withoutAggressiveGC,
+} from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -1040,5 +1049,36 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     );
     expect(stderr).not.toContain("AddressSanitizer");
     expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/25309
+it("object property enumeration scales linearly with property count", () => {
+  function makeWide(n) {
+    const o = {};
+    for (let i = 0; i < n; i++) o["p" + i] = i;
+    return o;
+  }
+  function timeInspect(o) {
+    const t0 = performance.now();
+    const out = Bun.inspect(o);
+    return { ms: performance.now() - t0, out };
+  }
+
+  const small = makeWide(3000);
+  const large = makeWide(30000);
+
+  withoutAggressiveGC(() => {
+    Bun.inspect(small); // warm up
+    const s = timeInspect(small);
+    const l = timeInspect(large);
+
+    // Output still lists every property (no behavior change).
+    expect(s.out.includes("p2999")).toBe(true);
+    expect(l.out.includes("p29999")).toBe(true);
+
+    // Per-property cost must stay roughly constant as n grows 10x. The previous
+    // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
+    expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
   });
 });

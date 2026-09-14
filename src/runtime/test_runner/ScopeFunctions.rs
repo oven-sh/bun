@@ -745,11 +745,9 @@ impl fmt::Display for ScopeFunctions {
     }
 }
 
-impl ScopeFunctions {
-    /// `.classes.ts` `finalize: true` — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
+impl Drop for ScopeFunctions {
+    fn drop(&mut self) {
         let _g = group_log::begin();
-        drop(self);
     }
 }
 

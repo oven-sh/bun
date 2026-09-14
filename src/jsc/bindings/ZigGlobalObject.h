@@ -63,7 +63,6 @@ struct node_module;
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
 #include "headers-handwritten.h"
-#include "BunCommonStrings.h"
 #include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
@@ -192,7 +191,7 @@ public:
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&, bool deferred);
     static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap);
-    static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
+    static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>, JSValue sentValue, JSValue resumeMode);
     static void compileStreaming(JSGlobalObject*, JSC::JSPromise*, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&&);
@@ -375,6 +374,8 @@ public:
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
+        jsFunctionMockModuleFactoryResolve,
+        jsFunctionMockModuleFactoryReject,
         Bun__TestScope__Describe2__bunTestThen,
         Bun__TestScope__Describe2__bunTestCatch,
         Bun__HTMLRewriter__onHandlerResolve,
@@ -383,8 +384,6 @@ public:
         Bun__onRejectEntryPointResult,
         Bun__NodeHTTPRequest__onResolve,
         Bun__NodeHTTPRequest__onReject,
-        Bun__FileStreamWrapper__onRejectRequestStream,
-        Bun__FileStreamWrapper__onResolveRequestStream,
         Bun__FileSink__onResolveStream,
         Bun__FileSink__onRejectStream,
         Bun__CronJob__onPromiseResolve,
@@ -431,7 +430,6 @@ public:
         return func;
     }
 
-    bool asyncHooksNeedsCleanup = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 
@@ -491,7 +489,9 @@ public:
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \
-    V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_moduleResolveFilenameFunction)                       \
+    /* The user-assigned Module._resolveFilename value; require() throws if it is not callable. */           \
+    V(public, WriteBarrier<JSC::Unknown>, m_moduleResolveFilenameOverride)                                   \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
@@ -554,7 +554,6 @@ public:
                                                                                                              \
     V(private, std::unique_ptr<WebCore::JSBuiltinInternalFunctions>, m_builtinInternalFunctions)             \
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \
-    V(private, Bun::CommonStrings, m_commonStrings)                                                          \
     V(private, Bun::MarkdownTagStrings, m_markdownTagStrings)                                                \
                                                                                                              \
     /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
@@ -767,7 +766,6 @@ public:
     JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 
-    Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -844,6 +842,15 @@ public:
     }
 };
 
+// The global object of a `bun build --compile` executable (main thread and workers): module-loader hooks that know every
+// embedded specifier is already its canonical `/$bunfs/` key and that the graph is fully present in memory.
+class StandaloneGlobalObject : public GlobalObject {
+public:
+    static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
+    static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool);
+    static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
+};
+
 } // namespace Zig
 
 namespace Bun {
@@ -863,6 +870,13 @@ ALWAYS_INLINE void* vm(JSC::VM& vm)
 ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
+}
+
+// A realm that `bun test --isolate` retired because its file finished
+// (Zig__GlobalObject__retireForTestIsolation). Nothing enters its script again.
+ALWAYS_INLINE bool isRetiredTestIsolationRealm(const JSC::JSGlobalObject* globalObject)
+{
+    return globalObject->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
 }
 
 }
@@ -895,6 +909,9 @@ inline Zig::GlobalObject* defaultGlobalObject()
 {
     return ___private___::getDefaultGlobalObject();
 }
+
+// The Structure a LazyClassStructure constructor allocates with for this newTarget. nullptr on exception.
+JSC::Structure* structureForNewTarget(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue newTarget, JSC::LazyClassStructure Zig::GlobalObject::* classStructure);
 
 inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)
 {

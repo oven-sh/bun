@@ -100,6 +100,8 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       for (const [k, v] of req.headers) out[k] = v;
       return Response.json({ url: req.url, method: req.method, headers: out });
     }
+    case "/body-null":
+      return new Response(String(req.body === null), { headers: { "x-method": req.method } });
     case "/set-cookies":
       return new Response("ok", {
         headers: [
@@ -109,6 +111,19 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
           ["x-multi", "2"],
         ],
       });
+    case "/latin1-headers": {
+      // ?bits=16 serves the same value from a 16-bit string (utf-16le decode).
+      const value =
+        url.searchParams.get("bits") === "16"
+          ? new TextDecoder("utf-16le").decode(new Uint16Array([0x63, 0x61, 0x66, 0xe9, 0x2d, 0x80, 0xff]))
+          : "caf\u00e9-\u0080\u00ff";
+      return new Response("ok", {
+        headers: [
+          ["content-disposition", value],
+          ["set-cookie", `a=${value}`],
+        ],
+      });
+    }
     case "/many-headers": {
       const h = new Headers();
       for (let i = 0; i < 3000; i++) h.set("x-header-" + i, "x-value-" + i);
@@ -164,6 +179,37 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       return Response.json({ ok: true });
     case "/fixed":
       return new Response(Buffer.alloc(Number(url.searchParams.get("n") ?? "264"), "a"));
+    // Bytes 0..99 from a source that produces them in one piece and ends. That is under the
+    // sink's 256-byte high-water mark, so end() still holds the whole body and sends it with
+    // content-length.
+    case "/stream-once": {
+      const body = new Uint8Array(100).map((_, i) => i);
+      const enqueueAndClose = (c: ReadableStreamDefaultController | ReadableByteStreamController) => {
+        c.enqueue(body);
+        c.close();
+      };
+      switch (url.searchParams.get("kind")) {
+        case "default":
+          return new Response(new ReadableStream({ pull: enqueueAndClose }));
+        case "bytes":
+          return new Response(new ReadableStream({ type: "bytes", pull: enqueueAndClose }));
+        case "direct":
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              pull(c) {
+                c.write(body);
+                c.close();
+              },
+            }),
+          );
+        case "generator":
+          return new Response(async function* () {
+            yield body;
+          });
+      }
+      break;
+    }
     case "/read-report": {
       try {
         await req.text();

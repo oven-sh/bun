@@ -25,7 +25,8 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 
 // TextDecoder.rs
-extern "C" void* TextDecoder__createForStream(JSC::JSGlobalObject*, JSC::EncodedJSValue label, bool fatal, bool ignoreBOM, bool* outUtf8FastPath, BunString* outEncodingLabel);
+extern "C" void* TextDecoder__createForStream(JSC::JSGlobalObject*, JSC::EncodedJSValue label, bool fatal, bool ignoreBOM, bool* outUtf8FastPath, uint8_t* outEncoding);
+extern "C" JSC::EncodedJSValue TextDecoder__encodingToJS(JSC::JSGlobalObject*, uint8_t encoding);
 extern "C" void TextDecoder__destroyForStream(void*);
 extern "C" JSC::EncodedJSValue TextDecoder__decodeForStream(void*, JSC::JSGlobalObject*, const uint8_t* input, size_t inputLen, bool stream);
 
@@ -145,8 +146,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
     // Validates label (WebIDL DOMString coercion — may run user JS). For utf-8 + !fatal no
     // Rust decoder is allocated: the transform/flush arms use streamingUTF8Decode instead.
     bool utf8FastPath = false;
-    BunString encodingLabel {};
-    void* decoder = TextDecoder__createForStream(lexicalGlobalObject, JSValue::encode(label), fatal, ignoreBOM, &utf8FastPath, &encodingLabel);
+    uint8_t encoding = 0;
+    void* decoder = TextDecoder__createForStream(lexicalGlobalObject, JSValue::encode(label), fatal, ignoreBOM, &utf8FastPath, &encoding);
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(utf8FastPath == !decoder);
 
@@ -157,7 +158,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
     }
     auto* stream = JSTextDecoderStream::create(vm, structure);
     stream->m_decoder = decoder;
-    stream->m_encodingLabel = encodingLabel;
+    stream->m_encoding = encoding;
     stream->m_fatal = fatal;
     stream->m_ignoreBOM = ignoreBOM;
     if (utf8FastPath)
@@ -198,9 +199,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTextDecoderStreamPrototype_inspectCustom, (JSGlobalOb
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    auto* encoding = Bun::toJS(lexicalGlobalObject, thisObject->m_encodingLabel);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::putDirectNamed(vm, data, "encoding"_s, encoding);
+    Bun::putDirectNamed(vm, data, "encoding"_s, JSValue::decode(TextDecoder__encodingToJS(lexicalGlobalObject, thisObject->m_encoding)));
     Bun::putDirectNamed(vm, data, "fatal"_s, jsBoolean(thisObject->m_fatal));
     Bun::putDirectNamed(vm, data, "ignoreBOM"_s, jsBoolean(thisObject->m_ignoreBOM));
     Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
@@ -278,7 +277,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_encoding, (JSGlobalO
     const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, scope, "TextDecoderStream"_s, "encoding"_s);
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::toJS(lexicalGlobalObject, stream->m_encodingLabel)));
+    RELEASE_AND_RETURN(scope, TextDecoder__encodingToJS(lexicalGlobalObject, stream->m_encoding));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_fatal, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

@@ -937,6 +937,52 @@ pub enum BuiltinName {
     sharedFd,
 }
 
+/// Keys `fetch()` reads off its init object, for `JSValue::get_fetch_option`.
+/// The VM atomizes each on first use. The order is that of
+/// `BUN_FETCH_OPTION_NAMES` (src/jsc/bindings/FetchOptionNames.h).
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum FetchOptionName {
+    Compress,
+    Context,
+    Decompress,
+    Keepalive,
+    Lookup,
+    MaxRedirects,
+    OnStats,
+    Protocol,
+    Proxy,
+    S3,
+    Timeout,
+    Tls,
+    Unix,
+    Verbose,
+}
+
+impl FetchOptionName {
+    pub const COUNT: u8 = Self::Verbose as u8 + 1;
+
+    /// The property name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Compress => "compress",
+            Self::Context => "context",
+            Self::Decompress => "decompress",
+            Self::Keepalive => "keepalive",
+            Self::Lookup => "lookup",
+            Self::MaxRedirects => "maxRedirects",
+            Self::OnStats => "onStats",
+            Self::Protocol => "protocol",
+            Self::Proxy => "proxy",
+            Self::S3 => "s3",
+            Self::Timeout => "timeout",
+            Self::Tls => "tls",
+            Self::Unix => "unix",
+            Self::Verbose => "verbose",
+        }
+    }
+}
+
 #[allow(non_upper_case_globals)]
 impl BuiltinName {
     // PascalCase aliases for downstream callers (Response.rs / Request.rs /

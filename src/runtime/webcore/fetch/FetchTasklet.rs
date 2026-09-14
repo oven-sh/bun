@@ -1272,49 +1272,30 @@ impl FetchTasklet {
         };
         let global_this = self.global_this;
         let stats = self.result.stats;
-        let object = JSValue::create_empty_object(&global_this, 7);
-        object.put(
-            &global_this,
-            b"bytesWritten".as_slice(),
-            JSValue::js_number_from_uint64(stats.bytes_written),
-        );
-        object.put(
-            &global_this,
-            b"requestBodyBytesSent".as_slice(),
-            JSValue::js_number_from_uint64(stats.request_body_bytes_sent),
-        );
-        object.put(
-            &global_this,
-            b"responseStarted".as_slice(),
-            JSValue::js_boolean(stats.response_started),
-        );
-        object.put(
-            &global_this,
-            b"socketReused".as_slice(),
-            JSValue::js_boolean(stats.socket_reused),
-        );
-        let (address, port, family) = match stats.remote_address {
+        let (address, port, is_ipv6) = match stats.remote_address {
             Some(remote) => {
                 let mut buf = [0u8; 64];
                 let text =
                     bun_core::fmt::buf_print_infallible(&mut buf, format_args!("{}", remote.ip()));
                 use bun_jsc::EncodedSliceJsc as _;
-                let strings = global_this.common_strings();
                 (
                     bun_core::EncodedSlice::latin1(text).to_js(&global_this),
-                    JSValue::js_number_from_int32(i32::from(remote.port())),
-                    if remote.is_ipv4() {
-                        strings.ipv4()
-                    } else {
-                        strings.ipv6()
-                    },
+                    remote.port(),
+                    remote.is_ipv6(),
                 )
             }
-            None => (JSValue::NULL, JSValue::NULL, JSValue::NULL),
+            None => (JSValue::NULL, 0, false),
         };
-        object.put(&global_this, b"remoteAddress".as_slice(), address);
-        object.put(&global_this, b"remotePort".as_slice(), port);
-        object.put(&global_this, b"remoteFamily".as_slice(), family);
+        let object = JSFetchConnectionStats__create(
+            &global_this,
+            stats.bytes_written,
+            stats.request_body_bytes_sent,
+            stats.response_started,
+            stats.socket_reused,
+            address,
+            port,
+            is_ipv6,
+        );
         // Once the HTTP thread is done with this request nothing contends for
         // the lock, and the callback may touch the response body, which takes it.
         if http_thread_is_done {
@@ -3016,4 +2997,18 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
         // SAFETY: fn contract — the box the completion queued.
         drop(unsafe { bun_core::heap::take(this) });
     }
+}
+
+unsafe extern "C" {
+    /// An object on the cached `onStats` structure; `remote_address` is a string or null.
+    safe fn JSFetchConnectionStats__create(
+        global: &JSGlobalObject,
+        bytes_written: u64,
+        request_body_bytes_sent: u64,
+        response_started: bool,
+        socket_reused: bool,
+        remote_address: JSValue,
+        remote_port: u16,
+        is_ipv6: bool,
+    ) -> JSValue;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
 import { lookup as dnsLookup } from "node:dns/promises";
 import net from "node:net";
 import { join } from "node:path";
@@ -39,6 +39,25 @@ function connectionCountingServer() {
     },
     close() {
       for (const socket of sockets) socket.destroy();
+      server.close();
+    },
+  };
+}
+
+/** A keep-alive http server whose `closed` settles when its first connection goes away. */
+async function closeObservingServer() {
+  const closed = Promise.withResolvers<void>();
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.on("close", () => closed.resolve());
+    socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  return {
+    url: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`,
+    closed: closed.promise,
+    [Symbol.dispose]() {
       server.close();
     },
   };
@@ -137,6 +156,72 @@ describe("Bun.FetchContext", () => {
     } finally {
       counting.close();
     }
+  });
+
+  // The socket timer sweeps every 4 seconds, so this takes two sweeps; it runs
+  // alongside the tests below.
+  test.concurrent(
+    "keepAlive.idleTimeout closes a connection that sat idle for that long",
+    async () => {
+      using server = await closeObservingServer();
+      using context = new Bun.FetchContext({ keepAlive: { idleTimeout: 1 } });
+      expect(await (await fetch(server.url, { context })).text()).toBe("ok");
+      // The client closes it; nothing else in this test would.
+      await server.closed;
+    },
+    20_000,
+  );
+
+  test.concurrent("collecting a context closes its idle connections", async () => {
+    using server = await closeObservingServer();
+    await (async () => {
+      const context = new Bun.FetchContext();
+      expect(await (await fetch(server.url, { context })).text()).toBe("ok");
+    })();
+    let done = false;
+    server.closed.then(() => (done = true));
+    for (let i = 0; i < 10 && !done; i++) {
+      Bun.gc(true);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await server.closed;
+  });
+
+  test.concurrent("concurrent requests of a context share its pool afterwards", async () => {
+    const counting = connectionCountingServer();
+    const port = await counting.listen();
+    using context = new Bun.FetchContext({ tls: { ca: tlsCert.cert } });
+    try {
+      const url = `https://localhost:${port}/`;
+      const burst = () => Promise.all(Array.from({ length: 8 }, () => fetch(url, { context }).then(r => r.text())));
+      expect(await burst()).toEqual(Array(8).fill("ok"));
+      const opened = counting.connections;
+      expect(opened).toBeGreaterThanOrEqual(1);
+      expect(opened).toBeLessThanOrEqual(8);
+      // They are parked now; the next requests need no new connection.
+      for (let i = 0; i < 3; i++) expect(await (await fetch(url, { context })).text()).toBe("ok");
+      expect(counting.connections).toBe(opened);
+    } finally {
+      counting.close();
+    }
+  });
+
+  test.concurrent("a redirect stays in the context's pool", async () => {
+    const ports: number[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, srv) {
+        ports.push(srv.requestIP(req)!.port);
+        return new URL(req.url).pathname === "/a" ? Response.redirect("/b", 302) : new Response("b");
+      },
+    });
+    using context = new Bun.FetchContext();
+    expect(await (await fetch(`${server.url}a`, { context })).text()).toBe("b");
+    expect(await (await fetch(`${server.url}b`, { context })).text()).toBe("b");
+    // One client port: /a, the /b it redirected to, and the second /b shared a connection.
+    expect(new Set(ports).size).toBe(1);
+    expect(ports.length).toBe(3);
   });
 
   test("tls options come from the context, and a request's tls replaces them as a whole", async () => {
@@ -503,6 +588,54 @@ describe("lookup", () => {
     }
   });
 
+  test("is called for a host that is already an IP address, and not for a unix socket", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("tcp") });
+    const seen: string[] = [];
+    const lookup = (hostname: string) => {
+      seen.push(hostname);
+      return "127.0.0.1";
+    };
+    // 127.0.0.9 is never dialed: the answer is.
+    expect(await (await fetch(`http://127.0.0.9:${server.port}/`, { lookup, keepalive: false })).text()).toBe("tcp");
+    expect(seen).toEqual(["127.0.0.9"]);
+    if (!isWindows) {
+      using dir = tempDir("fetch-lookup-unix", {});
+      const path = join(String(dir), "lookup.sock");
+      using overUnix = Bun.serve({ unix: path, fetch: () => new Response("unix") });
+      expect(await (await fetch("http://name.invalid/", { unix: path, lookup })).text()).toBe("unix");
+      expect(seen).toEqual(["127.0.0.9"]);
+    }
+  });
+
+  test.skipIf(!isIPv6())("dials an IPv6 answer", async () => {
+    using server = Bun.serve({ port: 0, hostname: "::1", fetch: req => new Response(req.headers.get("host")) });
+    let stats: Bun.FetchConnectionStats | undefined;
+    const response = await fetch(`http://six.invalid:${server.port}/`, {
+      lookup: () => ({ address: "::1", family: 6 }),
+      onStats: s => (stats = s),
+      keepalive: false,
+    });
+    expect(await response.text()).toBe(`six.invalid:${server.port}`);
+    expect(stats).toMatchObject({ remoteAddress: "::1", remotePort: server.port, remoteFamily: "IPv6" });
+  });
+
+  test("many requests can wait on their lookups at once", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: req => new Response(new URL(req.url).pathname) });
+    const release = Promise.withResolvers<string>();
+    let waiting = 0;
+    const all = Promise.all(
+      Array.from({ length: 32 }, (_, i) =>
+        fetch(`http://many.invalid:${server.port}/${i}`, {
+          lookup() {
+            if (++waiting === 32) release.resolve("127.0.0.1");
+            return release.promise;
+          },
+        }).then(r => r.text()),
+      ),
+    );
+    expect(await all).toEqual(Array.from({ length: 32 }, (_, i) => `/${i}`));
+  });
+
   test("is refused together with protocol http2", async () => {
     expect(
       await fetch("https://localhost:1/", { protocol: "http2", lookup: () => "127.0.0.1" }).catch(e => e.message),
@@ -589,6 +722,78 @@ describe("onStats", () => {
       for (const socket of sockets) socket.destroy();
       server.close();
     }
+  });
+
+  test("counts plaintext bytes over TLS, and the last hop of a redirect", async () => {
+    using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("target") });
+    using origin = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: () => Response.redirect(`https://localhost:${target.port}/`, 302),
+    });
+    const collected: Bun.FetchConnectionStats[] = [];
+    const response = await fetch(`https://localhost:${origin.port}/`, {
+      tls: { ca: tlsCert.cert },
+      keepalive: false,
+      onStats: s => collected.push(s),
+    });
+    expect(await response.text()).toBe("target");
+    // Once per request, for the connection that produced the response.
+    expect(collected).toEqual([
+      {
+        bytesWritten: expect.any(Number),
+        requestBodyBytesSent: 0,
+        responseStarted: true,
+        socketReused: false,
+        remoteAddress: expect.stringMatching(/^(127\.0\.0\.1|::1)$/),
+        remotePort: target.port,
+        remoteFamily: expect.stringMatching(/^IPv[46]$/),
+      },
+    ]);
+    // A request head, not TLS records of a handshake.
+    expect(collected[0].bytesWritten).toBeGreaterThan(40);
+    expect(collected[0].bytesWritten).toBeLessThan(400);
+  });
+
+  test("counts a streamed body with its chunked framing", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        return new Response(String((await req.arrayBuffer()).byteLength));
+      },
+    });
+    let stats: Bun.FetchConnectionStats | undefined;
+    const response = await fetch(server.url, {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(1000));
+          controller.enqueue(new Uint8Array(2000));
+          controller.close();
+        },
+      }),
+      onStats: s => (stats = s),
+    });
+    expect(await response.text()).toBe("3000");
+    // 3000 bytes of payload plus chunk sizes, CRLFs and the terminating chunk.
+    expect(stats!.requestBodyBytesSent).toBeGreaterThan(3000);
+    expect(stats!.requestBodyBytesSent).toBeLessThan(3100);
+    expect(stats!.bytesWritten).toBeGreaterThan(stats!.requestBodyBytesSent);
+  });
+
+  test("is one shape whatever the outcome", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+    using dead = await deadPort();
+    const shapes: string[] = [];
+    const onStats = (s: Bun.FetchConnectionStats) => shapes.push(Object.keys(s).join());
+    await (await fetch(server.url, { onStats })).text();
+    await fetch(`http://127.0.0.1:${dead.port}/`, { onStats }).catch(() => {});
+    expect(shapes).toEqual(
+      Array(2).fill(
+        "bytesWritten,requestBodyBytesSent,responseStarted,socketReused,remoteAddress,remotePort,remoteFamily",
+      ),
+    );
   });
 
   test("reports a connection that was never established", async () => {

@@ -748,7 +748,12 @@ impl HttpThread {
     }
 
     fn drain_queued_control(&mut self) {
-        while self.has_queued_control.swap(false, Ordering::Acquire) {
+        // Read before writing so an idle tick leaves the cache line shared. The
+        // flag is a hint: the queue is published by its lock, and the producer
+        // wakes the loop after raising the flag.
+        while self.has_queued_control.load(Ordering::Relaxed)
+            && self.has_queued_control.swap(false, Ordering::Acquire)
+        {
             let queued = {
                 let _guard = self.queued_control_lock.lock_guard();
                 core::mem::take(&mut self.queued_control)

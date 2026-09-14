@@ -807,6 +807,30 @@ export const fetchH3Internals = {
   },
 };
 
+const proxyFor = $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.proxyFor", 2) as (
+  entries: string[],
+  url: string,
+) => string | null;
+
+export const proxyInternals = {
+  /** Whether the `NO_PROXY` value `list` exempts `hostname` on `port`. */
+  noProxyMatches: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.noProxyMatches", 3) as (
+    list: string,
+    hostname: string,
+    port: number,
+  ) => boolean,
+  /** The proxy an environment of exactly `env` selects for `url`, or null. */
+  proxyFor: (env: Record<string, string>, url: string) => proxyFor(Object.entries(env).flat(), url),
+  /** What the HTTP client's URL parser makes of `href`. */
+  parseURL: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.parseURL", 1) as (href: string) => {
+    username: string;
+    password: string;
+    hostname: string;
+    port: string;
+    pathname: string;
+  },
+};
+
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };

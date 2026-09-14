@@ -8903,6 +8903,8 @@ declare module "bun" {
       | {
           /**
            * Seconds an idle connection stays in the pool before it is closed.
+           * The socket timer is coarse: it moves in 4 second steps up to four
+           * minutes, and in whole minutes beyond that.
            *
            * @default 300
            */

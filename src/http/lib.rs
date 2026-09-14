@@ -1503,6 +1503,22 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 //    and ProxyTunnel.rs.
 // ────────────────────────────────────────────────────────────────────────
 
+/// The `error` uSockets reports for a handshake that failed for a reason other
+/// than the certificate (`packages/bun-usockets/src/crypto/openssl.c`) when the
+/// peer went away. The other one, -71, is a fatal protocol error such as a peer
+/// that does not speak TLS. Certificate problems are the positive `X509_V_ERR_*`.
+const US_HANDSHAKE_ECONNRESET: i32 = -46;
+
+/// Why a TLS handshake that reported failure failed.
+pub(crate) fn handshake_failure(error_no: i32) -> crate::Error {
+    match error_no {
+        n if n > 0 => get_cert_error_from_no(n),
+        US_HANDSHAKE_ECONNRESET => crate::Error::ConnectionClosed,
+        // -71, and a failure that named no cause at all.
+        _ => crate::Error::TLSHandshakeFailed,
+    }
+}
+
 /// Maps an X509 verify code
 /// onto a `crate::Error` whose name is the upper-snake error tag
 /// (e.g. `CERT_HAS_EXPIRED`). JS-side `error.code` matches on this exact
@@ -4932,8 +4948,16 @@ impl<'a> HTTPClient<'a> {
         response: &mut picohttp::Response,
     ) -> crate::Result<ShouldContinue> {
         let is_connect_reply = self.is_reading_connect_reply();
-        let tunnel_established =
-            is_connect_reply && is_successful_connect_status(response.status_code);
+        // RFC 9110 §9.3.6: a 2xx reply to CONNECT is the tunnel. Its header
+        // fields frame nothing (Content-Length and Transfer-Encoding MUST be
+        // ignored) and say nothing about the tunneled origin, whose response
+        // this same state goes on to parse.
+        if is_connect_reply && is_successful_connect_status(response.status_code) {
+            if self.verbose != HTTPVerboseLevel::None {
+                print_response(response);
+            }
+            return Ok(ShouldContinue::ContinueStreaming);
+        }
         if !is_connect_reply {
             self.stats.response_started = true;
         }
@@ -4945,14 +4969,6 @@ impl<'a> HTTPClient<'a> {
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
-                    // RFC 9110 section 9.3.6: a client MUST ignore
-                    // Content-Length in a successful response to CONNECT —
-                    // the connection becomes an opaque tunnel and is never
-                    // pooled, so the framing-desync concern below does not
-                    // apply.
-                    if tunnel_established {
-                        continue;
-                    }
                     // byte-level parse — header.value() is network bytes, not &str
                     //
                     // RFC 9112 section 6.3: an invalid or conflicting
@@ -5006,12 +5022,6 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Transfer-Encoding") => {
-                    // RFC 9110 section 9.3.6: as with Content-Length above, a
-                    // client MUST ignore Transfer-Encoding in a successful
-                    // response to CONNECT.
-                    if tunnel_established {
-                        continue;
-                    }
                     // RFC 9112 §6.1: `chunked`, if present, must be the final coding.
                     for token in HeaderValueIterator::init(header.value()) {
                         if self.state.transfer_encoding == Encoding::Chunked {
@@ -5105,15 +5115,10 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        // RFC 9110 §9.3.6: only a 2xx response to CONNECT establishes the
-        // tunnel. Anything else came from the proxy, not the https origin, so
-        // it fails the request; the proxy's head rides along on the error.
+        // Only a 2xx response to CONNECT establishes the tunnel (above).
+        // Anything else came from the proxy, not the https origin, so it
+        // fails the request; the proxy's head rides along on the error.
         if is_connect_reply {
-            if tunnel_established {
-                // signal to continue the proxing
-                return Ok(ShouldContinue::ContinueStreaming);
-            }
-
             self.flags.proxy_tunneling = false;
             self.flags.disable_keepalive = true;
             self.clone_metadata(response);

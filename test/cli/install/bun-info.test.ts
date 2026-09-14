@@ -432,7 +432,7 @@ test.skipIf(!isASAN)(
   30_000,
 );
 
-test("a proxy that refuses CONNECT is reported with its status", async () => {
+test("a proxy that refuses CONNECT fails the command with ProxyConnectFailed", async () => {
   using proxy = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
@@ -461,7 +461,6 @@ test("a proxy that refuses CONNECT is reported with its status", async () => {
     stdin: "ignore",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("note: the proxy answered CONNECT with 407 Proxy Authentication Required");
   expect(stderr).toContain("ProxyConnectFailed");
   expect(exitCode).toBe(1);
 });

@@ -336,6 +336,15 @@ describe("fetch protocol: http3", () => {
     }
   });
 
+  test("onStats reports an h3 request", async () => {
+    let stats: Bun.FetchConnectionStats | undefined;
+    const body = Buffer.alloc(5000, "x");
+    const res = await fetch(`${base}/echo`, { ...h3, method: "POST", body, onStats: s => (stats = s) });
+    expect((await res.bytes()).length).toBe(5000);
+    expect(stats).toMatchObject({ requestBodyBytesSent: 5000, responseStarted: true });
+    expect(stats!.bytesWritten).toBeGreaterThan(5000);
+  });
+
   test("a FetchContext has its own connection, and close() closes it once idle", async () => {
     using one = new Bun.FetchContext();
     using other = new Bun.FetchContext();

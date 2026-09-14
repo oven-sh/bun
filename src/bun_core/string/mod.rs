@@ -1831,11 +1831,22 @@ pub mod printer {
         }
     }
 
+    /// `strings::Encoding` stand-in that derives `ConstParamTy` so it can be
+    /// used as a const-generic parameter (`const ENCODING: Encoding`). The
+    /// variant set is identical; convert at the boundary if a
+    /// `strings::Encoding` is ever needed.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, core::marker::ConstParamTy)]
+    pub enum Encoding {
+        Ascii,
+        Utf8,
+        Latin1,
+        Utf16,
+    }
+
     const MALFORMED: i32 = -1;
 
-    /// Same algorithm as `bun_js_printer::write_pre_quoted_string`, except malformed UTF-8 becomes U+FFFD.
-    /// PERF: (quote_char, ascii_only, json, encoding) are runtime params —
-    /// profile if it shows up on a hot path.
+    /// Runtime-encoding adapter: selects the matching monomorphized
+    /// [`write_pre_quoted_string_inner`] instance.
     pub fn write_pre_quoted_string<W: PrinterWriter + ?Sized>(
         text_in: &[u8],
         writer: &mut W,
@@ -1844,49 +1855,107 @@ pub mod printer {
         json: bool,
         encoding: StrEncoding,
     ) -> crate::CrateResult<()> {
-        debug_assert!(!json || quote_char == b'"');
-        // utf16 view over the same bytes (only used when encoding == Utf16).
-        // Callers pass 2-byte-aligned even-length input for Utf16; `cast_slice`
-        // panics (rather than UB) if that contract is violated.
-        let text16: &[u16] = if encoding == StrEncoding::Utf16 {
-            crate::cast_slice::<u8, u16>(text_in)
-        } else {
-            &[]
-        };
-        let n: usize = if encoding == StrEncoding::Utf16 {
-            text16.len()
-        } else {
-            text_in.len()
-        };
+        match encoding {
+            StrEncoding::Ascii => write_pre_quoted_string_inner::<W, { Encoding::Ascii }>(
+                text_in, writer, quote_char, ascii_only, json,
+            ),
+            StrEncoding::Utf8 => write_pre_quoted_string_inner::<W, { Encoding::Utf8 }>(
+                text_in, writer, quote_char, ascii_only, json,
+            ),
+            StrEncoding::Latin1 => write_pre_quoted_string_inner::<W, { Encoding::Latin1 }>(
+                text_in, writer, quote_char, ascii_only, json,
+            ),
+            StrEncoding::Utf16 => write_pre_quoted_string_inner::<W, { Encoding::Utf16 }>(
+                text_in, writer, quote_char, ascii_only, json,
+            ),
+        }
+    }
+
+    /// `quote_char` / `ascii_only` / `json` are runtime args: the branches on
+    /// them are cheap and well-predicted, and collapsing the monomorphizations
+    /// keeps the hot transpile pages dense. `ENCODING` stays `const` because it
+    /// changes the code-unit indexing structure of the loop, so a per-encoding
+    /// copy is genuinely different code.
+    ///
+    /// In the UTF-8 instance, malformed bytes (a stray continuation byte, an
+    /// invalid lead, or a truncated sequence) become U+FFFD, one byte at a time.
+    #[inline(never)]
+    pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
+        text_in: &[u8],
+        writer: &mut W,
+        quote_char: u8,
+        ascii_only: bool,
+        json: bool,
+    ) -> crate::CrateResult<()>
+    where
+        W: PrinterWriter + ?Sized,
+    {
+        debug_assert!(
+            !(json && quote_char != b'"'),
+            "for json, quote_char must be '\"'"
+        );
+
+        // this is a large hot-path function; logic is ported 1:1 but the
+        // utf16 path needs &[u16] handling.
+        let text = text_in;
         let mut i: usize = 0;
+        let n: usize = match ENCODING {
+            Encoding::Utf16 => text.len() / 2,
+            _ => text.len(),
+        };
+
+        macro_rules! code_unit_at {
+            ($idx:expr) => {
+                match ENCODING {
+                    Encoding::Utf16 => {
+                        let lo = text[$idx * 2];
+                        let hi = text[$idx * 2 + 1];
+                        u16::from_le_bytes([lo, hi]) as i32
+                    }
+                    _ => text[$idx] as i32,
+                }
+            };
+        }
 
         while i < n {
-            let width: u8 = match encoding {
-                StrEncoding::Latin1 | StrEncoding::Ascii | StrEncoding::Utf16 => 1,
-                StrEncoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text_in[i]),
+            let width: u8 = match ENCODING {
+                Encoding::Latin1 | Encoding::Ascii => 1,
+                Encoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text[i]),
+                Encoding::Utf16 => 1,
             };
             let clamped_width = (width as usize).min(n.saturating_sub(i));
-            let c: i32 = match encoding {
-                StrEncoding::Utf8 => {
+            let c: i32 = match ENCODING {
+                Encoding::Utf8 => {
                     if width == 1 {
                         // width 1 with a byte >= 0x80 is a stray continuation byte or an invalid lead.
-                        if text_in[i] >= 0x80 {
+                        if text[i] >= 0x80 {
                             MALFORMED
                         } else {
-                            text_in[i] as i32
+                            text[i] as i32
                         }
                     } else {
-                        let mut buf = [0u8; 4];
-                        buf[..clamped_width].copy_from_slice(&text_in[i..i + clamped_width]);
-                        strings::decode_wtf8_rune_t::<i32>(buf, width, MALFORMED)
+                        let bytes: [u8; 4] = match clamped_width {
+                            1 => [text[i], 0, 0, 0],
+                            2 => [text[i], text[i + 1], 0, 0],
+                            3 => [text[i], text[i + 1], text[i + 2], 0],
+                            4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
+                            _ => unreachable!(),
+                        };
+                        strings::decode_wtf8_rune_t::<i32>(bytes, width, MALFORMED)
                     }
                 }
-                StrEncoding::Ascii => {
-                    debug_assert!(text_in[i] <= 0x7F);
-                    text_in[i] as i32
+                Encoding::Ascii => {
+                    debug_assert!(text[i] <= 0x7F);
+                    text[i] as i32
                 }
-                StrEncoding::Latin1 => text_in[i] as i32,
-                StrEncoding::Utf16 => text16[i] as i32,
+                Encoding::Latin1 => text[i] as i32,
+                Encoding::Utf16 => {
+                    // Surrogate halves are processed one code unit at a time,
+                    // so a pair prints as \uD800\uDF34 instead of the raw
+                    // supplementary character; the paired escape is equivalent
+                    // JS, just longer.
+                    code_unit_at!(i)
+                }
             };
 
             if c == MALFORMED {
@@ -1901,31 +1970,30 @@ pub mod printer {
             }
 
             if can_print_without_escape(c, ascii_only) {
-                match encoding {
-                    StrEncoding::Ascii | StrEncoding::Utf8 => {
-                        let remain = &text_in[i + clamped_width..];
+                match ENCODING {
+                    Encoding::Ascii | Encoding::Utf8 => {
+                        let remain = &text[i + clamped_width..];
                         if let Some(j) = strings::index_of_needs_escape_for_java_script_string(
                             remain, quote_char,
                         ) {
-                            writer.write_all(&text_in[i..i + clamped_width])?;
-                            i += clamped_width;
-                            writer.write_all(&remain[..j as usize])?;
-                            i += j as usize;
+                            let j = j as usize;
+                            writer.write_all(&text[i..i + clamped_width + j])?;
+                            i += clamped_width + j;
                         } else {
-                            writer.write_all(&text_in[i..])?;
+                            writer.write_all(&text[i..])?;
                             break;
                         }
                     }
-                    StrEncoding::Latin1 | StrEncoding::Utf16 => {
-                        let mut cp = [0u8; 4];
-                        let cp_len = strings::encode_wtf8_rune(&mut cp, c as u32);
-                        writer.write_all(&cp[..cp_len])?;
+                    Encoding::Latin1 | Encoding::Utf16 => {
+                        let mut codepoint_bytes = [0u8; 4];
+                        let codepoint_len =
+                            strings::encode_wtf8_rune(&mut codepoint_bytes, c as u32);
+                        writer.write_all(&codepoint_bytes[..codepoint_len])?;
                         i += clamped_width;
                     }
                 }
                 continue;
             }
-
             match c {
                 0x07 => {
                     writer.write_all(if json { b"\\u0007" } else { b"\\x07" })?;
@@ -1940,51 +2008,79 @@ pub mod printer {
                     i += 1;
                 }
                 0x0A => {
-                    writer.write_all(if quote_char == b'`' { b"\n" } else { b"\\n" })?;
+                    if quote_char == b'`' {
+                        writer.write_all(b"\n")?;
+                    } else {
+                        writer.write_all(b"\\n")?;
+                    }
                     i += 1;
                 }
                 0x0D => {
                     writer.write_all(b"\\r")?;
                     i += 1;
                 }
+                // \v
                 0x0B => {
                     writer.write_all(if json { b"\\u000B" } else { b"\\v" })?;
                     i += 1;
                 }
+                // "\\"
                 0x5C => {
                     writer.write_all(b"\\\\")?;
                     i += 1;
                 }
                 0x22 => {
-                    writer.write_all(if quote_char == b'"' { b"\\\"" } else { b"\"" })?;
+                    if quote_char == b'"' {
+                        writer.write_all(b"\\\"")?;
+                    } else {
+                        writer.write_all(b"\"")?;
+                    }
                     i += 1;
                 }
                 0x27 => {
-                    writer.write_all(if quote_char == b'\'' { b"\\'" } else { b"'" })?;
+                    if quote_char == b'\'' {
+                        writer.write_all(b"\\'")?;
+                    } else {
+                        writer.write_all(b"'")?;
+                    }
                     i += 1;
                 }
                 0x60 => {
-                    writer.write_all(if quote_char == b'`' { b"\\`" } else { b"`" })?;
+                    if quote_char == b'`' {
+                        writer.write_all(b"\\`")?;
+                    } else {
+                        writer.write_all(b"`")?;
+                    }
                     i += 1;
                 }
                 0x24 => {
                     if quote_char == b'`' {
-                        let next_is_brace = match encoding {
-                            StrEncoding::Utf16 => i + 1 < n && text16[i + 1] == b'{' as u16,
-                            _ => i + 1 < n && text_in[i + 1] == b'{',
+                        let next = if i + clamped_width < n {
+                            Some(code_unit_at!(i + clamped_width))
+                        } else {
+                            None
                         };
-                        writer.write_all(if next_is_brace { b"\\$" } else { b"$" })?;
+                        if next == Some(b'{' as i32) {
+                            writer.write_all(b"\\$")?;
+                        } else {
+                            writer.write_all(b"$")?;
+                        }
                     } else {
                         writer.write_all(b"$")?;
                     }
                     i += 1;
                 }
                 0x09 => {
-                    writer.write_all(if quote_char == b'`' { b"\t" } else { b"\\t" })?;
+                    if quote_char == b'`' {
+                        writer.write_all(b"\t")?;
+                    } else {
+                        writer.write_all(b"\\t")?;
+                    }
                     i += 1;
                 }
                 _ => {
                     i += width as usize;
+
                     if c <= 0xFF && !json {
                         let h = hex2_upper(c as u8);
                         writer.write_all(&[b'\\', b'x', h[0], h[1]])?;
@@ -2006,9 +2102,16 @@ pub mod printer {
         bytes: &mut MutableString,
         ascii_only: bool,
     ) -> crate::CrateResult<()> {
-        // PERF: consider pre-growing via an estimated UTF-8 length — profile if it shows up on a hot path.
+        // Heuristic reservation (~12.5% slack) instead of a full escaped-length
+        // pre-scan, which would repeat the work the escaper below does anyway.
+        // Tab-indented JS (e.g. three.js) has ~9.4% of bytes needing 2-byte
+        // escapes, so 6.25% slack would under-shoot and force a 2x doubling
+        // memcpy of the whole source. The writer still grows on demand.
+        bytes.grow_if_needed(text.len() + (text.len() >> 3) + 8)?;
         bytes.append_char(b'"')?;
-        write_pre_quoted_string(text, bytes, b'"', ascii_only, true, StrEncoding::Utf8)?;
+        write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(
+            text, bytes, b'"', ascii_only, true,
+        )?;
         bytes.append_char(b'"').expect("unreachable");
         Ok(())
     }

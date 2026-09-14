@@ -166,7 +166,7 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
       // `<name>.switches`: settings of the backend (`BUN_JSC_useFFIInlineC=0`), one a line, none of which may
       // change what the program does.
       for (const setting of requirementIn(join(dir, `${name}.switches`))
-        ?.split("\n")
+        ?.split(/\r?\n/)
         .filter(Boolean) ?? []) {
         const at = setting.indexOf("=");
         declare.skipIf(!applies)(`${title} (${setting})`, async () =>

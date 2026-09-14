@@ -943,9 +943,8 @@ pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
 }
 
-/// `ExitHandler::requested` for the end of a run. The runner exits when the last test settles,
-/// with whatever the tests left in flight on the event loop still in flight: `process.exit()`,
-/// not a loop that ran dry.
+/// `ExitHandler::requested` at the end of a run: the runner exits when the last test settles,
+/// not when the event loop runs dry, so what the tests started can still be in flight.
 pub(crate) fn exit_is_requested() -> bool {
     !should_drain_event_loop()
 }

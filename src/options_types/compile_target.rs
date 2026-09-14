@@ -18,10 +18,10 @@ use bun_sys::Fd;
 #[derive(Clone, Copy)]
 pub struct CompileTarget {
     pub os: OperatingSystem,
-    pub(crate) arch: Architecture,
+    pub arch: Architecture,
     pub(crate) baseline: bool,
     pub(crate) version: Version,
-    pub(crate) libc: Libc,
+    pub libc: Libc,
 }
 
 impl Default for CompileTarget {
@@ -105,10 +105,6 @@ impl CompileTarget {
             && self.baseline == other.baseline
             && self.version.eql(other.version)
             && self.libc == other.libc
-    }
-
-    pub fn arch(&self) -> Architecture {
-        self.arch
     }
 
     pub fn is_default(&self) -> bool {
@@ -463,6 +459,26 @@ impl fmt::Display for CompileTarget {
             self.version.minor,
             self.version.patch,
         )
+    }
+}
+
+/// `bun-linux-x64-musl`: a target's os, arch and libc, as `--target` spells them.
+pub struct Platform<'a>(&'a CompileTarget);
+
+impl CompileTarget {
+    pub fn platform(&self) -> Platform<'_> {
+        Platform(self)
+    }
+}
+
+impl fmt::Display for Platform<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let arch = match self.0.arch {
+            Architecture::X64 => "x64",
+            Architecture::Arm64 => "arm64",
+            Architecture::Wasm => "wasm",
+        };
+        write!(f, "bun-{}-{}{}", self.0.os.npm_name(), arch, self.0.libc)
     }
 }
 

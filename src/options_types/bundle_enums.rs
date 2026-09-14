@@ -189,6 +189,7 @@ pub static LOADER_API_NAMES: api::Loader = {
     b"html" => api::Loader::html,
     b"md" => api::Loader::md,
     b"markdown" => api::Loader::md,
+    b"c" => api::Loader::c,
 };
 }
 

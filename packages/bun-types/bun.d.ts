@@ -6097,7 +6097,8 @@ declare module "bun" {
     | "wasm"
     | "text"
     | "css"
-    | "html";
+    | "html"
+    | "c";
 
   interface PluginConstraints {
     /**

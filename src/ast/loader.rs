@@ -125,11 +125,17 @@ impl Loader {
                 | Loader::Napi
                 | Loader::Sqlite
                 | Loader::SqliteEmbedded
-                // The compiled BIR, which the runtime loads under the original file name.
+                // The compiled BIR, which the bundle loads with `require(asset, { type: "c" })`.
                 | Loader::C
                 // TODO: loader for reading bytes and creating module or instance
                 | Loader::Wasm
         )
+    }
+
+    /// Whether a file that `should_copy_for_bundling` is only data, so that importing it just for
+    /// its effects does nothing. Not C: its constructors run when the module loads.
+    pub fn is_pure_data(self) -> bool {
+        self != Loader::C
     }
 
     pub fn handles_empty_file(self) -> bool {

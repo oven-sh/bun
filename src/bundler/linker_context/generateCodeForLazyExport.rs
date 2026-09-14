@@ -409,6 +409,31 @@ pub(crate) fn generate_code_for_lazy_export(
     let prints_runtime_require = this.options.output_format != crate::options::OutputFormat::Cjs;
     let calls_runtime_require = prints_runtime_require && runtime_require_calls(&expr) > 0;
 
+    // Statements a loader added after the lazy export are printed as they are (`.c`: the one that
+    // loads the module, whatever is imported from it).
+    if prints_runtime_require {
+        for part_index in 2..parts.len() {
+            // SAFETY: `parts` is a stable SoA column slice valid for the link pass and `part_index`
+            // is inside it; this reads one field of a part other than the one `part` borrows.
+            let stmts = unsafe { (*parts.cast::<Part>().add(part_index)).stmts };
+            let require_calls = stmts
+                .iter()
+                .filter(|stmt| match &stmt.data {
+                    StmtData::SExpr(s) => is_on_runtime_require(&s.value),
+                    _ => false,
+                })
+                .count() as u32;
+            if require_calls > 0 {
+                this.graph.generate_runtime_symbol_import_and_use(
+                    source_index,
+                    Index::part(part_index as u32),
+                    b"__require",
+                    require_calls,
+                )?;
+            }
+        }
+    }
+
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
             part.stmts.slice_mut()[0] = Stmt::assign(

@@ -114,6 +114,9 @@ pub struct BundleV2<'a> {
 
     /// See the comment in `Chunk.OutputPiece`.
     pub(crate) unique_key: u64,
+    /// When every entry point is a C file they are one program: the first stays the entry point and
+    /// these (absolute paths) are compiled and linked with it, as `cc a.c b.c c.c` would.
+    pub(crate) c_link_sources: Vec<Box<[u8]>>,
     pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
@@ -2775,8 +2778,11 @@ pub mod bv2_impl {
                             [source_index.get() as usize];
                     additional_files
                         .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
+                    if loader.is_pure_data() {
+                        self.graph.input_files.items_side_effects_mut()
+                            [source_index.get() as usize] =
+                            bun_ast::SideEffects::NoSideEffectsPureData;
+                    }
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -2887,8 +2893,11 @@ pub mod bv2_impl {
                             [source_index.get() as usize];
                     additional_files
                         .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
+                    if loader.is_pure_data() {
+                        self.graph.input_files.items_side_effects_mut()
+                            [source_index.get() as usize] =
+                            bun_ast::SideEffects::NoSideEffectsPureData;
+                    }
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -2957,6 +2966,7 @@ pub mod bv2_impl {
                 resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
                 free_list: Vec::new(),
                 unique_key: 0,
+                c_link_sources: Vec::new(),
                 dynamic_import_entry_points: ArrayHashMap::new(),
                 finalizers: Vec::new(),
                 drain_defer_task: DeferredBatchTask::default(),
@@ -3170,6 +3180,33 @@ pub mod bv2_impl {
             self.enqueue_entry_points_common()?;
             // (variant != .dev_server)
             self.reserve_source_indexes_for_bake()?;
+
+            // `bun build main.c parser.c util.c`: entry points that are all C files are one program
+            // in several files, as they are to `cc`, not several programs. The first stays the
+            // entry point; the others are compiled and linked with it.
+            self.c_link_sources.clear();
+            let loaders = &self.transpiler.options.loaders;
+            let is_c_program = data.len() > 1
+                && data.iter().all(|entry_point| {
+                    Fs::Path::init(entry_point.as_ref()).loader(loaders) == Some(Loader::C)
+                });
+            let data = if is_c_program {
+                let (first, others) = data.split_at(1);
+                for entry_point in others {
+                    // A file that cannot be found has been reported.
+                    let Ok(resolved) = self.transpiler.resolve_entry_point(entry_point.as_ref())
+                    else {
+                        continue;
+                    };
+                    let Some(path) = resolved.path_const() else {
+                        continue;
+                    };
+                    self.c_link_sources.push(Box::from(path.text));
+                }
+                first
+            } else {
+                data
+            };
 
             // Setup entry points
             let num_entry_points = data.len();
@@ -3759,8 +3796,11 @@ pub mod bv2_impl {
                             [source_index.get() as usize];
                     additional_files
                         .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
+                    if loader.is_pure_data() {
+                        self.graph.input_files.items_side_effects_mut()
+                            [source_index.get() as usize] =
+                            bun_ast::SideEffects::NoSideEffectsPureData;
+                    }
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -3857,8 +3897,11 @@ pub mod bv2_impl {
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
+                    if loader.is_pure_data() {
+                        self.graph.input_files.items_side_effects_mut()
+                            [source_index.get() as usize] =
+                            bun_ast::SideEffects::NoSideEffectsPureData;
+                    }
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -4662,9 +4705,11 @@ pub mod bv2_impl {
                                 [source_index.get() as usize];
                         let _ = additional_files
                             .push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                        this.graph.input_files.items_side_effects_mut()
-                            [source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
+                        if code.loader.is_pure_data() {
+                            this.graph.input_files.items_side_effects_mut()
+                                [source_index.get() as usize] =
+                                bun_ast::SideEffects::NoSideEffectsPureData;
+                        }
                         this.graph.estimated_file_loader_count += 1;
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
@@ -5049,9 +5094,11 @@ pub mod bv2_impl {
                                     additional_files.push(crate::AdditionalFile::SourceIndex(
                                         task.source_index.get(),
                                     ));
-                                    this.graph.input_files.items_side_effects_mut()
-                                        [source_index.get() as usize] =
-                                        bun_ast::SideEffects::NoSideEffectsPureData;
+                                    if loader.is_pure_data() {
+                                        this.graph.input_files.items_side_effects_mut()
+                                            [source_index.get() as usize] =
+                                            bun_ast::SideEffects::NoSideEffectsPureData;
+                                    }
                                     this.graph.estimated_file_loader_count += 1;
                                 }
 
@@ -6778,6 +6825,10 @@ pub mod bv2_impl {
                     // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader
                     // so that `shouldCopyForBundling()` returns true and the asset is emitted.
                     // Only do this for HTML sources — CSS url() imports should retain their original behavior.
+                    // A URL to a C file, from HTML or CSS, names the file: nothing calls into it.
+                    if import_record.kind == ImportKind::Url && resolved_loader == Loader::C {
+                        break 'brk Loader::File;
+                    }
                     if loader == Loader::Html
                         && import_record.kind == ImportKind::Url
                         && !resolved_loader.should_copy_for_bundling()
@@ -6968,9 +7019,11 @@ pub mod bv2_impl {
                         additional_files.push(crate::AdditionalFile::SourceIndex(
                             new_task.source_index.get(),
                         ));
-                        self.graph.input_files.items_side_effects_mut()
-                            [new_task.source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
+                        if loader.is_pure_data() {
+                            self.graph.input_files.items_side_effects_mut()
+                                [new_task.source_index.get() as usize] =
+                                bun_ast::SideEffects::NoSideEffectsPureData;
+                        }
                         self.graph.estimated_file_loader_count += 1;
                     }
 

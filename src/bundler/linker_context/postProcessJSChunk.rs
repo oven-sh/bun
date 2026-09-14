@@ -356,6 +356,7 @@ pub(crate) fn post_process_js_chunk(
                 chunk.renamer.as_renamer(),
                 module_info.as_deref_mut(),
                 cross_chunk_exports,
+                runtime_require_ref,
             );
         }
 
@@ -830,6 +831,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     r: js_printer::renamer::Renamer<'a, 'a>,
     module_info: Option<&'a mut ModuleInfo>,
     cross_chunk_exports: &[bun_ast::ClauseItem],
+    runtime_require_ref: Option<Ref>,
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
@@ -1257,6 +1259,78 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         }
     }
 
+    // A C file that is an entry point is a program when it has a `main`: the output it is the
+    // entry point of runs it, with the process's arguments, and exits with what it returns.
+    //
+    // require("<asset>", { type: "c" }).__bun_run_c_main__()
+    //
+    // The module's own statements load it the same way (`ParseTask`'s `Loader::C`), so this is the
+    // module they loaded. Only here is it run: bundled into another entry point, it is its exports.
+    if c.parse_graph().input_files.items_loader()[source_index as usize] == options::Loader::C
+        && !c
+            .parse_graph()
+            .input_files
+            .items_unique_key_for_additional_file()[source_index as usize]
+            .is_empty()
+    {
+        let asset: &[u8] = &c
+            .parse_graph()
+            .input_files
+            .items_unique_key_for_additional_file()[source_index as usize];
+        let mut properties = G::PropertyList::init_capacity(1);
+        VecExt::append(
+            &mut properties,
+            G::Property {
+                key: Some(Expr::init(E::String::init(b"type"), bun_ast::Loc::EMPTY)),
+                value: Some(Expr::init(E::String::init(b"c"), bun_ast::Loc::EMPTY)),
+                ..Default::default()
+            },
+        );
+        let attributes = Expr::init(
+            E::Object {
+                properties,
+                is_single_line: true,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let module = Expr::init(
+            E::Call {
+                target: Expr {
+                    data: bun_ast::ExprData::ERequireCallTarget,
+                    loc: bun_ast::Loc::EMPTY,
+                },
+                args: bun_ast::ExprNodeList::from_slice(&[
+                    Expr::init(E::String::init(asset), bun_ast::Loc::EMPTY),
+                    attributes,
+                ]),
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        stmts.push(Stmt::alloc(
+            S::SExpr {
+                value: Expr::init(
+                    E::Call {
+                        target: Expr::init(
+                            E::Dot {
+                                target: module,
+                                name: options::C_RUN_MAIN_PROPERTY.into(),
+                                name_loc: bun_ast::Loc::EMPTY,
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                ),
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        ));
+    }
+
     if stmts.is_empty() {
         return CompileResult::Javascript {
             source_index,
@@ -1273,6 +1347,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         indent: Default::default(),
         has_run_symbol_renamer: true,
 
+        require_ref: runtime_require_ref,
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
         require_or_import_meta_for_source_callback: js_printer::RequireOrImportMetaCallback::init::<

@@ -709,6 +709,20 @@ impl<'a> Resolver<'a> {
         unsafe { core::ptr::addr_of_mut!((*self.fs).fs) }
     }
 
+    /// Whether the cache keeps an open fd for `path` (a directory, or a file
+    /// inside one).
+    ///
+    /// With a watcher installed, `store_fd` exists so the watcher can adopt
+    /// the directory fds. It never watches anything under `node_modules`
+    /// (`Watcher::on_maybe_watch_directory`), and the cache is keyed by path
+    /// string, so with the isolated linker every dependent that reaches a
+    /// shared package through its own `node_modules/.bun/<dep>/node_modules/`
+    /// symlink would hold one more fd on the same real directory.
+    #[inline]
+    pub(crate) fn should_store_fd(&self, path: &[u8]) -> bool {
+        self.store_fd && !(self.watcher.is_some() && strings::contains(path, b"node_modules"))
+    }
+
     /// NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). BACKREF
     /// — owner (Transpiler/BundleV2) outlives the Resolver; worker clones share
     /// the same Log under the resolver mutex. Caller `unsafe { &mut *r.log() }`
@@ -1584,7 +1598,8 @@ impl<'a> Resolver<'a> {
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
-                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                let store_fd = self.should_store_fd(query.entry().dir);
+                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), store_fd) };
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -1606,8 +1621,6 @@ impl<'a> Resolver<'a> {
                     // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
                     // length so `buf` can be re-borrowed for null-termination below.
                     let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
-
-                    let store_fd = self.store_fd;
 
                     if !query.entry().cache().fd.is_valid() && store_fd {
                         buf[out_len] = 0;
@@ -3678,8 +3691,12 @@ impl<'a> Resolver<'a> {
 
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `kind()` is serialized on the per-entry mutex.
-                if unsafe { entry_query.entry().kind(self.rfs_ptr(), self.store_fd) }
-                    == Fs::file_system::EntryKind::Dir
+                if unsafe {
+                    entry_query.entry().kind(
+                        self.rfs_ptr(),
+                        self.should_store_fd(entry_query.entry().dir),
+                    )
+                } == Fs::file_system::EntryKind::Dir
                 {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     if ends_with_star
@@ -3713,8 +3730,12 @@ impl<'a> Resolver<'a> {
                                     // SAFETY: rfs points at the process-global RealFS; the
                                     // lazy-stat rewrite inside `kind()` is serialized on the
                                     // per-entry mutex.
-                                    if unsafe { iq.entry().kind(self.rfs_ptr(), self.store_fd) }
-                                        == Fs::file_system::EntryKind::File
+                                    if unsafe {
+                                        iq.entry().kind(
+                                            self.rfs_ptr(),
+                                            self.should_store_fd(iq.entry().dir),
+                                        )
+                                    } == Fs::file_system::EntryKind::File
                                     {
                                         if let Some(debug) = self.debug_logs.as_mut() {
                                             let mut ms = Vec::with_capacity(1 + file_name.len());
@@ -3832,8 +3853,11 @@ impl<'a> Resolver<'a> {
                 {
                     // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                     // rewrite inside `kind()` is serialized on the per-entry mutex.
-                    if unsafe { ext_query.entry().kind(rfs, self.store_fd) }
-                        == Fs::file_system::EntryKind::File
+                    if unsafe {
+                        ext_query
+                            .entry()
+                            .kind(rfs, self.should_store_fd(ext_query.entry().dir))
+                    } == Fs::file_system::EntryKind::File
                     {
                         if let Some(debug) = self.debug_logs.as_mut() {
                             debug.add_note_fmt(format_args!(
@@ -3873,8 +3897,11 @@ impl<'a> Resolver<'a> {
                     {
                         // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                         // rewrite inside `kind()` is serialized on the per-entry mutex.
-                        if unsafe { ts_query.entry().kind(rfs, self.store_fd) }
-                            == Fs::file_system::EntryKind::File
+                        if unsafe {
+                            ts_query
+                                .entry()
+                                .kind(rfs, self.should_store_fd(ts_query.entry().dir))
+                        } == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
                                 debug.add_note_fmt(format_args!(
@@ -4362,21 +4389,15 @@ impl<'a> Resolver<'a> {
         let open_dir_count = core::cell::Cell::new(0usize);
 
         // When this function halts, any item not processed means it's not found.
-        // NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
-        // (open_dir_count) so the guard doesn't pin `&mut self` across the loop
-        // body. `need_to_close_files()` is evaluated AT DROP TIME,
-        // not snapshotted up-front — the loop body calls
-        // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()`
-        // mid-walk. Reach the RealFS via the `&'static` singleton accessor
-        // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
-        let close_dirs_store_fd = self.store_fd;
+        // Every fd opened in this walk is closed on exit unless a `DirEntry`
+        // took it (the loop pops `open_dir_count` when one does).
+        // NOTE: capture only `open_dir_count` by-Cell so the guard doesn't pin
+        // `&mut self` across the loop body.
         scopeguard::defer! {
             let n = open_dir_count.get();
-            if n > 0 && (!close_dirs_store_fd || Fs::FileSystem::get().fs.need_to_close_files()) {
-                let open_dirs = &bufs!(open_dirs)[0..n];
-                for open_dir in open_dirs {
-                    open_dir.close();
-                }
+            let open_dirs = &bufs!(open_dirs)[0..n];
+            for open_dir in open_dirs {
+                open_dir.close();
             }
         }
 
@@ -4521,7 +4542,8 @@ impl<'a> Resolver<'a> {
 
             // `open_dir` is INVALID for a permission-denied ancestor treated as
             // an opaque directory; there is nothing to track or close then.
-            if !queue_top.fd.is_valid() && open_dir.is_valid() {
+            let opened_here = !queue_top.fd.is_valid() && open_dir.is_valid();
+            if opened_here {
                 Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs!(open_dirs)[open_dir_count.get()] = open_dir;
@@ -4646,7 +4668,20 @@ impl<'a> Resolver<'a> {
                     // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
                     unsafe { &mut *existing }.data.clear();
                 }
-                new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
+                new_entry.fd = if !self.store_fd || !open_dir.is_valid() {
+                    FD::INVALID
+                } else if !opened_here {
+                    // An in-place refresh: the cache already owns this fd.
+                    open_dir
+                } else if self.should_store_fd(dir_path) && !self.fs_ref().fs.need_to_close_files()
+                {
+                    // The cache takes the fd, so the exit guard must not close
+                    // it. It is the last one pushed to `open_dirs`.
+                    open_dir_count.set(open_dir_count.get() - 1);
+                    open_dir
+                } else {
+                    FD::INVALID
+                };
                 // NOTE: `DirEntry.data` is a `HashMap`
                 // (`NonNull` inside), so a zeroed slot is UB and `*ptr = new_entry` would drop it.
                 // Box `new_entry` directly for the fresh case; assign-into only for `in_place`.
@@ -5336,8 +5371,11 @@ impl<'a> Resolver<'a> {
         if let Some((Some(lookup), dirname_fd)) = looked_up {
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
-            if unsafe { lookup.entry().kind(rfs, self.store_fd) }
-                == Fs::file_system::EntryKind::File
+            if unsafe {
+                lookup
+                    .entry()
+                    .kind(rfs, self.should_store_fd(lookup.entry().dir))
+            } == Fs::file_system::EntryKind::File
             {
                 let out_buf: &[u8] = {
                     if lookup.entry().abs_path.is_empty() {
@@ -5781,7 +5819,7 @@ impl<'a> Resolver<'a> {
                 dir_path,
                 None,
                 self.generation,
-                self.store_fd,
+                self.should_store_fd(dir_path),
             ) {
                 Ok(e) => bun_ptr::BackRef::new(&*e),
                 Err(_) => dec_ret!(None),
@@ -5823,7 +5861,11 @@ impl<'a> Resolver<'a> {
         if let Some(query) = plain_query {
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
-            if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
+            if unsafe {
+                query
+                    .entry()
+                    .kind(rfs, self.should_store_fd(query.entry().dir))
+            } == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
@@ -5900,8 +5942,11 @@ impl<'a> Resolver<'a> {
                     if let Some(query) = ts_query {
                         // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                         // rewrite inside `kind()` is serialized on the per-entry mutex.
-                        if unsafe { query.entry().kind(rfs, self.store_fd) }
-                            == Fs::file_system::EntryKind::File
+                        if unsafe {
+                            query
+                                .entry()
+                                .kind(rfs, self.should_store_fd(query.entry().dir))
+                        } == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
                                 debug.add_note_fmt(format_args!(
@@ -6004,7 +6049,11 @@ impl<'a> Resolver<'a> {
         if let Some(query) = ext_query {
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
-            if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
+            if unsafe {
+                query
+                    .entry()
+                    .kind(rfs, self.should_store_fd(query.entry().dir))
+            } == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
@@ -6109,8 +6158,11 @@ impl<'a> Resolver<'a> {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
                     // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    unsafe { entry.entry().kind(rfs_ptr, self.store_fd) }
-                        == Fs::file_system::EntryKind::Dir,
+                    unsafe {
+                        entry
+                            .entry()
+                            .kind(rfs_ptr, self.should_store_fd(entry.entry().dir))
+                    } == Fs::file_system::EntryKind::Dir,
                 );
             }
         }
@@ -6161,7 +6213,7 @@ impl<'a> Resolver<'a> {
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
                         // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                        if unsafe { q.entry().kind(rfs_ptr, self.store_fd) }
+                        if unsafe { q.entry().kind(rfs_ptr, self.should_store_fd(q.entry().dir)) }
                             == Fs::file_system::EntryKind::Dir
                         {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
@@ -6245,7 +6297,7 @@ impl<'a> Resolver<'a> {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
                             && !lookup.entry().cache().fd.is_valid()
-                            && self.store_fd
+                            && self.should_store_fd(path)
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
                             let _entry_guard = lookup.entry().mutex.lock_guard();
@@ -6257,7 +6309,8 @@ impl<'a> Resolver<'a> {
 
                         // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
                         // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+                        let mut symlink =
+                            unsafe { entry.symlink(rfs_ptr, self.should_store_fd(entry.dir)) };
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6320,7 +6373,8 @@ impl<'a> Resolver<'a> {
                 // dies (NLL) before any later `&mut` to this slot.
                 let entry = lookup.entry();
                 // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
+                if unsafe { entry.kind(rfs_ptr, self.should_store_fd(entry.dir)) }
+                    == Fs::file_system::EntryKind::File
                 {
                     info.package_json = if self.use_package_manager()
                         && !info.has_node_modules()
@@ -6394,7 +6448,7 @@ impl<'a> Resolver<'a> {
                     // dies (NLL) before any later `&mut` to this slot.
                     let entry = lookup.entry();
                     // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    if unsafe { entry.kind(rfs_ptr, self.store_fd) }
+                    if unsafe { entry.kind(rfs_ptr, self.should_store_fd(entry.dir)) }
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"tsconfig.json".as_slice()];
@@ -6410,7 +6464,7 @@ impl<'a> Resolver<'a> {
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
                         // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                        if unsafe { entry.kind(rfs_ptr, self.store_fd) }
+                        if unsafe { entry.kind(rfs_ptr, self.should_store_fd(entry.dir)) }
                             == Fs::file_system::EntryKind::File
                         {
                             let parts = [path, b"jsconfig.json".as_slice()];

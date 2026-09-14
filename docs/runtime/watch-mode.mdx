@@ -142,9 +142,9 @@ bun --hot server.ts
 ```
 
 ```txt
+Reloaded 0 times
 Reloaded 1 times
 Reloaded 2 times
-Reloaded 3 times
 ```
 
 Traditional file watchers like `nodemon` restart the entire process, so HTTP servers and other stateful objects are lost. By contrast, `bun --hot` reflects the updated code without restarting the process.

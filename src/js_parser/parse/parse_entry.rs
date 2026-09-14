@@ -1854,8 +1854,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // `__dirname` and `__filename` at runtime: a CommonJS module gets them as
-        // arguments of its wrapper. For an ES module, `print_ast` declares them.
+        // At runtime, `print_ast` declares these for an ES module.
         let uses_dirname_ref = exports_kind == js_ast::ExportsKind::Esm && uses_dirname;
         let uses_filename_ref = exports_kind == js_ast::ExportsKind::Esm && uses_filename;
         debug_assert!(!p.options.bundle || !(uses_dirname_ref || uses_filename_ref));

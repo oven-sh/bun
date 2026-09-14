@@ -9474,7 +9474,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             uses_module_ref,
             uses_exports_ref,
             uses_require_ref,
-            // `_parse` sets these: only it knows if it declared the names itself.
+            // `_parse` sets these.
             uses_dirname_ref: false,
             uses_filename_ref: false,
             commonjs_module_exports_assigned_deoptimized: self

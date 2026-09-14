@@ -7787,15 +7787,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
-/// A free name that Bun defines for each ES module it runs without bundling.
-///
-/// `print_ast` declares the names that a module uses at the very start of its
-/// output, in table order, with nothing between them. A `var` has no value until
-/// the module body starts, but a function declaration of the module can run
-/// before that (import cycle). So `ImportMetaObject::initializeHoistedBindings`
-/// reads this table through `Bun__hoistedModuleBinding`, finds the declarations
-/// at the start of the source, and gives the variables the same values when the
-/// module is linked.
+/// A `var` that starts an unbundled ES module. C++ (`initializeHoistedBindings`) matches the text at link time.
 struct HoistedModuleBinding {
     name: HoistedModuleBindingName,
     /// The exact text that `print_ast` prints.
@@ -7813,10 +7805,7 @@ enum HoistedModuleBindingName {
 }
 
 const HOISTED_MODULE_BINDINGS: [HoistedModuleBinding; 3] = [
-    // `import.meta.require` at each call site would show up in
-    // `func.toString()`, and `import.meta` is a syntax error when that text
-    // goes through `new Function`.
-    // https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
+    // Not `import.meta.require` at each call site: https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
     HoistedModuleBinding {
         name: HoistedModuleBindingName::Require,
         declaration: c"var {require}=import.meta;",
@@ -8006,8 +7995,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let mut declared_any = false;
         for binding in &HOISTED_MODULE_BINDINGS {
             let declare = match binding.name {
-                // Never a symbol collision: `uses_require_ref` means that
-                // `require` is an unbound variable.
+                // `uses_require_ref` means `require` is unbound, so this cannot collide.
                 HoistedModuleBindingName::Require => {
                     tree.uses_require_ref
                         && tree.exports_kind == js_ast::ExportsKind::Esm
@@ -8019,7 +8007,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             if !declare {
                 continue;
             }
-            // See `HoistedModuleBinding`: the declarations start the output.
+            // C++ matches the declarations at the start of the source.
             debug_assert!(declared_any || printer.writer.slice().is_empty());
             printer.print(binding.declaration.to_bytes());
             declared_any = true;

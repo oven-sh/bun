@@ -33,8 +33,7 @@ pub struct Ast<'a> {
     pub uses_exports_ref: bool,
     pub uses_module_ref: bool,
     pub uses_require_ref: bool,
-    /// An ES module that reads `__dirname` / `__filename`, where the parser left
-    /// the declaration to `print_ast` (`HOISTED_MODULE_BINDINGS`).
+    /// `print_ast` declares `__dirname` / `__filename` for this ES module.
     pub uses_dirname_ref: bool,
     pub uses_filename_ref: bool,
     pub commonjs_module_exports_assigned_deoptimized: bool,

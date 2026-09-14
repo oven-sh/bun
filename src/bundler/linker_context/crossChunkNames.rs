@@ -254,11 +254,9 @@ pub(crate) fn apply_to_clauses(
     Ok(())
 }
 
-/// An ESM entry chunk's `export {}` clause lists its entry point's export names
-/// and the bindings it exports to other chunks. Where the two collide, the
-/// binding takes a numbered alias: `export { helper as helper2 }`,
-/// `import { helper2 as helper }`. If the entry point exports that same binding
-/// under that name, the item is dropped and importers use that export.
+/// Aliases for the bindings an ESM entry chunk exports to other chunks under
+/// the name of one of its entry point's exports: `export { helper as helper2 }`,
+/// `import { helper2 as helper }`. An item the entry point already exports is dropped.
 fn export_aliases_beside_entry_exports(
     c: &LinkerContext,
     chunks: &mut [Chunk],
@@ -340,8 +338,7 @@ fn export_aliases_beside_entry_exports(
     Ok(aliases)
 }
 
-/// The binding `generate_entry_point_tail_js` exports as `name`, unless it
-/// exports a copy (a property of a CommonJS namespace).
+/// The binding `generate_entry_point_tail_js` exports as `name`; `None` for a copy of a CommonJS property.
 fn entry_export_binding(c: &LinkerContext, source_index: usize, name: &[u8]) -> Option<Ref> {
     let export = c.graph.meta.items_resolved_exports()[source_index].get(name)?;
     let mut ref_ = export.data.import_ref;

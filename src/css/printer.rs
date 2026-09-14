@@ -537,9 +537,6 @@ impl<'a> Printer<'a> {
 
         if self.local_names.is_none() {
             if let Some(ref_) = ident.as_ref() {
-                // No link step renamed this symbol (`bun build --no-bundle`,
-                // `Bun.Transpiler`). Hash its original name like any other
-                // scoped ident.
                 let ref_ = self.symbols.follow(ref_);
                 let Some(symbol) = self.symbols.get_const(ref_) else {
                     return Err(self.add_fmt_error());

@@ -3322,6 +3322,166 @@ describe("script-sized stream containers throw when they cannot grow", () => {
       });
     },
   );
+
+  // A reader keeps one 8-byte slot per pending read() or read(view), and a byte stream keeps
+  // one pull-into descriptor per pending read. A read that the deque refuses rejects, and the
+  // stream stays readable: the reads before it still settle.
+  const MAX_PENDING_READS = LIMIT_BYTES / 8 - 1;
+
+  // Issues `count` reads, then one chunk. Reports how many reads rejected and why, and what
+  // the first read resolved with.
+  const pendingReads = `
+    const pendingReads = async (stream, read, feed) => {
+      const reader = read === "read(view)" ? stream.getReader({ mode: "byob" }) : stream.getReader();
+      const reads = [];
+      let rejected = 0;
+      const errors = new Set();
+      for (let i = 0; i < ${MAX_PENDING_READS} + 100; i++) {
+        const view = new Uint8Array(1);
+        const promise = read === "read(view)" ? reader.read(view) : reader.read();
+        reads.push(promise);
+        promise.then(
+          () => {},
+          e => {
+            rejected++;
+            errors.add(describeError(e));
+            if (read === "read(view)") errors.add("view byteLength " + view.byteLength);
+          },
+        );
+      }
+      // A refused read rejects at once, so every rejection handler above runs before this tick.
+      await Promise.resolve();
+      feed();
+      const first = await reads[0].then(r => ({ done: r.done, value: r.value && r.value.length }), describeError);
+      return { rejected, errors: [...errors], first };
+    };
+  `;
+
+  test.concurrent("ReadableStreamDefaultReader.read()", async () => {
+    const result = await runInSubprocess(`
+      ${pendingReads}
+      let controller;
+      const stream = new ReadableStream({ start(c) { controller = c; } });
+      console.log(JSON.stringify(await pendingReads(stream, "read()", () => controller.enqueue("ab"))));
+    `);
+    expect(result).toEqual({
+      stdout: { rejected: 100, errors: [outOfMemory], first: { done: false, value: 2 } },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("ReadableStreamDefaultReader.read() on a byte stream with autoAllocateChunkSize", async () => {
+    const result = await runInSubprocess(`
+      ${pendingReads}
+      let controller;
+      const stream = new ReadableStream({ type: "bytes", autoAllocateChunkSize: 4, start(c) { controller = c; } });
+      console.log(JSON.stringify(await pendingReads(stream, "read()", () => controller.enqueue(new Uint8Array(2)))));
+    `);
+    expect(result).toEqual({
+      stdout: { rejected: 100, errors: [outOfMemory], first: { done: false, value: 2 } },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A refused read(view) keeps the caller's view: its buffer is not transferred.
+  test.concurrent("ReadableStreamBYOBReader.read(view)", async () => {
+    const result = await runInSubprocess(`
+      ${pendingReads}
+      let controller;
+      const stream = new ReadableStream({ type: "bytes", start(c) { controller = c; } });
+      console.log(JSON.stringify(await pendingReads(stream, "read(view)", () => controller.enqueue(new Uint8Array(1)))));
+    `);
+    expect(result).toEqual({
+      stdout: { rejected: 100, errors: [outOfMemory, "view byteLength 1"], first: { done: false, value: 1 } },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A direct stream runs pull() for each read. A read that the deque refuses must not run it,
+  // or a close() that pull() defers is lost. The first read is the controller's own pending
+  // read, so one more read than MAX_PENDING_READS is accepted.
+  test.concurrent("a direct stream's reader.read()", async () => {
+    const result = await runInSubprocess(`
+      let pulls = 0;
+      let controller;
+      const stream = new ReadableStream({ type: "direct", pull(c) { pulls++; controller = c; } });
+      const reader = stream.getReader();
+      const reads = [];
+      for (let i = 0; i < ${MAX_PENDING_READS} + 100; i++) reads.push(reader.read().then(r => r.done, describeError));
+      await Promise.resolve();
+      controller.close();
+      const outcomes = await Promise.all(reads);
+      const count = outcome => outcomes.filter(o => o === outcome).length;
+      console.log(JSON.stringify({ pulls, done: count(true), refused: count("${outOfMemory}") }));
+    `);
+    expect(result).toEqual({
+      stdout: { pulls: MAX_PENDING_READS + 1, done: MAX_PENDING_READS + 1, refused: 99 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A byte queue entry is 24 bytes, and the capacity is a power of two with one slot empty.
+  const MAX_BYTE_CHUNKS = 2 ** Math.floor(Math.log2(LIMIT_BYTES / 24)) - 1;
+
+  test.concurrent("ReadableByteStreamController.enqueue()", async () => {
+    const result = await runInSubprocess(`
+      let controller;
+      const stream = new ReadableStream({ type: "bytes", start(c) { controller = c; } });
+      let queued = 0;
+      let enqueueError = null;
+      try {
+        for (; queued < ${MAX_BYTE_CHUNKS} + 100; queued++) controller.enqueue(new Uint8Array(1));
+      } catch (e) {
+        enqueueError = describeError(e);
+      }
+      // The refused chunk's buffer was already transferred, so the stream is errored.
+      const readError = await stream.getReader().read().then(() => null, describeError);
+      console.log(JSON.stringify({ queued, enqueueError, readError }));
+    `);
+    expect(result).toEqual({
+      stdout: { queued: MAX_BYTE_CHUNKS, enqueueError: outOfMemory, readError: outOfMemory },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A tee gives every chunk to both branches. When a branch that nothing reads cannot queue the
+  // next chunk, the tee ends as it does when a clone fails: both branches error and the source
+  // is canceled with the error.
+  describe.each([
+    ["default", "", "sent++", MAX_QUEUED],
+    ["byte", `type: "bytes",`, "new Uint8Array(1)", MAX_BYTE_CHUNKS],
+  ])("tee() of a %s stream with an unread branch", (_, type, chunk, maxQueued) => {
+    test.concurrent("errors both branches and cancels the source", async () => {
+      const result = await runInSubprocess(`
+        let sent = 0;
+        let cancelReason = null;
+        const source = new ReadableStream({
+          ${type}
+          pull(c) { c.enqueue(${chunk}); },
+          cancel(reason) { cancelReason = describeError(reason); },
+        });
+        const [unread, read] = source.tee();
+        const reader = read.getReader();
+        let reads = 0;
+        let readError = null;
+        for (; readError === null && reads <= ${maxQueued}; reads++) {
+          readError = await reader.read().then(() => null, describeError);
+        }
+        const unreadError = await unread.getReader().read().then(() => null, describeError);
+        console.log(JSON.stringify({ reads: reads - 1, readError, unreadError, cancelReason }));
+      `);
+      expect(result).toEqual({
+        stdout: { reads: maxQueued, readError: outOfMemory, unreadError: outOfMemory, cancelReason: outOfMemory },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 // A source pull() that runs inside the pipe's in-place drain and synchronously errors the

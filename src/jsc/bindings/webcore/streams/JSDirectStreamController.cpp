@@ -766,6 +766,11 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
     // Re-entrant pull while a pull is already running.
     if (m_deferClose == -1)
         return jsUndefined();
+    // Refuse before pull() runs, or a close() that pull() defers is lost with the read.
+    if (!readRequestQueued && m_pendingRead && readableStreamReadRequestsFull(stream)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
 
     int8_t deferredClose = 0;
     int8_t deferredFlush = 0;
@@ -830,7 +835,8 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         else {
             auto* runtime = JSStreamsRuntime::from(globalObject);
             auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::Promise, promiseToReturn);
-            readableStreamAddReadRequest(vm, stream, readRequest);
+            readableStreamAddReadRequest(globalObject, stream, readRequest);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

@@ -2571,36 +2571,26 @@ impl Data {
         Tag::typeof_(self.tag())
     }
 
-    pub fn to_number(&self) -> Option<f64> {
+    /// The value of `+expr` when it is known at compile time. `bump` is used to
+    /// flatten a string that constant folding left as a rope.
+    pub fn to_number(&self, bump: &Bump) -> Option<f64> {
         match self {
             Data::ENull(_) => Some(0.0),
             Data::EUndefined(_) => Some(f64::NAN),
             Data::EString(str) => {
-                if str.next.is_some() {
-                    return None;
-                }
+                // `StoreRef<EString>` is a Copy pointer; rebind mutably so
+                // `DerefMut` gives `&mut EString` for in-place rope flattening.
+                let mut str = *str;
+                str.resolve_rope_if_needed(bump);
                 if !str.is_utf8() {
                     return None;
                 }
                 // +'1' => 1
-                Some(string_to_equivalent_number_value(str.slice8()))
+                string_to_equivalent_number_value(str.slice8())
             }
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(if b.value { 1.0 } else { 0.0 }),
             Data::ENumber(n) => Some(n.value()),
-            Data::EInlinedEnum(inlined) => match &inlined.value.data {
-                Data::ENumber(num) => Some(num.value()),
-                Data::EString(str) => {
-                    if str.next.is_some() {
-                        return None;
-                    }
-                    if !str.is_utf8() {
-                        return None;
-                    }
-                    // +'1' => 1
-                    Some(string_to_equivalent_number_value(str.slice8()))
-                }
-                _ => None,
-            },
+            Data::EInlinedEnum(inlined) => inlined.value.data.to_number(bump),
             _ => None,
         }
     }
@@ -2904,13 +2894,16 @@ pub use data::Store;
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
+fn string_to_equivalent_number_value(str: &[u8]) -> Option<f64> {
     // +"" -> 0
     if str.is_empty() {
-        return 0.0;
+        return Some(0.0);
     }
+    // `JSC__jsToNumber` reads latin1, so utf-8 input must be ascii. A non-ascii
+    // string is not necessarily NaN (+"\u00a01" is 1: U+00A0 is whitespace to
+    // StringToNumber), so it is left unfolded rather than folded to NaN.
     if !bun_core::is_all_ascii(str) {
-        return f64::NAN;
+        return None;
     }
     unsafe extern "C" {
         // NOT `safe fn`: callee dereferences `ptr` for `len` bytes — caller must
@@ -2920,5 +2913,5 @@ fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     // SAFETY: `str` is a live `&[u8]`, so `as_ptr()` is non-null and readable for
     // exactly `str.len()` bytes for the duration of this call; the C++ side reads
     // only (no mutation, no retention past return).
-    unsafe { JSC__jsToNumber(str.as_ptr(), str.len()) }
+    Some(unsafe { JSC__jsToNumber(str.as_ptr(), str.len()) })
 }

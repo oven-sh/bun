@@ -195,7 +195,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             })?;
                         self.last_part
                             .symbol_uses
-                            .put_no_clobber(temp_id, js_ast::symbol::Use { count_estimate: 1 })?;
+                            .put_no_clobber(temp_id, js_ast::symbol::Use::unscoped(1))?;
                         // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
                         VecExt::append(&mut p.current_scope_mut().generated, temp_id);
 
@@ -471,7 +471,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // Note: the concrete `P` always carries `symbol_uses`;
                     // once a `ParserLike` trait is introduced for
                     // AstBuilder, that variant should override this to a no-op.
-                    p.symbol_uses.swap_remove(&namespace_ref);
+                    p.forget_part_use(namespace_ref);
                 }
             }
             if stmt.star_name_loc.is_empty() {
@@ -593,7 +593,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 })?;
             self.last_part
                 .symbol_uses
-                .put_no_clobber(arg1, js_ast::symbol::Use { count_estimate: 1 })?;
+                .put_no_clobber(arg1, js_ast::symbol::Use::unscoped(1))?;
             // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
             VecExt::append(&mut p.current_scope_mut().generated, arg1);
 
@@ -684,7 +684,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // mark a dependency on module_ref so it is renamed
             self.last_part
                 .symbol_uses
-                .put(p.module_ref, js_ast::symbol::Use { count_estimate: 1 })?;
+                .put(p.module_ref, js_ast::symbol::Use::unscoped(1))?;
             self.last_part
                 .declared_symbols
                 .append(js_ast::DeclaredSymbol {
@@ -739,7 +739,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 if !gop.found_existing {
                     *gop.value_ptr = v;
                 } else {
-                    gop.value_ptr.count_estimate += v.count_estimate;
+                    gop.value_ptr.merge(v);
                 }
             }
             part.stmts = bun_ast::StoreSlice::EMPTY;

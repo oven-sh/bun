@@ -561,13 +561,25 @@ impl ProxyTunnel {
     pub(crate) fn start<const IS_SSL: bool>(
         this: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
-        ssl_options: &SSLConfig,
+        ssl_options: Option<&SSLConfig>,
         start_payload: &[u8],
     ) {
-        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-        let custom_options = ssl_options.as_usockets_for_client_verification();
-        let wrapper = match ProxyTunnelWrapper::init_from_options(
-            &custom_options,
+        let mut err = uws::create_bun_socket_error_t::none;
+        let ssl_ctx = match ssl_options {
+            // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
+            Some(ssl_options) => ssl_options
+                .as_usockets_for_client_verification()
+                .create_ssl_context(&mut err),
+            // The context a direct connection uses: it holds the thread's CA options (`bun install --ca`).
+            None => Some(crate::http_thread().default_ssl_ctx()),
+        };
+        let Some(ssl_ctx) = ssl_ctx else {
+            // invalid TLS Options
+            this.close_and_fail::<IS_SSL>(crate::Error::ConnectionRefused, socket);
+            return;
+        };
+        let wrapper = match ProxyTunnelWrapper::init_with_ctx(
+            ssl_ctx,
             true,
             SSLWrapperHandlers {
                 on_open,

@@ -97,6 +97,22 @@ bitflags::bitflags! {
         /// The linker pointed `path` at another output chunk (a split
         /// `import()` / `require()`): `text` is its path, `pretty` its id; `source_index` is cleared.
         const IMPORTS_CHUNK = 1 << 16;
+
+        /// `import()` / `require()` whose value nothing reads: the linker bound
+        /// every name read off it to an export, so it evaluates to `{}`.
+        const NAMESPACE_UNUSED = 1 << 17;
+
+        /// A split `require()` whose target is CommonJS at link time: the
+        /// chunk's namespace is `{ default: module.exports }`, so the call
+        /// reads `.default` to return `module.exports`.
+        const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
+
+        /// Barrel optimization deferred this record: it set `IS_UNUSED` so the
+        /// target does not load until an importer requests one of its exports.
+        /// Only a record with this flag can be un-deferred. The parser sets
+        /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
+        /// import), and those records must never be resolved.
+        const IS_BARREL_DEFERRED = 1 << 19;
     }
 }
 

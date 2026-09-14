@@ -75,21 +75,17 @@ describe("bundler", () => {
       const bundled = api.readFile("out.js");
 
       expect(bundled).toMatchInlineSnapshot(`
-        "var __defProp = Object.defineProperty;
-        var __returnValue = (v) => v;
-        function __exportSetter(name, newValue) {
-          this[name] = __returnValue.bind(null, newValue);
-        }
-        var __export = (target, all) => {
-          for (var name in all)
-            __defProp(target, name, {
-              get: all[name],
-              enumerable: true,
-              configurable: true,
-              set: __exportSetter.bind(all, name)
-            });
+        "var __esm = (fn, res, err) => () => {
+          if (fn)
+            try {
+              res = fn(fn = 0);
+            } catch (e) {
+              err = [e];
+            }
+          if (err)
+            throw err[0];
+          return res;
         };
-        var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
         var __promiseAll = (args) => Promise.all(args);
 
         // StoreDependencyAsync.ts
@@ -125,11 +121,6 @@ describe("bundler", () => {
         });
 
         // BaseElement.ts
-        var exports_BaseElement = {};
-        __export(exports_BaseElement, {
-          BaseElement: () => BaseElement,
-          formValue: () => formValue
-        });
         function BaseElement() {
           console.log("BaseElement called", BaseElementImport());
           return BaseElementImport();
@@ -150,20 +141,16 @@ describe("bundler", () => {
         });
 
         // AsyncEntryPoint.ts
-        var exports_AsyncEntryPoint = {};
-        __export(exports_AsyncEntryPoint, {
-          AsyncEntryPoint: () => AsyncEntryPoint
-        });
         async function AsyncEntryPoint() {
-          const { BaseElement: BaseElement2 } = await init_BaseElement().then(() => exports_BaseElement);
-          console.log("Launching AsyncEntryPoint", BaseElement2());
+          await init_BaseElement();
+          console.log("Launching AsyncEntryPoint", BaseElement());
         }
 
         // entry.ts
-        var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
-        AsyncEntryPoint2();
+        await Promise.resolve();
+        AsyncEntryPoint();
 
-        //# debugId=58A499A633D13E2364756E2164756E21
+        //# debugId=B9EF7E5F2ACBD11D64756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -339,21 +326,17 @@ describe("bundler", () => {
       const bundled = api.readFile("out.js");
 
       expect(bundled).toMatchInlineSnapshot(`
-        "var __defProp = Object.defineProperty;
-        var __returnValue = (v) => v;
-        function __exportSetter(name, newValue) {
-          this[name] = __returnValue.bind(null, newValue);
-        }
-        var __export = (target, all) => {
-          for (var name in all)
-            __defProp(target, name, {
-              get: all[name],
-              enumerable: true,
-              configurable: true,
-              set: __exportSetter.bind(all, name)
-            });
+        "var __esm = (fn, res, err) => () => {
+          if (fn)
+            try {
+              res = fn(fn = 0);
+            } catch (e) {
+              err = [e];
+            }
+          if (err)
+            throw err[0];
+          return res;
         };
-        var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 
         // SecondElementImport.ts
         function SecondElementImport() {
@@ -374,11 +357,6 @@ describe("bundler", () => {
         });
 
         // BaseElement.ts
-        var exports_BaseElement = {};
-        __export(exports_BaseElement, {
-          BaseElement: () => BaseElement,
-          formValue: () => formValue
-        });
         function BaseElement() {
           console.log("BaseElement called", BaseElementImport());
           return BaseElementImport();
@@ -392,20 +370,16 @@ describe("bundler", () => {
         });
 
         // AsyncEntryPoint.ts
-        var exports_AsyncEntryPoint = {};
-        __export(exports_AsyncEntryPoint, {
-          AsyncEntryPoint: () => AsyncEntryPoint
-        });
         async function AsyncEntryPoint() {
-          const { BaseElement: BaseElement2 } = await Promise.resolve().then(() => (init_BaseElement(), exports_BaseElement));
-          console.log("Launching AsyncEntryPoint", BaseElement2());
+          await Promise.resolve().then(() => init_BaseElement());
+          console.log("Launching AsyncEntryPoint", BaseElement());
         }
 
         // entry.ts
-        var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
-        AsyncEntryPoint2();
+        await Promise.resolve();
+        AsyncEntryPoint();
 
-        //# debugId=90661D76D5B7686664756E2164756E21
+        //# debugId=6678C3B13A630A4064756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

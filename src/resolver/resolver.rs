@@ -413,15 +413,14 @@ fn bufs_storage_get() -> *mut Bufs {
 
 #[cold]
 fn bufs_storage_init() -> *mut Bufs {
-    // SAFETY: every field of `Bufs` is a byte/integer array
-    // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
-    // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
-    // no validity requirement, `()`), so EVERY bit-pattern — not just
-    // all-zero — is a valid `Bufs`. Each
-    // field is scratch (write-then-read within a single resolve call,
-    // including `open_dirs` which is bounded by `open_dir_count`), so
-    // there is no need to pay for zero-filling ~100 KiB on first use.
-    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
+    // SAFETY: every field of `Bufs` is a byte/integer array (`PathBuffer` =
+    // `[u8; N]`, `[u8; 512]`, `[FD; 256]` where `Fd` is a `#[repr(transparent)]`
+    // integer newtype with no niche) or `[MaybeUninit<_>; 256]`, so the
+    // all-zero bit-pattern is a valid `Bufs`. `new_zeroed` (not `new_uninit`)
+    // because integers must be initialized: a never-written `[u8; N]` is UB
+    // even though every bit pattern is a valid `u8`. Runs once per thread;
+    // `alloc_zeroed` of ~100 KiB is usually fresh OS-zeroed pages.
+    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_zeroed().assume_init() });
     BUFS_PTR.with(|s| s.0.set(p));
     p
 }
@@ -1520,11 +1519,21 @@ impl<'a> Resolver<'a> {
 
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
+        let mut is_primary = true;
         while let Some(path) = iter.next() {
             let name = path.name();
+            let primary = core::mem::take(&mut is_primary);
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 continue;
             };
+
+            // Node reads "type" from the nearest package.json, named or not.
+            if primary && !kind.is_from_css() && module_type == options::ModuleType::Unknown {
+                if let Some(pkg) = dir.package_json_for_module_type {
+                    module_type = pkg.module_type;
+                }
+            }
+
             let mut needs_side_effects = true;
             if let Some(existing) = Result::deref_package_json(result.package_json) {
                 // if we don't have it here, they might put it in a sideEfffects
@@ -1592,7 +1601,7 @@ impl<'a> Resolver<'a> {
                 } else if !dir.abs_real_path.is_empty() {
                     // When the directory is a symlink, we don't need to call getFdPath.
                     let parts = [dir.abs_real_path, query.entry().base()];
-                    let mut buf = bun_paths::PathBuffer::uninit();
+                    let mut buf = bun_paths::path_buffer_pool::get();
 
                     // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
                     // length so `buf` can be re-borrowed for null-termination below.
@@ -1662,12 +1671,6 @@ impl<'a> Resolver<'a> {
 
                     path.set_realpath(symlink);
                 }
-            }
-        }
-
-        if !kind.is_from_css() && module_type == options::ModuleType::Unknown {
-            if let Some(pkg) = result.package_json_ref() {
-                module_type = pkg.module_type;
             }
         }
 
@@ -6377,6 +6380,10 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
+
+        info.package_json_for_module_type = info
+            .package_json()
+            .or_else(|| parent.and_then(|parent_| parent_.package_json_for_module_type));
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
         if self.opts.load_tsconfig_json {

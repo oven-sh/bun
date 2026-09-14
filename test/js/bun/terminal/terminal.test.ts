@@ -767,65 +767,97 @@ describe("Bun.Terminal", () => {
       expect(drainCount).toBeGreaterThan(0);
     });
 
-    // After PTY EOF the wrapper used to be downgraded to a weak ref while
-    // buffered input the child never read was still flushing, so a GC in that
-    // window collected the wrapper together with the callbacks it roots: the
-    // pending drain dispatch was then lost (or, before a sweep, invoked a
-    // collected function). The wrapper must stay strongly held until the
-    // writer goes idle. Ten fresh processes, sequentially, because collection
-    // under conservative stack scanning is probabilistic per process (roughly
-    // half hit the window on an unfixed build; concurrent children skew the
-    // race uniformly, so sequential keeps the attempts independent). Each
-    // child bounds its wait at 20s and the loop stops at the first loss.
-    // Linux-only: the repro window depends on how the kernel drains PTY input
-    // after exit; the code under test is shared.
-    test.skipIf(!isLinux)(
-      "drain still fires when GC runs while unread input is buffered after the child exits",
-      async () => {
-        const childSrc = [
-          "const sleep = ms => new Promise(r => setTimeout(r, ms));",
-          "let sink;",
-          "function churn() { for (let i = 0; i < 500; i++) sink = { i, a: new Array(32).fill(i) }; }",
-          "let resolveDrain;",
-          "const drained = new Promise(r => (resolveDrain = r));",
-          "let proc = Bun.spawn(['sh', '-c', 'exit 0'], {",
-          "  terminal: { data() {}, exit() {}, drain() { resolveDrain('drain'); } },",
-          "});",
-          "const big = Buffer.alloc(65536, 97);",
-          "for (let i = 0; i < 16; i++) proc.terminal.write(big);",
-          "const exited = proc.exited;",
-          "proc = null;",
-          "await exited;",
-          "for (let i = 0; i < 4; i++) { churn(); await sleep(0); Bun.gc(true); }",
-          "const timer = setTimeout(() => resolveDrain('lost'), 20000);",
-          "const result = await drained;",
-          "clearTimeout(timer);",
-          "console.log(result);",
-        ].join("\n");
+    // Input the child never read can never drain once the last slave fd is
+    // gone, because a Linux pty master answers EAGAIN instead of EPIPE. The
+    // writer used to wait for that drain forever, which kept the wrapper (and
+    // the callbacks it roots) alive with its three pty fds for the rest of the
+    // process, and kept its poll re-arming on a permanent POLLHUP. PTY EOF now
+    // ends the writer and closes the reader, so `exit` is the last callback,
+    // a later write() is dropped instead of queued, and the wrapper becomes
+    // collectable. The children alternate two queue shapes: complete lines
+    // (the line discipline stops accepting once its line buffer is full) and
+    // one unterminated line (the kernel keeps discarding it, so an unfixed
+    // build delivers late echo and a late `drain` after `exit`).
+    // Linux-only: macOS fails the same write with EIO, which the writer
+    // reports as an error and which closes the whole terminal, so the queue
+    // never gets stuck and a post-EOF write throws there instead. The code
+    // under test is shared.
+    test.skipIf(!isLinux)("terminal is released after the child exits with input it never read", async () => {
+      const childSrc = /* js */ `
+        const { readdirSync } = require("node:fs");
+        const openFds = () => readdirSync("/dev/fd").length;
+        const N = 4;
+        let collected = 0;
+        const registry = new FinalizationRegistry(() => collected++);
+        let exits = 0;
+        let callbacksAfterExit = 0;
+        const big = { lines: Buffer.alloc(65536, "echo\\n"), unterminated: Buffer.alloc(65536, "a") };
 
-        const run = async () => {
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), "-e", childSrc],
-            env: bunEnv,
-            stderr: "pipe",
+        async function one(i) {
+          const { promise: ptyClosed, resolve } = Promise.withResolvers();
+          let exited = false;
+          let proc = Bun.spawn(["sh", "-c", "exit 0"], {
+            terminal: {
+              data() {
+                if (exited) callbacksAfterExit++;
+              },
+              exit() {
+                exited = true;
+                exits++;
+                resolve();
+              },
+              drain() {
+                if (exited) callbacksAfterExit++;
+              },
+            },
           });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          return { stdout: stdout.trim(), stderr, exitCode };
-        };
-
-        const results = [];
-        for (let i = 0; i < 10; i++) {
-          const r = await run();
-          results.push(r);
-          if (r.stdout !== "drain") break;
+          let terminal = proc.terminal;
+          registry.register(terminal, i);
+          const input = i % 2 === 0 ? big.lines : big.unterminated;
+          for (let j = 0; j < 32; j++) terminal.write(input);
+          const procExited = proc.exited;
+          proc = null;
+          await procExited;
+          await ptyClosed;
+          // After PTY EOF a write is accepted and dropped; it must not queue
+          // (and so re-root the wrapper) behind input that can never drain.
+          for (let j = 0; j < 32; j++) terminal.write(input);
+          terminal = null;
         }
-        expect(results.map(r => r.stdout)).toEqual(Array(results.length).fill("drain"));
-        expect(results.map(r => r.stderr)).toEqual(Array(results.length).fill(""));
-        expect(results.map(r => r.exitCode)).toEqual(Array(results.length).fill(0));
-        expect(results.length).toBe(10);
-      },
-      90_000,
-    );
+
+        // Spawn once first so any fd the spawn machinery opens lazily and
+        // keeps is part of the baseline.
+        await Bun.spawn(["sh", "-c", "exit 0"], { stdio: ["ignore", "ignore", "ignore"] }).exited;
+        const fdsBefore = openFds();
+        for (let i = 0; i < N; i++) await one(i);
+
+        let sink;
+        function churn() {
+          for (let i = 0; i < 500; i++) sink = { i, a: new Array(32).fill(i) };
+        }
+        // Collection runs the finalizer, which hands the remaining pty fds to
+        // a close thread; poll both conditions rather than a delay.
+        let fdsAfter = openFds();
+        for (let i = 0; i < 50 && (collected < N || fdsAfter > fdsBefore); i++) {
+          churn();
+          Bun.gc(true);
+          await new Promise(r => setImmediate(r));
+          fdsAfter = openFds();
+        }
+        console.log(JSON.stringify({ exits, collected, callbacksAfterExit, leakedFds: Math.max(0, fdsAfter - fdsBefore) }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childSrc],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ exits: 4, collected: 4, callbacksAfterExit: 0, leakedFds: 0 });
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe.concurrent("subprocess interaction", () => {

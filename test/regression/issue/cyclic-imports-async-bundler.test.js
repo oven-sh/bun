@@ -91,21 +91,17 @@ test("cyclic imports with async dependencies should generate async wrappers", as
   const bundled = await Bun.file(bundledPath).text();
 
   expect(bundled).toMatchInlineSnapshot(`
-    "var __defProp = Object.defineProperty;
-    var __returnValue = (v) => v;
-    function __exportSetter(name, newValue) {
-      this[name] = __returnValue.bind(null, newValue);
-    }
-    var __export = (target, all) => {
-      for (var name in all)
-        __defProp(target, name, {
-          get: all[name],
-          enumerable: true,
-          configurable: true,
-          set: __exportSetter.bind(all, name)
-        });
+    "var __esm = (fn, res, err) => () => {
+      if (fn)
+        try {
+          res = fn(fn = 0);
+        } catch (e) {
+          err = [e];
+        }
+      if (err)
+        throw err[0];
+      return res;
     };
-    var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
     var __promiseAll = (args) => Promise.all(args);
 
     // src/RecursiveDependencies/StoreDependencyAsync.ts
@@ -141,11 +137,6 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     });
 
     // src/RecursiveDependencies/BaseElement.ts
-    var exports_BaseElement = {};
-    __export(exports_BaseElement, {
-      BaseElement: () => BaseElement,
-      formValue: () => formValue
-    });
     function BaseElement() {
       console.log("BaseElement called", BaseElementImport());
       return BaseElementImport();
@@ -166,20 +157,16 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     });
 
     // src/RecursiveDependencies/AsyncEntryPoint.ts
-    var exports_AsyncEntryPoint = {};
-    __export(exports_AsyncEntryPoint, {
-      AsyncEntryPoint: () => AsyncEntryPoint
-    });
     async function AsyncEntryPoint() {
-      const { BaseElement: BaseElement2 } = await init_BaseElement().then(() => exports_BaseElement);
-      console.log("Launching AsyncEntryPoint", BaseElement2());
+      await init_BaseElement();
+      console.log("Launching AsyncEntryPoint", BaseElement());
     }
 
     // src/entryBuild.ts
-    var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
-    AsyncEntryPoint2();
+    await Promise.resolve();
+    AsyncEntryPoint();
 
-    //# debugId=CDA89BED21DB7D2D64756E2164756E21
+    //# debugId=5B573DC06E466ACE64756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

@@ -1,6 +1,7 @@
 import { write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
+import { randomBytes } from "crypto";
 import { readdir, rm } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
 import { join } from "path";
@@ -69,6 +70,30 @@ test.concurrent("basic", async () => {
   expect(exitCode).toBe(0);
 
   expect(tarballEntries(join(dir, "pack-basic-1.2.3.tgz"))).toEqual(["package/package.json", "package/index.js"]);
+});
+
+test.concurrent("package.json integers stay plain digits", async () => {
+  // The packed package.json is re-printed. Integers must not come out as 1e4.
+  using dir = tempDir("pack-integers", {
+    "package.json": JSON.stringify(
+      { name: "pack-integers", version: "1.0.0", config: { port: 10000, size: 160000, max: 1000000000 } },
+      null,
+      2,
+    ),
+    "index.js": indexJs,
+  });
+
+  const { err, exitCode } = await runPack(dir);
+  expect(err).toBe("");
+  expect(exitCode).toBe(0);
+
+  const tarball = readTarball(join(dir, "pack-integers-1.0.0.tgz"));
+  expect(entryNames(tarball)).toEqual(["package/package.json", "package/index.js"]);
+  const packageJson = tarball.entries[0].contents;
+  expect(packageJson).toContain('"port": 10000');
+  expect(packageJson).toContain('"size": 160000');
+  expect(packageJson).toContain('"max": 1000000000');
+  expect(packageJson).not.toMatch(/\d[eE][-+]?\d/);
 });
 
 test.concurrent("in subdirectory", async () => {
@@ -451,6 +476,24 @@ describe.concurrent("flags", () => {
     expect(out).toBe("bun pack <version> (<revision>)");
     expect(exitCode).toBe(1);
     expect(await sortedNames(dir)).toEqual(["index.js", "package.json"]);
+  });
+
+  // Every write(2) to /dev/full fails with ENOSPC, the same as a tarball destination on a full disk.
+  // "an entry": enough incompressible data that libarchive flushes a block while it writes index.js.
+  // "the end of the archive": small enough that the only write(2) happens when the archive is closed.
+  test.skipIf(!isLinux).each([
+    ["an entry", () => `// ${randomBytes(128 * 1024).toString("base64")}`],
+    ["the end of the archive", () => indexJs],
+  ] as const)("reports ENOSPC when the disk fills up while writing %s", async (_, indexJsContents) => {
+    using dir = tempDir("pack-enospc", {
+      "package.json": JSON.stringify({ name: "pack-enospc", version: "1.1.1" }),
+      "index.js": indexJsContents(),
+    });
+
+    const { out, err, exitCode } = await runPack(dir, ["--filename=/dev/full"]);
+    expect(err).toBe(`ENOSPC: No space left on device: failed to write tarball "/dev/full" (write)`);
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
   });
 
   test("--filename and --destination", async () => {

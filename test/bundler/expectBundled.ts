@@ -265,6 +265,8 @@ export interface BundlerTestInput {
   modulePreload?: boolean;
   /** `--min-chunk-size` / `minChunkSize`; requires `splitting` */
   minChunkSize?: number;
+  /** `false` skips chunk folding (`merge_small_chunks`). Internal to Bun's tests: api backend only. */
+  foldChunks?: boolean;
   serverComponents?: boolean;
   reactCompiler?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
@@ -544,6 +546,7 @@ function expectBundled(
     splitRequire,
     modulePreload,
     minChunkSize,
+    foldChunks,
     target,
     todo: notImplemented,
     treeShaking,
@@ -680,6 +683,9 @@ function expectBundled(
   }
   if (ESBUILD && minChunkSize !== undefined) {
     throw new UnsupportedOptionError("minChunkSize not possible in esbuild backend");
+  }
+  if (ESBUILD && foldChunks !== undefined) {
+    throw new UnsupportedOptionError("foldChunks not possible in esbuild backend");
   }
   if (ESBUILD && splitRequire !== undefined) {
     throw new UnsupportedOptionError("splitRequire not possible in esbuild backend");
@@ -829,6 +835,9 @@ function expectBundled(
       }
       if (reactCompilerOutputMode) {
         throw new Error("reactCompilerOutputMode not possible in backend=CLI (API-only option)");
+      }
+      if (foldChunks !== undefined) {
+        throw new Error("foldChunks not possible in backend=CLI (API-only option)");
       }
       const cmd = (
         !ESBUILD
@@ -1256,6 +1265,7 @@ function expectBundled(
           splitRequire,
           modulePreload,
           minChunkSize,
+          ...(foldChunks === undefined ? {} : { foldChunksForTesting: foldChunks }),
           target,
           reactCompiler,
           reactCompilerOutputMode,

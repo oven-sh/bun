@@ -2396,6 +2396,32 @@ fn get_or_put_resolved_package_with_find_result(
     )?)?;
 
     debug_assert!(package.meta.id != invalid_package_id);
+    // packageExtensions: graft the configured extra edges onto the package
+    // just created (its dependency slice is the buffer tail, so this is an
+    // in-place extend), then re-read it so the caller walks the full list.
+    let package = if this.options.package_extensions.is_empty() {
+        package
+    } else {
+        let log = this.log_mut();
+        // Moved out for the call so the list is not borrowed through `this`.
+        let extensions = core::mem::take(&mut this.options.package_extensions);
+        // SAFETY: same disjoint split as `from_npm` above — through `pm` the
+        // extension pass only reaches `known_npm_aliases` (via
+        // `Dependency::parse`), never `lockfile`.
+        let added = unsafe { &mut *(*this_ptr).lockfile }.apply_package_extensions_to(
+            unsafe { &mut *this_ptr },
+            log,
+            &extensions,
+            package.meta.id,
+            None,
+        );
+        this.options.package_extensions = extensions;
+        if added? > 0 {
+            *this.lockfile.packages.get(package.meta.id as usize)
+        } else {
+            package
+        }
+    };
     // Record exact-version pins so `Lockfile::get_package_id`'s
     // order-independence guard can tell them apart from range-resolved
     // entries (which it treats as network-order artefacts).

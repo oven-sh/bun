@@ -293,9 +293,8 @@ pub fn extension(p: &[u8]) -> &[u8] {
 pub fn stem(p: &[u8]) -> &[u8] {
     let filename = basename(p);
     match strings::last_index_of_char(filename, b'.') {
-        Some(0) => p,
-        Some(dot) => &filename[..dot],
-        None => filename,
+        Some(dot) if dot > 0 => &filename[..dot],
+        _ => filename,
     }
 }
 
@@ -987,6 +986,116 @@ pub mod fs {
             self.text = to;
             self.pretty = old_path;
             self.is_symlink = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Scalar stand-in: the highway kernels are only linked into the full binary.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_last_index_of_char(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: u8,
+    ) -> usize {
+        // SAFETY: the caller (`bun_highway::last_index_of_char`) passes a
+        // live slice's pointer and length.
+        let h = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+        h.iter().rposition(|&c| c == needle).unwrap_or(haystack_len)
+    }
+
+    #[track_caller]
+    fn check(path: &str, want_stem: &str, want_extension: &str) {
+        assert_eq!(
+            core::str::from_utf8(stem(path.as_bytes())),
+            Ok(want_stem),
+            "stem({path:?})"
+        );
+        assert_eq!(
+            core::str::from_utf8(extension(path.as_bytes())),
+            Ok(want_extension),
+            "extension({path:?})"
+        );
+    }
+
+    // Unlike `std.fs.path.stem`, which returns the whole path for these.
+    #[test]
+    fn dotfile_is_all_stem() {
+        check(".gitignore", ".gitignore", "");
+        check("/a/b/.gitignore", ".gitignore", "");
+        check("a/.env/", ".env", "");
+        check("/a/.", ".", "");
+        check(
+            "/a/.a-dotfile-longer-than-sixteen-bytes",
+            ".a-dotfile-longer-than-sixteen-bytes",
+            "",
+        );
+    }
+
+    #[test]
+    fn separators_follow_the_host_basename() {
+        if cfg!(windows) {
+            check("C:\\a\\.gitignore", ".gitignore", "");
+            check("C:\\a\\b.tar.gz", "b.tar", ".gz");
+            check("C:.gitignore", ".gitignore", "");
+        } else {
+            check("C:\\a\\.gitignore", "C:\\a\\", ".gitignore");
+            check("C:\\a\\b.tar.gz", "C:\\a\\b.tar", ".gz");
+            check("C:.gitignore", "C:", ".gitignore");
+        }
+        // `/` is a separator on both.
+        check("C:/a/.gitignore", ".gitignore", "");
+    }
+
+    #[test]
+    fn last_dot_splits_stem_and_extension() {
+        check("b.tar.gz", "b.tar", ".gz");
+        check("/a/b.tar.gz", "b.tar", ".gz");
+        check("/a/b.module.css", "b.module", ".css");
+        check("/a/.hidden.css", ".hidden", ".css");
+        check("/a/b.", "b", ".");
+        check("/a.b/c.d/", "c", ".d");
+    }
+
+    #[test]
+    fn no_dot_is_all_stem() {
+        check("b", "b", "");
+        check("/a/b", "b", "");
+        check("/a.b/c", "c", "");
+        check("/", "", "");
+        check("", "", "");
+    }
+
+    #[test]
+    fn stem_and_extension_partition_the_basename() {
+        for path in [
+            "",
+            "/",
+            ".",
+            ".gitignore",
+            "/a/.gitignore",
+            "/a/.",
+            "/a/b",
+            "/a/b.",
+            "/a/b.tar.gz",
+            "/a.b/c",
+            "/a.b/c.d/",
+            "/a/.hidden.css",
+            "/a/.a-dotfile-longer-than-sixteen-bytes",
+            "C:\\a\\.gitignore",
+            "C:\\a\\b.tar.gz",
+            "C:.gitignore",
+        ] {
+            let p = path.as_bytes();
+            let joined = [stem(p), extension(p)].concat();
+            assert_eq!(
+                bstr::BStr::new(&joined),
+                bstr::BStr::new(basename(p)),
+                "stem ++ extension for {path:?}"
+            );
         }
     }
 }

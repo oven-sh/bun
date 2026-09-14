@@ -251,6 +251,26 @@ devTest("ESM <-> CJS sync", {
     await c.expectMessage("PASS");
   },
 });
+devTest("require.resolve returns the resolved path", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // `hmr.requireResolve` returns its argument, so the bundler must print the
+    // resolved path there and not the specifier as written.
+    "index.ts": `
+      const resolved = require.resolve('./dep');
+      console.log(resolved.endsWith('dep.ts') ? 'PASS' : 'FAIL ' + resolved);
+    `,
+    "dep.ts": `
+      export const x = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
 devTest("ESM <-> CJS (async)", {
   files: {
     "index.html": emptyHtmlFile({

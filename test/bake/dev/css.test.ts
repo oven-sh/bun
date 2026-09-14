@@ -164,6 +164,217 @@ devTest("css import another css file", {
     await c.style("body").color.expect.toBe("red");
   },
 });
+devTest("css import recovers after a syntax error in the imported file", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      @import "./second.css";
+      body {
+        color: red;
+      }
+    `,
+    "second.css": `
+      h1 {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    // Every `color` in the stylesheet a new page load gets, as opposed to the one a connected client patched in place.
+    const servedColors = async () => {
+      const html = await (await dev.fetch("/")).text();
+      const href = html.match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+      const stylesheet = await (await dev.fetch(href)).text();
+      return Array.from(stylesheet.matchAll(/color:\s*([^;}\s]+)/g), match => match[1]);
+    };
+
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("#00f");
+    await c.style("body").color.expect.toBe("red");
+
+    await dev.write(
+      "second.css",
+      `
+        h1 {
+          color: blue;
+        }}
+      `,
+      {
+        errors: ["second.css:3:3: error: Unexpected end of input"],
+      },
+    );
+
+    // The importing stylesheet must be bundled again, with the fixed file in it.
+    await dev.write(
+      "second.css",
+      `
+        h1 {
+          color: green;
+        }
+      `,
+    );
+    await c.style("h1").color.expect.toBe("green");
+    await c.style("body").color.expect.toBe("red");
+    expect(await servedColors()).toEqual(["green", "red"]);
+
+    // The imported file is still an import of the stylesheet, not a stylesheet of its own.
+    for (const [color, value] of [
+      ["yellow", "#ff0"],
+      ["purple", "purple"],
+      ["blue", "#00f"],
+    ]) {
+      await dev.write(
+        "second.css",
+        `
+          h1 {
+            color: ${color};
+          }
+        `,
+      );
+      await c.style("h1").color.expect.toBe(value);
+      expect(await servedColors()).toEqual([value, "red"]);
+    }
+  },
+});
+devTest("css import with an initial syntax error gets recovered", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      @import "./second.css";
+      body {
+        color: red;
+      }
+    `,
+    "second.css": `
+      h1 {
+        color: blue;
+      }}
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["second.css:3:3: error: Unexpected end of input"],
+    });
+    // hard reload to dismiss the error overlay
+    await c.expectReload(async () => {
+      await dev.write(
+        "second.css",
+        `
+          h1 {
+            color: blue;
+          }
+        `,
+      );
+    });
+    await c.style("h1").color.expect.toBe("#00f");
+    await c.style("body").color.expect.toBe("red");
+    await dev.write(
+      "second.css",
+      `
+        h1 {
+          color: green;
+        }
+      `,
+    );
+    await c.style("h1").color.expect.toBe("green");
+    await c.style("body").color.expect.toBe("red");
+  },
+});
+devTest("nested css import recovers after it fails to bundle", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      @import "./second.css";
+      body {
+        color: red;
+      }
+    `,
+    "second.css": `
+      @import "./third.css";
+      h1 {
+        color: blue;
+      }
+    `,
+    "third.css": `
+      h2 {
+        color: green;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("h2").color.expect.toBe("green");
+    await c.style("h1").color.expect.toBe("#00f");
+    await c.style("body").color.expect.toBe("red");
+
+    // The innermost file parses, but an asset it references does not resolve.
+    await dev.write(
+      "third.css",
+      `
+        h2 {
+          background-image: url(./missing.png);
+        }
+      `,
+      {
+        errors: ['third.css:2:21: error: Could not resolve: "./missing.png"'],
+      },
+    );
+    await dev.write(
+      "third.css",
+      `
+        h2 {
+          color: yellow;
+        }
+      `,
+    );
+    await c.style("h2").color.expect.toBe("#ff0");
+    await c.style("h1").color.expect.toBe("#00f");
+    await c.style("body").color.expect.toBe("red");
+
+    // While the file in the middle fails, the root loses sight of the innermost file.
+    await dev.write(
+      "second.css",
+      `
+        @import "./third.css";
+        h1 {
+          color: blue;
+        }}
+      `,
+      {
+        errors: ["second.css:4:3: error: Unexpected end of input"],
+      },
+    );
+    await dev.write(
+      "second.css",
+      `
+        @import "./third.css";
+        h1 {
+          color: purple;
+        }
+      `,
+    );
+    await c.style("h2").color.expect.toBe("#ff0");
+    await c.style("h1").color.expect.toBe("purple");
+    await c.style("body").color.expect.toBe("red");
+
+    await dev.write(
+      "third.css",
+      `
+        h2 {
+          color: green;
+        }
+      `,
+    );
+    await c.style("h2").color.expect.toBe("green");
+    await c.style("h1").color.expect.toBe("purple");
+  },
+});
 devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({

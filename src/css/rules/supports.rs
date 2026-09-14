@@ -54,10 +54,21 @@ impl Declaration {
 
 impl Declaration {
     fn eql(&self, other: &Self) -> bool {
-        // `PropertyId` carries its own tag+prefix `PartialEq` (see
-        // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
-        // byte-slice equality.
-        self.property_id == other.property_id && self.value == other.value
+        // `PropertyId`'s `PartialEq` compares the tag and the vendor prefix;
+        // `value` is byte-slice equality.
+        self.property_id == other.property_id
+            && same_custom_name(&self.property_id, &other.property_id)
+            && self.value == other.value
+    }
+}
+
+/// Every custom (`--x`) and unknown property is `PropertyId::Custom`, which
+/// `PropertyId`'s tag-based `PartialEq` treats as one property; the names tell
+/// them apart. Known properties are fully identified by their tag.
+fn same_custom_name(a: &PropertyId, b: &PropertyId) -> bool {
+    match (a, b) {
+        (PropertyId::Custom(a), PropertyId::Custom(b)) => a == b,
+        _ => true,
     }
 }
 
@@ -208,7 +219,8 @@ impl SupportsCondition {
                 .copied()
                 .filter(|f| prefix.contains(*f)),
             |d| d.write_str(b") or ("),
-            |d, _flag| {
+            |d, flag| {
+                flag.to_css(d)?;
                 d.serialize_name(name)?;
                 d.delim(b':', false)?;
                 // Raw parser-input slice: may span newlines.
@@ -244,6 +256,9 @@ impl SupportsCondition {
             )));
         }
 
+        const AND: i32 = 1;
+        const OR: i32 = 2;
+
         let in_parens: SupportsCondition = SupportsCondition::parse_in_parens(input)?;
         let mut expected_type: Option<i32> = None;
         let mut conditions: Vec<SupportsCondition, ArenaPtr> =
@@ -254,13 +269,13 @@ impl SupportsCondition {
         loop {
             // A closure capturing `&mut expected_type` threads the expected
             // type through the parse attempt.
-            let _condition =
+            let next_condition =
                 input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
                     let location = i.current_source_location();
                     let s = i.expect_ident_cloned()?;
                     let found_type: i32 = crate::match_ignore_ascii_case! { s, {
-                        b"and" => 1,
-                        b"or" => 2,
+                        b"and" => AND,
+                        b"or" => OR,
                         _ => return Err(location.new_unexpected_token_error(css::Token::Ident(s))),
                     }};
 
@@ -275,48 +290,35 @@ impl SupportsCondition {
                     SupportsCondition::parse_in_parens(i)
                 });
 
-            match _condition {
-                Ok(condition) => {
-                    if conditions.is_empty() {
-                        conditions.push(in_parens.deep_clone(input.arena()));
-                        if let SupportsCondition::Declaration(decl) = &in_parens {
-                            let property_id = &decl.property_id;
-                            let value = decl.value;
-                            let _ = seen_declarations.put(
-                                SeenDeclKey(
-                                    property_id.with_prefix(css::VendorPrefix::NONE),
-                                    value,
-                                ),
-                                0,
-                            );
-                        }
-                    }
+            let Ok(condition) = next_condition else {
+                break;
+            };
 
-                    if let SupportsCondition::Declaration(decl) = &condition {
-                        // Merge multiple declarations with the same property id (minus prefix) and value together.
-                        let property_id_ = &decl.property_id;
-                        let value = decl.value;
-
-                        let property_id = property_id_.with_prefix(css::VendorPrefix::NONE);
-                        let key = SeenDeclKey(property_id, value);
-                        if let Some(index) = seen_declarations.get(&key) {
-                            let cond = &mut conditions[*index];
-                            if let SupportsCondition::Declaration(d) = cond {
-                                d.property_id.add_prefix(property_id.prefix());
-                            }
-                        } else {
-                            let _ = seen_declarations.put(key, conditions.len());
-                            conditions.push(SupportsCondition::Declaration(Declaration {
-                                property_id,
-                                value,
-                            }));
-                        }
-                    } else {
-                        conditions.push(condition);
-                    }
+            if conditions.is_empty() {
+                conditions.push(in_parens.deep_clone(input.arena()));
+                if let SupportsCondition::Declaration(decl) = &in_parens {
+                    let _ = seen_declarations.put(SeenDeclKey::new(decl), 0);
                 }
-                Err(_) => break,
             }
+
+            // `(-webkit-foo: v) or (foo: v)` tests one declaration under several
+            // prefixes, so under `or` the prefixes fold into the declaration seen
+            // first; `declaration_to_css` prints it back as that `or` chain. The
+            // same fold under `and` would turn the conjunction into a
+            // disjunction, so `and` keeps every operand as written.
+            if let SupportsCondition::Declaration(decl) = &condition {
+                if expected_type == Some(OR) {
+                    let key = SeenDeclKey::new(decl);
+                    if let Some(index) = seen_declarations.get(&key) {
+                        if let SupportsCondition::Declaration(seen) = &mut conditions[*index] {
+                            seen.property_id.add_prefix(decl.property_id.prefix());
+                        }
+                        continue;
+                    }
+                    let _ = seen_declarations.put(key, conditions.len());
+                }
+            }
+            conditions.push(condition);
         }
 
         if conditions.len() == 1 {
@@ -324,10 +326,10 @@ impl SupportsCondition {
             return Ok(ret);
         }
 
-        if expected_type == Some(1) {
+        if expected_type == Some(AND) {
             return Ok(SupportsCondition::And(conditions));
         }
-        if expected_type == Some(2) {
+        if expected_type == Some(OR) {
             return Ok(SupportsCondition::Or(conditions));
         }
         Ok(in_parens)
@@ -369,7 +371,16 @@ impl SupportsCondition {
                 }
             }
             css::Token::OpenParen => {
-                let res = input.try_parse(|i| i.parse_nested_block(SupportsCondition::parse));
+                // `( <supports-condition> )` or `( <declaration> )`; anything else
+                // in the parens is kept verbatim as `Unknown` below.
+                let res = input.try_parse(|i| {
+                    i.parse_nested_block(|i2| {
+                        if let Ok(condition) = i2.try_parse(SupportsCondition::parse) {
+                            return Ok(condition);
+                        }
+                        SupportsCondition::parse_declaration(i2)
+                    })
+                });
                 if res.is_ok() {
                     return res;
                 }
@@ -384,9 +395,17 @@ impl SupportsCondition {
     }
 }
 
-// Dedup key for `@supports` declaration conditions; manual Hash/PartialEq
-// (wrapping_add of string hash and enum int).
+// Key of the `or` prefix fold in `SupportsCondition::parse`: the declared
+// property ignoring its vendor prefix (which is what the fold accumulates),
+// plus the raw value. `PropertyId`'s own `PartialEq` is not used because it
+// compares the prefix.
 struct SeenDeclKey(PropertyId, &'static [u8]);
+
+impl SeenDeclKey {
+    fn new(decl: &Declaration) -> Self {
+        Self(decl.property_id, decl.value)
+    }
+}
 
 impl core::hash::Hash for SeenDeclKey {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
@@ -399,8 +418,7 @@ impl core::hash::Hash for SeenDeclKey {
 
 impl PartialEq for SeenDeclKey {
     fn eq(&self, other: &Self) -> bool {
-        // Tag-only equality + slice byte equality.
-        self.0.tag() as u16 == other.0.tag() as u16 && self.1 == other.1
+        self.0.tag() == other.0.tag() && same_custom_name(&self.0, &other.0) && self.1 == other.1
     }
 }
 impl Eq for SeenDeclKey {}

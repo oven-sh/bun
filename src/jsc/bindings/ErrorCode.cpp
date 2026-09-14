@@ -441,12 +441,15 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         return;
     }
     if (cell->isCallable()) {
+        // node: `function ${value.name}` (lib/internal/errors.js determineSpecificType)
+        auto name = value.get(globalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, void());
+        auto* nameString = name.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        auto nameView = nameString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
         builder.append("function "_s);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
-
-        if (!name.isEmpty()) {
-            builder.append(name);
-        }
+        builder.append(nameView);
         return;
     }
     if (cell->isString()) {

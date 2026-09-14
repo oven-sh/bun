@@ -224,7 +224,7 @@ pub use bun_core::strings::eql_case_insensitive_ascii_check_length as ascii_case
 
 /// Find an HTML entity starting at `start` (which must point to '&').
 /// Returns the end position (one past the ';') or null if no valid entity found.
-pub(crate) fn find_entity(content: &[u8], start: usize) -> Option<usize> {
+pub fn find_entity(content: &[u8], start: usize) -> Option<usize> {
     if start + 2 >= content.len() {
         return None;
     }

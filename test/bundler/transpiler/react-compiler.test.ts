@@ -9,9 +9,6 @@ import { itBundled, type BundlerTestInput } from "../expectBundled";
 // See vendor/react-compiler/crates/react_compiler/src/entrypoint/imports.rs
 // (`add_memo_cache_import` / `get_react_compiler_runtime_module`).
 
-// InferTypes stores the type of a phi as `Phi[TypeVar, ..]` and resolves it by
-// walking into the phis that feed it. Those form a DAG, and every path to a
-// phi used to produce its own copy of that phi's resolved type.
 describe("react-compiler InferTypes", () => {
   // `locals` variables rotated in a `while (true)` inside another loop: every
   // phi of the inner loop reaches every other one through two back edges.
@@ -48,11 +45,7 @@ describe("react-compiler InferTypes", () => {
     return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
   };
 
-  // A `let` reassigned in a nested `try` in a loop that holds another loop:
-  // each added statement multiplied the copies by 3 to 5. Three took 700 MB,
-  // four took 1.9 GB and five ran out of memory. Four rotated locals ran out
-  // of memory at once: `occurs_check` and `try_resolve_type` walked the same
-  // DAG as a tree.
+  // Every path to a phi used to copy its resolved type into the phi that reads it.
   test("resolves a phi type once however many paths reach it", async () => {
     const mutate = Array.from({ length: 3 }, () => "if (Array.isArray(v0)) v0.push(p.a);").join("\n");
     using dir = tempDir("react-compiler-phi-types", {
@@ -80,15 +73,12 @@ describe("react-compiler InferTypes", () => {
           return <div data-v={v3} />;
         }
       `,
-      "rotation.jsx": rotation(4),
+      "rotation.jsx": rotation(20),
     });
 
     const [empty, tryCatch, rotated] = await Promise.all(
       ["empty.jsx", "try.jsx", "rotation.jsx"].map(entry => build(String(dir), entry)),
     );
-    // Without the fix `try.jsx` is 660 MB above the empty build on a release
-    // build, and neither finishes in time on a debug build. With it both are
-    // 10 MB above on a release build and 30 MB on a debug build.
     const bound = isASAN || isDebug ? 300 : 100;
     expect({
       tryCatch: { memoized: tryCatch.memoized, bounded: tryCatch.peakMB - empty.peakMB < bound },
@@ -98,22 +88,6 @@ describe("react-compiler InferTypes", () => {
       rotated: { memoized: true, bounded: true },
     });
   });
-
-  // The memos make a walk linear in the number of distinct type nodes, but
-  // that number still doubles with each rotated local, because a phi has a
-  // different resolved type under each variable that reaches it through a
-  // cycle. Twelve locals compile. Past half a million steps InferTypes gives
-  // the function up, and it is left as written. A debug build takes 3 seconds
-  // to count that far.
-  test.skipIf(isDebug || isASAN)(
-    "leaves a function as written when its phi types take too long to resolve",
-    async () => {
-      using dir = tempDir("react-compiler-phi-budget", {
-        "rotation.jsx": rotation(20),
-      });
-      expect(await build(String(dir), "rotation.jsx")).toEqual({ memoized: false, peakMB: expect.any(Number) });
-    },
-  );
 });
 
 describe("bundler", () => {

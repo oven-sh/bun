@@ -215,6 +215,7 @@ impl BinaryExpressionVisitor {
                 // "(sideEffects(), 2)" => "(sideEffects(), 2)"
                 // "(0, this.fn)" => "this.fn"
                 // "(0, this.fn)()" => "(0, this.fn)()"
+                // "(0, class {})" => "(0, class {})"
                 if p.options.features.minify_syntax {
                     // If e_.left is itself a comma, its .left was already simplified
                     // by the previous unwind step; only simplify its .right to avoid
@@ -231,23 +232,15 @@ impl BinaryExpressionVisitor {
                         }
                         _ => SideEffects::simplify_unused_expr(p, e_.left),
                     };
-                    if let Some(simplified_left) = simplified_left {
-                        if simplified_left.is_empty() {
-                            return e_.right;
-                        }
-                        e_.left = simplified_left;
-                    } else {
-                        // The left operand has no side effects, but we need to preserve
-                        // the comma operator semantics when used as a call target
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            // Keep the comma expression to strip "this" binding
+                    match simplified_left.filter(|left| !left.is_empty()) {
+                        Some(simplified_left) => e_.left = simplified_left,
+                        None if e_.right.needs_comma_when_unwrapped(is_call_target) => {
                             e_.left = Expr {
                                 data: prefill::data::ZERO,
                                 loc: e_.left.loc,
                             };
-                        } else {
-                            return e_.right;
                         }
+                        None => return e_.right,
                     }
                 }
             }
@@ -354,44 +347,28 @@ impl BinaryExpressionVisitor {
                 if let Some(null_or_undefined) = SideEffects::to_null_or_undefined(p, &e_.left.data)
                 {
                     if !null_or_undefined.value {
-                        return e_.left;
+                        // "(class {} ?? 0)" => "(0, class {})"
+                        return e_.left.unwrapped_by_fold(is_call_target, e_.left.loc);
                     } else if null_or_undefined.side_effects == SideEffects::NoSideEffects {
                         // "(null ?? fn)()" => "fn()"
                         // "(null ?? this.fn)" => "this.fn"
                         // "(null ?? this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            return Expr::join_with_comma(
-                                Expr {
-                                    data: ExprData::ENumber(E::Number::new(0.0)),
-                                    loc: e_.left.loc,
-                                },
-                                e_.right,
-                            );
-                        }
-
-                        return e_.right;
+                        // "(null ?? class {})" => "(0, class {})"
+                        return e_.right.unwrapped_by_fold(is_call_target, e_.left.loc);
                     }
                 }
             }
             Op::Code::BinLogicalOr => {
                 if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
                     if side_effects.value {
-                        return e_.left;
+                        // "(class {} || 0)" => "(0, class {})"
+                        return e_.left.unwrapped_by_fold(is_call_target, e_.left.loc);
                     } else if side_effects.side_effects == SideEffects::NoSideEffects {
                         // "(0 || fn)()" => "fn()"
                         // "(0 || this.fn)" => "this.fn"
                         // "(0 || this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            return Expr::join_with_comma(
-                                Expr {
-                                    data: prefill::data::ZERO,
-                                    loc: e_.left.loc,
-                                },
-                                e_.right,
-                            );
-                        }
-
-                        return e_.right;
+                        // "(0 || class {})" => "(0, class {})"
+                        return e_.right.unwrapped_by_fold(is_call_target, e_.left.loc);
                     }
                 }
             }
@@ -403,17 +380,8 @@ impl BinaryExpressionVisitor {
                         // "(1 && fn)()" => "fn()"
                         // "(1 && this.fn)" => "this.fn"
                         // "(1 && this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            return Expr::join_with_comma(
-                                Expr {
-                                    data: prefill::data::ZERO,
-                                    loc: e_.left.loc,
-                                },
-                                e_.right,
-                            );
-                        }
-
-                        return e_.right;
+                        // "(1 && class {})" => "(0, class {})"
+                        return e_.right.unwrapped_by_fold(is_call_target, e_.left.loc);
                     }
                 }
             }
@@ -698,10 +666,10 @@ impl BinaryExpressionVisitor {
                 //    `import.meta.hot.data.etc ??= init()`
                 if let Some(dot) = e_.left.data.e_dot() {
                     if let Some(obj) = dot.target.data.e_object() {
-                        if obj.properties.len_u32() == 0 {
-                            if dot.name != b"__proto__" {
-                                return e_.right;
-                            }
+                        if obj.properties.len_u32() == 0 && dot.name != b"__proto__" {
+                            // "({}).x ??= class {}" => "(0, class {})"
+                            // "(({}).x ??= this.fn)()" => "(0, this.fn)()"
+                            return e_.right.unwrapped_by_fold(is_call_target, e_.left.loc);
                         }
                     }
                 }

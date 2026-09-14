@@ -483,16 +483,27 @@ x
 
 **Mode:** `--minify-syntax`
 
-Removes side-effect-free expressions from comma sequences.
+Removes side-effect-free expressions from comma sequences. Two kinds of value keep one `0`:
+
+- An anonymous function or class that is not called directly. `y = () => {}` names the function `"y"`, and `y = (0, () => {})` does not.
+- A member access that is called directly. `(0, obj.fn)()` passes no `this`, and `obj.fn()` does.
+
+An anonymous function that is called directly takes no name from a binding, so `(0, () => {})()` loses the `0`. The folds that return one operand (`true && x`, `null ?? x`, `true ? x : z`, `[x][0]`) follow the same rules.
 
 ```ts Input
 (0, x)
 (123, "str", x)
+y = (0, () => {})
+(0, obj.fn)()
+(0, () => {})()
 ```
 
 ```js Output
 x
 x
+y = (0, () => {})
+(0, obj.fn)()
+(() => {})()
 ```
 
 ### Ternary conditional folding
@@ -910,11 +921,11 @@ new Array(x, y)
 Inlines property access for objects with a single property.
 
 ```ts Input
-({fn: () => console.log('hi')}).fn
+({fn: handler}).fn
 ```
 
 ```js Output
-() => console.log('hi')
+handler
 ```
 
 ### String charCodeAt constant folding

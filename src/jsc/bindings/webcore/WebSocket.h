@@ -39,6 +39,7 @@
 #include <wtf/Lock.h>
 #include "FetchHeaders.h"
 #include "WebSocketErrorCode.h"
+#include "JSValueInWrappedObject.h"
 
 namespace WebCore {
 class JSBlob;
@@ -285,6 +286,12 @@ public:
         return m_rejectUnauthorized;
     }
 
+    const JSValueInWrappedObject& checkServerIdentity() const { return m_checkServerIdentity; }
+    void setCheckServerIdentity(JSC::VM& vm, const JSC::JSCell* wrapper, JSC::JSValue callback)
+    {
+        m_checkServerIdentity.set(vm, wrapper, callback);
+    }
+
     size_t memoryCost() const;
 
 private:
@@ -351,6 +358,8 @@ private:
     // TLS options (native heap SSLConfig — ownership is released to the
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
     WebSocketSSLConfigPtr m_sslConfig;
+    // `tls.checkServerIdentity`, marked by JSWebSocket::visitChildren.
+    JSValueInWrappedObject m_checkServerIdentity;
 
     NativeCallbacks m_native;
 };

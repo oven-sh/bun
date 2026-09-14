@@ -108,10 +108,10 @@ int main(int argc, char **argv) {
 
   // Runs `bun ...args` in `cwd` with getrandom(2) blocked. Returns null if the
   // environment refuses the seccomp filter (skip).
-  async function runWithoutGetrandom(cwd: string, args: string[]) {
+  async function runWithoutGetrandom(cwd: string, args: string[], env: Record<string, string> = {}) {
     await using proc = Bun.spawn({
       cmd: [helperBin!, bunExe(), ...args],
-      env: bunEnv,
+      env: { ...bunEnv, ...env },
       cwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -128,6 +128,8 @@ int main(int argc, char **argv) {
   const cases: Array<{
     name: string;
     args: string[];
+    files?: Record<string, string>;
+    env?: (dir: string) => Record<string, string>;
     check: (out: { stdout: string; stderr: string; exitCode: number }, dir: string) => Promise<void> | void;
   }> = [
     {
@@ -160,6 +162,27 @@ int main(int argc, char **argv) {
         expect(out.exitCode).toBe(0);
       },
     },
+    {
+      name: "bun install",
+      args: ["install"],
+      files: {
+        "package.json": JSON.stringify({
+          name: "p",
+          version: "1.0.0",
+          dependencies: { bar: join(import.meta.dir, "..", "..", "cli", "install", "bar-0.0.2.tgz") },
+        }),
+      },
+      // A cold cache makes the install extract the tarball into a temporary directory.
+      env: dir => ({ BUN_INSTALL_CACHE_DIR: join(dir, ".cache") }),
+      check: async (out, dir) => {
+        expect(out.stdout, out.stderr).toContain("bar@");
+        expect(await Bun.file(join(dir, "node_modules", "bar", "package.json")).json()).toMatchObject({
+          name: "bar",
+          version: "0.0.2",
+        });
+        expect(out.exitCode).toBe(0);
+      },
+    },
   ];
 
   for (const c of cases) {
@@ -172,9 +195,10 @@ int main(int argc, char **argv) {
       using dir = tempDir("getrandom-enosys", {
         "index.ts": `console.log("from-index");`,
         "seed.test.ts": `import { test, expect } from "bun:test"; test("runs", () => { expect(1).toBe(1); });`,
+        ...c.files,
       });
 
-      const out = await runWithoutGetrandom(String(dir), c.args);
+      const out = await runWithoutGetrandom(String(dir), c.args, c.env?.(String(dir)));
       if (out == null) {
         console.warn(`SKIP ${c.name}: seccomp not permitted in this environment`);
         return;

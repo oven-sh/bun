@@ -170,6 +170,22 @@ describe("bundler", async () => {
     },
   });
 
+  // Without --minify-syntax, a line break in the file prints as `\n` in a quoted string.
+  itBundled("bun/loader-text-file-line-break-stays-escaped", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import text from './hello.txt';
+    console.write(text);
+  `,
+      "/hello.txt": "Hello,\nworld!",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('"Hello,\\nworld!"');
+    },
+    run: { stdout: "Hello,\nworld!" },
+  });
+
   itBundled("bun/loader-json-proto-key-is-own-property", {
     target: "bun",
     files: {

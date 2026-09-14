@@ -334,7 +334,7 @@ Evaluates template literals with constant expressions.
 
 **Mode:** `--minify-syntax`
 
-Converts template literals with no substitutions to regular strings.
+Converts template literals with no substitutions to regular strings. A template literal with a line break stays a template literal, because the raw line break is shorter than `\n`.
 
 ```ts Input
 `Hello World`
@@ -344,25 +344,29 @@ Line 2`
 
 ```js Output
 "Hello World"
-"Line 1\nLine 2"
+`Line 1
+Line 2`
 ```
 
 ### String quote optimization
 
 **Mode:** `--minify-syntax`
 
-Chooses the optimal quote character to minimize escapes.
+Chooses the optimal quote character to minimize escapes. A string with `\n` becomes a template literal with a raw line break. Without `--minify-syntax`, `\n` stays escaped in a quoted string.
 
 ```ts Input
 "It's a string"
 'He said "hello"'
 `Simple string`
+"Line 1\nLine 2"
 ```
 
 ```js Output
 "It's a string"
 'He said "hello"'
 "Simple string"
+`Line 1
+Line 2`
 ```
 
 ### Array spread inlining

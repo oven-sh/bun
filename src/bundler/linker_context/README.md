@@ -754,6 +754,7 @@ The renamed symbols are then used during final code generation to produce output
 - Sets up cross-chunk binding code
 - Handles dynamic imports across chunks
 - Manages chunk metadata for dependency resolution
+- Where a build `require()`s a split ES module (`--target=bun`), lists a chunk's `import` of a chunk ahead of the ones for what that chunk's files import their way to, when the same code still runs in the same order (`nest_cross_chunk_imports`): the module loader then enters the importer first, as it enters the unbundled importing file first, and a chunk loaded from the middle of the others finds it being evaluated instead of running it early
 
 #### `findAllImportedPartsInJSOrder.rs`
 
@@ -764,6 +765,7 @@ The renamed symbols are then used during final code generation to produce output
 - Orders files by distance from entry point
 - Handles part dependencies within chunks
 - Records the other chunks in the order the walk reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
+- Where a build `require()`s a split ES module, also records which other chunks had every such file in the middle of being evaluated while each chunk was reached (`reached_while_evaluating`)
 - Ensures proper evaluation order
 
 #### `findImportedCSSFilesInJSOrder.rs`

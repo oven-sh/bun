@@ -382,6 +382,69 @@ impl<'a> LinkerContext<'a> {
                 .is_entry_point()
     }
 
+    /// The files whose top level can run a `require()` of a split ES module
+    /// (`CROSS_CHUNK_REQUIRE`): a live part of theirs holds such a call, or
+    /// they statically import their way to a file where one does, so they
+    /// can call what it exports. `None` when the build has no such call. It
+    /// is the one way a chunk gets loaded from the middle of another chunk's
+    /// evaluation.
+    pub(crate) fn files_that_can_require_a_chunk(&self) -> Option<Box<[bool]>> {
+        let import_records = self.graph.ast.items_import_records();
+        let parts = self.graph.ast.items_parts();
+        let mut found: Vec<u32> = Vec::new();
+        for source_index in self.graph.reachable_files.iter() {
+            let source_index = source_index.get();
+            let records = &import_records[source_index as usize];
+            let splits = |record: &ImportRecord| {
+                record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE)
+                    && record.source_index.is_valid()
+                    && self.is_external_dynamic_import(record, source_index)
+            };
+            if !records.iter().any(splits) {
+                continue;
+            }
+            let parts_live = &self.graph.parts_live[source_index as usize];
+            if parts[source_index as usize]
+                .as_slice()
+                .iter()
+                .enumerate()
+                .any(|(part_index, part)| {
+                    parts_live.is_set(part_index)
+                        && part
+                            .import_record_indices
+                            .iter()
+                            .any(|&i| splits(&records[i as usize]))
+                })
+            {
+                found.push(source_index);
+            }
+        }
+        if found.is_empty() {
+            return None;
+        }
+        let mut importers: Vec<Vec<u32>> = vec![Vec::new(); self.graph.files.len()];
+        for source_index in self.graph.reachable_files.iter() {
+            let file = source_index.get();
+            if self.graph.files_live.is_set(file as usize) {
+                self.for_each_file_loaded_by(file, |other| importers[other as usize].push(file));
+            }
+        }
+        let mut can = vec![false; self.graph.files.len()].into_boxed_slice();
+        for &file in &found {
+            can[file as usize] = true;
+        }
+        while let Some(file) = found.pop() {
+            for &importer in &importers[file as usize] {
+                if !core::mem::replace(&mut can[importer as usize], true) {
+                    found.push(importer);
+                }
+            }
+        }
+        Some(can)
+    }
+
     /// The bundled file a live part's import record makes the importer's
     /// chunk load, if any: not a split `import()` / `require()`, which loads
     /// on demand, and not an `import` or `export ... from` of a side-effect-free

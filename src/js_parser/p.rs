@@ -6637,7 +6637,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Use "var" instead of "let" and "const" if the variable declaration may
         // need to be separated from the initializer. This allows us to safely move
         // this declaration into a nested scope.
-        if (self.options.bundle || self.will_wrap_module_in_try_catch_for_using)
+        if ((self.options.bundle && self.options.top_level_var)
+            || self.will_wrap_module_in_try_catch_for_using)
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             && self.current_scope().parent.is_none()
             && !kind.is_using()

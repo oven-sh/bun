@@ -520,6 +520,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--no-deprecated-namespace-object-setters  Make bundled module namespace objects getter-only (the default in a future release)"
         ),
+        parse_param!(
+            "--no-top-level-var               Keep top-level const/let in the bundle instead of lowering them to var"
+        ),
         parse_param!("--minify                         Enable all minification flags"),
         parse_param!("--minify-syntax                  Minify syntax and inline data"),
         parse_param!("--minify-whitespace              Minify whitespace"),
@@ -2103,6 +2106,7 @@ fn parse_build_command_options(
         args.flag(b"--emit-dce-annotations") || !ctx.bundler_options.minify_whitespace;
     ctx.bundler_options.deprecated_namespace_object_setters =
         !args.flag(b"--no-deprecated-namespace-object-setters");
+    ctx.bundler_options.top_level_var = !args.flag(b"--no-top-level-var");
 
     if !args.options(b"--external").is_empty() {
         opts.external = slice_to_owned(args.options(b"--external"));

@@ -4259,5 +4259,70 @@ for (const backend of ["api", "cli"] as const) {
         ARBITRARY: "secret environment stuff!",
       },
     });
+
+    // An import cycle entered from the side whose back-edge is only used lazily. ESM evaluates
+    // filesystem before search, so filesystem's eager read of `searchNode` is a TDZ read.
+    // Unbundled this throws. The bundle lowers top-level const to var by default and reads
+    // `undefined`; `topLevelVar: false` keeps the const and the ReferenceError.
+    const tdzAcrossCycleFiles = {
+      "/entry.ts": /* ts */ `
+        import "./search";
+        import { fileSystemNode } from "./filesystem";
+        console.log("deps[1] =", fileSystemNode.deps[1]);
+      `,
+      "/filesystem.ts": /* ts */ `
+        export * as FileSystem from "./filesystem";
+        import { Search } from "./search";
+        export const Entry = { make: (v: string) => ({ v }) };
+        export const fileSystemNode = { name: "FileSystem", deps: ["fsutil", Search.searchNode] };
+      `,
+      "/search.ts": /* ts */ `
+        export * as Search from "./search";
+        import { FileSystem } from "./filesystem";
+        export const find = () => FileSystem.Entry.make("hit");
+        export const searchNode = { name: "Search", deps: ["ripgrep"] };
+      `,
+    };
+    itBundled("edgecase/TopLevelVarDefaultLosesTDZAcrossCycle", {
+      files: tdzAcrossCycleFiles,
+      backend,
+      target: "bun",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("var searchNode = ");
+      },
+      run: { stdout: "deps[1] = undefined" },
+    });
+    itBundled("edgecase/TopLevelVarOffKeepsTDZAcrossCycle", {
+      files: tdzAcrossCycleFiles,
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("const searchNode = ");
+      },
+      run: {
+        error: "ReferenceError: Cannot access 'searchNode' before initialization.",
+        validate({ stderr }) {
+          expect(stderr).toContain("ReferenceError: Cannot access 'searchNode' before initialization.");
+        },
+      },
+    });
+    // With the option off and minifySyntax on, const still becomes let (shorter) and keeps the TDZ.
+    itBundled("edgecase/TopLevelVarOffMinifySyntaxKeepsTDZ", {
+      files: tdzAcrossCycleFiles,
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      minifySyntax: true,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("let searchNode = ");
+      },
+      run: {
+        error: "ReferenceError: Cannot access 'searchNode' before initialization.",
+        validate({ stderr }) {
+          expect(stderr).toContain("ReferenceError: Cannot access 'searchNode' before initialization.");
+        },
+      },
+    });
   });
 }

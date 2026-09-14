@@ -3391,6 +3391,21 @@ declare module "bun" {
     deprecatedNamespaceObjectSetters?: boolean;
 
     /**
+     * Emit top-level `const` and `let` declarations as `var` in the bundle.
+     * When `false`, a module the bundler merges into the output scope keeps
+     * the declared kind, so a read before initialization (for example across
+     * an import cycle) throws a `ReferenceError` like the unbundled code.
+     *
+     * A module that the bundler wraps in a lazy closure still hoists its
+     * declarations as `var` and reads `undefined` before initialization. The
+     * bundler wraps a module that is `require()`d, a module that is
+     * `import()`ed without code splitting, and the modules those import.
+     *
+     * @default true
+     */
+    topLevelVar?: boolean;
+
+    /**
      * Whether to enable tree-shaking (removal of unreferenced top-level
      * declarations and unused exports). Defaults to `true`. Set to `false` to
      * keep dead code in the output for debugging or test fixtures.

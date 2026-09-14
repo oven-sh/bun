@@ -228,6 +228,7 @@ export interface BundlerTestInput {
   bytecodeDepth?: number;
   emitDCEAnnotations?: boolean;
   deprecatedNamespaceObjectSetters?: boolean;
+  topLevelVar?: boolean;
   inject?: string[];
   jsx?: {
     runtime?: "automatic" | "classic";
@@ -555,6 +556,7 @@ function expectBundled(
     bytecodeDepth,
     emitDCEAnnotations,
     deprecatedNamespaceObjectSetters,
+    topLevelVar,
     production,
     // @ts-expect-error
     _referenceFn,
@@ -689,6 +691,9 @@ function expectBundled(
   }
   if (ESBUILD && deprecatedNamespaceObjectSetters !== undefined) {
     throw new UnsupportedOptionError("deprecatedNamespaceObjectSetters not possible in esbuild backend");
+  }
+  if (ESBUILD && topLevelVar !== undefined) {
+    throw new UnsupportedOptionError("topLevelVar not possible in esbuild backend");
   }
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new UnsupportedOptionError("allowUnresolved not possible in esbuild backend");
@@ -891,6 +896,7 @@ function expectBundled(
               ignoreDCEAnnotations && `--ignore-dce-annotations`,
               emitDCEAnnotations && `--emit-dce-annotations`,
               deprecatedNamespaceObjectSetters === false && `--no-deprecated-namespace-object-setters`,
+              topLevelVar === false && `--no-top-level-var`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
               // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
@@ -1264,6 +1270,7 @@ function expectBundled(
           publicPath,
           emitDCEAnnotations,
           deprecatedNamespaceObjectSetters,
+          topLevelVar,
           ignoreDCEAnnotations,
           drop,
           features,

@@ -1438,6 +1438,31 @@ Default `true`. When a namespace object does have to be created, each property c
   </Tab>
 </Tabs>
 
+### topLevelVar
+
+Default `true`. The bundler emits top-level `const` and `let` declarations as `var`. A `var` has no temporal dead zone, so a module that reads another module's export before that module has run gets `undefined` instead of a `ReferenceError`. This happens in an import cycle where one side reads the other at module evaluation time.
+
+Set this to `false` to keep the declared kind. A module the bundler merges into the output scope then throws the same `ReferenceError: Cannot access 'x' before initialization` as the unbundled code.
+
+A module that the bundler wraps in a lazy closure is not affected. The bundler wraps a module that is `require()`d, a module that is `import()`ed without code splitting, and the modules those import. It hoists their declarations out of the closure as `var`, so a read before initialization still gets `undefined`.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      topLevelVar: false,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --no-top-level-var
+    ```
+  </Tab>
+</Tabs>
+
 ### metafile
 
 Generate metadata about the build in a structured format. The metafile describes every input and output file: sizes, imports, and exports. Use it for:
@@ -1864,6 +1889,11 @@ interface BuildConfig {
    * the only behavior in a future release.
    */
   deprecatedNamespaceObjectSetters?: boolean;
+  /**
+   * Emit top-level const/let as var (default). Set to `false` to keep the
+   * declared kind so a read before initialization throws a ReferenceError.
+   */
+  topLevelVar?: boolean;
 
   /**
    * Generate bytecode for the output. This can dramatically improve cold

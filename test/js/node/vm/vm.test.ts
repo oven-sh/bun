@@ -933,6 +933,59 @@ test("SourceTextModule accepts the cachedData it produced", () => {
   );
 });
 
+test("cachedData of 2 GiB or more is reported as rejected instead of aborting", async () => {
+  // The child reserves 2 GiB of address space and never writes to it, so RSS stays small.
+  const fixture = `
+    const vm = require("node:vm");
+    let buffer;
+    try {
+      buffer = new ArrayBuffer(2 ** 31);
+    } catch {
+      console.log("SKIP");
+      process.exit(0);
+    }
+    const result = {};
+    // A bare ArrayBuffer is a Bun extension: Node takes views only.
+    for (const cachedData of [new Uint8Array(buffer), new DataView(buffer), buffer]) {
+      const script = new vm.Script("1 + 1", { cachedData });
+      const fn = vm.compileFunction("return 2 + 2", [], { cachedData });
+      result[cachedData.constructor.name] = {
+        Script: [script.cachedDataRejected, script.runInThisContext()],
+        compileFunction: [fn.cachedDataRejected, fn()],
+      };
+    }
+    try {
+      result.SourceTextModule = new vm.SourceTextModule("export default 1", { cachedData: new Uint8Array(buffer) }).status;
+    } catch (e) {
+      result.SourceTextModule = e.code;
+    }
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The child prints SKIP when it cannot reserve 2 GiB.
+  if (stdout.trim() !== "SKIP") {
+    const rejected = { Script: [true, 2], compileFunction: [true, 4] };
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: {
+        Uint8Array: rejected,
+        DataView: rejected,
+        ArrayBuffer: rejected,
+        SourceTextModule: "ERR_VM_MODULE_CACHED_DATA_REJECTED",
+      },
+      stderr: "",
+    });
+  }
+  expect(exitCode).toBe(0);
+});
+
 describe("Script compiles its source once and links that in every context it runs in", () => {
   // Runs Script(s) in fresh contexts, keeping what every run produced alive (each run's wrapper function
   // pins that run's ProgramExecutable), and reports how many UnlinkedProgramCodeBlock cells (one per

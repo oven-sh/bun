@@ -13,6 +13,8 @@ public:
     WTF::Vector<uint8_t> cachedData;
     std::optional<int64_t> timeout = std::nullopt;
     bool produceCachedData = false;
+    // See NodeVM::CachedDataExtraction::TooLong.
+    bool cachedDataTooLong = false;
 
     using BaseVMOptions::BaseVMOptions;
 

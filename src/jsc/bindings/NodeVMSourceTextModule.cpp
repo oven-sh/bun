@@ -60,9 +60,18 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
 
     JSValue cachedDataValue = args.at(5);
     WTF::Vector<uint8_t> cachedData;
-    if (!cachedDataValue.isUndefined() && !extractCachedData(cachedDataValue, cachedData)) {
-        Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
-        return nullptr;
+    bool cachedDataTooLong = false;
+    if (!cachedDataValue.isUndefined()) {
+        switch (extractCachedData(cachedDataValue, cachedData)) {
+        case CachedDataExtraction::Copied:
+            break;
+        case CachedDataExtraction::TooLong:
+            cachedDataTooLong = true;
+            break;
+        case CachedDataExtraction::NotABuffer:
+            Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
+            return nullptr;
+        }
     }
 
     JSValue initializeImportMeta = args.at(6);
@@ -112,7 +121,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
     ptr->finishCreation(vm);
 
-    if (cachedData.isEmpty()) {
+    if (cachedData.isEmpty() && !cachedDataTooLong) {
         return ptr;
     }
 
@@ -121,6 +130,11 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, {});
     if (!executable) {
         throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
+        return nullptr;
+    }
+
+    if (cachedDataTooLong) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_CACHED_DATA_REJECTED, "cachedData buffer was rejected"_s);
         return nullptr;
     }
 

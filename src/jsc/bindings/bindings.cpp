@@ -5814,7 +5814,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    auto* context = thisObject->scriptExecutionContext();
+    auto* context = thisObject->currentScriptExecutionContext();
     RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
     return abortSignal.leakRef();
 }
@@ -5822,7 +5822,7 @@ extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* 
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    auto* context = thisObject->scriptExecutionContext();
+    auto* context = thisObject->currentScriptExecutionContext();
     auto abortSignal = WebCore::AbortSignal::create(context);
 
     return JSValue::encode(toJSNewlyCreated<IDLInterface<WebCore::AbortSignal>>(*globalObject, *uncheckedDowncast<JSDOMGlobalObject>(globalObject), WTF::move(abortSignal)));

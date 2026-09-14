@@ -363,8 +363,8 @@ static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSIsola
     VM& vm = globalObject->vm();
     auto& names = WebCore::builtinNames(vm);
     JSObject* frame = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    // No AsyncLocalStorage is ever this frame's storage.
-    frame->putDirect(vm, names.storagePublicName(), graph ? JSValue(graph) : jsNull());
+    // No AsyncLocalStorage is ever this frame's storage: the graph, or the frame itself.
+    frame->putDirect(vm, names.storagePublicName(), graph ? static_cast<JSObject*>(graph) : frame);
     frame->putDirect(vm, vm.propertyNames->value, jsUndefined());
     frame->putDirect(vm, names.prevPublicName(), previous);
     // What disable()d AsyncLocalStorages the frame below masks, frames above it mask too.
@@ -439,7 +439,7 @@ ModuleGraphContextScope::ModuleGraphContextScope(WebCore::ScriptExecutionContext
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
     if (JSObject* graph = context.moduleGraph())
         m_previous = enterModuleGraphContext(globalObject, graph);
-    else if (globalObject && globalObject->m_moduleGraphs && globalObject->m_moduleGraphs->hasIsolatedGraphs)
+    else if (!context.isForModuleGraph() && globalObject && globalObject->m_moduleGraphs && globalObject->m_moduleGraphs->hasIsolatedGraphs)
         m_previous = enterRootContext(globalObject);
     if (m_previous)
         m_globalObject = globalObject;

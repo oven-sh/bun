@@ -1480,6 +1480,9 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // SAFETY: `server` is heap-allocated and leaves its context in
             // `stop_listening` / `deinit`.
             unsafe {
+                (*server)
+                    .context
+                    .set(global_object.bun_vm().current_context().id());
                 bun_jsc::AbortHandle::arm_owner(server, global_object.bun_vm().current_context())
             };
 

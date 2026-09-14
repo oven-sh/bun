@@ -280,6 +280,9 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     deinit_running: core::cell::Cell<bool>,
     /// Armed while listening: the server stops with the context that started it.
     pub(crate) abort_handle: jsc::AbortHandle,
+    /// The context of the script that started the server: what a request makes before its
+    /// handler runs (its `AbortSignal`) belongs to it.
+    pub(crate) context: core::cell::Cell<jsc::ContextId>,
     pub(crate) request_pool:
         *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until `listen()` creates an HTTP/2 or HTTP/3 app. Kept as a raw
@@ -816,6 +819,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_ref.request_body.set(Some(body_hive.clone()));
 
         let global = server.global_this();
+        let _context = server.vm().enter_context(server.context.get());
         let signal = jsc::AbortSignal::new(global);
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         ctx_ref.signal.set(core::ptr::NonNull::new(signal));
@@ -2173,6 +2177,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
+            context: core::cell::Cell::new(jsc::ContextId::default()),
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
             // Servers that enable neither HTTP/2 nor HTTP/3 never allocate the
             // ~816 KB mux pool; `listen()` materializes it on demand.

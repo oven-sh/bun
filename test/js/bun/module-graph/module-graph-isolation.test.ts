@@ -287,7 +287,7 @@ const dir = String(
         const client = new Bun.S3Client({ endpoint, bucket: "bucket", accessKeyId: "id", secretAccessKey: "secret" });
         const part = Buffer.alloc(5 * 1024 * 1024, state.tag);
         return (async () => {
-          const writer = client.file(state.tag).writer({ partSize: part.length, queueSize: 1, retry: 1 });
+          const writer = client.file(state.tag).writer({ partSize: part.length, queueSize: 1, retry: 0 });
           for (let i = 0; i < 4; i++) { writer.write(part); await writer.flush(); state.ticks++; }
           await writer.end();
           state.settled = "uploaded";
@@ -1400,33 +1400,39 @@ test("ModuleGraph isolation: work that continues from one thread-pool step to th
   });
 });
 
-test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first request to the last: disposing the graph mid-way sends nothing more, and another graph's upload completes", async () => {
-  // A minimal S3: which requests each key (the state's tag) has made.
+test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first request to the last: disposing the graph mid-way sends no later part and no completion, and another graph's upload completes", async () => {
+  // A minimal S3: which requests each key (the state's tag) has made. Part 2 of the upload that gets
+  // disposed is held until the test lets it go.
   const requests: Record<string, string[]> = {};
+  const inFlight = Promise.withResolvers<void>();
+  const letGo = Promise.withResolvers<void>();
   using s3 = Bun.serve({
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
       const key = url.pathname.split("/").pop()!;
       const log = (requests[key] ??= []);
+      const xml = (body: string) => new Response(body, { headers: { "content-type": "application/xml" } });
       if (request.method === "POST" && url.searchParams.has("uploads")) {
         log.push("create");
-        return new Response(
+        return xml(
           `<InitiateMultipartUploadResult><Bucket>bucket</Bucket><Key>${key}</Key><UploadId>upload-${key}</UploadId></InitiateMultipartUploadResult>`,
-          { headers: { "content-type": "application/xml" } },
         );
       }
       if (request.method === "PUT" && url.searchParams.has("partNumber")) {
+        const part = url.searchParams.get("partNumber");
         await request.arrayBuffer();
-        log.push("part " + url.searchParams.get("partNumber"));
-        await Bun.sleep(10);
-        return new Response("", { headers: { etag: `"etag-${url.searchParams.get("partNumber")}"` } });
+        log.push("part " + part);
+        if (key === "upload-disposed" && part === "2") {
+          inFlight.resolve();
+          await letGo.promise;
+        }
+        return new Response("", { headers: { etag: `"etag-${part}"` } });
       }
       if (request.method === "POST" && url.searchParams.has("uploadId")) {
         log.push("complete");
-        return new Response(
+        return xml(
           `<CompleteMultipartUploadResult><Bucket>bucket</Bucket><Key>${key}</Key><ETag>"done"</ETag></CompleteMultipartUploadResult>`,
-          { headers: { "content-type": "application/xml" } },
         );
       }
       if (request.method === "DELETE") {
@@ -1443,22 +1449,21 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
   const endpoint = `http://127.0.0.1:${s3.port}`;
   disposed.graph.run(() => disposed.app.uploadInParts(ofDisposed, endpoint));
   const keptUpload: Promise<void> = kept.graph.run(() => kept.app.uploadInParts(ofKept, endpoint));
-  await until(() => (requests[ofDisposed.tag] ?? []).filter(request => request.startsWith("part")).length >= 2);
+  await inFlight.promise;
   disposed.graph.dispose();
-  const sentByDispose = requests[ofDisposed.tag].length;
+  letGo.resolve();
   await keptUpload;
+  // The part in flight fails and its script hears, as with an aborted fetch.
+  await until(() => ofDisposed.settled);
   await hostTimerTurns();
   expect({ settled: ofKept.settled, requests: requests[ofKept.tag] }).toEqual({
     settled: "uploaded",
     requests: ["create", "part 1", "part 2", "part 3", "part 4", "complete"],
   });
-  // The part in flight fails (its script hears, as with an aborted fetch); no further part and no
-  // completion is sent. The upload's own rollback (so the store keeps no orphaned parts) may be.
-  const after = requests[ofDisposed.tag].slice(sentByDispose);
+  // No later part and no completion is sent. The upload's own rollback (so the store keeps no
+  // orphaned parts) may be.
   expect({
     settled: ofDisposed.settled,
-    partsAfter: Math.max(1, after.filter(request => request.startsWith("part")).length),
-    completed: requests[ofDisposed.tag].includes("complete"),
-    unexpected: after.filter(request => !request.startsWith("part") && request !== "abort"),
-  }).toEqual({ settled: "Aborted", partsAfter: 1, completed: false, unexpected: [] });
+    requests: requests[ofDisposed.tag].filter(request => request !== "abort"),
+  }).toEqual({ settled: expect.stringMatching(/^Aborted/), requests: ["create", "part 1", "part 2"] });
 });

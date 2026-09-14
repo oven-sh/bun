@@ -84,6 +84,34 @@ const dir = String(
         broadcastChannel: (seen, env) => new Promise(resolve => { const a = new BroadcastChannel("callbacks-" + env.tag); const b = new BroadcastChannel("callbacks-" + env.tag); a.onmessage = () => { seen("message"); a.close(); b.close(); resolve(); }; b.postMessage(1); }),
         worker: seen => new Promise(resolve => { const worker = new Worker("data:text/javascript,postMessage(1)"); worker.onmessage = () => { seen("message"); }; worker.addEventListener("close", () => { seen("close"); resolve(); }); }),
 
+        portFromWorker: seen =>
+          new Promise(resolve => {
+            const worker = new Worker("data:text/javascript,const { port1, port2 } = new MessageChannel(); postMessage({ port: port2 }, [port2]); port1.postMessage(1);");
+            worker.onmessage = event => {
+              seen("worker message");
+              event.data.port.onmessage = () => { seen("port from worker message"); event.data.port.close(); worker.terminate(); resolve(); };
+            };
+          }),
+        serveRequestSignal: async seen => {
+          // The client goes away while the handler is waiting.
+          const aborted = defer(), reached = defer();
+          const server = Bun.serve({
+            port: 0,
+            async fetch(request) {
+              request.signal.addEventListener("abort", () => { seen("request.signal abort"); aborted.resolve(); });
+              seen("fetch handler");
+              reached.resolve();
+              await aborted.promise;
+              return new Response("late");
+            },
+          });
+          const controller = new AbortController();
+          fetch(server.url, { signal: controller.signal }).catch(() => {});
+          await reached.promise;
+          controller.abort();
+          await aborted.promise;
+          server.stop(true);
+        },
         bunListenAndConnect: async seen => {
           const closed = defer(), serverClosed = defer();
           const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
@@ -284,31 +312,29 @@ test("every callback of several graphs and the host, all running at once, finds 
   }
 
   // label -> what each runner's callback found.
-  const found: Record<string, Record<string, { context: string; store: string | undefined }>> = {};
+  // label -> runner -> what every call of that callback found.
+  const found: Record<string, Record<string, { context: string; store: string | undefined }[]>> = {};
+  const record = (label: string, tag: string) =>
+    ((found[label] ??= {})[tag] ??= []).push({ context: whose(ModuleGraph.current), store: storage.getStore() });
   const failures: string[] = [];
   const whose = (graph: unknown) =>
     graph ? (runners.find(runner => runner.graph === graph)?.tag ?? "an unknown graph") : "host";
+  // The host's own listeners, which each runner's script sets off: they run as the host's.
+  const hostListenerLabels: string[] = [];
   await Promise.all(
     runners.flatMap(({ tag, graph, app }) =>
       names.map(name => {
-        const seen = (event: string) => {
-          (found[name + ": " + event] ??= {})[tag] = { context: whose(ModuleGraph.current), store: storage.getStore() };
-        };
-        const hostTarget = new EventTarget();
-        hostTarget.addEventListener("go", () => {
-          (found["hostTarget: host listener (dispatched from " + tag + ")"] ??= {}).host = {
-            context: whose(ModuleGraph.current),
-            store: "host",
-          };
-        });
-        const hostController = new AbortController();
-        hostController.signal.addEventListener("abort", () => {
-          (found["hostTarget: host abort listener (aborted from " + tag + ")"] ??= {}).host = {
-            context: whose(ModuleGraph.current),
-            store: "host",
-          };
-        });
-        const env = { tag, httpPort: hostHttp.port, bun: bunExe(), hostTarget, hostController };
+        const seen = (event: string) => record(name + ": " + event, tag);
+        const env: Record<string, unknown> = { tag, httpPort: hostHttp.port, bun: bunExe() };
+        if (name === "hostTarget") {
+          const labels = [`host listener (dispatched from ${tag})`, `host abort listener (aborted from ${tag})`];
+          hostListenerLabels.push(...labels);
+          const hostTarget = new EventTarget();
+          hostTarget.addEventListener("go", () => storage.run("host", () => record(labels[0], "host")));
+          const hostController = new AbortController();
+          hostController.signal.addEventListener("abort", () => storage.run("host", () => record(labels[1], "host")));
+          Object.assign(env, { hostTarget, hostController });
+        }
         const start = () => storage.run(tag, () => app.callbacks[name](seen, env));
         return Promise.resolve()
           .then(() => (graph ? graph.run(start) : start()))
@@ -318,24 +344,33 @@ test("every callback of several graphs and the host, all running at once, finds 
   );
   expect(failures).toEqual([]);
 
-  // Every callback ran for every runner, in that runner's context.
   const wrongContext: string[] = [];
   const wrongStore: string[] = [];
   const missing: string[] = [];
+  for (const label of hostListenerLabels) {
+    const calls = found[label]?.host ?? [];
+    if (!calls.length) missing.push(label);
+    for (const call of calls) if (call.context !== "host") wrongContext.push(`${label} ran in ${call.context}`);
+    delete found[label];
+  }
+  // Every callback ran for every runner, every time in that runner's context.
   for (const [label, byRunner] of Object.entries(found)) {
+    // Where the host's own callback has no AsyncLocalStorage store (a MessagePort's, say), nobody's has.
+    const hostKeepsStore = (byRunner.host ?? []).every(call => call.store === "host");
     for (const { tag } of runners) {
-      const record = byRunner[tag];
-      // (The host's own listeners, set off from each runner, have the host's record only.)
-      if (!record && label.startsWith("hostTarget: host ")) continue;
-      if (!record) missing.push(`${label} in ${tag}`);
-      else if (record.context !== tag) wrongContext.push(`${label} in ${tag} ran in ${record.context}`);
-      // Where the host's own callback keeps its AsyncLocalStorage store, a graph's does too.
-      else if (byRunner.host?.store === "host" && record.store !== tag)
-        wrongStore.push(`${label} in ${tag} saw store ${record.store}`);
+      const calls = byRunner[tag] ?? [];
+      if (!calls.length) missing.push(`${label} in ${tag}`);
+      for (const call of calls) {
+        if (call.context !== tag) wrongContext.push(`${label} in ${tag} ran in ${call.context}`);
+        else if (call.store !== (hostKeepsStore ? tag : undefined))
+          wrongStore.push(`${label} in ${tag} saw store ${call.store}`);
+      }
     }
   }
   expect({ wrongContext, wrongStore, missing }).toEqual({ wrongContext: [], wrongStore: [], missing: [] });
   // Every entry reported at least one callback.
-  expect(names.filter(name => !Object.keys(found).some(label => label.startsWith(name + ": ")))).toEqual([]);
+  expect(
+    names.filter(name => name !== "hostTarget" && !Object.keys(found).some(label => label.startsWith(name + ": "))),
+  ).toEqual([]);
   // (One test on purpose, and slow on a debug build: it is everything running at once.)
 }, 30_000);

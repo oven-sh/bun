@@ -98,6 +98,8 @@ public:
     bool activeDOMObjectsAreStopped() const { return m_activeDOMObjectsAreStopped.load(std::memory_order_relaxed); }
     // A graph's context that was stopped (the graph was disposed or collected).
     bool isStopped() const { return m_isStopped || activeDOMObjectsAreStopped(); }
+    // A Bun.ModuleGraph's context (its graph may already have been collected).
+    bool isForModuleGraph() const { return !!m_parent; }
 
     // Called from the constructor and destructors of ActiveDOMObject.
     void didCreateActiveDOMObject(ActiveDOMObject&);

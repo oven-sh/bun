@@ -3014,6 +3014,7 @@ where
         // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
         ctx.set_request_body(Some(body_hive.clone()));
 
+        let _context = server.vm().enter_context(server.context.get());
         let signal = AbortSignal::new(&server.global());
         ctx.set_signal(signal);
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
@@ -3290,6 +3291,7 @@ where
         // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
         ctx.request_body.set(Some(body_hive.clone()));
 
+        let _context = this.vm().enter_context(this.context.get());
         let signal = AbortSignal::new(&this.global());
         // The
         // RequestContext owns one ref so aborts during the WS-upgrade fallback

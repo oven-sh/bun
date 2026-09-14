@@ -237,6 +237,10 @@ void EventTarget::fireEventListeners(Event& event, EventInvokePhase phase)
     auto* data = eventTargetData();
     if (!data)
         return;
+    // The context the target was made in is gone (a Bun.ModuleGraph's that was collected while the
+    // host still held the target): its listeners go unheard.
+    if (!scriptExecutionContext())
+        return;
 
     SetForScope firingEventListenersScope(data->isFiringEventListeners, true);
 

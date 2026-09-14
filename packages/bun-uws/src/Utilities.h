@@ -54,7 +54,7 @@ static inline bool isTokenByte(unsigned char c) {
 static inline bool validPseudoHeaderPath(std::string_view method, std::string_view path) {
     if (method.empty()) return false;
     for (unsigned char c : method) if (!isTokenByte(c)) return false;
-    if (method == "CONNECT") return true;
+    if (method == "CONNECT") return path.empty();
     if (!(path.size() && path[0] == '/') && !(path == "*" && method == "OPTIONS")) return false;
     for (unsigned char c : path) if (c <= 0x20) return false;
     return true;

@@ -1465,6 +1465,11 @@ describe("Bun.serve HTTP/3 request validation", () => {
     for (const path of ["/adm\tin/x", "/\tadmin/x", "/admin/x ", "/w/\t../admin/x"]) {
       results[JSON.stringify(path)] = await h3Exchange(server.port, requestHeaders(path));
     }
+    // CONNECT carries no :path, so one that does must not skip the byte check.
+    results["CONNECT with :path"] = await h3Exchange(server.port, {
+      ...requestHeaders("/adm\tin/x"),
+      ":method": "CONNECT",
+    });
 
     expect(results).toEqual({
       "/admin/x": "200 exact /admin/x",
@@ -1478,6 +1483,7 @@ describe("Bun.serve HTTP/3 request validation", () => {
       [JSON.stringify("/\tadmin/x")]: "400 ",
       [JSON.stringify("/admin/x ")]: "400 ",
       [JSON.stringify("/w/\t../admin/x")]: "400 ",
+      "CONNECT with :path": "400 ",
     });
   });
 

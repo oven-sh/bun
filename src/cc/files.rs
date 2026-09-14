@@ -34,13 +34,13 @@ fn read_regular_file(path: &[u8]) -> Result<Loaded, Unreadable> {
         let what = error.msg().unwrap_or_else(|| error.name());
         Unreadable::Because(crate::token::display_bytes(what))
     };
-    let file = File::openat(
-        Fd::cwd(),
-        path,
-        bun_sys::O::RDONLY | bun_sys::O::NONBLOCK,
-        0,
-    )
-    .map_err(because)?;
+    // Opening a FIFO nobody writes to waits for a writer unless asked not to; what it is shows in
+    // `stat` below. Windows has no such files and no such flag.
+    #[cfg(unix)]
+    let flags = bun_sys::O::RDONLY | bun_sys::O::NONBLOCK;
+    #[cfg(not(unix))]
+    let flags = bun_sys::O::RDONLY;
+    let file = File::openat(Fd::cwd(), path, flags, 0).map_err(because)?;
     let stat = file.stat().map_err(because)?;
     if !bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode) {
         return Err(Unreadable::Because("not a regular file".to_string()));

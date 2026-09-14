@@ -1501,14 +1501,14 @@ describe.concurrent("sourceMappingURL comment", () => {
     return { onDisk: comments[0], inMemory: comments[1] };
   }
 
-  for (const [label, terminator, encoded] of [
+  describe.each([
     ["LF", "\n", "%0A"],
     ["CR", "\r", "%0D"],
     ["U+2028", "\u2028", "%E2%80%A8"],
     ["U+2029", "\u2029", "%E2%80%A9"],
-  ]) {
+  ])("%s in an entry file name", (_, terminator, encoded) => {
     // A Windows file name cannot contain a control character.
-    test.skipIf(isWindows && terminator < " ")(`${label} in an entry file name is percent-encoded`, async () => {
+    test.skipIf(isWindows && terminator < " ")("is percent-encoded", async () => {
       const name = `page${terminator}globalThis.INJECTED=1,0`;
       using dir = tempDir("sourcemap-url-file-name", { [`${name}.js`]: "export default 1;\n" });
 
@@ -1518,7 +1518,7 @@ describe.concurrent("sourceMappingURL comment", () => {
       const url = expected.slice("//# sourceMappingURL=".length, -1);
       expect(await Bun.file(join(String(dir), "out", decodeURIComponent(url))).json()).toMatchObject({ version: 3 });
     });
-  }
+  });
 
   test("line terminators in publicPath are percent-encoded", async () => {
     using dir = tempDir("sourcemap-url-public-path", { "plain.js": "export default 1;\n" });

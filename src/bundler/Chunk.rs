@@ -470,26 +470,31 @@ pub struct CodeResult {
     pub(crate) shifts: Vec<source_map::SourceMapShifts>,
 }
 
-/// Returns `code` followed by `//# sourceMappingURL=<prefix><rel_path>\n`.
+/// Appends `//# sourceMappingURL=<prefix><rel_path>\n` to `out`.
 ///
 /// `prefix` is `publicPath` (or `./`) and `rel_path` is made of file names. Both
 /// are percent-encoded: written raw, a LF, CR, U+2028 or U+2029 in either ends
 /// the line comment and what follows it runs as code.
+pub(crate) fn append_source_mapping_url_comment(out: &mut Vec<u8>, prefix: &[u8], rel_path: &[u8]) {
+    const START: &[u8] = b"//# sourceMappingURL=";
+    out.reserve(START.len() + prefix.len() + rel_path.len() + b"\n".len());
+    out.extend_from_slice(START);
+    // `publicPath` is the author's URL. Printable ASCII stays as written, so
+    // `?`, `#`, a `[::1]` host and `%XX` escapes keep their meaning. No URL can
+    // contain the rest: control characters, space and non-ASCII bytes.
+    percent_encode(out, prefix, |byte| byte.is_ascii_graphic());
+    percent_encode(out, rel_path, is_url_path_byte);
+    out.push(b'\n');
+}
+
+/// Returns `code` followed by the comment, in an allocation of the exact size.
 pub(crate) fn with_source_mapping_url_comment(
     code: &[u8],
     prefix: &[u8],
     rel_path: &[u8],
 ) -> Box<[u8]> {
-    const START: &[u8] = b"//# sourceMappingURL=";
-    let mut comment: Vec<u8> =
-        Vec::with_capacity(START.len() + prefix.len() + rel_path.len() + b"\n".len());
-    comment.extend_from_slice(START);
-    // `publicPath` is the author's URL. Printable ASCII stays as written, so
-    // `?`, `#`, a `[::1]` host and `%XX` escapes keep their meaning. No URL can
-    // contain the rest: control characters, space and non-ASCII bytes.
-    percent_encode(&mut comment, prefix, |byte| byte.is_ascii_graphic());
-    percent_encode(&mut comment, rel_path, is_url_path_byte);
-    comment.push(b'\n');
+    let mut comment: Vec<u8> = Vec::new();
+    append_source_mapping_url_comment(&mut comment, prefix, rel_path);
 
     let mut buf: Vec<u8> = Vec::with_capacity(code.len() + comment.len());
     buf.extend_from_slice(code);

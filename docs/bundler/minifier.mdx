@@ -488,7 +488,7 @@ Removes side-effect-free expressions from comma sequences. Two kinds of value ke
 - An anonymous function or class that is not called directly. `y = () => {}` names the function `"y"`, and `y = (0, () => {})` does not.
 - A member access that is called directly. `(0, obj.fn)()` passes no `this`, and `obj.fn()` does.
 
-A function that is called directly is never named, so `(0, () => {})()` loses the `0`. The folds that return one operand (`true && x`, `null ?? x`, `true ? x : z`, `[x][0]`) follow the same rules.
+An anonymous function that is called directly takes no name from a binding, so `(0, () => {})()` loses the `0`. The folds that return one operand (`true && x`, `null ?? x`, `true ? x : z`, `[x][0]`) follow the same rules.
 
 ```ts Input
 (0, x)

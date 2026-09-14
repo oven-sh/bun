@@ -1,0 +1,4 @@
+[workspace]
+resolver = "2"
+
+members = ["native/native", "native_test_module"]

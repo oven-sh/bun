@@ -41,7 +41,9 @@ function expectHeapProfile(path: string, period: number) {
     // 16 MiB in blocks twice the interval: nearly every block is a sample.
     const inuse = allocate.reduce((sum, s) => sum + s.values.inuse_space, 0);
     expect(Math.abs(inuse - 16 * 1024 * 1024)).toBeLessThan(3 * 1024 * 1024);
+    return allocate;
   }
+  return [];
 }
 
 describe.concurrent("--pprof-heap", () => {
@@ -89,6 +91,91 @@ describe.concurrent("--pprof-heap", () => {
     using dir = tempDir("pprof-heap-exit", { "script.js": script + "process.exit(3);" });
     const result = await run(String(dir), ["--pprof-heap=heap.pb.gz", "script.js"]);
     expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 3 });
+    expectHeapProfile(join(String(dir), "heap.pb.gz"), 512 * 1024);
+  });
+
+  // The decoder these tests use was written with the encoder. pprof's own reader
+  // (`profile.Parse`, which also checks every id and string index) comes with Go.
+  const go = Bun.which("go");
+  test.skipIf(!go)("go tool pprof reads the file", async () => {
+    using dir = tempDir("pprof-heap-go", { "script.js": script });
+    const result = await run(String(dir), ["--pprof-heap=heap.pb.gz", "script.js"]);
+    expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+    await using proc = Bun.spawn({
+      cmd: [go!, "tool", "pprof", "-raw", "heap.pb.gz"],
+      cwd: String(dir),
+      env: { ...bunEnv, GOTOOLCHAIN: "local" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("PeriodType: space bytes\nPeriod: 524288\n");
+    expect(stdout).toContain("alloc_objects/count alloc_space/bytes inuse_objects/count inuse_space/bytes[dflt]\n");
+    if (!isASAN && !(isWindows && process.arch === "x64"))
+      expect(stdout).toMatch(/ allocate .*script\.js:4(:\d+)? s=3\n/);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  // The profile is the process's, so it is written by whichever thread ends the process.
+  test.each([
+    ["the main thread", `process.kill(process.pid, "SIGTERM");`],
+    ["a Worker", `new (require("worker_threads").Worker)('process.kill(process.pid, "SIGTERM")', { eval: true });`],
+  ])("is written before %s ends the process with a signal", async (thread, kill) => {
+    using dir = tempDir("pprof-heap-kill", { "script.js": script + kill + "\nsetInterval(() => {}, 1000);" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--pprof-heap=heap.pb.gz", "script.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // uv_kill() on Windows is TerminateProcess(1), which does not wait for the pipe.
+    expect({ stdout: isWindows ? "true\n" : stdout, stderr, signalCode: proc.signalCode }).toEqual({
+      stdout: "true\n",
+      stderr: "",
+      signalCode: isWindows ? null : "SIGTERM",
+    });
+    // Only the main thread can use its sourcemaps: a Worker writes its positions as they ran.
+    for (const sample of expectHeapProfile(join(String(dir), "heap.pb.gz"), 512 * 1024))
+      expect(sample.labels.generated).toBe(thread === "a Worker" ? "true" : undefined);
+  });
+
+  test.skipIf(isWindows)("a Worker's signal that the main thread listens for leaves the profile running", async () => {
+    using dir = tempDir("pprof-heap-listener", {
+      "script.js":
+        script +
+        `process.on("SIGUSR2", () => { console.log(Bun.pprof.heap.isRunning); process.exit(0); });
+         new (require("worker_threads").Worker)('process.kill(process.pid, "SIGUSR2")', { eval: true });
+         setInterval(() => {}, 1000);`,
+    });
+    const result = await run(String(dir), ["--pprof-heap=heap.pb.gz", "script.js"]);
+    expect(result).toEqual({ stdout: "true\ntrue\n", stderr: "", exitCode: 0 });
+    expectHeapProfile(join(String(dir), "heap.pb.gz"), 512 * 1024);
+  });
+
+  // --watch keeps its SIGINT handler installed, which says nothing about JavaScript listeners.
+  test.skipIf(isWindows)("is written before a Worker's SIGINT ends a --watch run", async () => {
+    using dir = tempDir("pprof-heap-watch", {
+      "script.js":
+        script +
+        `new (require("worker_threads").Worker)('process.kill(process.pid, "SIGINT")', { eval: true });
+         setInterval(() => {}, 1000);`,
+    });
+    const result = await run(String(dir), ["--watch", "--pprof-heap=heap.pb.gz", "script.js"]);
+    expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+    expectHeapProfile(join(String(dir), "heap.pb.gz"), 512 * 1024);
+  });
+
+  test("process.exit() in a Worker leaves the profile running", async () => {
+    using dir = tempDir("pprof-heap-worker-exit", {
+      "script.js":
+        script +
+        `new (require("worker_threads").Worker)("process.exit(0)", { eval: true })
+           .on("exit", () => console.log(Bun.pprof.heap.isRunning));`,
+    });
+    const result = await run(String(dir), ["--pprof-heap=heap.pb.gz", "script.js"]);
+    expect(result).toEqual({ stdout: "true\ntrue\n", stderr: "", exitCode: 0 });
     expectHeapProfile(join(String(dir), "heap.pb.gz"), 512 * 1024);
   });
 

@@ -1346,15 +1346,16 @@ impl Run<'_> {
             };
             bun_jsc::bun_heap_pprof::install();
             match bun_pprof::heap::start(interval) {
-                Ok(()) => {
-                    vm.pprof_heap_config = Some(bun_jsc::bun_heap_pprof::PprofHeapConfig { path });
-                }
+                Ok(()) => bun_jsc::bun_heap_pprof::request_profile_at_exit(
+                    bun_jsc::bun_heap_pprof::PprofHeapConfig { path },
+                ),
                 Err(e) => {
                     bun_core::Output::err(
                         <&'static str>::from(e),
                         "Failed to start --pprof-heap",
                         (),
                     );
+                    Global::exit(1);
                 }
             }
         }

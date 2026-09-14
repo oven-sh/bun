@@ -2,6 +2,7 @@
 
 use bun_core::Ordinal;
 use bun_pprof::heap::{JsThread, RawJsFrame, ResolvedPosition};
+use bun_threading::Guarded;
 
 use crate::VM;
 use crate::virtual_machine::VirtualMachine;
@@ -108,7 +109,26 @@ pub struct PprofHeapConfig {
     pub path: &'static [u8],
 }
 
-pub(crate) fn stop_and_write_profile(
+/// Not on a `VirtualMachine`: the profile covers the process, and a Worker can end the process.
+static WRITE_AT_EXIT: Guarded<Option<PprofHeapConfig>> = Guarded::new(None);
+
+pub fn request_profile_at_exit(config: PprofHeapConfig) {
+    *WRITE_AT_EXIT.lock() = Some(config);
+}
+
+/// Call it on `vm`'s thread, before that thread ends the process. The first caller writes the
+/// file; one that comes while it does returns once the file is written.
+pub(crate) fn write_requested_profile(vm: &mut VirtualMachine) {
+    let mut pending = WRITE_AT_EXIT.lock();
+    let Some(config) = pending.take() else {
+        return;
+    };
+    if let Err(e) = stop_and_write_profile(vm, &config) {
+        bun_core::Output::err(e, "Failed to write pprof heap profile", ());
+    }
+}
+
+fn stop_and_write_profile(
     vm: &mut VirtualMachine,
     config: &PprofHeapConfig,
 ) -> Result<(), crate::CrateError> {

@@ -207,7 +207,6 @@ pub struct VirtualMachine {
     pub dns_result_order: u8,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
-    pub pprof_heap_config: Option<crate::bun_heap_pprof::PprofHeapConfig>,
     pub counters: Counters,
 
     /// `--hot` / `--watch` mode this VM runs under.
@@ -667,11 +666,7 @@ impl VMHolder {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
         }
-        if let Some(config) = vm.pprof_heap_config.take() {
-            if let Err(e) = crate::bun_heap_pprof::stop_and_write_profile(vm, &config) {
-                bun_core::Output::err(e, "Failed to write pprof heap profile", ());
-            }
-        }
+        crate::bun_heap_pprof::write_requested_profile(vm);
         // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
         // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
         // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
@@ -1887,10 +1882,9 @@ impl VirtualMachine {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
         }
-        if let Some(config) = self.pprof_heap_config.take() {
-            if let Err(e) = crate::bun_heap_pprof::stop_and_write_profile(self, &config) {
-                bun_core::Output::err(e, "Failed to write pprof heap profile", ());
-            }
+        // `process.exit()` in a Worker ends the Worker.
+        if self.is_main_thread() {
+            crate::bun_heap_pprof::write_requested_profile(self);
         }
 
         ExitHandler::dispatch_on_exit(self);
@@ -2732,7 +2726,6 @@ impl VirtualMachine {
             // explicitly.
             addr_of_mut!((*vm).cpu_profiler_config).write(None);
             addr_of_mut!((*vm).heap_profiler_config).write(None);
-            addr_of_mut!((*vm).pprof_heap_config).write(None);
             // `Option<bool>` uses the bool's invalid range (2) as the niche, so
             // all-zero bytes decode as `Some(false)` — for TLS that would
             // silently disable certificate verification. Write `None` explicitly.

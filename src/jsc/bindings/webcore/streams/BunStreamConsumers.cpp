@@ -20,6 +20,7 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamsRuntime.h"
 #include "ObjectBindings.h"
+#include "VectorSizeLimit.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
@@ -359,6 +360,11 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     // the write pass below never re-reads the array or re-encodes.
     MarkedArgumentBuffer values;
     WTF::Vector<std::pair<WTF::String, size_t>, 16> stringChunks;
+    // Script picks the chunk count here and the byte total below, so both reserves are fallible.
+    if (length > Bun::maxVectorSize<std::pair<WTF::String, size_t>>() || !stringChunks.tryReserveCapacity(length)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     bool anyString = false;
     WTF::CheckedSize total = 0;
     for (unsigned i = 0; i < length; i++) {
@@ -399,13 +405,15 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         return {};
     }
     WTF::Vector<uint8_t> bytes;
-    bytes.reserveInitialCapacity(total.value());
-    for (unsigned i = 0; i < length; i++) {
+    bool appended = bytes.tryReserveInitialCapacity(total.value());
+    for (unsigned i = 0; appended && i < length; i++) {
         auto& [string, stringByteLength] = stringChunks[i];
         if (!string.isNull()) {
             if (stringByteLength) {
                 size_t oldSize = bytes.size();
-                bytes.grow(oldSize + stringByteLength);
+                appended = bytes.tryGrow(oldSize + stringByteLength);
+                if (!appended) [[unlikely]]
+                    break;
                 size_t written = writeUTF8WithReplacement(string, bytes.mutableSpan().subspan(oldSize));
                 // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
                 ASSERT(written == stringByteLength);
@@ -417,11 +425,15 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         JSValue chunk = values.at(i);
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
             if (!view->isDetached())
-                bytes.append(view->span());
+                appended = bytes.tryAppend(view->span());
         } else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
             if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
-                bytes.append(impl->span());
+                appended = bytes.tryAppend(impl->span());
         }
+    }
+    if (!appended) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
     if (asUint8Array) {
         // Buffer-backed from birth: a later `.buffer` access never has to change modes.
@@ -679,12 +691,16 @@ static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, J
         if (accumulator.rope.length()) {
             flushedRope = jsString(vm, accumulator.rope.toString());
             RETURN_IF_EXCEPTION(scope, {});
-            accumulator.rope.clear();
         }
-        WTF::Locker locker { owner->cellLock() };
-        if (flushedRope)
-            accumulator.pieces.append(JSC::WriteBarrier<JSC::Unknown>(vm, owner, flushedRope));
-        accumulator.pieces.append(JSC::WriteBarrier<JSC::Unknown>(vm, owner, chunk));
+        bool appended;
+        {
+            WTF::Locker locker { owner->cellLock() };
+            appended = accumulator.tryAppendPieces(locker, vm, owner, flushedRope, chunk);
+        }
+        if (!appended) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
     }
     accumulator.estimatedLength += byteLength;
     return jsNumber(static_cast<double>(byteLength));

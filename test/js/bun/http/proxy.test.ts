@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
+import http from "node:http";
 import net from "node:net";
 import tls from "node:tls";
 async function createProxyServer(is_tls: boolean) {
@@ -745,6 +746,53 @@ test("axios with https-proxy-agent", async () => {
   expect(result.data).toBe("");
   // did we got proxied?
   expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
+});
+
+// For a refused CONNECT, https-proxy-agent hands node:http a detached
+// `new net.Socket({ writable: false })` and replays the proxy's reply into it.
+// node:http only parses from a socket that is not writable and never writes the
+// request to it, so the caller sees the proxy's status. With `writable` forced
+// to true the request was written to the handle-less socket and failed with
+// ERR_SOCKET_CLOSED instead.
+test("https-proxy-agent reports a refused CONNECT as the proxy's response, like node", async () => {
+  const proxy = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => {
+      socket.end(
+        'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="test"\r\nContent-Length: 0\r\n\r\n',
+      );
+    });
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  const agent = new HttpsProxyAgent(`http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`);
+  try {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    let sawResponse = false;
+    const req = http.request({ host: "example.test", port: 80, path: "/", agent }, res => {
+      sawResponse = true;
+      events.push(`response ${res.statusCode} ${res.headers["proxy-authenticate"]}`);
+      res.on("error", ended.reject);
+      res.on("end", () => {
+        events.push("res end");
+        ended.resolve();
+      });
+      res.resume();
+    });
+    req.on("error", err => events.push(`req error ${(err as NodeJS.ErrnoException).code}`));
+    req.on("close", () => {
+      closed.resolve();
+      // A request that died without a response has nothing left to end.
+      if (!sawResponse) ended.resolve();
+    });
+    req.end();
+    await Promise.all([closed.promise, ended.promise]);
+    expect(events).toEqual(['response 407 Basic realm="test"', "res end"]);
+  } finally {
+    agent.destroy();
+    proxy.close();
+  }
 });
 
 test("HTTPS proxy tunnel keep-alive reuses CONNECT across sequential requests", async () => {

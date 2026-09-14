@@ -128,7 +128,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     // the module's JSModuleEnvironment, which does not exist yet.
     LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
     SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
-    Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
+    Ref<CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(cachedData.span());
     if (decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode)))
         return ptr;
 
@@ -165,7 +165,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         return {};
     }
 
-    ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
+    JSModuleLoader* loader = moduleLoader(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    ModuleAnalyzer analyzer(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
 
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(node != nullptr);

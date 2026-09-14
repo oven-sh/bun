@@ -27,10 +27,11 @@ int main(void) {
   double root = sqrt(four);
   printf("sqrt(4) = %g, errno %d\n", root, errno);
   root = sqrt(negative);
-  printf("sqrt(-1) is NaN: %d, errno is EDOM: %d\n", root != root, errno == EDOM);
+  // (Where the library reports such errors through errno at all: Apple's raises the exception only.)
+  printf("sqrt(-1) is NaN: %d, errno is EDOM: %d\n", root != root, (math_errhandling & MATH_ERRNO) ? errno == EDOM : 1);
   errno = 0;
   float rootf = sqrtf((float)negative * 4);
-  printf("sqrtf(-4) is NaN: %d, errno is EDOM: %d\n", rootf != rootf, errno == EDOM);
+  printf("sqrtf(-4) is NaN: %d, errno is EDOM: %d\n", rootf != rootf, (math_errhandling & MATH_ERRNO) ? errno == EDOM : 1);
   errno = 0;
   root = sqrt(nan);
   printf("sqrt(NaN) is NaN: %d, errno %d\n", root != root, errno);

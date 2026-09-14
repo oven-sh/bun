@@ -2754,8 +2754,7 @@ impl Sema {
                 Some(param) => self.assign_convert(arg, param, aloc, "passing an argument")?,
                 None => {
                     let arg = self.rvalue(arg)?;
-                    if arg.ty.is_struct() || arg.ty.is_complex() || self.tcx.is_half_vector(&arg.ty)
-                    {
+                    if arg.ty.is_struct() || arg.ty.is_complex() || arg.ty.is_vector() {
                         converted.push(arg);
                         continue;
                     }

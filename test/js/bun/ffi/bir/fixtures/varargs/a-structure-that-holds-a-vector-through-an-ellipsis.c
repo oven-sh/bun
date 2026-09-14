@@ -31,13 +31,11 @@ int main(void) {
   struct Two two = { { 5.5f, 6.5f, 7.5f, 8.5f }, { 9, 10, 11, 12 } };
   struct Mixed mixed = { 13, { 14.5f, 15.5f, 16.5f, 17.5f } };
   V plain = { 18.5f, 19.5f, 20.5f, 21.5f };
+  // (Three calls that Apple's own compiler reads the same at every optimization level. With a structure that holds a
+  // vector after a 4-byte argument, or after the registers are used up, it reads garbage or crashes once it optimizes,
+  // so there is nothing for those to agree with.)
   read_list("1", one);
-  read_list("i1i", 1, one, 2);
   read_list("2m", two, mixed);
-  // (Not the two-vector structure after the `double`: Apple's own compiler reads that one wrongly at -O0 and crashes
-  // at -O1, so there is nothing to agree with.)
   read_list("iv1d", 3, plain, one, 0.25);
-  read_list("iiiiiiiii1v", 1, 2, 3, 4, 5, 6, 7, 8, 9, one, plain);
-  read_list("ddddddddd1m", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, one, mixed);
   return 0;
 }

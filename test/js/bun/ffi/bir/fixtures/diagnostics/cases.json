@@ -627,11 +627,11 @@
     "message": "excess elements in vector initializer"
   },
   {
-    "about": "vector diagnostics",
-    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); int printf(const char *, ...); void f(V a) { printf(\"%d\", a); }",
+    "about": "6.5.2.2p4: an argument is an expression of an object type",
+    "source": "int printf(const char *, ...); void g(void); void f(void) { printf(\"%d\", g()); }\nint main(void) { return 0; }\n",
     "line": 1,
-    "column": 157,
-    "message": "cannot pass 'int __attribute__((vector_size(16)))' as a variadic argument"
+    "column": 75,
+    "message": "cannot pass 'void' as a variadic argument"
   },
   {
     "about": "vector diagnostics",

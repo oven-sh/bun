@@ -218,8 +218,8 @@ Paths: argument, return value, variadic argument, through a function pointer, to
 
 ## 5. Constraint violations (diagnostics)
 
-`fixtures/diagnostics/cases.json` has 588 cases. 367 of them are keyed by clause (their `about` starts with the clause and
-paragraph of C11 whose constraint the program violates, followed by the constraint in words); the other 221 predate
+`fixtures/diagnostics/cases.json` has 588 cases. 368 of them are keyed by clause (their `about` starts with the clause and
+paragraph of C11 whose constraint the program violates, followed by the constraint in words); the other 220 predate
 this index and are grouped by feature (vectors, inline assembly, atomics, `__int128`, attributes, Microsoft C, ...).
 Every case asserts the exact message, line and column. A program is a case here only if GCC and Clang both refuse
 it with their default options, or the standard plainly does and refusing costs nothing.
@@ -321,7 +321,7 @@ What the compiler refuses on purpose, with the diagnostic; each is asserted by a
 | A structure passed by value that is larger than 1 MiB or aligned to more than 16 bytes (returning one is fine: it goes through a pointer)                                               | `passing a 'struct B' by value is not supported: it is larger than 1048576 bytes`                                                                                                                                                          | cases under "what the loader takes by value: up to 1 MiB, aligned to at most 16"              |
 | An alignment over 4,096 bytes, on an object, a type, a member, `__builtin_alloca_with_align`                                                                                            | `alignments over 4096 bytes are not supported`                                                                                                                                                                                             | cases under "no object is aligned to more than 4096 bytes"                                    |
 | Converting between `long double` (x87) and `__int128` at run time; `va_arg` of a structure that holds a vector; `asm goto`; a computed `goto` where a variable length array is in scope | `converting a 'long double' to '__int128' is not supported yet`, `va_arg of a struct that contains a vector is not supported yet`, `asm goto is not supported`, `a computed goto in the scope of a variable length array is not supported` | cases under "unsupported constructs are diagnosed"                                            |
-| Vectors that are not 16 (or 8) bytes in computations                                                                                                                                    | see "vector diagnostics"                                                                                                                                                                                                                   | 25 cases                                                                                      |
+| Vectors that are not 16 (or 8) bytes in computations                                                                                                                                    | see "vector diagnostics"                                                                                                                                                                                                                   | 24 cases                                                                                      |
 | One-element vectors of `double` across calls                                                                                                                                            | `passing or returning a one-element vector of 'double' is not supported for this target: GCC and Clang disagree on how`                                                                                                                    | cases 71, 72                                                                                  |
 | `va_arg` of a 16-byte vector, or of a structure that holds one, on x86-64 System V (it works where variable arguments are all on the stack: Apple arm64, Windows)                       | `va_arg of a vector is not supported yet`                                                                                                                                                                                                  | cases 90, 554 (x64-sysv); varargs/a-structure-that-holds-a-vector-through-an-ellipsis (arm64) |
 | Signalling NaN builtins                                                                                                                                                                 | `__builtin_nans: signalling NaNs are not supported`                                                                                                                                                                                        | case 535                                                                                      |
@@ -413,9 +413,11 @@ x86-64 Linux). These are the exceptions, and why.
   the pass that unrolled such loops in the front end so that the array could live in registers is gone (it was wrong when
   the loop was left by `goto`, and it copied every function body to try). Doing it belongs to the backend, after B3's own
   unrolling; it is worth about 2x on such kernels and nothing on SQLite.
-- A structure of two 16-byte vectors read with `va_arg` after an 8-byte argument on Apple arm64 is not pinned: Apple's own
-  compiler reads it wrongly at -O0 and crashes at -O1, so there is nothing to agree with
-  (varargs/a-structure-that-holds-a-vector-through-an-ellipsis has the shapes that do have a reference).
+- On Apple arm64 a structure that holds a 16-byte vector, read with `va_arg` after a 4-byte argument, after an 8-byte one
+  when it holds two vectors, or after the registers are used up, is not pinned: Apple's own compiler reads those right at
+  -O0 and reads garbage or crashes once it optimizes, so there is nothing to agree with. This compiler puts them at the
+  next multiple of 16 bytes, as the ABI document says. (varargs/a-structure-that-holds-a-vector-through-an-ellipsis has the
+  three calls that Apple's compiler reads the same at every level.)
 - Conversions between `long double` and `__int128` at run time; `_Atomic` structures; the rest of section 7.
 
 ## 12. Open

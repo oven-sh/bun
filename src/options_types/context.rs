@@ -622,13 +622,24 @@ pub struct HeapProf {
 }
 
 /// `--pprof-heap[=<path>]`, `--pprof-heap-interval=<bytes>`
-#[derive(Default)]
 pub struct PprofHeap {
     pub enabled: bool,
     /// Empty: a generated name in the current directory.
     pub path: Box<[u8]>,
     /// 0: the default interval.
     pub sample_interval: usize,
+}
+
+impl Default for PprofHeap {
+    // See `ContextData::default` — folded into the single startup call site.
+    #[inline(always)]
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: Box::default(),
+            sample_interval: 0,
+        }
+    }
 }
 
 impl Default for RuntimeOptions {

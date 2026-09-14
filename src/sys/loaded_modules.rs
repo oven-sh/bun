@@ -100,13 +100,26 @@ mod imp {
             let build_id = build_id.get_or_insert_with(|| {
                 phdrs
                     .iter()
-                    .filter(|p| p.p_type == elf::PT_NOTE)
-                    .find_map(|p| {
-                        // SAFETY: a PT_NOTE segment of a loaded image is mapped for `p_memsz` bytes.
+                    .filter(|note| note.p_type == elf::PT_NOTE)
+                    // Nothing makes the loader map a PT_NOTE that is outside every PT_LOAD.
+                    .filter(|note| {
+                        let note_end = note.p_vaddr.checked_add(note.p_memsz);
+                        phdrs.iter().any(|load| {
+                            load.p_type == elf::PT_LOAD
+                                && load.p_flags & elf::PF_R != 0
+                                && load.p_vaddr <= note.p_vaddr
+                                && note_end
+                                    .zip(load.p_vaddr.checked_add(load.p_memsz))
+                                    .is_some_and(|(note_end, load_end)| note_end <= load_end)
+                        })
+                    })
+                    .find_map(|note| {
+                        // SAFETY: inside a readable PT_LOAD of a loaded image, which is mapped
+                        // for `p_memsz` bytes.
                         let notes = unsafe {
                             core::slice::from_raw_parts(
-                                base.wrapping_add(p.p_vaddr as usize) as *const u8,
-                                p.p_memsz as usize,
+                                base.wrapping_add(note.p_vaddr as usize) as *const u8,
+                                note.p_memsz as usize,
                             )
                         };
                         find_note(notes, b"GNU\0", NT_GNU_BUILD_ID)

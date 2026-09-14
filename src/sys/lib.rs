@@ -8395,6 +8395,8 @@ pub mod elf {
     pub const PT_NOTE: u32 = 4;
     /// `p_flags`: the segment is executable.
     pub const PF_X: u32 = 1;
+    /// `p_flags`: the segment is readable.
+    pub const PF_R: u32 = 4;
 
     /// Result of [`find_loaded_module`]: the loaded ELF object whose `PT_LOAD`
     /// segment spans a given address.

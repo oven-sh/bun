@@ -40,6 +40,7 @@ pub(crate) const JS_TAG: usize = 1 << (usize::BITS - 1);
 static META_HEAP: AtomicPtr<mimalloc::Heap> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Allocator on a process-lifetime mimalloc heap with sampling off (`mi_heap_profile_disable`).
+/// Any thread allocates from it: a mimalloc v3 `mi_heap_t` gives each thread its own `mi_theap_t`.
 #[derive(Clone, Copy)]
 pub(crate) struct Meta;
 
@@ -639,6 +640,7 @@ struct Unresolved {
 }
 
 /// Passes what was sampled on `vm` through `resolve(url, line, column)`, the VM's sourcemaps.
+/// `line` and `column` are one-based; a frame without a position (either is 0) is not passed.
 /// Call it on the VM's thread.
 pub fn resolve_js_locations(
     vm: usize,
@@ -696,7 +698,7 @@ pub fn resolve_js_locations(
     for (item, &(start, len)) in work.iter_mut().zip(&url_spans) {
         let url = &urls[start..][..len];
         for (position, resolved) in item.positions.iter().zip(&mut item.resolved) {
-            if position.0 != 0 {
+            if position.0 != 0 && position.1 != 0 {
                 *resolved = resolve(url, position.0, position.1);
             }
         }

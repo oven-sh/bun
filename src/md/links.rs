@@ -64,16 +64,25 @@ pub(crate) struct ParsedDest<'a> {
     pub(crate) end_pos: usize,
 }
 
+/// The bytes that end a `<...>` destination, make it invalid, or start an escape.
+const ANGLE_DEST_STOPS: &[u8] = b"<>\\\n\r";
+/// ASCII whitespace ends a bare destination; parentheses and backslash need a look.
+const BARE_DEST_STOPS: &[u8] = b" \t\n\r\x0b\x0c()\\";
+/// The ASCII control characters that are not in `BARE_DEST_STOPS`.
+const BARE_DEST_FORBIDDEN: &[u8] = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x7f";
+
 /// CommonMark §6.3 link destination, shared by inline links, the link lookahead and reference definitions.
 pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedDest<'_>> {
-    let escapes_next = |p: usize| p + 1 < text.len() && helpers::is_ascii_punctuation(text[p + 1]);
-    let mut p = start;
+    let after_backslash = |p: usize| match text.get(p + 1) {
+        Some(&next) if helpers::is_ascii_punctuation(next) => p + 2,
+        _ => p + 1,
+    };
 
-    if p < text.len() && text[p] == b'<' {
-        p += 1;
-        let dest_start = p;
-        while p < text.len() {
-            match text[p] {
+    if text.get(start) == Some(&b'<') {
+        let dest_start = start + 1;
+        let mut p = dest_start;
+        loop {
+            match *text.get(p)? {
                 b'>' => {
                     return Some(ParsedDest {
                         dest: &text[dest_start..p],
@@ -81,44 +90,52 @@ pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedD
                     });
                 }
                 b'<' | b'\n' | b'\r' => return None,
-                b'\\' if escapes_next(p) => p += 2,
-                _ => p += 1,
+                b'\\' => p = after_backslash(p),
+                _ => p += bun_core::strings::index_of_any(&text[p..], ANGLE_DEST_STOPS)?,
             }
         }
-        return None;
     }
 
+    let mut p = start;
     let mut paren_depth: u32 = 0;
-    while p < text.len() && !helpers::is_whitespace(text[p]) {
-        match text[p] {
-            b'\\' if escapes_next(p) => {
-                p += 2;
-                continue;
-            }
+    while let Some(&c) = text.get(p) {
+        match c {
+            b'\\' => p = after_backslash(p),
             b'(' => {
                 paren_depth += 1;
                 if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
                     return None;
                 }
+                p += 1;
             }
-            b')' => {
-                if paren_depth == 0 {
-                    break;
-                }
+            b')' if paren_depth > 0 => {
                 paren_depth -= 1;
+                p += 1;
             }
-            c if c.is_ascii_control() => return None,
-            _ => {}
+            b')' => break,
+            c if helpers::is_whitespace(c) => break,
+            _ => {
+                p += bun_core::strings::index_of_any(&text[p..], BARE_DEST_STOPS)
+                    .unwrap_or(text.len() - p);
+            }
         }
-        p += 1;
     }
-    if paren_depth != 0 {
+    let dest = &text[start..p];
+    if paren_depth != 0 || has_ascii_control(dest) {
         return None;
     }
-    Some(ParsedDest {
-        dest: &text[start..p],
-        end_pos: p,
-    })
+    Some(ParsedDest { dest, end_pos: p })
+}
+
+/// Whether `dest` holds U+0000 to U+001F or U+007F; two cheap passes when `dest` is ASCII.
+fn has_ascii_control(dest: &[u8]) -> bool {
+    let Some(i) = bun_core::strings::index_of_newline_or_non_ascii(dest, 0) else {
+        return bun_core::strings::contains_char(dest, 0x7f);
+    };
+    let (ascii, rest) = dest.split_at(i as usize);
+    rest[0] < 0x20
+        || bun_core::strings::contains_char(ascii, 0x7f)
+        || bun_core::strings::contains_any(rest, BARE_DEST_FORBIDDEN)
 }
 
 /// Characters that can affect bracket matching: the brackets themselves,

@@ -303,20 +303,19 @@ describe("re-export of a binding the requested module does not provide", () => {
     ],
   ];
 
-  for (const [name, files, message] of cases) {
+  describe.each(cases)("%s", (_name, files, message) => {
     // The check runs when mid.mjs links, so it fires the same way whether
     // mid.mjs is a dependency or the entry point.
-    for (const entry of ["main.mjs", "mid.mjs"]) {
-      test.concurrent(`${name} (entry ${entry})`, async () => {
-        await using dir = tempDir("reexport-missing", files);
+    test.concurrent.each(["main.mjs", "mid.mjs"])("entry %s", async entry => {
+      await using dir = tempDir("reexport-missing", files);
 
-        const result = await run([bunExe(), entry], String(dir));
+      const result = await run([bunExe(), entry], String(dir));
 
-        expect(result.stderr.trim()).toMatch(message);
-        expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout: "", exitCode: 1 });
-      });
-    }
-  }
+      expect(result.stderr.trim()).toMatch(message);
+      expect(result.stdout).toBe("");
+      expect(result.exitCode).toBe(1);
+    });
+  });
 });
 
 describe("through export merge", () => {

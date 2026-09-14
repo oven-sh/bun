@@ -122,6 +122,7 @@ impl<'a> Renderer<'a> {
 /// renderers that retain them past that call must copy.
 #[derive(Copy, Clone)]
 pub struct SpanDetail<'a> {
+    /// An e-mail or `www.` autolink has no scheme here. `href_with_prefix()` adds it.
     pub href: &'a [u8],
     pub title: &'a [u8],
     /// Standard autolink (angle-bracket): use writeUrlEscaped (no entity/escape processing)
@@ -144,6 +145,24 @@ impl<'a> Default for SpanDetail<'a> {
             permissive_autolink: false,
             autolink_www: false,
         }
+    }
+}
+
+impl SpanDetail<'_> {
+    /// The scheme that `href` of an e-mail or `www.` autolink lacks. A renderer writes it before `href`.
+    pub(crate) fn href_prefix(&self) -> &'static [u8] {
+        if self.autolink_email {
+            b"mailto:"
+        } else if self.autolink_www {
+            b"http://"
+        } else {
+            b""
+        }
+    }
+
+    /// An owned copy of `href` with `href_prefix()` in front, for a renderer that keeps it past `enter_span`.
+    pub fn href_with_prefix(&self) -> Box<[u8]> {
+        bun_core::strings::concat(&[self.href_prefix(), self.href])
     }
 }
 

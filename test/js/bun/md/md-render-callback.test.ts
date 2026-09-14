@@ -375,6 +375,33 @@ describe("Bun.markdown.render", () => {
     expect(result).toContain("[www.example.com]");
   });
 
+  // https://github.com/oven-sh/bun/issues/31936
+  test("link meta href has the same scheme as in html()", () => {
+    const cases = [
+      ["<email@example.com>", "mailto:email@example.com"],
+      ["email@example.com", "mailto:email@example.com"],
+      ["www.example.com", "http://www.example.com"],
+      ["<https://example.com>", "https://example.com"],
+      ["https://example.com", "https://example.com"],
+      ["<mailto:email@example.com>", "mailto:email@example.com"],
+      // Not an autolink: the destination stays as written.
+      ["[text](email@example.com)", "email@example.com"],
+      ["[text](www.example.com)", "www.example.com"],
+    ];
+    const hrefs: string[] = [];
+    Markdown.render(
+      cases.map(([md]) => md).join("\n\n") + "\n",
+      {
+        link: (children: string, { href }: any) => {
+          hrefs.push(href);
+          return children;
+        },
+      },
+      { autolinks: true },
+    );
+    expect(hrefs).toEqual(cases.map(([, href]) => href));
+  });
+
   test("headings option provides id in heading meta", () => {
     const result = Markdown.render(
       "## Hello World\n",

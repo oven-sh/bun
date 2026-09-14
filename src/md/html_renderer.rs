@@ -258,26 +258,15 @@ impl<'src> HtmlRenderer<'src> {
             SpanType::LatexmathDisplay => self.write(b"<x-equation type=\"display\">"),
             SpanType::A => {
                 self.write(b"<a href=\"");
+                self.write(detail.href_prefix());
                 if detail.permissive_autolink {
                     // Permissive autolinks use HTML-escaping for href
-                    if detail.autolink_email {
-                        self.write(b"mailto:");
-                    }
-                    if detail.autolink_www {
-                        self.write(b"http://");
-                    }
                     self.write_html_escaped(detail.href);
                 } else if detail.autolink {
                     // Standard autolinks: percent-encode only, no entity/escape processing
-                    if detail.autolink_email {
-                        self.write(b"mailto:");
-                    }
                     self.write_url_escaped(detail.href);
                 } else {
                     // Regular links: full entity/escape processing
-                    if detail.autolink_email {
-                        self.write(b"mailto:");
-                    }
                     self.write_url_with_escapes(detail.href);
                 }
                 self.write(b"\"");

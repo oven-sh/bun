@@ -2941,10 +2941,10 @@
  },
  {
   "about": "6.7.9p14: a character array is initialized by a string literal of a matching character type",
-  "source": "char a[] = L\"abc\";\nint main(void) { return 0; }",
+  "source": "char a[] = U\"abc\";\nint main(void) { return 0; }",
   "line": 1,
   "column": 12,
-  "message": "cannot initialize 'char []' with an expression of type 'int [4]'"
+  "message": "cannot initialize 'char []' with an expression of type 'unsigned int [4]'"
  },
  {
   "about": "6.7.9p16: the initializer of an aggregate is a brace-enclosed list",

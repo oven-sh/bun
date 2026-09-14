@@ -1197,6 +1197,7 @@ impl<S: TokenSource> Parser<S> {
                     | Kw::ThreadLocal
                     | Kw::Typedef
                     | Kw::Typeof
+                    | Kw::TypeofUnqual
                     | Kw::Union
                     | Kw::Unsigned
                     | Kw::Void
@@ -1231,6 +1232,7 @@ impl<S: TokenSource> Parser<S> {
                     | Kw::Signed
                     | Kw::Struct
                     | Kw::Typeof
+                    | Kw::TypeofUnqual
                     | Kw::Union
                     | Kw::Unsigned
                     | Kw::Void
@@ -1249,7 +1251,7 @@ impl<S: TokenSource> Parser<S> {
                 self.bump()?;
                 self.expect(Punct::LParen)?;
                 let double = self.eat(Punct::LParen)?;
-                self.parse_attribute_list(attrs)?;
+                self.parse_attribute_list(attrs, Punct::RParen)?;
                 if double {
                     self.expect(Punct::RParen)?;
                 }
@@ -1257,8 +1259,13 @@ impl<S: TokenSource> Parser<S> {
             } else if self.at(Punct::LBracket)
                 && matches!(self.peek2()?, Tok::Punct(Punct::LBracket))
             {
+                // `[[name]]`, `[[vendor::name(arguments)]]`: the vendors whose attributes these are
+                // mean by them what `__attribute__` means.
                 self.bump()?;
-                self.skip_balanced(Punct::LBracket, Punct::RBracket)?;
+                self.bump()?;
+                self.parse_attribute_list(attrs, Punct::RBracket)?;
+                self.expect(Punct::RBracket)?;
+                self.expect(Punct::RBracket)?;
             } else if self.at_kw(Kw::Asm) && matches!(self.peek2()?, Tok::Punct(Punct::LParen)) {
                 let loc = self.bump()?.loc;
                 self.bump()?;
@@ -1286,9 +1293,9 @@ impl<S: TokenSource> Parser<S> {
         }
     }
 
-    /// The comma-separated items inside `__attribute__((` ... `))`, up to the closing paren.
-    fn parse_attribute_list(&mut self, attrs: &mut Attrs) -> Res<()> {
-        while !self.at(Punct::RParen) {
+    /// The comma-separated items inside `__attribute__((` ... `))` or `[[` ... `]]`, up to `close`.
+    fn parse_attribute_list(&mut self, attrs: &mut Attrs, close: Punct) -> Res<()> {
+        while !self.at(close) {
             if self.cur.tok == Tok::Eof {
                 return err(self.loc(), "unterminated attribute list");
             }
@@ -1300,11 +1307,33 @@ impl<S: TokenSource> Parser<S> {
                 _ => None,
             };
             self.bump()?;
-            let name = name.as_deref().unwrap_or("");
-            let name = name
-                .strip_prefix("__")
-                .and_then(|n| n.strip_suffix("__"))
-                .unwrap_or(name);
+            let strip = |name: &str| -> Rc<str> {
+                Rc::from(
+                    name.strip_prefix("__")
+                        .and_then(|n| n.strip_suffix("__"))
+                        .unwrap_or(name),
+                )
+            };
+            let mut name = strip(name.as_deref().unwrap_or(""));
+            // `vendor::name`: another vendor's attribute is nobody's here.
+            if self.at(Punct::Colon) && matches!(self.peek2()?, Tok::Punct(Punct::Colon)) {
+                self.bump()?;
+                self.bump()?;
+                let vendor = name;
+                name = match &self.cur.tok {
+                    Tok::Ident(n) => strip(n),
+                    _ => Rc::from(""),
+                };
+                self.bump()?;
+                if !matches!(&*vendor, "gnu" | "clang" | "msvc") {
+                    if self.at(Punct::LParen) {
+                        self.bump()?;
+                        self.skip_balanced(Punct::LParen, Punct::RParen)?;
+                    }
+                    continue;
+                }
+            }
+            let name = &*name;
             let has_args = self.at(Punct::LParen);
             match name {
                 "aligned" | "align" => {
@@ -1596,10 +1625,11 @@ impl<S: TokenSource> Parser<S> {
                         any = true;
                         continue;
                     }
-                    Kw::Typeof => {
+                    Kw::Typeof | Kw::TypeofUnqual => {
                         if seen_type {
                             return err(tloc, "two or more data types in declaration specifiers");
                         }
+                        let unqualified = *k == Kw::TypeofUnqual;
                         self.bump()?;
                         self.expect(Punct::LParen)?;
                         let ty = if self.is_type_start() {
@@ -1608,7 +1638,11 @@ impl<S: TokenSource> Parser<S> {
                             self.parse_expr()?.ty
                         };
                         self.expect(Punct::RParen)?;
-                        other = Some(ty);
+                        other = Some(if unqualified {
+                            ty.unqualified().unatomic().clone()
+                        } else {
+                            ty
+                        });
                         any = true;
                         continue;
                     }
@@ -2651,6 +2685,12 @@ impl<S: TokenSource> Parser<S> {
                 variadic = true;
                 break;
             }
+            // `[[maybe_unused]] int n`: attributes of the parameter, ahead of its specifiers.
+            if self.at(Punct::LBracket) && matches!(self.peek2()?, Tok::Punct(Punct::LBracket)) {
+                let mut attrs = Attrs::default();
+                self.parse_attributes(&mut attrs)?;
+                self.leading_attrs = Some(attrs);
+            }
             if !self.is_type_start() {
                 if let Tok::Ident(name) = self.cur.tok.clone() {
                     return err(self.loc(), format!("unknown type name '{name}'"));
@@ -2913,9 +2953,16 @@ impl<S: TokenSource> Parser<S> {
             if self.eat(Punct::Semi)? {
                 return Ok(());
             }
-            // They belong to the declaration that follows.
-            self.leading_attrs = Some(attrs);
-            return self.parse_local_declaration(out);
+            // They belong to the declaration that follows; ahead of a label or a statement
+            // (`[[likely]]`, `[[maybe_unused]] out:`) they say nothing that changes it.
+            let labels = matches!(self.cur.tok, Tok::Ident(_))
+                && matches!(self.peek2()?, Tok::Punct(Punct::Colon));
+            if self.is_type_start() && !labels {
+                self.leading_attrs = Some(attrs);
+                return self.parse_local_declaration(out);
+            }
+            out.push(self.parse_statement()?);
+            return Ok(());
         }
         // `name:` is a label even when `name` is a typedef.
         let is_label = matches!(self.cur.tok, Tok::Ident(_))
@@ -2923,7 +2970,38 @@ impl<S: TokenSource> Parser<S> {
         if !is_label && self.is_type_start() {
             return self.parse_local_declaration(out);
         }
+        if !is_label
+            && matches!(&self.cur.tok, Tok::Ident(name) if &**name == "__auto_type")
+            && self.sema.lookup("__auto_type").is_none()
+        {
+            return self.parse_auto_type_declaration(out);
+        }
         out.push(self.parse_statement()?);
+        Ok(())
+    }
+
+    /// GNU C `__auto_type name = value;`: the variable has the type of the value.
+    fn parse_auto_type_declaration(&mut self, out: &mut Vec<Stmt>) -> Res<()> {
+        self.bump()?;
+        let (name, loc) = self.expect_ident()?;
+        if !self.eat(Punct::Assign)? {
+            return err(loc, "a declaration with '__auto_type' needs an initializer");
+        }
+        let value = self.parse_assign()?;
+        let value = self.sema.rvalue(value)?;
+        if value.ty.is_void() {
+            return err(
+                loc,
+                "the initializer of an '__auto_type' variable has no value",
+            );
+        }
+        self.expect(Punct::Semi)?;
+        self.flush_pending_vla(out);
+        let ty = value.ty.clone();
+        let local = self.sema.declare_local(name, ty.clone(), loc)?;
+        let target = self.sema.mk(ExprKind::Local(local), ty, loc)?;
+        let store = self.sema.assign(target, value, loc)?;
+        out.push(Stmt::Expr(store));
         Ok(())
     }
 
@@ -4315,6 +4393,20 @@ impl<S: TokenSource> Parser<S> {
             }
             let operand = self.parse_cast()?;
             self.leave();
+            if let Some(member) = self.union_member_for(&ty, &operand) {
+                // GNU C: a cast to a union type makes a union whose member of the operand's type
+                // has its value.
+                let init = crate::init::Init::List(
+                    vec![crate::init::InitEntry {
+                        designators: vec![crate::init::Designator::Field(member, loc)],
+                        init: crate::init::Init::Expr(operand),
+                        loc,
+                        once: None,
+                    }],
+                    loc,
+                );
+                return self.sema.compound_literal(&ty, init, loc);
+            }
             let cast = self.sema.cast(operand, &ty, loc)?;
             return self.after_pending_vla(cast);
         }
@@ -4326,6 +4418,25 @@ impl<S: TokenSource> Parser<S> {
     }
 
     /// The braces of `(type){ ... }`; the parenthesized type has been consumed.
+    /// The first named member of union type `ty` that has the type of `operand`, when `operand`
+    /// is not of type `ty` already.
+    fn union_member_for(&self, ty: &Type, operand: &Expr) -> Option<Rc<str>> {
+        let Type::Struct(id) = ty.unqualified() else {
+            return None;
+        };
+        let def = self.sema.tcx.struct_def(*id);
+        let from = self.sema.rvalue_type(&operand.ty);
+        if !def.is_union || from.unqualified() == ty.unqualified() {
+            return None;
+        }
+        def.members
+            .iter()
+            .find(|m| {
+                m.bitfield.is_none() && Sema::compatible(m.ty.unqualified(), from.unqualified())
+            })
+            .and_then(|m| m.name.clone())
+    }
+
     fn parse_compound_literal(&mut self, ty: &Type, loc: Loc) -> Res<Expr> {
         let init = self.parse_initializer()?;
         self.sema.compound_literal(ty, init, loc)
@@ -5611,6 +5722,40 @@ impl<S: TokenSource> Parser<S> {
 const INLINE_ONLY_DEFINITION: u8 = 0x80;
 
 /// Attributes that can be dropped without changing what the program does.
+/// The attributes `parse_attribute_list` gives a meaning to.
+const IMPLEMENTED_ATTRIBUTES: &[&str] = &[
+    "aligned",
+    "packed",
+    "weak",
+    "gnu_inline",
+    "always_inline",
+    "noinline",
+    "cleanup",
+    "mode",
+    "alias",
+    "weakref",
+    "constructor",
+    "destructor",
+    "vector_size",
+    "ext_vector_type",
+    "transparent_union",
+    "ms_struct",
+    "gcc_struct",
+];
+
+/// What `__has_attribute(name)` says: whether the attribute is implemented, or is one of those
+/// that say something about the code without changing what it means.
+pub(crate) fn has_attribute(name: &[u8]) -> bool {
+    let name = name
+        .strip_prefix(b"__")
+        .and_then(|n| n.strip_suffix(b"__"))
+        .unwrap_or(name);
+    IMPLEMENTED_ATTRIBUTES
+        .iter()
+        .chain(IGNORED_ATTRIBUTES)
+        .any(|known| known.as_bytes() == name)
+}
+
 const IGNORED_ATTRIBUTES: &[&str] = &[
     // `__declspec`s: where a symbol comes from is the loader's business, and the rest describe
     // C++ classes, code placement, or what the optimizer and the analyzers may assume.
@@ -5729,6 +5874,14 @@ const IGNORED_ATTRIBUTES: &[&str] = &[
     "zero_call_used_regs",
     "__const",
     "const__",
+    // C23's and C++'s own, which headers written for both use.
+    "likely",
+    "unlikely",
+    "unsequenced",
+    "reproducible",
+    "_Noreturn",
+    "carries_dependency",
+    "no_unique_address",
 ];
 
 fn has_suffix(name: &str, suffix: &str) -> bool {

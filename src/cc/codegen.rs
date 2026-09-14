@@ -3852,6 +3852,16 @@ pub(crate) struct Unit {
 
 /// The order constructors run in: ascending priority, source order within one. Destructors
 /// run in the reverse of the order built the same way.
+/// Whether an object of type `ty` with static storage is one the program never writes: it is
+/// `const` (every element of it, for an array) and not `volatile`. What a `const` pointer points
+/// to is another object's business.
+fn is_constant_object(ty: &Type) -> bool {
+    match ty {
+        Type::Array(elem, _) => is_constant_object(elem),
+        _ => ty.is_const() && !ty.is_volatile(),
+    }
+}
+
 pub(crate) fn initializer_order(entries: &[(u32, u32)], reverse: bool) -> Vec<u32> {
     let mut sorted = entries.to_vec();
     sorted.sort_by_key(|&(priority, _)| priority);
@@ -4134,6 +4144,7 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
             initialized: g.has_initializer,
             content: is_initialized(g),
             linkonce: g.linkonce,
+            constant: !g.thread_local && is_constant_object(&g.ty),
         });
     }
     for (i, blob) in m.blobs.iter().enumerate() {
@@ -4145,6 +4156,9 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
             initialized: true,
             content: true,
             linkonce: false,
+            // String literals, the images local aggregates are initialized from, and floating
+            // constants that instructions cannot hold.
+            constant: true,
         });
     }
     objects.sort_by_key(|o| (o.offset, o.size));
@@ -4281,6 +4295,8 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
         data: bir::Data {
             size,
             align,
+            // (Linking lays the data out again, the constants first.)
+            read_only: 0,
             init: image,
             relocs,
         },

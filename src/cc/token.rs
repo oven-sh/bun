@@ -245,6 +245,8 @@ pub(crate) enum Kw {
     ThreadLocal,
     Typedef,
     Typeof,
+    /// C23's `typeof_unqual`: the type without its qualifiers (and not atomic).
+    TypeofUnqual,
     Union,
     Unsigned,
     Void,
@@ -339,7 +341,8 @@ fn keyword(ident: &[u8]) -> Option<Kw> {
         b"switch" => Kw::Switch,
         b"_Thread_local" | b"thread_local" | b"__thread" => Kw::ThreadLocal,
         b"typedef" => Kw::Typedef,
-        b"typeof" | b"__typeof__" | b"__typeof" | b"typeof_unqual" => Kw::Typeof,
+        b"typeof" | b"__typeof__" | b"__typeof" => Kw::Typeof,
+        b"typeof_unqual" | b"__typeof_unqual__" | b"__typeof_unqual" => Kw::TypeofUnqual,
         b"union" => Kw::Union,
         b"unsigned" => Kw::Unsigned,
         b"void" => Kw::Void,

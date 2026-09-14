@@ -369,6 +369,10 @@ impl Preprocessor {
                 self.resolve_include(&header, angled, name == b"__has_include_next")
                     .is_some()
             }
+            b"__has_attribute" => match operand.as_slice() {
+                [t] if t.kind == PpKind::Ident => crate::parser::has_attribute(&t.text),
+                _ => false,
+            },
             b"__has_builtin" => match operand.as_slice() {
                 [t] if t.kind == PpKind::Ident => SUPPORTED_BUILTINS
                     .iter()

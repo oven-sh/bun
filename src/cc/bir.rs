@@ -7,14 +7,16 @@
 //! str = varuint length + bytes, type = u8):
 //!
 //! ```text
-//! magic "BIR6"
+//! magic "BIR7"
 //! u8 arch, u8 os, u8 pointerBytes (8), u8 reserved (0)
 //! varuint nsigs;    sig*:    { varuint nrets (0..4); type*; u8 flags (bit0 = variadic); varuint nparams; param* }
 //!                   param:   u8 kind, then Value: type | ByValStack: varuint size, varuint align, u8 exhausts
 //!                            | IndirectResult: nothing
 //! varuint nexterns; extern*: { str name; u8 kind (ExternKind, | 0x80 weak); varuint sig }   (sig is 0 for Data)
-//! data:             { varuint size; varuint align; varuint ninit; u8[ninit];
+//! data:             { varuint size; varuint align; varuint readOnly; varuint ninit; u8[ninit];
 //!                     varuint nrelocs; reloc*: { varuint offset; u8 kind; varuint index; varint addend } }
+//!                   (readOnly: how many leading bytes the program never writes: the constants. The loader
+//!                   protects the whole pages among them once the relocations are applied.)
 //! tls:              { varuint size; varuint align; varuint ninit; u8[ninit]; varuint nrelocs; reloc* }
 //!                   (applied to each thread's copy; kind Tls: the address of that copy + index)
 //! varuint nfuncs;   decl*:   { str name; varuint sig; u8 flags (bit0 = exported, bit1 = calls setjmp,
@@ -33,7 +35,10 @@
 
 use std::fmt::Write as _;
 
-pub(crate) const MAGIC: [u8; 4] = *b"BIR6";
+pub(crate) const MAGIC: [u8; 4] = *b"BIR7";
+/// Where the writable part of the data starts when there are constants before it: a multiple of
+/// the largest page size of any target (Apple arm64's), so that no page holds both.
+pub(crate) const DATA_PAGE: u64 = 16384;
 /// Or'ed into an extern's kind byte: `__attribute__((weak))`. Null when nothing defines it.
 pub(crate) const WEAK_EXTERN: u8 = 0x80;
 /// Function declaration flags that steer the backend's inliner.
@@ -679,6 +684,8 @@ pub(crate) struct Reloc {
 pub(crate) struct Data {
     pub(crate) size: u64,
     pub(crate) align: u64,
+    /// The constants come first; this is where they end.
+    pub(crate) read_only: u64,
     pub(crate) init: Vec<u8>,
     pub(crate) relocs: Vec<Reloc>,
 }
@@ -1122,6 +1129,7 @@ impl Module {
 
         w.varuint(self.data.size);
         w.varuint(self.data.align);
+        w.varuint(self.data.read_only);
         w.varuint(self.data.init.len() as u64);
         w.out.extend_from_slice(&self.data.init);
         w.relocs(&self.data.relocs);
@@ -1885,6 +1893,9 @@ pub(crate) fn validate(module: &Module) -> Result<(), String> {
     if data.init.len() as u64 > data.size {
         return Err("data ninit exceeds size".to_string());
     }
+    if data.read_only > data.size {
+        return Err("data readOnly exceeds size".to_string());
+    }
     let tls = &module.tls;
     for (segment, size, relocs) in [
         ("data", data.size, &data.relocs),
@@ -2081,9 +2092,10 @@ pub(crate) fn disassemble(module: &Module) -> Result<String, String> {
     let d = &module.data;
     let _ = writeln!(
         out,
-        "data: size {} align {} init {} bytes",
+        "data: size {} align {} read-only {} init {} bytes",
         d.size,
         d.align,
+        d.read_only,
         d.init.len()
     );
     for chunk_start in (0..d.init.len()).step_by(16) {

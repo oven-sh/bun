@@ -28,6 +28,9 @@ pub(crate) struct DataObject {
     pub(crate) content: bool,
     /// Every unit that defines it defines the same thing; the first one is kept.
     pub(crate) linkonce: bool,
+    /// The program never writes it (a string literal, a `const` object): it goes among the
+    /// constants, which are protected once the module is loaded.
+    pub(crate) constant: bool,
 }
 
 pub(crate) struct LinkError {
@@ -98,6 +101,8 @@ struct Segment<'u> {
     image: Vec<u8>,
     size: u64,
     align: u64,
+    /// Where the constants, which come first, end.
+    read_only: u64,
 }
 
 fn objects_of(unit: &Unit, tls: bool) -> &[DataObject] {
@@ -182,9 +187,16 @@ impl<'u> Segment<'u> {
             image: Vec::new(),
             size: 0,
             align: 1,
+            read_only: 0,
         };
-        // Objects with content first, zero-filled ones after.
-        for with_content in [true, false] {
+        // The constants first, then on a page of its own what is written to: objects with
+        // content, and the zero-filled ones after them.
+        for (constants, with_content) in [(true, true), (false, true), (false, false)] {
+            if !constants && with_content && segment.size > 0 {
+                // Whole pages are what can be protected: the constants have theirs to themselves.
+                segment.size = segment.size.next_multiple_of(bir::DATA_PAGE);
+                segment.read_only = segment.size;
+            }
             for (u, unit) in units.iter().enumerate() {
                 let init: &[u8] = if tls {
                     &unit.module.tls.init
@@ -192,7 +204,10 @@ impl<'u> Segment<'u> {
                     &unit.module.data.init
                 };
                 for (o, object) in objects_of(unit, tls).iter().enumerate() {
-                    if object.content != with_content || !segment.survives(units, u, o) {
+                    if object.content != with_content
+                        || (object.constant && object.content) != constants
+                        || !segment.survives(units, u, o)
+                    {
                         continue;
                     }
                     let object_align = object.align.max(1);
@@ -697,6 +712,7 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
             data: bir::Data {
                 size,
                 align,
+                read_only: data.read_only,
                 init: image,
                 relocs,
             },

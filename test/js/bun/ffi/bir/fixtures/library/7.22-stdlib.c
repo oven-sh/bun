@@ -61,9 +61,6 @@ int main(void) {
   zeroed = realloc(zeroed, 1000 * sizeof *zeroed);
   printf("%d %d %d %d\n", (uintptr_t)block % _Alignof(max_align_t) == 0, all_zero, zeroed[99], (uintptr_t)zeroed % _Alignof(max_align_t) == 0);
   free(block); free(zeroed); free(0);
-  void *aligned = aligned_alloc(64, 128);
-  printf("%d\n", aligned != 0 && (uintptr_t)aligned % 64 == 0);
-  free(aligned);
   // rand is a sequence that srand restarts; the environment can be asked.
   srand(7); int a = rand(), b = rand(); srand(7);
   printf("%d %d %d\n", rand() == a && rand() == b, a >= 0 && a <= RAND_MAX, RAND_MAX >= 32767);

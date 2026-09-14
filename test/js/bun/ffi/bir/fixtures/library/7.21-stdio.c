@@ -39,10 +39,9 @@ int main(void) {
   printf("%s\n", line);
   snprintf(line, sizeof line, "%a|%A|%.1a|%Lf|%Le|%Lg", 1.0, 0.5, 1.0, 1.5L, 1500.0L, 0.25L);
   printf("%s\n", line);
-  // Strings, pointers, %n.
-  int so_far = 0;
-  snprintf(line, sizeof line, "%s|%10s|%-10s|%.3s|%.*s|%c%n", "text", "right", "left", "truncated", 2, "abc", 'z', &so_far);
-  printf("%s %d\n", line, so_far);
+  // Strings and pointers. (%n is in a fixture of its own: Microsoft's library refuses it unless asked.)
+  snprintf(line, sizeof line, "%s|%10s|%-10s|%.3s|%.*s|%c", "text", "right", "left", "truncated", 2, "abc", 'z');
+  printf("%s\n", line);
   snprintf(line, sizeof line, "%p", (void *)line);
   printf("%d\n", strlen(line) > 0);
   // The return value, truncation, and the va_list forms.
@@ -50,7 +49,7 @@ int main(void) {
   printf("%d %s\n", format(line, sizeof line, "%d-%s-%.1f", 7, "seven", 7.0), line);
   // scanf conversions.
   int d, i, n; unsigned u, x, o; char c, word[16], set[16]; float f; double lf; long long ll; short h;
-  int matched = sscanf("-12 0x1f 99 ff 17 q hello abc123 1.5 2.25 -9000000000 -3", "%d %i %u %x %o %c %15s %[a-c]%n %f %lf %lld %hd", &d, &i, &u, &x, &o, &c, word, set, &n, &f, &lf, &ll, &h);
+  int matched = sscanf("-12 0x1f 99 ff 17 q hello abc 1.5 2.25 -9000000000 -3", "%d %i %u %x %o %c %15s %[a-c]%n %f %lf %lld %hd", &d, &i, &u, &x, &o, &c, word, set, &n, &f, &lf, &ll, &h);
   printf("%d: %d %d %u %u %u %c %s %s %d %.1f %.2f %lld %d\n", matched, d, i, u, x, o, c, word, set, n, (double)f, lf, ll, h);
   printf("%d %d %d\n", sscanf("12abc", "%d%*[a-z]%d", &d, &i), sscanf("", "%d", &d), scan("3,4", "%d,%d", &d, &i) + d + i);
   // A stream: this source file, read line by line, with seeking, pushing back and the end-of-file indicator.

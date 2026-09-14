@@ -176,4 +176,53 @@ describe("heapStats() mimalloc integration", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // On Linux the allocator counts a slice as committed the first time it hands it out. A purge returns the slice to the
+  // OS (MADV_DONTNEED) and forgets that it was handed out, so the next allocation of it counted it again, and nothing
+  // counted it down: `committed` grew by the size of every free-and-reuse cycle. A process with 30 MB resident reported
+  // 390 MB committed after 20 rounds of this loop, and 28 GB after 8 days (#42652).
+  test.skipIf(!isLinux || isASAN)("committed comes back down after a purge and stays flat across reuse", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { heapStats } from "bun:jsc";
+          const MB = 1048576;
+          const committed = () => heapStats().mimalloc.committed.current / MB;
+          const rss = () => process.memoryUsage.rss() / MB;
+          // The allocator starts its purge thread the first time a thread blocks.
+          await Bun.sleep(1);
+          const start = committed();
+          const rounds = [];
+          for (let round = 0; round < 8; round++) {
+            const arrays = [];
+            for (let i = 0; i < 16; i++) arrays.push(new Uint8Array(MB).fill(1));
+            const held = committed();
+            const resident = rss();
+            // transfer(0) frees the 16 MB here and now. The purge thread returns them to the OS after the purge delay.
+            for (const array of arrays) array.buffer.transfer(0);
+            const deadline = performance.now() + 5000;
+            let purged = false;
+            while (!(purged = rss() <= resident - 12) && performance.now() < deadline) await Bun.sleep(5);
+            rounds.push({ held: held - start, purged, after: committed() - start });
+          }
+          console.log(JSON.stringify(rounds));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const rounds = JSON.parse(stdout);
+    for (const { held, purged, after } of rounds) {
+      expect(purged, stdout).toBe(true);
+      // the 16 MB this round holds, not those of the rounds before it too
+      expect(held, stdout).toBeLessThan(40);
+      // and they are counted down once they are purged
+      expect(after, stdout).toBeLessThan(24);
+    }
+    expect(exitCode).toBe(0);
+  });
 });

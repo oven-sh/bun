@@ -5031,6 +5031,27 @@ impl DevServer {
         Ok(())
     }
 
+    /// A `"use client"` file that fails before bundling never reaches
+    /// server-component-boundary registration, so the server graph gets no
+    /// node for it and routes that import it get no edge to the failure.
+    /// Insert a stale placeholder marked as a boundary so a route's failure
+    /// trace crosses into the client graph and finds the failure.
+    pub(crate) fn insert_stale_client_component_boundary(
+        &mut self,
+        abs_path: &[u8],
+    ) -> crate::Result<()> {
+        let _g = self.graph_safety_lock.guard();
+        // `trace_imports` panics when a boundary has no client-graph file.
+        self.client_graph
+            .insert_empty(abs_path, FileKind::Unknown)?;
+        let idx = self
+            .server_graph
+            .insert_stale(abs_path, bake::Graph::Server)?;
+        self.server_graph.bundled_files.values_mut()[idx.get() as usize]
+            .is_client_component_boundary = true;
+        Ok(())
+    }
+
     /// Return a log to write resolution failures into.
     pub(crate) fn get_log_for_resolution_failures(
         &mut self,

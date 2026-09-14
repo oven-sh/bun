@@ -1144,6 +1144,11 @@ bun_bundler::link_impl_DevServerHandle! {
                 .track_resolution_failure(import_source, specifier, renderer, loader)
                 .map_err(Into::into)
         },
+        insert_stale_client_component_boundary(abs_path) => {
+            (*this)
+                .insert_stale_client_component_boundary(abs_path)
+                .map_err(Into::into)
+        },
         is_file_cached(abs_path, side) => {
             (*this).is_file_cached(abs_path, side).map(|e| {
                 use bun_bundler::bake_types::CacheKind;

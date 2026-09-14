@@ -18,7 +18,7 @@ unsafe extern "C" {
     fn Bun__CModule__create(
         bir: *const u8,
         bir_len: usize,
-        resolve: unsafe extern "C" fn(*const c_char, usize) -> *mut c_void,
+        resolve: unsafe extern "C" fn(*const c_char, usize, bool) -> *mut c_void,
         out: *mut *mut c_void,
         error: *mut bun_core::String,
     ) -> bool;
@@ -40,25 +40,30 @@ pub struct Loaded {
 
 /// Resolves what the C source declares but does not define: whatever the process already has
 /// loaded (libc, libm, Bun's own exported symbols such as `napi_*`).
-unsafe extern "C" fn resolve_extern(name: *const c_char, name_len: usize) -> *mut c_void {
+unsafe extern "C" fn resolve_extern(
+    name: *const c_char,
+    name_len: usize,
+    of_the_process: bool,
+) -> *mut c_void {
     // SAFETY: `name` is NUL-terminated with `name_len` bytes before the NUL.
     let name = unsafe { ZStr::from_raw(name.cast::<u8>(), name_len) };
-    // Bun keeps both lists itself (`at_exit`), on every platform.
-    match name.as_bytes() {
-        b"atexit" => return at_exit::atexit as *mut c_void,
-        b"at_quick_exit" => return at_exit::at_quick_exit as *mut c_void,
-        b"quick_exit" => return at_exit::quick_exit as *mut c_void,
-        _ => {}
-    }
-    #[cfg(not(windows))]
-    if let Some(address) = compiler_runtime::find(name.as_bytes()) {
-        return address;
-    }
-    // What a toolchain links statically into a program is in no library: asked for first, so that
-    // looking for it loads nothing.
-    #[cfg(windows)]
-    if let Some(address) = windows_runtime::find(name.as_bytes()) {
-        return address;
+    // What Bun defines in place of the platform's own is asked for before the libraries the module
+    // names are searched: looking a name up in a library also finds it in what that library
+    // depends on, the C library among them.
+    if !of_the_process {
+        // Bun keeps both lists itself (`at_exit`), on every platform.
+        match name.as_bytes() {
+            b"atexit" => return at_exit::atexit as *mut c_void,
+            b"at_quick_exit" => return at_exit::at_quick_exit as *mut c_void,
+            b"quick_exit" => return at_exit::quick_exit as *mut c_void,
+            _ => {}
+        }
+        // What a toolchain links statically into a program is in no library.
+        #[cfg(not(windows))]
+        let found = compiler_runtime::find(name.as_bytes());
+        #[cfg(windows)]
+        let found = windows_runtime::find(name.as_bytes());
+        return found.unwrap_or(core::ptr::null_mut());
     }
     #[cfg(not(windows))]
     if let Some(address) = bun_sys::dlsym_impl(None, name) {

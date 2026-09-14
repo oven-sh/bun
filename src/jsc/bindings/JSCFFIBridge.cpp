@@ -128,7 +128,9 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
 
 // C compiled by bun_cc (BIR) and lowered to machine code by JSC's B3.
 
-using BunCModuleResolver = void* (*)(const char* name, size_t nameLength);
+// `ofTheProcess` is false when asked for what Bun defines in place of the platform's own (before the libraries the
+// module names are searched), true when asked for whatever else the process has (after them).
+using BunCModuleResolver = void* (*)(const char* name, size_t nameLength, bool ofTheProcess);
 
 // Loads the module: none of its code runs. On success stores it in `out`: a module that has loaded stays loaded
 // for the life of the process (what the C code gives the process, an exit or signal handler, a thread's start
@@ -141,8 +143,8 @@ extern "C" bool Bun__CModule__create(
     JSC::FFI::CModule** out,
     BunString* error)
 {
-    auto module = JSC::FFI::CModule::tryCreate(std::span { bir, birLength }, [&](const CString& name) {
-        return resolve(name.data(), name.length());
+    auto module = JSC::FFI::CModule::tryCreate(std::span { bir, birLength }, [&](const CString& name, JSC::FFI::CModule::ExternScope scope) {
+        return resolve(name.data(), name.length(), scope == JSC::FFI::CModule::ExternScope::Process);
     });
     if (!module) {
         *error = Bun::toStringRef(module.error());

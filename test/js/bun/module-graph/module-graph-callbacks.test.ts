@@ -11,7 +11,7 @@ const ModuleGraph = Bun.ModuleGraph;
 
 const dir = String(
   tempDir("module-graph-callbacks-", {
-    "data.txt": "0123456789".repeat(1000),
+    "data.txt": Buffer.alloc(10000, "0123456789").toString(),
     // A 1x1 PNG.
     "pixel.png": Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -73,6 +73,13 @@ const dir = String(
             observer.observe({ entryTypes: ["mark"] });
             performance.mark("callbacks-test");
           }),
+        writableStreamSignal: seen =>
+          new Promise(resolve => {
+            const stream = new WritableStream({ start(controller) { controller.signal.addEventListener("abort", () => { seen("controller signal abort"); resolve(); }); } });
+            setTimeout(() => stream.abort(), 1);
+          }),
+        // What the host made stays the host's when a graph's script is what sets it off.
+        hostTarget: (seen, env) => { env.hostTarget.dispatchEvent(new Event("go")); env.hostController.abort(); },
         messageChannel: seen => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { seen("message"); port1.close(); resolve(); }; port2.postMessage(1); }),
         broadcastChannel: (seen, env) => new Promise(resolve => { const a = new BroadcastChannel("callbacks-" + env.tag); const b = new BroadcastChannel("callbacks-" + env.tag); a.onmessage = () => { seen("message"); a.close(); b.close(); resolve(); }; b.postMessage(1); }),
         worker: seen => new Promise(resolve => { const worker = new Worker("data:text/javascript,postMessage(1)"); worker.onmessage = () => { seen("message"); }; worker.addEventListener("close", () => { seen("close"); resolve(); }); }),
@@ -185,7 +192,7 @@ const dir = String(
           await Bun.file(data).text(); seen("after text()");
           await Bun.file(data).arrayBuffer(); seen("after arrayBuffer()");
           for await (const chunk of Bun.file(data).stream()) seen("stream chunk");
-          await Bun.write(data + "." + env.tag + ".out", "x".repeat(1 << 20)); seen("after write");
+          await Bun.write(data + "." + env.tag + ".out", Buffer.alloc(1 << 20, "x")); seen("after write");
           await Bun.write(data + "." + env.tag + ".copied", Bun.file(data)); seen("after copy");
         },
         bunImage: async (seen, env) => {
@@ -211,7 +218,7 @@ const dir = String(
         zlib: async seen => {
           await new Promise(resolve => zlib.gzip("hello", () => { seen("gzip callback"); resolve(); }));
           await new Promise(resolve => zlib.brotliCompress("hello", () => { seen("brotli callback"); resolve(); }));
-          await new Promise(resolve => { const gzip = zlib.createGzip(); gzip.on("data", () => seen("stream data")); gzip.on("end", () => { seen("stream end"); resolve(); }); gzip.end("x".repeat(100000)); });
+          await new Promise(resolve => { const gzip = zlib.createGzip(); gzip.on("data", () => seen("stream data")); gzip.on("end", () => { seen("stream end"); resolve(); }); gzip.end(Buffer.alloc(100000, "x")); });
         },
         crypto: async seen => {
           await new Promise(resolve => crypto.pbkdf2("pw", "salt", 1000, 32, "sha256", () => { seen("pbkdf2 callback"); resolve(); }));
@@ -287,7 +294,21 @@ test("every callback of several graphs and the host, all running at once, finds 
         const seen = (event: string) => {
           (found[name + ": " + event] ??= {})[tag] = { context: whose(ModuleGraph.current), store: storage.getStore() };
         };
-        const env = { tag, httpPort: hostHttp.port, bun: bunExe() };
+        const hostTarget = new EventTarget();
+        hostTarget.addEventListener("go", () => {
+          (found["hostTarget: host listener (dispatched from " + tag + ")"] ??= {}).host = {
+            context: whose(ModuleGraph.current),
+            store: "host",
+          };
+        });
+        const hostController = new AbortController();
+        hostController.signal.addEventListener("abort", () => {
+          (found["hostTarget: host abort listener (aborted from " + tag + ")"] ??= {}).host = {
+            context: whose(ModuleGraph.current),
+            store: "host",
+          };
+        });
+        const env = { tag, httpPort: hostHttp.port, bun: bunExe(), hostTarget, hostController };
         const start = () => storage.run(tag, () => app.callbacks[name](seen, env));
         return Promise.resolve()
           .then(() => (graph ? graph.run(start) : start()))
@@ -304,6 +325,8 @@ test("every callback of several graphs and the host, all running at once, finds 
   for (const [label, byRunner] of Object.entries(found)) {
     for (const { tag } of runners) {
       const record = byRunner[tag];
+      // (The host's own listeners, set off from each runner, have the host's record only.)
+      if (!record && label.startsWith("hostTarget: host ")) continue;
       if (!record) missing.push(`${label} in ${tag}`);
       else if (record.context !== tag) wrongContext.push(`${label} in ${tag} ran in ${record.context}`);
       // Where the host's own callback keeps its AsyncLocalStorage store, a graph's does too.
@@ -312,5 +335,7 @@ test("every callback of several graphs and the host, all running at once, finds 
     }
   }
   expect({ wrongContext, wrongStore, missing }).toEqual({ wrongContext: [], wrongStore: [], missing: [] });
-  expect(Object.keys(found).length).toBeGreaterThan(100);
+  // Every entry reported at least one callback.
+  expect(names.filter(name => !Object.keys(found).some(label => label.startsWith(name + ": ")))).toEqual([]);
+  // (One test on purpose, and slow on a debug build: it is everything running at once.)
 }, 30_000);

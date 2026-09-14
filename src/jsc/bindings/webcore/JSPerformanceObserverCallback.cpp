@@ -59,7 +59,6 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
     if (!canInvokeCallback())
         return CallbackResultType::UnableToExecute;
 
-    // The callback is its maker's: it runs in the context it was made in.
     Bun::ModuleGraphContextScope moduleGraphContext(*scriptExecutionContext());
 
     Ref<JSPerformanceObserverCallback> protectedThis(*this);

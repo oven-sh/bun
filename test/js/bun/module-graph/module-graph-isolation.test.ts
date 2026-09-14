@@ -288,7 +288,7 @@ const dir = String(
         const part = Buffer.alloc(5 * 1024 * 1024, state.tag);
         return (async () => {
           const writer = client.file(state.tag).writer({ partSize: part.length, queueSize: 1, retry: 1 });
-          for (let i = 0; i < 6; i++) { writer.write(part); await writer.flush(); state.ticks++; }
+          for (let i = 0; i < 4; i++) { writer.write(part); await writer.flush(); state.ticks++; }
           await writer.end();
           state.settled = "uploaded";
         })().catch(error => { state.settled = String(error?.code ?? error); });
@@ -1450,15 +1450,15 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
   await hostTimerTurns();
   expect({ settled: ofKept.settled, requests: requests[ofKept.tag] }).toEqual({
     settled: "uploaded",
-    requests: ["create", "part 1", "part 2", "part 3", "part 4", "part 5", "part 6", "complete"],
+    requests: ["create", "part 1", "part 2", "part 3", "part 4", "complete"],
   });
   // The part in flight fails (its script hears, as with an aborted fetch); no further part and no
   // completion is sent. The upload's own rollback (so the store keeps no orphaned parts) may be.
   const after = requests[ofDisposed.tag].slice(sentByDispose);
   expect({
     settled: ofDisposed.settled,
-    partsAfter: after.filter(request => request.startsWith("part")).length <= 1,
+    partsAfter: Math.max(1, after.filter(request => request.startsWith("part")).length),
     completed: requests[ofDisposed.tag].includes("complete"),
     unexpected: after.filter(request => !request.startsWith("part") && request !== "abort"),
-  }).toEqual({ settled: "Aborted", partsAfter: true, completed: false, unexpected: [] });
-}, 30_000);
+  }).toEqual({ settled: "Aborted", partsAfter: 1, completed: false, unexpected: [] });
+});

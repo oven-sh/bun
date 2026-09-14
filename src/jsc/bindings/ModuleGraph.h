@@ -157,8 +157,8 @@ class ModuleGraphContextScope {
 
 public:
     ModuleGraphContextScope(Zig::GlobalObject*, JSModuleGraph*);
-    // The graph `context` was made for, if any: an event dispatched to something the graph's
-    // script made runs its listeners in the graph's context.
+    // Listeners of something a graph's script made run in the graph's context; of something the
+    // realm's own script made, in the realm's, whoever dispatches.
     explicit ModuleGraphContextScope(WebCore::ScriptExecutionContext&);
     ~ModuleGraphContextScope();
 

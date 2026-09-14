@@ -56,7 +56,6 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSAbortAlgorithm::hand
     if (!canInvokeCallback())
         return CallbackResultType::UnableToExecute;
 
-    // The callback is its maker's: it runs in the context it was made in.
     Bun::ModuleGraphContextScope moduleGraphContext(*scriptExecutionContext());
 
     Ref<JSAbortAlgorithm> protectedThis(*this);

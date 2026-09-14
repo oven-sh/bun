@@ -356,18 +356,21 @@ extern "C" void* Bun__currentGraphContext(JSGlobalObject* globalObject)
     return defaultGlobalObject(globalObject)->currentScriptExecutionContext()->bunContext();
 }
 
+// `graph` null: a frame that leaves the graph's context the frames below are in, keeping their
+// AsyncLocalStorage stores.
 static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSIsolatedModuleGraph* graph, JSValue previous)
 {
     VM& vm = globalObject->vm();
     auto& names = WebCore::builtinNames(vm);
     JSObject* frame = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    frame->putDirect(vm, names.storagePublicName(), graph);
+    // No AsyncLocalStorage is ever this frame's storage.
+    frame->putDirect(vm, names.storagePublicName(), graph ? JSValue(graph) : jsNull());
     frame->putDirect(vm, vm.propertyNames->value, jsUndefined());
     frame->putDirect(vm, names.prevPublicName(), previous);
     // What disable()d AsyncLocalStorages the frame below masks, frames above it mask too.
     JSValue masked = previous.isObject() ? asObject(previous)->getDirect(vm, names.maskedPublicName()) : JSValue();
     frame->putDirect(vm, names.maskedPublicName(), masked ? masked : jsUndefined());
-    frame->putDirect(vm, names.graphPublicName(), graph);
+    frame->putDirect(vm, names.graphPublicName(), graph ? JSValue(graph) : jsUndefined());
     return frame;
 }
 
@@ -416,9 +419,30 @@ ModuleGraphContextScope::ModuleGraphContextScope(Zig::GlobalObject* globalObject
         m_globalObject = globalObject;
 }
 
-ModuleGraphContextScope::ModuleGraphContextScope(WebCore::ScriptExecutionContext& context)
-    : ModuleGraphContextScope(uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject()), context.moduleGraph() ? uncheckedDowncast<JSModuleGraph>(context.moduleGraph()) : nullptr)
+// The realm's own context: out of whatever graph's context is current (a completion of the host's
+// run from an event-loop tick nested under a graph's script, an event the graph's script dispatches
+// to something of the host's). Empty: nothing to do.
+static JSValue enterRootContext(Zig::GlobalObject* globalObject)
 {
+    if (!currentIsolatedModuleGraph(globalObject))
+        return {};
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue previous = asyncContextData->getInternalField(0);
+    JSValue frame = createModuleGraphFrame(globalObject, nullptr, previous);
+    asyncContextData->putInternalField(globalObject->vm(), 0, frame);
+    noteEnteredFromEventLoop(globalObject, frame);
+    return previous;
+}
+
+ModuleGraphContextScope::ModuleGraphContextScope(WebCore::ScriptExecutionContext& context)
+{
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
+    if (JSObject* graph = context.moduleGraph())
+        m_previous = enterModuleGraphContext(globalObject, graph);
+    else if (globalObject && globalObject->m_moduleGraphs && globalObject->m_moduleGraphs->hasIsolatedGraphs)
+        m_previous = enterRootContext(globalObject);
+    if (m_previous)
+        m_globalObject = globalObject;
 }
 
 static void leaveModuleGraphContext(Zig::GlobalObject* globalObject, JSValue previous)
@@ -445,18 +469,9 @@ extern "C" EncodedJSValue Bun__ModuleGraph__enterContext(WebCore::ScriptExecutio
     return JSValue::encode(enterModuleGraphContext(uncheckedDowncast<Zig::GlobalObject>(context->jsGlobalObject()), graph));
 }
 
-// The realm's own context: out of whatever graph's context is current (a completion of the
-// host's run from an event-loop tick nested under a graph's script). Empty: nothing to do.
 extern "C" EncodedJSValue Bun__ModuleGraph__enterRootContext(JSGlobalObject* lexicalGlobalObject)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (!currentIsolatedModuleGraph(globalObject))
-        return JSValue::encode(JSValue());
-    auto* asyncContextData = globalObject->m_asyncContextData.get();
-    JSValue previous = asyncContextData->getInternalField(0);
-    asyncContextData->putInternalField(globalObject->vm(), 0, jsUndefined());
-    noteEnteredFromEventLoop(globalObject, jsUndefined());
-    return JSValue::encode(previous);
+    return JSValue::encode(enterRootContext(defaultGlobalObject(lexicalGlobalObject)));
 }
 
 extern "C" void Bun__ModuleGraph__leaveContext(JSGlobalObject* lexicalGlobalObject, EncodedJSValue previous)

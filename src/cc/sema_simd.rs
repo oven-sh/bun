@@ -1300,7 +1300,8 @@ impl Sema {
         self.after(vec![order_expr], e, loc)
     }
 
-    /// `__atomic_thread_fence(order)`; a signal fence orders nothing the hardware sees.
+    /// `__atomic_thread_fence(order)`. A signal fence orders nothing the hardware sees, but holds
+    /// the compiler as the other does (C11 7.17.4.2): what `asm volatile("" ::: "memory")` is.
     pub(crate) fn atomic_fence(
         &self,
         name: &str,
@@ -1315,6 +1316,12 @@ impl Sema {
         let order = self.memory_order(&order_expr, OrderUse::ReadModifyWrite);
         let e = if hardware && order != bir::order::RELAXED {
             self.mk_atomic(AtomicExpr::Fence(order), Type::Void, loc)?
+        } else if order != bir::order::RELAXED {
+            self.mk(
+                ExprKind::Intrinsic(Intrinsic::Barrier, Vec::new()),
+                Type::Void,
+                loc,
+            )?
         } else {
             let zero = self.int_lit(0, Type::Int, loc)?;
             self.void_of(zero, loc)?

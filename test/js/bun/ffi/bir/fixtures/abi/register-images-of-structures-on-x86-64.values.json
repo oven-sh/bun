@@ -34,6 +34,10 @@
 ["AS(long (*)(LD_AND_DOUBLES, long), first_integer)(and_doubles, 42) == 42", 1],
 ["AS(long (*)(LD_THEN_INT, long), first_integer)(then_int, 42) == 42", 1],
 ["AS(long (*)(LD_ALONE, long), first_integer)(alone, 42) == 42", 1],
+["AS(long (*)(ODD_ARRAY_OF_NONE, long), first_integer)(odd, 42) == 42", 1],
+["AS(long (*)(ODD_LONGS_OF_NONE, long), first_integer)(odd_longs, 42) == 42", 1],
+["AS(long (*)(EVEN_ARRAY_OF_NONE, long), low_byte_and_second_integer)(even, 42) == 4 * 1000 + 42", 1],
+["AS(long (*)(BYTES_OF_NONE, long), low_byte_and_second_integer)(bytes_of_none, 42) == 4 * 1000 + 42", 1],
 ["sum_variadic(2, s, 5L, (AL16){ 3 }, 4L) == (7 * 10 + 5) * 100 + 3 * 10 + 4", 1],
 ["variadic_scalars(4, s, 5L, (AL16){ 3 }, 4L) == 7534", 1],
 ["AS(long (*)(int, ...), sum_variadic)(2, 7L, 5L, 3L, 4L) == 7534", 1]

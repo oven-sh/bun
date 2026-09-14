@@ -195,7 +195,11 @@ fn compile_unit_with(
     };
     unit.module.libraries.clone_from(&files.libraries);
     let module = &unit.module;
-    if let Some(text) = link::past_the_loader(module.data.size, module.tls.size) {
+    if let Some(text) = link::past_the_loader(
+        module.data.size,
+        module.tls.size,
+        module.data.relocs.len().max(module.tls.relocs.len()),
+    ) {
         let msg = diagnostics::message_in_file(Kind::Err, filename, text);
         diagnostics::add(log, msg);
         return None;

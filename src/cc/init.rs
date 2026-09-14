@@ -78,6 +78,10 @@ impl Sema {
             let Designator::Range(first, last, loc) = entry.designators[at] else {
                 continue;
             };
+            // (No object is as many arrays and structures deep as this path is long.)
+            if entry.designators.len() > MAX_DESIGNATORS {
+                return err(loc, "initializer is nested too deeply");
+            }
             // (One level for each range of a path.)
             if !self.tcx.stack_check.is_safe_to_recurse() {
                 return err(loc, "initializer is nested too deeply");
@@ -134,6 +138,10 @@ pub(crate) struct InitEntry {
     /// holds its value, so that it is evaluated once.
     pub(crate) once: Option<LocalId>,
 }
+
+/// The longest path of designators that can name anything: one for each array and structure an
+/// object can be inside (256 derivations and `MAX_STRUCT_NESTING`).
+const MAX_DESIGNATORS: usize = 256 + crate::types::MAX_STRUCT_NESTING as usize;
 
 /// Objects larger than this are rejected; it bounds what a hostile designator such as
 /// `[0x7fffffff] = 1` can make the compiler allocate.

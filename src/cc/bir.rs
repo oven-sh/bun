@@ -59,6 +59,12 @@ pub(crate) const MAX_FRAME_SIZE: u64 = 1 << 30;
 /// this much) and of the thread-local one:
 pub(crate) const MAX_SEGMENT_SIZE: u64 = 1 << 30;
 pub(crate) const MAX_TLS_SIZE: u64 = 1 << 28;
+/// Every count in a module: of signatures, results, parameters, externs, relocations, functions,
+/// locals, slots, blocks, the instructions of a block, the arguments of a call, the cases of a
+/// switch, exports, libraries, and the bytes of a name.
+pub(crate) const MAX_COUNT: usize = 1 << 24;
+/// The arguments of a function JavaScript can call.
+pub(crate) const MAX_EXPORT_ARGUMENTS: usize = 32;
 /// Or'ed into an extern's kind byte: `__attribute__((weak))`. Null when nothing defines it.
 pub(crate) const WEAK_EXTERN: u8 = 0x80;
 /// Function declaration flags that steer the backend's inliner.
@@ -1263,7 +1269,7 @@ pub(crate) struct Def {
     pub(crate) count: u32,
 }
 
-/// Numbers the values of `func` and checks every rule of the BIR spec for it.
+/// Numbers the values of `func` and checks it as the loader's decoder does.
 pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, String> {
     let func = &module.funcs[func_index];
     let fail = |block: usize, inst: usize, msg: String| -> String {
@@ -1275,6 +1281,22 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
     let Some(sig) = module.sigs.get(func.sig as usize) else {
         return Err(format!("function '{}': sig index out of range", func.name));
     };
+    if func.inlining & !(INLINE_ALWAYS | INLINE_NEVER | INLINE_HINT) != 0 {
+        return Err(format!("function '{}': unknown flags", func.name));
+    }
+    for (what, count) in [
+        ("locals", func.locals.len()),
+        ("slots", func.slots.len()),
+        ("blocks", func.blocks.len()),
+        (
+            "instructions in one block",
+            func.blocks.iter().map(Vec::len).max().unwrap_or(0),
+        ),
+    ] {
+        if count > MAX_COUNT {
+            return Err(format!("function '{}': too many {what}", func.name));
+        }
+    }
     for (i, &l) in func.locals.iter().enumerate() {
         if l == Ty::Void {
             return Err(format!(
@@ -1303,33 +1325,6 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
 
     let nparams = sig.params.len();
     let mut value_types: Vec<Ty> = sig.params.iter().map(|p| p.value_ty()).collect();
-    for &p in &sig.params {
-        match p {
-            Param::Value(Ty::Void) => {
-                return Err(format!("function '{}': void parameter", func.name));
-            }
-            Param::ByValStack { size, align, .. }
-                if !matches!(align, 8 | MAX_BY_VALUE_ALIGN)
-                    || size == 0
-                    || size > MAX_BY_VALUE_SIZE =>
-            {
-                return Err(format!(
-                    "function '{}': ByValStack of {size} bytes aligned to {align}",
-                    func.name
-                ));
-            }
-            _ => {}
-        }
-    }
-    if by_value_size(&sig.params) > MAX_FRAME_SIZE {
-        return Err(format!(
-            "function '{}': the by-value parameters are too large",
-            func.name
-        ));
-    }
-    if sig.rets.len() > 4 || sig.rets.contains(&Ty::Void) {
-        return Err(format!("function '{}': invalid results", func.name));
-    }
     let mut defs: Vec<Vec<Def>> = Vec::with_capacity(func.blocks.len());
     let nblocks = func.blocks.len() as u32;
 
@@ -1566,6 +1561,7 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                         || asm.code.len() > 4096
                         || asm.inputs.len() > 16
                         || asm.outputs.len() > 16
+                        || asm.clobbers.len() > 64
                     {
                         return Err(fail(bi, ii, "InlineAsm out of bounds".to_string()));
                     }
@@ -1606,6 +1602,34 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                             bi,
                             ii,
                             "InlineAsm clobbers a wrong register".to_string(),
+                        ));
+                    }
+                    fn set(registers: impl Iterator<Item = u8>) -> Option<u32> {
+                        let mut seen = 0u32;
+                        for r in registers {
+                            if seen & (1 << r) != 0 {
+                                return None;
+                            }
+                            seen |= 1 << r;
+                        }
+                        Some(seen)
+                    }
+                    let (Some(inputs), Some(outputs)) = (
+                        set(asm.inputs.iter().map(|&(_, r)| r)),
+                        set(asm.outputs.iter().map(|&(_, r)| r)),
+                    ) else {
+                        return Err(fail(
+                            bi,
+                            ii,
+                            "two InlineAsm operands of a kind in one register".to_string(),
+                        ));
+                    };
+                    let clobbered = asm.clobbers.iter().fold(0u32, |seen, &r| seen | (1 << r));
+                    if clobbered & (inputs | outputs) != 0 {
+                        return Err(fail(
+                            bi,
+                            ii,
+                            "an InlineAsm operand is in a clobbered register".to_string(),
                         ));
                     }
                     call_results = Some(asm.outputs.iter().map(|(ty, _)| *ty).collect());
@@ -1684,6 +1708,13 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                 }
                 Inst::Bin(op, a, b) => {
                     let ta = use_value(*a)?;
+                    if ta == Ty::V128 {
+                        return Err(fail(
+                            bi,
+                            ii,
+                            format!("{} is a scalar operation, on a vector", op.name()),
+                        ));
+                    }
                     if op.int_only() && !ta.is_int() {
                         return Err(fail(
                             bi,
@@ -1707,7 +1738,17 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                     }
                 }
                 Inst::Un(op, a) => match op {
-                    UnOp::Neg => Some(use_value(*a)?),
+                    UnOp::Neg => {
+                        let ta = use_value(*a)?;
+                        if ta == Ty::V128 {
+                            return Err(fail(
+                                bi,
+                                ii,
+                                "Neg is a scalar operation, on a vector".to_string(),
+                            ));
+                        }
+                        Some(ta)
+                    }
                     UnOp::Clz | UnOp::Ctz | UnOp::Popcnt | UnOp::Bswap => {
                         let ta = use_value(*a)?;
                         if !ta.is_int() {
@@ -1971,7 +2012,12 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
 /// What the loader counts a function's stack slots as (`MAX_FRAME_SIZE`).
 pub(crate) fn frame_size(slots: &[Slot]) -> u64 {
     slots.iter().fold(0u64, |total, slot| {
-        total.saturating_add(slot.size.next_multiple_of(16).saturating_add(slot.align))
+        total.saturating_add(
+            slot.size
+                .max(1)
+                .next_multiple_of(16)
+                .saturating_add(slot.align),
+        )
     })
 }
 
@@ -1983,8 +2029,111 @@ pub(crate) fn by_value_size(params: &[Param]) -> u64 {
     })
 }
 
-/// Checks the module-level tables, then every function.
+/// What the loader asks of a signature, whoever uses it (a function, an extern, an indirect call).
+fn check_sig(module: &Module, index: usize, sig: &Sig) -> Result<(), String> {
+    let windows = module.os == 2;
+    if sig.rets.len() > 4 || sig.rets.contains(&Ty::Void) {
+        return Err(format!("sig {index}: invalid results"));
+    }
+    // As many results as the target returns in registers: rax:rdx and xmm0:xmm1, x0:x1 and v0 to
+    // v3, one on Win64.
+    let integers = sig
+        .rets
+        .iter()
+        .filter(|ty| matches!(ty, Ty::I32 | Ty::I64))
+        .count();
+    let floats = sig.rets.len() - integers;
+    let most_floats = if module.arch == 1 { 4 } else { 2 };
+    if integers > 2 || floats > most_floats || (windows && sig.rets.len() > 1) {
+        return Err(format!(
+            "sig {index}: more results than the target has result registers"
+        ));
+    }
+    if sig.params.len() > MAX_COUNT {
+        return Err(format!("sig {index}: too many parameters"));
+    }
+    for (i, &p) in sig.params.iter().enumerate() {
+        match p {
+            Param::Value(Ty::Void) => return Err(format!("sig {index}: void parameter")),
+            Param::Value(Ty::V128) if windows => {
+                return Err(format!(
+                    "sig {index}: a vector cannot be passed by value on this target"
+                ));
+            }
+            Param::ByValStack { .. } if windows => {
+                return Err(format!(
+                    "sig {index}: an aggregate cannot be passed in the stack arguments on this target"
+                ));
+            }
+            Param::ByValStack { size, align, .. }
+                if !matches!(align, 8 | MAX_BY_VALUE_ALIGN)
+                    || size == 0
+                    || size > MAX_BY_VALUE_SIZE =>
+            {
+                return Err(format!(
+                    "sig {index}: ByValStack of {size} bytes aligned to {align}"
+                ));
+            }
+            Param::IndirectResult if i != 0 => {
+                return Err(format!(
+                    "sig {index}: the indirect result must be the first parameter"
+                ));
+            }
+            _ => {}
+        }
+    }
+    if by_value_size(&sig.params) > MAX_FRAME_SIZE {
+        return Err(format!(
+            "sig {index}: the by-value parameters are too large"
+        ));
+    }
+    Ok(())
+}
+
+/// Whether JavaScript can call a function of this signature: the loader's `isScalar`.
+fn is_scalar(sig: &Sig) -> bool {
+    !sig.variadic
+        && sig.rets.len() <= 1
+        && sig.rets.first() != Some(&Ty::V128)
+        && sig
+            .params
+            .iter()
+            .all(|p| matches!(p, Param::Value(ty) if *ty != Ty::V128))
+}
+
+/// Checks the module-level tables, then every function: what the loader's decoder checks, so that
+/// a module it would refuse is an internal error here and never a file.
 pub(crate) fn validate(module: &Module) -> Result<(), String> {
+    for (what, count) in [
+        ("signatures", module.sigs.len()),
+        ("externs", module.externs.len()),
+        ("data relocations", module.data.relocs.len()),
+        ("thread-local relocations", module.tls.relocs.len()),
+        ("functions", module.funcs.len()),
+        ("exports", module.exports.len()),
+        ("libraries", module.libraries.len()),
+        ("constructors", module.constructors.len()),
+        ("destructors", module.destructors.len()),
+    ] {
+        if count > MAX_COUNT {
+            return Err(format!("too many {what}"));
+        }
+    }
+    let names = module
+        .externs
+        .iter()
+        .map(|e| &e.name)
+        .chain(module.funcs.iter().map(|f| &f.name))
+        .chain(module.exports.iter().map(|e| &e.name))
+        .chain(&module.libraries);
+    for name in names {
+        if name.len() > MAX_COUNT {
+            return Err("a name is too long".to_string());
+        }
+    }
+    for (index, sig) in module.sigs.iter().enumerate() {
+        check_sig(module, index, sig)?;
+    }
     for (i, e) in module.externs.iter().enumerate() {
         match e.kind {
             ExternKind::Function if e.sig as usize >= module.sigs.len() => {
@@ -2048,7 +2197,8 @@ pub(crate) fn validate(module: &Module) -> Result<(), String> {
             }
         }
     }
-    if tls.size > 0 && (tls.align == 0 || !tls.align.is_power_of_two() || tls.align > MAX_ALIGN) {
+    // (What is written for no alignment is 1.)
+    if !tls.align.max(1).is_power_of_two() || tls.align > MAX_ALIGN {
         return Err(format!(
             "tls alignment is not a power of two up to {MAX_ALIGN}"
         ));
@@ -2079,7 +2229,16 @@ pub(crate) fn validate(module: &Module) -> Result<(), String> {
                 e.name
             ));
         }
-        if e.ret > 13 || e.args.iter().any(|&a| a > 12) {
+        if !is_scalar(sig) || e.args.len() > MAX_EXPORT_ARGUMENTS {
+            return Err(format!(
+                "export '{}': not a signature JavaScript can call",
+                e.name
+            ));
+        }
+        // (The loader's `FFI::Type`: 22 of them, of which a result is not 18, 20 or 21 and an
+        // argument is not 13 or 18.)
+        let result_ok = e.ret < 22 && !matches!(e.ret, 18 | 20 | 21);
+        if !result_ok || e.args.iter().any(|&a| a >= 22 || matches!(a, 13 | 18)) {
             return Err(format!("export '{}': invalid FFI type", e.name));
         }
     }

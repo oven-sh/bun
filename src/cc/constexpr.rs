@@ -215,7 +215,11 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
         if is_wide(e) {
             break;
         }
-        e = if truthy(eval(c, tcx)?) { a } else { b };
+        e = if truthy(eval(c, tcx)?, tcx, c.loc)? {
+            a
+        } else {
+            b
+        };
     }
     // `a + b + c + ...` is `((a + b) + c) + ...`: down the left operands by a loop, and up again
     // with the values.
@@ -333,10 +337,13 @@ fn eval_one(e: &Expr, tcx: &TypeCtx, left: Option<Const>) -> Res<Const> {
                         not_constant(e.loc)
                     }
                 }
-                Const::Addr { .. } => {
+                Const::Addr { base, .. } => {
                     // An address survives casts between pointers and pointer-sized integers,
                     // and is not null.
                     if matches!(ty, Type::Bool) {
+                        if may_be_null(base, tcx) {
+                            return not_constant(e.loc);
+                        }
                         Ok(Const::Int(1))
                     } else if ty.is_ptr() || (ty.is_integer() && tcx.size_of(ty) == Some(8)) {
                         Ok(v)
@@ -356,21 +363,21 @@ fn eval_one(e: &Expr, tcx: &TypeCtx, left: Option<Const>) -> Res<Const> {
             Const::Int(v) => Ok(Const::Int(wrap(!v, ty, tcx))),
             _ => not_constant(e.loc),
         },
-        ExprKind::LogNot(a) => Ok(Const::Int(i64::from(!truthy(eval(a, tcx)?)))),
+        ExprKind::LogNot(a) => Ok(Const::Int(i64::from(!truthy(eval(a, tcx)?, tcx, a.loc)?))),
         ExprKind::LogAnd(a, b) => {
-            if !truthy(left.map_or_else(|| eval(a, tcx), Ok)?) {
+            if !truthy(left.map_or_else(|| eval(a, tcx), Ok)?, tcx, a.loc)? {
                 return Ok(Const::Int(0));
             }
-            Ok(Const::Int(i64::from(truthy(eval(b, tcx)?))))
+            Ok(Const::Int(i64::from(truthy(eval(b, tcx)?, tcx, b.loc)?)))
         }
         ExprKind::LogOr(a, b) => {
-            if truthy(left.map_or_else(|| eval(a, tcx), Ok)?) {
+            if truthy(left.map_or_else(|| eval(a, tcx), Ok)?, tcx, a.loc)? {
                 return Ok(Const::Int(1));
             }
-            Ok(Const::Int(i64::from(truthy(eval(b, tcx)?))))
+            Ok(Const::Int(i64::from(truthy(eval(b, tcx)?, tcx, b.loc)?)))
         }
         ExprKind::Cond(c, a, b) => {
-            if truthy(eval(c, tcx)?) {
+            if truthy(eval(c, tcx)?, tcx, c.loc)? {
                 eval(a, tcx)
             } else {
                 eval(b, tcx)
@@ -435,9 +442,13 @@ fn eval_one(e: &Expr, tcx: &TypeCtx, left: Option<Const>) -> Res<Const> {
                 }
                 // The address of an object or a function is not the null pointer, and two places
                 // in one object compare as their offsets do.
-                (Const::Addr { .. }, Const::Int(0)) | (Const::Int(0), Const::Addr { .. })
+                (Const::Addr { base, .. }, Const::Int(0))
+                | (Const::Int(0), Const::Addr { base, .. })
                     if matches!(op, BinOp::Eq | BinOp::Ne) =>
                 {
+                    if may_be_null(base, tcx) {
+                        return not_constant(e.loc);
+                    }
                     Ok(Const::Int(i64::from(*op == BinOp::Ne)))
                 }
                 (
@@ -787,12 +798,28 @@ pub(crate) fn eval_complex(e: &Expr, tcx: &TypeCtx) -> Option<Complex> {
     })
 }
 
-fn truthy(c: Const) -> bool {
-    match c {
+/// Whether `c` is other than zero, which for the address of a weak symbol that nothing defines
+/// so far is not known before the program runs.
+fn truthy(c: Const, tcx: &TypeCtx, loc: Loc) -> Res<bool> {
+    Ok(match c {
         Const::Int(v) => v != 0,
         Const::Float(v) => v != 0.0,
         Const::LongDouble(v) => !v.is_zero(),
-        Const::Addr { .. } => true,
+        Const::Addr { base, .. } => {
+            if may_be_null(base, tcx) {
+                return not_constant(loc);
+            }
+            true
+        }
+    })
+}
+
+fn may_be_null(base: AddrBase, tcx: &TypeCtx) -> bool {
+    let nullable = tcx.weak_undefined.borrow();
+    match base {
+        AddrBase::Global(id) => nullable.0.contains(&id),
+        AddrBase::Func(id) => nullable.1.contains(&id),
+        AddrBase::Str(_) => false,
     }
 }
 

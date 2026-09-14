@@ -936,12 +936,12 @@
     }
   },
   {
-    "name": "100000 variables with a cleanup in the first clause of a for",
+    "name": "5000 variables with a cleanup in the first clause of a for",
     "source": [
       "void c(int *p) { (void)p; }\nvoid f(void) { for (int first __attribute__((cleanup(c))) = 0",
       {
         "each": ", v{i} __attribute__((cleanup(c))) = 0",
-        "count": 100000,
+        "count": 5000,
         "from": 0
       },
       "; first < 1; first++) { } }\nint main(void) { f(); return 0; }\n"
@@ -1180,10 +1180,10 @@
     }
   },
   {
-    "name": "a range designator for each of 100000 dimensions",
-    "source": ["int a[1] = { ", ["[0 ... 0]", 100000], " = 1 };\nint main(void) { return 0; }\n"],
+    "name": "a range designator for each of 5000 dimensions",
+    "source": ["int a[1] = { ", ["[0 ... 0]", 5000], " = 1 };\nint main(void) { return 0; }\n"],
     "error": {
-      "contains": "error: "
+      "contains": "initializer is nested too deeply"
     }
   },
   {

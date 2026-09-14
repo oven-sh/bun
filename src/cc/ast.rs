@@ -710,6 +710,9 @@ pub(crate) struct Function {
     pub(crate) destructor: Option<u32>,
     /// `__attribute__((weak))`, and where.
     pub(crate) weak: Option<Loc>,
+    /// `visibility("hidden")` or `("internal")`: for the program's other files and not for whoever
+    /// loads the program, which is JavaScript.
+    pub(crate) hidden: bool,
     /// `bir::INLINE_*`: `always_inline`, `noinline`, and whether some declaration says `inline`.
     pub(crate) inlining: u8,
     pub(crate) body: Option<FuncBody>,

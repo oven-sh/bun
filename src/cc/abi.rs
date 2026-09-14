@@ -126,6 +126,17 @@ fn flatten(tcx: &TypeCtx, ty: &Type, base: u64, out: &mut Vec<Field>) -> Result<
         }
         Type::Array(elem, len) => {
             let esize = tcx.size_of(elem).unwrap_or(0);
+            // An array of no elements passes nothing, but where it stands still counts: at an
+            // offset its elements could not be at (in a packed structure) it makes the whole a
+            // MEMORY one for System V, as it does for GCC and Clang.
+            if *len == Some(0) {
+                out.push(Field {
+                    offset: base,
+                    size: 0,
+                    kind: Leaf::Int,
+                    align: tcx.align_of(elem).unwrap_or(1),
+                });
+            }
             for i in 0..len.unwrap_or(0) {
                 flatten(tcx, elem, base + i * esize, out)?;
                 // A long array is memory class anyway; its first elements are enough.
@@ -261,6 +272,7 @@ pub(crate) fn sysv_classify(tcx: &TypeCtx, ty: &Type) -> Result<Option<Vec<Piece
     if size > 16 || fields.iter().any(|f| f.offset % f.align != 0) {
         return Ok(None);
     }
+    fields.retain(|f| f.size != 0);
     #[derive(Clone, Copy, PartialEq)]
     enum Class {
         /// No field reaches into the eightbyte (the tail of an over-aligned structure): it
@@ -364,6 +376,7 @@ pub(crate) fn is_homogeneous_aggregate(tcx: &TypeCtx, ty: &Type) -> bool {
 fn hfa_pieces(tcx: &TypeCtx, ty: &Type) -> Result<Option<Vec<Piece>>, String> {
     let mut fields = Vec::new();
     flatten(tcx, ty, 0, &mut fields)?;
+    fields.retain(|f| f.size != 0);
     // Union members that share an offset count once.
     fields.sort_by_key(|f| f.offset);
     fields.dedup_by(|b, a| a.offset == b.offset && a.kind == b.kind);
@@ -454,6 +467,7 @@ fn is_aggregate(ty: &Type) -> bool {
 fn is_only_long_double(tcx: &TypeCtx, ty: &Type) -> Result<bool, String> {
     let mut fields = Vec::new();
     flatten(tcx, ty, 0, &mut fields)?;
+    fields.retain(|f| f.size != 0);
     Ok(tcx.size_of(ty) == Some(16) && fields.iter().all(|f| f.kind == Leaf::X87))
 }
 
@@ -520,6 +534,8 @@ pub(crate) fn lower_call(
         }
     } else {
         match sysv_classify(tcx, ret)? {
+            // (Nothing but padding: unnamed bit-fields.)
+            Some(pieces) if pieces.is_empty() => RetPass::Void,
             Some(pieces) => RetPass::Pieces(pieces),
             None => RetPass::HiddenPointer,
         }

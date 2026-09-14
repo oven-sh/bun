@@ -37,6 +37,12 @@ typedef union { long double f; long first_half_only; } LD_AND_LONG;
 typedef union { long double f; double halves[2]; } LD_AND_DOUBLES;
 typedef struct { long double f; int after; } LD_THEN_INT;
 typedef struct { long double f; } LD_ALONE;
+// An array of no elements passes nothing, but at an offset its elements could not be at (in a packed structure) it
+// makes the whole a MEMORY one. Where it stands as it should, it changes nothing.
+typedef struct __attribute__((packed, aligned(4))) { short m0; int m1[0]; } ODD_ARRAY_OF_NONE;
+typedef struct __attribute__((packed)) { char tag; long data[0]; } ODD_LONGS_OF_NONE;
+typedef struct { short m0; int m1[0]; } EVEN_ARRAY_OF_NONE;
+typedef struct __attribute__((packed)) { char tag; char data[0]; } BYTES_OF_NONE;
 
 #define NOINLINE __attribute__((noinline))
 // The address of a function with nothing left that says which function: what the other half of a program would hold.
@@ -47,6 +53,7 @@ static NOINLINE long first_integer(long a) { return a; }
 static NOINLINE long second_integer(long a, long b) { (void)a; return b; }
 static NOINLINE long third_integer(long a, long b, long c) { (void)a; (void)b; return c; }
 static NOINLINE long first_two_integers(long a, long b) { return a * 1000 + b; }
+static NOINLINE long low_byte_and_second_integer(long a, long b) { return (a & 0xff) * 1000 + b; }
 static NOINLINE long low_byte_then_integer(long a, long b) { return (a & 0xff) * 1000 + b; }
 static NOINLINE long double_then_integer(double x, long a) { return (long)(x * 4) * 1000 + a; }
 static NOINLINE long float_then_integer(float f, long a) { return (long)(f * 4) * 1000 + a; }
@@ -178,6 +185,14 @@ int main(void) {
   CHECK(AS(long (*)(LD_AND_DOUBLES, long), first_integer)(and_doubles, 42) == 42);
   CHECK(AS(long (*)(LD_THEN_INT, long), first_integer)(then_int, 42) == 42);
   CHECK(AS(long (*)(LD_ALONE, long), first_integer)(alone, 42) == 42);
+  ODD_ARRAY_OF_NONE odd = { 4 };
+  ODD_LONGS_OF_NONE odd_longs = { 4 };
+  EVEN_ARRAY_OF_NONE even = { 4 };
+  BYTES_OF_NONE bytes_of_none = { 4 };
+  CHECK(AS(long (*)(ODD_ARRAY_OF_NONE, long), first_integer)(odd, 42) == 42);
+  CHECK(AS(long (*)(ODD_LONGS_OF_NONE, long), first_integer)(odd_longs, 42) == 42);
+  CHECK(AS(long (*)(EVEN_ARRAY_OF_NONE, long), low_byte_and_second_integer)(even, 42) == 4 * 1000 + 42);
+  CHECK(AS(long (*)(BYTES_OF_NONE, long), low_byte_and_second_integer)(bytes_of_none, 42) == 4 * 1000 + 42);
   // Through an ellipsis the rules are the same, in both directions.
   CHECK(sum_variadic(2, s, 5L, (AL16){ 3 }, 4L) == (7 * 10 + 5) * 100 + 3 * 10 + 4);
   CHECK(variadic_scalars(4, s, 5L, (AL16){ 3 }, 4L) == 7534);

@@ -4167,5 +4167,121 @@
     "line": 1,
     "column": 17,
     "message": "unterminated string literal"
+  },
+  {
+    "about": "6.6p7: whether the address of a weak symbol that nothing defines is null is not a constant",
+    "source": "extern int uw __attribute__((weak));\nstatic _Bool b = &uw;\nint main(void) { return b; }",
+    "line": 2,
+    "column": 18,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.6p7: whether the address of a weak symbol that nothing defines is null is not a constant",
+    "source": "extern int uw __attribute__((weak));\nstatic int i = &uw != 0;\nint main(void) { return i; }",
+    "line": 2,
+    "column": 20,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.6p7: whether the address of a weak symbol that nothing defines is null is not a constant",
+    "source": "extern int uwf(void) __attribute__((weak));\nstatic int i = uwf ? 1 : 2;\nint main(void) { return i; }",
+    "line": 2,
+    "column": 20,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.6p7: whether the address of a weak symbol that nothing defines is null is not a constant",
+    "source": "extern int uwf(void) __attribute__((weak));\nstatic int i = !uwf;\nint main(void) { return i; }",
+    "line": 2,
+    "column": 16,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.6p7: whether the address of a weak symbol that nothing defines is null is not a constant",
+    "source": "extern int uw __attribute__((weak));\n_Static_assert(&uw != 0, \"\");\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 20,
+    "message": "expression is not a compile-time constant"
+  },
+  {
+    "about": "6.6p7: whether the address of a weak symbol that nothing defines is null is not a constant",
+    "source": "extern int uw __attribute__((weak));\nstatic int i = &uw && 1;\nint main(void) { return i; }",
+    "line": 2,
+    "column": 20,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "inline assembly: a flag as an output is said not to be there",
+    "source": "int f(unsigned a, unsigned b) { int z; __asm__(\"cmpl %2, %1\" : \"=@ccz\"(z) : \"r\"(a), \"r\"(b)); return z; }",
+    "line": 1,
+    "column": 40,
+    "message": "inline assembly: the constraint \"=@ccz\" asks for a flag as an output, which is not supported (there is no __GCC_ASM_FLAG_OUTPUTS__)",
+    "requires": "x64"
+  },
+  {
+    "about": "6.3.1.8: the common type of a complex number and an x87 long double is long double _Complex",
+    "source": "double _Complex f(double _Complex z) { return z * 2.0L; }",
+    "line": 1,
+    "column": 49,
+    "message": "computing with values of type 'long double _Complex' is not supported yet",
+    "requires": "x87"
+  },
+  {
+    "about": "6.3.1.8: the common type of a complex number and an x87 long double is long double _Complex",
+    "source": "double _Complex f(double _Complex z, long double ld) { return ld / z; }",
+    "line": 1,
+    "column": 66,
+    "message": "computing with values of type 'long double _Complex' is not supported yet",
+    "requires": "x87"
+  },
+  {
+    "about": "6.3.1.8: the common type of a complex number and an x87 long double is long double _Complex",
+    "source": "void f(double _Complex *z, long double ld) { *z *= ld; }",
+    "line": 1,
+    "column": 49,
+    "message": "computing with values of type 'long double _Complex' is not supported yet",
+    "requires": "x87"
+  },
+  {
+    "about": "attributes: visibility is one of four",
+    "source": "__attribute__((visibility(\"secret\"))) int f(void) { return 0; }",
+    "line": 1,
+    "column": 26,
+    "message": "visibility is \"default\", \"hidden\", \"protected\" or \"internal\""
+  },
+  {
+    "about": "6.9.2: a tentative definition of a structure nothing completes",
+    "source": "struct S never;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 10,
+    "message": "variable 'never' has incomplete type 'struct S'"
+  },
+  {
+    "about": "6.9.2: a static tentative definition needs a complete type where it stands",
+    "source": "static struct S early;\nstruct S { int a; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "variable 'early' has incomplete type 'struct S'"
+  },
+  {
+    "about": "6.9.2: an array of an incomplete structure",
+    "source": "struct S several[2];\nstruct S { int a; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "array has incomplete element type 'struct S'"
+  },
+  {
+    "about": "7.19: offsetof with an index that is not a constant is not a constant",
+    "source": "struct S { int n; char tail[]; };\nint i;\nstatic int s = __builtin_offsetof(struct S, tail[i]);\nint main(void) { return s; }",
+    "line": 3,
+    "column": 16,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "7.19: offsetof of a bit-field",
+    "source": "struct S { int n : 3; };\nint f(void) { return __builtin_offsetof(struct S, n); }",
+    "line": 2,
+    "column": 22,
+    "message": "cannot take the address of a bit-field"
   }
 ]

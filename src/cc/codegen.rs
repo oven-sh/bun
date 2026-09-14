@@ -2166,15 +2166,28 @@ impl<'a> FnGen<'a, '_> {
                         object
                     }
                     CompoundOp::Arith(bop) if op_ty.is_complex() => {
-                        let widened = self.convert(old, &lhs.ty, op_ty, loc)?;
+                        // (A real left operand stays real for the operation, as a real right one
+                        // does; what is stored back is the real part.)
+                        let left_is_complex = lhs.ty.unatomic().is_complex();
+                        let operand_ty = match op_ty.complex_part() {
+                            Some(part) if !left_is_complex => part,
+                            _ => op_ty.clone(),
+                        };
+                        let widened = self.convert(old, &lhs.ty, &operand_ty, loc)?;
                         let result = self.gen_complex_mixed(
                             *bop,
                             op_ty,
-                            (widened, true),
+                            (widened, left_is_complex),
                             (vr, rhs.ty.is_complex()),
                             loc,
                         )?;
-                        self.convert(result, op_ty, &lhs.ty, loc)?
+                        match op_ty.complex_part() {
+                            Some(part) if !left_is_complex => {
+                                let real = self.load_pair(result, op_ty).low;
+                                self.convert(real, &part, &lhs.ty, loc)?
+                            }
+                            _ => self.convert(result, op_ty, &lhs.ty, loc)?,
+                        }
                     }
                     CompoundOp::Arith(bop) if op_ty.is_pair() => {
                         let widened = self.convert(old, &lhs.ty, op_ty, loc)?;
@@ -3386,10 +3399,17 @@ impl<'a> FnGen<'a, '_> {
         if !self.tcx.stack_check.is_safe_to_recurse() {
             return err(loc, "statement is nested too deeply");
         }
-        // What the statement takes for its temporaries is spare again once it is over; what the
-        // statements around it hold (this one may be inside a statement expression) stays theirs.
+        self.giving_temporaries_back(|g| g.gen_statement(stmt, loc))
+    }
+
+    /// What a statement takes for its temporaries is spare again once it is over; what the
+    /// statements around it hold (this one may be inside a statement expression) stays theirs.
+    pub(super) fn giving_temporaries_back<T>(
+        &mut self,
+        statement: impl FnOnce(&mut Self) -> Res<T>,
+    ) -> Res<T> {
         let held_outside = self.temporary_slots.len();
-        let result = self.gen_statement(stmt, loc);
+        let result = statement(self);
         self.spare_slots
             .extend(self.temporary_slots.drain(held_outside..));
         result
@@ -4021,6 +4041,17 @@ fn gen_function<'a>(m: &mut ModuleGen<'a>, f: &'a Function, body: &'a FuncBody) 
             format!("the stack frame of '{}' is too large", f.name),
         );
     }
+    // (What else a module counts is bounded by what a file of 1 GiB can say.)
+    if func.blocks.iter().any(|block| block.len() > bir::MAX_COUNT) {
+        return err(
+            f.loc,
+            format!(
+                "'{}' has more than {} operations in a row with no branch among them",
+                f.name,
+                bir::MAX_COUNT
+            ),
+        );
+    }
     func.returns_twice = returns_twice;
     // Code that must see its own frame or come back from setjmp stays where it is.
     let inlining = f.inlining & (bir::INLINE_ALWAYS | bir::INLINE_NEVER | bir::INLINE_HINT);
@@ -4304,7 +4335,7 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
                 function: funcs.len() as u32,
             });
         }
-        if is_exported(f) && callable_from_javascript(&f.ty) {
+        if is_exported(f) && !f.hidden && callable_from_javascript(&f.ty) {
             exports.push(bir::Export {
                 name: func.name.clone(),
                 func: funcs.len() as u32,

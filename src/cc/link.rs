@@ -126,9 +126,14 @@ impl<'u> Segment<'u> {
         let name_of = |unit: usize| names.get(unit).map_or("?", String::as_str);
         // Pick the definition of every external object that survives.
         let mut chosen: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+        // The strictest alignment any definition of a symbol asks for is the one it gets, as a
+        // linker gives a common symbol: a unit may count on what it declared.
+        let mut strictest: BTreeMap<&str, u64> = BTreeMap::new();
         for (u, unit) in units.iter().enumerate() {
             for (o, object) in objects_of(unit, tls).iter().enumerate() {
                 let Some(name) = &object.symbol else { continue };
+                let asked = strictest.entry(name.as_str()).or_insert(1);
+                *asked = (*asked).max(object.align);
                 if let Some(&(other, _)) = defined_funcs.get(name.as_str()) {
                     return fail(
                         u,
@@ -221,7 +226,12 @@ impl<'u> Segment<'u> {
                     {
                         continue;
                     }
-                    let object_align = object.align.max(1);
+                    let object_align = object
+                        .symbol
+                        .as_ref()
+                        .and_then(|name| strictest.get(name.as_str()).copied())
+                        .unwrap_or(object.align)
+                        .max(1);
                     segment.align = segment.align.max(object_align);
                     segment.size = segment.size.next_multiple_of(object_align);
                     segment.new_offsets[u][o] = segment.size;
@@ -590,7 +600,7 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
         }
     }
     size = size.max(image.len() as u64);
-    if let Some(text) = past_the_loader(size, tls.size) {
+    if let Some(text) = past_the_loader(size, tls.size, relocs.len().max(tls_relocs.len())) {
         return fail(0, text);
     }
 
@@ -782,7 +792,15 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
 
 /// What is wrong with a data segment and a thread-local one of these sizes for the loader, if
 /// anything is.
-pub(crate) fn past_the_loader(data: u64, thread_local: u64) -> Option<String> {
+/// What the loader would refuse of a program's data (its size, its thread-local size, the most
+/// relocations either has), in the front end's words.
+pub(crate) fn past_the_loader(data: u64, thread_local: u64, relocations: usize) -> Option<String> {
+    if relocations > bir::MAX_COUNT {
+        return Some(format!(
+            "the program's data has more than {} addresses in its initializers",
+            bir::MAX_COUNT
+        ));
+    }
     if data > bir::MAX_SEGMENT_SIZE {
         return Some(format!(
             "the program's data is larger than {} bytes",

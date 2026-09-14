@@ -118,6 +118,10 @@ fn directory_of(path: &str) -> &str {
 }
 
 fn join(dir: &str, name: &str) -> String {
+    // (The compiler's own headers are not files: their names are written one way everywhere.)
+    if dir == BUILTIN_DIR {
+        return format!("{dir}/{name}");
+    }
     // A path is written one way throughout, the way this system writes them.
     let (separator, name) = if cfg!(windows) {
         let written: String = name

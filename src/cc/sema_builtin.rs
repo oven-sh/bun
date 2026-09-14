@@ -1077,7 +1077,9 @@ impl Sema {
                 if closest && !last {
                     return size;
                 }
-                self.extent_of(base, false)?.checked_sub(*offset)
+                // (Of what holds it the same is asked: a last member of a member that is not last
+                // ends where that one ends.)
+                self.extent_of(base, closest)?.checked_sub(*offset)
             }
             ExprKind::Deref(_) => {
                 let (array, offset) = self.element_of(object)?;

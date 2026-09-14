@@ -2,8 +2,6 @@
 //!
 //! (`__int128` needs nothing here: it is an integer type to every rule in `sema.rs`.)
 //!
-//! A real operand that meets a complex one is converted to the complex type first, with a
-//! zero imaginary part; C keeps it real, which only matters for signed zeros and infinities.
 
 use super::Sema;
 use crate::ast::*;
@@ -95,11 +93,17 @@ impl Sema {
     }
 
     /// The complex type two operands are brought to.
-    fn common_complex(&self, a: &Type, b: &Type) -> Type {
+    fn common_complex(&self, a: &Type, b: &Type, loc: Loc) -> Res<Type> {
         let real = |t: &Type| t.complex_part().unwrap_or_else(|| t.clone());
         match self.arith_common_type(&real(a), &real(b)) {
-            Type::Float => Type::ComplexFloat,
-            _ => Type::ComplexDouble,
+            Type::Float => Ok(Type::ComplexFloat),
+            // (With the x87 format for a part it is a type of 32 bytes; computing it in `double`s
+            // would be another program.)
+            wide if wide.is_long_double() => err(
+                loc,
+                "computing with values of type 'long double _Complex' is not supported yet",
+            ),
+            _ => Ok(Type::ComplexDouble),
         }
     }
 
@@ -119,7 +123,7 @@ impl Sema {
         if !supported || !ok(&a.ty) || !ok(&b.ty) {
             return self.bad_operands(spelling, &a, &b, loc);
         }
-        let ty = self.common_complex(&a.ty, &b.ty);
+        let ty = self.common_complex(&a.ty, &b.ty, loc)?;
         let (aloc, bloc) = (a.loc, b.loc);
         let a = self.complex_operand(a, &ty, aloc)?;
         let b = self.complex_operand(b, &ty, bloc)?;
@@ -192,7 +196,9 @@ impl Sema {
         loc: Loc,
     ) -> Res<Expr> {
         let ty = lhs.ty.unatomic().clone();
-        if !ty.is_complex() || !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div) {
+        // (A real left operand takes the real part of what is computed, 6.5.16.2.)
+        let arithmetic = |t: &Type| t.is_arith() || t.is_complex();
+        if !arithmetic(&ty) || !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div) {
             return err(
                 loc,
                 format!(
@@ -205,7 +211,7 @@ impl Sema {
         if !rhs.ty.is_arith() && !rhs.ty.is_complex() {
             return err(loc, "invalid operand to compound assignment");
         }
-        let op_ty = self.common_complex(&ty, &rhs.ty);
+        let op_ty = self.common_complex(&ty, &rhs.ty, loc)?;
         let rloc = rhs.loc;
         let rhs = self.complex_operand(rhs, &op_ty, rloc)?;
         self.mk(

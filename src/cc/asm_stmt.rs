@@ -26,8 +26,6 @@ pub(crate) struct OperandInfo {
     pub(crate) size: u64,
     /// The operand's value, when it is an integer constant expression.
     pub(crate) constant: Option<i64>,
-    /// `register T x asm("rbx")`.
-    pub(crate) pinned: Option<Vec<u8>>,
 }
 
 /// Where a value that has to be in a register before the code runs comes from.
@@ -160,30 +158,29 @@ fn classify(operand: &OperandInfo, is_output: bool) -> Res<Classified> {
             b'&' => early_clobber = true,
             // The first alternative is as good as any.
             b',' => break,
+            // What GCC reads and sets no store by: how much an alternative costs, and that the
+            // memory may be addressed with a side effect, which no x86 address has.
+            b'?' | b'!' | b'^' | b'$' | b'*' | b'<' | b'>' => {}
+            // The rest of the alternative is a comment.
+            b'#' => break,
+            b'@' => {
+                return Err(format!(
+                    "the constraint \"{}\" asks for a flag as an output, which is not supported (there is no __GCC_ASM_FLAG_OUTPUTS__)",
+                    shown()
+                ));
+            }
+            byte if !byte.is_ascii_alphanumeric() => {
+                return Err(format!(
+                    "the constraint \"{}\" has a '{}', which means nothing",
+                    shown(),
+                    crate::token::display_bytes(&[byte])
+                ));
+            }
             _ => letters.push(byte),
         }
     }
     if in_out && !is_output {
         return Err(format!("the input constraint \"{}\" has a '+'", shown()));
-    }
-    if let Some(name) = &operand.pinned {
-        let number = register_number(name)
-            .ok_or_else(|| format!("'{}' is not a register", crate::token::display_bytes(name)))?;
-        let kind = if number >= 16 {
-            Kind::Xmm
-        } else {
-            Kind::Specific(number)
-        };
-        if number >= 16 {
-            return Err(
-                "a variable pinned to an xmm register cannot be an asm operand yet".to_string(),
-            );
-        }
-        return Ok(Classified {
-            kind,
-            in_out,
-            early_clobber,
-        });
     }
     if let [digit @ b'0'..=b'9'] = letters.as_slice() {
         if is_output {

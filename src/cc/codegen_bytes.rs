@@ -352,67 +352,70 @@ impl FnGen<'_, '_> {
     fn gen_discarded(&mut self, items: &[&Expr]) -> Res<()> {
         let mut at = 0;
         while at < items.len() {
-            let mut combined = false;
-            for bytes in [8usize, 4, 2] {
-                if at + bytes > items.len() {
-                    continue;
-                }
-                let run: Option<Vec<ByteStore<'_>>> = items[at..at + bytes]
-                    .iter()
-                    .map(|e| self.byte_store(e))
-                    .collect();
-                let Some(run) = run else { continue };
-                let first = &run[0];
-                let same = run.iter().all(|s| {
-                    same_pure(s.base, first.base)
-                        && same_pure(s.value, first.value)
-                        && s.value.ty == first.value.ty
-                });
-                let lowest = run.iter().map(|s| s.offset).min().unwrap_or(0);
-                // Byte i of the value goes to offset lowest + i, or to the mirror image.
-                let little = run
-                    .iter()
-                    .all(|s| s.offset.checked_sub(lowest) == Some(s.source_byte as i64));
-                let big = run.iter().all(|s| {
-                    s.offset.checked_sub(lowest)
-                        == Some((bytes - 1 - s.source_byte.min(bytes - 1)) as i64)
-                        && s.source_byte < bytes
-                });
-                let mut seen = vec![false; bytes];
-                let distinct = run.iter().all(|s| {
-                    s.source_byte < bytes && !std::mem::replace(&mut seen[s.source_byte], true)
-                });
-                if !same || !distinct || !(little || big) {
-                    continue;
-                }
-                let base = self.gen_value(first.base)?;
-                let held = self.hold(base, first.value.has_control_flow);
-                let v = self.gen_value(first.value)?;
-                let base = self.release(held);
-                let (kind, mut v) = match bytes {
-                    8 if self.b.value_ty(v) == Ty::I64 => (MemKind::I64, v),
-                    8 => continue,
-                    4 => (MemKind::I32, self.low_word(v)),
-                    _ => (MemKind::I16U, self.low_word(v)),
-                };
-                if big {
-                    v = self.b.un(UnOp::Bswap, v);
-                    if bytes == 2 {
-                        let sixteen = self.b.const_i32(16);
-                        v = self.b.bin(CBin::ShrU, v, sixteen);
-                    }
-                }
-                self.b.effect(Inst::Store(kind, v, base, lowest));
-                at += bytes;
-                combined = true;
-                break;
-            }
-            if !combined {
-                self.gen_discard(items[at])?;
-                at += 1;
-            }
+            // (Each is a statement, or as good as one: its temporaries are the next one's.)
+            let taken = self.giving_temporaries_back(|g| g.gen_discarded_at(items, at))?;
+            at += taken;
         }
         Ok(())
+    }
+
+    /// Generates the expression at `at`, or a run of them that store the bytes of one value as one
+    /// store; how many that was.
+    fn gen_discarded_at(&mut self, items: &[&Expr], at: usize) -> Res<usize> {
+        for bytes in [8usize, 4, 2] {
+            if at + bytes > items.len() {
+                continue;
+            }
+            let run: Option<Vec<ByteStore<'_>>> = items[at..at + bytes]
+                .iter()
+                .map(|e| self.byte_store(e))
+                .collect();
+            let Some(run) = run else { continue };
+            let first = &run[0];
+            let same = run.iter().all(|s| {
+                same_pure(s.base, first.base)
+                    && same_pure(s.value, first.value)
+                    && s.value.ty == first.value.ty
+            });
+            let lowest = run.iter().map(|s| s.offset).min().unwrap_or(0);
+            // Byte i of the value goes to offset lowest + i, or to the mirror image.
+            let little = run
+                .iter()
+                .all(|s| s.offset.checked_sub(lowest) == Some(s.source_byte as i64));
+            let big = run.iter().all(|s| {
+                s.offset.checked_sub(lowest)
+                    == Some((bytes - 1 - s.source_byte.min(bytes - 1)) as i64)
+                    && s.source_byte < bytes
+            });
+            let mut seen = vec![false; bytes];
+            let distinct = run.iter().all(|s| {
+                s.source_byte < bytes && !std::mem::replace(&mut seen[s.source_byte], true)
+            });
+            if !same || !distinct || !(little || big) {
+                continue;
+            }
+            let base = self.gen_value(first.base)?;
+            let held = self.hold(base, first.value.has_control_flow);
+            let v = self.gen_value(first.value)?;
+            let base = self.release(held);
+            let (kind, mut v) = match bytes {
+                8 if self.b.value_ty(v) == Ty::I64 => (MemKind::I64, v),
+                8 => continue,
+                4 => (MemKind::I32, self.low_word(v)),
+                _ => (MemKind::I16U, self.low_word(v)),
+            };
+            if big {
+                v = self.b.un(UnOp::Bswap, v);
+                if bytes == 2 {
+                    let sixteen = self.b.const_i32(16);
+                    v = self.b.bin(CBin::ShrU, v, sixteen);
+                }
+            }
+            self.b.effect(Inst::Store(kind, v, base, lowest));
+            return Ok(bytes);
+        }
+        self.gen_discard(items[at])?;
+        Ok(1)
     }
 
     /// Generates a list of statements, looking at adjacent expression statements together.

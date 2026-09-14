@@ -70,6 +70,8 @@ struct Attrs {
     mode: Option<(Rc<str>, Loc)>,
     /// `weak`.
     weak: bool,
+    /// `visibility("hidden")` or `("internal")`.
+    hidden: bool,
     /// `__declspec(thread)`.
     thread: bool,
     /// `__declspec(selectany)`.
@@ -99,6 +101,7 @@ impl Attrs {
         self.gnu_inline |= written_before.gnu_inline;
         self.mode = self.mode.take().or(written_before.mode);
         self.weak |= written_before.weak;
+        self.hidden |= written_before.hidden;
         self.thread |= written_before.thread;
         self.selectany |= written_before.selectany;
         self.declspec_align =
@@ -502,6 +505,7 @@ impl<S: TokenSource> Parser<S> {
                 constructor,
                 destructor,
                 weak: None,
+                hidden: false,
                 param_names: Vec::new(),
                 body: Some(FuncBody {
                     params: Vec::new(),
@@ -516,6 +520,19 @@ impl<S: TokenSource> Parser<S> {
             });
         }
         let va_list_size = sema.va_list_size();
+        for (id, loc) in &sema.tentative_incomplete {
+            let global = &sema.globals[*id as usize];
+            if !sema.tcx.is_complete(&global.ty) {
+                return err(
+                    *loc,
+                    format!(
+                        "variable '{}' has incomplete type '{}'",
+                        global.name,
+                        sema.tcx.display(&global.ty)
+                    ),
+                );
+            }
+        }
         let mut globals = sema.globals;
         for g in &mut globals {
             // `int a[];` with no later definition is a tentative definition of one element.
@@ -933,6 +950,19 @@ impl<S: TokenSource> Parser<S> {
         if gnu_inline && inline_only && is_definition {
             f.inlining |= INLINE_ONLY_DEFINITION;
         }
+        // The definition proper after a `gnu_inline` one, which was only ever a copy to inline
+        // (how a library compiles its own `atof` next to its header's): this one is the function.
+        let microsoft_inline = self.dialect.microsoft && spec.is_inline;
+        if is_definition
+            && !inline_only
+            && !microsoft_inline
+            && f.inlining & INLINE_ONLY_DEFINITION != 0
+            && f.body.is_some()
+            && !f.linkonce
+        {
+            f.inlining &= !INLINE_ONLY_DEFINITION;
+            f.body = None;
+        }
         // Microsoft's `inline` is C++'s: every unit that uses the function has a definition of
         // its own, whatever other declarations say, and none is the program's one.
         if self.dialect.microsoft && spec.is_inline && is_definition {
@@ -952,6 +982,15 @@ impl<S: TokenSource> Parser<S> {
         }
         if decl.attrs.weak || spec.attrs.weak {
             f.weak = Some(decl.loc);
+        }
+        f.hidden |= decl.attrs.hidden || spec.attrs.hidden;
+        {
+            let mut nullable = self.sema.tcx.weak_undefined.borrow_mut();
+            if f.weak.is_some() && f.body.is_none() && !is_definition {
+                nullable.1.insert(id);
+            } else {
+                nullable.1.remove(&id);
+            }
         }
         if let Some(params) = &decl.params {
             if params.iter().any(|p| p.name.is_some()) || f.param_names.is_empty() {
@@ -1031,10 +1070,14 @@ impl<S: TokenSource> Parser<S> {
                     }
                 }
             }
-            if is_definition
+            let incomplete = is_definition
                 && !self.sema.tcx.is_complete(&decl.ty)
-                && !matches!(decl.ty, Type::Array(_, None))
-            {
+                && !matches!(decl.ty, Type::Array(_, None));
+            // A structure may be completed further down, for an object that is not `static`.
+            let completed_later = incomplete
+                && spec.storage != Storage::Static
+                && matches!(decl.ty.unqualified(), Type::Struct(_));
+            if incomplete && !completed_later {
                 return err(
                     decl.loc,
                     format!(
@@ -1048,7 +1091,11 @@ impl<S: TokenSource> Parser<S> {
                 self.sema
                     .declare_global(Rc::clone(&name), decl.ty, is_definition, decl.loc)?;
             self.sema.set_global_attrs(id, align, link_name);
+            if completed_later {
+                self.sema.tentative_incomplete.push((id, decl.loc));
+            }
             self.sema.globals[id as usize].weak |= decl.attrs.weak || spec.attrs.weak;
+            self.sema.note_weakness_of_global(id);
             self.sema.globals[id as usize].linkonce |= decl.attrs.selectany || spec.attrs.selectany;
             self.check_linkage_agrees(id, &name, spec, first, decl.loc)?;
             self.sema.globals[id as usize].is_static |= spec.storage == Storage::Static;
@@ -1065,6 +1112,7 @@ impl<S: TokenSource> Parser<S> {
             .declare_global(Rc::clone(&name), decl.ty.clone(), true, decl.loc)?;
         self.sema.set_global_attrs(id, align, link_name);
         self.sema.globals[id as usize].weak |= decl.attrs.weak || spec.attrs.weak;
+        self.sema.note_weakness_of_global(id);
         self.sema.globals[id as usize].linkonce |= decl.attrs.selectany || spec.attrs.selectany;
         self.check_linkage_agrees(id, &name, spec, first, decl.loc)?;
         self.sema.globals[id as usize].is_static |= spec.storage == Storage::Static;
@@ -1485,6 +1533,21 @@ impl<S: TokenSource> Parser<S> {
                             attrs.alias = Some((Rc::from(target), aloc));
                         }
                         _ => return err(aloc, format!("{name} expects the name of a symbol")),
+                    }
+                }
+                "visibility" if has_args => {
+                    let at = self.bump()?.loc;
+                    let which = self.adjacent_strings(false)?.unwrap_or_default();
+                    self.expect(Punct::RParen)?;
+                    match &which[..] {
+                        b"hidden" | b"internal" => attrs.hidden = true,
+                        b"default" | b"protected" => {}
+                        _ => {
+                            return err(
+                                at,
+                                "visibility is \"default\", \"hidden\", \"protected\" or \"internal\"",
+                            );
+                        }
                     }
                 }
                 "constructor" | "destructor" => {
@@ -4069,7 +4132,6 @@ impl<S: TokenSource> Parser<S> {
                     class,
                     size: parser.sema.tcx.size_of(&ty).unwrap_or(0),
                     constant,
-                    pinned: None,
                 }
             };
         let output_info: Vec<OperandInfo> = outputs
@@ -5272,11 +5334,13 @@ impl<S: TokenSource> Parser<S> {
                 let mut place = self.sema.deref(zero, loc)?;
                 let (first, _) = self.expect_ident()?;
                 place = self.sema.member(place, &first, false, loc)?;
+                let mut indexed = false;
                 loop {
                     if self.eat(Punct::Dot)? {
                         let (member, _) = self.expect_ident()?;
                         place = self.sema.member(place, &member, false, loc)?;
                     } else if self.at(Punct::LBracket) {
+                        indexed = true;
                         let iloc = self.bump()?.loc;
                         let index = self.parse_expr()?;
                         self.expect(Punct::RBracket)?;
@@ -5289,13 +5353,13 @@ impl<S: TokenSource> Parser<S> {
                 let address = self.sema.addr_of(place, loc)?;
                 let size_type = self.sema.size_type();
                 let as_int = self.sema.cast(address, &size_type, loc)?;
-                let value = match self.sema.const_int(&as_int) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return err(loc, "__builtin_offsetof needs a constant member designator");
-                    }
-                };
-                Ok(Some(self.sema.int_lit(value, size_type, loc)?))
+                match self.sema.const_int(&as_int) {
+                    Ok(value) => Ok(Some(self.sema.int_lit(value, size_type, loc)?)),
+                    // With an index that is not a constant (`offsetof(T, tail[n])`, to size an
+                    // allocation) it is the address itself, worked out where it stands.
+                    Err(_) if indexed => Ok(Some(as_int)),
+                    Err(_) => err(loc, "__builtin_offsetof needs a constant member designator"),
+                }
             }
             "expect" | "expect_with_probability" => {
                 let mut args = self.parse_builtin_args()?;

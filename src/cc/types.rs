@@ -1,5 +1,6 @@
 //! C types and target data layout.
 
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use crate::bir;
@@ -285,6 +286,10 @@ pub(crate) struct TypeCtx {
     /// How much stack the thread that is compiling has, for whatever recurses once per level of
     /// nesting in the source.
     pub(crate) stack_check: bun_core::StackCheck,
+    /// The objects and the functions (by their ids) that are declared weak and not defined so
+    /// far: the ones whose address may be null when the program runs, so that whether it is is
+    /// not a constant.
+    pub(crate) weak_undefined: std::cell::RefCell<(BTreeSet<u32>, BTreeSet<u32>)>,
 }
 
 /// A set of type qualifiers, and the alignment a typedef gave the type with
@@ -627,6 +632,7 @@ impl TypeCtx {
             target,
             structs: Vec::new(),
             stack_check: bun_core::StackCheck::init(),
+            weak_undefined: std::cell::RefCell::default(),
         }
     }
 

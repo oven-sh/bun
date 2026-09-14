@@ -173,6 +173,9 @@ pub(crate) struct Sema {
     pub(crate) flexible_end: std::cell::Cell<u64>,
     /// The depth of the deepest expression made since this was last reset.
     pub(crate) deepest_expr: std::cell::Cell<u32>,
+    /// The tentative definitions whose type was not complete where they stand (C11 6.9.2p2: with
+    /// external linkage it has to be by the end of the unit, which is where it is looked at).
+    pub(crate) tentative_incomplete: Vec<(GlobalId, Loc)>,
     /// For `elaborate_init`: where the items so far write.
     pub(crate) init_index: std::cell::RefCell<crate::init::InitIndex>,
     /// Other external names of functions this unit defines: (name, function).
@@ -278,6 +281,7 @@ impl Sema {
             defined_enums: Vec::new(),
             flexible_end: std::cell::Cell::new(0),
             deepest_expr: std::cell::Cell::new(0),
+            tentative_incomplete: Vec::new(),
             init_index: std::cell::RefCell::default(),
             function_aliases: Vec::new(),
             asm_blocks: Vec::new(),
@@ -480,8 +484,12 @@ impl Sema {
             let mut falign = natural_align;
             let mut bits_packed = false;
             // An `aligned` bit-field starts a unit of its own even where `#pragma pack`
-            // cancels the alignment itself.
-            let starts_unit = field_align.is_some();
+            // cancels the alignment itself: for GCC. Clang, which is the platform's compiler on
+            // macOS, takes no notice of an alignment that is more than the packing.
+            let clang_is_the_reference = self.tcx.target.os == crate::types::Os::MacOs;
+            let beyond_the_packing = pragma_pack.is_some_and(|limit| requested > limit);
+            let starts_unit =
+                field_align.is_some() && !(clang_is_the_reference && beyond_the_packing);
             let mut field_align = field_align;
             if !zero_width {
                 if packed || field_packed {
@@ -504,12 +512,12 @@ impl Sema {
                     }
                 }
                 if let Some(a) = field_align {
-                    // `aligned` only ever raises the alignment, unless the member is packed.
-                    falign = if packed || field_packed {
-                        a
-                    } else {
-                        falign.max(a)
-                    };
+                    // `aligned` only ever raises the alignment, unless the member is packed; and
+                    // while the pragma is in force `packed` does not lower a bit-field's, so
+                    // neither does this.
+                    let lowers = (packed || field_packed)
+                        && !(pragma_pack.is_some() && bit_width.is_some() && !ms_bitfields);
+                    falign = if lowers { a } else { falign.max(a) };
                 }
             }
             if is_union {
@@ -705,10 +713,27 @@ impl Sema {
             members,
             size,
             align,
-            required_align,
+            // (Clang's Microsoft layout: of a structure that has an alignment attribute of its own,
+            // all of its alignment is required of what holds it, whatever that came from.)
+            required_align: if min_align.is_some() {
+                align
+            } else {
+                required_align
+            },
             nesting,
         });
         Ok(())
+    }
+
+    /// Whether the address of object `id` can be null is a matter of what is known about it now.
+    pub(crate) fn note_weakness_of_global(&mut self, id: GlobalId) {
+        let global = &self.globals[id as usize];
+        let mut nullable = self.tcx.weak_undefined.borrow_mut();
+        if global.weak && !global.defined {
+            nullable.0.insert(id);
+        } else {
+            nullable.0.remove(&id);
+        }
     }
 
     // ───────────────────────────── declarations ─────────────────────────────
@@ -1047,6 +1072,7 @@ impl Sema {
                     constructor: None,
                     destructor: None,
                     weak: None,
+                    hidden: false,
                     param_names: Vec::new(),
                     body: None,
                     first_use: None,
@@ -3178,6 +3204,7 @@ impl Sema {
             constructor: None,
             destructor: None,
             weak: None,
+            hidden: false,
             param_names: Vec::new(),
             body: None,
             first_use: None,

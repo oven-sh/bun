@@ -2188,6 +2188,57 @@ const extraSections = `
   out.privateForms = [new SC().call(), new SC().swap()];
 }
 
+// A tagged template whose tag is a decorated \`#private\` member: \`this\` is the
+// receiver, the receiver is evaluated once, and the strings array is the one
+// of the call site. The expected values are what node prints for the same
+// class without the decorators.
+{
+  let n = 0;
+  const sites = [];
+  class PT {
+    @dec #tag(s, ...vals) { sites.push(s); return this?.n + ":" + s.raw.join("|") + ":" + vals.join(","); }
+    @dec static #stag(s, ...vals) { return (this === PT) + ":" + s.raw.join("|") + ":" + vals.join(","); }
+    @dec get #getter() { return function (s) { return this?.n + ":getter:" + s.raw[0]; }; }
+    @dec #field = function (s) { return this?.n + ":field:" + s.raw[0]; };
+    @dec accessor #acc = function (s) { return this?.n + ":accessor:" + s.raw[0]; };
+    @dec #me = this;
+    n = 7;
+    self() { n++; return this; }
+    static self() { n++; return PT; }
+    arrow = () => this.self().#tag\`arrow\`;
+    static { PT.fromBlock = PT.self().#stag\`block\`; }
+    run(other) {
+      return [
+        this.#tag\`a\${1}b\${2}\`,
+        PT.#stag\`x\${3}\`,
+        other.#tag\`o\`,
+        this.self().#tag\`c\`,
+        PT.self().#stag\`d\`,
+        this.#me.#tag\`m\`,
+        this.#getter\`e\`,
+        this.#field\`f\`,
+        this.#acc\`g\`,
+        this.#tag\`h\${this.self().#tag\`i\`}\`,
+        this.arrow(),
+        PT.fromBlock,
+      ];
+    }
+  }
+  const pt = new PT();
+  const other = new PT();
+  other.n = 8;
+  const values = pt.run(other);
+  const perRun = sites.length;
+  pt.run(other);
+  out.privateTag = {
+    values,
+    receiverEvals: n,
+    sameSiteSameStrings: sites[0] === sites[perRun],
+    otherSiteOtherStrings: sites[0] !== sites[1],
+    raw: sites[0].raw,
+  };
+}
+
 // https://github.com/oven-sh/bun/issues/28118
 {
   const id = (value, context) => value;
@@ -2417,6 +2468,26 @@ const extraExpected = {
     ["hi:7/undefined/undefined", "sm:SC/g", "7:q|1"],
     [10, 30],
   ],
+  privateTag: {
+    values: [
+      "7:a|b|:1,2",
+      "true:x|:3",
+      "8:o:",
+      "7:c:",
+      "true:d:",
+      "7:m:",
+      "7:getter:e",
+      "7:field:f",
+      "7:accessor:g",
+      "7:h|:7:i:",
+      "7:arrow:",
+      "true:block:",
+    ],
+    receiverEvals: 9,
+    sameSiteSameStrings: true,
+    otherSiteOtherStrings: true,
+    raw: ["a", "b", ""],
+  },
   issue28118: "hello",
   issue31917: ["s", "t"],
   issue31929: ["function", true],

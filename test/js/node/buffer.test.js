@@ -5084,6 +5084,103 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
   });
 });
 
+// Node reads the view's length (0 once it is detached or out of bounds) and
+// copies by index, so these all serialize as empty instead of throwing.
+describe("Buffer.prototype.toJSON", () => {
+  const empty = { type: "Buffer", data: [] };
+
+  it("serializes a Buffer whose ArrayBuffer was detached as empty", () => {
+    const ab = new ArrayBuffer(4);
+    const buf = Buffer.from(ab);
+    buf.fill(1);
+    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [1, 1, 1, 1] });
+
+    ab.transfer();
+    expect(buf.length).toBe(0);
+    expect(buf.toJSON()).toEqual(empty);
+    expect(JSON.stringify(buf)).toBe('{"type":"Buffer","data":[]}');
+    expect(JSON.stringify({ buf })).toBe('{"buf":{"type":"Buffer","data":[]}}');
+  });
+
+  it("serializes a length-tracking Buffer over a detached resizable ArrayBuffer as empty", () => {
+    const rab = new ArrayBuffer(4, { maxByteLength: 8 });
+    const buf = Buffer.from(rab, 0);
+    buf.fill(2);
+    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [2, 2, 2, 2] });
+
+    rab.transfer();
+    expect(buf.toJSON()).toEqual(empty);
+    expect(JSON.stringify(buf)).toBe('{"type":"Buffer","data":[]}');
+  });
+
+  it("serializes a fixed-length Buffer pushed out of bounds by resize() as empty", () => {
+    const rab = new ArrayBuffer(4, { maxByteLength: 8 });
+    const buf = Buffer.from(rab, 0, 4);
+    buf.fill(3);
+
+    rab.resize(2);
+    expect(buf.length).toBe(0);
+    expect(buf.toJSON()).toEqual(empty);
+    expect(JSON.stringify(buf)).toBe('{"type":"Buffer","data":[]}');
+
+    // Growing the ArrayBuffer again brings the view back in bounds; resize()
+    // keeps the surviving bytes and zero-fills the rest.
+    rab.resize(4);
+    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [3, 3, 0, 0] });
+  });
+
+  it("serializes a length-tracking Buffer whose byteOffset is past the resized end as empty", () => {
+    const rab = new ArrayBuffer(8, { maxByteLength: 8 });
+    const buf = Buffer.from(rab, 4);
+    buf.fill(4);
+    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [4, 4, 4, 4] });
+
+    rab.resize(2);
+    expect(buf.length).toBe(0);
+    expect(buf.toJSON()).toEqual(empty);
+    expect(JSON.stringify(buf)).toBe('{"type":"Buffer","data":[]}');
+  });
+
+  it("serializes a detached Uint8Array receiver as empty", () => {
+    const ab = new ArrayBuffer(4);
+    const view = new Uint8Array(ab).fill(5);
+    expect(Buffer.prototype.toJSON.call(view)).toEqual({ type: "Buffer", data: [5, 5, 5, 5] });
+
+    ab.transfer();
+    expect(Buffer.prototype.toJSON.call(view)).toEqual(empty);
+  });
+
+  it("follows the current length of a length-tracking Buffer that is still in bounds", () => {
+    const rab = new ArrayBuffer(4, { maxByteLength: 8 });
+    const buf = Buffer.from(rab, 0);
+    buf.fill(6);
+
+    rab.resize(2);
+    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [6, 6] });
+
+    rab.resize(0);
+    expect(buf.toJSON()).toEqual(empty);
+
+    rab.resize(3);
+    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [0, 0, 0] });
+  });
+
+  it("copies the bytes of live Buffers by index", () => {
+    expect(Buffer.alloc(0).toJSON()).toEqual(empty);
+    expect(Buffer.from([0, 127, 128, 255]).toJSON()).toEqual({ type: "Buffer", data: [0, 127, 128, 255] });
+    expect(Buffer.from([1, 2, 3, 4, 5]).subarray(1, 4).toJSON()).toEqual({ type: "Buffer", data: [2, 3, 4] });
+    expect(Object.keys(Buffer.from("a").toJSON())).toEqual(["type", "data"]);
+
+    // Like Node, the result comes from length and indexed reads, not from the iterator.
+    const buf = Buffer.from([7, 8, 9]);
+    buf[Symbol.iterator] = function* () {
+      yield 0;
+    };
+    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [7, 8, 9] });
+    expect(JSON.stringify(buf)).toBe('{"type":"Buffer","data":[7,8,9]}');
+  });
+});
+
 // MAX_LENGTH is 2**32 on 64-bit: a buffer of exactly that length must not
 // hit the uint32 truncation path that made toString()/write() see length 0.
 it.skipIf(os.totalmem() < 10 * 1024 ** 3)(

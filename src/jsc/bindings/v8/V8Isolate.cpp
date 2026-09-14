@@ -117,7 +117,7 @@ void Isolate::RemoveNearHeapLimitCallback(NearHeapLimitCallback callback, size_t
     });
 }
 
-extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject*, void*, void (*)(void*));
+extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject*, void*, void (*run)(void*), void (*drop)(void*));
 
 namespace {
 struct InterruptRequest {
@@ -133,11 +133,14 @@ void Isolate::RequestInterrupt(InterruptCallback callback, void* data)
     if (!vm().currentThreadIsHoldingAPILock()) [[unlikely]]
         return;
     auto* request = new InterruptRequest { this, callback, data };
-    JSC__JSGlobalObject__queueMicrotaskCallback(m_globalObject, request, [](void* ptr) {
-        auto* req = static_cast<InterruptRequest*>(ptr);
-        req->callback(req->isolate, req->data);
-        delete req;
-    });
+    JSC__JSGlobalObject__queueMicrotaskCallback(
+        m_globalObject, request,
+        [](void* ptr) {
+            auto* req = static_cast<InterruptRequest*>(ptr);
+            req->callback(req->isolate, req->data);
+            delete req;
+        },
+        [](void* ptr) { delete static_cast<InterruptRequest*>(ptr); });
 }
 
 Local<Value> Isolate::ThrowException(Local<Value> exception)

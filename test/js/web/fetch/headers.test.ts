@@ -841,4 +841,58 @@ describe("the string length limit", () => {
     },
     60_000,
   );
+
+  // The message about an invalid name or value quotes it, so the message passes
+  // the limit when the name or value is this long. Validation stops at the first
+  // character and no message is built, so the cost is the one 2 GiB string. It
+  // has its own child so that the two big strings never coexist. The ceiling is
+  // the one test/js/bun/util/error-message-string-length-limit.test.ts uses for
+  // the same work: the default is too close on a loaded machine.
+  test.skipIf(totalmem() < 8 * 1024 ** 3)(
+    "a message about a name or value past it is an error instead of an abort",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const bad = String.fromCharCode(0).repeat(2 ** 31 - 20);
+            const cases = {
+              "append value": headers => headers.append("accept", bad),
+              "set value": headers => headers.set("x-bun", bad),
+              "set name": headers => headers.set(bad, "v"),
+              "get name": headers => headers.get(bad),
+              "has name": headers => headers.has(bad),
+              "delete name": headers => headers.delete(bad),
+            };
+            const results = {};
+            for (const [name, run] of Object.entries(cases)) {
+              try {
+                run(new Headers());
+                results[name] = "no error";
+              } catch (e) {
+                results[name] = e.name + ": " + e.message;
+              }
+            }
+            console.log(JSON.stringify(results));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout || "{}")).toEqual({
+        "append value": "RangeError: Out of memory",
+        "set value": "RangeError: Out of memory",
+        "set name": "RangeError: Out of memory",
+        "get name": "RangeError: Out of memory",
+        "has name": "RangeError: Out of memory",
+        "delete name": "RangeError: Out of memory",
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 });

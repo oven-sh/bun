@@ -6277,13 +6277,18 @@ class ClientHttp2Session extends Http2Session {
   }
 
   // Counts a submitted request against the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit until its
-  // stream closes, then tries to submit queued requests.
+  // stream closes, then tries to submit queued requests. destroy() and close() send RST_STREAM
+  // from a setImmediate queued before 'close', and the peer counts the stream as open until that
+  // frame arrives. So the slot is released one setImmediate after 'close': a HEADERS frame that
+  // overtakes the RST_STREAM exceeds the peer's limit and is refused.
   #trackActiveRequest(req: ClientHttp2Stream) {
     this.#activeRequestCount++;
-    req.once("close", () => {
-      this.#activeRequestCount--;
-      this.#flushPendingRequests();
-    });
+    req.once("close", () =>
+      setImmediate(() => {
+        this.#activeRequestCount--;
+        this.#flushPendingRequests();
+      }),
+    );
   }
 
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots

@@ -3236,8 +3236,7 @@ impl<S: TokenSource> Parser<S> {
         if is_unsized_array {
             self.sema.set_local_type(local, ty.clone());
         }
-        let whole_copy = matches!(items.as_slice(), [InitItem::Copy { offset: 0, .. }]);
-        let zero_first = (ty.is_array() || ty.is_struct()) && !whole_copy;
+        let zero_first = self.sema.clears_before(&ty, &items);
         out.push(Stmt::LocalInit {
             local,
             zero_first,

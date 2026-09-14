@@ -159,6 +159,20 @@ impl Sema {
         }
     }
 
+    /// Whether an automatic object of type `ty` is cleared before `items` are written (C11
+    /// 6.7.9p21): every aggregate, unless one copy fills all of it.
+    pub(crate) fn clears_before(&self, ty: &Type, items: &[InitItem]) -> bool {
+        let filled = match items {
+            [
+                InitItem::Copy {
+                    offset: 0, size, ..
+                },
+            ] => self.tcx.size_of(ty) == Some(*size),
+            _ => false,
+        };
+        is_aggregate(ty) && !filled
+    }
+
     /// Initializes the object of type `ty` at `offset` from `init`. For arrays, returns the
     /// number of elements the initializer covers.
     fn init_object(&self, ty: &Type, offset: u64, init: Init, out: &mut Vec<InitItem>) -> Res<u64> {

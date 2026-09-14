@@ -749,3 +749,41 @@ test("my-test", () => {
     });
   }
 });
+
+test("a rejection left by a setImmediate callback is reported before the test's due timer fires", async () => {
+  // The timer is due by the time the immediate returns (the immediate blocks
+  // past its deadline), so it fires in the runner's next poll of the event
+  // loop. The rejection must be reported when the immediate returns, not after
+  // that poll: with a test waiting on something slower than a due timer, the
+  // report used to wait along with it.
+  using dir = tempDir("unhandled-immediate", {
+    "my-test.test.js": /* js */ `
+      import { test } from "bun:test";
+      test("my-test", async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        // Concatenated so the marker only appears in stderr when the timer
+        // fires, not in the source excerpt printed with the error.
+        setTimeout(() => { console.error("## timer " + "fired ##"); resolve(); }, 0);
+        setImmediate(() => { Promise.reject(new Error("## rejected in immediate ##")); Bun.sleepSync(5); });
+        await promise;
+      });
+    `,
+    "package.json": "{}",
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "my-test.test.js"],
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  const reportedAt = stderr.indexOf("error: ## rejected in immediate ##");
+  const timerAt = stderr.indexOf("## timer fired ##");
+  expect(reportedAt).toBeGreaterThan(-1);
+  expect(timerAt).toBeGreaterThan(reportedAt);
+  expect(stderr).toContain("1 fail");
+  expect(exitCode).toBe(1);
+});

@@ -21,9 +21,7 @@ unsafe extern "C" {
 #[derive(Default)]
 pub struct FakeTimers {
     active: bool,
-    /// Nesting depth of [`FakeTimers::fire`]: above zero while a fake timer's
-    /// callback runs, up to the end of the microtasks it drains on return
-    /// (an `await Bun.sleep(0)` loop re-arms from there).
+    /// Depth of [`FakeTimers::fire`] calls on the stack; each covers the callback and its microtask drain.
     firing: u32,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
     /// - peek/takeFirst (provided by TimerHeap)
@@ -178,13 +176,7 @@ impl FakeTimers {
         self.active
     }
 
-    /// The shortest delay a timer armed now can have: 1ms while a fake timer's
-    /// callback runs, as in `@sinonjs/fake-timers` (`addTimer`,
-    /// `clock.duringTick`). With no delay the timer is due again in the drain
-    /// that runs the callback, so a callback that re-arms itself that way
-    /// (`AbortSignal.timeout(0)` from its own abort listener, a
-    /// `while (..) await Bun.sleep(0)` loop) never lets
-    /// `advanceTimersByTime()` / `runOnlyPendingTimers()` return.
+    /// 1 while a fake timer's callback runs (sinon's `duringTick` rule): a zero-delay re-arm is due again in the drain that runs it.
     pub(crate) fn min_delay_ms(&self) -> u32 {
         if self.active && self.firing > 0 { 1 } else { 0 }
     }

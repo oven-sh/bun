@@ -372,24 +372,22 @@ describe("a zero-delay timer armed by a timer callback", () => {
     using dir = tempDir("fake-timers-sleep-loop", {
       "sleep-loop.test.ts": `
         import { jest, test } from "bun:test";
-        for (const control of ["advanceTimersByTime", "runOnlyPendingTimers"]) {
-          test(control, () => {
-            jest.useFakeTimers();
-            let done = false;
-            const polledAt = [];
-            setTimeout(() => (done = true), 3);
-            (async () => {
-              while (!done && polledAt.length < ${GIVE_UP}) {
-                polledAt.push(performance.now());
-                await Bun.sleep(0);
-              }
-            })();
-            if (control === "advanceTimersByTime") jest.advanceTimersByTime(5);
-            else jest.runOnlyPendingTimers();
-            console.log(JSON.stringify({ control, polledAt, done, now: performance.now(), pending: jest.getTimerCount() }));
-            jest.useRealTimers();
-          });
-        }
+        test.each(["advanceTimersByTime", "runOnlyPendingTimers"])("%s", control => {
+          jest.useFakeTimers();
+          let done = false;
+          const polledAt = [];
+          setTimeout(() => (done = true), 3);
+          (async () => {
+            while (!done && polledAt.length < ${GIVE_UP}) {
+              polledAt.push(performance.now());
+              await Bun.sleep(0);
+            }
+          })();
+          if (control === "advanceTimersByTime") jest.advanceTimersByTime(5);
+          else jest.runOnlyPendingTimers();
+          console.log(JSON.stringify({ control, polledAt, done, now: performance.now(), pending: jest.getTimerCount() }));
+          jest.useRealTimers();
+        });
       `,
     });
     await using proc = Bun.spawn({

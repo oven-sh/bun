@@ -32,10 +32,18 @@ type State = {
 const dir = String(
   tempDir("module-graph-isolation-", {
     // Every opener takes the host's state object: nothing here depends on `globals`.
+    "data.txt": "0123456789",
+    "entry.js": "export const a = 1;",
     "app.mjs": `
       import net from "node:net";
       import http from "node:http";
       import fs from "node:fs";
+      import zlib from "node:zlib";
+      import crypto from "node:crypto";
+      import dns from "node:dns";
+      import childProcess from "node:child_process";
+      import timersPromises from "node:timers/promises";
+      import { promisify } from "node:util";
       export const open = {
         interval(state) {
           const interval = setInterval(() => state.ticks++, 1);
@@ -227,6 +235,43 @@ const dir = String(
         state.close = () => { held.resolve(); server.stop(true); };
         return () => held.resolve();
       }
+
+      // Work whose result the event loop delivers later, by what starts it.
+      const dataFile = import.meta.dir + "/data.txt";
+      export const background = {
+        "fs.promises.readFile": () => fs.promises.readFile(dataFile, "utf8"),
+        "fs.readFile callback": () => new Promise(resolve => fs.readFile(dataFile, resolve)),
+        "fs.promises.stat": () => fs.promises.stat(dataFile),
+        "fs.promises.readdir": () => fs.promises.readdir(import.meta.dir),
+        "fs.createReadStream": () => new Promise(resolve => fs.createReadStream(dataFile).on("data", () => {}).on("close", resolve)),
+        "Bun.file().text()": () => Bun.file(dataFile).text(),
+        "Bun.file().arrayBuffer()": () => Bun.file(dataFile).arrayBuffer(),
+        "Bun.file().stream()": async () => { for await (const chunk of Bun.file(dataFile).stream()) void chunk; },
+        "zlib.gzip": () => promisify(zlib.gzip)("hello"),
+        "zlib.brotliCompress": () => promisify(zlib.brotliCompress)("hello"),
+        "zlib.zstdCompress": () => promisify(zlib.zstdCompress)("hello"),
+        "Bun.zstdCompress": () => Bun.zstdCompress("hello"),
+        "Bun.password.hash": () => Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 }),
+        "crypto.pbkdf2": () => promisify(crypto.pbkdf2)("pw", "salt", 1000, 32, "sha256"),
+        "crypto.scrypt": () => promisify(crypto.scrypt)("pw", "salt", 32),
+        "crypto.randomBytes": () => promisify(crypto.randomBytes)(16),
+        "crypto.generateKeyPair": () => promisify(crypto.generateKeyPair)("ec", { namedCurve: "P-256" }),
+        "crypto.subtle.digest": () => crypto.subtle.digest("SHA-256", new Uint8Array(1024)),
+        "dns.lookup": () => promisify(dns.lookup)("localhost"),
+        "dns.promises.resolve4": () => dns.promises.resolve4("localhost").catch(() => {}),
+        "Bun.dns.lookup": () => Bun.dns.lookup("localhost"),
+        "Bun.Glob.scan": async () => { for await (const found of new Bun.Glob("*").scan(import.meta.dir)) void found; },
+        "Bun.build": () => Bun.build({ entrypoints: [import.meta.dir + "/entry.js"], write: false }),
+        "Bun.$ builtins": () => Bun.$\`echo hi\`.quiet(),
+        "Bun.sleep": () => Bun.sleep(1),
+        "timers/promises": () => timersPromises.setTimeout(1),
+        "fetch(file:)": () => fetch("file://" + dataFile).then(response => response.text()),
+        "fetch(data:)": () => fetch("data:text/plain,hi").then(response => response.text()),
+        "CompressionStream": () => new Response(new Blob(["x".repeat(1000)]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer(),
+        "MessageChannel": () => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(1); }),
+        "worker_threads": () => new Promise(resolve => { const worker = new Worker("data:text/javascript,postMessage(1)"); worker.onmessage = () => resolve(); }),
+        "child_process.exec": () => promisify(childProcess.exec)("echo hi"),
+      };
 
       export function queueEverything(log) {
         process.nextTick(() => log.push("nextTick"));
@@ -1279,4 +1324,39 @@ test("ModuleGraph isolation: a Bun.$ script of a disposed graph stops: the runni
       }
     }
   }
+});
+
+// What a disposed graph started in the background never reports back: the promise its code is
+// waiting on stays pending, so none of its code runs again. The exceptions are listed, with why.
+test("ModuleGraph isolation: background work of a disposed graph does not settle into it", async () => {
+  using made = await newGraph();
+  const names = Object.keys(hostApp.background);
+  const started: Record<string, Promise<unknown>> = {};
+  made.graph.run(() => {
+    for (const name of names) (started[name] = Promise.resolve(made.app.background[name]())).catch(() => {});
+  });
+  // Not something the event loop delivers: it had settled before dispose() was called.
+  const settledAlready = names.filter(name => Bun.peek.status(started[name]) !== "pending");
+  made.graph.dispose();
+  // The same work in the host, started afterwards, has all finished: the graph's would have too.
+  await Promise.all(names.map(name => Promise.resolve(hostApp.background[name]()).catch(() => {})));
+  await hostTimerTurns();
+  const settledAfterwards = names.filter(
+    name => !settledAlready.includes(name) && Bun.peek.status(started[name]) !== "pending",
+  );
+  expect({ settledAlready, settledAfterwards }).toEqual({
+    settledAlready: [],
+    settledAfterwards: [
+      // These resolve a promise from a native completion that does not know which graph started it, so
+      // the graph's continuation still runs (in its stopped context: what it opens is closed at once).
+      "Bun.file().stream()",
+      "crypto.subtle.digest",
+      "dns.promises.resolve4",
+      "Bun.build",
+      "fetch(data:)",
+      "CompressionStream",
+      // The exit of a child the graph started is a close notification: its code hears of it.
+      "child_process.exec",
+    ],
+  });
 });

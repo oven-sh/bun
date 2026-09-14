@@ -1079,6 +1079,14 @@ impl VirtualMachine {
         if self.graph_contexts.count() == 0 {
             return None;
         }
+        // "Current" only means something while script is running: the context rides the async
+        // context of the script that called in. Native code reached from the event loop (an I/O
+        // or process-exit callback) has no current context; it uses the one its owner captured
+        // when script created it.
+        debug_assert!(
+            self.jsc_vm().is_entered(),
+            "current_context() with no script on the stack: use the context captured when script created the owner"
+        );
         // SAFETY: a graph's context outlives every async context frame that names it.
         unsafe { Bun__currentGraphContext(self.global()).as_ref() }
     }

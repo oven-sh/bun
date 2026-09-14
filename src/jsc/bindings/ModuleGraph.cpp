@@ -25,7 +25,6 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/StackVisitor.h>
-#include <JavaScriptCore/JSSymbolTableObject.h>
 #include <JavaScriptCore/SymbolTable.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
 #include <wtf/SetForScope.h>
@@ -89,10 +88,21 @@ static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Ve
 
 // The symbol table is shared by every overlay of its shape, each holding other values: a write
 // invalidates the entry's watchpoint so compiled code never takes one overlay's value for a constant.
-static void setOverlaySlot(JSGlobalObject* globalObject, JSLexicalEnvironment* overlay, const Identifier& name, JSValue value)
+static void setOverlaySlot(VM& vm, JSLexicalEnvironment* overlay, const Identifier& name, JSValue value)
 {
-    bool putResult = false;
-    symbolTablePutInvalidateWatchpointSet(overlay, globalObject, name, value, false, true, putResult);
+    SymbolTable* symbolTable = overlay->symbolTable();
+    InlineWatchpointSet* watchpoints = nullptr;
+    ScopeOffset offset;
+    {
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        auto entry = symbolTable->find(locker, name.impl());
+        ASSERT(entry != symbolTable->end(locker));
+        offset = entry->value.scopeOffset();
+        watchpoints = entry->value.watchpointSet();
+    }
+    overlay->variableAt(offset).set(vm, overlay, value);
+    if (watchpoints)
+        watchpoints->invalidate(vm, StringFireDetail("A Bun.ModuleGraph overlay variable was written"));
 }
 
 // The new graph's loader, over a new overlay holding `globals`.
@@ -114,12 +124,10 @@ static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, 
     for (auto& name : names) {
         JSValue value = globals->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        setOverlaySlot(globalObject, overlay, name, value);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        setOverlaySlot(vm, overlay, name, value);
     }
     JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm, overlay);
-    setOverlaySlot(globalObject, overlay, moduleLoaderSlotName(vm), loader);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    setOverlaySlot(vm, overlay, moduleLoaderSlotName(vm), loader);
     return loader;
 }
 
@@ -446,7 +454,7 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     m_requireMap.set(vm, this, JSMap::create(vm, globalObject->mapStructure()));
-    setOverlaySlot(globalObject, overlay(), moduleGraphSlotName(vm), this);
+    setOverlaySlot(vm, overlay(), moduleGraphSlotName(vm), this);
 }
 
 JSLexicalEnvironment* JSModuleGraph::overlay() const

@@ -3374,6 +3374,154 @@ describe("fetch() with a streaming request body and caller framing headers", () 
       expect(await origin.nextRequest()).toEqual({ framing: [`Content-Length: ${body.length}`], body });
     }
   });
+
+  describe("across a redirect", () => {
+    // A 303 (or a 301/302 on POST) drops the stream body and follows with a GET.
+    // The caller's framing headers describe that dropped body, so the follow-up
+    // must carry neither of them: a bodyless GET that announces Content-Length: 7
+    // makes the target read the next request on the connection as its body.
+    type Seen = { connection: number; request: string; framing: string[]; body: string };
+
+    // A keep-alive origin: it parses every request on a connection by its own
+    // framing, records it, and answers by path. "/early-303" answers before it
+    // reads the body. "/303" and "/307" answer once the body is complete.
+    async function redirectOrigin() {
+      const queue: Seen[] = [];
+      const waiting: ((seen: Seen) => void)[] = [];
+      const seenPaths = new Map<string, PromiseWithResolvers<void>>();
+      const whenSeen = (request: string) => {
+        if (!seenPaths.has(request)) seenPaths.set(request, Promise.withResolvers<void>());
+        return seenPaths.get(request)!.promise;
+      };
+      let connections = 0;
+      let requests = 0;
+      const record = (seen: Seen) => {
+        requests++;
+        whenSeen(seen.request);
+        seenPaths.get(seen.request)!.resolve();
+        const resolve = waiting.shift();
+        if (resolve) resolve(seen);
+        else queue.push(seen);
+      };
+      const reply = (status: string, extra = "", text = "") =>
+        `HTTP/1.1 ${status}\r\n${extra}Content-Length: ${text.length}\r\n\r\n${text}`;
+      const server = net.createServer(socket => {
+        const connection = ++connections;
+        let raw = "";
+        let abandoned = false;
+        socket.on("error", () => {});
+        socket.on("data", data => {
+          if (abandoned) return;
+          raw += data.toString("latin1");
+          for (;;) {
+            const headerEnd = raw.indexOf("\r\n\r\n");
+            if (headerEnd === -1) return;
+            const lines = raw.slice(0, headerEnd).split("\r\n");
+            const request = lines[0].replace(/ HTTP\/1\.1$/, "");
+            const framing = lines.slice(1).filter(line => /^(content-length|transfer-encoding):/i.test(line));
+            const rest = raw.slice(headerEnd + 4);
+            if (request === "POST /early-303") {
+              // The rest of this connection is the body the client gives up on.
+              abandoned = true;
+              record({ connection, request, framing, body: "" });
+              socket.write(reply("303 See Other", "Location: /next\r\n"));
+              return;
+            }
+            let bodyLength = 0;
+            if (framing.some(line => /^transfer-encoding:.*chunked\s*$/i.test(line))) {
+              const end = rest.indexOf("0\r\n\r\n");
+              if (end === -1) return;
+              bodyLength = end + 5;
+            } else {
+              bodyLength = Number(/^content-length:\s*(\d+)\s*$/i.exec(framing[0] ?? "")?.[1] ?? 0);
+              if (rest.length < bodyLength) return;
+            }
+            record({ connection, request, framing, body: rest.slice(0, bodyLength) });
+            raw = rest.slice(bodyLength);
+            if (request === "POST /303") socket.write(reply("303 See Other", "Location: /next\r\n"));
+            else if (request === "POST /307") socket.write(reply("307 Temporary Redirect", "Location: /next\r\n"));
+            else socket.write(reply("200 OK", "", "OK"));
+          }
+        });
+      });
+      await once(server.listen(0, "localhost"), "listening");
+      return {
+        url: `http://localhost:${(server.address() as AddressInfo).port}/`,
+        take: () =>
+          queue.length > 0 ? Promise.resolve(queue.shift()!) : new Promise<Seen>(resolve => waiting.push(resolve)),
+        whenSeen,
+        get requests() {
+          return requests;
+        },
+        [Symbol.asyncDispose]: () => server[Symbol.asyncDispose](),
+      };
+    }
+
+    const [, makeBody] = bodyKinds[0];
+    const framings: [string, HeadersInit, Pick<Seen, "framing" | "body">][] = [
+      ["Content-Length: 7", { "Content-Length": "7" }, { framing: ["Content-Length: 7"], body }],
+      [
+        "Transfer-Encoding: gzip, chunked",
+        { "Transfer-Encoding": "gzip, chunked" },
+        { framing: ["Transfer-Encoding: gzip, chunked"], body: chunked },
+      ],
+      ["no framing header", {}, { framing: ["Transfer-Encoding: chunked"], body: chunked }],
+    ];
+
+    it.each(framings)("a 303 follow-up carries no framing header (%s)", async (_, headers, hop1) => {
+      await using origin = await redirectOrigin();
+      const response = await post(origin.url + "303", headers, makeBody);
+      expect([response.status, response.redirected, await response.text()]).toEqual([200, true, "OK"]);
+      expect(await origin.take()).toMatchObject({ request: "POST /303", ...hop1 });
+      const followUp = await origin.take();
+      expect(followUp).toEqual({ connection: followUp.connection, request: "GET /next", framing: [], body: "" });
+      // Nothing is left over on the follow-up's connection: the next fetch reuses
+      // it and the origin parses that request as its own.
+      expect(await outcome(fetch(origin.url + "after", { method: "POST", body: "hello" }))).toBe("OK");
+      expect(await origin.take()).toEqual({
+        connection: followUp.connection,
+        request: "POST /after",
+        framing: ["Content-Length: 5"],
+        body: "hello",
+      });
+    });
+
+    it("a 303 that arrives before the body resolves with the final response and drops hop 1's connection", async () => {
+      await using origin = await redirectOrigin();
+      // The stream says nothing until the follow-up has reached the origin, then
+      // ends 7 bytes short of its declared length. That body was already dropped,
+      // so the count does not fail the fetch.
+      const followedUp = origin.whenSeen("GET /next");
+      const late = new ReadableStream({
+        async pull(controller) {
+          await followedUp;
+          controller.close();
+        },
+      });
+      const response = await post(origin.url + "early-303", { "Content-Length": "7" }, () => late);
+      expect([response.status, response.redirected, await response.text()]).toEqual([200, true, "OK"]);
+      const hop1 = await origin.take();
+      expect(hop1).toMatchObject({ request: "POST /early-303", framing: ["Content-Length: 7"] });
+      const followUp = await origin.take();
+      expect(followUp).toMatchObject({ request: "GET /next", framing: [], body: "" });
+      // Hop 1 still owed 7 body bytes, so its connection was closed, not pooled.
+      expect(followUp.connection).not.toBe(hop1.connection);
+    });
+
+    it.each(framings)("a 307 rejects as not replayable (%s)", async (_, headers, hop1) => {
+      await using origin = await redirectOrigin();
+      const rejection = await post(origin.url + "307", headers, makeBody).then(
+        response => response.status,
+        e => ({ name: e?.name, message: e?.message }),
+      );
+      expect(rejection).toEqual({
+        name: "TypeError",
+        message: "Request body is a ReadableStream and cannot be replayed for this redirect",
+      });
+      expect(await origin.take()).toMatchObject({ request: "POST /307", ...hop1 });
+      expect(origin.requests).toBe(1);
+    });
+  });
 });
 
 it("releases interim 1xx response bytes as they are parsed while waiting for the final response", async () => {

@@ -76,10 +76,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     using tenant = new Tenant({ isolateIO: true });
     const prototypes = [Bun.ModuleGraph.prototype, Bun.ModuleGraph.prototype, Tenant.prototype];
     expect(
-      [graph, plain, tenant].map((g, i) => [
-        g instanceof Bun.ModuleGraph,
-        Object.getPrototypeOf(g) === prototypes[i],
-      ]),
+      [graph, plain, tenant].map((g, i) => [g instanceof Bun.ModuleGraph, Object.getPrototypeOf(g) === prototypes[i]]),
     ).toEqual([
       [true, true],
       [true, true],

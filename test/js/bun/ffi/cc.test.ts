@@ -1087,6 +1087,104 @@ describe("double <-> JSValue conversions", () => {
   });
 });
 
+describe("napi_value results from cc()-compiled C", () => {
+  // cc()-compiled C resolves napi_* from the host process; that lookup is only
+  // exercised on POSIX today (see cc-fixture.c).
+  it.skipIf(isWindows)("a NULL napi_value is undefined and a scheduled napi exception is thrown", async () => {
+    using dir = tempDir("bun-ffi-napi-null-return", {
+      "napi_null.c": /* c */ `
+        typedef struct napi_env_fake* napi_env_t;
+        typedef struct napi_value_fake* napi_value_t;
+        extern int napi_create_string_utf8(napi_env_t env, const char* str, unsigned long long length, napi_value_t* result);
+        extern int napi_throw_error(napi_env_t env, const char* code, const char* msg);
+
+        napi_value_t returns_null(napi_env_t env) {
+          return 0;
+        }
+        napi_value_t returns_string(napi_env_t env) {
+          napi_value_t result;
+          napi_create_string_utf8(env, "hello", 5, &result);
+          return result;
+        }
+        napi_value_t throws_then_returns_null(napi_env_t env) {
+          napi_throw_error(env, "ERR_FROM_C", "thrown from C");
+          return 0;
+        }
+        int throws_then_returns_int(napi_env_t env) {
+          napi_throw_error(env, 0, "thrown from int-returning C");
+          return 42;
+        }
+        int returns_int(napi_env_t env) {
+          return 42;
+        }
+        void throws_from_void(napi_env_t env) {
+          napi_throw_error(env, 0, "thrown from void C");
+        }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "napi_null.c"),
+          symbols: {
+            returns_null: { args: ["napi_env"], returns: "napi_value" },
+            returns_string: { args: ["napi_env"], returns: "napi_value" },
+            throws_then_returns_null: { args: ["napi_env"], returns: "napi_value" },
+            throws_then_returns_int: { args: ["napi_env"], returns: "int" },
+            returns_int: { args: ["napi_env"], returns: "int" },
+            throws_from_void: { args: ["napi_env"], returns: "void" },
+          },
+        });
+
+        function caught(fn) {
+          try {
+            return { returned: fn() };
+          } catch (e) {
+            return { threw: [e.code ?? null, e.message] };
+          }
+        }
+
+        const nullValue = symbols.returns_null();
+        console.log(
+          JSON.stringify({
+            nullValue: [typeof nullValue, nullValue === undefined],
+            string: symbols.returns_string(),
+            thrownNull: caught(() => symbols.throws_then_returns_null()),
+            thrownInt: caught(() => symbols.throws_then_returns_int()),
+            thrownVoid: caught(() => symbols.throws_from_void()),
+            // The scheduled exception must not leak into the next call.
+            afterThrow: caught(() => symbols.returns_int()),
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    // stderr is in the received object so a failure shows it; it is not asserted.
+    expect({ results, stderr }).toMatchObject({
+      results: {
+        nullValue: ["undefined", true],
+        string: "hello",
+        thrownNull: { threw: ["ERR_FROM_C", "thrown from C"] },
+        thrownInt: { threw: [null, "thrown from int-returning C"] },
+        thrownVoid: { threw: [null, "thrown from void C"] },
+        afterThrow: { returned: 42 },
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
   const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
   const files = {

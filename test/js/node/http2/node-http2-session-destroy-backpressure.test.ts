@@ -31,7 +31,12 @@ function frame(type: number, flags: number, streamId: number, payload = Buffer.a
 // HPACK "literal header field without indexing, new name" for each pair.
 function hpack(headers: [string, string][]) {
   return Buffer.concat(
-    headers.flatMap(([k, v]) => [Buffer.from([0x00, k.length]), Buffer.from(k), Buffer.from([v.length]), Buffer.from(v)]),
+    headers.flatMap(([k, v]) => [
+      Buffer.from([0x00, k.length]),
+      Buffer.from(k),
+      Buffer.from([v.length]),
+      Buffer.from(v),
+    ]),
   );
 }
 

@@ -1,0 +1,4171 @@
+[
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { return 1 }",
+    "line": 1,
+    "column": 24,
+    "message": "expected ';' before '}'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { return x; }",
+    "line": 1,
+    "column": 22,
+    "message": "use of undeclared identifier 'x'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) {\n  int a;\n  int a;\n}",
+    "line": 3,
+    "column": 7,
+    "message": "redefinition of 'a'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { int *p = 5; return 0; }",
+    "line": 1,
+    "column": 24,
+    "message": "incompatible types when initializing: cannot convert 'int' to 'int *'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(int *p) { int x = p; return x; }",
+    "line": 1,
+    "column": 25,
+    "message": "incompatible types when initializing: cannot convert 'int *' to 'int'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "struct S { int a; }; int f(struct S s1) { return s1 + 1; }",
+    "line": 1,
+    "column": 53,
+    "message": "invalid operands to binary + ('struct S' and 'int')"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "struct S { int a; }; int f(struct S *s) { return *s + 1; }",
+    "line": 1,
+    "column": 53,
+    "message": "invalid operands to binary + ('struct S' and 'int')"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { 3 = 4; return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { int a[2]; int b[2]; a = b; return 0; }",
+    "line": 1,
+    "column": 37,
+    "message": "array type is not assignable"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(int x) { return x.y; }",
+    "line": 1,
+    "column": 24,
+    "message": "member reference base type 'int' is not a struct or union"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "struct S { int a; }; int f(struct S *s) { return s->b; }",
+    "line": 1,
+    "column": 51,
+    "message": "no member named 'b' in 'struct S'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(int x) { return *x; }",
+    "line": 1,
+    "column": 23,
+    "message": "indirection requires a pointer operand ('int' is invalid)"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(int x) { return x(); }",
+    "line": 1,
+    "column": 24,
+    "message": "called object type 'int' is not a function or function pointer"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int g(int); int f(void) { return g(1, 2); }",
+    "line": 1,
+    "column": 35,
+    "message": "wrong number of arguments: function takes 1, 2 given"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { break; }",
+    "line": 1,
+    "column": 15,
+    "message": "'break' statement not in a loop or switch"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { continue; }",
+    "line": 1,
+    "column": 15,
+    "message": "'continue' statement not in a loop"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(int x) { case 1: return x; }",
+    "line": 1,
+    "column": 16,
+    "message": "'case' label not within a switch statement"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(int x) { switch (x) { case 1: case 1: return 0; } return 1; }",
+    "line": 1,
+    "column": 37,
+    "message": "duplicate case value 1"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { goto nowhere; }",
+    "line": 1,
+    "column": 20,
+    "message": "use of undeclared label 'nowhere'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { l: l: return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "redefinition of label 'l'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "void f(void) { return 1; }",
+    "line": 1,
+    "column": 16,
+    "message": "void function should not return a value"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { struct U u; return 0; }",
+    "line": 1,
+    "column": 24,
+    "message": "variable 'u' has incomplete type 'struct U'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int a[-1];",
+    "line": 1,
+    "column": 7,
+    "message": "array size is negative"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int g = f;",
+    "line": 1,
+    "column": 9,
+    "message": "use of undeclared identifier 'f'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int x = 1; int x = 2;",
+    "line": 1,
+    "column": 16,
+    "message": "redefinition of 'x'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void); double f(void);",
+    "line": 1,
+    "column": 21,
+    "message": "conflicting types for 'f'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(int a) { return 1; } int f(int a) { return 2; }",
+    "line": 1,
+    "column": 32,
+    "message": "redefinition of 'f'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int y; int g = y;",
+    "line": 1,
+    "column": 16,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int a[2] = { 1, 2, 3 };",
+    "line": 1,
+    "column": 20,
+    "message": "excess elements in initializer"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "struct P { int x; }; struct P p = { .q = 1 };",
+    "line": 1,
+    "column": 38,
+    "message": "no member named 'q' in 'struct P'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { int x; return &x + &x; }",
+    "line": 1,
+    "column": 32,
+    "message": "invalid operands to binary + ('int *' and 'int *')"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(double d) { return d % 2; }",
+    "line": 1,
+    "column": 28,
+    "message": "invalid operands to binary % ('double' and 'int')"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(double d) { return ~d; }",
+    "line": 1,
+    "column": 26,
+    "message": "invalid operand to unary ~ ('double')"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "unsigned signed x;",
+    "line": 1,
+    "column": 1,
+    "message": "both 'signed' and 'unsigned' in declaration specifiers"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int float x;",
+    "line": 1,
+    "column": 1,
+    "message": "invalid combination of type specifiers"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "x;",
+    "line": 1,
+    "column": 1,
+    "message": "expected a type before 'x'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { return 1 +; }",
+    "line": 1,
+    "column": 25,
+    "message": "expected an expression before ';'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { return (1; }",
+    "line": 1,
+    "column": 24,
+    "message": "expected ')' before ';'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { /* never closed",
+    "line": 1,
+    "column": 15,
+    "message": "unterminated /* comment"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "char *s = \"abc;\nint x;",
+    "line": 1,
+    "column": 11,
+    "message": "unterminated string literal"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int x = 12abc;",
+    "line": 1,
+    "column": 9,
+    "message": "invalid integer constant '12abc'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int x = 99999999999999999999;",
+    "line": 1,
+    "column": 9,
+    "message": "integer constant is too large"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int x = 1 @ 2;",
+    "line": 1,
+    "column": 11,
+    "message": "unexpected character '@'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int a[1 / 0];",
+    "line": 1,
+    "column": 9,
+    "message": "division by zero in a constant expression"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "enum { Z = 5 % 0 };",
+    "line": 1,
+    "column": 14,
+    "message": "division by zero in a constant expression"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int s[1 << 40 >> 100];",
+    "line": 1,
+    "column": 9,
+    "message": "shift count is out of range in a constant expression"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "_Static_assert(sizeof(int) == 8, \"int is 4\");",
+    "line": 1,
+    "column": 1,
+    "message": "static assertion failed: int is 4"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) {",
+    "line": 1,
+    "column": 13,
+    "message": "expected '}' before end of file"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "struct S { struct S inner; };",
+    "line": 1,
+    "column": 21,
+    "message": "member has incomplete type 'struct S'"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "void v; ",
+    "line": 1,
+    "column": 6,
+    "message": "variable 'v' has type void"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int f(void) { int big[1 << 30][1 << 30]; return 0; }",
+    "line": 1,
+    "column": 31,
+    "message": "array is too large"
+  },
+  {
+    "about": "syntax and type errors are diagnosed",
+    "source": "int a[] = { [0x7fffffff] = 1 };",
+    "line": 1,
+    "column": 13,
+    "message": "object is too large"
+  },
+  {
+    "about": "unsupported constructs are diagnosed",
+    "source": "void f(int x) { __asm__(\"pushq %q0\" : \"+r\"(x)); }",
+    "line": 1,
+    "column": 17,
+    "message": "inline assembly: 'pushq' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
+  },
+  {
+    "about": "unsupported constructs are diagnosed",
+    "source": "int f(void) { return g(1); }",
+    "line": 1,
+    "column": 22,
+    "message": "call to undeclared function 'g'; implicit function declarations are not allowed"
+  },
+  {
+    "about": "unsupported constructs are diagnosed",
+    "source": "static int f(void); int g(void) { return f(); }",
+    "line": 1,
+    "column": 42,
+    "message": "static function 'f' is used but never defined"
+  },
+  {
+    "about": "bit fields",
+    "source": "struct S { int a : 3; } s; int *p = &s.a;",
+    "line": 1,
+    "column": 37,
+    "message": "cannot take the address of a bit-field"
+  },
+  {
+    "about": "bit fields",
+    "source": "struct S { int a : 33; };",
+    "line": 1,
+    "column": 16,
+    "message": "width of bit-field exceeds its type"
+  },
+  {
+    "about": "bit fields",
+    "source": "struct S { float a : 3; };",
+    "line": 1,
+    "column": 18,
+    "message": "bit-field has a non-integer type"
+  },
+  {
+    "about": "bit fields",
+    "source": "struct S { int a : 0; };",
+    "line": 1,
+    "column": 20,
+    "message": "a named bit-field cannot have zero width"
+  },
+  {
+    "about": "conditional directives",
+    "source": "int x = 'a;",
+    "line": 1,
+    "column": 9,
+    "message": "unterminated character constant"
+  },
+  {
+    "about": "gnu and c11 expression forms",
+    "source": "int f(int x) { return _Generic(x, long: 1); }",
+    "line": 1,
+    "column": 23,
+    "message": "_Generic selector of type 'int' is not compatible with any association"
+  },
+  {
+    "about": "gnu and c11 expression forms",
+    "source": "int f(int c) { switch (c) { case 1 ... 5: case 3: return 1; } return 0; }",
+    "line": 1,
+    "column": 43,
+    "message": "duplicate case value 3"
+  },
+  {
+    "about": "gnu and c11 expression forms",
+    "source": "int f(int c) { switch (c) { case 5 ... 1: return 1; } return 0; }",
+    "line": 1,
+    "column": 29,
+    "message": "empty case range"
+  },
+  {
+    "about": "variadic definitions",
+    "source": "#include <stdarg.h>\nint f(int n) { va_list ap; va_start(ap, n); return 0; }",
+    "line": 2,
+    "column": 28,
+    "message": "va_start used in a function that does not take variable arguments"
+  },
+  {
+    "about": "variadic definitions",
+    "source": "#include <stdarg.h>\nint f(int n, ...) { int x; va_start(x, n); return 0; }",
+    "line": 2,
+    "column": 28,
+    "message": "expected a va_list, got 'int'"
+  },
+  {
+    "about": "intrinsic headers are per architecture",
+    "source": "#include <arm_neon.h>\nint x;",
+    "line": 1,
+    "column": 2,
+    "message": "'arm_neon.h' file not found",
+    "requires": "glibc"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef float v8f __attribute__((vector_size(32))); v8f f(v8f a) { return a; }",
+    "line": 1,
+    "column": 75,
+    "message": "only 8-byte and 16-byte vectors are supported yet"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef short v2s __attribute__((vector_size(4))); short f(v2s *p) { return (*p)[0]; }",
+    "line": 1,
+    "column": 78,
+    "message": "only 8-byte and 16-byte vectors are supported yet"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int v8i __attribute__((vector_size(32))); v8i g; int f(void) { return g[0]; }",
+    "line": 1,
+    "column": 79,
+    "message": "only 8-byte and 16-byte vectors are supported yet"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef char v4c __attribute__((vector_size(4))); v4c f(void);  int g(void) { f(); return 0; }",
+    "line": 1,
+    "column": 80,
+    "message": "only 8-byte and 16-byte vectors are supported yet"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef double v8d __attribute__((vector_size(64))); void f(void) { v8d x = {0}; }",
+    "line": 1,
+    "column": 77,
+    "message": "only 8-byte and 16-byte vectors are supported yet"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef double v1d __attribute__((vector_size(8))); v1d f(v1d a) { return a + a; }",
+    "line": 1,
+    "column": 57,
+    "message": "passing or returning a one-element vector of 'double' is not supported for this target: GCC and Clang disagree on how",
+    "requires": "x64-sysv"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef double v1d __attribute__((vector_size(8))); struct s { v1d v; }; void g(struct s); void f(struct s *p) { g(*p); }",
+    "line": 1,
+    "column": 79,
+    "message": "passing or returning a one-element vector of 'double' is not supported for this target: GCC and Clang disagree on how",
+    "requires": "x64-sysv"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int v2i __attribute__((vector_size(8))); typedef int v4i __attribute__((vector_size(16))); v4i f(v2i a) { return (v4i)a; }",
+    "line": 1,
+    "column": 122,
+    "message": "cannot cast 'int __attribute__((vector_size(8)))' to 'int __attribute__((vector_size(16)))'"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int v2i __attribute__((vector_size(8))); int f(v2i a) { return (int)a; }",
+    "line": 1,
+    "column": 72,
+    "message": "cannot cast 'int __attribute__((vector_size(8)))' to 'int'"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int v2i __attribute__((vector_size(8))); typedef short v4s __attribute__((vector_size(8))); v2i f(v2i a, v4s b) { return a + b; }",
+    "line": 1,
+    "column": 132,
+    "message": "invalid operands to binary + ('int __attribute__((vector_size(8)))' and 'short __attribute__((vector_size(8)))')"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int bad __attribute__((vector_size(12)));",
+    "line": 1,
+    "column": 43,
+    "message": "vector size must be a power of two that is a multiple of the element size"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef struct S { int x; } bad __attribute__((vector_size(16)));",
+    "line": 1,
+    "column": 59,
+    "message": "invalid vector element type 'struct S'"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef _Bool bad __attribute__((vector_size(16)));",
+    "line": 1,
+    "column": 45,
+    "message": "invalid vector element type '_Bool'"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(V a, F b) { return a + b; }",
+    "line": 1,
+    "column": 124,
+    "message": "invalid operands to binary + ('int __attribute__((vector_size(16)))' and 'float __attribute__((vector_size(16)))')"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); F f(F a, F b) { return a & b; }",
+    "line": 1,
+    "column": 124,
+    "message": "invalid operands to binary & ('float __attribute__((vector_size(16)))' and 'float __attribute__((vector_size(16)))')"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); F f(F a) { return ~a; }",
+    "line": 1,
+    "column": 117,
+    "message": "invalid operand to unary ~ ('float __attribute__((vector_size(16)))')"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); F f(V a) { return a; }",
+    "line": 1,
+    "column": 110,
+    "message": "incompatible types when returning: cannot convert 'int __attribute__((vector_size(16)))' to 'float __attribute__((vector_size(16)))'"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(int a) { return (V)a; }",
+    "line": 1,
+    "column": 119,
+    "message": "cannot cast 'int' to 'int __attribute__((vector_size(16)))'"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); int f(V a) { return a ? 1 : 2; }",
+    "line": 1,
+    "column": 112,
+    "message": "incompatible types when returning: cannot convert 'int __attribute__((vector_size(16)))' to 'int'"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); int f(V a) { if (a) return 1; return 0; }",
+    "line": 1,
+    "column": 116,
+    "message": "a condition requires a scalar operand, got 'int __attribute__((vector_size(16)))'"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(V a) { return __builtin_shufflevector(a, a, 0, 1, 2, 8); }",
+    "line": 1,
+    "column": 156,
+    "message": "shuffle index is out of range"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(V a, int i) { return __builtin_shufflevector(a, a, 0, 1, 2, i); }",
+    "line": 1,
+    "column": 163,
+    "message": "shuffle index must be a constant integer"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(V a) { V v = {1, 2, 3, 4, 5}; return v; }",
+    "line": 1,
+    "column": 116,
+    "message": "excess elements in vector initializer"
+  },
+  {
+    "about": "6.5.2.2p4: an argument is an expression of an object type",
+    "source": "int printf(const char *, ...); void g(void); void f(void) { printf(\"%d\", g()); }\nint main(void) { return 0; }\n",
+    "line": 1,
+    "column": 75,
+    "message": "cannot pass 'void' as a variadic argument"
+  },
+  {
+    "about": "vector diagnostics",
+    "source": "#include <stdarg.h>\ntypedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(int n, ...) { va_list ap; va_start(ap, n); V v = va_arg(ap, V); va_end(ap); return v; }",
+    "line": 2,
+    "column": 152,
+    "message": "va_arg of a vector is not supported yet",
+    "requires": "x64-sysv"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "struct S { int a, b; }; _Atomic struct S s;",
+    "line": 1,
+    "column": 25,
+    "message": "_Atomic 'struct S' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "struct S { int a, b; }; _Atomic(struct S) s;",
+    "line": 1,
+    "column": 25,
+    "message": "_Atomic 'struct S' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "struct S { char c[16]; }; void f(struct S *p, struct S *q) { __atomic_load(p, q, 5); }",
+    "line": 1,
+    "column": 76,
+    "message": "__atomic_load on an object of type 'struct S' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "_Atomic long double x; void f(void) { x = 1; }",
+    "line": 1,
+    "column": 41,
+    "message": "an atomic operation on an object of type 'long double' is not supported: there are no 16-byte atomic operations",
+    "requires": "x87"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "_Atomic __int128 x; void f(void) { x = 1; }",
+    "line": 1,
+    "column": 38,
+    "message": "an atomic operation on an object of type '__int128' is not supported: there are no 16-byte atomic operations"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "typedef int V __attribute__((vector_size(16))); _Atomic V v;",
+    "line": 1,
+    "column": 49,
+    "message": "_Atomic 'int __attribute__((vector_size(16)))' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "int f(int x) { return __atomic_load_n(x, 5); }",
+    "line": 1,
+    "column": 39,
+    "message": "the first argument of __atomic_load_n must be a pointer"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "int f(float *p) { return __atomic_fetch_add(p, 1, 5); }",
+    "line": 1,
+    "column": 26,
+    "message": "__atomic_fetch_add needs a pointer to an integer, got 'float'"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "int f(int *p) { return __atomic_fetch_add(p, 5); }",
+    "line": 1,
+    "column": 24,
+    "message": "__atomic_fetch_add takes three arguments"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "int f(int *p, long long *e) { return __atomic_compare_exchange_n(p, e, 1, 0, 5, 5); }",
+    "line": 1,
+    "column": 69,
+    "message": "the second argument of __atomic_compare_exchange_n must point to an object of the same size"
+  },
+  {
+    "about": "atomic diagnostics",
+    "source": "_Atomic int x; void f(void) { x.y = 1; }",
+    "line": 1,
+    "column": 32,
+    "message": "member reference base type '_Atomic(int)' is not a struct or union"
+  },
+  {
+    "about": "alloca in its spellings",
+    "source": "void *p = alloca(4);",
+    "line": 1,
+    "column": 11,
+    "message": "alloca outside of a function"
+  },
+  {
+    "about": "complex arithmetic",
+    "source": "double _Complex z; int f(void) { return z < z; }",
+    "line": 1,
+    "column": 43,
+    "message": "invalid operands to binary < ('double _Complex' and 'double _Complex')"
+  },
+  {
+    "about": "complex arithmetic",
+    "source": "double _Complex z; void *f(void) { return (void *)z; }",
+    "line": 1,
+    "column": 43,
+    "message": "cannot convert 'double _Complex' to 'void *'"
+  },
+  {
+    "about": "complex arithmetic",
+    "source": "long double _Complex z; double f(void) { return __real__ z; }",
+    "line": 1,
+    "column": 58,
+    "message": "computing with values of type 'long double _Complex' is not supported yet",
+    "requires": "x87"
+  },
+  {
+    "about": "computed goto bytecode interpreter",
+    "source": "void f(void) { goto *&&missing; }",
+    "line": 1,
+    "column": 24,
+    "message": "use of undeclared label 'missing'"
+  },
+  {
+    "about": "computed goto bytecode interpreter",
+    "source": "void f(int n) { void *p = &&l; { int a[n]; l: a[0] = 0; } goto *p; }",
+    "line": 1,
+    "column": 59,
+    "message": "a computed goto cannot target a label in the scope of a variable length array"
+  },
+  {
+    "about": "computed goto bytecode interpreter",
+    "source": "void f(void) { goto *1.5; }",
+    "line": 1,
+    "column": 16,
+    "message": "the operand of 'goto *' must be a pointer"
+  },
+  {
+    "about": "int128 abi varargs and diagnostics",
+    "source": "__int128 x; int f(void) { switch (x) { case 1: return 1; } return 0; }",
+    "line": 1,
+    "column": 35,
+    "message": "a switch on a 128-bit integer is not supported yet"
+  },
+  {
+    "about": "int128 abi varargs and diagnostics",
+    "source": "struct S { __int128 x : 3; };",
+    "line": 1,
+    "column": 21,
+    "message": "bit-field has a non-integer type"
+  },
+  {
+    "about": "int128 abi varargs and diagnostics",
+    "source": "typedef __int128 V __attribute__((vector_size(16)));",
+    "line": 1,
+    "column": 46,
+    "message": "invalid vector element type '__int128'"
+  },
+  {
+    "about": "int128 abi varargs and diagnostics",
+    "source": "_Atomic __int128 x; __int128 f(void) { return x; }",
+    "line": 1,
+    "column": 47,
+    "message": "an atomic operation on an object of type '__int128' is not supported: there are no 16-byte atomic operations"
+  },
+  {
+    "about": "int128 abi varargs and diagnostics",
+    "source": "int g(void); __int128 x = (__int128)1 << 100 | g();",
+    "line": 1,
+    "column": 46,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "vla diagnostics",
+    "source": "int n = 3; int a[n];",
+    "line": 1,
+    "column": 17,
+    "message": "a variable length array cannot be declared at file scope"
+  },
+  {
+    "about": "vla diagnostics",
+    "source": "void f(int n) { static int a[n]; }",
+    "line": 1,
+    "column": 28,
+    "message": "a variable length array must have automatic storage duration"
+  },
+  {
+    "about": "vla diagnostics",
+    "source": "void f(int n) { extern int a[n]; }",
+    "line": 1,
+    "column": 28,
+    "message": "a variable length array must have automatic storage duration"
+  },
+  {
+    "about": "vla diagnostics",
+    "source": "void f(int n) { int a[n] = {0}; }",
+    "line": 1,
+    "column": 21,
+    "message": "a variable length array cannot be initialized"
+  },
+  {
+    "about": "vla diagnostics",
+    "source": "void f(int n) { struct S { int a[n]; } s; }",
+    "line": 1,
+    "column": 32,
+    "message": "member has incomplete type 'int [*]'"
+  },
+  {
+    "about": "vla diagnostics",
+    "source": "void f(int n) { int a[*]; }",
+    "line": 1,
+    "column": 22,
+    "message": "'[*]' is only allowed in a parameter declaration"
+  },
+  {
+    "about": "vla diagnostics",
+    "source": "int f(int n) { goto inside; { int a[n]; inside: a[0] = 1; return a[0]; } }",
+    "line": 1,
+    "column": 21,
+    "message": "goto into the scope of a variable length array"
+  },
+  {
+    "about": "vla diagnostics",
+    "source": "int f(int n) { { int a[n]; a[0] = 0; mid: a[0]++; } goto mid; }",
+    "line": 1,
+    "column": 58,
+    "message": "goto into the scope of a variable length array"
+  },
+  {
+    "about": "vla diagnostics",
+    "source": "int f(int n, int k) { switch (k) { int a[n]; case 1: a[0] = 1; return a[0]; } return 0; }",
+    "line": 1,
+    "column": 46,
+    "message": "switch jumps into the scope of a variable length array"
+  },
+  {
+    "about": "smaller fixes",
+    "source": "void f(int n, int a[*]) { }",
+    "line": 1,
+    "column": 20,
+    "message": "'[*]' is only allowed in a declaration that is not a function definition"
+  },
+  {
+    "about": "thread local objects",
+    "source": "_Thread_local int t; int *p = &t;",
+    "line": 1,
+    "column": 31,
+    "message": "the address of a thread-local object is not a constant"
+  },
+  {
+    "about": "thread local objects",
+    "source": "void f(void) { _Thread_local int t; }",
+    "line": 1,
+    "column": 34,
+    "message": "a block-scope thread-local variable must be static or extern"
+  },
+  {
+    "about": "thread local objects",
+    "source": "extern int t; _Thread_local int t;",
+    "line": 1,
+    "column": 33,
+    "message": "'t' is thread-local in one declaration and not in another"
+  },
+  {
+    "about": "thread local objects",
+    "source": "extern _Thread_local int elsewhere;\nint f(void) {\n  return elsewhere;\n}",
+    "line": 3,
+    "column": 10,
+    "message": "thread-local variable 'elsewhere' is declared but not defined in any translation unit"
+  },
+  {
+    "about": "aliases are other names for the target",
+    "source": "void f(void) __attribute__((alias(\"nowhere\")));",
+    "line": 1,
+    "column": 34,
+    "message": "alias target 'nowhere' must be a function declared earlier in this translation unit"
+  },
+  {
+    "about": "attributes that change meaning are implemented or refused",
+    "source": "__attribute__((naked)) void f(void) {}",
+    "line": 1,
+    "column": 21,
+    "message": "__attribute__((naked)) is not supported: it changes how the code must be compiled"
+  },
+  {
+    "about": "attributes that change meaning are implemented or refused",
+    "source": "void f(void) __attribute__((ms_abi));",
+    "line": 1,
+    "column": 35,
+    "message": "__attribute__((ms_abi)) is not supported on this target: it changes the calling convention",
+    "requires": "sysv"
+  },
+  {
+    "about": "attributes that change meaning are implemented or refused",
+    "source": "struct __attribute__((scalar_storage_order(\"big-endian\"))) s { int a; };",
+    "line": 1,
+    "column": 43,
+    "message": "__attribute__((scalar_storage_order)) is not supported: it changes how the code must be compiled"
+  },
+  {
+    "about": "attributes that change meaning are implemented or refused",
+    "source": "typedef int t __attribute__((mode(XX)));",
+    "line": 1,
+    "column": 34,
+    "message": "unknown machine mode 'XX'"
+  },
+  {
+    "about": "attributes that change meaning are implemented or refused",
+    "source": "typedef float t __attribute__((mode(SI)));",
+    "line": 1,
+    "column": 36,
+    "message": "mode 'SI' needs an integer type, not 'float'"
+  },
+  {
+    "about": "attributes that change meaning are implemented or refused",
+    "source": "int f(void) { int g(void) { return 1; } return g(); }",
+    "line": 1,
+    "column": 19,
+    "message": "nested functions (a GNU C extension) are not supported: calling one through a pointer needs code on an executable stack"
+  },
+  {
+    "about": "builtins the libraries use",
+    "source": "int f(int a, _Bool *r) { return __builtin_add_overflow(a, a, r); }",
+    "line": 1,
+    "column": 33,
+    "message": "__builtin_add_overflow needs integer operands of at most 64 bits, not '_Bool'"
+  },
+  {
+    "about": "const is a real qualifier",
+    "source": "const int x = 1; void f(void) { x = 2; }",
+    "line": 1,
+    "column": 35,
+    "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+  },
+  {
+    "about": "const is a real qualifier",
+    "source": "void f(const int *p) { *p = 2; }",
+    "line": 1,
+    "column": 27,
+    "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+  },
+  {
+    "about": "const is a real qualifier",
+    "source": "void f(const int *p) { (*p)++; }",
+    "line": 1,
+    "column": 28,
+    "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+  },
+  {
+    "about": "const is a real qualifier",
+    "source": "struct s { int a; }; void f(const struct s *p) { p->a += 1; }",
+    "line": 1,
+    "column": 55,
+    "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+  },
+  {
+    "about": "const is a real qualifier",
+    "source": "struct s { const int a; }; void f(struct s *p) { p->a = 1; }",
+    "line": 1,
+    "column": 55,
+    "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+  },
+  {
+    "about": "const is a real qualifier",
+    "source": "void f(int *const p) { p = 0; }",
+    "line": 1,
+    "column": 26,
+    "message": "cannot assign to an lvalue of const-qualified type 'int * const'"
+  },
+  {
+    "about": "const is a real qualifier",
+    "source": "void f(const char c[4]) { c[0] = 1; }",
+    "line": 1,
+    "column": 32,
+    "message": "cannot assign to an lvalue of const-qualified type 'const char'"
+  },
+  {
+    "about": "const is a real qualifier",
+    "source": "int f(const char *); int f(char *);",
+    "line": 1,
+    "column": 26,
+    "message": "conflicting types for 'f'"
+  },
+  {
+    "about": "constructors and destructors are listed",
+    "source": "struct s { int x; }; __attribute__((constructor)) void bad(struct s v) { (void)v; }",
+    "line": 1,
+    "column": 56,
+    "message": "a constructor must take and return scalars, as in 'void f(void)'"
+  },
+  {
+    "about": "flexible array members and zero length arrays",
+    "source": "struct m { int n; char t[]; }; int f(void) { struct m x = { 1, \"a\" }; return x.n; }",
+    "line": 1,
+    "column": 55,
+    "message": "a flexible array member can only be initialized in an object with static storage duration"
+  },
+  {
+    "about": "gnu c corner cases that tcctest exercises",
+    "source": "int f(unsigned __int128 *p, unsigned __int128 *e) { return __atomic_compare_exchange_n(p, e, 1, 0, 5, 5); }",
+    "line": 1,
+    "column": 60,
+    "message": "__atomic_compare_exchange_n on an object of type 'unsigned __int128' is not supported: there are no 16-byte atomic operations"
+  },
+  {
+    "about": "inline assembly that needs no assembler",
+    "source": "int f(int x) { __asm__(\"frobnicate %0\" : \"+r\"(x)); return x; }",
+    "line": 1,
+    "column": 16,
+    "message": "inline assembly: unsupported instruction 'frobnicate'",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly that needs no assembler",
+    "source": "int f(void) { int x; __asm__(\"cpuid\" : \"=r\"(x) : \"a\"(0)); return x; }",
+    "line": 1,
+    "column": 45,
+    "message": "inline assembly is not supported yet (an output of 'cpuid' that is not in a named register)",
+    "requires": "x64"
+  },
+  {
+    "about": "inline assembly that needs no assembler",
+    "source": "__asm__(\".globl x\");",
+    "line": 1,
+    "column": 1,
+    "message": "inline assembly is not supported yet"
+  },
+  {
+    "about": "old style definitions and unprototyped calls",
+    "source": "int f(a, b) int c; { return a; }",
+    "line": 1,
+    "column": 17,
+    "message": "'c' is not a parameter of the function"
+  },
+  {
+    "about": "pragma pack and push macro",
+    "source": "#pragma pack(3)\nint x;",
+    "line": 1,
+    "column": 1,
+    "message": "#pragma pack expects 1, 2, 4, 8 or 16"
+  },
+  {
+    "about": "range designators and obsolete spellings",
+    "source": "int a[4] = { [3 ... 1] = 0 };",
+    "line": 1,
+    "column": 14,
+    "message": "array range designator is empty"
+  },
+  {
+    "about": "range designators and obsolete spellings",
+    "source": "int a[4] = { [1 ... 4] = 0 };",
+    "line": 1,
+    "column": 14,
+    "message": "array designator index exceeds the array bounds"
+  },
+  {
+    "about": "macro expansion",
+    "source": "#define F(a, b) a\nF(1)",
+    "line": 2,
+    "column": 1,
+    "message": "macro 'F' requires 2 arguments, but 1 given"
+  },
+  {
+    "about": "macro expansion",
+    "source": "#define F(a) a\nF(1",
+    "line": 2,
+    "column": 1,
+    "message": "unterminated argument list invoking macro 'F'"
+  },
+  {
+    "about": "macro expansion",
+    "source": "#define C(a, b) a ## b\nC(+, /)",
+    "line": 2,
+    "column": 1,
+    "message": "pasting \"+\" and \"/\" does not give a valid preprocessing token"
+  },
+  {
+    "about": "macro expansion",
+    "source": "#define S(x) # y",
+    "line": 1,
+    "column": 14,
+    "message": "'#' is not followed by a macro parameter"
+  },
+  {
+    "about": "macro expansion",
+    "source": "#define P ## x",
+    "line": 1,
+    "column": 9,
+    "message": "'##' cannot appear at either end of a macro expansion"
+  },
+  {
+    "about": "conditional directives",
+    "source": "#if 1 / 0\n#endif",
+    "line": 1,
+    "column": 7,
+    "message": "division by zero in preprocessor expression"
+  },
+  {
+    "about": "conditional directives",
+    "source": "#if 1 +\n#endif",
+    "line": 1,
+    "column": 2,
+    "message": "expected a value in preprocessor expression"
+  },
+  {
+    "about": "conditional directives",
+    "source": "#if 1.5\n#endif",
+    "line": 1,
+    "column": 5,
+    "message": "floating constant in preprocessor expression"
+  },
+  {
+    "about": "conditional directives",
+    "source": "#if 1 2\n#endif",
+    "line": 1,
+    "column": 7,
+    "message": "missing binary operator in preprocessor expression"
+  },
+  {
+    "about": "conditional directives",
+    "source": "#endif",
+    "line": 1,
+    "column": 1,
+    "message": "#endif without #if"
+  },
+  {
+    "about": "conditional directives",
+    "source": "#else",
+    "line": 1,
+    "column": 1,
+    "message": "#else without #if"
+  },
+  {
+    "about": "conditional directives",
+    "source": "#if 1\n#else\n#else\n#endif",
+    "line": 3,
+    "column": 1,
+    "message": "#else after #else"
+  },
+  {
+    "about": "conditional directives",
+    "source": "\n#error stop here",
+    "line": 2,
+    "column": 1,
+    "message": "#error stop here"
+  },
+  {
+    "about": "conditional directives",
+    "source": "#bogus",
+    "line": 1,
+    "column": 2,
+    "message": "invalid preprocessing directive #bogus"
+  },
+  {
+    "about": "conditional directives",
+    "source": "#if 1\nint x;",
+    "line": 1,
+    "column": 1,
+    "message": "unterminated conditional directive"
+  },
+  {
+    "about": "Microsoft C",
+    "source": "int __vectorcall f(float x);",
+    "line": 1,
+    "column": 5,
+    "message": "__vectorcall is not supported: it changes how arguments are passed",
+    "requires": "windows"
+  },
+  {
+    "about": "Microsoft C",
+    "source": "static __inline int guarded(int *p) {\n  int v = 0;\n  __try { v = *p; if (v) __leave; v = 1; } __except (v == 1 ? 1 : 0) { v = -1; }\n  __try { v++; } __finally { v += 2; }\n  return v;\n}\nint uses(int *p) { return guarded(p); }",
+    "line": 3,
+    "column": 3,
+    "message": "structured exception handling (__try) is not supported",
+    "requires": "windows"
+  },
+  {
+    "about": "Microsoft C",
+    "source": "void f(void) { __try { } }",
+    "line": 1,
+    "column": 26,
+    "message": "expected __except or __finally after the block of __try",
+    "requires": "windows"
+  },
+  {
+    "about": "Microsoft C",
+    "source": "unsigned char _InterlockedCompareExchange128(__int64 volatile *, __int64, __int64, __int64 *);\nstatic __inline int cas(__int64 volatile *p, __int64 *c) { return _InterlockedCompareExchange128(p, 1, 2, c); }\nint uses(__int64 volatile *p, __int64 *c) { return cas(p, c); }",
+    "line": 2,
+    "column": 67,
+    "message": "_InterlockedCompareExchange128: a 16-byte compare and swap is not supported",
+    "requires": "windows"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"popq %%rax\" : : : \"rax\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: 'popq' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"ret\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: 'ret' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"call 1f\\n1:\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: 'call' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"int $3\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: 'int' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"syscall\" : : : \"rcx\", \"r11\", \"memory\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: 'syscall' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { long long v; __asm__(\"movq foo(%%rip), %0\" : \"=r\"(v)); return (int)v; }",
+    "line": 1,
+    "column": 31,
+    "message": "inline assembly: 'foo' is not a number",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { long long v = 1; __asm__(\"frobnicate %0\" : \"+r\"(v)); return (int)v; }",
+    "line": 1,
+    "column": 35,
+    "message": "inline assembly: unsupported instruction 'frobnicate'",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { long long v = 1; __asm__(\"jmp *%0\" : : \"r\"(v)); return 0; }",
+    "line": 1,
+    "column": 35,
+    "message": "inline assembly: 'jmp *%rax' would leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { long long v = 1; __asm__(\"movq %0\" : \"+r\"(v)); return (int)v; }",
+    "line": 1,
+    "column": 35,
+    "message": "inline assembly: 'movq' does not take these operands",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { int v = 1; __asm__(\"addl $1, (%0,%%rsp)\" : : \"r\"(&v) : \"memory\"); return v; }",
+    "line": 1,
+    "column": 29,
+    "message": "inline assembly: %rsp cannot be an index register",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { int v = 0x1234; __asm__(\"movb %%ah, %%sil\" : : \"a\"(v) : \"rsi\"); return 0; }",
+    "line": 1,
+    "column": 34,
+    "message": "inline assembly: %ah, %ch, %dh and %bh cannot be used together with %spl, %sil, %r8 and later, or a 64-bit operand",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"incl\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: 'incl' does not take these operands",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { int v = 1; __asm__(\"inc (%0)\" : : \"r\"(&v) : \"memory\"); return v; }",
+    "line": 1,
+    "column": 29,
+    "message": "inline assembly: 'inc' needs a size suffix (b, w, l or q): no operand is a register",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"jmp 3f\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: there is no label 3 after this branch",
+    "requires": "x64"
+  },
+  {
+    "about": "asm operands that cannot be placed",
+    "source": "int main(void) { long long a = 1, b; __asm__(\"movq %2, %0\" : \"=r\"(b) : \"r\"(a)); return (int)b; }",
+    "line": 1,
+    "column": 38,
+    "message": "inline assembly: the asm template uses operand 2, but there are only 2",
+    "requires": "x64"
+  },
+  {
+    "about": "asm operands that cannot be placed",
+    "source": "int main(void) { long long v = 1; __asm__(\"movq %[nobody], %0\" : \"+r\"(v)); return (int)v; }",
+    "line": 1,
+    "column": 35,
+    "message": "inline assembly: the asm template names an operand 'nobody' that does not exist",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"pushq %rax\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: 'pushq' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
+  },
+  {
+    "about": "asm operands that cannot be placed",
+    "source": "int main(void) { long long v; __asm__(\"xorl %%r8d, %%r8d\" : \"=A\"(v) : : \"r8\"); return (int)v; }",
+    "line": 1,
+    "column": 31,
+    "message": "inline assembly: the constraint \"=A\" names x87 registers or a register pair, which are not supported",
+    "requires": "x64"
+  },
+  {
+    "about": "asm operands that cannot be placed",
+    "source": "int main(void) { long long a, b; __asm__(\"xorl %%r8d, %%r8d\" : \"=a\"(a), \"=a\"(b) : : \"r8\"); return (int)(a + b); }",
+    "line": 1,
+    "column": 34,
+    "message": "inline assembly: two outputs are in %rax",
+    "requires": "x64"
+  },
+  {
+    "about": "asm operands that cannot be placed",
+    "source": "int main(void) { long long a = 1; __asm__(\"xorl %%r8d, %%r8d\" : : \"a\"(a) : \"rax\", \"r8\"); return 0; }",
+    "line": 1,
+    "column": 35,
+    "message": "inline assembly: %rax is both an operand and clobbered",
+    "requires": "x64"
+  },
+  {
+    "about": "asm operands that cannot be placed",
+    "source": "int main(int argc, char **argv) { __asm__(\"xorl %%r8d, %%r8d\" : : \"i\"(argc) : \"r8\"); return 0; }",
+    "line": 1,
+    "column": 35,
+    "message": "inline assembly: the operand for the constraint \"i\" is not a constant",
+    "requires": "x64"
+  },
+  {
+    "about": "asm operands that cannot be placed",
+    "source": "int main(void) { double d = 1; __asm__(\"xorl %%r8d, %%r8d\" : : \"a\"(d) : \"r8\"); return 0; }",
+    "line": 1,
+    "column": 32,
+    "message": "inline assembly: the constraint \"a\" puts a value that is not an integer or a pointer in a general register",
+    "requires": "x64"
+  },
+  {
+    "about": "asm operands that cannot be placed",
+    "source": "int main(void) { struct { long long a, b, c; } s = {1, 2, 3}; __asm__(\"xorl %%r8d, %%r8d\" : : \"r\"(s) : \"r8\"); return 0; }",
+    "line": 1,
+    "column": 63,
+    "message": "inline assembly: the constraint \"r\" is not supported for this operand",
+    "requires": "x64"
+  },
+  {
+    "about": "asm operands that cannot be placed",
+    "source": "int main(void) { long long v = 1; __asm__(\"xorl %%r8d, %%r8d\" : : \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v) : \"r8\"); return 0; }",
+    "line": 1,
+    "column": 35,
+    "message": "inline assembly: the asm statement needs more general registers than there are",
+    "requires": "x64"
+  },
+  {
+    "about": "asm operands that cannot be placed",
+    "source": "int main(void) { long long v = 1; __asm__(\"xorl %%r8d, %%r8d\" : : \"r\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v) : \"r8\"); return 0; }",
+    "line": 1,
+    "column": 35,
+    "message": "inline assembly: an asm statement can have at most 30 operands",
+    "requires": "x64"
+  },
+  {
+    "about": "intrinsic headers are per architecture",
+    "source": "#include <emmintrin.h>\nint x;",
+    "line": 1,
+    "column": 2,
+    "message": "'emmintrin.h' file not found",
+    "requires": "arm64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"cpuid\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly is not supported yet ('cpuid')",
+    "requires": "arm64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { int a = 1, b = 2; __asm__(\"cmp %w1, %w0\" : \"+r\"(a) : \"r\"(b)); return a; }",
+    "line": 1,
+    "column": 36,
+    "message": "inline assembly is not supported yet ('cmp')",
+    "requires": "arm64"
+  },
+  {
+    "about": "6.2.5p10: long double is not double, whatever its format",
+    "source": "double f(void);\nlong double f(void);\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 13,
+    "message": "conflicting types for 'f'"
+  },
+  {
+    "about": "6.2.5p10: long double is not double, whatever its format",
+    "source": "extern long double x;\ndouble x;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 8,
+    "message": "conflicting types for 'x'"
+  },
+  {
+    "about": "6.2.5p10: long double is not double, whatever its format",
+    "source": "int main(void) { return _Generic(1.0L, double: 1, float: 2); }",
+    "line": 1,
+    "column": 25,
+    "message": "_Generic selector of type 'long double' is not compatible with any association"
+  },
+  {
+    "about": "6.5.1.1p2: no two associations of a generic selection name compatible types",
+    "source": "typedef unsigned short first, second;\nint main(void) { return _Generic((first)0, first: 1, second: 2, default: 0); }",
+    "line": 2,
+    "column": 54,
+    "message": "_Generic names type 'unsigned short', which is compatible with 'unsigned short' named before it"
+  },
+  {
+    "about": "6.5.1.1p2: no two associations of a generic selection name compatible types",
+    "source": "int main(void) { return _Generic(1, int: 1, signed: 2); }",
+    "line": 1,
+    "column": 45,
+    "message": "_Generic names type 'int', which is compatible with 'int' named before it"
+  },
+  {
+    "about": "6.5.1.1p2: a generic selection has at most one default",
+    "source": "int main(void) { return _Generic(1, default: 1, int: 2, default: 3); }",
+    "line": 1,
+    "column": 25,
+    "message": "duplicate default in _Generic"
+  },
+  {
+    "about": "6.9.1p6: every parameter of an old-style definition is declared",
+    "source": "int f(a, b) int a; { return a + b; }\nint main(void) { return f(1, 2); }",
+    "line": 1,
+    "column": 10,
+    "message": "parameter 'b' has no declaration (implicit int is not supported)"
+  },
+  {
+    "about": "6.7.6.3p3: an identifier list in a declarator that is not a definition is empty",
+    "source": "int f(a, b);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 5,
+    "message": "a list of parameter names without types is only allowed in a function definition"
+  },
+  {
+    "about": "6.5.1.1p2: the controlling expression of a generic selection matches at most... none and no default",
+    "source": "int main(void) { return _Generic(1.0f, int: 1, double: 2); }",
+    "line": 1,
+    "column": 25,
+    "message": "_Generic selector of type 'float' is not compatible with any association"
+  },
+  {
+    "about": "6.5.1.1p2: an association names a complete object type",
+    "source": "struct s;\nint main(void) { return _Generic(1, struct s: 1, default: 2); }",
+    "line": 2,
+    "column": 37,
+    "message": "_Generic names type 'struct s', which is not a complete object type of known constant size"
+  },
+  {
+    "about": "6.5.1.1p2: an association does not name a function type",
+    "source": "int main(void) { return _Generic(1, int(void): 1, default: 2); }",
+    "line": 1,
+    "column": 37,
+    "message": "_Generic names type 'int ()', which is not a complete object type of known constant size"
+  },
+  {
+    "about": "6.5.1.1p2: an association does not name a variably modified type",
+    "source": "int main(void) { int n = 2; return _Generic(1, int[n]: 1, default: 2); }",
+    "line": 1,
+    "column": 48,
+    "message": "_Generic names type 'int [*]', which is not a complete object type of known constant size"
+  },
+  {
+    "about": "6.5.2.1p1: one operand of a subscript is a pointer to a complete object type, the other an integer",
+    "source": "int main(void) { int a = 1, b = 2; return a[b]; }",
+    "line": 1,
+    "column": 44,
+    "message": "subscripted value is not an array or pointer, or the index is not an integer"
+  },
+  {
+    "about": "6.5.2.1p1: one operand of a subscript is a pointer to a complete object type, the other an integer",
+    "source": "int main(void) { int a[2] = {0}; return a[1.0]; }",
+    "line": 1,
+    "column": 42,
+    "message": "subscripted value is not an array or pointer, or the index is not an integer"
+  },
+  {
+    "about": "6.5.2.2p1: the called expression is a pointer to a function",
+    "source": "int main(void) { int x = 1; return x(); }",
+    "line": 1,
+    "column": 37,
+    "message": "called object type 'int' is not a function or function pointer"
+  },
+  {
+    "about": "6.5.2.2p1: a called function does not return an array or an incomplete type other than void",
+    "source": "struct s f(void);\nint main(void) { f(); return 0; }",
+    "line": 2,
+    "column": 19,
+    "message": "calling a function that returns an incomplete type"
+  },
+  {
+    "about": "6.5.2.2p2: the number of arguments agrees with the number of parameters",
+    "source": "int f(int a, int b);\nint main(void) { return f(1); }",
+    "line": 2,
+    "column": 26,
+    "message": "wrong number of arguments: function takes 2, 1 given"
+  },
+  {
+    "about": "6.5.2.2p2: the number of arguments agrees with the number of parameters",
+    "source": "int f(void);\nint main(void) { return f(1); }",
+    "line": 2,
+    "column": 26,
+    "message": "wrong number of arguments: function takes 0, 1 given"
+  },
+  {
+    "about": "6.5.2.2p2: each argument can be assigned to its parameter",
+    "source": "struct s { int a; };\nint f(int a);\nint main(void) { struct s v = {1}; return f(v); }",
+    "line": 3,
+    "column": 45,
+    "message": "incompatible types when passing an argument: cannot convert 'struct s' to 'int'"
+  },
+  {
+    "about": "6.5.2.2p2: each argument can be assigned to its parameter",
+    "source": "int f(int *p);\nint main(void) { return f(1.5); }",
+    "line": 2,
+    "column": 27,
+    "message": "incompatible types when passing an argument: cannot convert 'double' to 'int *'"
+  },
+  {
+    "about": "6.5.2.3p1: the left operand of . is a structure or a union with that member",
+    "source": "int main(void) { int x = 1; return x.a; }",
+    "line": 1,
+    "column": 37,
+    "message": "member reference base type 'int' is not a struct or union"
+  },
+  {
+    "about": "6.5.2.3p1: the left operand of . is a structure or a union with that member",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; return v.b; }",
+    "line": 2,
+    "column": 44,
+    "message": "no member named 'b' in 'struct s'"
+  },
+  {
+    "about": "6.5.2.3p2: the left operand of -> is a pointer to a structure or a union with that member",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; return v->a; }",
+    "line": 2,
+    "column": 44,
+    "message": "member reference type 'struct s' is not a pointer to a struct or union"
+  },
+  {
+    "about": "6.5.2.3p2: the left operand of -> is a pointer to a structure or a union with that member",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}, *p = &v; return p.a; }",
+    "line": 2,
+    "column": 53,
+    "message": "member reference base type 'struct s *' is not a struct or union"
+  },
+  {
+    "about": "6.5.2.3p2: the left operand of -> is a pointer to a structure or a union with that member",
+    "source": "struct s;\nint f(struct s *p) { return p->a; }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 30,
+    "message": "member access into incomplete type 'struct s'"
+  },
+  {
+    "about": "6.5.2.4p1: the operand of postfix ++ is a modifiable lvalue of real or pointer type",
+    "source": "int main(void) { return 5++; }",
+    "line": 1,
+    "column": 26,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.5.2.4p1: the operand of postfix ++ is a modifiable lvalue of real or pointer type",
+    "source": "int main(void) { const int x = 1; x++; return x; }",
+    "line": 1,
+    "column": 36,
+    "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+  },
+  {
+    "about": "6.5.2.4p1: the operand of postfix ++ is a modifiable lvalue of real or pointer type",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; v++; return 0; }",
+    "line": 2,
+    "column": 37,
+    "message": "cannot increment a value of type 'struct s'"
+  },
+  {
+    "about": "6.5.2.4p1: the operand of postfix -- is a modifiable lvalue of real or pointer type",
+    "source": "int main(void) { int a[2] = {0}; a--; return 0; }",
+    "line": 1,
+    "column": 35,
+    "message": "array type is not assignable"
+  },
+  {
+    "about": "6.5.2.5p1: a compound literal names a complete object type or an array of unknown size, not a variable length array",
+    "source": "int main(void) { int n = 2; int *p = (int[n]){1, 2}; return p[0]; }",
+    "line": 1,
+    "column": 47,
+    "message": "excess elements in initializer"
+  },
+  {
+    "about": "6.5.2.5p1: a compound literal names a complete object type or an array of unknown size",
+    "source": "struct s;\nint main(void) { (struct s){0}; return 0; }",
+    "line": 2,
+    "column": 29,
+    "message": "excess elements in initializer"
+  },
+  {
+    "about": "6.5.2.5p1: a compound literal does not name a function type",
+    "source": "int main(void) { (int(void)){0}; return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "invalid type for a compound literal"
+  },
+  {
+    "about": "6.5.2.5p3: a compound literal outside a function has constant initializers",
+    "source": "int x = 1;\nint *p = (int[]){x};\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 18,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.5.3.1p1: the operand of prefix ++ is a modifiable lvalue of real or pointer type",
+    "source": "int main(void) { int x = 1; ++(x + 1); return x; }",
+    "line": 1,
+    "column": 29,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.5.3.1p1: the operand of prefix -- is a modifiable lvalue of real or pointer type",
+    "source": "int f(void);\nint main(void) { --f; return 0; }",
+    "line": 2,
+    "column": 18,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.5.3.2p1: the operand of & is a function designator, the result of [] or *, or an lvalue that is neither a bit-field nor register",
+    "source": "struct s { int b : 3; };\nint main(void) { struct s v = {1}; return &v.b != 0; }",
+    "line": 2,
+    "column": 43,
+    "message": "cannot take the address of a bit-field"
+  },
+  {
+    "about": "6.5.3.2p1: the operand of & is a function designator, the result of [] or *, or an lvalue that is neither a bit-field nor register",
+    "source": "int main(void) { register int r = 1; return &r != 0; }",
+    "line": 1,
+    "column": 45,
+    "message": "cannot take the address of a register variable"
+  },
+  {
+    "about": "6.5.3.2p1: the operand of & is a function designator, the result of [] or *, or an lvalue that is neither a bit-field nor register",
+    "source": "int main(void) { int x = 1; return &(x + 1) != 0; }",
+    "line": 1,
+    "column": 36,
+    "message": "cannot take the address of an rvalue"
+  },
+  {
+    "about": "6.5.3.2p2: the operand of unary * is a pointer",
+    "source": "int main(void) { int x = 1; return *x; }",
+    "line": 1,
+    "column": 36,
+    "message": "indirection requires a pointer operand ('int' is invalid)"
+  },
+  {
+    "about": "6.5.3.2p2: the operand of unary * is a pointer",
+    "source": "int main(void) { double d = 1; return (int)*d; }",
+    "line": 1,
+    "column": 44,
+    "message": "indirection requires a pointer operand ('double' is invalid)"
+  },
+  {
+    "about": "6.5.3.3p1: the operand of unary + or - is arithmetic, of ~ integer, of ! scalar",
+    "source": "int main(void) { int x = 1, *p = &x; return -p != 0; }",
+    "line": 1,
+    "column": 45,
+    "message": "invalid operand to unary - ('int *')"
+  },
+  {
+    "about": "6.5.3.3p1: the operand of unary + or - is arithmetic, of ~ integer, of ! scalar",
+    "source": "int main(void) { return (int)~1.5; }",
+    "line": 1,
+    "column": 30,
+    "message": "invalid operand to unary ~ ('double')"
+  },
+  {
+    "about": "6.5.3.3p1: the operand of unary + or - is arithmetic, of ~ integer, of ! scalar",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; return !v; }",
+    "line": 2,
+    "column": 44,
+    "message": "'!' requires a scalar operand, got 'struct s'"
+  },
+  {
+    "about": "6.5.3.3p1: the operand of unary + or - is arithmetic, of ~ integer, of ! scalar",
+    "source": "int main(void) { int x = 1, *p = &x; return +p != 0; }",
+    "line": 1,
+    "column": 45,
+    "message": "invalid operand to unary + ('int *')"
+  },
+  {
+    "about": "6.5.3.4p1: sizeof is not applied to a function type, an incomplete type or a bit-field",
+    "source": "struct s;\nint main(void) { return (int)sizeof(struct s); }",
+    "line": 2,
+    "column": 30,
+    "message": "invalid application of 'sizeof' to incomplete type 'struct s'"
+  },
+  {
+    "about": "6.5.3.4p1: sizeof is not applied to a function type, an incomplete type or a bit-field",
+    "source": "struct s { int b : 3; };\nint main(void) { struct s v = {1}; return (int)sizeof v.b; }",
+    "line": 2,
+    "column": 48,
+    "message": "invalid application of 'sizeof' to a bit-field"
+  },
+  {
+    "about": "6.5.3.4p1: sizeof is not applied to a function type, an incomplete type or a bit-field",
+    "source": "extern int a[];\nint main(void) { return (int)sizeof a; }",
+    "line": 2,
+    "column": 30,
+    "message": "invalid application of 'sizeof' to incomplete type 'int []'"
+  },
+  {
+    "about": "6.5.3.4p1: _Alignof is not applied to a function type or an incomplete type",
+    "source": "struct s;\nint main(void) { return (int)_Alignof(struct s); }",
+    "line": 2,
+    "column": 30,
+    "message": "invalid application of '_Alignof' to incomplete type 'struct s'"
+  },
+  {
+    "about": "6.5.4p2: a cast names void or a scalar type, and its operand is scalar",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; return (int)v; }",
+    "line": 2,
+    "column": 43,
+    "message": "cannot cast 'struct s' to 'int'"
+  },
+  {
+    "about": "6.5.4p2: a cast names void or a scalar type, and its operand is scalar",
+    "source": "struct s { int a; };\nint main(void) { struct s v = (struct s)1; return v.a; }",
+    "line": 2,
+    "column": 31,
+    "message": "cannot cast to non-scalar type 'struct s'"
+  },
+  {
+    "about": "6.5.4p2: a cast names void or a scalar type, and its operand is scalar",
+    "source": "int main(void) { int a[2]; (int[2])a; return 0; }",
+    "line": 1,
+    "column": 28,
+    "message": "cannot cast to non-scalar type 'int [2]'"
+  },
+  {
+    "about": "6.5.4p4: a pointer is not converted to a floating type nor a floating type to a pointer",
+    "source": "int main(void) { int x = 1; return (int)(double)&x; }",
+    "line": 1,
+    "column": 41,
+    "message": "cannot cast between pointer and floating types"
+  },
+  {
+    "about": "6.5.4p4: a pointer is not converted to a floating type nor a floating type to a pointer",
+    "source": "int main(void) { return (int *)1.5 != 0; }",
+    "line": 1,
+    "column": 25,
+    "message": "cannot cast between pointer and floating types"
+  },
+  {
+    "about": "6.5.5p2: the operands of * and / are arithmetic, of % integer",
+    "source": "int main(void) { int x = 1, *p = &x; return p * 2 != 0; }",
+    "line": 1,
+    "column": 47,
+    "message": "invalid operands to binary * ('int *' and 'int')"
+  },
+  {
+    "about": "6.5.5p2: the operands of * and / are arithmetic, of % integer",
+    "source": "int main(void) { return (int)(5.0 % 2); }",
+    "line": 1,
+    "column": 35,
+    "message": "invalid operands to binary % ('double' and 'int')"
+  },
+  {
+    "about": "6.5.5p2: the operands of * and / are arithmetic, of % integer",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; return v / 2; }",
+    "line": 2,
+    "column": 45,
+    "message": "invalid operands to binary / ('struct s' and 'int')"
+  },
+  {
+    "about": "6.5.6p2: for + both operands are arithmetic, or one is a pointer to a complete object type and the other an integer",
+    "source": "int main(void) { int x = 1, *p = &x, *q = &x; return p + q != 0; }",
+    "line": 1,
+    "column": 56,
+    "message": "invalid operands to binary + ('int *' and 'int *')"
+  },
+  {
+    "about": "6.5.6p2: for + both operands are arithmetic, or one is a pointer to a complete object type and the other an integer",
+    "source": "int main(void) { int x = 1, *p = &x; return p + 1.5 != 0; }",
+    "line": 1,
+    "column": 47,
+    "message": "invalid operands to binary + ('int *' and 'double')"
+  },
+  {
+    "about": "6.5.6p2: for + both operands are arithmetic, or one is a pointer to a complete object type and the other an integer",
+    "source": "struct s;\nint f(struct s *p) { return p + 1 != 0; }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 31,
+    "message": "arithmetic on a pointer to incomplete type 'struct s'"
+  },
+  {
+    "about": "6.5.6p3: for - both are arithmetic, both are pointers to compatible complete object types, or the left is such a pointer and the right an integer",
+    "source": "int main(void) { int x = 1; char c = 2; return &x - &c != 0; }",
+    "line": 1,
+    "column": 51,
+    "message": "'int *' and 'char *' are not pointers to compatible types"
+  },
+  {
+    "about": "6.5.6p3: for - both are arithmetic, both are pointers to compatible complete object types, or the left is such a pointer and the right an integer",
+    "source": "int main(void) { int x = 1, *p = &x; return 1 - p != 0; }",
+    "line": 1,
+    "column": 47,
+    "message": "invalid operands to binary - ('int' and 'int *')"
+  },
+  {
+    "about": "6.5.7p2: the operands of << and >> are integers",
+    "source": "int main(void) { return (int)(1.0 << 2); }",
+    "line": 1,
+    "column": 35,
+    "message": "invalid operands to binary << ('double' and 'int')"
+  },
+  {
+    "about": "6.5.7p2: the operands of << and >> are integers",
+    "source": "int main(void) { int x = 1, *p = &x; return 1 >> p; }",
+    "line": 1,
+    "column": 47,
+    "message": "invalid operands to binary >> ('int' and 'int *')"
+  },
+  {
+    "about": "6.5.8p2: relational operands are both real, or both pointers to compatible object types",
+    "source": "struct s { int a; };\nint main(void) { struct s a = {1}, b = {2}; return a < b; }",
+    "line": 2,
+    "column": 54,
+    "message": "invalid operands to binary < ('struct s' and 'struct s')"
+  },
+  {
+    "about": "6.5.8p2: relational operands are both real, or both pointers to compatible object types",
+    "source": "int main(void) { int x = 1; return &x < 1; }",
+    "line": 1,
+    "column": 39,
+    "message": "invalid operands to binary < ('int *' and 'int')"
+  },
+  {
+    "about": "6.5.9p2: equality operands are both arithmetic, both pointers to compatible types, a pointer and a pointer to void, or a pointer and a null pointer constant",
+    "source": "struct s { int a; };\nint main(void) { struct s a = {1}, b = {1}; return a == b; }",
+    "line": 2,
+    "column": 54,
+    "message": "invalid operands to binary == ('struct s' and 'struct s')"
+  },
+  {
+    "about": "6.5.9p2: equality operands are both arithmetic, both pointers to compatible types, a pointer and a pointer to void, or a pointer and a null pointer constant",
+    "source": "int main(void) { int x = 1; return &x == 5; }",
+    "line": 1,
+    "column": 39,
+    "message": "invalid operands to binary == ('int *' and 'int')"
+  },
+  {
+    "about": "6.5.10p2: the operands of & | ^ are integers",
+    "source": "int main(void) { return (int)(1.5 & 1); }",
+    "line": 1,
+    "column": 35,
+    "message": "invalid operands to binary & ('double' and 'int')"
+  },
+  {
+    "about": "6.5.11p2: the operands of & | ^ are integers",
+    "source": "int main(void) { int x = 1; return (&x ^ 1) != 0; }",
+    "line": 1,
+    "column": 40,
+    "message": "invalid operands to binary ^ ('int *' and 'int')"
+  },
+  {
+    "about": "6.5.12p2: the operands of & | ^ are integers",
+    "source": "int main(void) { return (int)(1 | 2.0f); }",
+    "line": 1,
+    "column": 33,
+    "message": "invalid operands to binary | ('int' and 'float')"
+  },
+  {
+    "about": "6.5.13p2: the operands of && and || are scalar",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; return v && 1; }",
+    "line": 2,
+    "column": 43,
+    "message": "'&&' requires a scalar operand, got 'struct s'"
+  },
+  {
+    "about": "6.5.14p2: the operands of && and || are scalar",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; return 0 || v; }",
+    "line": 2,
+    "column": 48,
+    "message": "'||' requires a scalar operand, got 'struct s'"
+  },
+  {
+    "about": "6.5.15p2: the first operand of ?: is scalar",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; return v ? 1 : 2; }",
+    "line": 2,
+    "column": 43,
+    "message": "a condition requires a scalar operand, got 'struct s'"
+  },
+  {
+    "about": "6.5.15p3: the second and third operands of ?: are both arithmetic, the same structure or union, both void, compatible pointers, a pointer and a null pointer constant, or a pointer and a pointer to void",
+    "source": "struct s { int a; }; struct t { int a; };\nint main(void) { struct s u = {1}; struct t v = {2}; return (1 ? u : v).a; }",
+    "line": 2,
+    "column": 64,
+    "message": "incompatible operand types in conditional expression ('struct s' and 'struct t')"
+  },
+  {
+    "about": "6.5.15p3: the second and third operands of ?: are both arithmetic, the same structure or union, both void, compatible pointers, a pointer and a null pointer constant, or a pointer and a pointer to void",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; return (1 ? v : 1).a; }",
+    "line": 2,
+    "column": 46,
+    "message": "incompatible operand types in conditional expression ('struct s' and 'int')"
+  },
+  {
+    "about": "6.5.16p2: the left operand of an assignment is a modifiable lvalue",
+    "source": "int main(void) { 1 = 2; return 0; }",
+    "line": 1,
+    "column": 20,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.5.16p2: the left operand of an assignment is a modifiable lvalue",
+    "source": "int main(void) { int a[2], b[2] = {0}; a = b; return 0; }",
+    "line": 1,
+    "column": 42,
+    "message": "array type is not assignable"
+  },
+  {
+    "about": "6.5.16p2: the left operand of an assignment is a modifiable lvalue",
+    "source": "struct s { const int a; };\nint main(void) { struct s u = {1}, v = {2}; u = v; return 0; }",
+    "line": 2,
+    "column": 47,
+    "message": "cannot assign to an lvalue of type 'struct s', which has a const-qualified member"
+  },
+  {
+    "about": "6.5.16p2: the left operand of an assignment is a modifiable lvalue",
+    "source": "int main(void) { const int x = 1; x = 2; return x; }",
+    "line": 1,
+    "column": 37,
+    "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+  },
+  {
+    "about": "6.5.16p2: the left operand of an assignment is a modifiable lvalue",
+    "source": "int f(void);\nint main(void) { f = 0; return 0; }",
+    "line": 2,
+    "column": 20,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.5.16p2: the left operand of an assignment is a modifiable lvalue",
+    "source": "int main(void) { int x = 1; (x + 1) = 2; return x; }",
+    "line": 1,
+    "column": 37,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.5.16p2: the left operand of an assignment is a modifiable lvalue",
+    "source": "int main(void) { int x = 1; (1 ? x : x) = 2; return x; }",
+    "line": 1,
+    "column": 41,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.5.16p2: the left operand of an assignment is a modifiable lvalue",
+    "source": "int main(void) { int x = 1; (int)x = 2; return x; }",
+    "line": 1,
+    "column": 36,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.5.16.1p1: simple assignment: arithmetic to arithmetic, compatible structures, compatible pointers (the left having all the qualifiers), void pointers, null pointer constants, pointers to _Bool",
+    "source": "struct s { int a; }; struct t { int a; };\nint main(void) { struct s u = {1}; struct t v = {2}; u = v; return 0; }",
+    "line": 2,
+    "column": 56,
+    "message": "incompatible types when assigning: cannot convert 'struct t' to 'struct s'"
+  },
+  {
+    "about": "6.5.16.1p1: simple assignment: arithmetic to arithmetic, compatible structures, compatible pointers (the left having all the qualifiers), void pointers, null pointer constants, pointers to _Bool",
+    "source": "int main(void) { int x = 1; double *p; p = &x; return p != 0; }",
+    "line": 1,
+    "column": 42,
+    "message": "incompatible pointer types when assigning: 'int *' to 'double *'"
+  },
+  {
+    "about": "6.5.16.1p1: simple assignment: arithmetic to arithmetic, compatible structures, compatible pointers (the left having all the qualifiers), void pointers, null pointer constants, pointers to _Bool",
+    "source": "int main(void) { int *p; p = 5; return p != 0; }",
+    "line": 1,
+    "column": 28,
+    "message": "incompatible types when assigning: cannot convert 'int' to 'int *'"
+  },
+  {
+    "about": "6.5.16.1p1: simple assignment: arithmetic to arithmetic, compatible structures, compatible pointers (the left having all the qualifiers), void pointers, null pointer constants, pointers to _Bool",
+    "source": "int main(void) { int x = 1, y; y = &x; return y; }",
+    "line": 1,
+    "column": 34,
+    "message": "incompatible types when assigning: cannot convert 'int *' to 'int'"
+  },
+  {
+    "about": "6.5.16.1p1: simple assignment: arithmetic to arithmetic, compatible structures, compatible pointers (the left having all the qualifiers), void pointers, null pointer constants, pointers to _Bool",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; int x; x = v; return x; }",
+    "line": 2,
+    "column": 45,
+    "message": "incompatible types when assigning: cannot convert 'struct s' to 'int'"
+  },
+  {
+    "about": "6.5.16.1p1: simple assignment: arithmetic to arithmetic, compatible structures, compatible pointers (the left having all the qualifiers), void pointers, null pointer constants, pointers to _Bool",
+    "source": "int f(void);\nint main(void) { int (*p)(int) ; p = f; return p != 0; }",
+    "line": 2,
+    "column": 36,
+    "message": "incompatible pointer types when assigning: 'int () *' to 'int (int) *'"
+  },
+  {
+    "about": "6.5.16.1p1: simple assignment: arithmetic to arithmetic, compatible structures, compatible pointers (the left having all the qualifiers), void pointers, null pointer constants, pointers to _Bool",
+    "source": "int main(void) { int **pp = 0; const int **cpp; cpp = pp; return cpp != 0; }",
+    "line": 1,
+    "column": 53,
+    "message": "incompatible pointer types when assigning: 'int * *' to 'const int * *'"
+  },
+  {
+    "about": "6.5.16.2p1: for += and -= the left is a pointer to a complete object type and the right an integer, or both are arithmetic; for the others both are arithmetic as the binary operator requires",
+    "source": "int main(void) { int x = 1, *p = &x; p += 1.5; return 0; }",
+    "line": 1,
+    "column": 40,
+    "message": "invalid operands to compound assignment on a pointer"
+  },
+  {
+    "about": "6.5.16.2p1: for += and -= the left is a pointer to a complete object type and the right an integer, or both are arithmetic; for the others both are arithmetic as the binary operator requires",
+    "source": "int main(void) { int x = 1, *p = &x; p *= 2; return 0; }",
+    "line": 1,
+    "column": 40,
+    "message": "invalid operands to compound assignment on a pointer"
+  },
+  {
+    "about": "6.5.16.2p1: for += and -= the left is a pointer to a complete object type and the right an integer, or both are arithmetic; for the others both are arithmetic as the binary operator requires",
+    "source": "int main(void) { double d = 1; d %= 2; return 0; }",
+    "line": 1,
+    "column": 34,
+    "message": "invalid operands to compound assignment ('double' and 'int')"
+  },
+  {
+    "about": "6.5.16.2p1: for += and -= the left is a pointer to a complete object type and the right an integer, or both are arithmetic; for the others both are arithmetic as the binary operator requires",
+    "source": "int main(void) { double d = 1; d <<= 2; return 0; }",
+    "line": 1,
+    "column": 34,
+    "message": "invalid operands to compound assignment ('double' and 'int')"
+  },
+  {
+    "about": "6.5.16.2p1: for += and -= the left is a pointer to a complete object type and the right an integer, or both are arithmetic; for the others both are arithmetic as the binary operator requires",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; v += 1; return 0; }",
+    "line": 2,
+    "column": 38,
+    "message": "invalid operand to compound assignment ('struct s')"
+  },
+  {
+    "about": "6.5.16.2p1: for += and -= the left is a pointer to a complete object type and the right an integer, or both are arithmetic; for the others both are arithmetic as the binary operator requires",
+    "source": "int main(void) { int x = 1, *p = &x, *q = &x; p += q; return 0; }",
+    "line": 1,
+    "column": 49,
+    "message": "invalid operands to compound assignment on a pointer"
+  },
+  {
+    "about": "6.6p3: a constant expression has no assignment, increment, decrement, function call or comma operator where it is evaluated",
+    "source": "int f(void);\nenum { A = f() };\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 13,
+    "message": "expression is not a compile-time constant"
+  },
+  {
+    "about": "6.6p3: a constant expression has no assignment, increment, decrement, function call or comma operator where it is evaluated",
+    "source": "int x;\nint a[(x = 2)];\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 6,
+    "message": "a variable length array cannot be declared at file scope"
+  },
+  {
+    "about": "6.6p3: a constant expression has no assignment, increment, decrement, function call or comma operator where it is evaluated",
+    "source": "int x;\nstruct s { int b : x++; };\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 21,
+    "message": "expression is not a compile-time constant"
+  },
+  {
+    "about": "6.6p4: a constant expression evaluates to a value its type can represent",
+    "source": "enum { A = 1 / 0 };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 14,
+    "message": "division by zero in a constant expression"
+  },
+  {
+    "about": "6.6p6: an integer constant expression has only integer operands, and floating constants only as the immediate operands of casts",
+    "source": "static int v = 3;\nenum { A = v };\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 12,
+    "message": "expression is not a compile-time constant"
+  },
+  {
+    "about": "6.6p6: an integer constant expression has only integer operands, and floating constants only as the immediate operands of casts",
+    "source": "struct s { int b : 1.0; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 20,
+    "message": "expression is not an integer constant expression"
+  },
+  {
+    "about": "6.6p7: the initializer of an object of static storage duration is a constant expression",
+    "source": "int f(void);\nint x = f();\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 10,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.6p7: the initializer of an object of static storage duration is a constant expression",
+    "source": "int a = 1;\nint b = a;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 9,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.6p7: the initializer of an object of static storage duration is a constant expression",
+    "source": "int main(void) { int local = 1; static int *p = &local; return *p; }",
+    "line": 1,
+    "column": 49,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.6p7: the initializer of an object of static storage duration is a constant expression",
+    "source": "int a[2];\nint v = a[1];\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 10,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.7p3: an identifier with no linkage is declared once in a scope and name space",
+    "source": "int main(void) { int x = 1; int x = 2; return x; }",
+    "line": 1,
+    "column": 33,
+    "message": "redefinition of 'x'"
+  },
+  {
+    "about": "6.7p3: an identifier with no linkage is declared once in a scope and name space",
+    "source": "int main(void) { int x = 1; double x = 2; return 0; }",
+    "line": 1,
+    "column": 36,
+    "message": "redefinition of 'x'"
+  },
+  {
+    "about": "6.7p3: an identifier with no linkage is declared once in a scope and name space",
+    "source": "int f(int a, int a) { return a; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "redefinition of 'a'"
+  },
+  {
+    "about": "6.7p3: an identifier with no linkage is declared once in a scope and name space",
+    "source": "struct s { int a; int a; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 23,
+    "message": "duplicate member 'a'"
+  },
+  {
+    "about": "6.7p3: an identifier with no linkage is declared once in a scope and name space",
+    "source": "enum { A, A };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 11,
+    "message": "redefinition of 'A'"
+  },
+  {
+    "about": "6.7p4: all declarations of one object or function in a scope have compatible types",
+    "source": "extern int x;\nextern long x;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 13,
+    "message": "conflicting types for 'x'"
+  },
+  {
+    "about": "6.7p4: all declarations of one object or function in a scope have compatible types",
+    "source": "int f(int);\nint f(double);\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 5,
+    "message": "conflicting types for 'f'"
+  },
+  {
+    "about": "6.7p4: all declarations of one object or function in a scope have compatible types",
+    "source": "extern int a[3];\nextern int a[4];\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 12,
+    "message": "conflicting types for 'a'"
+  },
+  {
+    "about": "6.7p7: an object declared with no linkage has a complete type by the end of its declarator",
+    "source": "struct s;\nint main(void) { struct s v; return 0; }",
+    "line": 2,
+    "column": 27,
+    "message": "variable 'v' has incomplete type 'struct s'"
+  },
+  {
+    "about": "6.7.1p2: at most one storage-class specifier, except _Thread_local with static or extern",
+    "source": "static extern int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 8,
+    "message": "multiple storage classes in declaration specifiers"
+  },
+  {
+    "about": "6.7.1p2: at most one storage-class specifier, except _Thread_local with static or extern",
+    "source": "typedef static int t;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 9,
+    "message": "multiple storage classes in declaration specifiers"
+  },
+  {
+    "about": "6.7.1p2: at most one storage-class specifier, except _Thread_local with static or extern",
+    "source": "int main(void) { auto register int x = 1; return x; }",
+    "line": 1,
+    "column": 23,
+    "message": "multiple storage classes in declaration specifiers"
+  },
+  {
+    "about": "6.7.1p3: a block-scope _Thread_local object is also static or extern",
+    "source": "int main(void) { _Thread_local int x = 1; return x; }",
+    "line": 1,
+    "column": 36,
+    "message": "a block-scope thread-local variable must be static or extern"
+  },
+  {
+    "about": "6.7.1p4: _Thread_local does not appear on a function",
+    "source": "_Thread_local int f(void);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 19,
+    "message": "a function cannot be thread-local"
+  },
+  {
+    "about": "6.9p2: auto and register do not appear in an external declaration",
+    "source": "register int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "a declaration outside a function cannot be 'register'"
+  },
+  {
+    "about": "6.9p2: auto and register do not appear in an external declaration",
+    "source": "auto int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "a declaration outside a function cannot be 'auto'"
+  },
+  {
+    "about": "6.7.1p7: a block-scope function declaration has no storage class but extern",
+    "source": "int main(void) { static int f(void); return 0; }",
+    "line": 1,
+    "column": 29,
+    "message": "a function declared inside a block can be 'extern' but not 'static'"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "long short x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "invalid combination of type specifiers"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "signed unsigned x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "both 'signed' and 'unsigned' in declaration specifiers"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "long long long x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "invalid combination of type specifiers"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "unsigned double x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "invalid combination of type specifiers"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "short char x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "invalid combination of type specifiers"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "int int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "invalid combination of type specifiers"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "struct s { int a; } int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "two or more data types in declaration specifiers"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "void int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "invalid combination of type specifiers"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "typedef int t;\nunsigned t x;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 10,
+    "message": "'t' redeclared as a different kind of symbol"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "_Bool int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "invalid combination of type specifiers"
+  },
+  {
+    "about": "6.7.2p2: the type specifiers form one of the listed multisets",
+    "source": "float double x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "invalid combination of type specifiers"
+  },
+  {
+    "about": "6.7.2p2: at least one type specifier is given",
+    "source": "static x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "a type specifier is required (implicit int is not supported)"
+  },
+  {
+    "about": "6.7.2p2: at least one type specifier is given",
+    "source": "const y = 1;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "a type specifier is required (implicit int is not supported)"
+  },
+  {
+    "about": "6.7.2.1p3: a member does not have an incomplete or function type",
+    "source": "struct s { struct s inner; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 21,
+    "message": "member has incomplete type 'struct s'"
+  },
+  {
+    "about": "6.7.2.1p3: a member does not have an incomplete or function type",
+    "source": "struct s { int f(void); };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "member declared as a function"
+  },
+  {
+    "about": "6.7.2.1p3: a member does not have an incomplete or function type",
+    "source": "struct s { void v; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "member has incomplete type 'void'"
+  },
+  {
+    "about": "6.7.2.1p3: a flexible array member is the last member of a structure with more than one named member",
+    "source": "struct s { int a[]; int b; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "member has incomplete type 'int []'"
+  },
+  {
+    "about": "6.7.2.1p4: the width of a bit-field is a non-negative integer constant expression no wider than its type",
+    "source": "struct s { int b : 33; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "width of bit-field exceeds its type"
+  },
+  {
+    "about": "6.7.2.1p4: the width of a bit-field is a non-negative integer constant expression no wider than its type",
+    "source": "struct s { int b : -1; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 20,
+    "message": "invalid bit-field width"
+  },
+  {
+    "about": "6.7.2.1p4: a bit-field of width 0 has no declarator",
+    "source": "struct s { int b : 0; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 20,
+    "message": "a named bit-field cannot have zero width"
+  },
+  {
+    "about": "6.7.2.1p4: the width of a bit-field is a non-negative integer constant expression no wider than its type",
+    "source": "struct s { _Bool b : 2; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 22,
+    "message": "width of bit-field exceeds its type"
+  },
+  {
+    "about": "6.7.2.1p5: a bit-field has type _Bool, signed int, unsigned int or another integer type the implementation allows",
+    "source": "struct s { float b : 3; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "bit-field has a non-integer type"
+  },
+  {
+    "about": "6.7.2.1p5: a bit-field has type _Bool, signed int, unsigned int or another integer type the implementation allows",
+    "source": "struct s { int *b : 3; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "bit-field has a non-integer type"
+  },
+  {
+    "about": "6.7.2.1p5: a bit-field is not atomic",
+    "source": "struct s { _Atomic int b : 3; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 24,
+    "message": "a bit-field cannot have an atomic type"
+  },
+  {
+    "about": "6.7.2.1: a member has no storage class and no initializer",
+    "source": "struct s { static int a; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "storage class specified for a struct member"
+  },
+  {
+    "about": "6.7.2.1: a member has no storage class and no initializer",
+    "source": "struct s { int a = 1; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "expected ';' before '='"
+  },
+  {
+    "about": "6.7.2.2p2: the value of an enumeration constant is an integer constant expression representable as an int",
+    "source": "enum e { A = 1.5 };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 14,
+    "message": "expression is not an integer constant expression"
+  },
+  {
+    "about": "6.7.2.3p1: a type is defined at most once",
+    "source": "struct s { int a; };\nstruct s { int a; };\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 1,
+    "message": "redefinition of 'struct s'"
+  },
+  {
+    "about": "6.7.2.3p1: a type is defined at most once",
+    "source": "enum e { A };\nenum e { B };\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 1,
+    "message": "redefinition of 'enum e'"
+  },
+  {
+    "about": "6.7.2.3p2: declarations of one tag say struct, union or enum alike",
+    "source": "struct s { int a; };\nunion s u;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 1,
+    "message": "'s' was declared as a different kind of tag"
+  },
+  {
+    "about": "6.7.2.3p2: declarations of one tag say struct, union or enum alike",
+    "source": "struct s;\nenum s { A };\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 1,
+    "message": "'s' was declared as a different kind of tag"
+  },
+  {
+    "about": "6.7.2.4p3: _Atomic(T) does not name an array, function, atomic or qualified type",
+    "source": "_Atomic(int[2]) x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "_Atomic 'int [2]' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+  },
+  {
+    "about": "6.7.2.4p3: _Atomic(T) does not name an array, function, atomic or qualified type",
+    "source": "_Atomic(const int) x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "_Atomic( ) cannot name the atomic or qualified type 'const int'"
+  },
+  {
+    "about": "6.7.2.4p3: _Atomic(T) does not name an array, function, atomic or qualified type",
+    "source": "_Atomic(_Atomic(int)) x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "_Atomic( ) cannot name the atomic or qualified type '_Atomic(int)'"
+  },
+  {
+    "about": "6.7.2.4p3: _Atomic(T) does not name an array, function, atomic or qualified type",
+    "source": "_Atomic(int(void)) *x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "_Atomic 'int ()' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+  },
+  {
+    "about": "6.7.3p2: restrict qualifies only pointers to object types",
+    "source": "restrict int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "'restrict' qualifies only pointers to object types"
+  },
+  {
+    "about": "6.7.3p2: restrict qualifies only pointers to object types",
+    "source": "int (*restrict f)(void);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 5,
+    "message": "'restrict' qualifies only pointers to object types"
+  },
+  {
+    "about": "6.7.3p3: _Atomic does not qualify an array or a function type",
+    "source": "typedef int a2[2];\n_Atomic a2 x;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 1,
+    "message": "_Atomic 'int [2]' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+  },
+  {
+    "about": "6.7.3p3: _Atomic does not qualify an array or a function type",
+    "source": "typedef int fn(void);\n_Atomic fn *x;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 1,
+    "message": "_Atomic 'int ()' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+  },
+  {
+    "about": "6.7.4p2: function specifiers are used only in the declaration of a function",
+    "source": "inline int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "'inline' and '_Noreturn' can only be used in the declaration of a function"
+  },
+  {
+    "about": "6.7.4p2: function specifiers are used only in the declaration of a function",
+    "source": "_Noreturn int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 15,
+    "message": "'inline' and '_Noreturn' can only be used in the declaration of a function"
+  },
+  {
+    "about": "6.7.5p2: an alignment specifier is not for a typedef, a bit-field, a function, a parameter or a register object",
+    "source": "typedef _Alignas(8) int t;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 9,
+    "message": "'_Alignas' cannot be applied to a typedef"
+  },
+  {
+    "about": "6.7.5p2: an alignment specifier is not for a typedef, a bit-field, a function, a parameter or a register object",
+    "source": "struct s { _Alignas(8) int b : 3; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "'_Alignas' cannot be applied to a bit-field"
+  },
+  {
+    "about": "6.7.5p2: an alignment specifier is not for a typedef, a bit-field, a function, a parameter or a register object",
+    "source": "_Alignas(8) int f(void);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "'_Alignas' cannot be applied to a function"
+  },
+  {
+    "about": "6.7.5p2: an alignment specifier is not for a typedef, a bit-field, a function, a parameter or a register object",
+    "source": "int f(_Alignas(8) int p) { return p; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 7,
+    "message": "'_Alignas' cannot be applied to a parameter"
+  },
+  {
+    "about": "6.7.5p2: an alignment specifier is not for a typedef, a bit-field, a function, a parameter or a register object",
+    "source": "int main(void) { register _Alignas(8) int r = 0; return r; }",
+    "line": 1,
+    "column": 27,
+    "message": "'_Alignas' cannot be applied to a register variable"
+  },
+  {
+    "about": "6.7.5p3: the alignment is a valid one: zero or a power of two",
+    "source": "_Alignas(3) int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "requested alignment is not a power of two"
+  },
+  {
+    "about": "6.7.5p3: the alignment is a valid one: zero or a power of two",
+    "source": "_Alignas(-8) int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "requested alignment is not a power of two"
+  },
+  {
+    "about": "6.7.5p4: an alignment specifier does not ask for less than the type requires",
+    "source": "_Alignas(1) int x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "'_Alignas(1)' is less than the alignment of 'int'"
+  },
+  {
+    "about": "6.7.6.2p1: an array size is an integer greater than zero, and the element type is complete and not a function",
+    "source": "int a[-1];\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 7,
+    "message": "array size is negative"
+  },
+  {
+    "about": "6.7.6.2p1: an array size is an integer greater than zero, and the element type is complete and not a function",
+    "source": "int a[1.5];\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 7,
+    "message": "size of array has non-integer type"
+  },
+  {
+    "about": "6.7.6.2p1: an array size is an integer greater than zero, and the element type is complete and not a function",
+    "source": "struct s;\nstruct s a[2];\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 11,
+    "message": "array has incomplete element type 'struct s'"
+  },
+  {
+    "about": "6.7.6.2p1: an array size is an integer greater than zero, and the element type is complete and not a function",
+    "source": "int a[2](void);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 6,
+    "message": "array of functions"
+  },
+  {
+    "about": "6.7.6.2p1: an array size is an integer greater than zero, and the element type is complete and not a function",
+    "source": "void a[2];\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 7,
+    "message": "array has incomplete element type 'void'"
+  },
+  {
+    "about": "6.7.6.2p1: an array size is an integer greater than zero, and the element type is complete and not a function",
+    "source": "int a[][];\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 6,
+    "message": "array has incomplete element type 'int []'"
+  },
+  {
+    "about": "6.7.6.2p1: static and qualifiers in array brackets appear only in a parameter, in the outermost derivation",
+    "source": "int a[static 3];\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 6,
+    "message": "'static' and type qualifiers in array brackets are only allowed in the outermost array type of a parameter"
+  },
+  {
+    "about": "6.7.6.2p1: static and qualifiers in array brackets appear only in a parameter, in the outermost derivation",
+    "source": "int f(int a[2][static 3]);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 15,
+    "message": "'static' and type qualifiers in array brackets are only allowed in the outermost array type of a parameter"
+  },
+  {
+    "about": "6.7.6.2p1: static and qualifiers in array brackets appear only in a parameter, in the outermost derivation",
+    "source": "int main(void) { int a[const 3]; return 0; }",
+    "line": 1,
+    "column": 23,
+    "message": "'static' and type qualifiers in array brackets are only allowed in the outermost array type of a parameter"
+  },
+  {
+    "about": "6.7.6.2p2: a variably modified type is declared at block or prototype scope, without linkage or static storage",
+    "source": "int n = 3;\nint a[n];\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 6,
+    "message": "a variable length array cannot be declared at file scope"
+  },
+  {
+    "about": "6.7.6.2p2: a variably modified type is declared at block or prototype scope, without linkage or static storage",
+    "source": "int main(void) { int n = 3; static int a[n]; return 0; }",
+    "line": 1,
+    "column": 40,
+    "message": "a variable length array must have automatic storage duration"
+  },
+  {
+    "about": "6.7.6.2p2: a variably modified type is declared at block or prototype scope, without linkage or static storage",
+    "source": "int main(void) { int n = 3; extern int a[n]; return 0; }",
+    "line": 1,
+    "column": 40,
+    "message": "a variable length array must have automatic storage duration"
+  },
+  {
+    "about": "6.7.6.2p2: a variably modified type is declared at block or prototype scope, without linkage or static storage",
+    "source": "int n = 3;\nstruct s { int a[n]; };\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 17,
+    "message": "a variable length array cannot be declared at file scope"
+  },
+  {
+    "about": "6.7.6.2p4: [*] appears only in a prototype that is not part of a definition",
+    "source": "int f(int a[*]) { return a[0]; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "'[*]' is only allowed in a declaration that is not a function definition"
+  },
+  {
+    "about": "6.7.6.3p1: a function does not return a function or an array",
+    "source": "int f(void)[3];\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 6,
+    "message": "function cannot return an array"
+  },
+  {
+    "about": "6.7.6.3p1: a function does not return a function or an array",
+    "source": "int f(void)(void);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 6,
+    "message": "function cannot return a function"
+  },
+  {
+    "about": "6.7.6.3p2: the only storage class in a parameter declaration is register",
+    "source": "int f(static int a);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 7,
+    "message": "invalid storage class for a parameter"
+  },
+  {
+    "about": "6.7.6.3p2: the only storage class in a parameter declaration is register",
+    "source": "int f(typedef int a);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 7,
+    "message": "invalid storage class for a parameter"
+  },
+  {
+    "about": "6.7.6.3p4: the parameters of a definition have complete types after adjustment",
+    "source": "struct s;\nint f(struct s p) { return 0; }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 16,
+    "message": "variable 'p' has incomplete type 'struct s'"
+  },
+  {
+    "about": "6.7.6.3p10: void as the only parameter has no name and no qualifiers, and is the only one",
+    "source": "int f(void, int);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 11,
+    "message": "parameter has type void"
+  },
+  {
+    "about": "6.7.6.3p10: void as the only parameter has no name and no qualifiers, and is the only one",
+    "source": "int f(void v);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "parameter has type void"
+  },
+  {
+    "about": "6.7.8p2: a typedef of a variably modified type has block scope",
+    "source": "int n = 2;\ntypedef int t[n];\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 14,
+    "message": "a variable length array cannot be declared at file scope"
+  },
+  {
+    "about": "6.7.8: a typedef name is redefined in a scope only to the same type",
+    "source": "typedef int t;\ntypedef long t;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 14,
+    "message": "redefinition of 't'"
+  },
+  {
+    "about": "6.7.8: a typedef has no initializer",
+    "source": "typedef int t = 1;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 15,
+    "message": "expected ';' before '='"
+  },
+  {
+    "about": "6.7.9p2: no initializer gives a value to something the object does not contain",
+    "source": "int a[2] = {1, 2, 3};\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 19,
+    "message": "excess elements in initializer"
+  },
+  {
+    "about": "6.7.9p2: no initializer gives a value to something the object does not contain",
+    "source": "struct s { int a; } v = {1, 2};\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 29,
+    "message": "excess elements in initializer"
+  },
+  {
+    "about": "6.7.9p2: no initializer gives a value to something the object does not contain",
+    "source": "int x = {1, 2};\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 13,
+    "message": "excess elements in scalar initializer"
+  },
+  {
+    "about": "6.7.9p2: no initializer gives a value to something the object does not contain",
+    "source": "int a[2] = {[2] = 1};\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 13,
+    "message": "array designator index exceeds the array bounds"
+  },
+  {
+    "about": "6.7.9p3: what is initialized is an object of complete type or an array of unknown size, not a variable length array",
+    "source": "int main(void) { int n = 2; int a[n] = {1, 2}; return a[0]; }",
+    "line": 1,
+    "column": 33,
+    "message": "a variable length array cannot be initialized"
+  },
+  {
+    "about": "6.7.9p3: what is initialized is an object of complete type or an array of unknown size, not a variable length array",
+    "source": "struct s;\nextern struct s v = {0};\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 22,
+    "message": "excess elements in initializer"
+  },
+  {
+    "about": "6.7.9p4: the initializers of an object of static or thread storage duration are constant expressions or string literals",
+    "source": "int main(void) { int n = 1; static int v = n; return v; }",
+    "line": 1,
+    "column": 44,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.7.9p4: the initializers of an object of static or thread storage duration are constant expressions or string literals",
+    "source": "int f(void);\nstruct s { int a; } v = {f()};\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 27,
+    "message": "initializer element is not a compile-time constant"
+  },
+  {
+    "about": "6.7.9p5: a block-scope declaration of an identifier with linkage has no initializer",
+    "source": "int main(void) { extern int x = 1; return x; }",
+    "line": 1,
+    "column": 29,
+    "message": "a block-scope extern declaration cannot have an initializer"
+  },
+  {
+    "about": "6.7.9p6: a designator [constant] designates an element of an array, with a non-negative integer constant expression",
+    "source": "int a[3] = {[-1] = 1};\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 13,
+    "message": "array designator index is negative"
+  },
+  {
+    "about": "6.7.9p6: a designator [constant] designates an element of an array, with a non-negative integer constant expression",
+    "source": "struct s { int a; } v = {[0] = 1};\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 26,
+    "message": "array designator used for a non-array type"
+  },
+  {
+    "about": "6.7.9p6: a designator [constant] designates an element of an array, with a non-negative integer constant expression",
+    "source": "int n = 1;\nint main(void) { int a[3] = {[n] = 1}; return a[1]; }",
+    "line": 2,
+    "column": 31,
+    "message": "expression is not a compile-time constant"
+  },
+  {
+    "about": "6.7.9p7: a designator .member names a member of the structure or union",
+    "source": "struct s { int a; } v = {.b = 1};\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 27,
+    "message": "no member named 'b' in 'struct s'"
+  },
+  {
+    "about": "6.7.9p7: a designator .member names a member of the structure or union",
+    "source": "int a[2] = {.x = 1};\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 14,
+    "message": "field designator used for a non-struct type"
+  },
+  {
+    "about": "6.7.9p11: the initializer of a scalar is one expression of a type that can be assigned to it",
+    "source": "struct s { int a; } v = {1};\nint x = v;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 9,
+    "message": "incompatible types when initializing: cannot convert 'struct s' to 'int'"
+  },
+  {
+    "about": "6.7.9p11: the initializer of a scalar is one expression of a type that can be assigned to it",
+    "source": "int *p = 1.5;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 10,
+    "message": "incompatible types when initializing: cannot convert 'double' to 'int *'"
+  },
+  {
+    "about": "6.7.9p14: a character array is initialized by a string literal of a matching character type",
+    "source": "int a[] = \"abc\";\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 11,
+    "message": "cannot initialize 'int []' with an expression of type 'char [4]'"
+  },
+  {
+    "about": "6.7.9p14: a character array is initialized by a string literal of a matching character type",
+    "source": "char a[] = U\"abc\";\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "cannot initialize 'char []' with an expression of type 'unsigned int [4]'"
+  },
+  {
+    "about": "6.7.9p16: the initializer of an aggregate is a brace-enclosed list",
+    "source": "int a[2] = 1;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "cannot initialize 'int [2]' with an expression of type 'int'"
+  },
+  {
+    "about": "6.7.9p16: the initializer of an aggregate is a brace-enclosed list",
+    "source": "struct s { int a; } v = 1;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 25,
+    "message": "cannot initialize 'struct s' with an expression of type 'int'"
+  },
+  {
+    "about": "6.7.10p2: the expression of a static assertion is an integer constant expression that is not zero",
+    "source": "_Static_assert(0, \"said so\");\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "static assertion failed: said so"
+  },
+  {
+    "about": "6.7.10p2: the expression of a static assertion is an integer constant expression that is not zero",
+    "source": "int n = 1;\n_Static_assert(n, \"not constant\");\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 16,
+    "message": "expression is not a compile-time constant"
+  },
+  {
+    "about": "6.7.10p2: the expression of a static assertion is an integer constant expression that is not zero",
+    "source": "_Static_assert(1.5, \"not an integer\");\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "expression is not an integer constant expression"
+  },
+  {
+    "about": "6.7.10p2: the expression of a static assertion is an integer constant expression that is not zero",
+    "source": "struct s { int a; _Static_assert(sizeof(int) == 1, \"among members\"); };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 19,
+    "message": "static assertion failed: among members"
+  },
+  {
+    "about": "6.8.1p2: case and default labels appear only in a switch statement",
+    "source": "int main(void) { case 1: return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "'case' label not within a switch statement"
+  },
+  {
+    "about": "6.8.1p2: case and default labels appear only in a switch statement",
+    "source": "int main(void) { default: return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "'default' label not within a switch statement"
+  },
+  {
+    "about": "6.8.1p3: label names are unique within a function",
+    "source": "int main(void) { again: ; again: return 0; }",
+    "line": 1,
+    "column": 27,
+    "message": "redefinition of label 'again'"
+  },
+  {
+    "about": "6.8.4.1p1: the controlling expression of an if statement has scalar type",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {1}; if (v) return 1; return 0; }",
+    "line": 2,
+    "column": 40,
+    "message": "a condition requires a scalar operand, got 'struct s'"
+  },
+  {
+    "about": "6.8.4.2p1: the controlling expression of a switch statement has integer type",
+    "source": "int main(void) { switch (1.5) { default: return 0; } }",
+    "line": 1,
+    "column": 26,
+    "message": "switch quantity is not an integer"
+  },
+  {
+    "about": "6.8.4.2p1: the controlling expression of a switch statement has integer type",
+    "source": "int main(void) { int x = 0; switch (&x) { default: return 0; } }",
+    "line": 1,
+    "column": 37,
+    "message": "switch quantity is not an integer"
+  },
+  {
+    "about": "6.8.4.2p2: a switch does not jump into the scope of a variably modified identifier",
+    "source": "int main(void) { int n = 2; switch (n) { int a[n]; case 2: a[0] = 1; return a[0]; } return 0; }",
+    "line": 1,
+    "column": 52,
+    "message": "switch jumps into the scope of a variable length array"
+  },
+  {
+    "about": "6.8.4.2p3: case expressions are integer constant expressions, no two with the same value; at most one default",
+    "source": "int main(void) { int n = 1; switch (n) { case n: return 1; } return 0; }",
+    "line": 1,
+    "column": 47,
+    "message": "expression is not a compile-time constant"
+  },
+  {
+    "about": "6.8.4.2p3: case expressions are integer constant expressions, no two with the same value; at most one default",
+    "source": "int main(void) { switch (1) { case 1: return 1; case 1: return 2; } return 0; }",
+    "line": 1,
+    "column": 49,
+    "message": "duplicate case value 1"
+  },
+  {
+    "about": "6.8.4.2p3: case expressions are integer constant expressions, no two with the same value; at most one default",
+    "source": "int main(void) { switch (1) { default: return 1; default: return 2; } return 0; }",
+    "line": 1,
+    "column": 50,
+    "message": "multiple default labels in one switch"
+  },
+  {
+    "about": "6.8.4.2p3: case expressions are integer constant expressions, no two with the same value; at most one default",
+    "source": "int main(void) { switch (1) { case 1.5: return 1; } return 0; }",
+    "line": 1,
+    "column": 36,
+    "message": "expression is not an integer constant expression"
+  },
+  {
+    "about": "6.8.4.2p3: case expressions are integer constant expressions, no two with the same value; at most one default",
+    "source": "int main(void) { switch ((unsigned char)1) { case 1: return 1; case 257 - 256: return 2; } return 0; }",
+    "line": 1,
+    "column": 64,
+    "message": "duplicate case value 1"
+  },
+  {
+    "about": "6.8.5p2: the controlling expression of an iteration statement has scalar type",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {0}; while (v) { } return 0; }",
+    "line": 2,
+    "column": 43,
+    "message": "a condition requires a scalar operand, got 'struct s'"
+  },
+  {
+    "about": "6.8.5p2: the controlling expression of an iteration statement has scalar type",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {0}; do { } while (v); return 0; }",
+    "line": 2,
+    "column": 50,
+    "message": "a condition requires a scalar operand, got 'struct s'"
+  },
+  {
+    "about": "6.8.5p2: the controlling expression of an iteration statement has scalar type",
+    "source": "struct s { int a; };\nint main(void) { struct s v = {0}; for (; v; ) { } return 0; }",
+    "line": 2,
+    "column": 43,
+    "message": "a condition requires a scalar operand, got 'struct s'"
+  },
+  {
+    "about": "6.8.6.1p1: the identifier in a goto names a label in the enclosing function, and the jump does not enter the scope of a variably modified identifier",
+    "source": "int main(void) { goto nowhere; return 0; }",
+    "line": 1,
+    "column": 23,
+    "message": "use of undeclared label 'nowhere'"
+  },
+  {
+    "about": "6.8.6.1p1: the identifier in a goto names a label in the enclosing function, and the jump does not enter the scope of a variably modified identifier",
+    "source": "int main(void) { int n = 2; goto inside; { int a[n]; inside: a[0] = 1; return a[0]; } }",
+    "line": 1,
+    "column": 34,
+    "message": "goto into the scope of a variable length array"
+  },
+  {
+    "about": "6.8.6.1p1: the identifier in a goto names a label in the enclosing function, and the jump does not enter the scope of a variably modified identifier",
+    "source": "int f(void) { there: return 1; }\nint main(void) { goto there; }",
+    "line": 2,
+    "column": 23,
+    "message": "use of undeclared label 'there'"
+  },
+  {
+    "about": "6.8.6.2p1: continue appears only in a loop body",
+    "source": "int main(void) { continue; return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "'continue' statement not in a loop"
+  },
+  {
+    "about": "6.8.6.2p1: continue appears only in a loop body",
+    "source": "int main(void) { switch (1) { case 1: continue; } return 0; }",
+    "line": 1,
+    "column": 39,
+    "message": "'continue' statement not in a loop"
+  },
+  {
+    "about": "6.8.6.3p1: break appears only in a switch body or a loop body",
+    "source": "int main(void) { break; return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "'break' statement not in a loop or switch"
+  },
+  {
+    "about": "6.8.6.3p1: break appears only in a switch body or a loop body",
+    "source": "int main(void) { if (1) { break; } return 0; }",
+    "line": 1,
+    "column": 27,
+    "message": "'break' statement not in a loop or switch"
+  },
+  {
+    "about": "6.8.6.4p1: a return with an expression is not in a void function; one without is only there",
+    "source": "void f(void) { return 1; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "void function should not return a value"
+  },
+  {
+    "about": "6.8.6.4p1: a return with an expression is not in a void function; one without is only there",
+    "source": "int f(void) { return; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 15,
+    "message": "a function that returns a value needs one in 'return'"
+  },
+  {
+    "about": "6.8.6.4p1: a return with an expression is not in a void function; one without is only there",
+    "source": "struct s { int a; };\nint f(void) { struct s v = {1}; return v; }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 33,
+    "message": "incompatible types when returning: cannot convert 'struct s' to 'int'"
+  },
+  {
+    "about": "6.8.6.4p1: a return with an expression is not in a void function; one without is only there",
+    "source": "int *f(void) { return 1.5; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "incompatible types when returning: cannot convert 'double' to 'int *'"
+  },
+  {
+    "about": "6.9p3: an identifier with internal linkage that is used has exactly one definition in the translation unit",
+    "source": "static int f(void);\nint main(void) { return f(); }",
+    "line": 2,
+    "column": 25,
+    "message": "static function 'f' is used but never defined"
+  },
+  {
+    "about": "6.9p3: an identifier with internal linkage that is used has exactly one definition in the translation unit",
+    "source": "static int f(void) { return 1; }\nstatic int f(void) { return 2; }\nint main(void) { return f(); }",
+    "line": 2,
+    "column": 12,
+    "message": "redefinition of 'f'"
+  },
+  {
+    "about": "6.9p5: an identifier with external linkage has at most one definition",
+    "source": "int x = 1;\nint x = 2;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 5,
+    "message": "redefinition of 'x'"
+  },
+  {
+    "about": "6.9p5: an identifier with external linkage has at most one definition",
+    "source": "int f(void) { return 1; }\nint f(void) { return 2; }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 5,
+    "message": "redefinition of 'f'"
+  },
+  {
+    "about": "6.9.1p2: the declarator of a function definition has function type, not got through a typedef",
+    "source": "typedef int fn(void);\nfn f { return 1; }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 4,
+    "message": "the declarator of a function definition must have a parameter list of its own"
+  },
+  {
+    "about": "6.9.1p3: the return type of a function is void or a complete object type other than an array",
+    "source": "struct s;\nstruct s f(void) { }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 10,
+    "message": "function returns an incomplete type"
+  },
+  {
+    "about": "6.9.1p4: the storage class of a function definition is extern or static",
+    "source": "typedef int f(void) { return 1; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 21,
+    "message": "expected ';' before '{'"
+  },
+  {
+    "about": "6.9.1p6: every parameter of an old-style definition is declared, and only parameters are",
+    "source": "int f(a) int a; int b; { return a; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 21,
+    "message": "'b' is not a parameter of the function"
+  },
+  {
+    "about": "6.9.1p6: the declarations of an old-style definition have no initializers and no storage class but register",
+    "source": "int f(a) int a = 1; { return a; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "expected ';' before '='"
+  },
+  {
+    "about": "6.9.1p6: the declarations of an old-style definition have no initializers and no storage class but register",
+    "source": "int f(a) static int a; { return a; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 10,
+    "message": "invalid storage class for a parameter"
+  },
+  {
+    "about": "6.9.1p7: the parameters of a definition have complete object types after adjustment",
+    "source": "int f(void v) { return 0; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "parameter has type void"
+  },
+  {
+    "about": "6.9.2p3: a tentative definition with internal linkage has a complete type",
+    "source": "struct s;\nstatic struct s v;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 17,
+    "message": "variable 'v' has incomplete type 'struct s'"
+  },
+  {
+    "about": "6.2.2p7: an identifier does not have both internal and external linkage",
+    "source": "int x;\nstatic int x;\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 12,
+    "message": "static declaration of 'x' follows a non-static declaration"
+  },
+  {
+    "about": "6.2.2p7: an identifier does not have both internal and external linkage",
+    "source": "int f(void);\nstatic int f(void) { return 1; }\nint main(void) { return f(); }",
+    "line": 2,
+    "column": 12,
+    "message": "static declaration of 'f' follows a non-static declaration"
+  },
+  {
+    "about": "6.4.2.1: __func__ is declared only in a function",
+    "source": "const char *name = __func__;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 20,
+    "message": "use of undeclared identifier '__func__'"
+  },
+  {
+    "about": "6.4.4.1p2: an integer constant fits one of the types of its list",
+    "source": "int main(void) { return 99999999999999999999999 != 0; }",
+    "line": 1,
+    "column": 25,
+    "message": "integer constant is too large"
+  },
+  {
+    "about": "6.4.4.1: octal constants have only the digits 0 to 7",
+    "source": "int main(void) { return 089; }",
+    "line": 1,
+    "column": 25,
+    "message": "invalid integer constant '089'"
+  },
+  {
+    "about": "6.4.4.1: a suffix is one of the listed ones",
+    "source": "int main(void) { return 1lul; }",
+    "line": 1,
+    "column": 25,
+    "message": "invalid integer constant '1lul'"
+  },
+  {
+    "about": "6.4.4.2: a hexadecimal floating constant has a binary exponent",
+    "source": "double d = 0x1.8;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "invalid floating constant '0x1.8'"
+  },
+  {
+    "about": "6.4.4.2: a floating suffix is f, l, F or L",
+    "source": "double d = 1.0q3;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "invalid floating constant '1.0q3'"
+  },
+  {
+    "about": "6.4.4.4p9: a character constant's value fits its type; escapes are in range",
+    "source": "int main(void) { return '\\x100'; }",
+    "line": 1,
+    "column": 25,
+    "message": "hex escape sequence out of range"
+  },
+  {
+    "about": "6.4.4.4p9: a character constant's value fits its type; escapes are in range",
+    "source": "int main(void) { return '\\777'; }",
+    "line": 1,
+    "column": 25,
+    "message": "octal escape sequence out of range"
+  },
+  {
+    "about": "6.4.4.4: a character constant is not empty",
+    "source": "int main(void) { return ''; }",
+    "line": 1,
+    "column": 25,
+    "message": "empty character constant"
+  },
+  {
+    "about": "6.4.3p2: a universal character name does not name a surrogate, nor a basic character outside a literal",
+    "source": "int main(void) { return \"\\ud800\"[0]; }",
+    "line": 1,
+    "column": 25,
+    "message": "invalid universal character name"
+  },
+  {
+    "about": "6.4.3p2: a universal character name does not name a surrogate, nor a basic character outside a literal",
+    "source": "int \\u0041x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 5,
+    "message": "unexpected character '\\'"
+  },
+  {
+    "about": "6.4.5p2: adjacent string literals do not mix wide prefixes",
+    "source": "const void *p = L\"a\" u\"b\";\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 22,
+    "message": "concatenation of string literals with different prefixes"
+  },
+  {
+    "about": "6.4: every preprocessing token that reaches the parser is a token",
+    "source": "int main(void) { return 0 @ 1; }",
+    "line": 1,
+    "column": 27,
+    "message": "unexpected character '@'"
+  },
+  {
+    "about": "6.4: every preprocessing token that reaches the parser is a token",
+    "source": "int main(void) { return 1 ` 2; }",
+    "line": 1,
+    "column": 27,
+    "message": "unexpected character '`'"
+  },
+  {
+    "about": "6.4.5: a string literal ends before the end of its line",
+    "source": "const char *s = \"abc;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "unterminated string literal"
+  },
+  {
+    "about": "6.4.9: a comment that is opened is closed",
+    "source": "int main(void) { return 0; } /* never closed",
+    "line": 1,
+    "column": 30,
+    "message": "unterminated /* comment"
+  },
+  {
+    "about": "6.10.1p1: the expression of #if is an integer constant expression without casts",
+    "source": "#if (int)1\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 10,
+    "message": "missing binary operator in preprocessor expression"
+  },
+  {
+    "about": "6.10.1p1: the expression of #if is an integer constant expression without casts",
+    "source": "#if 1.5\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 5,
+    "message": "floating constant in preprocessor expression"
+  },
+  {
+    "about": "6.10.1p1: the expression of #if is an integer constant expression without casts",
+    "source": "#if \"text\"\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 5,
+    "message": "token \"\"text\"\" is not valid in preprocessor expressions"
+  },
+  {
+    "about": "6.10.1p1: the expression of #if is an integer constant expression without casts",
+    "source": "#if 1 +\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "expected a value in preprocessor expression"
+  },
+  {
+    "about": "6.10.1p1: the expression of #if is an integer constant expression without casts",
+    "source": "#if\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "#if with no expression"
+  },
+  {
+    "about": "6.10.1p1: the expression of #if is an integer constant expression without casts",
+    "source": "#if 1 = 1\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 7,
+    "message": "missing binary operator in preprocessor expression"
+  },
+  {
+    "about": "6.10.1p1: the expression of #if is an integer constant expression without casts",
+    "source": "#if 1 / 0\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 7,
+    "message": "division by zero in preprocessor expression"
+  },
+  {
+    "about": "6.10.1p1: defined takes an identifier, in parentheses or not",
+    "source": "#if defined\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 5,
+    "message": "operator 'defined' requires an identifier"
+  },
+  {
+    "about": "6.10.1p1: defined takes an identifier, in parentheses or not",
+    "source": "#if defined(X\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 5,
+    "message": "missing ')' after 'defined'"
+  },
+  {
+    "about": "6.10.1p1: defined takes an identifier, in parentheses or not",
+    "source": "#if defined 3\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 5,
+    "message": "operator 'defined' requires an identifier"
+  },
+  {
+    "about": "6.10.1: #ifdef and #ifndef take one identifier",
+    "source": "#ifdef\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "expected a macro name"
+  },
+  {
+    "about": "6.10.1: #ifdef and #ifndef take one identifier",
+    "source": "#ifndef 3\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "expected a macro name"
+  },
+  {
+    "about": "6.10: the groups of a conditional are balanced within a file",
+    "source": "#if 1\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "unterminated conditional directive"
+  },
+  {
+    "about": "6.10: the groups of a conditional are balanced within a file",
+    "source": "#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "#endif without #if"
+  },
+  {
+    "about": "6.10: the groups of a conditional are balanced within a file",
+    "source": "#else\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "#else without #if"
+  },
+  {
+    "about": "6.10: the groups of a conditional are balanced within a file",
+    "source": "#elif 1\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "#elif without #if"
+  },
+  {
+    "about": "6.10: the groups of a conditional are balanced within a file",
+    "source": "#if 1\n#else\n#else\n#endif\nint main(void) { return 0; }",
+    "line": 3,
+    "column": 1,
+    "message": "#else after #else"
+  },
+  {
+    "about": "6.10: the groups of a conditional are balanced within a file",
+    "source": "#if 1\n#else\n#elif 1\n#endif\nint main(void) { return 0; }",
+    "line": 3,
+    "column": 1,
+    "message": "#elif after #else"
+  },
+  {
+    "about": "6.10: a directive name is one of the known ones",
+    "source": "#frobnicate\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "invalid preprocessing directive #frobnicate"
+  },
+  {
+    "about": "6.10.2: #include names a header in \"quotes\" or <brackets>, after macro replacement",
+    "source": "#include\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "#include expects \"FILENAME\" or <FILENAME>"
+  },
+  {
+    "about": "6.10.2: #include names a header in \"quotes\" or <brackets>, after macro replacement",
+    "source": "#include stdio.h\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "#include expects \"FILENAME\" or <FILENAME>"
+  },
+  {
+    "about": "6.10.2: #include names a header in \"quotes\" or <brackets>, after macro replacement",
+    "source": "#include <stdio.h\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "#include expects \"FILENAME\" or <FILENAME>"
+  },
+  {
+    "about": "6.10.2: #include names a header in \"quotes\" or <brackets>, after macro replacement",
+    "source": "#include \"no-such-header.h\"\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "'no-such-header.h' file not found"
+  },
+  {
+    "about": "6.10.2: #include names a header in \"quotes\" or <brackets>, after macro replacement",
+    "source": "#include <no/such/header.h>\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "'no/such/header.h' file not found"
+  },
+  {
+    "about": "6.10.2: #include names a header in \"quotes\" or <brackets>, after macro replacement",
+    "source": "#define NOTHING\n#include NOTHING\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 2,
+    "message": "#include expects \"FILENAME\" or <FILENAME>"
+  },
+  {
+    "about": "6.10.3p4: a function-like macro is called with as many arguments as it has parameters",
+    "source": "#define F(a, b) a\nint main(void) { return F(0); }",
+    "line": 2,
+    "column": 25,
+    "message": "macro 'F' requires 2 arguments, but 1 given"
+  },
+  {
+    "about": "6.10.3p4: a function-like macro is called with as many arguments as it has parameters",
+    "source": "#define F(a) a\nint main(void) { return F(0, 1); }",
+    "line": 2,
+    "column": 25,
+    "message": "macro 'F' requires 1 arguments, but 2 given"
+  },
+  {
+    "about": "6.10.3p4: a function-like macro is called with as many arguments as it has parameters",
+    "source": "#define F() 0\nint main(void) { return F(1); }",
+    "line": 2,
+    "column": 25,
+    "message": "macro 'F' requires 0 arguments, but 1 given"
+  },
+  {
+    "about": "6.10.3p4: the argument list of a macro call ends",
+    "source": "#define F(a) a\nint main(void) { return F(0; }",
+    "line": 2,
+    "column": 25,
+    "message": "unterminated argument list invoking macro 'F'"
+  },
+  {
+    "about": "6.10.3p6: the parameters of a macro are unique identifiers",
+    "source": "#define F(a, a) a\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 14,
+    "message": "duplicate macro parameter 'a'"
+  },
+  {
+    "about": "6.10.3p6: the parameters of a macro are unique identifiers",
+    "source": "#define F(a, 1) a\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 14,
+    "message": "invalid token in macro parameter list"
+  },
+  {
+    "about": "6.10.3p6: the parameters of a macro are unique identifiers",
+    "source": "#define F(a, b a\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "invalid token in macro parameter list"
+  },
+  {
+    "about": "6.10.3p6: the parameters of a macro are unique identifiers",
+    "source": "#define F(..., a) a\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 14,
+    "message": "invalid token in macro parameter list"
+  },
+  {
+    "about": "6.10.3.2p1: # in a function-like macro is followed by a parameter",
+    "source": "#define F(a) #b\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 14,
+    "message": "'#' is not followed by a macro parameter"
+  },
+  {
+    "about": "6.10.3.2p1: # in a function-like macro is followed by a parameter",
+    "source": "#define F(a) a #\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "'#' is not followed by a macro parameter"
+  },
+  {
+    "about": "6.10.3.3p1: ## is not at either end of a replacement list",
+    "source": "#define A ## b\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 9,
+    "message": "'##' cannot appear at either end of a macro expansion"
+  },
+  {
+    "about": "6.10.3.3p1: ## is not at either end of a replacement list",
+    "source": "#define A b ##\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 9,
+    "message": "'##' cannot appear at either end of a macro expansion"
+  },
+  {
+    "about": "6.10.3.3p1: ## is not at either end of a replacement list",
+    "source": "#define F(a) ## a\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 9,
+    "message": "'##' cannot appear at either end of a macro expansion"
+  },
+  {
+    "about": "6.10.3.3p3: the result of ## is a valid preprocessing token",
+    "source": "#define CAT(a, b) a ## b\nint main(void) { return CAT(+, 1); }",
+    "line": 2,
+    "column": 25,
+    "message": "pasting \"+\" and \"1\" does not give a valid preprocessing token"
+  },
+  {
+    "about": "6.10.3.5: #undef takes one identifier",
+    "source": "#undef\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "#undef expects a single macro name"
+  },
+  {
+    "about": "6.10.3.5: #undef takes one identifier",
+    "source": "#undef 3\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "#undef expects a single macro name"
+  },
+  {
+    "about": "6.10.3: #define takes an identifier",
+    "source": "#define\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "macro name must be an identifier"
+  },
+  {
+    "about": "6.10.3: #define takes an identifier",
+    "source": "#define 3 4\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "macro name must be an identifier"
+  },
+  {
+    "about": "6.10.8p4: the predefined macro names and defined are not defined or undefined",
+    "source": "#define defined 1\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 9,
+    "message": "'defined' cannot be used as a macro name"
+  },
+  {
+    "about": "6.10.8p4: the predefined macro names and defined are not defined or undefined",
+    "source": "#undef defined\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 8,
+    "message": "'defined' cannot be used as a macro name"
+  },
+  {
+    "about": "6.10.4p3: #line takes a digit sequence from 1 to 2147483647 and optionally a string",
+    "source": "#line x\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "#line expects a line number"
+  },
+  {
+    "about": "6.10.4p3: #line takes a digit sequence from 1 to 2147483647 and optionally a string",
+    "source": "#line 5 file\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "invalid file name in #line"
+  },
+  {
+    "about": "6.10.4p3: #line takes a digit sequence from 1 to 2147483647 and optionally a string",
+    "source": "#line\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 2,
+    "message": "#line expects a line number"
+  },
+  {
+    "about": "6.10.5: #error stops translation with its message",
+    "source": "#error stop here\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "#error stop here"
+  },
+  {
+    "about": "6.10.9: _Pragma takes one string literal in parentheses",
+    "source": "_Pragma(once)\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 9,
+    "message": "_Pragma takes one string literal in parentheses"
+  },
+  {
+    "about": "6.10.9: _Pragma takes one string literal in parentheses",
+    "source": "_Pragma \"once\"\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "expected a type before '_Pragma'"
+  },
+  {
+    "about": "6.7.2.3p3: an enumeration that has no enumerator list yet is an incomplete type",
+    "source": "enum never_defined x;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 20,
+    "message": "variable has incomplete type 'enum never_defined'"
+  },
+  {
+    "about": "6.7.2.3p3: an enumeration that has no enumerator list yet is an incomplete type",
+    "source": "int main(void) { enum later value; enum later { A }; return 0; }",
+    "line": 1,
+    "column": 29,
+    "message": "variable has incomplete type 'enum later'"
+  },
+  {
+    "about": "6.4.5p2: adjacent string literals do not mix a UTF-8 prefix with a wide one",
+    "source": "const void *p = u8\"a\" L\"b\";\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "concatenation of string literals with different prefixes"
+  },
+  {
+    "about": "6.4.5p2: adjacent string literals do not mix a UTF-8 prefix with a wide one",
+    "source": "const void *p = U\"a\" u8\"b\";\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "concatenation of string literals with different prefixes"
+  },
+  {
+    "about": "6.4.4.2: a preprocessing number that is no constant is an error where a constant is wanted, and only there",
+    "source": "int x = 10.13.4;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 9,
+    "message": "invalid floating constant '10.13.4'"
+  },
+  {
+    "about": "6.4.4.2: a preprocessing number that is no constant is an error where a constant is wanted, and only there",
+    "source": "#if 10.13.4\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 5,
+    "message": "invalid floating constant '10.13.4'"
+  },
+  {
+    "about": "6.4.4.2: a preprocessing number that is no constant is an error where a constant is wanted, and only there",
+    "source": "int f(void) __attribute__((aligned(10.13.4)));\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 36,
+    "message": "invalid floating constant '10.13.4'"
+  },
+  {
+    "about": "unsupported constructs are diagnosed",
+    "source": "double x(void) { return __builtin_nans(\"\"); }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 25,
+    "message": "__builtin_nans: signalling NaNs are not supported"
+  },
+  {
+    "about": "Microsoft C",
+    "source": "void __halt(void);\nint main(void) { __halt(); return 0; }",
+    "line": 2,
+    "column": 18,
+    "message": "__halt: a privileged instruction is not supported",
+    "requires": "windows x64"
+  },
+  {
+    "about": "Microsoft C",
+    "source": "unsigned __int64 __readeflags(void);\nint main(void) { return (int)__readeflags(); }",
+    "line": 2,
+    "column": 30,
+    "message": "__readeflags: reading the flags (which would disturb the stack) is not supported",
+    "requires": "windows x64"
+  },
+  {
+    "about": "6.5.3.3p3: the result of unary + is a value, not the object",
+    "source": "int main(void) { int x = 1; +x = 3; return x; }",
+    "line": 1,
+    "column": 32,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.5.3.3p3: the result of unary + is a value, not the object",
+    "source": "int main(void) { int x = 1; int *p = &+x; return *p; }",
+    "line": 1,
+    "column": 38,
+    "message": "cannot take the address of an rvalue"
+  },
+  {
+    "about": "6.5.3.3p3: the result of unary + is a value, not the object",
+    "source": "struct S { int a : 3; } s;\nint main(void) { +s.a = 3; return 0; }",
+    "line": 2,
+    "column": 23,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.5.3.3p3: the result of unary + is a value, not the object",
+    "source": "int main(void) { double d = 1; +d = 2.5; return 0; }",
+    "line": 1,
+    "column": 35,
+    "message": "expression is not assignable"
+  },
+  {
+    "about": "6.7.6.3p13: no two parameters of a function declarator have the same name",
+    "source": "int f(int a, int a);\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "redefinition of 'a'"
+  },
+  {
+    "about": "what the loader takes by value: up to 1 MiB, aligned to at most 16",
+    "source": "typedef struct { int x; } __attribute__((aligned(32))) A;\nint f(A a) { return a.x; }\nint main(void) { A a = { 5 }; return f(a); }",
+    "line": 2,
+    "column": 5,
+    "message": "passing a 'struct <anonymous>' by value is not supported: it is aligned to more than 16 bytes",
+    "requires": "x64-sysv"
+  },
+  {
+    "about": "what the loader takes by value: up to 1 MiB, aligned to at most 16",
+    "source": "struct B { char a[3000000]; };\nint f(struct B b) { return b.a[0]; }\nint main(void) { static struct B b; return f(b); }",
+    "line": 2,
+    "column": 5,
+    "message": "passing a 'struct B' by value is not supported: it is larger than 1048576 bytes",
+    "requires": "x64-sysv"
+  },
+  {
+    "about": "what the loader takes by value: up to 1 MiB, aligned to at most 16",
+    "source": "typedef struct { long v[8]; } __attribute__((aligned(64))) V;\nint sum(int n, ...);\nint main(void) { V v = { { 1 } }; return sum(1, v); }",
+    "line": 3,
+    "column": 42,
+    "message": "passing a 'struct <anonymous>' by value is not supported: it is aligned to more than 16 bytes",
+    "requires": "x64-sysv"
+  },
+  {
+    "about": "no object is aligned to more than 4096 bytes",
+    "source": "int main(void) { _Alignas(8192) char buffer[8]; return buffer[0]; }",
+    "line": 1,
+    "column": 18,
+    "message": "alignments over 4096 bytes are not supported"
+  },
+  {
+    "about": "no object is aligned to more than 4096 bytes",
+    "source": "static _Alignas(8192) char buffer[8];\nint main(void) { return buffer[0]; }",
+    "line": 1,
+    "column": 8,
+    "message": "alignments over 4096 bytes are not supported"
+  },
+  {
+    "about": "no object is aligned to more than 4096 bytes",
+    "source": "_Thread_local _Alignas(8192) char buffer[8];\nint main(void) { return buffer[0]; }",
+    "line": 1,
+    "column": 15,
+    "message": "alignments over 4096 bytes are not supported"
+  },
+  {
+    "about": "no object is aligned to more than 4096 bytes",
+    "source": "struct S { int x; } __attribute__((aligned(65536)));\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 50,
+    "message": "alignments over 4096 bytes are not supported"
+  },
+  {
+    "about": "no object is aligned to more than 4096 bytes",
+    "source": "int main(void) { char *p = __builtin_alloca_with_align(16, 8 * 8192); return p != 0; }",
+    "line": 1,
+    "column": 28,
+    "message": "alignments over 4096 bytes are not supported"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"call *%rax\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: 'call' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\"jmp *8(%rdi)\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: 'jmp *8(%rdi)' would leave the statement, which the surrounding code cannot account for",
+    "requires": "x64"
+  },
+  {
+    "about": "unsupported constructs are diagnosed",
+    "source": "int main(void) { long double x = 1; __int128 y = (__int128)x; return (int)y; }",
+    "line": 1,
+    "column": 50,
+    "message": "converting a 'long double' to '__int128' is not supported yet",
+    "requires": "x87"
+  },
+  {
+    "about": "unsupported constructs are diagnosed",
+    "source": "typedef float V __attribute__((vector_size(16)));\nstruct S { V v; };\nint f(int n, ...) { __builtin_va_list ap; __builtin_va_start(ap, n); struct S s = __builtin_va_arg(ap, struct S); __builtin_va_end(ap); return (int)s.v[0]; }\nint main(void) { return 0; }",
+    "line": 3,
+    "column": 83,
+    "message": "va_arg of a struct that contains a vector is not supported yet",
+    "requires": "x64-sysv"
+  },
+  {
+    "about": "unsupported constructs are diagnosed",
+    "source": "int main(void) { int x = 0; __asm__ goto(\"\" : : : : out); out: return x; }",
+    "line": 1,
+    "column": 29,
+    "message": "asm goto is not supported"
+  },
+  {
+    "about": "unsupported constructs are diagnosed",
+    "source": "int f(int n) { int a[n]; void *t = &&l; goto *t; l: return a[0]; }\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 41,
+    "message": "a computed goto in the scope of a variable length array is not supported"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { __asm__(\".section .text\"); return 0; }",
+    "line": 1,
+    "column": 18,
+    "message": "inline assembly: unsupported directive '.section'",
+    "requires": "x64"
+  },
+  {
+    "about": "what the assembler refuses",
+    "source": "int main(void) { int x = 1; __asm__(\"mov %z0, %0\" : \"+r\"(x)); return x; }",
+    "line": 1,
+    "column": 29,
+    "message": "inline assembly: the operand modifier 'z' is not supported here",
+    "requires": "x64"
+  },
+  {
+    "about": "6.5.2.2: the called function is declared",
+    "source": "int main(void) { __builtin_va_list ap; va_start(ap, 0); return 0; }",
+    "line": 1,
+    "column": 40,
+    "message": "call to undeclared function 'va_start'; implicit function declarations are not allowed"
+  },
+  {
+    "about": "6.7.2.3p1: a structure or union is defined once, and not inside its own member list",
+    "source": "struct S { struct S { int x; } y; };\nstruct S s;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "nested redefinition of 'struct S'"
+  },
+  {
+    "about": "6.7.2.3p1: a structure or union is defined once, and not inside its own member list",
+    "source": "union U { union U { int x; } y; };\nint main(void) { return sizeof(union U); }",
+    "line": 1,
+    "column": 11,
+    "message": "nested redefinition of 'union U'"
+  },
+  {
+    "about": "6.7.2.3p1: a structure or union is defined once, and not inside its own member list",
+    "source": "struct S { struct S { struct S { int x; } a; } b; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 12,
+    "message": "nested redefinition of 'struct S'"
+  },
+  {
+    "about": "6.7.2.3p1: a structure or union is defined once, and not inside its own member list",
+    "source": "struct S { int a[sizeof(struct S { int x; })]; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 25,
+    "message": "nested redefinition of 'struct S'"
+  },
+  {
+    "about": "6.7.2.3p1: a structure or union is defined once, and not inside its own member list",
+    "source": "struct S { __typeof__(struct S { int x; }) y; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 23,
+    "message": "nested redefinition of 'struct S'"
+  },
+  {
+    "about": "6.7.2.3p1: a structure or union is defined once, and not inside its own member list",
+    "source": "struct S { _Alignas(struct S { int x; }) int y; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 21,
+    "message": "nested redefinition of 'struct S'"
+  },
+  {
+    "about": "6.7.2.3p1: a structure or union is defined once, and not inside its own member list",
+    "source": "struct S { int b : sizeof(struct S { int x; }); };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 27,
+    "message": "nested redefinition of 'struct S'"
+  },
+  {
+    "about": "6.7.2.3p1: a structure or union is defined once, and not inside its own member list",
+    "source": "int main(void) { struct S { struct S { int x; } y; } s; return 0; }",
+    "line": 1,
+    "column": 29,
+    "message": "nested redefinition of 'struct S'"
+  },
+  {
+    "about": "6.7.2.3p1: a structure or union is defined once, and not inside its own member list",
+    "source": "struct S;\nstruct S { struct S { int x; } y; };\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 12,
+    "message": "nested redefinition of 'struct S'"
+  },
+  {
+    "about": "6.7.2.3p1: a structure or union is defined once, and not inside its own member list",
+    "source": "struct S { struct T { struct S s; } t; };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 32,
+    "message": "member has incomplete type 'struct S'"
+  },
+  {
+    "about": "6.10.3p5: __VA_OPT__ belongs to a variadic macro, is followed by a parenthesized group, and does not nest",
+    "source": "#define F(...) __VA_OPT__(__VA_OPT__(1))\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 27,
+    "message": "'__VA_OPT__' may not appear in a '__VA_OPT__'"
+  },
+  {
+    "about": "6.10.3p5: __VA_OPT__ belongs to a variadic macro, is followed by a parenthesized group, and does not nest",
+    "source": "#define F(...) __VA_OPT__(\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "unterminated '__VA_OPT__'"
+  },
+  {
+    "about": "6.10.3p5: __VA_OPT__ belongs to a variadic macro, is followed by a parenthesized group, and does not nest",
+    "source": "#define F(...) __VA_OPT__((1)\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "unterminated '__VA_OPT__'"
+  },
+  {
+    "about": "6.10.3p5: __VA_OPT__ belongs to a variadic macro, is followed by a parenthesized group, and does not nest",
+    "source": "#define F(...) __VA_OPT__ 1\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "'__VA_OPT__' must be followed by '('"
+  },
+  {
+    "about": "6.10.3p5: __VA_OPT__ belongs to a variadic macro, is followed by a parenthesized group, and does not nest",
+    "source": "#define F(args...) a __VA_OPT__(b __VA_OPT__(c))\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 35,
+    "message": "'__VA_OPT__' may not appear in a '__VA_OPT__'"
+  },
+  {
+    "about": "6.10.3.3p3: what ## makes is one valid preprocessing token",
+    "source": "#define P(a,b) a##b\nint main(void) { return P(/,*) 1; }",
+    "line": 2,
+    "column": 25,
+    "message": "pasting \"/\" and \"*\" does not give a valid preprocessing token"
+  },
+  {
+    "about": "6.10.3.3p3: what ## makes is one valid preprocessing token",
+    "source": "#define P(a,b) a##b\nint main(void) { return P(/,/) 1; }",
+    "line": 2,
+    "column": 25,
+    "message": "pasting \"/\" and \"/\" does not give a valid preprocessing token"
+  },
+  {
+    "about": "6.10.9p1: _Pragma takes one string literal",
+    "source": "_Pragma(\"/*\")\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 1,
+    "message": "unterminated /* comment"
+  },
+  {
+    "about": "6.10.9p1: _Pragma takes one string literal",
+    "source": "_Pragma(\"pack(1)\" \"x\")\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 8,
+    "message": "_Pragma takes one string literal in parentheses"
+  },
+  {
+    "about": "6.10.9p1: _Pragma takes one string literal",
+    "source": "#define N 5\n_Pragma(N)\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 9,
+    "message": "_Pragma takes one string literal in parentheses"
+  },
+  {
+    "about": "6.10.1p1: the expression of #if is an integer constant expression without casts",
+    "source": "#if L'ab'\n#endif\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 5,
+    "message": "multi-character character constants are not supported"
+  },
+  {
+    "about": "6.7.2.2: an enumerator fits the type the enumeration was given",
+    "source": "enum E : unsigned char { A = 256 };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 26,
+    "message": "the value of 'A' is outside the range of 'unsigned char'"
+  },
+  {
+    "about": "6.7.2.2: an enumerator fits the type the enumeration was given",
+    "source": "enum E : unsigned { A = -1 };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 21,
+    "message": "the value of 'A' is outside the range of 'unsigned int'"
+  },
+  {
+    "about": "6.7.2.2: an enumerator fits the type the enumeration was given",
+    "source": "enum E : int { A = 0x80000000 };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 16,
+    "message": "the value of 'A' is outside the range of 'int'"
+  },
+  {
+    "about": "6.7.2.2: an enumerator fits the type the enumeration was given",
+    "source": "enum E : signed char { A = 127, B };\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 33,
+    "message": "the value of 'B' is outside the range of 'signed char'"
+  },
+  {
+    "about": "what the loader takes of stack and data",
+    "source": "void use(char *);\nvoid f(void) { char a[200 << 20], b[200 << 20], c[200 << 20], d[200 << 20], e[200 << 20], g[200 << 20]; use(a); use(b); use(c); use(d); use(e); use(g); }\nint main(void) { return 0; }",
+    "line": 2,
+    "column": 6,
+    "message": "the stack frame of 'f' is too large"
+  },
+  {
+    "about": "6.4.4.4: a character constant ends on its line",
+    "source": "int c = L'a;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 9,
+    "message": "unterminated character constant"
+  },
+  {
+    "about": "6.4.5: a string literal ends on its line",
+    "source": "const void *s = u8\"abc;\nint main(void) { return 0; }",
+    "line": 1,
+    "column": 17,
+    "message": "unterminated string literal"
+  }
+]

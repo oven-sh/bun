@@ -3362,6 +3362,31 @@ fn transpile_source_code_inner(
         }
 
         // ────────────────────────────────────────────────────────────────────
+        // .c — compiled now; the module's exports are the file's non-static functions.
+        // ────────────────────────────────────────────────────────────────────
+        L::C => {
+            use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+            // The file and every header it includes, including when it fails to compile.
+            let exports = crate::ffi::c_module::load(
+                global_object,
+                path.text,
+                args.virtual_source.map(|source| &*source.contents),
+                &mut |file| auto_watch_path(jsc_vm, file),
+            )?;
+            // SAFETY: `jsc_vm` is the live per-thread VM.
+            let vm = unsafe { &*jsc_vm };
+            if vm.main() == path.text && vm.worker_ref().is_none() {
+                crate::ffi::c_module::run_main_if_any(global_object, exports, path.text, &vm.argv)?;
+            }
+            Ok(ResolvedSource {
+                jsvalue_for_export: exports,
+                source_url: input_specifier.create_if_different(path.text),
+                tag: ResolvedSourceTag::ExportsObject,
+                ..Default::default()
+            })
+        }
+
+        // ────────────────────────────────────────────────────────────────────
         // .html
         // ────────────────────────────────────────────────────────────────────
         L::Html => {
@@ -3396,51 +3421,8 @@ fn transpile_source_code_inner(
                 });
             }
 
-            // auto-watch for non-virtual absolute paths.
-            'auto_watch: {
-                if args.virtual_source.is_some() {
-                    break 'auto_watch;
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                if !unsafe { &*jsc_vm }.is_watcher_enabled() {
-                    break 'auto_watch;
-                }
-                if !bun_paths::is_absolute(path.text)
-                    || bun_core::strings::contains(path.text, b"node_modules")
-                {
-                    break 'auto_watch;
-                }
-                // kqueue watchers need a file descriptor to receive event
-                // notifications on it; inotify/win32 watch by path.
-                let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    if path.text.len() >= buf.len() {
-                        break 'auto_watch;
-                    }
-                    let z = bun_paths::resolve_path::z(path.text, &mut buf);
-                    match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
-                        Ok(fd) => fd,
-                        Err(_) => break 'auto_watch,
-                    }
-                } else {
-                    bun_sys::Fd::INVALID
-                };
-                let hash = bun_watcher::Watcher::get_hash(path.text);
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set when `is_watcher_enabled()`; cast recovers the concrete
-                // type.
-                let watcher =
-                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                let added =
-                    watcher.add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None);
-                if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                    // Not adopted (already watched, or add failed); close the
-                    // fd this arm opened.
-                    if input_fd.is_valid() {
-                        use bun_sys::FdExt as _;
-                        input_fd.close();
-                    }
-                }
+            if args.virtual_source.is_none() {
+                auto_watch_path(jsc_vm, path.text);
             }
 
             // `export default <path string>`.
@@ -3681,6 +3663,68 @@ fn get_hardcoded_module(
     }
 }
 
+/// `bun_jsc::module_loader::__bun_compile_c`: the pool thread's half of importing a C file.
+#[unsafe(no_mangle)]
+fn __bun_compile_c(path: &[u8]) -> bun_jsc::module_loader::CompiledC<'static> {
+    crate::ffi::c_module::compile(path, None)
+}
+
+/// `bun_jsc::module_loader::__bun_load_compiled_c`: the JavaScript thread's half.
+#[unsafe(no_mangle)]
+fn __bun_load_compiled_c(
+    jsc_vm: *mut VirtualMachine,
+    global: &JSGlobalObject,
+    path: &[u8],
+    compiled: bun_jsc::module_loader::CompiledC<'static>,
+) -> bun_jsc::JsResult<ResolvedSource> {
+    let exports = crate::ffi::c_module::finish(global, path, compiled, &mut |file| {
+        auto_watch_path(jsc_vm, file)
+    })?;
+    Ok(ResolvedSource {
+        jsvalue_for_export: exports,
+        tag: bun_jsc::resolved_source::Tag::ExportsObject,
+        ..Default::default()
+    })
+}
+
+/// With `--watch` / `--hot`: watch a file that a loader read without going through the transpiler.
+fn auto_watch_path(jsc_vm: *mut VirtualMachine, path: &[u8]) {
+    // SAFETY: `jsc_vm` is the live per-thread VM.
+    if !unsafe { &*jsc_vm }.is_watcher_enabled() {
+        return;
+    }
+    if !bun_paths::is_absolute(path) || bun_core::strings::contains(path, b"node_modules") {
+        return;
+    }
+    // kqueue watchers need a file descriptor to receive event
+    // notifications on it; inotify/win32 watch by path.
+    let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path.len() >= buf.len() {
+            return;
+        }
+        let z = bun_paths::resolve_path::z(path, &mut buf);
+        match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
+            Ok(fd) => fd,
+            Err(_) => return,
+        }
+    } else {
+        bun_sys::Fd::INVALID
+    };
+    let hash = bun_watcher::Watcher::get_hash(path);
+    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when `is_watcher_enabled()`; cast
+    // recovers the concrete type.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    let added = watcher.add_file::<true>(input_fd, path, hash, bun_sys::Fd::INVALID, None);
+    if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+        // Not adopted (already watched, or add failed); close the fd opened above.
+        if input_fd.is_valid() {
+            use bun_sys::FdExt as _;
+            input_fd.close();
+        }
+    }
+}
+
 /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)` — `HardcodedModule`
 /// lookup + macro-namespace + standalone-module-graph probe.
 #[unsafe(no_mangle)]
@@ -3688,7 +3732,7 @@ fn __bun_fetch_builtin_module(
     jsc_vm: &VirtualMachine,
     global: &JSGlobalObject,
     specifier: &bun_core::String,
-) -> Option<ResolvedSource> {
+) -> bun_jsc::JsResult<Option<ResolvedSource>> {
     let spec_utf8 = specifier.to_utf8();
     let spec = spec_utf8.slice();
 
@@ -3696,15 +3740,15 @@ fn __bun_fetch_builtin_module(
     if let Some(&hardcoded) = HardcodedModule::MAP.get(spec) {
         // `None` ⇒ recognised builtin but not servable right now → fall
         // through to filesystem resolution.
-        return get_hardcoded_module(specifier, hardcoded);
+        return Ok(get_hardcoded_module(specifier, hardcoded));
     }
 
     if let Some((name, tag)) = bun_jsc::module_loader::exposed_internal_tag(spec) {
-        return Some(ResolvedSource {
+        return Ok(Some(ResolvedSource {
             source_url: bun_core::String::clone_utf8(&name),
             tag,
             ..ResolvedSource::default()
-        });
+        }));
     }
 
     // ── `macro:` namespace ──────────────────────────────────────────────
@@ -3720,13 +3764,13 @@ fn __bun_fetch_builtin_module(
             // inserted by `load_macro_entry_point`; map ownership keeps it
             // alive for the VM lifetime.
             let contents = unsafe { &(*entry).source.contents };
-            return Some(ResolvedSource {
+            return Ok(Some(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(contents),
                 source_url: specifier.clone(),
                 ..ResolvedSource::default()
-            });
+            }));
         }
-        return None;
+        return Ok(None);
     }
 
     // ── Standalone-module-graph probe ───────────────────────────────────
@@ -3750,11 +3794,27 @@ export const db = new Database(readFileSync(import.meta.path));
 export const __esModule = true;
 export default db;
 ";
-            return Some(ResolvedSource {
+            return Ok(Some(ResolvedSource {
                 source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
                 source_url: specifier.clone(),
                 ..ResolvedSource::default()
-            });
+            }));
+        }
+
+        if file.loader == Loader::C {
+            // `bun build` embedded the C file's BIR under its name.
+            let exports = crate::ffi::c_module::load(
+                global,
+                spec,
+                Some(file.contents.as_bytes()),
+                &mut |_| {},
+            )?;
+            return Ok(Some(ResolvedSource {
+                jsvalue_for_export: exports,
+                source_url: specifier.clone(),
+                tag: bun_jsc::resolved_source::Tag::ExportsObject,
+                ..ResolvedSource::default()
+            }));
         }
 
         if file.is_text_module() {
@@ -3765,11 +3825,11 @@ export default db;
                 .to_wtf_string()
                 .into_js(global)
                 .expect("embedded text module string is never dead");
-            return Some(ResolvedSource {
+            return Ok(Some(ResolvedSource {
                 jsvalue_for_export: value,
                 tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
                 ..ResolvedSource::default()
-            });
+            }));
         }
 
         // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
@@ -3777,7 +3837,7 @@ export default db;
         let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
             .map_or(&[], |graph| graph.module_info_string_table);
-        return Some(ResolvedSource {
+        return Ok(Some(ResolvedSource {
             source_code: file.to_wtf_string(),
             source_url: specifier.clone(),
             // An embedded file is served through the builtin-module path but is a file: its origin is its own path
@@ -3806,10 +3866,10 @@ export default db;
             is_commonjs_module: file.module_format == ModuleFormat::Cjs,
             is_prelinked_module: file.prelinked_index != u32::MAX,
             ..ResolvedSource::default()
-        });
+        }));
     }
 
-    None
+    Ok(None)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -3852,6 +3912,7 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
         20 => Some(L::Json5),
         21 => Some(L::Md),
         22 => Some(L::Xml),
+        23 => Some(L::C),
         // 254 = `_none`; everything else is open-tail.
         _ => None,
     }
@@ -4295,7 +4356,13 @@ pub unsafe extern "C" fn Bun__transpileFile(
         if !had_blob
             && allow_promise
             && (has_loaded || is_in_preload)
-            && concurrent_loader.is_java_script_like()
+            // C is compiled on the pool like JavaScript is transpiled there: a file that is read,
+            // and that importing is allowed at all (the error is the synchronous path's to throw).
+            && (concurrent_loader.is_java_script_like()
+                || (concurrent_loader == Loader::C
+                    && lr.virtual_source.is_none()
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    && unsafe { &*jsc_vm }.allow_ffi_cc()))
             && !lr.is_main
             // Plugins make this complicated.
             // TODO: allow running concurrently when no onLoad handlers match a plugin.

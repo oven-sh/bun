@@ -1,0 +1,5 @@
+42 2.5 an array of const char alpha gamma the pointer is writable, the characters are not
+one 3 two 6 42 5
+6 m 1099511627776 1.5 1.25 40 y main
+9 1
+beta Writable characters behind a constant pointer 6 1 Initialized and writable 9

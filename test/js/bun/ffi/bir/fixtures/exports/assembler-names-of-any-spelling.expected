@@ -1,0 +1,13 @@
+"7" function 7
+"0" function 100
+"4294967294" function 101
+"4294967295" function 102
+"-1" function 103
+"constructor" function 105
+"toString" function 106
+"then" function 107
+"a b" function 108
+"été" function 109
+"plain" function 107
+7 100 0 7 4294967294
+true function function

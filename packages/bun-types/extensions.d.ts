@@ -28,6 +28,13 @@ declare module "*.json5" {
   export = contents;
 }
 
+/**
+ * A C source file. Bun compiles it and exports each of its non-`static` functions. Integers up to
+ * 32 bits, `float` and `double` are passed as numbers, 64-bit integers as bigints, and pointers as
+ * numbers, `TypedArray`s or `null`.
+ */
+declare module "*.c";
+
 declare module "*.xml" {
   var contents: import("bun").XML.Document;
   export = contents;

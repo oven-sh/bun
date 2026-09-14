@@ -1,0 +1,5 @@
+phase 2: 42 7
+phase 3: 15 5 4 3 /* still text */ // also text
+phase 4: 5 a_plus CAT(a_, plus) 3
+phase 5 and 6: 3 18 51 abc 0
+trigraphs: ??= 3

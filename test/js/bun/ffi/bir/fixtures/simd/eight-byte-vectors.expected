@@ -1,0 +1,149 @@
+s8x8 +             c8 9f 05 00 80 7d 05 81
+s8x8 -             00 99 09 f2 7e 83 fb 81
+s8x8 *             10 d4 f2 cf 7f 80 00 80
+s8x8 /             01 df fd ff 7f 2a 00 00
+s8x8 neg           9c 64 f9 07 81 80 00 ff
+s8x8 scalars       ca 3a 10 f4 00 02 02 04
+s8x8 ==            ff 00 00 00 00 00 00 00
+s8x8 <             00 ff 00 ff 00 ff ff 00
+s8x8 >=            ff 00 ff 00 ff 00 00 ff
+u8x8 +             04 15 20 2b 2d 6e 43 fe
+u8x8 -             f0 ed e4 db 23 f6 35 00
+u8x8 *             c4 14 3c 78 c8 b8 a4 01
+u8x8 /             19 00 00 00 08 00 08 01
+u8x8 neg           06 ff fe fd d8 ce c4 01
+u8x8 scalars       f6 04 06 08 52 66 7a 00
+u8x8 ==            00 00 00 00 00 00 00 ff
+u8x8 <             00 ff ff ff 00 ff 00 00
+u8x8 >=            ff 00 00 00 ff 00 ff ff
+s16x4 +            67 00 3b ff 2d 75 fe 7f
+s16x4 -            61 00 35 ff 33 75 02 80
+s16x4 *            2c 01 a8 fd 70 a0 00 00
+s16x4 /            21 00 be ff f0 d8 00 40
+s16x4 neg          9c ff c8 00 d0 8a 00 80
+s16x4 scalars      ca 00 72 fe 62 ea 02 00
+s16x4 ==           00 00 00 00 00 00 00 00
+s16x4 <            00 00 ff ff 00 00 ff ff
+s16x4 >=           ff ff 00 00 ff ff 00 00
+u16x4 +            67 00 01 00 70 11 00 00
+u16x4 -            61 00 fd ff f0 d8 02 00
+u16x4 *            2c 01 fe ff 00 8c ff ff
+u16x4 /            21 00 ff 7f 00 00 00 00
+u16x4 neg          9c ff 01 00 d0 8a ff ff
+u16x4 scalars      ca 00 00 00 62 ea 04 00
+u16x4 ==           00 00 00 00 00 00 00 00
+u16x4 <            00 00 00 00 ff ff ff ff
+u16x4 >=           ff ff ff ff 00 00 00 00
+s32x2 +            6b 00 00 00 fb ff ff ff
+s32x2 -            5d 00 00 00 f7 ff ff ff
+s32x2 *            bc 02 00 00 f2 ff ff ff
+s32x2 /            0e 00 00 00 fd ff ff ff
+s32x2 neg          9c ff ff ff 07 00 00 00
+s32x2 scalars      ca 00 00 00 f4 ff ff ff
+s32x2 ==           00 00 00 00 00 00 00 00
+s32x2 <            00 00 00 00 ff ff ff ff
+s32x2 >=           ff ff ff ff 00 00 00 00
+u32x2 +            07 28 6b ee 07 28 6b ee
+u32x2 -            f9 27 6b ee 07 d8 94 11
+u32x2 *            00 18 ee 84 00 18 ee 84
+u32x2 /            db 4e 0f 22 00 00 00 00
+u32x2 neg          00 d8 94 11 f9 ff ff ff
+u32x2 scalars      02 50 d6 dc 10 00 00 00
+u32x2 ==           00 00 00 00 00 00 00 00
+u32x2 <            00 00 00 00 ff ff ff ff
+u32x2 >=           ff ff ff ff 00 00 00 00
+s64x1 +            07 18 89 b7 e8 ff ff ff
+s64x1 -            f9 17 89 b7 e8 ff ff ff
+s64x1 *            00 a8 bf 04 5d ff ff ff
+s64x1 /            93 4c 81 ac fc ff ff ff
+s64x1 neg          00 e8 76 48 17 00 00 00
+s64x1 scalars      02 30 12 6f d1 ff ff ff
+s64x1 ==           00 00 00 00 00 00 00 00
+s64x1 <            ff ff ff ff ff ff ff ff
+s64x1 >=           00 00 00 00 00 00 00 00
+f32x2 +            00 00 e0 3f 00 00 80 3f
+f32x2 -            00 00 a0 3f 00 00 a0 c0
+f32x2 *            00 00 c0 3e 00 00 c0 c0
+f32x2 /            00 00 c0 40 ab aa 2a bf
+f32x2 neg          00 00 c0 bf 00 00 00 40
+f32x2 scalars      00 00 a0 40 00 00 00 c0
+f32x2 ==           00 00 00 00 00 00 00 00
+f32x2 <            00 00 00 00 ff ff ff ff
+f32x2 >=           ff ff ff ff 00 00 00 00
+s8x8 %             01 ff 01 00 00 fe 00 01
+s8x8 bits          92 60 06 01 81 82 fa 7e
+s8x8 << 3          20 e0 38 c8 f8 00 00 08
+s8x8 >> 2          19 e7 01 fe 1f e0 00 00
+s8x8 shifts        00 f6 1d 37 f7 fc 00 80
+u8x8 %             00 01 02 03 00 32 04 00
+u8x8 bits          0f ea e3 d4 d2 f1 c4 ff
+u8x8 << 3          d0 08 10 18 40 90 e0 f8
+u8x8 >> 2          3e 00 00 00 0a 0c 0f 3f
+u8x8 shifts        01 40 40 30 45 c4 66 00
+s16x4 %            01 00 fe ff 00 00 00 00
+s16x4 bits         98 ff c4 00 32 75 01 80
+s16x4 << 3         20 03 c0 f9 80 a9 00 00
+s16x4 >> 2         19 00 ce ff 4c 1d 00 e0
+s16x4 shifts       00 00 f9 18 1d c0 ff ff
+u16x4 %            01 00 01 00 30 75 01 00
+u16x4 bits         98 ff 02 00 8f 16 01 00
+u16x4 << 3         20 03 f8 ff 80 a9 08 00
+u16x4 >> 2         19 00 ff 3f 4c 1d 00 00
+u16x4 shifts       00 00 ff ff f8 d0 00 00
+s32x2 %            02 00 00 00 ff ff ff ff
+s32x2 bits         9c ff ff ff 04 00 00 00
+s32x2 << 3         20 03 00 00 c8 ff ff ff
+s32x2 >> 2         19 00 00 00 fe ff ff ff
+s32x2 shifts       00 00 00 00 0e 00 00 00
+u32x2 %            03 00 00 00 07 00 00 00
+u32x2 bits         f8 d7 94 11 f8 d7 94 11
+u32x2 << 3         00 40 59 73 38 00 00 00
+u32x2 >> 2         00 ca 9a 3b 01 00 00 00
+u32x2 shifts       00 c4 e3 ab 00 00 00 c0
+s64x1 %            fb ff ff ff ff ff ff ff
+s64x1 bits         f8 e7 76 48 17 00 00 00
+s64x1 << 3         00 c0 48 bc 45 ff ff ff
+s64x1 >> 2         00 46 e2 2d fa ff ff ff
+s64x1 shifts       ff ff ff ff ff ff e7 76
+element            100 -200 -400 300
+with element       65 00 38 ff 4d 00 70 fe
+through pointer    01 02 fc 04 05 06 07 08 00 00 00 00 00 02 00 00
+both               41 3 -3 4 16
+tagged             14 11 88 24 8
+many               8b 8b 8b 8b 8b 8b 8b 8b
+ellipsis           135195
+apply              90 01 f8 f8 2c 01 00 00
+function table     c7 00 6f fe 57 02 df fc
+as bits            07060504030201fa
+from bits          08 07 06 05 04 03 02 01
+reinterpret        fa 01 02 03 04 05 06 07
+compare            ff ff ff ff 00 00 00 00
+union              0023334555677789
+copy8              03 04 05 06 07 08 09 0a
+table              01 02 03 04 05 06 07 08 09 00 00 00 00 00 00 00 ff fe 00 00 00 00 00 00
+table[1]           0a 02 03 04 05 06 07 08
+ptr                fe fe 00 09 00 00 00 00
+statics            00 00 00 40 00 00 80 bf
+sizes              8 8 24 8
+low                00 01 02 03 04 05 06 07
+high               08 09 0a 0b 0c 0d 0e 0f
+combine            08 09 0a 0b 0c 0d 0e 0f 00 01 02 03 04 05 06 07
+interleave         00 08 01 09 02 0a 03 0b
+reverse            fc ff 03 00 fe ff 01 00
+two                06 00 00 00 00 00 00 00 fb ff ff ff ff ff ff ff
+widen              02 00 03 00 04 00 05 00 06 00 07 00 08 00 09 00
+widen signed       ff ff ff ff 02 00 00 00 d0 8a ff ff 30 75 00 00
+widen more         f9 ff ff ff ff ff ff ff 07 00 00 00 00 00 00 00
+narrow             0b 0c 0d 0e 0f 10 11 12
+narrow more        45 23 fe ff 70 11 90 ee
+widen float        1.5 -2.25
+to double          -3 1.07374e+09
+narrow float       0.333333 -1e+10
+to float           -3 1.67772e+07
+to int             fd ff ff ff 40 42 0f 00
+reductions         11 12 3 32775
+elementwise        65 66 04 04 06 85 10 11
+min float          00 00 80 bf 00 00 a0 c0
+permute            11 0a 0b 0d 0d 0c 0b 10
+permute two        01 00 ff ff fc ff 03 00
+permute constant   fc ff fd ff 02 00 01 00

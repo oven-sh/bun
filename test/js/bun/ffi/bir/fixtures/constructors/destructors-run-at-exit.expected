@@ -1,0 +1,6 @@
+constructor
+main
+atexit
+destructor
+destructor 200
+destructor 101

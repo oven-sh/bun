@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
-import goodSource from "./uv-stub-stuff/good_plugin.c";
-import source from "./uv-stub-stuff/plugin.c";
+import goodSource from "./uv-stub-stuff/good_plugin.c" with { type: "file" };
+import source from "./uv-stub-stuff/plugin.c" with { type: "file" };
 
 const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 // Each per-symbol test spawns a fresh bun subprocess that aborts in the stub.

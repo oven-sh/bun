@@ -1,0 +1,6 @@
+[
+["_Generic(100.0, double: 1, int *: 2, int: 3, float: 4)", 1],
+["_Generic((int *)0, double: 1, int *: 2, int: 3, float: 4)", 2],
+["_Generic((int[3]){}, double: 1, int *: 2, int: 3, float: 4)", 2],
+["_Generic(100, double: 1, int *: 2, int: 3, float: 4)", 3]
+]

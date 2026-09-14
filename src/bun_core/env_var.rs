@@ -119,7 +119,11 @@ new!(pub BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR: boolean, "BUN_SSG_DISABLE_STATIC_
 new!(pub BUN_TCC_OPTIONS: string, "BUN_TCC_OPTIONS", {});
 // Standard C compiler environment variable for include paths (colon-separated).
 // Used by bun:ffi's TinyCC integration for systems like NixOS.
-platform_specific_new!(pub C_INCLUDE_PATH: string, posix = "C_INCLUDE_PATH", windows = None, {});
+new!(pub C_INCLUDE_PATH: string, "C_INCLUDE_PATH", {});
+// What a Visual Studio developer prompt sets for cl.exe, and where Visual Studio and the Windows SDK are installed.
+platform_specific_new!(pub INCLUDE: string, posix = None, windows = "INCLUDE", {});
+platform_specific_new!(pub PROGRAMFILES: string, posix = None, windows = "ProgramFiles", {});
+platform_specific_new!(pub PROGRAMFILES_X86: string, posix = None, windows = "ProgramFiles(x86)", {});
 // Standard C compiler environment variable for library paths (colon-separated).
 // Used by bun:ffi's TinyCC integration for systems like NixOS.
 platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows = None, {});

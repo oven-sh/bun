@@ -1,0 +1,156 @@
+struct same_type: 8 bytes, aligned to 4
+  a: 3 bits at 0
+  b: 4 bits at 3
+  c: 25 bits at 7
+  d: 1 bits at 32
+struct same_size: 2 bytes, aligned to 1
+  a: 1 bits at 0
+  b: 1 bits at 1
+  c: 6 bits at 2
+  d: 1 bits at 8
+struct signed_and_unsigned: 8 bytes, aligned to 4
+  a: 10 bits at 0
+  b: 10 bits at 10
+  c: 10 bits at 20
+  d: 3 bits at 32
+struct sizes_change: 24 bytes, aligned to 8
+  a: 3 bits at 0
+  b: 4 bits at 32
+  c: 2 bits at 64
+  d: 5 bits at 80
+  e: 11 bits at 85
+  f: 1 bits at 128
+struct narrow_then_wide: 24 bytes, aligned to 8
+  a: 1 bits at 0
+  b: 1 bits at 64
+  c: 1 bits at 128
+struct does_not_fit: 12 bytes, aligned to 4
+  a: 30 bits at 0
+  b: 4 bits at 32
+  c: 28 bits at 36
+  d: 4 bits at 64
+struct whole_units: 16 bytes, aligned to 8
+  a: 8 bits at 0
+  b: 16 bits at 16
+  c: 32 bits at 32
+  d: 64 bits at 64
+struct after_members: 24 bytes, aligned to 8
+  c: 8 bits at 0
+  a: 3 bits at 32
+  d: 8 bits at 64
+  b: 3 bits at 80
+  e: 32 bits at 96
+  f: 5 bits at 128
+struct then_members: 16 bytes, aligned to 4
+  a: 3 bits at 0
+  c: 8 bits at 32
+  b: 3 bits at 64
+  d: 16 bits at 96
+struct zero_width: 8 bytes, aligned to 4
+  a: 3 bits at 0
+  b: 3 bits at 32
+struct zero_width_of_another_type: 24 bytes, aligned to 8
+  a: 3 bits at 0
+  b: 3 bits at 32
+  c: 1 bits at 64
+  d: 1 bits at 128
+struct zero_width_after_a_member: 3 bytes, aligned to 1
+  c: 8 bits at 0
+  d: 8 bits at 8
+  e: 8 bits at 16
+struct zero_width_first: 1 bytes, aligned to 1
+  c: 8 bits at 0
+struct zero_width_twice: 8 bytes, aligned to 4
+  a: 1 bits at 0
+  b: 1 bits at 32
+struct zero_width_last: 8 bytes, aligned to 8
+  a: 1 bits at 0
+struct unnamed_bits: 8 bytes, aligned to 4
+  a: 3 bits at 0
+  b: 3 bits at 10
+  c: 2 bits at 35
+union only_bits: 4 bytes, aligned to 1
+  a: 3 bits at 0
+  b: 2 bits at 0
+union wide_bits: 8 bytes, aligned to 1
+  c: 8 bits at 0
+  a: 3 bits at 0
+union bits_and_members: 4 bytes, aligned to 2
+  s: 16 bits at 0
+  a: 17 bits at 0
+  b: 2 bits at 0
+union zero_width_in_a_union: 1 bytes, aligned to 1
+  a: 3 bits at 0
+struct packed_to_1: 16 bytes, aligned to 1
+  c: 8 bits at 0
+  a: 3 bits at 8
+  b: 4 bits at 11
+  d: 3 bits at 40
+  e: 40 bits at 56
+  f: 1 bits at 120
+struct packed_to_1_with_zero_width: 8 bytes, aligned to 4
+  c: 8 bits at 0
+  a: 3 bits at 8
+  d: 8 bits at 40
+struct packed_to_2: 20 bytes, aligned to 2
+  c: 8 bits at 0
+  a: 3 bits at 16
+  b: 4 bits at 48
+  d: 3 bits at 112
+  e: 32 bits at 128
+struct packed_to_4: 32 bytes, aligned to 4
+  c: 8 bits at 0
+  a: 3 bits at 32
+  d: 8 bits at 96
+  b: 60 bits at 128
+  e: 5 bits at 192
+struct packed_to_8: 24 bytes, aligned to 8
+  c: 8 bits at 0
+  a: 3 bits at 64
+  b: 3 bits at 128
+struct aligned_bits: 8 bytes, aligned to 4
+  c: 8 bits at 0
+  a: 3 bits at 32
+  b: 3 bits at 35
+struct aligned_whole: 16 bytes, aligned to 16
+  a: 3 bits at 0
+  b: 3 bits at 32
+struct outer: 40 bytes, aligned to 8
+  c: 8 bits at 0
+  inner.c: 6 bits at 10
+  more.f: 1 bits at 192
+  s: 3 bits at 256
+struct array_of: 80 bytes, aligned to 8
+  three[2].c: 1 bits at 512
+  last: 1 bits at 576
+struct anonymous: 20 bytes, aligned to 4
+  a: 3 bits at 0
+  b: 3 bits at 32
+  c: 3 bits at 64
+  d: 5 bits at 96
+  e: 16 bits at 96
+  f: 3 bits at 128
+struct the_other_layout: 8 bytes, aligned to 8
+  a: 3 bits at 0
+  b: 4 bits at 3
+  c: 2 bits at 8
+  d: 5 bits at 10
+  e: 1 bits at 15
+struct by_pragma: 12 bytes, aligned to 4
+  a: 3 bits at 0
+  b: 4 bits at 32
+  c: 2 bits at 64
+struct after_the_pragma: 4 bytes, aligned to 4
+  a: 3 bits at 0
+  b: 4 bits at 3
+  c: 2 bits at 8
+1023: -1 1023 -1
+-513: 511 511 -1
+511 and then: -512 87 -1
+sum: -89785834
+sum: -25964
+initialized: 2 -3 0 -1
+packed: x -1 5 -2 -549755813888 -1 then 2 -549755813887 0
+anonymous: 3 -4 2 -2 -1
+union: -56507 1 9029
+array: -1 -1 -1 -1 -1

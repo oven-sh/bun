@@ -363,6 +363,7 @@ impl RuntimeTranspilerStore {
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 poll_ref: KeepAlive::default(),
                 resolved_source,
+                compiled_c: None,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 parse_error: None,
                 work_task: WorkPoolTask {
@@ -422,6 +423,9 @@ pub struct TranspilerJob {
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
     pub(crate) resolved_source: ResolvedSource,
+    /// For `Loader::C`, what the pool thread made of the file: loaded into the VM by
+    /// `run_from_js_thread`.
+    pub(crate) compiled_c: Option<crate::module_loader::CompiledC<'static>>,
     pub(crate) work_task: WorkPoolTask,
     /// INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
     pub(crate) next: unbounded_queue::Link<TranspilerJob>,
@@ -525,9 +529,30 @@ impl TranspilerJob {
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
-        let (specifier, result) = match self.parse_error {
-            Some(e) => (String::clone_utf8(self.path.text), Err(e)),
-            None => {
+        let (specifier, result) = match (self.parse_error, self.compiled_c.take()) {
+            (Some(e), _) => (String::clone_utf8(self.path.text), Err(e)),
+            // A C file: the pool thread compiled it, and what is left needs the VM.
+            (None, Some(compiled)) => {
+                let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
+                // SAFETY: `vm` is this thread's live VM, which owns the job.
+                let loaded = unsafe {
+                    crate::module_loader::__bun_load_compiled_c(
+                        vm,
+                        &global_this,
+                        self.path.text,
+                        compiled,
+                    )
+                };
+                match loaded {
+                    Ok(mut resolved_source) => {
+                        resolved_source.source_url = out.create_if_different(self.path.text);
+                        (out, Ok(resolved_source))
+                    }
+                    // What it threw is pending, for `fulfill` to reject the import with.
+                    Err(_) => (out, Err(crate::CrateError::JSError)),
+                }
+            }
+            (None, None) => {
                 let mut resolved_source = core::mem::take(&mut self.resolved_source);
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
                 debug_assert!(resolved_source.source_url.is_empty());
@@ -635,6 +660,12 @@ impl TranspilerJob {
         };
         if self.generation_number != store_generation {
             self.parse_error = Some(crate::CrateError::TranspilerJobGenerationMismatch);
+            return;
+        }
+
+        // C is compiled, not transpiled: nothing below applies to it.
+        if self.loader == Loader::C {
+            self.compiled_c = Some(crate::module_loader::__bun_compile_c(self.path.text));
             return;
         }
 

@@ -1086,6 +1086,11 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.configure_linker();
         transpiler.configure_defines()?;
 
+        transpiler.options.compile_target = config
+            .compile
+            .as_ref()
+            .map(|compile| compile.compile_target);
+
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         transpiler.options.compile_target_builtins = match &config.compile {
             Some(compile)

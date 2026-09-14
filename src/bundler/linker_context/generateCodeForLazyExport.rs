@@ -374,10 +374,65 @@ pub(crate) fn generate_code_for_lazy_export(
     };
 
     // `require(<asset>)` prints as the runtime's `__require` outside CommonJS
-    // output, so the part that holds the call must import it.
-    let calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
-        if matches!(c.target.data, ExprData::ERequireCallTarget))
-        && this.options.output_format != crate::options::OutputFormat::Cjs;
+    // output, so every part that holds such a call must import it. The shapes a
+    // loader produces: the call itself (`.node`), a member of it or a call of one
+    // (`require(<asset>).f`, `require(<asset>).main()`), and an object whose values
+    // are such members (`.c`: `{ f: require(<asset>).f }`). Nothing a loader makes
+    // nests the call deeper, so an object's own values are as far as this looks: data
+    // (JSON, TOML, YAML) is as deep as its author made it.
+    fn is_on_runtime_require(mut expr: &Expr) -> bool {
+        loop {
+            expr = match &expr.data {
+                ExprData::ECall(call) => {
+                    if matches!(call.target.data, ExprData::ERequireCallTarget) {
+                        return true;
+                    }
+                    &call.target
+                }
+                ExprData::EDot(dot) => &dot.target,
+                _ => return false,
+            };
+        }
+    }
+    fn runtime_require_calls(expr: &Expr) -> u32 {
+        match &expr.data {
+            ExprData::EObject(object) => object
+                .properties
+                .slice()
+                .iter()
+                .filter_map(|property| property.value.as_ref())
+                .filter(|value| is_on_runtime_require(value))
+                .count() as u32,
+            _ => u32::from(is_on_runtime_require(expr)),
+        }
+    }
+    let prints_runtime_require = this.options.output_format != crate::options::OutputFormat::Cjs;
+    let calls_runtime_require = prints_runtime_require && runtime_require_calls(&expr) > 0;
+
+    // Statements a loader added after the lazy export are printed as they are (`.c`: the one that
+    // loads the module, whatever is imported from it).
+    if prints_runtime_require {
+        for part_index in 2..parts.len() {
+            // SAFETY: `parts` is a stable SoA column slice valid for the link pass and `part_index`
+            // is inside it; this reads one field of a part other than the one `part` borrows.
+            let stmts = unsafe { (*parts.cast::<Part>().add(part_index)).stmts };
+            let require_calls = stmts
+                .iter()
+                .filter(|stmt| match &stmt.data {
+                    StmtData::SExpr(s) => is_on_runtime_require(&s.value),
+                    _ => false,
+                })
+                .count() as u32;
+            if require_calls > 0 {
+                this.graph.generate_runtime_symbol_import_and_use(
+                    source_index,
+                    Index::part(part_index as u32),
+                    b"__require",
+                    require_calls,
+                )?;
+            }
+        }
+    }
 
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
@@ -474,6 +529,16 @@ pub(crate) fn generate_code_for_lazy_export(
                     let parts =
                         this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                     parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
+
+                    let require_calls = runtime_require_calls(&value);
+                    if prints_runtime_require && require_calls > 0 {
+                        this.graph.generate_runtime_symbol_import_and_use(
+                            source_index,
+                            Index::part(generated.1),
+                            b"__require",
+                            require_calls,
+                        )?;
+                    }
                 }
             }
 
@@ -514,7 +579,7 @@ pub(crate) fn generate_code_for_lazy_export(
                         source_index,
                         Index::part(generated.1),
                         b"__require",
-                        1,
+                        runtime_require_calls(&expr),
                     )?;
                 }
             }

@@ -587,8 +587,32 @@ mod draft {
 
     // Locked to avoid interleaving panic messages from multiple threads.
     // TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
+    const C_PROGRAM_CRASHED: &str = "The process crashed while a C program's main() was running. That is machine code compiled from\nthe program's own C, where a fault (a null pointer, a write past an array, abort()) is most\nlikely a bug in the program, as it would be in an executable a C compiler made.\n\n";
+    const C_PROGRAM_CRASHED_REPORT: &str = "If you think Bun compiled correct C wrongly, please file a GitHub issue using the link below:\n\n";
+
     // PORTING.md §Concurrency: `bun_threading::Guarded<()>` for a bare critical section.
     static PANIC_MUTEX: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
+
+    /// How many C programs' `main` are running (`bun program.c`, or an executable built from one):
+    /// machine code compiled from the program's own C, where a fault is the program's as it would be
+    /// in an executable a C toolchain made. Process-wide: the program may have threads of its own.
+    static C_PROGRAMS_RUNNING: AtomicU32 = AtomicU32::new(0);
+
+    /// Held while a C program's `main` runs. See [`C_PROGRAMS_RUNNING`].
+    pub struct RunningCProgram(());
+
+    impl RunningCProgram {
+        pub fn enter() -> RunningCProgram {
+            C_PROGRAMS_RUNNING.fetch_add(1, Ordering::Relaxed);
+            RunningCProgram(())
+        }
+    }
+
+    impl Drop for RunningCProgram {
+        fn drop(&mut self) {
+            C_PROGRAMS_RUNNING.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
 
     thread_local! {
         /// Counts how many times the panic handler is invoked by this thread.
@@ -889,6 +913,11 @@ mod draft {
                             // SAFETY: single-threaded mutation under panic_mutex
                             HAS_PRINTED_MESSAGE.store(true, Ordering::Relaxed);
                         }
+                        if C_PROGRAMS_RUNNING.load(Ordering::Relaxed) > 0
+                            && writer.write_all(C_PROGRAM_CRASHED.as_bytes()).is_err()
+                        {
+                            abort();
+                        }
                     } else {
                         if enable_ansi_colors_stderr() {
                             if writer
@@ -1113,6 +1142,14 @@ mod draft {
                                     bstr::BStr::new(name)
                                 )
                                 .is_err()
+                                {
+                                    abort();
+                                }
+                            } else if C_PROGRAMS_RUNNING.load(Ordering::Relaxed) > 0 {
+                                if writer.write_all(C_PROGRAM_CRASHED.as_bytes()).is_err()
+                                    || writer
+                                        .write_all(C_PROGRAM_CRASHED_REPORT.as_bytes())
+                                        .is_err()
                                 {
                                     abort();
                                 }

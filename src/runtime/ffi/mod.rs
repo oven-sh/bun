@@ -11,6 +11,8 @@
 #[path = "ffi_body.rs"]
 mod ffi_body;
 
+pub mod c_module;
+
 /// `js2native` codegen resolves `$rust(ffi.rs, Bun__FFI__cc)` to
 /// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.rs` basename.
 /// `FFI::bun_ffi_cc` lives in `ffi_body` — re-export it under

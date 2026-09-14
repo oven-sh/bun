@@ -1,0 +1,8 @@
+[
+["({ typeof(int) x=3; x; })", 3],
+["({ typeof(1) x=3; x; })", 3],
+["({ int x; typeof(x) y; sizeof(y); })", 4],
+["({ int x; typeof(&x) y; sizeof(y); })", 8],
+["({ typeof(\"foo\") x; sizeof(x); })", 4],
+["sizeof(typeof(struct { int a,b,c; }))", 12]
+]

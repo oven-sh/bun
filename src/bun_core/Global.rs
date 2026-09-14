@@ -683,7 +683,8 @@ extern "C" fn bun_is_exiting() -> c_int {
     is_exiting() as c_int
 }
 
-fn is_exiting() -> bool {
+/// Whether [`exit`] has been called: the process is on its way out through Bun's own exit path.
+pub fn is_exiting() -> bool {
     IS_EXITING.load(Ordering::Relaxed)
 }
 

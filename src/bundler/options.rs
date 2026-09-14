@@ -589,6 +589,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".mjs", Loader::Js),
     (b".cjs", Loader::Js),
     (b".css", Loader::Css),
+    (b".c", Loader::C),
     (b".ts", Loader::Ts),
     (b".tsx", Loader::Tsx),
     (b".mts", Loader::Ts),
@@ -638,6 +639,10 @@ impl DefaultLoaders {
         // compare. Within each arm, keys are fixed-width so `==` is a single
         // word compare (no memcmp loop).
         match ext.len() {
+            2 => match ext {
+                b".c" => Some(&Loader::C),
+                _ => None,
+            },
             3 => match ext {
                 b".js" => Some(&Loader::Jsx),
                 b".ts" => Some(&Loader::Ts),
@@ -973,7 +978,7 @@ pub(crate) fn defines_from_transform_options(
     Ok(define)
 }
 
-const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
+const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html", b".c"];
 const DEFAULT_LOADER_EXT: &[&[u8]] = &[
     b".jsx", b".json", b".js", b".mjs", b".cjs", b".css",
     // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
@@ -1142,6 +1147,59 @@ pub enum CompileTargetBuiltins {
     Host,
     Target(std::sync::Arc<[u8]>),
     None,
+}
+
+/// The platform a bundle's C files are compiled for: the one the bundle runs on. BIR is specific to
+/// a platform (type sizes, struct layout, how arguments are passed, which headers were read).
+/// `compile_target` is what `--compile --target=…` / `Bun.build({ compile: { target } })` names;
+/// without one the bundle is for this machine.
+pub fn c_target(
+    compile_target: Option<&bun_options_types::compile_target::CompileTarget>,
+) -> Result<bun_cc::Target, CTargetUnsupported> {
+    use bun_core::env::{Architecture, OperatingSystem};
+    use bun_options_types::compile_target::Libc;
+    let Some(target) = compile_target.filter(|target| !target.is_host_platform()) else {
+        return bun_cc::Target::host().ok_or(CTargetUnsupported(None));
+    };
+    let (arch, os) = match (target.os, target.arch, target.libc) {
+        (OperatingSystem::Linux, Architecture::X64, Libc::Default) => {
+            (bun_cc::Arch::X86_64, bun_cc::Os::Linux)
+        }
+        (OperatingSystem::Mac, Architecture::Arm64, _) => {
+            (bun_cc::Arch::Aarch64, bun_cc::Os::MacOs)
+        }
+        (OperatingSystem::Windows, Architecture::X64, _) => {
+            (bun_cc::Arch::X86_64, bun_cc::Os::Windows)
+        }
+        _ => return Err(CTargetUnsupported(Some(*target))),
+    };
+    Ok(bun_cc::Target { arch, os })
+}
+
+/// What a bundle calls on a C module that was an entry point, `require(asset).__bun_run_c_main__()`:
+/// the runtime puts it on a module it loads from its compiled form, and it runs the module's
+/// `main`, if it has one, as `bun program.c` does.
+pub const C_RUN_MAIN_PROPERTY: &[u8] = b"__bun_run_c_main__";
+
+/// Compiled C does not run on the platform the bundle is for: `None` is this machine.
+pub struct CTargetUnsupported(Option<bun_options_types::compile_target::CompileTarget>);
+
+impl core::fmt::Display for CTargetUnsupported {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match &self.0 {
+            None => write!(
+                f,
+                "Compiling C is not supported on this platform yet (it is on {})",
+                bun_cc::Target::SUPPORTED
+            ),
+            Some(target) => write!(
+                f,
+                "Compiling C for {} is not supported yet (it is for {})",
+                target.platform(),
+                bun_cc::Target::SUPPORTED
+            ),
+        }
+    }
 }
 
 /// What `--compile` resolved to for this bundle.
@@ -1341,6 +1399,8 @@ pub struct BundleOptions<'a> {
     pub optimize_bytecode: bool,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
+    /// `--compile`: the platform the executable is for. `None` without `--compile`. See `c_target`.
+    pub compile_target: Option<bun_options_types::compile_target::CompileTarget>,
 
     pub code_coverage: bool,
     pub debugger: bool,
@@ -1543,6 +1603,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_depth: self.bytecode_depth,
             optimize_bytecode: self.optimize_bytecode,
             compile_target_builtins: self.compile_target_builtins.clone(),
+            compile_target: self.compile_target,
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
@@ -1792,6 +1853,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
             compile_target_builtins: CompileTargetBuiltins::Host,
+            compile_target: None,
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
+import { supported as compilesC } from "../js/bun/ffi/bir/run-fixtures";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -96,6 +97,47 @@ describe("bundler", () => {
       stdout: '[{"config":{"@env":"test","name":"app"}},{"feed":{"entry":["1","2"]}}]',
     },
   });
+
+  // A C file reports "c" as its default loader and a plugin may rely on it implicitly, give the file another, or
+  // answer with C for a file that is not one.
+  if (compilesC) {
+    itBundled("plugin/LoadCLoader", {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/index.ts": /* ts */ `
+          import { add } from "./add.c";
+          import { answer } from "./generated.magic";
+          import notes from "./notes.c";
+          import path from "./copied.c";
+          console.log(add(2, 3), answer(), notes, path.startsWith("./copied-") && path.endsWith(".c"));
+        `,
+        "/add.c": "int add(int a, int b) { return a - b; }",
+        "/generated.magic": "",
+        "/notes.c": "not C at all",
+        "/copied.c": "nor is this",
+      },
+      plugins(builder) {
+        builder.onLoad({ filter: /add\.c$/ }, async args => {
+          if (args.loader !== "c") throw new Error("expected args.loader to be c, got " + args.loader);
+          return { contents: (await Bun.file(args.path).text()).replace("a - b", "a + b") };
+        });
+        builder.onLoad({ filter: /\.magic$/ }, () => ({ contents: "int answer(void) { return 42; }", loader: "c" }));
+        builder.onLoad({ filter: /notes\.c$/ }, async args => ({
+          contents: await Bun.file(args.path).text(),
+          loader: "text",
+        }));
+        builder.onLoad({ filter: /copied\.c$/ }, async args => ({
+          contents: await Bun.file(args.path).text(),
+          loader: "file",
+        }));
+      },
+      run: {
+        file: "/out/index.js",
+        stdout: "5 42 not C at all true",
+      },
+    });
+  }
 
   // Load Plugin Errors
   itBundled("plugin/LoadThrow", {

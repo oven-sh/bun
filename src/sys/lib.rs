@@ -6047,8 +6047,9 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
 pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_void> {
     #[cfg(unix)]
     {
-        let h = handle.unwrap_or(core::ptr::null_mut());
-        // SAFETY: name is NUL-terminated; dlsym accepts NULL handle as RTLD_DEFAULT.
+        // RTLD_DEFAULT is null on Linux and -2 on macOS.
+        let h = handle.unwrap_or(libc::RTLD_DEFAULT);
+        // SAFETY: name is NUL-terminated; `h` is a handle from dlopen or RTLD_DEFAULT.
         let p = unsafe { libc::dlsym(h, name.as_ptr()) };
         if p.is_null() { None } else { Some(p) }
     }

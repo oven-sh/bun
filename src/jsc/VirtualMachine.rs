@@ -4394,7 +4394,7 @@ impl VirtualMachine {
         debug_assert!(VirtualMachine::is_loaded());
 
         if let Some(resolved) =
-            ModuleLoader::__bun_fetch_builtin_module(jsc_vm, global_object, specifier)
+            ModuleLoader::__bun_fetch_builtin_module(jsc_vm, global_object, specifier)?
         {
             return Ok(resolved);
         }

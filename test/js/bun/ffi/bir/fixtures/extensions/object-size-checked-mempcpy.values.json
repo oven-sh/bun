@@ -1,0 +1,6 @@
+[
+["__builtin___mempcpy_chk(buffer, \"one\", 3, UNKNOWN) == buffer + 3", 1],
+["__builtin___mempcpy_chk(buffer + 3, \", two\", 5, 61) == buffer + 8", 1],
+["__builtin___mempcpy_chk(buffer + 8, \", three\", 8, sixty_four) == buffer + 16 && strcmp(buffer, \"one, two, three\") == 0", 1],
+["__builtin_mempcpy(buffer, \"ONE\", 3) == buffer + 3 && strcmp(buffer, \"ONE, two, three\") == 0", 1]
+]

@@ -116,6 +116,9 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// Other files whose contents went into this one's output (what a C file `#include`s): a
+    /// change to any of them is a change to this file.
+    pub(crate) also_depends_on: Vec<Box<[u8]>>,
 }
 
 pub enum ParseTaskStage {
@@ -133,6 +136,8 @@ pub(crate) struct Result {
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
     pub(crate) watcher_data: WatcherData,
+    /// See `ParseTask::also_depends_on`.
+    pub(crate) also_depends_on: Vec<Box<[u8]>>,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
@@ -289,6 +294,7 @@ impl ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            also_depends_on: Vec::new(),
         }
     }
 
@@ -329,6 +335,7 @@ impl Default for ParseTask {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            also_depends_on: Vec::new(),
         }
     }
 }
@@ -608,6 +615,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            also_depends_on: Vec::new(),
         };
         let source = Source {
             // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
@@ -715,9 +723,15 @@ pub mod parse_worker {
         unique_key
     }
 
-    /// `require("<unique key>")`. Unlike `import.meta.require`, the call target
-    /// prints per output format, so `--bytecode` (CommonJS) can compile it.
-    fn require_embedded_asset(unique_key: &[u8]) -> Expr {
+    /// `require("<unique key>")`, or `require("<unique key>", { type: "<type>" })` for a loader the
+    /// asset's name does not imply: the name is the input file's and the `--asset-naming` template's.
+    /// Unlike `import.meta.require`, the call target prints per output format, so `--bytecode`
+    /// (CommonJS) can compile it.
+    fn require_embedded_asset(
+        bump: &Bump,
+        unique_key: &[u8],
+        type_attribute: Option<&'static [u8]>,
+    ) -> Expr {
         let import_path = Expr::init(
             E::String {
                 data: unique_key.into(),
@@ -725,13 +739,51 @@ pub mod parse_worker {
             },
             Loc { start: 0 },
         );
+        let target = Expr {
+            data: ast::ExprData::ERequireCallTarget,
+            loc: Loc { start: 0 },
+        };
+        let Some(type_attribute) = type_attribute else {
+            return Expr::init(
+                E::Call {
+                    target,
+                    args: bun_ast::ExprNodeList::from_arena_slice(&[import_path]),
+                    ..Default::default()
+                },
+                Loc { start: 0 },
+            );
+        };
+        let properties = bump.alloc_slice_fill_default::<G::Property>(1);
+        properties[0] = G::Property {
+            key: Some(Expr::init(
+                E::String {
+                    data: b"type".as_slice().into(),
+                    ..Default::default()
+                },
+                Loc { start: 0 },
+            )),
+            value: Some(Expr::init(
+                E::String {
+                    data: type_attribute.into(),
+                    ..Default::default()
+                },
+                Loc { start: 0 },
+            )),
+            ..Default::default()
+        };
+        let attributes = Expr::init(
+            E::Object {
+                // SAFETY: bump-owned slice; never grown via this Vec.
+                properties: unsafe { G::PropertyList::from_bump_slice(properties) },
+                is_single_line: true,
+                ..Default::default()
+            },
+            Loc { start: 0 },
+        );
         Expr::init(
             E::Call {
-                target: Expr {
-                    data: ast::ExprData::ERequireCallTarget,
-                    loc: Loc { start: 0 },
-                },
-                args: bun_ast::ExprNodeList::from_arena_slice(&[import_path]),
+                target,
+                args: bun_ast::ExprNodeList::from_arena_slice(&[import_path, attributes]),
                 ..Default::default()
             },
             Loc { start: 0 },
@@ -803,6 +855,8 @@ pub mod parse_worker {
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
+        // For `Loader::C`: the functions of the module `source.contents` is.
+        c_exports: &[String],
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
 
@@ -976,12 +1030,16 @@ pub mod parse_worker {
                 // module becomes `export default require("<bunfs path>")`.
                 // Browser chunks cannot reach the embedded graph.
                 let root = if topts.compile_mode.is_executable() && topts.target.is_bun() {
-                    require_embedded_asset(register_embedded_asset(
+                    require_embedded_asset(
                         bump,
-                        source,
-                        unique_key_prefix,
-                        unique_key_for_additional_file,
-                    ))
+                        register_embedded_asset(
+                            bump,
+                            source,
+                            unique_key_prefix,
+                            unique_key_for_additional_file,
+                        ),
+                        None,
+                    )
                 } else {
                     Expr::init(
                         E::String {
@@ -1160,6 +1218,78 @@ pub mod parse_worker {
                     .ok_or(AnyError::ParserError)?,
                 ));
             }
+            Loader::C => {
+                // `source.contents` is already the compiled BIR. This injects the following code, so
+                // that the module's functions are named exports the bundler can check and tree-shake:
+                //
+                // { add: require(unique_key, { type: "c" }).add, mul: require(unique_key, { type: "c" }).mul }
+                //
+                // and one statement that is kept whatever is imported, because loading the module is
+                // itself an effect (its constructors run, as they do for `import "./x.c"` unbundled):
+                //
+                // require(unique_key, { type: "c" })
+                //
+                // The output a C file is the entry point of also runs its `main`: that is in what the
+                // linker adds to an entry point (`generate_entry_point_tail_js`), so that the module is
+                // the same module wherever else it is imported.
+                //
+                let names = c_exports;
+                let unique_key = register_embedded_asset(
+                    bump,
+                    source,
+                    unique_key_prefix,
+                    unique_key_for_additional_file,
+                );
+                let module = || require_embedded_asset(bump, unique_key, Some(b"c"));
+                let properties = bump.alloc_slice_fill_default::<G::Property>(names.len());
+                for (property, name) in properties.iter_mut().zip(names.iter()) {
+                    let name: &[u8] = bump.alloc_slice_copy(name.as_bytes());
+                    *property = G::Property {
+                        key: Some(Expr::init(
+                            E::String {
+                                data: name.into(),
+                                ..Default::default()
+                            },
+                            Loc { start: 0 },
+                        )),
+                        value: Some(Expr::init(
+                            E::Dot {
+                                target: module(),
+                                name_loc: Loc::EMPTY,
+                                name: name.into(),
+                                ..Default::default()
+                            },
+                            Loc { start: 0 },
+                        )),
+                        ..Default::default()
+                    };
+                }
+                let root = Expr::init(
+                    E::Object {
+                        // SAFETY: bump-owned slice; never grown via this Vec.
+                        properties: unsafe { G::PropertyList::from_bump_slice(properties) },
+                        ..Default::default()
+                    },
+                    Loc { start: 0 },
+                );
+                let mut ast = js_parser::new_lazy_export_ast(
+                    bump,
+                    &mut topts.define,
+                    opts,
+                    log,
+                    root,
+                    source,
+                    b"",
+                )?
+                .ok_or(AnyError::ParserError)?;
+                ast.parts.push(Part {
+                    stmts: bun_ast::StoreSlice::new_mut(
+                        bump.alloc_slice_copy(&[ast::Stmt::allocate_expr(bump, module())]),
+                    ),
+                    ..Default::default()
+                });
+                return Ok(JSAst::init(ast));
+            }
             Loader::Napi => {
                 // (dap-eval-cb "source.contents.ptr")
                 if topts.target == options::Target::Browser {
@@ -1176,12 +1306,16 @@ pub mod parse_worker {
                 //
                 // require(unique_key)
                 //
-                let root = require_embedded_asset(register_embedded_asset(
+                let root = require_embedded_asset(
                     bump,
-                    source,
-                    unique_key_prefix,
-                    unique_key_for_additional_file,
-                ));
+                    register_embedded_asset(
+                        bump,
+                        source,
+                        unique_key_prefix,
+                        unique_key_for_additional_file,
+                    ),
+                    None,
+                );
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
@@ -2282,6 +2416,125 @@ pub mod parse_worker {
         result
     }
 
+    /// A C file's compiled form: what the bundle carries in place of the source.
+    struct CompiledC {
+        bir: Vec<u8>,
+        /// The functions JavaScript can call.
+        exports: Vec<String>,
+    }
+
+    /// Compiles the C file at `path` (and, when it is the entry point of a program in several
+    /// files, `link_sources` with it) for the platform the bundle is for. `also_depends_on`, when
+    /// there is a use for it, gets every other file that was read, whether or not compiling
+    /// succeeded: fixing a header is how a header's error gets fixed.
+    fn compile_c(
+        topts: &options::BundleOptions<'_>,
+        log: &mut Log,
+        path: &[u8],
+        contents: &[u8],
+        link_sources: &[Box<[u8]>],
+        also_depends_on: Option<&mut Vec<Box<[u8]>>>,
+    ) -> core::result::Result<CompiledC, AnyError> {
+        if !topts.target.is_bun() {
+            // logger OOM-only
+            let _ = log.add_error(
+                None,
+                Loc::EMPTY,
+                b"To import a \".c\" file, set target to \"bun\"",
+            );
+            return Err(AnyError::ParserError);
+        }
+        let c_target = match options::c_target(topts.compile_target.as_ref()) {
+            Ok(c_target) => c_target,
+            Err(unsupported) => {
+                // logger OOM-only
+                let _ = log.add_error_fmt(None, Loc::EMPTY, format_args!("{unsupported}"));
+                return Err(AnyError::ParserError);
+            }
+        };
+        // What the files are called in `__FILE__` and in messages: relative to the directory the
+        // build runs in, which is also what the compiler reads files relative to. What is compiled,
+        // and the name its hash gives the asset, then does not depend on where the project is
+        // checked out.
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let cwd: &[u8] = bun_sys::getcwd_z(&mut cwd_buf).map_or(b"", |cwd| cwd.as_bytes());
+        // The compiler names files with `str`s (they end up in `#include` lookups and diagnostics).
+        let name_of = |log: &mut Log, path: &[u8]| -> core::result::Result<String, AnyError> {
+            let shown = if !cwd.is_empty() && bun_paths::is_absolute(path) {
+                bun_paths::resolve_path::relative_alloc(cwd, path)?.into_vec()
+            } else {
+                path.to_vec()
+            };
+            match core::str::from_utf8(&shown) {
+                Ok(name) => Ok(name.to_owned()),
+                Err(_) => {
+                    // logger OOM-only
+                    let _ = log.add_error(
+                        None,
+                        Loc::EMPTY,
+                        b"Cannot compile a C file whose path is not valid UTF-8",
+                    );
+                    Err(AnyError::ParserError)
+                }
+            }
+        };
+        let name = name_of(log, path)?;
+        // The other C entry points of `bun build a.c b.c ...`, linked into this one.
+        let mut linked: Vec<(Vec<u8>, String)> = Vec::with_capacity(link_sources.len());
+        for (i, link_source) in link_sources.iter().enumerate() {
+            // Naming a file twice is not defining everything in it twice.
+            if **link_source == *path || link_sources[..i].contains(link_source) {
+                continue;
+            }
+            let link_name = name_of(log, link_source)?;
+            match bun_sys::File::read_from(bun_sys::Fd::cwd(), link_source) {
+                Ok(contents) => linked.push((contents, link_name)),
+                Err(error) => {
+                    // logger OOM-only
+                    let _ = log.add_error_fmt(
+                        None,
+                        Loc::EMPTY,
+                        format_args!(
+                            "Cannot read \"{}\": {}",
+                            link_name,
+                            bstr::BStr::new(error.name())
+                        ),
+                    );
+                    return Err(AnyError::ParserError);
+                }
+            }
+        }
+        let mut units = vec![bun_cc::Unit {
+            path: &name,
+            contents,
+        }];
+        units.extend(linked.iter().map(|(contents, name)| bun_cc::Unit {
+            path: name,
+            contents,
+        }));
+        let compilation = bun_cc::compile(&units, c_target, log);
+        if let Some(also_depends_on) = also_depends_on {
+            *also_depends_on =
+                compilation
+                    .files_read
+                    .iter()
+                    .filter(|read| **read != name)
+                    .map(|read| {
+                        Box::<[u8]>::from(bun_paths::resolve_path::join_abs::<
+                            bun_paths::platform::Auto,
+                        >(cwd, read.as_bytes()))
+                    })
+                    .collect();
+        }
+        match compilation.output {
+            Some(output) => Ok(CompiledC {
+                bir: output.bir,
+                exports: output.exports,
+            }),
+            None => Err(AnyError::ParserError),
+        }
+    }
+
     // ───────────────────────────────────────────────────────────────────────────
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
@@ -2420,6 +2673,40 @@ pub mod parse_worker {
         // reassigned above); reborrow only the disjoint `options` field.
         let topts = unsafe { &(*transpiler).options };
 
+        // A C file is compiled now; what the bundle carries (and a standalone executable embeds)
+        // is its BIR, which the runtime turns into machine code without a C parser or headers.
+        let compiled_c: Option<CompiledC> = if loader == Loader::C && !is_empty {
+            let link_sources: &[Box<[u8]>] = if task.is_entry_point {
+                &worker_ctx.c_link_sources
+            } else {
+                &[]
+            };
+            match compile_c(
+                topts,
+                log,
+                file_path.text,
+                entry_contents,
+                link_sources,
+                // Only a build that watches files has a use for the list.
+                worker_ctx
+                    .bun_watcher
+                    .is_some()
+                    .then_some(&mut task.also_depends_on),
+            ) {
+                Ok(compiled) => Some(compiled),
+                Err(e) => {
+                    // SAFETY: `transpiler` is live; no other borrow of it is held here.
+                    unsafe { (*transpiler).reset_store() };
+                    if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
+                        entry.deinit();
+                    }
+                    return Err(e);
+                }
+            }
+        } else {
+            None
+        };
+
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
         // `&'bump Source` parameter is satisfied (`bump` is the same arena).
         let source: &'static Source = bump.alloc(Source {
@@ -2440,7 +2727,15 @@ pub mod parse_worker {
             // borrow is sound. Routed through the audited `StoreStr` arena-erasure
             // path (single `from_raw_parts` in `StoreStr::slice`); replace with
             // `Source<'arena>` once that lifetime is threaded through `Success`/Graph.
-            contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
+            // The compiled form goes in the arena with the `Source`: the arena runs no
+            // destructors, so a buffer this `Source` owned would never be freed.
+            contents: std::borrow::Cow::Borrowed(
+                ast::StoreStr::new(match &compiled_c {
+                    Some(compiled) => bump.alloc_slice_copy(&compiled.bir),
+                    None => entry_contents,
+                })
+                .slice(),
+            ),
             contents_is_recycled: false,
             ..Default::default()
         });
@@ -2679,6 +2974,9 @@ pub mod parse_worker {
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
                     &task_ctx.linker.has_any_css_locals,
+                    compiled_c
+                        .as_ref()
+                        .map_or(&[], |compiled| &compiled.exports),
                 )
             } else if loader.is_css() {
                 get_empty_css_ast(log, transpiler, opts, bump, source)
@@ -2861,6 +3159,7 @@ pub mod parse_worker {
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
+            also_depends_on: core::mem::take(&mut this.also_depends_on),
             watcher_data: match this.contents_or_fd {
                 ContentsOrFd::Fd { file, dir } => WatcherData {
                     fd: file,

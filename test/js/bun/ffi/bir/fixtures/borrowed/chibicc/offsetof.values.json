@@ -1,0 +1,6 @@
+[
+["offsetof(T, a)", 0],
+["offsetof(T, b)", 4],
+["offsetof(T, c)", 8],
+["offsetof(T, d)", 16]
+]

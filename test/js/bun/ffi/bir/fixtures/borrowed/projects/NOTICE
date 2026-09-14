@@ -1,0 +1,7 @@
+The two projects here are files of the borrowed suites that are kept as several translation units:
+
+- chibicc-function/ is test/function.c of chibicc (with test/common as its second unit), by Rui Ueyama, under the MIT
+  licence. Where it comes from, what was changed and the licence text: ../chibicc/NOTICE and ../chibicc/LICENSE.
+- scc-0193-incomplete/ is tests/cc/execute/0193-incomplete.c of scc with tests/cc/execute/test.c, the unit it is linked
+  with upstream, by Roberto E. Vargas Caballero and the scc contributors, under the ISC licence. Where it comes from, what was
+  changed and the licence text: ../scc/NOTICE and ../scc/LICENSE.

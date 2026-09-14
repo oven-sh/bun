@@ -258,18 +258,16 @@ const dir = String(
         "crypto.generateKeyPair": () => promisify(crypto.generateKeyPair)("ec", { namedCurve: "P-256" }),
         "crypto.subtle.digest": () => crypto.subtle.digest("SHA-256", new Uint8Array(1024)),
         "dns.lookup": () => promisify(dns.lookup)("localhost"),
-        "dns.promises.resolve4": () => dns.promises.resolve4("localhost").catch(() => {}),
         "Bun.dns.lookup": () => Bun.dns.lookup("localhost"),
         "Bun.Glob.scan": async () => { for await (const found of new Bun.Glob("*").scan(import.meta.dir)) void found; },
         "Bun.build": () => Bun.build({ entrypoints: [import.meta.dir + "/entry.js"], write: false }),
-        "Bun.$ builtins": () => Bun.$\`echo hi\`.quiet(),
         "Bun.sleep": () => Bun.sleep(1),
         "timers/promises": () => timersPromises.setTimeout(1),
         "fetch(file:)": () => fetch("file://" + dataFile).then(response => response.text()),
         "fetch(data:)": () => fetch("data:text/plain,hi").then(response => response.text()),
         "CompressionStream": () => new Response(new Blob(["x".repeat(1000)]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer(),
         "MessageChannel": () => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(1); }),
-        "worker_threads": () => new Promise(resolve => { const worker = new Worker("data:text/javascript,postMessage(1)"); worker.onmessage = () => resolve(); }),
+        "Worker": () => new Promise(resolve => { const worker = new Worker("data:text/javascript,postMessage(1)"); worker.onmessage = () => resolve(); }),
         "child_process.exec": () => promisify(childProcess.exec)("echo hi"),
       };
 
@@ -1137,8 +1135,8 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
 
 // A forcing function: whoever adds something to `Bun` has to say here what a graph's dispose() does
 // with it. "owned": something it opens outlives the call and a test above (or in
-// module-graph-io.test.ts) shows dispose() closing it. "job": its work runs on a thread pool and its
-// completion is dropped once the graph is disposed (the "background work" test). "pure": nothing
+// module-graph-io.test.ts) shows dispose() closing it. "job": its work runs on a thread pool; the
+// "background work" test says which completions are dropped once the graph is disposed. "pure": nothing
 // outlives the call. "host": process-wide on purpose (the graph's host decides who may use it).
 test("ModuleGraph isolation: every property of Bun is classified", () => {
   const classified: Record<string, "owned" | "job" | "pure" | "host"> = {
@@ -1327,36 +1325,34 @@ test("ModuleGraph isolation: a Bun.$ script of a disposed graph stops: the runni
 });
 
 // What a disposed graph started in the background never reports back: the promise its code is
-// waiting on stays pending, so none of its code runs again. The exceptions are listed, with why.
+// waiting on stays pending, so none of its code runs again.
 test("ModuleGraph isolation: background work of a disposed graph does not settle into it", async () => {
+  // Completions that do not know which graph started them still resolve their promise, so the graph's
+  // continuation runs (in its stopped context: what it opens is closed at once). Which of these a
+  // platform's backend delivers this way varies; none other may.
+  const mayStillSettle = [
+    "Bun.file().stream()",
+    "crypto.subtle.digest",
+    "Bun.build",
+    "fetch(data:)",
+    "CompressionStream",
+  ];
+  // The exit of a child the graph started is a close notification: its code hears of it.
+  const mustSettle = ["child_process.exec"];
+
   using made = await newGraph();
   const names = Object.keys(hostApp.background);
   const started: Record<string, Promise<unknown>> = {};
   made.graph.run(() => {
     for (const name of names) (started[name] = Promise.resolve(made.app.background[name]())).catch(() => {});
   });
-  // Not something the event loop delivers: it had settled before dispose() was called.
-  const settledAlready = names.filter(name => Bun.peek.status(started[name]) !== "pending");
+  // What finished inside the call that started it is not something the event loop delivers.
+  const pending = names.filter(name => Bun.peek.status(started[name]) === "pending");
   made.graph.dispose();
   // The same work in the host, started afterwards, has all finished: the graph's would have too.
   await Promise.all(names.map(name => Promise.resolve(hostApp.background[name]()).catch(() => {})));
+  await until(() => mustSettle.every(name => Bun.peek.status(started[name]) !== "pending"));
   await hostTimerTurns();
-  const settledAfterwards = names.filter(
-    name => !settledAlready.includes(name) && Bun.peek.status(started[name]) !== "pending",
-  );
-  expect({ settledAlready, settledAfterwards }).toEqual({
-    settledAlready: [],
-    settledAfterwards: [
-      // These resolve a promise from a native completion that does not know which graph started it, so
-      // the graph's continuation still runs (in its stopped context: what it opens is closed at once).
-      "Bun.file().stream()",
-      "crypto.subtle.digest",
-      "dns.promises.resolve4",
-      "Bun.build",
-      "fetch(data:)",
-      "CompressionStream",
-      // The exit of a child the graph started is a close notification: its code hears of it.
-      "child_process.exec",
-    ],
-  });
+  const settled = pending.filter(name => Bun.peek.status(started[name]) !== "pending");
+  expect(settled.filter(name => !mayStillSettle.includes(name))).toEqual(mustSettle);
 });

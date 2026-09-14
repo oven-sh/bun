@@ -309,7 +309,7 @@ Bun includes its own implementation of a few npm packages. When you import one o
 
 A built-in module does not implement every API of the package it replaces. For example, the built-in `undici` exports `Agent`, `Pool`, `Client`, `ProxyAgent`, and `MockAgent` so that imports succeed. These classes do not manage connections, and `fetch` ignores the `dispatcher` option. `stream()`, `pipeline()`, `connect()`, and `upgrade()` throw an error. If your code needs an API that is missing, [open an issue](https://bun.com/issues).
 
-Bun matches the whole specifier. Any other subpath, such as `undici/package.json`, resolves to the installed package. For a replaced package, `require.resolve()` and `import.meta.resolve()` return the specifier itself, for example `"undici"`, instead of a file path.
+Bun matches the whole specifier. Any other subpath, such as `undici/package.json`, resolves to the installed package. For a replaced specifier, `require.resolve()` and `import.meta.resolve()` return the name of the built-in module instead of a file path. For example, both `"undici"` and `"next/dist/compiled/undici"` resolve to `"undici"`.
 
 [`bun build`](/bundler) applies the same replacement when the target is `bun`, and leaves the import in the bundle. With `--target=node` or `--target=browser`, `bun build` bundles the copy in `node_modules`.
 

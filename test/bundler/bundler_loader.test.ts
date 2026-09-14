@@ -148,8 +148,204 @@ describe("bundler", async () => {
             '[{"hello":{"@to":"world","#text":"hi ","b":"there"}},{"greeting":{"@__proto__":"1","to":["world","you"]}},{"@__proto__":"1","to":["world","you"]}]',
         },
       });
+      // One file imported under two `with { type }` loaders is two modules
+      // with two values. The bundler used to key modules by path alone, so the
+      // first loader won for every import of the file.
+      // The plugin variant resolves every import through the onResolve
+      // fallback path (a plugin that matches but defers to the default resolver).
+      // Its first import takes the other path: onResolve returns aliased.json.
+      // That module stays keyed by path and takes the loader of its extension,
+      // so the import attribute has no effect there yet. The plain import that
+      // follows must be the parsed object, whatever the aliased import gets.
+      for (const withPlugin of [false, true]) {
+        const deferred: string[] = [];
+        itBundled(`bun/loader-same-file-under-two-import-attributes${withPlugin ? "-plugin" : ""}`, {
+          target,
+          outdir: "/out",
+          files: {
+            "/entry.ts": /* js */ `
+          ${
+            withPlugin
+              ? `import aliased from 'alias:aliased' with { type: 'text' };
+          import aliasedObj from './aliased.json';`
+              : `const aliased = '', aliasedObj = { k: 2 };`
+          }
+          import { readFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import obj from './data.json';
+          import { text, cfg as cfgFromAsText } from './as-text';
+          import * as shadow from './as-text';
+          const dynamicText = (await import('./data.json', { with: { type: 'text' } })).default;
+          const dynamicObj = (await import('./data.json')).default;
+          // At runtime these two still share one module (#32999).
+          import pageText from './page.html' with { type: 'text' };
+          import pageFile from './page.html' with { type: 'file' };
+          // Two importers of one (path, loader) pair share one module: the same object.
+          import cfg from './cfg.txt' with { type: 'json' };
+          console.write(JSON.stringify([
+            typeof obj, obj.j,
+            typeof text, text,
+            dynamicText === text, dynamicObj === obj, shadow.text === text,
+            pageText,
+            pageFile !== pageText, readFileSync(join(import.meta.dirname, pageFile), 'utf8') === pageText,
+            cfg.c, cfg === cfgFromAsText,
+            aliased != null, typeof aliasedObj, aliasedObj.k,
+          ]));
+        `,
+            "/as-text.ts": /* js */ `
+          import text from './data.json' with { type: 'text' };
+          import cfg from './cfg.txt' with { type: 'json' };
+          export { text, cfg };
+        `,
+            "/data.json": `{"j":1}`,
+            "/aliased.json": `{"k":2}`,
+            "/cfg.txt": `{"c":3}`,
+            "/page.html": `<p>hi</p>`,
+          },
+          plugins: withPlugin
+            ? builder => {
+                builder.onResolve({ filter: /^alias:aliased$/ }, args => ({
+                  path: join(args.importer, "../aliased.json"),
+                }));
+                builder.onResolve({ filter: /.*/ }, args => {
+                  deferred.push(args.path);
+                  return undefined;
+                });
+              }
+            : undefined,
+          onAfterBundle() {
+            if (withPlugin) {
+              expect(deferred).toEqual(
+                expect.arrayContaining(["./data.json", "./as-text", "./page.html", "./cfg.txt", "./aliased.json"]),
+              );
+            }
+          },
+          run: {
+            stdout: '["object",1,"string","{\\"j\\":1}",true,true,true,"<p>hi</p>",true,true,3,true,true,"object",2]',
+          },
+        });
+      }
     });
   }
+
+  // An HTML import from a server build turns into a manifest module plus a
+  // browser entry point that the linker finds again by path, so it stays keyed
+  // by path even when `with { type: "html" }` is not the path's default loader.
+  itBundled("bun/loader-html-type-attribute-on-non-html-extension", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+      import page from './page.htm' with { type: 'html' };
+      console.write(JSON.stringify([typeof page.index, page.files.some(f => f.path === page.index)]));
+    `,
+      "/page.htm": `<!DOCTYPE html><html><head></head><body><h1>hi</h1></body></html>`,
+    },
+    run: { stdout: '["string",true]' },
+  });
+
+  // The two imports sit in one module, so they meet in one resolve queue, and
+  // the import with the attribute comes first. The second run entry runs the
+  // source file: `bun run` gives the same two values.
+  itBundled("bun/loader-same-file-under-two-import-attributes-in-one-module", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import asText from "./data.json" with { type: "text" };
+        import asJson from "./data.json";
+        console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+      `,
+      "/data.json": `{"a":1}`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("// data.json with { type: 'text' }\n");
+      expect(out).toContain("// data.json\n");
+    },
+    run: [
+      { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+      { file: "/entry.ts", stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+    ],
+  });
+
+  // The text request used to be folded into the entry point's own JS module:
+  // `No matching export in "entry.ts" for import "default"`.
+  itBundled("bun/loader-entry-point-imports-itself-as-text", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import source from "./entry.ts" with { type: "text" };
+        console.log(typeof source, source.includes('with { type: "text" }'));
+      `,
+    },
+    run: [{ stdout: "string true" }, { file: "/entry.ts", stdout: "string true" }],
+  });
+
+  // A stylesheet's url() takes the file as an asset, and a script imports the
+  // same file as text. The url() used to get the text module:
+  // `data:text/plain;base64,...`, which no browser renders as an image.
+  itBundled("bun/loader-css-url-and-text-import-of-one-file", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.js": /* js */ `
+        import svg from "./icon.svg" with { type: "text" };
+        import "./style.css";
+        console.log(typeof svg, svg.startsWith("<svg"));
+      `,
+      "/style.css": `.a { background: url("./icon.svg"); }`,
+      "/icon.svg": `<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>`,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toContain("data:image/svg+xml;base64,");
+    },
+    run: { stdout: "string true" },
+  });
+
+  // package.json and tsconfig.json are jsonc by default. `with { type: "json" }`
+  // on one of them is not a second loader: as before, there is one module.
+  itBundled("bun/loader-package-json-with-type-json", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import pkg from "./package.json" with { type: "json" };
+        import { name } from "./other";
+        console.log(pkg.name, name);
+      `,
+      "/other.ts": /* js */ `
+        import pkg from "./package.json";
+        export const name = pkg.name;
+      `,
+      "/package.json": `{"name":"only-once"}`,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js").split("only-once").length - 1).toBe(1);
+    },
+    run: { stdout: "only-once only-once" },
+  });
+
+  // shim.txt loaded as js is a `module.exports = require()` redirect to
+  // target.js. The redirect belongs to that module alone: a later plain import
+  // of shim.txt still gets the text module.
+  itBundled("bun/loader-commonjs-redirect-under-a-type-attribute", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import viaShim from "./shim.txt" with { type: "js" };
+        import later from "./later1.js";
+        console.log(viaShim.value, later);
+      `,
+      "/shim.txt": `module.exports = require("./target.js");`,
+      "/target.js": `module.exports = { value: "from target" };`,
+      "/later1.js": `export { default } from "./later2.js";`,
+      "/later2.js": `export { default } from "./later3.js";`,
+      "/later3.js": /* js */ `
+        import text from "./shim.txt";
+        export default typeof text;
+      `,
+    },
+    run: { stdout: "from target string" },
+  });
 
   itBundled("bun/loader-text-file", {
     target: "bun",

@@ -223,7 +223,12 @@ pub(crate) fn filter<'a>(
         }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
-        path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
+        let first = bun_core::handle_oom(path_to_index.get_or_put(path_text));
+        if first.found_existing {
+            // One file under two `with { type }` loaders is two modules. An entry point is enqueued first.
+            continue;
+        }
+        *first.value_ptr = u32::try_from(idx).unwrap();
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
         graph_files.push(Box::<[u8]>::from(path_text));
@@ -256,14 +261,10 @@ pub(crate) fn filter<'a>(
     let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
     let mut queue: Vec<u32> = Vec::new();
 
-    {
-        for changed_path in changed_files.keys() {
-            if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
-                if !affected.is_set(idx as usize) {
-                    affected.set(idx as usize);
-                    queue.push(idx);
-                }
-            }
+    for (idx, source) in sources.iter().enumerate() {
+        if source.path.is_file() && changed_files.contains(source.path.text) {
+            affected.set(idx);
+            queue.push(u32::try_from(idx).unwrap());
         }
     }
 

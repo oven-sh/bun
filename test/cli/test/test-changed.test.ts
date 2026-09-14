@@ -171,6 +171,23 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a file imported under two import attributes selects all importers", async () => {
+    // data.json is two modules in the graph: one per loader.
+    using dir = tempDir("test-changed-two-attributes", {
+      "package.json": JSON.stringify({ name: "two-attributes", type: "module" }),
+      "data.json": `{"v":1}\n`,
+      "one.test.ts": `import { test, expect } from "bun:test";\nimport data from "./data.json";\ntest("one", () => expect(data.v).toBe(1));\n`,
+      "two.test.ts": `import { test, expect } from "bun:test";\nimport text from "./data.json" with { type: "text" };\ntest("two", () => expect(text).toContain("v"));\n`,
+      "three.test.ts": `import { test, expect } from "bun:test";\ntest("three", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "data.json"), "\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["one.test.ts", "two.test.ts", "three.test.ts"])).toEqual(["one.test.ts", "two.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("staged changes are picked up", async () => {
     using dir = tempDir("test-changed-staged", fixture);
     initRepo(String(dir));

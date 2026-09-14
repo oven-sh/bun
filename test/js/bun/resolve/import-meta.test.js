@@ -263,6 +263,7 @@ function bindingsBeforeModuleBodyFixture(padding = "") {
     "main.ts": `
       import "./all.ts";
       import "./filename-only.ts";
+      import "./user-declared.ts";
     `,
     // The declarations of the bindings must stay at the start of the output, also with a directive here.
     "all.ts": `
@@ -295,6 +296,19 @@ function bindingsBeforeModuleBodyFixture(padding = "") {
       import { beforeBody } from "./filename-only.ts";
       console.log("filename only:", beforeBody());
     `,
+    // A declaration that the user wrote has no value before the body runs, as the language specifies.
+    // That also applies when it reads the same property as the declaration that Bun prints.
+    "user-declared.ts": `
+      var __dirname = import.meta.dir;
+      import "./user-declared-caller.ts";
+      export function beforeBody() {
+        return typeof __dirname;
+      }
+    `,
+    "user-declared-caller.ts": `
+      import { beforeBody } from "./user-declared.ts";
+      console.log("user declared:", beforeBody());
+    `,
     // No function captures this `require`, so it is not a variable of the module environment.
     "dep.ts": `export const dep = require("node:path").basename("/dir/dep");`,
   };
@@ -310,7 +324,8 @@ const bindingsBeforeModuleBodyResult = {
   stdout:
     `{"required":"dep","resolved":true,"isImportMetaRequire":true,"dirname":true,"filename":true}\n` +
     `all.ts body\n` +
-    `filename only: true\n`,
+    `filename only: true\n` +
+    `user declared: undefined\n`,
   stderr: "",
   exitCode: 0,
 };

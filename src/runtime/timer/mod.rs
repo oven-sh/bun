@@ -58,6 +58,7 @@ pub mod timer;
 macro_rules! impl_timer_object {
     ($T:ident, $tag:ident, $js_name:literal) => {
         #[::bun_jsc::JsClass(name = $js_name)]
+        #[derive(::bun_ptr::RefCounted)]
         pub struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
             pub event_loop_timer: super::EventLoopTimer,
@@ -66,19 +67,10 @@ macro_rules! impl_timer_object {
 
         ::bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
 
-        // Intrusive single-thread refcount mixin.
-        impl ::bun_ptr::RefCounted for $T {
-            type DestructorCtx = ();
-            #[inline]
-            unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
-                // SAFETY: caller contract — `this` points to a live `Self`.
-                unsafe { &raw mut (*this).ref_count }
-            }
-            #[inline]
-            unsafe fn destructor(this: *mut Self, _ctx: ()) {
-                // SAFETY: `raw_count == 0` ⇒ unique ownership; `deinit`
-                // consumes the `heap::alloc`'d allocation from `init_with()`.
-                unsafe { Self::deinit(this) }
+        impl ::core::ops::Drop for $T {
+            fn drop(&mut self) {
+                // SAFETY: last ref gone; JS thread with RuntimeState installed.
+                unsafe { self.internals.deinit() }
             }
         }
 
@@ -110,9 +102,8 @@ macro_rules! impl_timer_object {
                 unsafe { ::bun_ptr::RefCount::<Self>::ref_(this) }
             }
 
-            /// Decrement the intrusive refcount; on zero runs `deinit` (drops
-            /// `internals`, frees the `Box`). After this returns `this` may
-            /// dangle.
+            /// Decrement the intrusive refcount; on zero drops the `Box`.
+            /// After this returns `this` may dangle.
             ///
             /// # Safety
             /// `this` must point to a live, `heap::alloc`-allocated `Self`.
@@ -168,20 +159,6 @@ macro_rules! impl_timer_object {
                 js_value
             }
 
-            /// Called via `RefCounted::destructor` when the refcount reaches
-            /// zero. Not `impl Drop`: this fn frees the backing `Box` itself.
-            ///
-            /// # Safety
-            /// `this` must be the unique owner (refcount == 0) of a
-            /// `heap::alloc`'d `Self`.
-            unsafe fn deinit(this: *mut Self) {
-                // SAFETY: refcount has reached zero ⇒ unique reference.
-                unsafe {
-                    (*this).internals.deinit();
-                    drop(::bun_core::heap::take(this));
-                }
-            }
-
             // C-ABI shim (`${name}Class__construct`) is emitted by
             // `#[bun_jsc::JsClass]` via `host_fn_construct_result`; do not also
             // annotate with `#[host_fn]` here.
@@ -228,13 +205,8 @@ macro_rules! impl_timer_object {
                 this.internals.has_ref()
             }
 
-            /// `.classes.ts` `finalize: true` — runs on the mutator thread
-            /// during lazy sweep. Do not touch any `JSValue`/`Strong` content.
-            pub fn finalize(self: ::std::boxed::Box<Self>) {
-                // Refcounted via `internals`: `internals.finalize()` derefs the
-                // intrusive count; allocation may outlive this call if other
-                // refs remain, so hand ownership back to the raw refcount.
-                ::bun_core::heap::release(self).internals.finalize()
+            pub fn finalize(&self) {
+                self.internals.finalize()
             }
 
             #[::bun_jsc::host_fn(getter)]
@@ -400,7 +372,7 @@ impl DateHeaderTimer {
         // separate allocation from `RuntimeState.timer` so no aliasing with
         // `&mut self`).
         let loop_ = vm.uws_loop_mut();
-        let now = Timespec::now(TimespecMockMode::AllowMockedTime);
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
 
         // Record when we last ran it.
         self.event_loop_timer.next = ElTimespec {
@@ -427,10 +399,9 @@ impl DateHeaderTimer {
 }
 
 pub struct EventLoopDelayMonitor {
-    // TODO: bare `JSValue` heap field with no Strong/visitChildren rooting —
-    // the histogram object can be GC'd while `monitorEventLoopDelay` is active.
-    // Needs JsRef-style rooting.
-    js_histogram: JSValue,
+    /// Weak, so a leaked monitor does not pin the retired `--isolate` realm.
+    /// `stop_active_handles` drops it before `~VM` (`All` outlives the heap).
+    histogram: bun_jsc::Weak<()>,
     pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) resolution_ms: i32,
     pub(crate) last_fire_ns: u64,
@@ -439,7 +410,7 @@ pub struct EventLoopDelayMonitor {
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
-            js_histogram: JSValue::default(),
+            histogram: bun_jsc::Weak::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
             resolution_ms: 10,
             last_fire_ns: 0,
@@ -455,14 +426,12 @@ impl EventLoopDelayMonitor {
 
     fn enable(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+        vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
         resolution_ms: i32,
     ) {
-        if self.enabled {
-            return;
-        }
-        self.js_histogram = histogram;
+        self.disable();
+        self.histogram = bun_jsc::Weak::create_passive(histogram, vm.global());
         self.resolution_ms = resolution_ms;
         self.enabled = true;
 
@@ -479,16 +448,19 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
-    fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    pub(crate) fn disable(&mut self) {
         if !self.enabled {
             return;
         }
         self.enabled = false;
-        self.js_histogram = JSValue::default();
+        self.histogram = bun_jsc::Weak::default();
         self.last_fire_ns = 0;
-        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
-        unsafe { (*Self::timer_all()).remove(elt) };
+        // FIRED (not linked) when called from `on_fire`.
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
+            // SAFETY: see `enable` — disjoint-field access on `All`.
+            unsafe { (*Self::timer_all()).remove(elt) };
+        }
     }
 
     /// Record `now - last_fire_ns`
@@ -498,9 +470,14 @@ impl EventLoopDelayMonitor {
         _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
-        if !self.enabled || self.js_histogram.is_empty() {
+        self.event_loop_timer.state = EventLoopTimerState::FIRED;
+        if !self.enabled {
             return;
         }
+        let Some(histogram) = self.histogram.get() else {
+            self.disable();
+            return;
+        };
 
         let now_ns = now.ns();
         if self.last_fire_ns > 0 {
@@ -518,7 +495,7 @@ impl EventLoopDelayMonitor {
                         delay_ns: i64,
                     );
                 }
-                JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
+                JSNodePerformanceHooksHistogram_recordDelay(histogram, delay_ns);
             }
         }
 
@@ -695,6 +672,25 @@ impl All {
         }
     }
 
+    /// The owning thread's JSC VM is gone (nothing schedules a WTFTimer any
+    /// more) and the timeout objects are drained: hand the embedded
+    /// `uv_timer_t`/`uv_idle_t` to `uv_close` so their nodes leave the loop's
+    /// handle queue when the teardown closes the loop — before this struct's
+    /// storage is freed.
+    #[cfg(windows)]
+    pub(crate) fn close_loop_handles_for_vm_teardown(&mut self) {
+        unsafe extern "C" fn timer_closed(_: *mut uv::Timer) {}
+        unsafe extern "C" fn idle_closed(_: *mut uv::uv_idle_t) {}
+        if !self.uv_timer.data.is_null() {
+            self.uv_timer.stop();
+            self.uv_timer.close(timer_closed);
+        }
+        if !self.uv_idle.data.is_null() {
+            self.uv_idle.stop();
+            self.uv_idle.close(idle_closed);
+        }
+    }
+
     /// Lazily `uv_timer_init` the
     /// per-`All` libuv timer, then (re)start it for the soonest deadline
     /// across both heaps. On Windows there is no epoll/kqueue fallback; this
@@ -715,6 +711,10 @@ impl All {
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
             self.uv_timer.unref();
         }
+        debug_assert!(
+            !self.uv_timer.is_closing(),
+            "timer scheduled after teardown closed the heap's uv timer"
+        );
 
         let reg_next = self.timers.peek().map(|timer| {
             // SAFETY: `peek` returns a live heap node.
@@ -915,7 +915,12 @@ impl All {
                 nsec: now.nsec,
             };
             // SAFETY: `min` is live; no guard or borrow of `All` is held here.
-            unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+            let fired = unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+            // WTF timers run JSC-internal work, not user JS; a stop found here
+            // is the loop's to act on at its next gate, and the heap's next
+            // deadline is still reported to the poll.
+            // SAFETY: `vm` is the erased per-thread VM per fn contract.
+            let _ = unsafe { fold_timer(vm, fired) };
         }
     }
 
@@ -1083,7 +1088,11 @@ impl All {
             // `fire` dispatches through the FIRE_TIMER hook (§Dispatch hot
             // path) and may re-enter `(*runtime_state()).timer` — no `&mut`
             // to `All` is live here.
-            unsafe { EventLoopTimer::fire(t, &el_now, vm) };
+            let fired = unsafe { EventLoopTimer::fire(t, &el_now, vm) };
+            // SAFETY: `vm` per fn contract.
+            if unsafe { fold_timer(vm, fired) }.is_err() {
+                break;
+            }
         }
     }
 
@@ -1170,9 +1179,47 @@ impl All {
         let _ = uws_loop;
     }
 
-    /// VM-teardown pass: `cancel()` every `TimeoutObject` / `ImmediateObject`
-    /// still linked in `timers` / `fake_timers.timers` so the in-heap `+1` ref
-    /// and the JS pin (`this_value` Strong) are released before the GC sweep.
+    /// VM teardown, after `cancel_all_timeout_objects`: unlink every timer still
+    /// in either heap, whatever its kind. Owners keep their nodes (now
+    /// `CANCELLED`, which their own `state == ACTIVE` checks respect); nothing
+    /// can fire afterwards even if the loop turns again.
+    ///
+    /// # Safety
+    /// `this` is the live per-thread `All`; JS thread; never on a VM that keeps running.
+    pub(crate) unsafe fn disarm_all_for_vm_teardown(this: *mut Self) {
+        let mut nodes: Vec<*mut EventLoopTimer> = Vec::new();
+        let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
+        // SAFETY: fn contract.
+        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
+        for root in roots {
+            if !root.is_null() {
+                stack.push(root);
+            }
+        }
+        while let Some(node) = stack.pop() {
+            // SAFETY: intrusive-heap invariant — reachable nodes are live while linked.
+            let (child, next) = unsafe { ((*node).heap.child, (*node).heap.next) };
+            if !child.is_null() {
+                stack.push(child);
+            }
+            if !next.is_null() {
+                stack.push(next);
+            }
+            nodes.push(node);
+        }
+        for node in nodes {
+            // SAFETY: collected from the live heap above; `remove` relinks the
+            // others but every node stays a valid allocation owned elsewhere.
+            unsafe { (*this).remove(node) };
+        }
+    }
+
+    /// VM-teardown / `--isolate` file-swap pass: `cancel()` every
+    /// `TimeoutObject` / `ImmediateObject` still linked in `timers` /
+    /// `fake_timers.timers` so the in-heap `+1` ref and the JS pin
+    /// (`this_value` Strong) are released before the GC sweep, and discard
+    /// every `AbortSignal.timeout()` timer through its signal so the signal
+    /// stops reporting an active timer.
     ///
     /// # Safety
     /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
@@ -1180,7 +1227,7 @@ impl All {
     /// (`Zig__GlobalObject__destructOnExit` / `WebWorker__teardownJSCVM`) and
     /// BEFORE `runtime_state` is nulled — the GC sweep frees the
     /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
-    /// alias.
+    /// alias, and the `AbortSignal`s that own the `AbortSignalTimeout` boxes.
     pub(crate) unsafe fn cancel_all_timeout_objects(
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
@@ -1240,23 +1287,18 @@ impl All {
             unsafe { (*internals).cancel(vm) };
         }
 
-        // `AbortSignal.timeout()` boxes are owned by the C++ `AbortSignal`
-        // (freed via `~AbortSignal` → `cancelTimer`), and the signal is kept
-        // alive by its JS wrapper. Unlink the timer here so `Timeout::deinit`'s
-        // `cancel` is a no-op against the already-destroyed heap, and null the
-        // back-pointer so `Timeout::run` cannot dereference a freed signal if
-        // an event-loop drain sneaks in before teardown.
+        // `AbortSignal.timeout()` boxes are owned by the C++ `AbortSignal`, so
+        // each one is handed back to its signal, which unlinks and frees it and
+        // clears `m_timeout`. Only unlinking the node here would leave every
+        // observed signal's wrapper (under `--isolate`: the retired global its
+        // listeners close over) pinned by `isReachableFromOpaqueRoots` for the
+        // rest of the process; see `Timeout::discard`.
         for t in signal_timeouts {
-            // SAFETY: each `t` was collected from the live heap above and is
-            // still owned by its `AbortSignal` (the box is freed by
-            // `cancelTimer()` at wrapper GC / `lastChanceToFinalize`). JS
-            // thread.
-            unsafe {
-                if (*t).event_loop_timer.state == EventLoopTimerState::ACTIVE {
-                    (*this).remove(core::ptr::addr_of_mut!((*t).event_loop_timer));
-                }
-                (*t).signal = core::ptr::null_mut();
-            }
+            // SAFETY: each `t` was collected from the live heap above, so its
+            // box (and therefore its owning signal) is still alive; JS thread;
+            // no borrow of `*this` is held across the call (`discard` re-enters
+            // `remove` through `timer_remove`). `t` is freed by the call.
+            unsafe { AbortSignalTimeout::discard(t) };
         }
     }
 }
@@ -1292,14 +1334,6 @@ pub(crate) struct ID {
     pub id: i32,
     pub kind: KindBig,
 }
-impl Default for ID {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            kind: KindBig::SetTimeout,
-        }
-    }
-}
 impl ID {
     #[inline]
     fn async_id(self) -> u64 {
@@ -1315,3 +1349,27 @@ impl ID {
 
 const US_PER_S: i64 = bun_core::time::US_PER_S as i64;
 const NS_PER_US: i64 = bun_core::time::NS_PER_US as i64;
+
+/// The timer drain's fold: report what a fired timer's handler left pending
+/// as uncaught, or — if it is the VM's termination — tell the drain to stop.
+///
+/// # Safety
+/// `vm` is the erased per-thread `*mut VirtualMachine`.
+#[inline]
+unsafe fn fold_timer(
+    vm: *mut (),
+    fired: bun_event_loop::JsResult<()>,
+) -> Result<(), bun_jsc::Stopped> {
+    #[cold]
+    #[inline(never)]
+    unsafe fn report(vm: *mut (), err: bun_jsc::JsError) -> Result<(), bun_jsc::Stopped> {
+        // SAFETY: fn contract.
+        let global = unsafe { (*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).global() };
+        bun_jsc::task::report_error_or_terminate(global, err)
+    }
+    match fired {
+        Ok(()) => Ok(()),
+        // SAFETY: fn contract.
+        Err(err) => unsafe { report(vm, err) },
+    }
+}

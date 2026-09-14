@@ -25,22 +25,15 @@
 
 #pragma once
 
+#include "ActiveDOMObject.h"
 #include "EventTarget.h"
-#include "MessageWithMessagePorts.h"
-#include "WorkerOptions.h"
-#include <JavaScriptCore/RuntimeFlags.h>
-#include <JavaScriptCore/Strong.h>
-#include <wtf/Deque.h>
-#include <wtf/HashMap.h>
-#include <wtf/text/AtomStringHash.h>
-#include "ContextDestructionObserver.h"
-#include "Event.h"
+#include "ExceptionOr.h"
+#include "WorkerMessagingProxy.h"
+#include <wtf/RefCounted.h>
 
 namespace JSC {
-class CallFrame;
-class JSObject;
+class JSGlobalObject;
 class JSValue;
-class JSPromise;
 }
 
 namespace WebCore {
@@ -49,118 +42,40 @@ class ScriptExecutionContext;
 struct StructuredSerializeOptions;
 struct WorkerOptions;
 
-/// Parent-side handle for a Web or Node worker thread.
-///
-/// Lifetime / ownership (see also the header comment in src/jsc/web_worker.rs):
-///
-///   JSWorker (GC'd JSCell)  ──Ref──►  Worker  ──owns──►  native WebWorker
-///     parent thread                   ThreadSafeRefCounted   default_allocator
-///
-/// Refs held on this object:
-///   - JSWorker wrapper       from construct() until GC finalize
-///   - worker thread          taken in create() before the thread is spawned;
-///                            dropped on the PARENT thread inside dispatchExit()'s
-///                            posted close task, so ~Worker never runs on the
-///                            worker thread (EventListenerMap is single-threaded)
-///   - transient Ref{*this} captured by posted tasks
-///
-/// impl_ (native WebWorker*) is owned by this object and freed in ~Worker(), so
-/// terminate()/ref()/unref() can never see a dangling pointer while JS holds
-/// the wrapper.
-///
-/// State machine:
-///
-///     ┌────────┐  dispatchOnline   ┌────────┐
-///     │Pending │ ────────────────► │Running │
-///     └───┬────┘  (worker thread,  └───┬────┘
-///         │        under lock)         │
-///         │                            │
-///         └────────────┬───────────────┘
-///                      │ close task (parent thread)
-///                      ▼
-///                 ┌────────┐  'close' event   ┌────────┐
-///                 │Closing │ ───────────────► │ Closed │
-///                 └────────┘  dispatched      └────────┘
-///
-/// Closing exists so that inside the 'close'/'exit' handler threadId reads
-/// -1 and isOnline() is false (old ClosingFlag behaviour) while postMessage()
-/// — which only gates on Closed (old TerminatedFlag behaviour) — still
-/// accepts and silently drops the message, matching browser/Node semantics.
-///
-/// m_terminateRequested is orthogonal: set once by terminate(), gates
-/// dispatchEvent()/setKeepAlive(), and is mirrored into the native side via
-/// WebWorker__notifyNeedTermination so the worker loop can observe it.
-class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
+// The script-visible Worker object. Lives entirely on the thread that constructed it; everything
+// that involves the worker thread goes through m_contextProxy.
+class Worker final : public RefCounted<Worker>, public EventTargetWithInlineData, public ActiveDOMObject {
     WTF_MAKE_TZONE_ALLOCATED(Worker);
 
 public:
-    enum class State : uint8_t {
-        Pending, // created; worker thread starting up
-        Running, // dispatchOnline has fired; worker event loop is spinning
-        Closing, // worker thread has exited; close task is dispatching the 'close' event
-        Closed, // close event dispatched on the parent; worker is fully done
-    };
-
     static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, const String& url, WorkerOptions&&);
     ~Worker();
 
+    // ActiveDOMObject.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTargetWithInlineData);
+
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
-
-    using ThreadSafeRefCounted::deref;
-    using ThreadSafeRefCounted::ref;
-
-    // -- Parent-thread API (called from JS on the owning thread) -------------
     void terminate();
+    // terminate() was called or the thread has gone; the object dispatches nothing further.
+    bool wasTerminated() const { return m_wasTerminated || m_contextProxy->isClosingOrClosed(); }
+    // The thread has exited (or never started). threadId reads -1 from here on, as in Node.
+    bool hasExited() const { return m_contextProxy->isClosingOrClosed(); }
+    bool isOnline() const { return m_contextProxy->isOnline(); }
     void setKeepAlive(bool);
-    void dispatchEvent(Event&);
-    // Returns true if the task was accepted (queued to Pending or posted to
-    // Running). Returns false if the worker is Closing/Closed or its context
-    // is already gone — the caller must handle cleanup itself.
-    bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
-    // -- State queries (safe from any thread; all loads are atomic) ----------
-    bool wasTerminated() const { return m_state.load() >= State::Closing; }
-    bool hasPendingActivity() const { return m_state.load() != State::Closed; }
-    bool isOnline() const { return m_state.load() == State::Running; }
+    // Node worker_threads: 'message'/'error'/'messageerror' are not delivered once terminate() was
+    // called; 'close' (which carries the exit code) always is.
+    void dispatchEvent(Event&) final;
+    void dispatchCloseEvent(Event&);
 
-    const String& name() const { return m_options.name; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
-    ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
-    WorkerOptions& options() { return m_options; }
+    const String& name() const { return m_name; }
+    // Both identifiers are process-unique; threadId is derived from the worker's.
+    ScriptExecutionContextIdentifier clientIdentifier() const { return m_contextProxy->workerContextIdentifier(); }
+    WorkerMessagingProxy& contextProxy() { return m_contextProxy.get(); }
 
-    // -- Worker-thread entry points (each posts to m_parentContextId) --------
-    void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
-    void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
-    void dispatchErrorWithMessage(WTF::String message);
-    bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
-    bool dispatchExit(int32_t exitCode);
-
-    // Post a task to the parent's ScriptExecutionContext by stable identifier.
-    // Returns false if the parent context no longer exists (nested worker whose
-    // middle thread has torn down). Callable from any thread.
-    bool postTaskToParent(Function<void(ScriptExecutionContext&)>&&);
-
-    // Parent-thread registry for introspection promises (getHeapSnapshot etc).
-    // Captured by id across the cross-thread round-trip so the worker thread
-    // never touches the parent VM's HandleSet, and drained (rejected) by
-    // dispatchExit so a Running+terminate race settles instead of leaking.
-    uint64_t registerCrossVMRequest(JSC::VM&, JSC::JSPromise*);
-    JSC::Strong<JSC::JSPromise> takeCrossVMRequest(uint64_t id);
-    void rejectAllCrossVMRequests(JSC::JSGlobalObject*);
-
-    // Coalesced cross-thread inbox for worker↔parent postMessage, mirroring
-    // MessagePortPipe: a burst of N postMessage calls schedules one drain
-    // task on the receiver, which loops dispatching + draining microtasks.
-    // This avoids N× (global-contexts-lock + HashMap lookup + lambda alloc)
-    // per burst.
-    struct MessageInbox {
-        WTF::Lock lock;
-        WTF::Deque<MessageWithMessagePorts> queue WTF_GUARDED_BY_LOCK(lock);
-        std::atomic<bool> drainScheduled { false };
-    };
-
-    void enqueueToParent(MessageWithMessagePorts&&);
-    void drainToWorker(ScriptExecutionContext&);
+    ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
 
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
@@ -170,44 +85,16 @@ private:
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final {};
 
-    void enqueueToWorker(MessageWithMessagePorts&&);
-    void drainToParent(ScriptExecutionContext&);
+    // ActiveDOMObject.
+    void stop() final;
+    bool virtualHasPendingActivity() const final;
 
-    WorkerOptions m_options;
-
-    // Messages posted before the worker reaches Running are queued here and
-    // flushed by fireEarlyMessages(). The Pending→Running transition happens
-    // under this lock so postTaskToWorkerGlobalScope never loses a task. If the
-    // worker never reaches Running (entry threw / failed to load / unsettled
-    // TLA), dispatchExit clears the queue on the parent thread and
-    // rejectAllCrossVMRequests() settles the callers' promises.
-    Lock m_pendingTasksMutex;
-    Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
-    // Owned by the parent thread; guarded only for take() vs reject-all ordering.
-    HashMap<uint64_t, JSC::Strong<JSC::JSPromise>> m_pendingCrossVMRequests WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
-    std::atomic<uint64_t> m_nextRequestId { 1 };
-
-    MessageInbox m_toWorker; // messages parent → worker, drained on the worker thread
-    MessageInbox m_toParent; // messages worker → parent, drained on the parent thread
-
-    std::atomic<State> m_state { State::Pending };
-    std::atomic<bool> m_terminateRequested { false };
-
-    // Stable for the process lifetime; used with ScriptExecutionContext::
-    // postTaskTo() so the worker thread never dereferences the parent context
-    // pointer (which could be freed concurrently).
-    const ScriptExecutionContextIdentifier m_parentContextId;
-    // This worker's own context identifier (allocated at construction, bound
-    // once the worker VM is up).
-    const ScriptExecutionContextIdentifier m_clientIdentifier;
-
-    // Owned native WebWorker*. Written once in create(), read only on the parent
-    // thread (terminate/setKeepAlive) or in the close task (also parent thread).
-    // Freed in ~Worker(). Never null once create() returns successfully.
-    void* impl_ { nullptr };
+    const String m_name;
+    const Ref<WorkerMessagingProxy> m_contextProxy;
+    bool m_wasTerminated { false };
 };
 
-JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
+JSC::JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
 

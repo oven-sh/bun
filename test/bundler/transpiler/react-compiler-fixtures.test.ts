@@ -83,6 +83,10 @@ const IGNORED_PRAGMAS = new Set([
   // current harness ignores them.
   "xonly",
   "Pass",
+  // The experimental derived-computations validation was removed along with
+  // its parse_fixture_pragmas arm, so these keys are no longer recognized.
+  "validateNoDerivedComputationsInEffectsExp",
+  "validateNoDerivedComputationsInEffects_exp",
 ]);
 
 // Pragmas Bun's `parse_fixture_pragmas` (src/react_compiler/program.rs) reads
@@ -115,8 +119,6 @@ const HANDLED_PRAGMAS = new Set([
   "enableUseKeyedState",
   "validateNoSetStateInEffects",
   "validateNoDerivedComputationsInEffects",
-  "validateNoDerivedComputationsInEffectsExp",
-  "validateNoDerivedComputationsInEffects_exp",
   "validateNoJsxInTryStatements",
   "validateNoJSXInTryStatements",
   "validateStaticComponents",
@@ -446,6 +448,13 @@ describe("react-compiler upstream fixtures", () => {
 
       const want = slotCounts(expected.code ?? "");
       const got = slotCounts(output);
+      // A component that `@enableJsxOutlining` outlines has memo slots of its
+      // own. Bun declares an outlined function ahead of the module's other
+      // statements, upstream after the function it came from.
+      if (pragmas.has("enableJsxOutlining")) {
+        want.sort((a, b) => a - b);
+        got.sort((a, b) => a - b);
+      }
 
       const wantRuntime = (expected.code ?? "").includes("react/compiler-runtime");
       const gotRuntime = output.includes("react/compiler-runtime");

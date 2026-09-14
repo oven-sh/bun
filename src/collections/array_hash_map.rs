@@ -859,11 +859,12 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if len < 2 {
             return;
         }
-        let mut perm: Vec<usize> = (0..len).collect();
+        let mut perm: Vec<u32> = crate::index_sort::identity(len);
         {
             let keys = &self.keys[..];
             let values = &self.values[..];
-            perm.sort_by(|&a, &b| {
+            crate::index_sort::sort_indices(&mut perm, &mut |a, b| {
+                let (a, b) = (a as usize, b as usize);
                 if less_than(keys, values, a, b) {
                     core::cmp::Ordering::Less
                 } else if less_than(keys, values, b, a) {
@@ -878,13 +879,13 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.drop_index();
         let mut visited = vec![false; len];
         for start in 0..len {
-            if visited[start] || perm[start] == start {
+            if visited[start] || perm[start] as usize == start {
                 continue;
             }
             let mut i = start;
             while !visited[i] {
                 visited[i] = true;
-                let j = perm[i];
+                let j = perm[i] as usize;
                 if j == start {
                     break;
                 }
@@ -903,7 +904,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         // SAFETY: `keys` and `values` are distinct allocations; producing one
         // `&mut` into each is sound even though both derive from `&mut self`.
         // `index < self.keys.len() == self.values.len()` — every caller
-        // (`get_or_put*`/`put_index`) passes the index just returned by
+        // (`get_or_put*`) passes the index just returned by
         // `push_entry` or `find_hash`.
         let (key_ptr, value_ptr) = unsafe {
             (
@@ -939,15 +940,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     {
         let h = adapter.hash(key);
         self.find_hash(h, |k, idx| adapter.eql(key, k, idx))
-    }
-
-    #[inline]
-    pub fn get_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> Option<&V>
-    where
-        Ad: ArrayHashAdapter<Q, K>,
-    {
-        self.get_index_adapted(key, adapter)
-            .map(|i| &self.values[i])
     }
 
     #[inline]
@@ -1118,6 +1110,11 @@ pub struct OccupiedEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> OccupiedEntry<'a, K, V, C, A> {
+    /// Position of the entry in `keys()` / `values()` (indexmap parity).
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.idx
+    }
     #[inline]
     pub fn get(&self) -> &V {
         &self.map.values[self.idx]
@@ -1139,6 +1136,11 @@ pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
+    /// Position [`insert`](Self::insert) will append the entry at (indexmap parity).
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.map.keys.len()
+    }
     pub fn insert(self, value: V) -> &'a mut V {
         let i = self.map.push_entry(self.key, value, self.hash);
         &mut self.map.values[i]
@@ -1701,22 +1703,6 @@ fn owned_key<A: Allocator + Default>(key: &[u8]) -> StringHashMapKey<A> {
 }
 
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
-    /// `const` constructor — empty map, no heap touch. Exists so aggregates
-    /// that embed a `StringHashMap` (e.g. `js_ast::Scope::EMPTY`) can be
-    /// spelled as a `const` and used with struct-update syntax in hot
-    /// allocation paths, instead of calling the `Default` chain at runtime
-    /// for every field. `hashbrown::HashMap::with_hasher_in` and
-    /// `BuildHasherDefault::new` are both `const fn`, so this is a true
-    /// compile-time value (all-zeros for ZST `A`).
-    #[inline]
-    pub const fn new_in(alloc: A) -> Self {
-        Self {
-            inner: hashbrown::HashMap::with_hasher_in(core::hash::BuildHasherDefault::new(), alloc),
-        }
-    }
-}
-
-impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -1731,11 +1717,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     #[inline]
     pub fn values(&self) -> hashbrown::hash_map::Values<'_, StringHashMapKey<A>, V> {
         self.inner.values()
-    }
-
-    #[inline]
-    pub fn values_mut(&mut self) -> hashbrown::hash_map::ValuesMut<'_, StringHashMapKey<A>, V> {
-        self.inner.values_mut()
     }
 
     pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
@@ -1825,30 +1806,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Ok(())
     }
 
-    /// Insert `value` under `key` **without copying the key bytes** — the
-    /// arena-lifetime twin of [`put_static_key`]. The safe [`put`] heap-boxes
-    /// the key, which profiling
-    /// flagged as the dominant `_mi_malloc_generic` caller in the parser
-    /// (`Scope::members` takes one box per declared identifier per scope).
-    /// This entry point provides zero-copy insertion for callers whose
-    /// key bytes already live in an arena that outlives the map.
-    ///
-    /// # Safety
-    /// The bytes behind `key` must remain alive and unmoved for as long as the
-    /// resulting entry stays in `self` (i.e. until the entry is removed or the
-    /// map is dropped/reset). For the parser this is satisfied because keys
-    /// point into source text or the lexer string-table, both of which outlive
-    /// the `AstAlloc` arena that owns the `Scope` holding this map.
-    #[inline]
-    pub unsafe fn put_borrowed(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        // SAFETY: caller contract above. Erase the borrow's lifetime so it can
-        // be stored as `Static` without a heap copy; the map never inspects the
-        // lifetime, only the (ptr, len) pair.
-        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
-        self.inner.insert(StringHashMapKey::borrowed(key), value);
-        Ok(())
-    }
-
     /// PERF: std::HashMap cannot skip the grow check, so this is
     /// just `put` without the `Result`.
     #[inline]
@@ -1906,38 +1863,6 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
                 }
             },
         )
-    }
-
-    /// Zero-allocation `getOrPut` — the arena-lifetime twin of
-    /// [`get_or_put`]. Looks up `key` and on
-    /// miss inserts `V::default()` keyed by the **borrowed slice itself** (no
-    /// `box_key`). Single hash + single probe via `hashbrown`'s `entry_ref`;
-    /// the `From<&'static [u8]>` impl above is what `VacantEntryRef::insert`
-    /// uses to turn the lifetime-erased slice into a `Static` key.
-    ///
-    /// This is the hot path for `Scope::members` (one call per declared
-    /// identifier in `declare_symbol` / scope hoisting), where
-    /// the previous owning shape was the parser's single largest
-    /// `mi_heap_malloc` source.
-    ///
-    /// # Safety
-    /// Same contract as [`put_borrowed`]: the bytes behind `key` must outlive
-    /// the entry's residency in `self`.
-    #[inline]
-    pub unsafe fn get_or_put_borrowed(&mut self, key: &[u8]) -> StringHashMapGetOrPut<'_, V> {
-        use hashbrown::hash_map::EntryRef;
-        // SAFETY: caller contract above; see `put_borrowed`.
-        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
-        match self.inner.entry_ref(key) {
-            EntryRef::Occupied(o) => StringHashMapGetOrPut {
-                found_existing: true,
-                value_ptr: o.into_mut(),
-            },
-            EntryRef::Vacant(v) => StringHashMapGetOrPut {
-                found_existing: false,
-                value_ptr: v.insert(V::default()),
-            },
-        }
     }
 }
 
@@ -2098,6 +2023,28 @@ mod index_tests {
         let gop = m.get_or_put(2654435761).unwrap();
         assert!(gop.found_existing);
         assert_eq!(*gop.value_ptr, 1);
+    }
+
+    #[test]
+    fn entry_index_matches_entry_position() {
+        let mut m: ArrayHashMap<u64, u64> = ArrayHashMap::new();
+        // Past INDEX_THRESHOLD so both the linear and the indexed lookup run.
+        for i in 0..32u64 {
+            let MapEntry::Vacant(v) = m.entry(i * 7) else {
+                panic!("fresh key must be vacant");
+            };
+            assert_eq!(v.index(), i as usize);
+            v.insert(i);
+            assert_eq!(m.keys()[i as usize], i * 7);
+        }
+        for i in 0..32u64 {
+            let MapEntry::Occupied(o) = m.entry(i * 7) else {
+                panic!("inserted key must be occupied");
+            };
+            assert_eq!(o.index(), i as usize);
+            assert_eq!(m.values()[i as usize], i);
+        }
+        assert!(matches!(m.entry(1), MapEntry::Vacant(v) if v.index() == 32));
     }
 
     #[test]

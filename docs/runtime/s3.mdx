@@ -183,7 +183,7 @@ await writer.end();
 
 When your production service needs to let users upload files to your server, it's often more reliable for the user to upload directly to S3 instead of your server acting as an intermediary.
 
-To do this, presign URLs for S3 files. Presigning generates a URL with a signature that lets a user upload that specific file to S3, without exposing your credentials or granting them unnecessary access to your bucket.
+To let users upload directly to S3, presign URLs for S3 files. Presigning generates a URL with a signature that lets a user upload that specific file to S3, without exposing your credentials or granting them unnecessary access to your bucket.
 
 By default, Bun generates a `GET` URL that expires in 24 hours.
 
@@ -273,7 +273,7 @@ const url = s3file.presign({
 
 To redirect users to a presigned URL for an S3 file, pass an `S3File` instance to a `Response` object as the body.
 
-The response redirects the user to a presigned URL for the S3 file, saving you the memory, time, and bandwidth cost of downloading the file to your server and sending it back to the user.
+The response redirects the user to a presigned URL for the S3 file. The redirect saves you the memory, time, and bandwidth cost of downloading the file to your server and sending it back to the user.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 const response = new Response(s3file);
@@ -395,7 +395,7 @@ const supabase = new S3Client({
   secretAccessKey: "secret-key",
   bucket: "my-bucket",
   region: "us-west-1",
-  endpoint: "https://<account-id>.supabase.co/storage/v1/s3/storage",
+  endpoint: "https://<account-id>.supabase.co/storage/v1/s3",
 });
 ```
 
@@ -404,9 +404,9 @@ const supabase = new S3Client({
 When using a virtual hosted-style endpoint, set the `virtualHostedStyle` option to `true`.
 
 <Note>
-  - If you don't specify an endpoint, Bun determines the AWS S3 endpoint from the provided region and bucket. - If no
-  region is specified, Bun defaults to `us-east-1`. - If you explicitly provide an endpoint, you don't need to specify a
-  bucket name.
+  - If you don't specify an endpoint, Bun determines the AWS S3 endpoint from the provided region and bucket. - If you
+  don't specify a region, Bun defaults to `us-east-1`. - If you explicitly provide an endpoint, you don't need to
+  specify a bucket name.
 </Note>
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={17, 25}
@@ -465,7 +465,7 @@ For each option, if the `S3_*` environment variable is not set, Bun falls back t
 | `bucket`          | `AWS_BUCKET`                  |
 | `sessionToken`    | `AWS_SESSION_TOKEN`           |
 
-Bun reads these environment variables from [`.env` files](/runtime/environment-variables) or from the process environment at initialization time (`process.env` is not used for this).
+Bun reads these environment variables from [`.env` files](/runtime/environment-variables) or from the process environment at initialization time (Bun does not use `process.env` for this).
 
 Options you pass to `s3.file(credentials)`, `new Bun.S3Client(credentials)`, or any of the methods that accept credentials override these defaults. So if you use the same credentials for different buckets, you can set the credentials once in your `.env` file and pass only `bucket: "my-bucket"` to `s3.file()`.
 
@@ -485,6 +485,8 @@ const client = new S3Client({
   // endpoint: "https://<account-id>.r2.cloudflarestorage.com", // Cloudflare R2
   // endpoint: "http://localhost:9000", // MinIO
 });
+
+const file = client.file("my-file.txt");
 
 // Write using a Response
 await file.write(new Response("Hello World!"));
@@ -594,10 +596,10 @@ Like `Bun.file()`, `S3File` extends [`Blob`](https://developer.mozilla.org/en-US
 | `await s3File.text()`        | `string`         |
 | `await s3File.bytes()`       | `Uint8Array`     |
 | `await s3File.json()`        | `JSON`           |
-| `await s3File.stream()`      | `ReadableStream` |
+| `s3File.stream()`            | `ReadableStream` |
 | `await s3File.arrayBuffer()` | `ArrayBuffer`    |
 
-That means `S3File` instances work with `fetch()`, `Response`, and other web APIs that accept `Blob` instances.
+Because `S3File` extends `Blob`, `S3File` instances work with `fetch()`, `Response`, and other web APIs that accept `Blob` instances.
 
 ### Partial reads with `slice`
 
@@ -637,7 +639,7 @@ When Bun's S3 API throws an error, the error has a `code` property with one of t
 - `ERR_S3_INVALID_SIGNATURE`
 - `ERR_S3_INVALID_SESSION_TOKEN`
 
-When the S3 service itself returns an error (that is, not Bun), it is an `S3Error` instance (an `Error` instance with the name `"S3Error"`).
+When the S3 service itself returns an error (that is, not Bun), the error is an `S3Error` instance: an `Error` instance with the name `"S3Error"`.
 
 ## `S3Client` static methods
 
@@ -659,7 +661,7 @@ const credentials = {
 };
 
 // Write string
-await S3Client.write("my-file.txt", "Hello World");
+await S3Client.write("my-file.txt", "Hello World", credentials);
 
 // Write JSON with type
 await S3Client.write("data.json", JSON.stringify({ hello: "world" }), {
@@ -708,7 +710,7 @@ This is equivalent to calling `new S3Client(credentials).presign("my-file.txt", 
 
 To list some or all (up to 1,000) objects in a bucket, use the `S3Client.list` static method.
 
-```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-20, 24-29}
+```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-22, 27-35}
 import { S3Client } from "bun";
 
 const credentials = {
@@ -723,21 +725,27 @@ const credentials = {
 const allObjects = await S3Client.list(null, credentials);
 
 // List (up to) 500 objects under `uploads/` prefix, with owner field for each object
-const uploads = await S3Client.list({
-  prefix: 'uploads/',
-  maxKeys: 500,
-  fetchOwner: true,
-}, credentials);
+const uploads = await S3Client.list(
+  {
+    prefix: "uploads/",
+    maxKeys: 500,
+    fetchOwner: true,
+  },
+  credentials,
+);
 
 // Check if more results are available
 if (uploads.isTruncated) {
   // List next batch of objects under `uploads/` prefix
-  const moreUploads = await S3Client.list({
-    prefix: 'uploads/',
-    maxKeys: 500,
-    startAfter: uploads.contents!.at(-1).key
-    fetchOwner: true,
-  }, credentials);
+  const moreUploads = await S3Client.list(
+    {
+      prefix: "uploads/",
+      maxKeys: 500,
+      startAfter: uploads.contents!.at(-1)!.key,
+      fetchOwner: true,
+    },
+    credentials,
+  );
 }
 ```
 

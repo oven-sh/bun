@@ -21,7 +21,6 @@
 
 'use strict';
 const common = require('../common');
-if (common.isLinux) return; // TODO: BUN
 const assert = require('assert');
 const cluster = require('cluster');
 const net = require('net');

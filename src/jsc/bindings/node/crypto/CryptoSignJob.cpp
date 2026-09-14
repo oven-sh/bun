@@ -258,19 +258,6 @@ JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     return {};
 }
 
-extern "C" SignJob* Bun__SignJob__create(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
-SignJob* SignJob::create(JSGlobalObject* globalObject, SignJobCtx&& ctx, JSValue callback)
-{
-    SignJobCtx* ctxCopy = new SignJobCtx(WTF::move(ctx));
-    return Bun__SignJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__SignJob__schedule(SignJob* job);
-void SignJob::schedule()
-{
-    Bun__SignJob__schedule(this);
-}
-
 extern "C" void Bun__SignJob__createAndSchedule(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
 void SignJob::createAndSchedule(JSGlobalObject* globalObject, SignJobCtx&& ctx, JSValue callback)
 {
@@ -404,22 +391,26 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         //              return 0;
         //      }
         //
+        //    EC and DSA providers do the same thing:
+        //    - providers/implementations/keymgmt/ec_kmgmt.c returns "SHA256"
+        //    - providers/implementations/keymgmt/dsa_kmgmt.c returns DSA_DEFAULT_MD ("SHA256")
+        //
         // BoringSSL Difference:
         // =====================
         // BoringSSL (used by Bun) does not have this automatic default mechanism.
-        // When NULL is passed as the digest to EVP_DigestVerifyInit for RSA keys,
+        // When NULL is passed as the digest to EVP_DigestVerifyInit for RSA/EC/DSA keys,
         // BoringSSL returns error 0x06000077 (NO_DEFAULT_DIGEST).
         //
         // This Fix:
         // =========
         // To achieve Node.js/OpenSSL compatibility, we explicitly set SHA256 as the
-        // default digest for RSA keys when no algorithm is specified, matching the
-        // OpenSSL behavior documented above.
+        // default digest for RSA, EC, and DSA keys when no algorithm is specified,
+        // matching the OpenSSL behavior documented above.
         //
         // For Ed25519/Ed448 keys (one-shot variants), we intentionally leave digest
         // as null since these algorithms perform their own hashing internally and
         // don't require a separate digest algorithm.
-        if (keyObject.asymmetricKey().isRsaVariant()) {
+        if (keyObject.asymmetricKey().isRsaVariant() || keyObject.asymmetricKey().isSigVariant()) {
             digest = Digest::FromName("SHA256"_s);
         }
     }

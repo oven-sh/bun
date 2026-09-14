@@ -30,19 +30,6 @@ extern "C" void Bun__NidKeyPairJobCtx__runFromJS(NidKeyPairJobCtx* ctx, JSGlobal
     *out = ctx->runFromJS(globalObject);
 }
 
-extern "C" NidKeyPairJob* Bun__NidKeyPairJob__create(JSGlobalObject* globalObject, NidKeyPairJobCtx* ctx, EncodedJSValue callback);
-NidKeyPairJob* NidKeyPairJob::create(JSGlobalObject* globalObject, NidKeyPairJobCtx&& ctx, JSValue callback)
-{
-    NidKeyPairJobCtx* ctxCopy = new NidKeyPairJobCtx(WTF::move(ctx));
-    return Bun__NidKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__NidKeyPairJob__schedule(NidKeyPairJob* job);
-void NidKeyPairJob::schedule()
-{
-    Bun__NidKeyPairJob__schedule(this);
-}
-
 extern "C" void Bun__NidKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, NidKeyPairJobCtx* ctx, EncodedJSValue callback);
 void NidKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, NidKeyPairJobCtx&& ctx, JSValue callback)
 {

@@ -1,3 +1,5 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -181,6 +183,234 @@ describe("css", () => {
     },
   });
 
+  // The name inside `::view-transition-group(name)` (and `-old`, `-new`,
+  // `-image-pair`) is a custom ident. It must get the same module hash as the
+  // `view-transition-name` / `view-transition-class` / `view-transition-group`
+  // declarations, otherwise the selectors never match the elements.
+  itBundled("css-module/ViewTransitionNamesScoped", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.card);
+      `,
+      "/styles.module.css": `
+        .card {
+          view-transition-name: hero;
+          view-transition-class: slide;
+          view-transition-group: hero;
+        }
+        .page {
+          view-transition-name: none;
+          view-transition-class: none;
+          view-transition-group: nearest;
+        }
+        ::view-transition-group(hero) { animation-duration: 1s }
+        ::view-transition-image-pair(hero) { isolation: auto }
+        ::view-transition-old(.slide) { opacity: 0 }
+        ::view-transition-new(.slide) { opacity: 1 }
+        ::view-transition-group(*) { animation-timing-function: linear }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const card = css.match(/\.card_([A-Za-z0-9_-]+)\s*\{/);
+      expect(card, ".card should be scoped").not.toBeNull();
+      const hash = card![1];
+
+      expect(css).toEqualIgnoringWhitespace(`
+        /* styles.module.css */
+        .card_${hash} {
+          view-transition-name: hero_${hash};
+          view-transition-class: slide_${hash};
+          view-transition-group: hero_${hash};
+        }
+
+        .page_${hash} {
+          view-transition-name: none;
+          view-transition-class: none;
+          view-transition-group: nearest;
+        }
+
+        ::view-transition-group(hero_${hash}) {
+          animation-duration: 1s;
+        }
+
+        ::view-transition-image-pair(hero_${hash}) {
+          isolation: auto;
+        }
+
+        ::view-transition-old(.slide_${hash}) {
+          opacity: 0;
+        }
+
+        ::view-transition-new(.slide_${hash}) {
+          opacity: 1;
+        }
+
+        ::view-transition-group(*) {
+          animation-timing-function: linear;
+        }
+      `);
+    },
+  });
+
+  // A class used only inside a `::view-transition-*(.class)` selector is
+  // hashed in the CSS, so it must also be in the exports object. Otherwise
+  // JS cannot set `view-transition-class` to the hashed name.
+  // https://github.com/oven-sh/bun/issues/42726
+  itBundled("css-module/ViewTransitionClassExported", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        ::view-transition-group(.overlay) { z-index: 100 }
+        ::view-transition-image-pair(.pair) { isolation: auto }
+        ::view-transition-old(.slide-out) { opacity: 0 }
+        ::view-transition-new(.slide-in) { opacity: 1 }
+        ::view-transition-group(hero) { animation-duration: 1s }
+        .plain { color: red }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const plain = css.match(/\.plain_([A-Za-z0-9_-]+)\s*\{/);
+      expect(plain, ".plain should be scoped").not.toBeNull();
+      const hash = plain![1];
+
+      expect(css).toEqualIgnoringWhitespace(`
+        /* styles.module.css */
+        ::view-transition-group(.overlay_${hash}) {
+          z-index: 100;
+        }
+
+        ::view-transition-image-pair(.pair_${hash}) {
+          isolation: auto;
+        }
+
+        ::view-transition-old(.slide-out_${hash}) {
+          opacity: 0;
+        }
+
+        ::view-transition-new(.slide-in_${hash}) {
+          opacity: 1;
+        }
+
+        ::view-transition-group(hero_${hash}) {
+          animation-duration: 1s;
+        }
+
+        .plain_${hash} {
+          color: red;
+        }
+      `);
+
+      const js = api.readFile("/out/entry.js");
+      expect(js).toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          overlay: "overlay_${hash}",
+          pair: "pair_${hash}",
+          "slide-out": "slide-out_${hash}",
+          "slide-in": "slide-in_${hash}",
+          plain: "plain_${hash}"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+      `);
+    },
+  });
+
+  // A module file in a nested directory: the `view-transition-class`
+  // declaration, the `::view-transition-*(.class)` selector and the exported
+  // value must all carry the same hash.
+  itBundled("css-module/ViewTransitionClassNestedDirectory", {
+    files: {
+      "/entry.js": `
+        import styles from './src/deep/styles.module.css';
+        console.log(styles);
+      `,
+      "/src/deep/styles.module.css": `
+        .card {
+          view-transition-class: slide;
+          animation-name: spin;
+        }
+        @keyframes spin { to { opacity: 0 } }
+        ::view-transition-old(.slide) { opacity: 0 }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const card = css.match(/\.card_([A-Za-z0-9_-]+)\s*\{/);
+      expect(card, ".card should be scoped").not.toBeNull();
+      const hash = card![1];
+
+      expect(css).toEqualIgnoringWhitespace(`
+        /* src/deep/styles.module.css */
+        .card_${hash} {
+          view-transition-class: slide_${hash};
+          animation-name: spin_${hash};
+        }
+
+        @keyframes spin_${hash} {
+          to {
+            opacity: 0;
+          }
+        }
+
+        ::view-transition-old(.slide_${hash}) {
+          opacity: 0;
+        }
+      `);
+
+      const js = api.readFile("/out/entry.js");
+      expect(js).toEqualIgnoringWhitespace(`
+        // src/deep/styles.module.css
+        var styles_module_default = {
+          card: "card_${hash}",
+          slide: "slide_${hash}"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+      `);
+    },
+  });
+
+  // Values the grammar rejects stay untouched, so a future keyword or a
+  // var() reference is not hashed as if it were a name.
+  itBundled("css-module/ViewTransitionUnparsedValuesNotScoped", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.card);
+      `,
+      "/styles.module.css": `
+        .card {
+          view-transition-name: var(--name);
+          view-transition-class: slide none;
+          view-transition-group: 1px;
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      expect(css).toContain("view-transition-name: var(--name);");
+      expect(css).toContain("view-transition-class: slide none;");
+      expect(css).toContain("view-transition-group: 1px;");
+    },
+  });
+
   itBundled("css-module/ExportsMapMultipleClassesAndComposes", {
     files: {
       "/entry.js": `
@@ -212,4 +442,72 @@ describe("css", () => {
       expect(css).toContain(`.${betaOwn}`);
     },
   });
+});
+
+// `bun build --no-bundle` prints a module file with no link step. Class
+// symbols have no final name there, so the printer hashes the original name
+// like it does for keyframes.
+test("css-module/NoBundleHashesClassSymbols", async () => {
+  using dir = tempDir("css-module-no-bundle", {
+    "styles.module.css": `
+      .card { view-transition-class: slide; animation-name: spin }
+      @keyframes spin { to { opacity: 0 } }
+      ::view-transition-old(.slide) { opacity: 0 }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "styles.module.css"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const card = stdout.match(/\.card_([A-Za-z0-9_-]+)\s*\{/);
+  expect(card, ".card should be scoped").not.toBeNull();
+  const hash = card![1];
+  expect(stdout).toEqualIgnoringWhitespace(`
+    .card_${hash} {
+      view-transition-class: slide_${hash};
+      animation-name: spin_${hash};
+    }
+
+    @keyframes spin_${hash} {
+      to {
+        opacity: 0;
+      }
+    }
+
+    ::view-transition-old(.slide_${hash}) {
+      opacity: 0;
+    }
+  `);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// The hash comes from the path relative to the project root, as in a bundled
+// build, so two module files with the same basename get different names.
+test("css-module/NoBundleHashesByRelativePath", async () => {
+  using dir = tempDir("css-module-no-bundle-nested", {
+    "a/styles.module.css": `.card { color: red }`,
+    "b/styles.module.css": `.card { color: blue }`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "a/styles.module.css", "b/styles.module.css", "--outdir", "out"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  const a = await Bun.file(`${dir}/out/a/styles.module.css`).text();
+  const b = await Bun.file(`${dir}/out/b/styles.module.css`).text();
+  const hashA = a.match(/\.card_([A-Za-z0-9_-]+)\s*\{/)?.[1];
+  const hashB = b.match(/\.card_([A-Za-z0-9_-]+)\s*\{/)?.[1];
+  expect(hashA).toBeDefined();
+  expect(hashB).toBeDefined();
+  expect(hashA).not.toBe(hashB);
 });

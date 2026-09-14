@@ -303,10 +303,21 @@ describe.concurrent("bunshell ls", () => {
 
     test.if(isPosix)("permission denied directory", async () => {
       await using tempdir = tempDir("ls-permission", {});
-      await $`mkdir restricted; chmod 000 restricted`.quiet().throws(true).cwd(tempdir);
+      await $`mkdir restricted; chmod 000 restricted; ln -s restricted link-to-restricted`
+        .quiet()
+        .throws(true)
+        .cwd(tempdir);
       await TestBuilder.command`ls restricted`
         .setTempdir(tempdir)
         .exitCode(1)
+        .stderr(s => expect(s).toContain("Permission denied"))
+        .run();
+      // A symlink to a directory that cannot be opened reports the open
+      // error. It is not listed by name like a symlink to a file.
+      await TestBuilder.command`ls link-to-restricted`
+        .setTempdir(tempdir)
+        .exitCode(1)
+        .stdout("")
         .stderr(s => expect(s).toContain("Permission denied"))
         .run();
       await $`chmod 755 restricted`.quiet().throws(true).cwd(tempdir); // cleanup
@@ -336,12 +347,25 @@ describe.concurrent("bunshell ls", () => {
       await $`chmod 755 level1/level2`.quiet().throws(true).cwd(tempdir); // cleanup
     });
 
+    // A dangling symlink named on the command line is listed by name, like
+    // GNU and BSD ls. Only `ls` of a nonexistent path is an error.
     test.if(isPosix)("broken symlink file", async () => {
       await using tempdir = tempDir("ls-broken-symlink", {});
       await $`touch will-remove; ln -s will-remove broken-link; rm will-remove`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls broken-link`
-        .exitCode(1)
-        .stderr("ls: broken-link: No such file or directory\n")
+        .exitCode(0)
+        .stdout("broken-link\n")
+        .stderr("")
+        .setTempdir(tempdir)
+        .run();
+      await TestBuilder.command`ls -l broken-link`
+        .exitCode(0)
+        .stdout(s => {
+          // symlink perms differ between Linux (0777) and macOS (0755)
+          expect(s).toStartWith("lrwx");
+          expect(s).toEndWith(" broken-link\n");
+        })
+        .stderr("")
         .setTempdir(tempdir)
         .run();
     });
@@ -350,9 +374,90 @@ describe.concurrent("bunshell ls", () => {
       await using tempdir = tempDir("ls-broken-symlink", {});
       await $`mkdir will-remove; ln -s will-remove broken-link; rm -rf will-remove`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls broken-link`
-        .exitCode(1)
-        .stderr("ls: broken-link: No such file or directory\n")
+        .exitCode(0)
+        .stdout("broken-link\n")
+        .stderr("")
         .setTempdir(tempdir)
+        .run();
+    });
+
+    test.if(isPosix)("symlink loop", async () => {
+      await using tempdir = tempDir("ls-symlink-loop", {});
+      await $`ln -s loop loop`.quiet().throws(true).cwd(tempdir);
+      await TestBuilder.command`ls loop`.exitCode(0).stdout("loop\n").stderr("").setTempdir(tempdir).run();
+      await TestBuilder.command`ls loop/x`
+        .exitCode(1)
+        .stdout("")
+        .stderr("ls: loop/x: Too many levels of symbolic links\n")
+        .setTempdir(tempdir)
+        .run();
+    });
+
+    test("operand whose path goes through a regular file", async () => {
+      using tempdir = tempDir("ls-enotdir", { "f": "hello", "sub/a": "" });
+      const notADirectory = (operand: string) => (s: string) => {
+        expect(s).toStartWith(`ls: ${operand}: `);
+        if (isPosix) expect(s).toBe(`ls: ${operand}: Not a directory\n`);
+      };
+      await TestBuilder.command`ls f/x`
+        .exitCode(1)
+        .stdout("")
+        .stderr(notADirectory("f/x"))
+        .setTempdir(String(tempdir))
+        .run();
+      await TestBuilder.command`ls -l f/x`
+        .exitCode(1)
+        .stdout("")
+        .stderr(notADirectory("f/x"))
+        .setTempdir(String(tempdir))
+        .run();
+      await TestBuilder.command`ls -d f/x`
+        .exitCode(1)
+        .stdout("")
+        .stderr(notADirectory("f/x"))
+        .setTempdir(String(tempdir))
+        .run();
+      await TestBuilder.command`ls f/x/y/z`
+        .exitCode(1)
+        .stdout("")
+        .stderr(notADirectory("f/x/y/z"))
+        .setTempdir(String(tempdir))
+        .run();
+      // The other operands are still listed.
+      await TestBuilder.command`ls sub f/x`
+        .exitCode(1)
+        .stdout(s => expect(sortedLsOutput(s)).toEqual(["a", "sub:"]))
+        .stderr(notADirectory("f/x"))
+        .setTempdir(String(tempdir))
+        .run();
+      await TestBuilder.command`ls f f/x`
+        .exitCode(1)
+        .stdout("f\n")
+        .stderr(notADirectory("f/x"))
+        .setTempdir(String(tempdir))
+        .run();
+    });
+
+    test("operand starting with a dot is not hidden", async () => {
+      using tempdir = tempDir("ls-dot-operand", { ".hidden": "", "f": "hello" });
+      await TestBuilder.command`ls .hidden`
+        .exitCode(0)
+        .stdout(".hidden\n")
+        .stderr("")
+        .setTempdir(String(tempdir))
+        .run();
+      await TestBuilder.command`ls -d .hidden`
+        .exitCode(0)
+        .stdout(".hidden\n")
+        .stderr("")
+        .setTempdir(String(tempdir))
+        .run();
+      await TestBuilder.command`ls ./f`.exitCode(0).stdout("./f\n").stderr("").setTempdir(String(tempdir)).run();
+      await TestBuilder.command`ls -l ./f`
+        .exitCode(0)
+        .stdout(s => expect(s).toEndWith(" ./f\n"))
+        .stderr("")
+        .setTempdir(String(tempdir))
         .run();
     });
 

@@ -115,12 +115,8 @@ pub(crate) fn mysql_error_to_js(
         "FailedToEncryptPassword" => b"ERR_MYSQL_FAILED_TO_ENCRYPT_PASSWORD",
         "InvalidPublicKey" => b"ERR_MYSQL_INVALID_PUBLIC_KEY",
         "PublicKeyRetrievalNotAllowed" => b"ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED",
-        "InvalidState" => b"ERR_MYSQL_INVALID_STATE",
         "JSError" => {
             return global_object.take_exception(JsError::Thrown);
-        }
-        "JSTerminated" => {
-            return global_object.take_exception(JsError::Terminated);
         }
         "OutOfMemory" => {
             return global_object.create_out_of_memory_error();

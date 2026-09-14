@@ -48,6 +48,17 @@ pub fn top_level_dir() -> &'static [u8] {
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
 pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
+/// What `bun_crash_handler` catches. SIGABRT and SIGTRAP cover abort() and traps (#34771).
+#[cfg(unix)]
+pub const CRASH_HANDLER_SIGNALS: [c_int; 6] = [
+    libc::SIGSEGV,
+    libc::SIGILL,
+    libc::SIGBUS,
+    libc::SIGFPE,
+    libc::SIGABRT,
+    libc::SIGTRAP,
+];
+
 /// VEH handle returned by `AddVectoredExceptionHandler`, written by
 /// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
 /// removes it before re-raising so the signal goes to the OS default.
@@ -281,6 +292,73 @@ macro_rules! __define_signal_code {
 }
 for_each_signal!(__define_signal_code);
 
+impl SignalCode {
+    /// This table uses Linux numbering; returns the current platform's number
+    /// (they differ on macOS/BSD), or `None` when the platform lacks the signal.
+    pub fn platform_number(self) -> Option<i32> {
+        #[cfg(unix)]
+        {
+            use SignalCode as S;
+            Some(match self {
+                S::SIGHUP => libc::SIGHUP,
+                S::SIGINT => libc::SIGINT,
+                S::SIGQUIT => libc::SIGQUIT,
+                S::SIGILL => libc::SIGILL,
+                S::SIGTRAP => libc::SIGTRAP,
+                S::SIGABRT => libc::SIGABRT,
+                S::SIGBUS => libc::SIGBUS,
+                S::SIGFPE => libc::SIGFPE,
+                S::SIGKILL => libc::SIGKILL,
+                S::SIGUSR1 => libc::SIGUSR1,
+                S::SIGSEGV => libc::SIGSEGV,
+                S::SIGUSR2 => libc::SIGUSR2,
+                S::SIGPIPE => libc::SIGPIPE,
+                S::SIGALRM => libc::SIGALRM,
+                S::SIGTERM => libc::SIGTERM,
+                S::SIG16 => return None,
+                S::SIGCHLD => libc::SIGCHLD,
+                S::SIGCONT => libc::SIGCONT,
+                S::SIGSTOP => libc::SIGSTOP,
+                S::SIGTSTP => libc::SIGTSTP,
+                S::SIGTTIN => libc::SIGTTIN,
+                S::SIGTTOU => libc::SIGTTOU,
+                S::SIGURG => libc::SIGURG,
+                S::SIGXCPU => libc::SIGXCPU,
+                S::SIGXFSZ => libc::SIGXFSZ,
+                S::SIGVTALRM => libc::SIGVTALRM,
+                S::SIGPROF => libc::SIGPROF,
+                S::SIGWINCH => libc::SIGWINCH,
+                S::SIGIO => libc::SIGIO,
+                #[cfg(target_os = "linux")]
+                S::SIGPWR => libc::SIGPWR,
+                #[cfg(not(target_os = "linux"))]
+                S::SIGPWR => return None,
+                S::SIGSYS => libc::SIGSYS,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows numbering: CRT <signal.h> plus libuv's synthetic SIGHUP/SIGQUIT/SIGKILL/
+            // SIGWINCH (vendor/libuv/include/uv/win.h). The enum discriminants are Linux numbers
+            // and must not leak here (SIGABRT is 22 on Windows, not 6).
+            use SignalCode as S;
+            match self {
+                S::SIGHUP => Some(1),
+                S::SIGINT => Some(2),
+                S::SIGQUIT => Some(3),
+                S::SIGILL => Some(4),
+                S::SIGABRT => Some(22),
+                S::SIGFPE => Some(8),
+                S::SIGKILL => Some(9),
+                S::SIGSEGV => Some(11),
+                S::SIGTERM => Some(15),
+                S::SIGWINCH => Some(28),
+                _ => None,
+            }
+        }
+    }
+}
+
 // ─── analytics::features (MOVE_DOWN from bun_analytics) ───────────────────
 // Atomic counters so cross-thread `.fetch_add` is sound. Only the
 // counters are tier-0; `builtin_modules` (EnumSet over jsc HardcodedModule)
@@ -319,7 +397,8 @@ pub mod features {
     pub fn yaml_parse_inc() {
         YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
-    /// parsers crate calls `bun_core::analytics::Features::xml_parse_inc()`.
+    /// Bumped by the `Bun.XML` API and `.xml` imports (not by internal users
+    /// of the parser, such as the S3 client).
     #[inline]
     pub fn xml_parse_inc() {
         XML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -650,7 +729,13 @@ pub fn exit(code: u32) -> ! {
     }
     #[cfg(windows)]
     {
+        // c-bindings.cpp: no WTF thread may hold this one suspended when ExitProcess
+        // kills it. No args, no preconditions: `safe fn`.
+        unsafe extern "C" {
+            safe fn Bun__lockThreadSuspensionForExit();
+        }
         Bun__onExit();
+        Bun__lockThreadSuspensionForExit();
         // `ExitProcess` is `safe fn` (no preconditions; never returns).
         crate::windows_sys::kernel32::ExitProcess(code)
     }
@@ -686,14 +771,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             let mut act: libc::sigaction = crate::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut act.sa_mask);
-            for &s in &[
-                libc::SIGSEGV,
-                libc::SIGBUS,
-                libc::SIGILL,
-                libc::SIGFPE,
-                libc::SIGABRT,
-                libc::SIGTRAP,
-            ] {
+            for s in CRASH_HANDLER_SIGNALS {
                 let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
             }
         }
@@ -763,7 +841,7 @@ pub fn crash() -> ! {
     exit(1);
 }
 
-// `BunInfo` (struct + `generate()`) lives at `bun_runtime::server::BunInfo`
+// `BunInfo` (struct + `generate()`) lives in `bun_runtime`'s server module
 // because it depends on analytics/js_parser/interchange — all higher-tier. Only the version constants below
 // are needed at this tier.
 

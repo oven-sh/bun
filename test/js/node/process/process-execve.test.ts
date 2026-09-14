@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 describe.concurrent("process.execve", () => {
   test("is a function", () => {
@@ -168,6 +169,54 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
+  // While a thread is inside execve(2), Linux fails every clone(CLONE_FS) in
+  // the process with EAGAIN until the exec has killed the other threads or has
+  // failed (fs/exec.c check_unsafe_exec, kernel/fork.c copy_fs). An exec of a
+  // file that is executable but not a valid binary opens that window and then
+  // fails with ENOEXEC, so the fixture can open it thousands of times while
+  // background threads keep calling pthread_create. The threads are spawning
+  // before the first exec (the call returns once they run) and record both a
+  // failed spawn and running out of iterations, so an empty file means they
+  // spawned without failure for the whole exec loop.
+  test.skipIf(!isLinux)("does not make pthread_create fail on other threads while the exec runs", async () => {
+    using dir = tempDir("process-execve-pthread-create", {
+      "index.js": `
+        import { spawnThreadsForTesting } from "bun:internal-for-testing";
+        import { openSync, writeFileSync } from "node:fs";
+        writeFileSync("not-a-binary", "not an ELF file\\n", { mode: 0o755 });
+        const fd = openSync("failures.txt", "a");
+        const rc = spawnThreadsForTesting(1_000_000, fd, 2, true);
+        if (rc !== 0) throw new Error("could not start the spinner threads: errno " + rc);
+        let attempts = 0;
+        for (; attempts < 3000; attempts++) {
+          try {
+            process.execve("./not-a-binary", ["not-a-binary"], {});
+            throw new Error("execve returned without an error");
+          } catch (e) {
+            if (e.code !== "ENOEXEC") throw e;
+          }
+        }
+        console.log("attempts:" + attempts);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(await Bun.file(join(String(dir), "failures.txt")).text()).toBe("");
+    // stderr carries the ExperimentalWarning for process.execve.
+    expect(stderr).not.toContain("error");
+    expect(stdout.trim()).toBe("attempts:3000");
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(isWindows)("closes listening sockets in the replacement process", async () => {
     using dir = tempDir("process-execve-socket", {
       "index.js": `
@@ -207,6 +256,70 @@ describe.concurrent("process.execve", () => {
     expect(stderr).not.toContain("LISTEN_ERROR");
     expect(stdout).toContain("RELISTENED:");
     expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("accepts an omitted args parameter", async () => {
+    // Node declares execve(execPath, args = [], env = process.env): a
+    // one-argument call is valid and must reach execve (failing with ENOENT
+    // here, not ERR_INVALID_ARG_TYPE).
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.execve(process.execPath + "_does_not_exist");`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("ERR_INVALID_ARG_TYPE");
+    expect(stderr).toContain('code: "ENOENT"');
+    expect(stderr).toContain('syscall: "execve"');
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.skipIf(isWindows)("inherits process.env when env is omitted", async () => {
+    // Node declares execve(execPath, args = [], env = process.env): the
+    // current environment is the default, not an empty one.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.execve(process.execPath, [process.execPath, "-e", "console.log(process.env.EXECVE_INHERITED)"]);`,
+      ],
+      env: { ...bunEnv, EXECVE_INHERITED: "yes-inherited" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "yes-inherited", exitCode: 0 });
+  });
+
+  test.skipIf(isWindows)("inherits process.env when env is omitted with an empty TZ in the OS env", async () => {
+    // The TZ / NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH
+    // accessors read back undefined for an empty value; the execve env loop
+    // must skip those rather than rejecting the defaulted process.env with
+    // ERR_INVALID_ARG_VALUE naming an argument the caller never passed.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { process.execve("/definitely/does/not/exist", ["x"]); }
+         catch (e) { console.log(e.code); }`,
+      ],
+      env: { ...bunEnv, TZ: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      stdout: "ENOENT",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test.skipIf(isWindows)("validates arguments", async () => {

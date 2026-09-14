@@ -116,7 +116,7 @@ AbortSignal::~AbortSignal()
     // on the freed vector. Clearing only the impl's object pointer leaves
     // the impl itself (and the EventTargetData it hosts) intact so
     // ~EventTarget()'s eventTargetData() lookup still works.
-    if (auto* impl = weakPtrFactory().impl())
+    if (auto* impl = EventTargetWithInlineData::weakPtrFactory().impl())
         impl->clear();
 
     cancelTimer();
@@ -297,14 +297,6 @@ void AbortSignal::eventListenersDidChange()
         else
             m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
     }
-
-    // When a timeout signal loses all observers there is nothing left to
-    // notify when the timer fires, so cancel it eagerly.
-    // JSAbortSignalOwner::isReachableFromOpaqueRoots then no longer keeps the
-    // wrapper alive and ~AbortSignal() runs on collection; this just frees the
-    // native timer sooner.
-    if (m_timeout && !aborted() && !hasTimeoutObserver())
-        cancelTimer();
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
@@ -352,7 +344,9 @@ void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)
 
     Ref vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    throwException(&lexicalGlobalObject, scope, jsReason(lexicalGlobalObject));
+    JSValue reason = jsReason(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    throwException(&lexicalGlobalObject, scope, reason);
 }
 
 WebCoreOpaqueRoot root(AbortSignal* signal)

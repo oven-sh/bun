@@ -12,7 +12,7 @@ test("not implemented yet module throws an error", () => {
     code: "ERR_UNKNOWN_BUILTIN_MODULE",
   });
   assert.throws(() => require.resolve(missingModule), {
-    message: /Cannot find package 'node:missing' from/,
+    message: /^Cannot find module 'node:missing'\nRequire stack:\n- /,
     code: "MODULE_NOT_FOUND",
   });
   assert.rejects(() => import(missingModule), {
@@ -21,15 +21,15 @@ test("not implemented yet module throws an error", () => {
   });
 
   assert.throws(() => require(missingBun), {
-    message: /^Cannot find package 'bun:missing' from/,
+    message: /^Cannot find module 'bun:missing'\nRequire stack:\n- /,
     code: "MODULE_NOT_FOUND",
   });
   assert.throws(() => require.resolve(missingBun), {
-    message: /^Cannot find package 'bun:missing' from/,
+    message: /^Cannot find module 'bun:missing'\nRequire stack:\n- /,
     code: "MODULE_NOT_FOUND",
   });
   assert.rejects(() => import(missingBun), {
-    message: /^Cannot find package 'bun:missing' from/,
+    message: /^Cannot find package 'bun:missing' imported from /,
     code: "ERR_MODULE_NOT_FOUND",
   });
 
@@ -47,15 +47,15 @@ test("not implemented yet module throws an error", () => {
   });
 
   assert.throws(() => require(missingPackage), {
-    message: /^Cannot find package 'package-that-doesnt-exist'/,
+    message: /^Cannot find module 'package-that-doesnt-exist'\nRequire stack:\n- /,
     code: "MODULE_NOT_FOUND",
   });
   assert.throws(() => require.resolve(missingPackage), {
-    message: /^Cannot find package 'package-that-doesnt-exist'/,
+    message: /^Cannot find module 'package-that-doesnt-exist'\nRequire stack:\n- /,
     code: "MODULE_NOT_FOUND",
   });
   assert.rejects(() => import(missingPackage), {
-    message: /^Cannot find package 'package-that-doesnt-exist'/,
+    message: /^Cannot find package 'package-that-doesnt-exist' imported from /,
     code: "ERR_MODULE_NOT_FOUND",
   });
 });

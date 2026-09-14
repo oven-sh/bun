@@ -1,5 +1,4 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
   "theme": "aspen",
   "name": "Bun",
   "seo": {
@@ -18,13 +17,6 @@
   "favicon": "/logo/bun.png",
   "icons": {
     "library": "lucide"
-  },
-  "fonts": {
-    "heading": {
-      "family": "Inter Display Bold",
-      "source": "https://mintlify-assets.b-cdn.net/fonts/InterDisplay-Bold.woff2",
-      "format": "woff2"
-    }
   },
   "appearance": {
     "default": "system"
@@ -198,7 +190,15 @@
           {
             "group": "Core Commands",
             "icon": "terminal",
-            "pages": ["/pm/cli/install", "/pm/cli/add", "/pm/cli/remove", "/pm/cli/update", "/pm/bunx"]
+            "pages": [
+              "/pm/cli/install",
+              "/pm/cli/add",
+              "/pm/cli/remove",
+              "/pm/cli/update",
+              "/pm/cli/dedupe",
+              "/pm/cli/prune",
+              "/pm/bunx"
+            ]
           },
           {
             "group": "Publishing & Analysis",
@@ -390,7 +390,6 @@
               "/guides/ecosystem/sentry",
               "/guides/ecosystem/solidstart",
               "/guides/ecosystem/ssr-react",
-              "/guides/ecosystem/stric",
               "/guides/ecosystem/sveltekit",
               "/guides/ecosystem/systemd",
               "/guides/ecosystem/vite",

@@ -10,10 +10,9 @@
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
 extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSyncPrivate);
-extern "C" JSC::EncodedJSValue Bun__resolve(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm);
 extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve, const BunString* paths, size_t paths_len);
-extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSource(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm, bool isUserRequireResolve);
+extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithStrings(JSC::JSGlobalObject* global, BunString* specifier, BunString* from, bool is_esm);
 
 namespace Zig {
@@ -21,11 +20,16 @@ namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
-class ImportMetaObject final : public JSC::JSNonFinalObject {
+class ImportMetaObject final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<ImportMetaObject*>(cell)->ImportMetaObject::~ImportMetaObject();
+    }
 
     /// Must be called with a valid url string (for `import.meta.url`)
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url);
@@ -60,12 +64,7 @@ public:
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
 
-        return WebCore::subspaceForImpl<ImportMetaObject, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForImportMeta.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForImportMeta = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForImportMeta.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForImportMeta = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<ImportMetaObject, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForImportMeta, m_subspaceForImportMeta));
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake = false);

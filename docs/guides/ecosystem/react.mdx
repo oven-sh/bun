@@ -47,6 +47,7 @@ Run `bun run build` to build the app as a static site. This creates a `dist` dir
 │   └── *.svg           # Static assets
 ├── package.json        # Dependencies and scripts
 ├── tsconfig.json       # TypeScript configuration
+├── bun-env.d.ts        # Type declarations for .svg and .css imports
 ├── bunfig.toml         # Bun configuration
 └── bun.lock            # Lock file
 ```

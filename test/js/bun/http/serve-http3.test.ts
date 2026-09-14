@@ -1,6 +1,9 @@
+import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { createHash, randomBytes } from "crypto";
+import { createHash, createPrivateKey, randomBytes } from "crypto";
+import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { connect, QuicEndpoint } from "node:quic";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -49,9 +52,14 @@ const server = serve({
       headers: { "content-type": "text/plain", etag: '"v1"' },
     }),
     "/file-route": Bun.file(process.env.BIG_FILE),
+    "/static-hop": new Response("hop", { headers: { connection: "keep-alive", "keep-alive": "timeout=5", te: "gzip", "x-kept": "1" } }),
+    "/file-hop": new Response(Bun.file(process.env.BIG_FILE), { headers: { connection: "close", upgrade: "x", "x-kept": "1" } }),
   },
   async fetch(req) {
     const url = new URL(req.url);
+    if (url.pathname === "/hop-headers") {
+      return new Response("hi", { headers: { "transfer-encoding": "chunked", connection: "close", "keep-alive": "timeout=5", upgrade: "websocket", "proxy-connection": "x", te: "gzip", "x-kept": "1" } });
+    }
     if (url.pathname === "/hello") {
       return new Response("hello over h3", {
         headers: { "x-proto": "h3", "content-type": "text/plain" },
@@ -437,6 +445,20 @@ describe("Bun.serve HTTP/3", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  test("connection-specific response headers are dropped on fetch, static and file routes", async () => {
+    await withServer(async port => {
+      for (const path of ["/hop-headers", "/static-hop", "/file-hop"]) {
+        const res = await fetchH3(port, path);
+        expect(res.status).toBe(200);
+        expect(res.headers.get("x-kept")).toBe("1");
+        for (const h of ["connection", "keep-alive", "upgrade", "proxy-connection", "transfer-encoding", "te"]) {
+          expect([path, h, res.headers.get(h)]).toEqual([path, h, null]);
+        }
+        await res.arrayBuffer();
+      }
+    });
+  });
+
   test("static route (Response value) is mirrored onto H3", async () => {
     await withServer(async port => {
       const res = await fetchH3(port, "/static");
@@ -549,7 +571,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     await withServer(async port => {
       // Body is tiny ("one two three"); the point is the server sees
       // backpressure from the QUIC flow-control window and the
-      // H3ResponseSink onWritable path completes instead of hanging.
+      // HTTPSResponseSink onWritable path completes instead of hanging.
       // Throttle by reading via getReader() with a delay between chunks.
       const res = await fetchH3(port, "/stream");
       const reader = res.body!.getReader();
@@ -621,7 +643,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   // The big one: every concurrent stream gets back exactly its own bytes,
   // transformed. Catches shared-buffer reuse in quic.c read_buf, response
   // backpressure aliasing in Http3ResponseData, and partial-write offset
-  // bugs in H3ResponseSink. Bodies are crypto-random so any cross-stream
+  // bugs in HTTPSResponseSink. Bodies are crypto-random so any cross-stream
   // leak shows up as an md5 mismatch, not just an offset shift.
   const isolationRound = async (port: number, count: number, size: number) => {
     const transform = (input: Uint8Array) => {
@@ -738,7 +760,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  test("Response(Bun.file().stream()) goes through H3ResponseSink", async () => {
+  test("Response(Bun.file().stream()) goes through HTTPSResponseSink", async () => {
     await withServer(async (port, dir) => {
       const raw = await fetchH3(port, "/file-stream").then(r => r.bytes());
       expect(raw.length).toBe(200 * 1024);
@@ -961,6 +983,298 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       expect(res.headers.get("x-len")).toBe(String(body.length));
       expect((await res.bytes()).length).toBe(body.length);
     });
+  });
+
+  // server.stop(true) from the request handler, or from a microtask the handler
+  // resolved, runs while lsquic's process_conns is on the stack. The aborted
+  // connection only packs its CONNECTION_CLOSE when that tick resumes, so the
+  // UDP fd has to stay open until process_conns returns. It used to close at
+  // once: the peer got no close signal and only noticed through its idle timer.
+  // The client never retries a ReadableStream request body, so the rejection
+  // surfaces as soon as the client sees the connection close.
+  test.each([
+    ["synchronously", ""],
+    ["after an await", "await null;"],
+  ])("server.stop(true) %s inside an H3 handler sends CONNECTION_CLOSE", async (_where, beforeStop) => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, http3: true,
+        async fetch(req) {
+          if (new URL(req.url).pathname === "/stop") {
+            ${beforeStop}
+            server.stop(true);
+            console.error("STOPPED");
+            await new Promise(() => {});
+          }
+          return new Response("ok");
+        },
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.resume();
+      process.stdin.on("end", () => process.exit(0));
+    `;
+    await withCustomServer(script, async (port, send, waitForStderr) => {
+      expect(await fetchH3(port, "/").then(r => r.text())).toBe("ok");
+      const inflight = fetchH3(port, "/stop", {
+        method: "POST",
+        body: new ReadableStream({
+          start(c) {
+            c.enqueue("payload");
+            c.close();
+          },
+        }),
+      });
+      await waitForStderr(/STOPPED/);
+      const outcome = await inflight.then(r => r.text()).catch(e => e.code);
+      expect(outcome).toBe("HTTP3StreamReset");
+    });
+  });
+
+  // The fd of a listener stopped from inside a handler stays open until
+  // process_conns returns, but stop(true) promises that the port is free when
+  // it returns: a new listener on the same port must still bind in that turn.
+  test("server.stop(true) then Bun.serve on the same port inside an H3 handler binds", async () => {
+    // The client runs in the same subprocess: the rebind releases the old fd
+    // before its CONNECTION_CLOSE goes out, so the client's session to this
+    // port stays dead in its pool and must not outlive the test.
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const rebound = Promise.withResolvers();
+      let server = Bun.serve({
+        port: 0, hostname: "127.0.0.1", tls, http3: true, http1: false,
+        async fetch(req) {
+          const port = server.port;
+          server.stop(true);
+          try {
+            server = Bun.serve({ port, hostname: "127.0.0.1", tls, http3: true, http1: false, fetch: () => new Response("second") });
+            rebound.resolve("rebound on the same port: " + (server.port === port));
+          } catch (e) {
+            rebound.resolve(String(e));
+          }
+          await new Promise(() => {});
+        },
+      });
+      fetch("https://127.0.0.1:" + server.port + "/", {
+        protocol: "http3", tls: { rejectUnauthorized: false },
+      }).catch(() => {});
+      process.stdout.write(await rebound.promise);
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "rebound on the same port: true", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // A bind to another port leaves the pending fd alone, so the stopped server
+  // still sends its CONNECTION_CLOSE.
+  test("server.stop(true) then Bun.serve on another port inside an H3 handler sends CONNECTION_CLOSE", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      let other;
+      const server = Bun.serve({
+        port: 0, hostname: "127.0.0.1", tls, http3: true, http1: false,
+        async fetch(req) {
+          server.stop(true);
+          other = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, http3: true, http1: false, fetch: () => new Response("other") });
+          await new Promise(() => {});
+        },
+      });
+      const outcome = await fetch("https://127.0.0.1:" + server.port + "/", {
+        protocol: "http3", tls: { rejectUnauthorized: false },
+        method: "POST",
+        body: new ReadableStream({ start(c) { c.enqueue("payload"); c.close(); } }),
+      }).then(r => r.text(), e => e.code);
+      other.stop(true);
+      process.stdout.write(outcome);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "HTTP3StreamReset", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // `using server` disposes with stop(true). Here the scope ends in a
+  // continuation of a promise that the handler resolved, so the disposal runs
+  // inside process_conns like the stop(true) calls above.
+  test("a `using` server disposed after a handler-resolved await sends CONNECTION_CLOSE", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const received = Promise.withResolvers();
+      async function run() {
+        using server = Bun.serve({
+          port: 0, hostname: "127.0.0.1", tls, http3: true, http1: false,
+          async fetch(req) {
+            received.resolve();
+            await new Promise(() => {});
+          },
+        });
+        const outcome = fetch("https://127.0.0.1:" + server.port + "/", {
+          protocol: "http3", tls: { rejectUnauthorized: false },
+          method: "POST",
+          body: new ReadableStream({ start(c) { c.enqueue("payload"); c.close(); } }),
+        }).then(r => r.text(), e => e.code);
+        await received.promise;
+        return { outcome };
+      }
+      process.stdout.write(await (await run()).outcome);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "HTTP3StreamReset", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // A graceful server.stop() from the same place must not enter the engine
+  // either. The GOAWAY goes out after process_conns returns and the request
+  // that is in the handler still completes. `warm` runs one request first, so
+  // the connection that carries the in-flight request is not a new one.
+  test.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])("server.stop() inside an H3 handler drains the in-flight request (http1: %p, warm: %p)", async (http1, warm) => {
+    const script = `
+        const tls = ${JSON.stringify(tls)};
+        const inHandler = Promise.withResolvers();
+        const proceed = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0, hostname: "127.0.0.1", tls, http3: true, http1: ${http1},
+          async fetch(req) {
+            if (new URL(req.url).pathname === "/warm") return new Response("warm");
+            inHandler.resolve();
+            await proceed.promise;
+            return new Response("late");
+          },
+        });
+        const h3 = { protocol: "http3", tls: { rejectUnauthorized: false } };
+        const origin = "https://127.0.0.1:" + server.port;
+        if (${warm}) await fetch(origin + "/warm", h3).then(r => r.text());
+        const response = fetch(origin + "/", h3).then(r => r.text());
+        await inHandler.promise;
+        server.stop();
+        proceed.resolve();
+        process.stdout.write("got:" + await response);
+      `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "got:late", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // GOAWAY rejects new requests only (RFC 9114 section 5.2). The peer can still
+  // open its control and QPACK streams, and an lsquic client opens its QPACK
+  // encoder stream when the server's SETTINGS arrive. On a new connection that
+  // is after the GOAWAY of a stop() in the first handler. lsquic answered that
+  // stream with STOP_SENDING, which a client has to treat as
+  // H3_CLOSED_CRITICAL_STREAM: it closed the connection, and the request that
+  // stop() was draining died with it.
+  //
+  // The node:quic client shares this thread with the server, so the order is
+  // exact. The request is queued before the handshake completes and leaves with
+  // the client's Finished: the handler runs before the client has the SETTINGS.
+  // The client ends the request body once it has the GOAWAY, so the handler
+  // answers only after the server has read the QPACK encoder stream.
+  //
+  // The handler also makes the client send a second request. The client has not
+  // read the GOAWAY yet, and the server reads that request after the GOAWAY
+  // left: it still has to reject it.
+  test("server.stop() in the first handler of a new H3 connection rejects new requests but not the client's QPACK encoder stream", async () => {
+    let handled = 0;
+    const afterStop = Promise.withResolvers<string>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      async fetch(req) {
+        if (++handled === 1) {
+          server.stop();
+          afterStop.resolve(requestAfterStop());
+        }
+        return new Response("late:" + (await req.text()));
+      },
+    });
+
+    await using endpoint = new QuicEndpoint();
+    const goaway = Promise.withResolvers<void>();
+    const client = await connect(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+      ongoaway: () => goaway.resolve(),
+    });
+    const closed = client.closed.then(
+      () => "closed",
+      (err: Error) => `closed: ${err.message}`,
+    );
+
+    async function requestAfterStop() {
+      let status = "";
+      const stream = await client.createBidirectionalStream({
+        headers: requestHeaders("/after-stop"),
+        onheaders(received: Record<string, string>) {
+          status = received[":status"];
+        },
+      });
+      stream.closed.catch(() => {});
+      for await (const _ of stream as AsyncIterable<Uint8Array[]>) {
+      }
+      return status || "no response";
+    }
+
+    let status = "";
+    const stream = await client.createBidirectionalStream({
+      onheaders(received: Record<string, string>) {
+        status = received[":status"];
+      },
+    });
+    stream.closed.catch(() => {});
+    const writer = stream.writer;
+    stream.sendHeaders({ ...requestHeaders("/"), ":method": "POST" });
+    const outcome = (async () => {
+      let body = "";
+      for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+      // Without a response the session is gone: report why.
+      return status ? `${status} ${body}` : await closed;
+    })();
+
+    await Promise.race([goaway.promise, outcome]);
+    writer.writeSync(new TextEncoder().encode("body"));
+    writer.endSync();
+
+    expect({ inHandler: await outcome, afterStop: await afterStop.promise, handled }).toEqual({
+      inHandler: "200 late:body",
+      afterStop: "no response",
+      handled: 1,
+    });
+    if (!client.destroyed) client.close().catch(() => {});
   });
 
   // bughunt #3: server.stop() must not leave the lsquic engine pointing at a
@@ -1300,4 +1614,215 @@ describe("Bun.serve HTTP/3 production", () => {
   // Expect: 100-continue is handled at the uWS layer for both transports
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
+});
+
+async function h3Exchange(
+  port: number,
+  headers: Record<string, string>,
+  options: Record<string, unknown> = {},
+): Promise<string> {
+  await using endpoint = new QuicEndpoint();
+  const client = await connect(`127.0.0.1:${port}`, {
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
+    onerror() {},
+    ...options,
+  });
+  const outcome = Promise.withResolvers<string>();
+  client.closed.then(
+    () => outcome.resolve("closed"),
+    (err: Error & { code?: string; errorCode?: bigint }) =>
+      outcome.resolve(err?.code === "ERR_QUIC_APPLICATION_ERROR" ? `closed ${err.code} ${err.errorCode}` : "closed"),
+  );
+  client.opened
+    .then(async () => {
+      let status = "";
+      const stream = await client.createBidirectionalStream({
+        headers,
+        onheaders(received: Record<string, string>) {
+          status = received[":status"];
+        },
+      });
+      stream.closed.catch(() => {});
+      let body = "";
+      for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+      if (status) outcome.resolve(`${status} ${body}`);
+    })
+    .catch(() => {});
+  const result = await outcome.promise;
+  if (!client.destroyed) client.close().catch(() => {});
+  return result;
+}
+
+const requestHeaders = (path: string, extra: Record<string, string> = {}) => ({
+  ":method": "GET",
+  ":path": path,
+  ":scheme": "https",
+  ":authority": "localhost",
+  ...extra,
+});
+
+describe("Bun.serve HTTP/3 request validation", () => {
+  test("rejects a request whose field value contains CR or LF before the fetch handler runs", async () => {
+    let reachedWithProbe = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        if (req.headers.has("x-probe")) reachedWithProbe++;
+        return new Response(String(reachedWithProbe));
+      },
+    });
+
+    const results: Record<string, string> = {};
+    for (const value of ["a\r\nb: c", "a\nb", "a\rb"]) {
+      results[JSON.stringify(value)] = await h3Exchange(server.port, requestHeaders("/", { "x-probe": value }));
+    }
+    results.wellFormed = await h3Exchange(server.port, requestHeaders("/", { "x-probe": "plain" }));
+    results.after = await h3Exchange(server.port, requestHeaders("/"));
+
+    expect(results).toEqual({
+      [JSON.stringify("a\r\nb: c")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\nb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\rb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      wellFormed: "200 1",
+      after: "200 1",
+    });
+  });
+
+  test("request.url falls back to the :path when :authority is not a valid host", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const authorities = [
+      "example.com/other",
+      "user@example.com",
+      "example.com#frag",
+      "example.com\\other:8080",
+      "[::1]:3000?q",
+    ];
+    const results: Record<string, string> = {};
+    for (const authority of authorities) {
+      results[authority] = await h3Exchange(server.port, { ...requestHeaders("/index"), ":authority": authority });
+    }
+    results["example.com:8443"] = await h3Exchange(server.port, {
+      ...requestHeaders("/index"),
+      ":authority": "example.com:8443",
+    });
+
+    expect(results).toEqual({
+      "example.com/other": "200 /index",
+      "user@example.com": "200 /index",
+      "example.com#frag": "200 /index",
+      "example.com\\other:8080": "200 /index",
+      "[::1]:3000?q": "200 /index",
+      "example.com:8443": "200 https://example.com:8443/index",
+    });
+  });
+
+  test("requestCert with rejectUnauthorized only serves QUIC clients whose certificate chains to the configured CA", async () => {
+    const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+    const pem = (name: string) => readFileSync(join(keysDir, name), "utf8");
+    let handled = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls: {
+        key: pem("agent1-key.pem"),
+        cert: pem("agent1-cert.pem"),
+        ca: pem("ca1-cert.pem"),
+        requestCert: true,
+        rejectUnauthorized: true,
+      },
+      http3: true,
+      fetch() {
+        handled++;
+        return new Response(String(handled));
+      },
+    });
+
+    const clientIdentity = (name: string) => ({
+      keys: [createPrivateKey(pem(`${name}-key.pem`))],
+      certs: [readFileSync(join(keysDir, `${name}-cert.pem`))],
+    });
+    const selfSigned = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent2"));
+    const chained = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent1"));
+
+    expect({ selfSigned, chained }).toEqual({ selfSigned: "closed", chained: "200 1" });
+  });
+});
+
+// The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()
+// runs close() before it returns, and a request handler that calls it must still
+// run to completion before the nextTick and promise callbacks it queued. The
+// socket being closed lives on a plain HTTP/1 server, since HTTP/3 carries no
+// WebSockets; any handler can close it.
+describe("Bun.serve HTTP/3 request handlers run to completion before the callbacks they queued", () => {
+  async function openHeldSocket() {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    const closed = Promise.withResolvers<void>();
+    const wsServer = Bun.serve({
+      port: 0,
+      fetch: (req, srv) => (srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 })),
+      websocket: {
+        open: ws => opened.resolve(ws),
+        message() {},
+        close() {
+          order.push("close()");
+        },
+      },
+    });
+    const client = new WebSocket(wsServer.url.href.replace(/^http/, "ws"));
+    client.onerror = () => closed.resolve();
+    client.onclose = () => closed.resolve();
+    const held = await opened.promise;
+    return {
+      order,
+      closed: closed.promise,
+      handler() {
+        process.nextTick(() => order.push("nextTick"));
+        Promise.resolve().then(() => order.push("microtask"));
+        held.close();
+        order.push("rest of handler");
+        return new Response("ok");
+      },
+      [Symbol.dispose]: () => wsServer.stop(true),
+    };
+  }
+
+  test("fetch() and a route handler closing an open ServerWebSocket", async () => {
+    using viaFetch = await openHeldSocket();
+    using viaRoute = await openHeldSocket();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      routes: { "/route": viaRoute.handler },
+      fetch: viaFetch.handler,
+    });
+
+    const responses = {
+      fetch: await h3Exchange(server.port, requestHeaders("/")),
+      route: await h3Exchange(server.port, requestHeaders("/route")),
+    };
+    await Promise.all([viaFetch.closed, viaRoute.closed]);
+
+    const expectedOrder = ["close()", "rest of handler", "nextTick", "microtask"];
+    expect({ responses, fetch: viaFetch.order, route: viaRoute.order }).toEqual({
+      responses: { fetch: "200 ok", route: "200 ok" },
+      fetch: expectedOrder,
+      route: expectedOrder,
+    });
+  });
 });

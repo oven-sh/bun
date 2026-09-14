@@ -1928,12 +1928,9 @@ mod _async_tasks {
             // `cp_task` pointers stored in subtasks retain mutable provenance for
             // `on_subtask_done`'s eventual `&mut` promotion.
             let this_ref = unsafe { &*this };
-            // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling.
-            // Platform-generic — `OSPathBuffer` is `[u16;N]` on Windows, `[u8;N]` on POSIX,
-            // so reconstruct as `&OSPathSliceZ`.
-            let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), src_dir_len as usize) };
-            // SAFETY: dest_buf[dest_dir_len] == 0 written by caller
-            let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dest_dir_len as usize) };
+            // NUL at `[len]` written by `os_path` (top level) or the `Directory` arm below.
+            let src = OSPathSliceZ::from_buf(&src_buf[..], src_dir_len as usize);
+            let dest = OSPathSliceZ::from_buf(&dest_buf[..], dest_dir_len as usize);
 
             #[cfg(target_os = "macos")]
             {
@@ -2017,9 +2014,9 @@ mod _async_tasks {
             loop {
                 let current = match entry {
                     Err(err) => {
-                        this_ref.finish_concurrently(Err(
-                            err.with_path(nodefs.os_path_into_sync_error_buf(src))
-                        ));
+                        this_ref.finish_concurrently(Err(err.with_path(
+                            nodefs.os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize]),
+                        )));
                         return false;
                     }
                     Ok(ent) => match ent {

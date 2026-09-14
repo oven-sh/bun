@@ -1,6 +1,6 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { fetchH3Internals } from "bun:internal-for-testing";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 
 // In-process server with `http1: false` so the build under test binds UDP only.

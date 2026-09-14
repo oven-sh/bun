@@ -23,13 +23,13 @@ import {
 } from "harness";
 
 import { once } from "events";
-import { deadPort } from "../../bun/http/proxy-stress-helpers";
 import { mkfifo } from "mkfifo";
 import type { AddressInfo } from "net";
 import net from "net";
 import { join } from "path";
 import { Readable } from "stream";
 import { gzipSync } from "zlib";
+import { deadPort } from "../../bun/http/proxy-stress-helpers";
 
 const tmp_dir = tmpdirSync();
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");

@@ -96,7 +96,7 @@ Bun.serve({
 });
 ```
 
-Bun matches routes against the same path that `request.url` reports. Before it matches, Bun resolves `.` and `..` segments (also written `%2e`), reads `\` as `/`, and drops a `#` and everything after it. Bun does not percent-decode the path to match it.
+Bun matches routes against the same path that `request.url` reports. Before it matches, Bun resolves `.` and `..` segments (also written `%2e`), reads `\` as `/`, and drops a `#` and everything after it.
 
 ---
 

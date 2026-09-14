@@ -46,22 +46,30 @@ static inline bool isTokenByte(unsigned char c) {
 }
 
 /* RFC 9113 §8.3.1 / RFC 9114 §4.3.1 request-target rules shared by the h2
- * and h3 request validators: :method is a token; :path is origin-form (or
- * "*" for OPTIONS) and carries no byte the HTTP/1 request line could not
- * (controls, SP); CONNECT carries no :path; there is an authority, Host
- * doesn't contradict :authority, and :authority has no userinfo. */
-static inline bool validPseudoHeaderTarget(std::string_view method, std::string_view path, std::string_view authority, std::string_view host) {
+ * and h3 request validators, in two halves. This one: :method is a token;
+ * :path is origin-form (or "*" for OPTIONS) and carries no byte the HTTP/1
+ * request line could not (controls, SP); CONNECT carries no :path. The
+ * router and request.url both read :path, and the URL parser drops TAB and
+ * trims SP, so those bytes must not reach either. */
+static inline bool validPseudoHeaderPath(std::string_view method, std::string_view path) {
     if (method.empty()) return false;
     for (unsigned char c : method) if (!isTokenByte(c)) return false;
-    bool isConnect = method == "CONNECT";
-    if (!isConnect) {
-        if (!(path.size() && path[0] == '/') && !(path == "*" && method == "OPTIONS")) return false;
-        for (unsigned char c : path) if (c <= 0x20) return false;
-    }
+    if (method == "CONNECT") return true;
+    if (!(path.size() && path[0] == '/') && !(path == "*" && method == "OPTIONS")) return false;
+    for (unsigned char c : path) if (c <= 0x20) return false;
+    return true;
+}
+
+/* The other half: there is an authority, Host doesn't contradict :authority,
+ * and :authority has no userinfo. */
+static inline bool validPseudoHeaderAuthority(std::string_view authority, std::string_view host) {
     if (authority.empty() && host.empty()) return false;
     if (!authority.empty() && !host.empty() && authority != host) return false;
-    if (authority.find('@') != std::string_view::npos) return false;
-    return true;
+    return authority.find('@') == std::string_view::npos;
+}
+
+static inline bool validPseudoHeaderTarget(std::string_view method, std::string_view path, std::string_view authority, std::string_view host) {
+    return validPseudoHeaderPath(method, path) && validPseudoHeaderAuthority(authority, host);
 }
 
 static inline bool isConnectionSpecificResponseField(std::string_view name, std::string_view value) {

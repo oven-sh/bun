@@ -1461,6 +1461,10 @@ describe("Bun.serve HTTP/3 request validation", () => {
       ...requestHeaders("/admin\\x"),
       ":authority": "user@example.com",
     });
+    // The URL parser drops TAB and trims SP, which the HTTP/1 and HTTP/2 parsers never let into a target.
+    for (const path of ["/adm\tin/x", "/\tadmin/x", "/admin/x ", "/w/\t../admin/x"]) {
+      results[JSON.stringify(path)] = await h3Exchange(server.port, requestHeaders(path));
+    }
 
     expect(results).toEqual({
       "/admin/x": "200 exact /admin/x",
@@ -1470,6 +1474,10 @@ describe("Bun.serve HTTP/3 request validation", () => {
       "/w\\z": "200 wildcard /w/z",
       "/w/..": "200 fetch /",
       "no authority": "200 exact /admin/x",
+      [JSON.stringify("/adm\tin/x")]: "400 ",
+      [JSON.stringify("/\tadmin/x")]: "400 ",
+      [JSON.stringify("/admin/x ")]: "400 ",
+      [JSON.stringify("/w/\t../admin/x")]: "400 ",
     });
   });
 

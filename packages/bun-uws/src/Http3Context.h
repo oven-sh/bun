@@ -7,6 +7,7 @@
 #include "Http3Request.h"
 #include "Http3Response.h"
 #include "Http3ResponseData.h"
+#include "Utilities.h"
 
 namespace uWS {
 
@@ -35,6 +36,11 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
+            /* RFC 9114 §4.1.2 lets a server answer a malformed request before it closes the stream */
+            if (!validPseudoHeaderPath(req.getCaseSensitiveMethod(), req.getFullUrl())) {
+                res->writeStatus("400 Bad Request")->end();
+                return;
+            }
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {

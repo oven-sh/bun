@@ -222,8 +222,10 @@ impl<'a> BundleV2<'a> {
         // SAFETY: BACKREF — heap-owned by hot_reloader / DevServer (set via
         // `install_bun_watcher`), live for the process under `--watch`. The
         // watcher storage is disjoint from `self`; `&mut self` excludes any
-        // other safe projection from this `BundleV2`, and `add_file` is only
-        // ever driven from the single bundle thread (`thread_lock`-asserted).
+        // other safe projection from this `BundleV2`. `add_file` is driven
+        // from the bundle thread (`thread_lock`-asserted); parse workers reach
+        // the watcher only through `watch_file_before_read`, and `Watcher`
+        // serializes both with its own mutex.
         self.bun_watcher.map(|mut p| unsafe { p.as_mut() })
     }
 
@@ -7264,7 +7266,8 @@ pub mod bv2_impl {
                 let source_path = this.graph.input_files.items_source()[source_index as usize]
                     .path
                     .text;
-                let adopted = this.should_add_watcher(source_path) && {
+                // A descriptor the resolver cache owns stays with it.
+                let adopted = watcher_data.owns_fd && this.should_add_watcher(source_path) && {
                     let fd = watcher_data.fd;
                     let dir_fd = watcher_data.dir_fd;
                     let hash = bun_wyhash::hash(source_path) as u32;

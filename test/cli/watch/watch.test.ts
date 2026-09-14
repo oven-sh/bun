@@ -536,17 +536,15 @@ test("logs", () => console.log("value " + value + " " + macro));
   }
 
   for (const cmd of [["--watch"], ["--hot"]]) {
-    it(`${cmd[0]}, saved in place`, () => expectReload([...cmd, "entry.js"], "write", "value 1 kept"), 30000);
+    it(`${cmd[0]}, saved in place`, () => expectReload([...cmd, "entry.js"], "write", "value 1 kept"));
     // Windows refuses to rename over a file that is open for the parse.
-    it.skipIf(isWindows)(
-      `${cmd[0]}, saved with a rename`,
-      () => expectReload([...cmd, "entry.js"], "rename", "value 1 kept"),
-      30000,
+    it.skipIf(isWindows)(`${cmd[0]}, saved with a rename`, () =>
+      expectReload([...cmd, "entry.js"], "rename", "value 1 kept"),
     );
   }
 
-  it("bun test --watch", () => expectReload(["test", "--watch", "./entry.test.js"], "write", "value 1 kept"), 30000);
+  it("bun test --watch", () => expectReload(["test", "--watch", "./entry.test.js"], "write", "value 1 kept"));
 
   // Without --outdir the bundle goes to stdout, once per build.
-  it("bun build --watch", () => expectReload(["build", "--watch", "entry.js"], "write", "var value = 1;"), 30000);
+  it("bun build --watch", () => expectReload(["build", "--watch", "entry.js"], "write", "var value = 1;"));
 });

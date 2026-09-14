@@ -22,6 +22,11 @@ for (const { name, browser_download_url } of assets) {
   if (name.startsWith("SHASUMS256.txt")) {
     continue;
   }
+  // Two-phase canary upload stages under this prefix before renaming into
+  // place; see .buildkite/scripts/upload-release.sh. Don't hash or sign them.
+  if (name.startsWith("incoming-")) {
+    continue;
+  }
   const response = await fetch(browser_download_url);
   const buffer = Buffer.from(await response.arrayBuffer());
   existing.set(name, await hash(buffer));

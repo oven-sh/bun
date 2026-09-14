@@ -142,7 +142,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
         if (global->m_perThreadData) [[likely]] {
             BunString moduleKeyBunString = Bun::toString(moduleKey);
             BunString source = BakeProdLoad(global->m_perThreadData, &moduleKeyBunString);
-            if (source.tag != BunStringTag::Dead) {
+            if (!source.isDead()) {
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(
                     globalObject,
@@ -218,6 +218,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         INHERIT_HOOK_METHOD(shouldInterruptScript),
         INHERIT_HOOK_METHOD(javaScriptRuntimeFlags),
         INHERIT_HOOK_METHOD(shouldInterruptScriptBeforeTimeout),
+        INHERIT_HOOK_METHOD(moduleTypeIsAllowed),
         bakeModuleLoaderImportModule,
         bakeModuleLoaderResolve,
         bakeModuleLoaderFetch,

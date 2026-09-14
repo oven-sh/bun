@@ -301,12 +301,13 @@ napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
 void Napi::NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
-    weakValue->callFinalizer();
+    weakValue->callFinalizerFromGC();
 }
 
 void Napi::NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
+    // The ref goes away right here, so the finalizer is queued as a copy that does not need it.
     weakValue->callFinalizer();
     delete weakValue;
 }
@@ -1209,7 +1210,7 @@ extern "C" JS_EXPORT napi_status node_api_post_finalizer(napi_env env,
     void* finalize_hint)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
-    napi_internal_enqueue_finalizer(env, finalize_cb, finalize_data, finalize_hint);
+    Bun__napi_enqueue_finalizer(env, finalize_cb, finalize_data, finalize_hint);
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -3382,7 +3383,7 @@ extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_clean
     NAPI_RETURN_SUCCESS(env);
 }
 
-extern "C" void napi_internal_cleanup_env_cpp(napi_env env)
+extern "C" void Bun__napi_cleanup_env_cpp(napi_env env)
 {
     env->cleanup();
 }
@@ -3397,12 +3398,12 @@ extern "C" void NapiEnv__unregisterThreadSafeFunction(napi_env env, void* tsfn)
     env->unregisterThreadSafeFunction(tsfn);
 }
 
-extern "C" void napi_internal_remove_finalizer(napi_env env, napi_finalize callback, void* hint, void* data)
+extern "C" void Bun__napi_remove_finalizer(napi_env env, napi_finalize callback, void* hint, void* data)
 {
     env->removeFinalizer(callback, hint, data);
 }
 
-extern "C" void napi_internal_check_gc(napi_env env)
+extern "C" void Bun__napi_check_gc(napi_env env)
 {
     env->checkGC();
 }
@@ -3416,7 +3417,7 @@ extern "C" bool NapiEnv__hasPendingException(napi_env env)
     return scope.exception() != nullptr;
 }
 
-extern "C" uint32_t napi_internal_get_version(napi_env env)
+extern "C" uint32_t Bun__napi_get_version(napi_env env)
 {
     return env->napiModule().nm_version;
 }

@@ -40,8 +40,6 @@ use bun_jsc::GlobalRef;
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 #[cfg(windows)]
-use bun_paths::PathBuffer;
-#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
 bun_output::define_scoped_log!(log, Listener, visible);
@@ -191,6 +189,16 @@ impl Listener {
         let _cell_root = socket_config.handlers.root_cell(global);
 
         let port = socket_config.port;
+        if port.is_some() {
+            let hostname = socket_config.hostname_or_unix.slice();
+            if !bun_dns::is_valid_hostname(hostname) {
+                return Err(
+                    global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                        global, hostname,
+                    )),
+                );
+            }
+        }
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
         let pause_on_connect = socket_config.pause_on_connect;
@@ -198,14 +206,14 @@ impl Listener {
         #[cfg(windows)]
         if port.is_none() {
             // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             if let Some(pipe_name) =
                 normalize_pipe_name(socket_config.hostname_or_unix.slice(), buf.as_mut_slice())
             {
                 // Note: reshaped — `pipe_name` borrows `buf`; copy to an owned
                 // buffer so the borrow ends before we `mem::take` from
                 // `socket_config` below.
-                let mut pipe_buf = PathBuffer::uninit();
+                let mut pipe_buf = bun_paths::path_buffer_pool::get();
                 let pipe_len = pipe_name.len();
                 pipe_buf[..pipe_len].copy_from_slice(pipe_name);
 
@@ -1162,7 +1170,7 @@ impl Listener {
             use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
             use bun_sys::FdExt as _;
 
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             // Note: reshaped for borrowck — `normalize_pipe_name` borrows
             // `buf` for the returned slice; store length and re-borrow after the
             // `connection` match drops.
@@ -1296,7 +1304,13 @@ impl Listener {
                     };
                     let named_pipe = match named_pipe_result {
                         Ok(p) => p,
-                        Err(_) => return Ok(promise_value),
+                        Err(_) => {
+                            // The context's guard already ran `handle_connect_error`
+                            // on the still-detached socket, which releases nothing.
+                            // Balance the attempt `tls_ref.ref_()` above.
+                            TLSSocket::deref(&tls_ref);
+                            return Ok(promise_value);
+                        }
                     };
                     tls_ref.socket.set(uws::NewSocketHandler {
                         socket: uws::InternalSocket::Pipe(named_pipe.cast()),
@@ -1375,7 +1389,11 @@ impl Listener {
                     };
                     let named_pipe = match named_pipe_result {
                         Ok(p) => p,
-                        Err(_) => return Ok(promise_value),
+                        Err(_) => {
+                            // Balance the attempt `tcp_ref.ref_()` above; see the TLS arm.
+                            TCPSocket::deref(&tcp_ref);
+                            return Ok(promise_value);
+                        }
                     };
                     tcp_ref.socket.set(uws::NewSocketHandler {
                         socket: uws::InternalSocket::Pipe(named_pipe.cast()),
@@ -1898,7 +1916,7 @@ impl WindowsNamedPipeListeningContext {
                 )
             }
         } else {
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             // we need to null terminate the path
             let len = path.len().min(path_buf.len() - 1);
             path_buf[..len].copy_from_slice(&path[..len]);

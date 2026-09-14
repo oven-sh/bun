@@ -36,7 +36,7 @@ use bun_sys::FdExt as _;
 use bun_uws as uws;
 
 #[cfg(windows)]
-use bun_libuv_sys::{UvHandle as _, UvStream as _};
+use bun_libuv_sys::UvStream as _;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -269,15 +269,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
     /// Windows-only: adopt a `uv::Pipe` already initialized by spawn (the
     /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
-    /// reading. On failure the caller still owns `pipe`.
-    ///
-    /// We keep the pipe ref'd:
-    /// the worker (and the coordinator before workers register process exit
-    /// handles) has nothing else keeping `uv_loop_alive()` true, so unref'ing
-    /// here makes autoTick() take the tickWithoutIdle (NOWAIT) path and never
-    /// block for the peer's first frame. The pipe is closed explicitly in
-    /// `close()` / `Drop`, and both sides exit via Global.exit / drive()
-    /// returning, so the extra ref never holds the process open.
+    /// reading. On failure the caller still owns `pipe`. The pipe stays ref'd
+    /// so the loop blocks for the peer's first frame; `Drop` closes it.
     #[cfg(windows)]
     pub(crate) fn adopt_pipe(
         this: *mut Self,
@@ -489,33 +482,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 }
             }
         }
-    }
-
-    pub fn close(&self) {
-        if self.done.get() {
-            return;
-        }
-        self.flush();
-        #[cfg(windows)]
-        {
-            let p = self.backend.pipe.replace(core::ptr::null_mut());
-            if !p.is_null() {
-                // SAFETY: `p` is the live Box-allocated uv_pipe_t owned by this channel.
-                if unsafe { !(*p).is_closing() } {
-                    // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-                    unsafe { uv::Pipe::close_and_destroy(p) };
-                } else {
-                    // Already closing: keep ownership; the uv close callback
-                    // finishes the teardown.
-                    self.backend.pipe.set(p);
-                }
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            self.backend.socket.get().close(uws::CloseCode::Normal);
-        }
-        self.mark_done();
     }
 
     // -- frame decode (shared) -----------------------------------------------

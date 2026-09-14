@@ -139,6 +139,22 @@ test.each(["this is not a hostname", "localhost:80", "a..b"])(
   },
 );
 
+// The listen side binds through a synchronous getaddrinfo, so a name the
+// resolver would sit on blocks the whole thread. The same names are rejected
+// before the call, with the same error the connect side reports.
+test.each(["this is not a hostname", "localhost:80", "a..b"])(
+  "Bun.listen on %p, which is not a hostname, throws ENOTFOUND without asking the resolver",
+  hostname => {
+    let error: any;
+    try {
+      Bun.listen({ hostname, port: 0, socket: { data() {} } }).stop(true);
+    } catch (e) {
+      error = e;
+    }
+    expect(pick(error ?? {})).toEqual({ ...EXPECTED, hostname, message: `getaddrinfo ENOTFOUND ${hostname}` });
+  },
+);
+
 // An answer that is already known when Bun.connect() is called (answered
 // in-process, or a cache hit) is delivered from the event loop, not inline.
 // When the connect is made from the callback that delivers the previous

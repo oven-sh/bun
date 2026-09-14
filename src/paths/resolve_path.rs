@@ -2155,11 +2155,12 @@ fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
 /// let result = normalizer.resolve_cwd(b"/dev/bun/test/etc.js");
 /// ```
 ///
-/// This API does nothing on Linux (it has a size of zero)
+/// This API does nothing on Linux (it has a size of zero). On Windows it
+/// holds a pooled path buffer.
 #[derive(Default)]
 pub struct PosixToWinNormalizer {
     #[cfg(windows)]
-    _raw_bytes: PathBuffer,
+    _raw_bytes: crate::path_buffer_pool::Guard,
     #[cfg(not(windows))]
     _raw_bytes: (),
 }
@@ -2170,8 +2171,6 @@ type PosixToWinBuf = PathBuffer;
 type PosixToWinBuf = ();
 
 impl PosixToWinNormalizer {
-    // methods on PosixToWinNormalizer, to be minimal yet stack allocate the PathBuffer
-    // these do not force inline of much code
     #[inline]
     pub fn resolve<'a>(&'a mut self, source_dir: &[u8], maybe_posix_path: &'a [u8]) -> &'a [u8] {
         Self::resolve_with_external_buf(&mut self._raw_bytes, source_dir, maybe_posix_path)

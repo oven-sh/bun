@@ -139,6 +139,11 @@ impl ImportKind {
         matches!(self, Self::Require | Self::RequireResolve)
     }
 
+    #[inline]
+    pub fn is_entry_point(self) -> bool {
+        matches!(self, Self::EntryPointRun | Self::EntryPointBuild)
+    }
+
     pub fn is_from_css(self) -> bool {
         self == Self::AtConditional
             || self == Self::At

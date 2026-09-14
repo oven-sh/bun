@@ -647,6 +647,38 @@ describe("bunshell", () => {
       expect(results).toEqual([...Array(firstFailure).fill(ok), ...Array(results.length - firstFailure).fill(emfile)]);
       expect(exitCode).toBe(0);
     });
+
+    // Same sweep with a subshell at the head. A subshell runs a Script of its
+    // own, so if the pipeline started it before a later command's `dup`
+    // failed, tearing the pipeline down would leave that Script behind with
+    // the subshell's echo still writing into the pipe. The echo then reports
+    // to a freed node once the pipe is closed under it. No child may start
+    // until every child is set up.
+    test("reports EMFILE from the per-command env dup when the head is a subshell", async () => {
+      const script = /* ts */ `
+        import { $ } from "bun";
+        const results = [];
+        for (let n = 2; n <= 16; n++) {
+          const pipeline = ["(echo hi)", ...Array(n - 1).fill("cat")].join(" | ");
+          const r = await $\`\${{ raw: pipeline }}\`.nothrow().quiet();
+          results.push({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode });
+          // One event loop turn, so that a write a torn-down child left in
+          // flight completes (and reports) before the next pipeline runs.
+          await Bun.sleep(0);
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = runWithFdLimit(32, script, { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const results = JSON.parse(stdout);
+      const ok = { stdout: "hi\n", stderr: "", exitCode: 0 };
+      const emfile = { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 };
+      const firstFailure = results.findIndex(r => r.exitCode !== 0);
+      expect(firstFailure).toBeGreaterThan(0);
+      expect(results).toEqual([...Array(firstFailure).fill(ok), ...Array(results.length - firstFailure).fill(emfile)]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("operators no spaces", async () => {
@@ -1281,6 +1313,21 @@ booga"
       expect(stderr).toBe("");
       expect(stdout.trim()).toBe("ENAMETOOLONG");
       expect(exitCode).toBe(0);
+    });
+
+    test(".cwd() to a missing directory rejects the promise instead of throwing from then()", async () => {
+      using dir = tempDir("cwd-missing", {});
+      const missing = join(String(dir), "does-not-exist");
+      const promise = $`echo hi`.cwd(missing).nothrow();
+      // `then()` starts the shell. A setup failure must settle the promise,
+      // not throw out of `then()`.
+      const settled = promise.then(
+        () => "resolved",
+        e => e,
+      );
+      const err = await settled;
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("No such file or directory");
     });
 
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
@@ -3328,6 +3375,41 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
       stderr: result.stderr.toString(),
       exitCode: result.exitCode,
     }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
+describe.skipIf(isWindows)("stdin redirect whose pipe outlives the command's process", () => {
+  // `< ${input}` is pumped into the child over a pipe. A command finishes once
+  // its exit code and the stdin, stdout and stderr closes are all in, and the
+  // four arrive as separate event-loop callbacks. Here the child hands its
+  // stdin to a background `sleep` and exits without reading the redirect,
+  // which is bigger than the pipe buffer: the exit and the stdout/stderr EOFs
+  // are processed first, and the pending stdin write only fails once `sleep`
+  // lets go of the pipe. That stdin close is what has to finish the command.
+  // Without it the promise never settles.
+  const SIZE = 1 << 20;
+  const script = "exec 3<&0; sleep 1 <&3 >/dev/null 2>&1 & echo out; echo err >&2; exit 3";
+  const redirects: Array<[string, () => Buffer | Blob]> = [
+    ["Buffer", () => Buffer.alloc(SIZE, "a")],
+    ["Blob", () => new Blob([Buffer.alloc(SIZE, "a")])],
+  ];
+
+  test.concurrent.each(redirects)("%s", async (_name, input) => {
+    const r = await $`sh -c ${script} < ${input()}`.quiet().nothrow();
+    expect({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+      stdout: "out\n",
+      stderr: "err\n",
+      exitCode: 3,
+    });
+  });
+
+  test.concurrent("inside a pipeline", async () => {
+    const r = await $`sh -c ${script} < ${Buffer.alloc(SIZE, "a")} | cat`.quiet().nothrow();
+    expect({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+      stdout: "out\n",
+      stderr: "err\n",
+      exitCode: 0,
+    });
   });
 });
 

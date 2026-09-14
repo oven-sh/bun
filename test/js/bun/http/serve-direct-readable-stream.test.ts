@@ -4,6 +4,13 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
+import { Readable } from "node:stream";
+import {
+  expected as directExpected,
+  observe as directObserve,
+  shapes as directShapes,
+} from "../../web/streams/direct-stream-contract";
+import { baseHeaders, frame, RawH2, T } from "./serve-http2-helpers";
 
 test("HTTPResponseSink displays correct message", async () => {
   let leakedCtrl: any;
@@ -38,10 +45,10 @@ test("HTTPResponseSink displays correct message", async () => {
 // on_resolve_stream reaction frees the sink when microtasks drain during
 // onClose, leaving endWithSink() to dereference a freed HTTPServerWritable.
 //
-// The repro forces the microtask drain from inside the stream's cancel()
-// callback (which is what detach()'s onClose invokes for a direct stream).
-// Under ASAN this is a heap-use-after-free without the fix; in release it
-// segfaults on the scrubbed buffer pointer.
+// The repro forced the microtask drain from inside the stream's cancel()
+// callback, which detach()'s onClose invoked for a direct stream at the time.
+// The source's own end() no longer calls cancel(), so no user code runs inside
+// detach() any more; the test stays as a guard for end() after a settled pull().
 test.skipIf(!isASAN)(
   "controller.end() after pull() resolved does not use the sink after free",
   async () => {
@@ -67,9 +74,9 @@ test.skipIf(!isASAN)(
               return p;
             },
             cancel() {
-              // Reached from controller.end() -> detach() -> onClose.
-              // Draining here runs on_resolve_stream, which destroys the
-              // native sink while endWithSink() still holds a pointer to it.
+              // Was reached from controller.end() -> detach() -> onClose.
+              // Draining here ran on_resolve_stream, which destroyed the
+              // native sink while endWithSink() still held a pointer to it.
               drainMicrotasks();
             },
           }),
@@ -91,9 +98,9 @@ test.skipIf(!isASAN)(
     resolvePull();
     await pullSettled.promise;
 
-    // controller.end(): stashes ptr, detach() fires onClose -> cancel()
-    // -> drainMicrotasks() -> on_resolve_stream frees the sink, then
-    // endWithSink(ptr) runs on the freed allocation.
+    // controller.end() after pull() settled: endWithSink(ptr) must run on a
+    // live sink, and detach()'s onClose must not run user code that could
+    // free it first.
     capturedController.end();
 
     await drained;
@@ -434,7 +441,11 @@ describe("direct stream whose pull() runs while its Response is being attached",
   `;
 
   // pull() parks after close(): the response completes inside the dispatch,
-  // the request itself stays pending until the gate opens.
+  // the request itself stays pending until the gate opens. The microtask yield
+  // before close() is what keeps it pending: the Response is attached with
+  // pull() still in flight, so the request waits for pull() to settle. A
+  // close() before the first yield completes the request on the spot, the
+  // same as end().
   const closeThenPark = `
     const gate = Promise.withResolvers();
     let request;
@@ -450,6 +461,7 @@ describe("direct stream whose pull() runs while its Response is being attached",
             type: "direct",
             async pull(controller) {
               controller.write("seed");
+              await Promise.resolve();
               controller.close();
               await gate.promise;
             },
@@ -600,21 +612,15 @@ describe("direct stream whose pull() runs while its Response is being attached",
 
   const lateWrites = `
     try {
-      controller.write("late");
-      events.push("write() returned");
+      events.push("write() returned " + controller.write("late"));
     } catch (error) {
       events.push("write() threw: " + error.message);
     }
     controller.end();
     events.push("end() returned");
   `;
-  const abortedEvents = [
-    "stop(true)",
-    "cancel()",
-    "stop(true) returned",
-    'write() threw: This HTTPResponseSink has already been closed. A "direct" ReadableStream terminates its underlying socket once `async pull()` returns.',
-    "end() returned",
-  ];
+  // After the stop aborted the stream, write() reports 0 bytes instead of throwing.
+  const abortedEvents = ["stop(true)", "cancel()", "stop(true) returned", "write() returned 0", "end() returned"];
 
   // Called directly, the stop runs while the stream is being attached. From a
   // microtask it runs inside the microtask drain that follows the attach (sync
@@ -638,15 +644,14 @@ describe("direct stream whose pull() runs while its Response is being attached",
 
   // end() completes the response, so uWS has already dropped the abort
   // callback when the stop closes the socket: nothing aborts the request, and
-  // it has to be released the way a completed response normally is.
+  // it has to be released the way a completed response normally is. The
+  // source ended the stream itself, so its cancel() is not called.
   test.concurrent.each(handlers)(
     "server.stop(true) from inside pull() after end() still releases the request (%s)",
     async (_label, handler) => {
       const result = await run(stopFromPull(handler, `events.push("end()"); controller.end(); stop();`));
       expect(result).toEqual({
-        stdout:
-          JSON.stringify({ events: ["end()", "cancel()", "stop(true)", "stop(true) returned"], pendingRequests: 0 }) +
-          "\n",
+        stdout: JSON.stringify({ events: ["end()", "stop(true)", "stop(true) returned"], pendingRequests: 0 }) + "\n",
         stderr: "",
         exitCode: 0,
       });
@@ -982,6 +987,40 @@ describe("end() under transport backpressure over h3", () => {
     const res = await h3fetch(server);
     expect(await res.text()).toBe("hey");
   });
+
+  // close() must park the same pending flush as end(). It used to leave the
+  // tail to the auto-flusher instead, and when that try_end hit backpressure
+  // nothing was parked for the request to wait on, so the sink was torn down
+  // and the body came back empty even from an async pull().
+  test("async pull() that closes synchronously", async () => {
+    using server = serveH3(
+      () =>
+        new ReadableStream({
+          type: "direct",
+          async pull(c: any) {
+            c.write("hey");
+            c.close();
+          },
+        } as any),
+    );
+    const res = await h3fetch(server);
+    expect(await res.text()).toBe("hey");
+  });
+
+  test("sync pull() that closes synchronously", async () => {
+    using server = serveH3(
+      () =>
+        new ReadableStream({
+          type: "direct",
+          pull(c: any) {
+            c.write("hey");
+            c.close();
+          },
+        } as any),
+    );
+    const res = await h3fetch(server);
+    expect(await res.text()).toBe("hey");
+  });
 });
 
 // The controller's detach() used to skip the close callback when it was
@@ -1033,64 +1072,1094 @@ test("sync pull() under AsyncLocalStorage releases the request on end()", async 
 });
 
 // https://github.com/oven-sh/bun/issues/36940
-// close() while the sink still holds unflushed bytes deferred the final send
-// to the auto-flusher, which ended the response through uWS (writing the
-// terminating 0\r\n\r\n chunk) and then finalize() ended the stream a second
-// time, writing another terminator. On a keep-alive connection the stray
-// terminator is parsed as the start of the next response.
-test("close() with unflushed data writes the chunked terminator exactly once", async () => {
+// close() while the sink still holds unflushed bytes must put exactly one
+// chunked last-chunk (0\r\n\r\n) on the wire, whichever path performs the
+// final send and however pull() settles around it. Ending the response through
+// uWS `end()` already writes the terminator; a second `end_stream()` after that
+// wrote another one. On a keep-alive connection the stray terminator is parsed
+// as the start of the next response (node: HPE_INVALID_CONSTANT, curl:
+// "Leftovers after chunking").
+describe("close() with unflushed data writes the chunked terminator exactly once", () => {
+  // An event-loop turn, so pull() settles from a later task than the one that
+  // attached the stream. Not a time wait.
+  const nextTask = () => new Promise<void>(resolve => setImmediate(() => resolve()));
+  const x800 = Buffer.alloc(800, "x").toString();
+
+  // One keep-alive connection: GET / (the chunked stream), then GET /plain once
+  // the first response terminated (or right away if the server closes). Decodes
+  // the first body strictly (RFC 9112 §7.1: it ends at the first last-chunk)
+  // and returns whatever follows it on the connection.
+  async function exchange(server: { port: number }) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const sock = net.connect(server.port, "127.0.0.1");
+    let raw = "";
+    let sentSecond = false;
+    sock.setNoDelay(true);
+    sock.on("connect", () => {
+      sock.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+    });
+    sock.on("data", d => {
+      raw += d.toString("latin1");
+      if (!sentSecond && raw.includes("\r\n0\r\n\r\n")) {
+        sentSecond = true;
+        sock.write("GET /plain HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      }
+    });
+    sock.on("close", () => resolve(raw));
+    // close(error) aborts the connection; a reset still hands back whatever arrived before it.
+    sock.on("error", () => resolve(raw));
+    const data = await promise;
+
+    const headerEnd = data.indexOf("\r\n\r\n");
+    // A reset can discard the send buffer, so an aborted response may arrive empty.
+    if (headerEnd === -1) {
+      expect(data).toBe("");
+      return { decoded: "", terminated: false, rest: "" };
+    }
+    expect(data.slice(0, headerEnd).toLowerCase()).toContain("transfer-encoding: chunked");
+    let offset = headerEnd + 4;
+    let decoded = "";
+    let terminated = false;
+    while (offset < data.length) {
+      const lineEnd = data.indexOf("\r\n", offset);
+      expect(lineEnd).toBeGreaterThan(-1);
+      expect(data.slice(offset, lineEnd)).toMatch(/^[0-9a-fA-F]+$/);
+      const size = parseInt(data.slice(offset, lineEnd), 16);
+      offset = lineEnd + 2;
+      if (size === 0) {
+        // No trailer section: the last-chunk is followed by the final CRLF.
+        expect(data.slice(offset, offset + 2)).toBe("\r\n");
+        offset += 2;
+        terminated = true;
+        break;
+      }
+      decoded += data.slice(offset, offset + size);
+      expect(data.slice(offset + size, offset + size + 2)).toBe("\r\n");
+      offset += size + 2;
+    }
+    return { decoded, terminated, rest: data.slice(offset) };
+  }
+
+  function serve(pull: (c: any) => unknown) {
+    return Bun.serve({
+      port: 0,
+      development: false,
+      error: (e: any) => new Response(String(e?.message ?? e), { status: 500 }),
+      fetch(req) {
+        if (new URL(req.url).pathname === "/plain") {
+          return new Response("ok");
+        }
+        return new Response(new ReadableStream({ type: "direct", pull } as any), {
+          headers: { "content-type": "text/plain" },
+        });
+      },
+    });
+  }
+
+  const shapes: Record<string, { body: string; pull: (c: any) => unknown }> = {
+    // #36940: every await is a microtask, so pull() settles inside the
+    // attach-time drain.
+    "await write() x8, close()": {
+      body: x800,
+      async pull(c) {
+        for (let i = 0; i < 8; i++) {
+          await c.write(new Uint8Array(100).fill(0x78));
+        }
+        c.close();
+      },
+    },
+    // The rest settle pull() from a later task with an earlier chunk already
+    // on the wire.
+    "write, await flush(), task, write, close()": {
+      body: "hello-world",
+      async pull(c) {
+        c.write("hello");
+        await c.flush();
+        await nextTask();
+        c.write("-world");
+        c.close();
+      },
+    },
+    "write, task, write, close() (no flush)": {
+      body: "hello-world",
+      async pull(c) {
+        c.write("hello");
+        await nextTask();
+        c.write("-world");
+        c.close();
+      },
+    },
+    "write, flush() not awaited, task, write, close()": {
+      body: "hello-world",
+      async pull(c) {
+        c.write("hello");
+        c.flush();
+        await nextTask();
+        c.write("-world");
+        c.close();
+      },
+    },
+    "write, await flush(), task, write, microtask, close()": {
+      body: "hello-world",
+      async pull(c) {
+        c.write("hello");
+        await c.flush();
+        await nextTask();
+        c.write("-world");
+        await Promise.resolve();
+        c.close();
+      },
+    },
+    "SSE loop: (write, await flush(), task) x3, write, close()": {
+      body: "ev0\nev1\nev2\nbye",
+      async pull(c) {
+        for (let i = 0; i < 3; i++) {
+          c.write("ev" + i + "\n");
+          await c.flush();
+          await nextTask();
+        }
+        c.write("bye");
+        c.close();
+      },
+    },
+    "sync pull(), then write + close() from a later task": {
+      body: "hello-late",
+      pull(c) {
+        c.write("hello");
+        setImmediate(() => {
+          c.write("-late");
+          c.close();
+        });
+      },
+    },
+  };
+
+  test.concurrent.each(Object.keys(shapes))("%s", async name => {
+    const { body, pull } = shapes[name];
+    using server = serve(pull);
+    const { decoded, terminated, rest } = await exchange(server);
+    expect({ decoded, terminated }).toEqual({ decoded: body, terminated: true });
+    // The very next bytes are the second response, framed by Content-Length,
+    // and nothing else is on the connection.
+    expect(rest.slice(0, 15)).toBe("HTTP/1.1 200 OK");
+    expect(rest).toEndWith("\r\n\r\nok");
+    expect(rest.split("\r\n0\r\n\r\n").length - 1).toBe(0);
+  });
+
+  // close(error) fails the response: what was flushed stands, no last-chunk is written, and the connection is torn down.
+  test.concurrent("write, await flush(), task, write, close(error)", async () => {
+    using server = serve(async c => {
+      c.write("hello");
+      await c.flush();
+      await nextTask();
+      c.write("-world");
+      c.close(new Error("boom"));
+    });
+    const { decoded, terminated, rest } = await exchange(server);
+    // The prefix stands unless the reset discarded it; the response never terminates.
+    expect({ prefix: decoded === "" || decoded.startsWith("hello"), terminated, rest }).toEqual({
+      prefix: true,
+      terminated: false,
+      rest: "",
+    });
+  });
+
+  // A sync pull() that ends the response and then throws in the same call. The
+  // body is already complete on the wire, so the throw must not end the
+  // response again. do_render_stream read the thrown error before it checked
+  // whether the response had responded, so handle_reject() left the request
+  // looking unanswered and the handler tail wrote a second last-chunk.
+  describe("pull() throws after it ended the response", () => {
+    const throwingShapes: Record<string, { body: string; pull: (c: any) => unknown }> = {
+      "write, flush(), close(), throw": {
+        body: "hello",
+        pull(c) {
+          c.write("hello");
+          c.flush();
+          c.close();
+          throw new Error("boom");
+        },
+      },
+      "write, flush(), end(), throw": {
+        body: "hello",
+        pull(c) {
+          c.write("hello");
+          c.flush();
+          c.end();
+          throw new Error("boom");
+        },
+      },
+      // Over the sink's high water mark: write() already put a chunk on the
+      // wire, so close() ends a chunked response and not a Content-Length one.
+      "write(800 bytes), close(), throw": {
+        body: x800,
+        pull(c) {
+          c.write(x800);
+          c.close();
+          throw new Error("boom");
+        },
+      },
+    };
+
+    test.concurrent.each(Object.keys(throwingShapes))("%s", async name => {
+      const { body, pull } = throwingShapes[name];
+      using server = serve(pull);
+      const { decoded, terminated, rest } = await exchange(server);
+      expect({ decoded, terminated }).toEqual({ decoded: body, terminated: true });
+      // The very next bytes are the second response, framed by Content-Length,
+      // and nothing else is on the connection.
+      expect(rest.slice(0, 15)).toBe("HTTP/1.1 200 OK");
+      expect(rest).toEndWith("\r\n\r\nok");
+      expect(rest.split("\r\n0\r\n\r\n").length - 1).toBe(0);
+    });
+  });
+});
+
+// A direct stream's cancel() is the "consumer went away" hook. The source's own
+// end()/close(), and a pull() that settles, complete the response without a
+// consumer going away, so none of them may call it. Before, the sink's close
+// handler called cancel(undefined) on every one of these, so a source could not
+// tell a client abort from a delivered response.
+describe("cancel() only runs when the client goes away", () => {
+  const completions = {
+    "sync write + close()": () => ({
+      pull(c: any) {
+        c.write("hello");
+        c.close();
+      },
+    }),
+    "sync write + end()": () => ({
+      pull(c: any) {
+        c.write("hello");
+        c.end();
+      },
+    }),
+    "async write + flush() + end()": () => ({
+      async pull(c: any) {
+        c.write("hello");
+        await c.flush();
+        c.end();
+      },
+    }),
+    "async write + close()": () => ({
+      async pull(c: any) {
+        c.write("hello");
+        c.close();
+      },
+    }),
+    "async pull() that settles without end()": () => ({
+      async pull(c: any) {
+        c.write("hello");
+        await c.flush();
+      },
+    }),
+    "end() after pull() yielded to the event loop": () => ({
+      async pull(c: any) {
+        c.write("hel");
+        await new Promise<void>(resolve => setImmediate(resolve));
+        c.write("lo");
+        c.end();
+      },
+    }),
+  };
+
+  for (const [name, source] of Object.entries(completions)) {
+    test(name, async () => {
+      const cancelCalls: unknown[][] = [];
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              ...source(),
+              cancel(...args: unknown[]) {
+                cancelCalls.push(args);
+              },
+            } as any),
+          );
+        },
+      });
+      const res = await fetch(server.url);
+      expect(await res.text()).toBe("hello");
+      // The request is released after the body went out; by then every path
+      // that used to call cancel() has run.
+      while (server.pendingRequests > 0) await Bun.sleep(0);
+      expect(cancelCalls).toEqual([]);
+    });
+  }
+
+  // The client closing the connection is a cancel, and the reason says so: the
+  // same AbortError that request.signal.reason carries. A default (non-direct)
+  // stream body goes through the same sink close, so it gets the reason too.
+  test.each(["direct", "default"] as const)(
+    "client disconnect cancels a %s stream with the connection-closed AbortError",
+    async kind => {
+      const written = Promise.withResolvers<void>();
+      const cancelled = Promise.withResolvers<unknown[]>();
+      let signal!: AbortSignal;
+      using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        fetch(req) {
+          signal = req.signal;
+          const hold = Promise.withResolvers<void>();
+          const source =
+            kind === "direct"
+              ? {
+                  type: "direct",
+                  async pull(c: any) {
+                    c.write("partial");
+                    await c.flush();
+                    written.resolve();
+                    await hold.promise;
+                  },
+                }
+              : {
+                  async pull(c: ReadableStreamDefaultController) {
+                    c.enqueue(new TextEncoder().encode("partial"));
+                    written.resolve();
+                    await hold.promise;
+                  },
+                };
+          return new Response(
+            new ReadableStream({
+              ...source,
+              cancel(...args: unknown[]) {
+                cancelled.resolve(args);
+                hold.resolve();
+              },
+            } as any),
+          );
+        },
+      });
+
+      const socket = net.connect(server.port, "127.0.0.1");
+      await new Promise<void>(resolve => socket.once("connect", () => resolve()));
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await new Promise<void>(resolve => socket.once("data", () => resolve()));
+      await written.promise;
+      socket.destroy();
+
+      const args = await cancelled.promise;
+      expect(args).toHaveLength(1);
+      const reason = args[0] as DOMException;
+      expect(reason).toBeInstanceOf(DOMException);
+      expect({ name: reason.name, message: reason.message }).toEqual({
+        name: "AbortError",
+        message: "The connection was closed.",
+      });
+      const signalReason = signal.reason;
+      expect({ name: signalReason.name, message: signalReason.message }).toEqual({
+        name: "AbortError",
+        message: "The connection was closed.",
+      });
+    },
+  );
+});
+
+// controller.close() only marked the end of the body: the bytes still buffered
+// below the high-water mark were left for someone else to send. A synchronous
+// pull() lost them (empty body), and a pull() that had yielded to the event loop
+// before close() had the auto-flusher end the response and then the request end
+// it again, so a keep-alive connection carried a stray `0\r\n\r\n` into the
+// next response. close() now flushes and ends the response exactly like end().
+test("controller.close() sends the buffered bytes and ends the response once, like end()", async () => {
+  const big = Buffer.alloc(512 * 1024, "x").toString();
+  const bodies: Record<string, () => any> = {
+    "/sync-close": () => ({
+      pull(c: any) {
+        c.write("hello");
+        c.close();
+      },
+    }),
+    "/sync-flush-close": () => ({
+      pull(c: any) {
+        c.write("hel");
+        c.flush();
+        c.write("lo");
+        c.close();
+      },
+    }),
+    "/async-close": () => ({
+      async pull(c: any) {
+        c.write("hello");
+        c.close();
+      },
+    }),
+    "/yield-close": () => ({
+      async pull(c: any) {
+        c.write("hel");
+        await new Promise<void>(resolve => setImmediate(resolve));
+        c.write("lo");
+        c.close();
+      },
+    }),
+    "/empty-close": () => ({
+      pull(c: any) {
+        c.close();
+      },
+    }),
+    "/big-close": () => ({
+      pull(c: any) {
+        c.write(big);
+        c.close();
+      },
+    }),
+  };
+  const expected: Record<string, string> = {
+    "/sync-close": "hello",
+    "/sync-flush-close": "hello",
+    "/async-close": "hello",
+    "/yield-close": "hello",
+    "/empty-close": "",
+    "/big-close": big,
+  };
+
   using server = Bun.serve({
     port: 0,
+    idleTimeout: 0,
     fetch(req) {
-      if (new URL(req.url).pathname === "/plain") {
-        return new Response("ok");
-      }
-      return new Response(
-        new ReadableStream({
-          type: "direct",
-          async pull(c) {
-            // Write enough for chunked encoding, in pieces small enough that
-            // bytes are still buffered below the high-water mark when close()
-            // runs.
-            for (let i = 0; i < 8; i++) {
-              await c.write(new Uint8Array(100).fill(0x78));
-            }
-            c.close();
-          },
-        }),
-        { headers: { "content-type": "text/plain" } },
-      );
+      const path = new URL(req.url).pathname;
+      return new Response(new ReadableStream({ type: "direct", ...bodies[path]() } as any));
     },
   });
 
-  const { promise, resolve, reject } = Promise.withResolvers<string>();
-  const sock = net.connect(server.port, "127.0.0.1");
-  let raw = "";
-  let sentSecond = false;
-  sock.setNoDelay(true);
-  sock.on("connect", () => {
-    sock.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+  // One keep-alive connection and a strict parser: a stray terminating chunk or
+  // a missing byte shows up as a framing error on the following response.
+  const socket = net.connect(server.port, "127.0.0.1");
+  await new Promise<void>(resolve => socket.once("connect", () => resolve()));
+  let buffered = Buffer.alloc(0);
+  let wake: (() => void) | undefined;
+  socket.on("data", chunk => {
+    buffered = Buffer.concat([buffered, chunk]);
+    wake?.();
   });
-  sock.on("data", d => {
-    raw += d.toString("latin1");
-    // Once the first (chunked) response has terminated, reuse the connection.
-    // The stray terminator was flushed together with the real one, so it is
-    // already in `raw` by the time the second response arrives.
-    if (!sentSecond && raw.includes("0\r\n\r\n")) {
-      sentSecond = true;
-      sock.write("GET /plain HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  const closed = new Promise<void>(resolve => socket.once("close", () => resolve()));
+  const more = () =>
+    new Promise<void>((resolve, reject) => {
+      wake = resolve;
+      closed.then(() => reject(new Error("connection closed with " + JSON.stringify(buffered.toString("latin1")))));
+    });
+
+  // Returns the body of the next response on the connection and consumes it.
+  async function readResponse(): Promise<string> {
+    while (true) {
+      const headEnd = buffered.indexOf("\r\n\r\n");
+      if (headEnd !== -1) {
+        const head = buffered.subarray(0, headEnd).toString("latin1");
+        if (!head.startsWith("HTTP/1.1 200")) throw new Error("bad response head: " + JSON.stringify(head));
+        const contentLength = /\r\ncontent-length: *(\d+)/i.exec(head);
+        if (contentLength) {
+          const length = Number(contentLength[1]);
+          if (buffered.length >= headEnd + 4 + length) {
+            const body = buffered.subarray(headEnd + 4, headEnd + 4 + length).toString("latin1");
+            buffered = buffered.subarray(headEnd + 4 + length);
+            return body;
+          }
+        } else if (/\r\ntransfer-encoding: *chunked/i.test(head)) {
+          let pos = headEnd + 4;
+          let body = "";
+          let complete = false;
+          while (true) {
+            const lineEnd = buffered.indexOf("\r\n", pos);
+            if (lineEnd === -1) break;
+            const sizeLine = buffered.subarray(pos, lineEnd).toString("latin1");
+            if (!/^[0-9a-fA-F]+$/.test(sizeLine)) throw new Error("bad chunk size line: " + JSON.stringify(sizeLine));
+            const size = parseInt(sizeLine, 16);
+            if (size === 0) {
+              if (buffered.length < lineEnd + 4) break;
+              buffered = buffered.subarray(lineEnd + 4);
+              complete = true;
+              break;
+            }
+            if (buffered.length < lineEnd + 2 + size + 2) break;
+            body += buffered.subarray(lineEnd + 2, lineEnd + 2 + size).toString("latin1");
+            pos = lineEnd + 2 + size + 2;
+          }
+          if (complete) return body;
+        } else {
+          throw new Error("response without a body length: " + JSON.stringify(head));
+        }
+      }
+      await more();
+    }
+  }
+
+  const received: Record<string, string> = {};
+  for (let round = 0; round < 2; round++) {
+    for (const path of Object.keys(bodies)) {
+      socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+      const body = await readResponse();
+      if (round === 0) received[path] = body;
+      else expect(body).toBe(received[path]);
+    }
+  }
+  socket.destroy();
+  expect(received).toEqual(expected);
+});
+
+// close() with bytes still buffered below the high-water mark left them for
+// the auto-flusher. A pull() that closes synchronously never gets there: the
+// request finalizes the sink as soon as pull() returns, so the buffered tail
+// was dropped and the client got Content-Length: 0 (or, after a mid-stream
+// flush(), a chunked body missing its tail). end() in the same position sent
+// everything; close() must too.
+describe("buffered bytes are sent when the controller finishes", () => {
+  type Framing = { body: string; contentLength: string | null; transferEncoding: string | null };
+  const unflushed: Framing = { body: "helloworld", contentLength: "10", transferEncoding: null };
+  const flushedMidway: Framing = { body: "helloworld", contentLength: null, transferEncoding: "chunked" };
+  const nothingWritten: Framing = { body: "", contentLength: "0", transferEncoding: null };
+  // A write of at least the sink's high-water mark (2048 bytes by default)
+  // goes straight to the socket instead of the buffer, so close() finds
+  // nothing left to send and only has to terminate the chunked response.
+  const highWaterMarkBody = Buffer.alloc(2048, "x").toString();
+  const sentByWrite: Framing = { body: highWaterMarkBody, contentLength: null, transferEncoding: "chunked" };
+
+  // The writes stay below the sink's high-water mark, so whatever follows the
+  // last flush() is still buffered when the controller is finished.
+  const writeThen = (finish: "close" | "end", flushMidway: boolean) => (c: any) => {
+    c.write("hello");
+    if (flushMidway) c.flush();
+    c.write("world");
+    c[finish]();
+  };
+
+  const cases: [name: string, pull: (c: any) => unknown, expected: Framing][] = [
+    ["sync pull, close()", writeThen("close", false), unflushed],
+    ["sync pull, end()", writeThen("end", false), unflushed],
+    ["sync pull, flush() midway, close()", writeThen("close", true), flushedMidway],
+    ["sync pull, flush() midway, end()", writeThen("end", true), flushedMidway],
+    ["async pull, close()", async c => writeThen("close", false)(c), unflushed],
+    ["async pull, flush() midway, close()", async c => writeThen("close", true)(c), flushedMidway],
+    [
+      "sync pull, single write, close()",
+      c => {
+        c.write("helloworld");
+        c.close();
+      },
+      unflushed,
+    ],
+    // Nothing is buffered in these two, so close() takes its empty-buffer
+    // path; they pin down that it still ends the response.
+    ["sync pull, close() without writing", c => c.close(), nothingWritten],
+    [
+      "sync pull, write at the high-water mark, close()",
+      c => {
+        c.write(highWaterMarkBody);
+        c.close();
+      },
+      sentByWrite,
+    ],
+  ];
+
+  // The TLS server uses a separate instantiation of the sink, so the matrix
+  // runs over both.
+  describe.each([
+    ["http", {}, {}],
+    ["https", { tls }, { tls: { rejectUnauthorized: false } }],
+  ])("over %s", (_protocol, serveOptions, fetchOptions) => {
+    test.concurrent.each(cases)("%s", async (_name, pull, expected) => {
+      using server = Bun.serve({
+        port: 0,
+        ...serveOptions,
+        fetch: () => new Response(new ReadableStream({ type: "direct", pull } as any)),
+      });
+
+      const response = await fetch(server.url, fetchOptions);
+      expect({
+        body: await response.text(),
+        contentLength: response.headers.get("content-length"),
+        transferEncoding: response.headers.get("transfer-encoding"),
+      }).toEqual(expected);
+      expect(response.status).toBe(200);
+    });
+  });
+});
+
+// close() with a small tail still buffered while an earlier, larger write is
+// under transport backpressure. end() used to leave that tail buffered for the
+// auto-flusher or finalize(), and both refused to send it while the earlier
+// write's backpressure flag was up, so finalize() wrote the chunked terminator
+// (HTTP/1.1) or END_STREAM (h2) without it: a well formed body that is
+// silently missing its last bytes.
+describe("close() under transport backpressure sends the buffered tail", () => {
+  const big = Buffer.alloc(1024 * 1024, "x");
+  type State = { bigBytes: number; closed: PromiseWithResolvers<void> };
+  const newState = (): State => ({ bigBytes: 0, closed: Promise.withResolvers<void>() });
+
+  // Writes `big` until the sink reports backpressure (write() returns a
+  // promise instead of a byte count), then writes a small tail and closes
+  // without awaiting anything the sink handed back.
+  const body = (state: State, closeFromLaterTask: boolean) =>
+    new ReadableStream({
+      type: "direct",
+      async pull(c: any) {
+        for (;;) {
+          const wrote = c.write(big);
+          state.bigBytes += big.length;
+          if (wrote instanceof Promise) break;
+          if (state.bigBytes >= 512 * 1024 * 1024) throw new Error("no backpressure after 512 MB");
+        }
+        if (closeFromLaterTask) await new Promise<void>(done => setImmediate(done));
+        c.write("tail");
+        c.close();
+        state.closed.resolve();
+      },
+    } as any);
+
+  const modes = [
+    ["in the same tick", false],
+    ["from a later task", true],
+  ] as const;
+
+  // A raw client that stops reading until the source has closed, then decodes the chunked body.
+  async function readPausedH1(port: number, state: State) {
+    const socket = net.connect(port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    const done = Promise.withResolvers<void>();
+    socket.on("error", done.reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("close", () => done.resolve());
+    socket.on("connect", () => {
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      // Stop reading so the response backs up into the server's socket.
+      socket.pause();
+    });
+    await state.closed.promise;
+    socket.resume();
+    await done.promise;
+
+    const raw = Buffer.concat(chunks);
+    const headEnd = raw.indexOf("\r\n\r\n");
+    expect(raw.subarray(0, headEnd).toString("latin1")).toContain("Transfer-Encoding: chunked");
+    // Decode the chunked framing: every byte of `big` plus the tail, then the
+    // terminating chunk and nothing else.
+    let rest = raw.subarray(headEnd + 4);
+    const payload: Buffer[] = [];
+    let terminated = false;
+    while (rest.length > 0 && !terminated) {
+      const lineEnd = rest.indexOf("\r\n");
+      expect(lineEnd).toBeGreaterThan(0);
+      const size = parseInt(rest.subarray(0, lineEnd).toString("latin1"), 16);
+      if (size === 0) {
+        terminated = true;
+        rest = rest.subarray(lineEnd + 4);
+        break;
+      }
+      payload.push(rest.subarray(lineEnd + 2, lineEnd + 2 + size));
+      rest = rest.subarray(lineEnd + 2 + size + 2);
+    }
+    const decoded = Buffer.concat(payload);
+    return {
+      terminated,
+      trailing: rest.length,
+      length: decoded.length,
+      end: decoded.subarray(-8).toString("latin1"),
+    };
+  }
+
+  test.each(modes)("over http/1.1, close() %s", async (_mode, later) => {
+    const state = newState();
+    using server = Bun.serve({ port: 0, idleTimeout: 0, fetch: () => new Response(body(state, later)) });
+    expect(await readPausedH1(server.port, state)).toEqual({
+      terminated: true,
+      trailing: 0,
+      length: state.bigBytes + 4,
+      end: "xxxxtail",
+    });
+  });
+
+  // end() used to replace a parked flush(true) promise: the first one stayed protect()ed for the life of the VM and never settled.
+  test("over http/1.1, end() while a flush(true) is parked on the same drain settles both", async () => {
+    const state = newState();
+    const flushed = Promise.withResolvers<number>();
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(c: any) {
+              for (;;) {
+                const wrote = c.write(big);
+                state.bigBytes += big.length;
+                if (wrote instanceof Promise) break;
+                if (state.bigBytes >= 512 * 1024 * 1024) throw new Error("no backpressure after 512 MB");
+              }
+              const parked = c.flush(true);
+              c.write("tail");
+              const ended = c.end();
+              state.closed.resolve();
+              flushed.resolve(await Promise.all([parked, ended]).then(() => 1));
+            },
+          } as any),
+        ),
+    });
+    expect(await readPausedH1(server.port, state)).toEqual({
+      terminated: true,
+      trailing: 0,
+      length: state.bigBytes + 4,
+      end: "xxxxtail",
+    });
+    expect(await flushed.promise).toBe(1);
+  });
+
+  // Over h2 the backpressure is the stream's flow-control window: the client
+  // opens none beyond the initial 65535 bytes until close() has run. The old
+  // drain path also indexed the buffered tail with the transport's cumulative
+  // write offset here, which h2 (unlike chunked HTTP/1.1) advances on every
+  // write, and sent a 1-byte tail.
+  test.each(modes)("over h2, close() %s", async (_mode, later) => {
+    const state = newState();
+    using server = Bun.serve({ port: 0, idleTimeout: 0, http2: true, fetch: () => new Response(body(state, later)) });
+
+    const client = await RawH2.connect(server.port, false);
+    try {
+      client.headers(1, baseHeaders("/"));
+      await state.closed.promise;
+      const increment = Buffer.alloc(4);
+      increment.writeUInt32BE(0x7fff0000);
+      client.write(frame(T.WINDOW_UPDATE, 0, 0, increment));
+      client.write(frame(T.WINDOW_UPDATE, 0, 1, increment));
+      const decoded = await client.body(1);
+      expect({ length: decoded.length, end: decoded.subarray(-8).toString("latin1") }).toEqual({
+        length: state.bigBytes + 4,
+        end: "xxxxtail",
+      });
+    } finally {
+      client.close();
     }
   });
-  sock.on("close", () => resolve(raw));
-  sock.on("error", reject);
-  const data = await promise;
+});
 
-  // The chunked body is all "x"; the second response is framed by
-  // Content-Length. Exactly one terminating chunk must appear in the stream.
-  expect(data.split("0\r\n\r\n").length - 1).toBe(1);
-  // The bytes right after the terminator are the next response, not another
-  // terminator.
-  const afterTerminator = data.slice(data.indexOf("0\r\n\r\n") + 5);
-  expect(afterTerminator.slice(0, 12)).toBe("HTTP/1.1 200");
-  expect(afterTerminator).toEndWith("ok");
+// The server/fetch cells of the `type: "direct"` contract matrix; the in-process cells live in test/js/web/streams/streams.test.js.
+describe("direct stream contract", () => {
+  // Each resolves to the body text, or rejects if the transfer failed or the status was not 2xx.
+  const okText = async (res: Response) => {
+    const body = await res.text();
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${body}`);
+    return body;
+  };
+  // The error shapes fail the body on purpose; answer 500 (if headers are not out yet) instead of logging to stderr.
+  const quiet = { development: false, error: (e: any) => new Response(String(e?.message ?? e), { status: 500 }) };
+  const consumers: Record<string, (s: ReadableStream) => Promise<string>> = {
+    "Bun.serve response body (http)": async s => {
+      using server = Bun.serve({ port: 0, ...quiet, fetch: () => new Response(s) });
+      return await okText(await fetch(server.url));
+    },
+    "Bun.serve response body (https)": async s => {
+      using server = Bun.serve({ port: 0, tls, ...quiet, fetch: () => new Response(s) });
+      return await okText(await fetch(server.url, { tls: { rejectUnauthorized: false } }));
+    },
+    "fetch request body": async s => {
+      using server = Bun.serve({ port: 0, ...quiet, fetch: async req => new Response(await req.text()) });
+      return await okText(await fetch(server.url, { method: "POST", body: s, duplex: "half" } as RequestInit));
+    },
+  };
+  describe.each(Object.keys(directShapes))("%s", shapeName => {
+    test.concurrent.each(Object.keys(consumers))("%s", async consumerName => {
+      const shape = directShapes[shapeName];
+      const got = await directObserve(shape, consumers[consumerName]);
+      if ("error" in shape.expect) {
+        // The source's message cannot cross the wire; the peer sees a failed transfer or a 5xx.
+        expect({ pulls: got.pulls, cancels: got.cancels, errored: "error" in got }).toEqual({
+          pulls: 1,
+          cancels: 0,
+          errored: true,
+        });
+        return;
+      }
+      expect(got).toEqual(directExpected(shape));
+    });
+  });
+});
+
+describe("direct stream edge cases over Bun.serve", () => {
+  const later = () => new Promise<void>(r => setImmediate(r));
+  const dec = new TextDecoder();
+  type Tally = { pulls: number; cancels: unknown[]; events: string[] };
+  const tally = (): Tally => ({ pulls: 0, cancels: [], events: [] });
+  const direct = (t: Tally, pull: (c: any) => unknown) =>
+    new ReadableStream({
+      type: "direct",
+      pull(c: any) {
+        t.pulls++;
+        return pull(c);
+      },
+      cancel(reason: any) {
+        t.cancels.push(reason?.code ?? reason?.message ?? reason);
+      },
+    } as any);
+  const settle = <T>(p: Promise<T>) =>
+    p.then(
+      v => ({ ok: v }),
+      (e: any) => ({ err: e?.code ?? e?.message ?? String(e) }),
+    );
+  // Opens a raw connection, reads until `until` appears in the response, then destroys the socket.
+  async function abortAfter(server: { port: number }, until: string) {
+    const sock = net.connect(server.port, "127.0.0.1");
+    let raw = "";
+    await new Promise<void>((resolve, reject) => {
+      sock.on("connect", () => sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+      sock.on("data", d => {
+        raw += d.toString("latin1");
+        if (raw.includes(until)) resolve();
+      });
+      sock.on("error", reject);
+      sock.on("close", () => resolve());
+    });
+    sock.destroy();
+    return raw;
+  }
+
+  test("client abort while pull() is parked: cancel() once with the connection-closed reason, and pull() gets unstuck", async () => {
+    const t = tally();
+    const done = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          direct(t, async c => {
+            c.write("first");
+            await c.flush();
+            // Keep writing until the socket pushes back, so the abort always finds pull() parked on a write; 0 bytes means the peer is gone.
+            try {
+              while (await c.write(Buffer.alloc(256 * 1024, "x"))) {}
+            } finally {
+              done.resolve();
+            }
+          }),
+        ),
+    });
+    await abortAfter(server, "first");
+    // pull() must not stay parked forever once the peer is gone: the pending write settles (or the next one throws).
+    await done.promise;
+    await later();
+    expect({ pulls: t.pulls, cancels: t.cancels.length }).toEqual({ pulls: 1, cancels: 1 });
+  });
+
+  test("client abort racing pull() resolution: exactly one of end / cancel is observed", async () => {
+    // Run the race many times; every iteration must be consistent, none may do both or neither.
+    const outcomes = new Set<string>();
+    for (let i = 0; i < 20; i++) {
+      const t = tally();
+      const release = Promise.withResolvers<void>();
+      using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            direct(t, async c => {
+              c.write("first");
+              await c.flush();
+              await release.promise;
+              c.write("tail");
+            }),
+          ),
+      });
+      const aborted = abortAfter(server, "first");
+      // Resolve pull() in the same turn the abort is processed, alternating who goes first.
+      if (i % 2) await aborted;
+      release.resolve();
+      await aborted;
+      await later();
+      await later();
+      outcomes.add(
+        t.cancels.length === 1 ? "cancelled" : t.cancels.length === 0 ? "ended" : `cancels=${t.cancels.length}`,
+      );
+      expect(t.pulls).toBe(1);
+    }
+    expect([...outcomes].every(o => o === "cancelled" || o === "ended")).toBe(true);
+  });
+
+  test("client abort while a sync pull() has not returned yet: the late writes and close() return 0 / no-op", async () => {
+    const t = tally();
+    let controller: any;
+    const gotController = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          direct(t, c => {
+            controller = c;
+            c.write("first");
+            c.flush();
+            gotController.resolve();
+          }),
+        ),
+    });
+    const aborted = abortAfter(server, "first");
+    await gotController.promise;
+    await aborted;
+    while (t.cancels.length === 0) await later();
+    // The source keeps using the controller after the peer left; none of this may throw or crash.
+    const results = [
+      settle(Promise.resolve().then(() => controller.write("late"))),
+      settle(Promise.resolve().then(() => controller.flush())),
+      settle(Promise.resolve().then(() => controller.close())),
+    ];
+    await Promise.all(results);
+    expect({ pulls: t.pulls, cancels: t.cancels.length }).toEqual({ pulls: 1, cancels: 1 });
+  });
+
+  test("cancel() hook that writes to and closes its controller after a client abort: write() returns 0, no crash", async () => {
+    let controller: any;
+    let written: unknown = "not called";
+    const cancelled = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(c: any) {
+              controller = c;
+              c.write("first");
+              await c.flush();
+              await new Promise(() => {});
+            },
+            cancel() {
+              written = controller.write("from cancel");
+              controller.close();
+              cancelled.resolve();
+            },
+          } as any),
+        ),
+    });
+    await abortAfter(server, "first");
+    await cancelled.promise;
+    // write() after the peer left reports 0 bytes; the same server still serves the next request.
+    expect({ written, next: (await abortAfter(server, "first")).includes("first") }).toEqual({
+      written: 0,
+      next: true,
+    });
+  });
+
+  test("async generator body: client abort between yields throws the connection-closed error into the generator once, then finally", async () => {
+    const events: string[] = [];
+    const finished = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          (async function* () {
+            try {
+              yield "first";
+              for (let i = 0; i < 50; i++) {
+                await later();
+                yield "more";
+              }
+              events.push("completed");
+            } catch (e: any) {
+              events.push("catch:" + (e?.message ?? e));
+            } finally {
+              events.push("finally");
+              finished.resolve();
+            }
+          })() as any,
+        ),
+    });
+    await abortAfter(server, "first");
+    await finished.promise;
+    expect(events).toEqual([expect.stringMatching(/^catch:.*closed/i), "finally"]);
+  });
+
+  test("Readable.toWeb(nodeReadable) body destroyed mid-response aborts the response instead of hanging", async () => {
+    const readable = new Readable({ read() {} });
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      error: () => new Response("error", { status: 500 }),
+      fetch: () => new Response(Readable.toWeb(readable) as any),
+    });
+    const resPromise = fetch(server.url);
+    // Headers go out with the first body chunk, so push before awaiting the response.
+    readable.push("first");
+    const res = await resPromise;
+    const reader = res.body!.getReader();
+    expect(dec.decode((await reader.read()).value)).toBe("first");
+    readable.destroy(new Error("node source failed"));
+    const rest = await settle(
+      (async () => {
+        for (;;) {
+          const r = await reader.read();
+          if (r.done) return "done";
+        }
+      })(),
+    );
+    expect("err" in rest || rest.ok === "done").toBe(true);
+  });
+
+  test("direct source → CompressionStream → Bun.serve: pull() once, body round-trips", async () => {
+    const t = tally();
+    const payload = Buffer.alloc(200 * 1024, "compress me ").toString();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          direct(t, async c => {
+            for (let i = 0; i < payload.length; i += 16 * 1024) await c.write(payload.slice(i, i + 16 * 1024));
+            c.close();
+          }).pipeThrough(new CompressionStream("gzip")),
+          { headers: { "content-encoding": "gzip" } },
+        ),
+    });
+    const body = await (await fetch(server.url)).text();
+    expect({ same: body === payload, length: body.length, pulls: t.pulls, cancels: t.cancels.length }).toEqual({
+      same: true,
+      length: payload.length,
+      pulls: 1,
+      cancels: 0,
+    });
+  });
+
+  test("GC while pull() is parked on a backpressured write: the controller keeps the source alive and the body completes", async () => {
+    const t = tally();
+    const total = 4 * 1024 * 1024;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        // No JS reference to the stream or source survives this function; only the sink controller's edge does.
+        return new Response(
+          direct(t, async c => {
+            for (let sent = 0; sent < total; sent += 256 * 1024) {
+              await c.write(new Uint8Array(256 * 1024));
+              if (sent === 512 * 1024) {
+                Bun.gc(true);
+                await later();
+                Bun.gc(true);
+              }
+            }
+            c.close();
+          }),
+        );
+      },
+    });
+    const res = await fetch(server.url);
+    Bun.gc(true);
+    const bytes = await res.bytes();
+    expect({ length: bytes.length, pulls: t.pulls, cancels: t.cancels.length }).toEqual({
+      length: total,
+      pulls: 1,
+      cancels: 0,
+    });
+  });
+
+  test("request body (native source) echoed back while the client aborts mid-upload does not crash and releases the request", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const sock = net.connect(server.port, "127.0.0.1");
+    await new Promise<void>(resolve => sock.on("connect", () => resolve()));
+    sock.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
+    await new Promise<void>(resolve => sock.once("data", () => resolve()));
+    sock.destroy();
+    await later();
+    // Server still answers.
+    expect(await (await fetch(server.url, { method: "POST", body: "again" })).text()).toBe("again");
+  });
 });

@@ -37,8 +37,7 @@ mod _impl {
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
     use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
-    #[cfg(windows)]
-    use bun_paths::PathBuffer;
+
     #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
     #[cfg(not(windows))]
@@ -273,7 +272,7 @@ mod _impl {
                             cpu.put(
                                 global_this,
                                 b"model",
-                                BunString::static_("unknown").to_js(global_this)?,
+                                global_this.common_strings().unknown(),
                             );
                             cpu.put(global_this, b"speed", JSValue::js_number(0.0));
                             stubs.put_index(global_this, i, cpu)?;
@@ -349,7 +348,7 @@ mod _impl {
                         cpu.put(
                             global_this,
                             b"model",
-                            BunString::static_("unknown").to_js(global_this)?,
+                            global_this.common_strings().unknown(),
                         );
                     }
                     // If this line starts a new processor, parse the index from the line
@@ -376,7 +375,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    BunString::static_("unknown").to_js(global_this)?,
+                    global_this.common_strings().unknown(),
                 );
             }
 
@@ -388,7 +387,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    BunString::static_("unknown").to_js(global_this)?,
+                    global_this.common_strings().unknown(),
                 );
             }
         }
@@ -444,7 +443,7 @@ mod _impl {
         let model = if bun_sys::posix::sysctl_read_slice(c"hw.model", &mut model_buf[..]).is_ok() {
             bun_string_jsc::create_utf8_for_js(global_this, bun_core::slice_to_nul(&model_buf))?
         } else {
-            BunString::static_("unknown").to_js(global_this)?
+            global_this.common_strings().unknown()
         };
 
         let mut speed_mhz: c_uint = 0;
@@ -659,7 +658,7 @@ mod _impl {
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
         {
-            let mut out = PathBuffer::uninit();
+            let mut out = bun_paths::path_buffer_pool::get();
             let mut size: usize = out.len();
             // SAFETY: valid buffer + size out-param
             if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }
@@ -769,7 +768,7 @@ mod _impl {
                 return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
             }
 
-            return BunString::static_("unknown").to_js(global);
+            return Ok(global.common_strings().unknown());
         }
         #[cfg(not(windows))]
         {
@@ -1032,7 +1031,7 @@ mod _impl {
                 match addr.family() as c_int {
                     libc::AF_INET => global_this.common_strings().ipv4(),
                     libc::AF_INET6 => global_this.common_strings().ipv6(),
-                    _ => BunString::static_("unknown").to_js(global_this)?,
+                    _ => global_this.common_strings().unknown(),
                 },
             );
 
@@ -1265,7 +1264,7 @@ mod _impl {
                 match family {
                     bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
                     bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
-                    _ => BunString::static_("unknown").to_js(global_this)?,
+                    _ => global_this.common_strings().unknown(),
                 },
             );
 

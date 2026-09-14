@@ -107,7 +107,7 @@ impl Mkdir {
                     NextAction::Schedule(exec.args_start)
                 }
             }
-            State::WaitingWriteErr => return Yield::failed(),
+            State::WaitingWriteErr => return Yield::suspended(),
             State::Done => return Builtin::done(interp, cmd, 0),
         };
         match action {
@@ -403,7 +403,7 @@ impl MkdirCtx for MkdirVerboseVTable {
         let out = unsafe { &mut *self.inner };
         #[cfg(windows)]
         {
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let str = bun_paths::strings::from_wpath(buf.as_mut(), dirpath.as_slice());
             out.extend_from_slice(str.as_bytes());
             out.push(b'\n');

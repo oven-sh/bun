@@ -353,6 +353,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// beside the real count rather than decremented from it so the minifier's
     /// single-use substitution still sees every use.
     pub(crate) namespace_tracked_uses: HashMap<Ref, u32>,
+    /// The file is CommonJS in a package of `unwrap_commonjs_packages`.
     pub(crate) unwrap_all_requires: bool,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
@@ -1304,9 +1305,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.conditional_namespace_records(e.yes, out)?;
                 self.conditional_namespace_records(e.no, out)
             }
-            js_ast::ExprData::ERequireString(req)
-                if self.options.bundle && req.unwrapped_id.get().is_none() =>
-            {
+            js_ast::ExprData::ERequireString(req) if self.options.bundle => {
                 out.push(req.import_record_index);
                 Some(())
             }
@@ -1434,7 +1433,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `try_track_dynamic_import_destructure` / `maybe_rewrite_property_access`
     /// can record aliases against it.
     pub(crate) fn require_namespace_ref(&mut self, req: E::RequireString) -> Option<Ref> {
-        if !self.options.bundle || req.unwrapped_id.get().is_some() {
+        if !self.options.bundle {
             return None;
         }
         let ns = self.new_symbol(js_ast::symbol::Kind::Other, b"require_ns");
@@ -3327,6 +3326,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || self.esm_import_keyword.len > 0
             || self.esm_export_keyword.len > 0
             || self.top_level_await_keyword.len > 0;
+        // The unwrap list converts CommonJS files. An ES module, by syntax or by type, is not one.
+        self.unwrap_all_requires = self.unwrap_all_requires
+            && !self.has_es_module_syntax
+            && self.options.module_type != options::ModuleType::Esm;
 
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.

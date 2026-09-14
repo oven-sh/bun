@@ -375,26 +375,35 @@ pub(crate) fn generate_code_for_lazy_export(
 
     // `require(<asset>)` prints as the runtime's `__require` outside CommonJS
     // output, so every part that holds such a call must import it. The shapes a
-    // loader produces: the call itself (`.node`), and an object whose values are
-    // members of the call (`.c`: `{ f: require(<asset>).f }`).
+    // loader produces: the call itself (`.node`), a member of it or a call of one
+    // (`require(<asset>).f`, `require(<asset>).main()`), and an object whose values
+    // are such members (`.c`: `{ f: require(<asset>).f }`). Nothing a loader makes
+    // nests the call deeper, so an object's own values are as far as this looks: data
+    // (JSON, TOML, YAML) is as deep as its author made it.
+    fn is_on_runtime_require(mut expr: &Expr) -> bool {
+        loop {
+            expr = match &expr.data {
+                ExprData::ECall(call) => {
+                    if matches!(call.target.data, ExprData::ERequireCallTarget) {
+                        return true;
+                    }
+                    &call.target
+                }
+                ExprData::EDot(dot) => &dot.target,
+                _ => return false,
+            };
+        }
+    }
     fn runtime_require_calls(expr: &Expr) -> u32 {
         match &expr.data {
-            ExprData::ECall(call) => {
-                if matches!(call.target.data, ExprData::ERequireCallTarget) {
-                    1
-                } else {
-                    runtime_require_calls(&call.target)
-                }
-            }
-            ExprData::EDot(dot) => runtime_require_calls(&dot.target),
             ExprData::EObject(object) => object
                 .properties
                 .slice()
                 .iter()
                 .filter_map(|property| property.value.as_ref())
-                .map(runtime_require_calls)
-                .sum(),
-            _ => 0,
+                .filter(|value| is_on_runtime_require(value))
+                .count() as u32,
+            _ => u32::from(is_on_runtime_require(expr)),
         }
     }
     let prints_runtime_require = this.options.output_format != crate::options::OutputFormat::Cjs;

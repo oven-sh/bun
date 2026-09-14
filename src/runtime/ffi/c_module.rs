@@ -385,12 +385,18 @@ fn compile_to_bir(
             BStr::new(path)
         )));
     };
+    let Some(target) = bun_cc::Target::host() else {
+        return Err(global_this.throw(format_args!(
+            "cannot import {filename}: compiling C is not supported on this platform yet (it is on {})",
+            bun_cc::Target::SUPPORTED
+        )));
+    };
     let mut log = bun_ast::Log::default();
     let unit = bun_cc::Unit {
         path: filename,
         contents: source,
     };
-    let compilation = bun_cc::compile(&[unit], bun_cc::Target::host(), &mut log);
+    let compilation = bun_cc::compile(&[unit], target, &mut log);
     for file in &compilation.files_read {
         on_file_read(file.as_bytes());
     }

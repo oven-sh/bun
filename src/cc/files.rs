@@ -79,7 +79,7 @@ pub(crate) fn system_include_dirs(target: Target) -> Vec<String> {
             }
         }
     }
-    if target != Target::host() {
+    if Some(target) != Target::host() {
         return dirs;
     }
     match target.os {

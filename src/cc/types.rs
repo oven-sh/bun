@@ -26,20 +26,33 @@ pub struct Target {
 }
 
 impl Target {
-    pub fn host() -> Target {
-        let arch = if cfg!(target_arch = "aarch64") {
-            Arch::Aarch64
+    /// The platforms compiled C runs on, for messages that say it does not run on this one.
+    pub const SUPPORTED: &'static str = "Linux x64 (glibc), macOS arm64 and Windows x64";
+
+    /// This machine as a target, where compiled C runs on it (`SUPPORTED`).
+    pub fn host() -> Option<Target> {
+        if cfg!(all(
+            target_os = "linux",
+            target_arch = "x86_64",
+            target_env = "gnu"
+        )) {
+            Some(Target {
+                arch: Arch::X86_64,
+                os: Os::Linux,
+            })
+        } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            Some(Target {
+                arch: Arch::Aarch64,
+                os: Os::MacOs,
+            })
+        } else if cfg!(all(windows, target_arch = "x86_64")) {
+            Some(Target {
+                arch: Arch::X86_64,
+                os: Os::Windows,
+            })
         } else {
-            Arch::X86_64
-        };
-        let os = if cfg!(target_os = "macos") {
-            Os::MacOs
-        } else if cfg!(windows) {
-            Os::Windows
-        } else {
-            Os::Linux
-        };
-        Target { arch, os }
+            None
+        }
     }
 
     pub(crate) fn dialect(self) -> crate::token::Dialect {

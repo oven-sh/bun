@@ -2523,7 +2523,18 @@ pub mod parse_worker {
         let compiled_c: Option<Vec<u8>> = if loader == Loader::C && !is_empty {
             // BIR is specific to a platform (type sizes, struct layout, how arguments are passed, which
             // headers were read): the C is compiled for the platform the bundle is for.
-            let c_target = topts.c_target.unwrap_or_else(bun_cc::Target::host);
+            let Some(c_target) = topts.c_target.or_else(bun_cc::Target::host) else {
+                // logger OOM-only
+                let _ = log.add_error_fmt(
+                    None,
+                    Loc::EMPTY,
+                    format_args!(
+                        "Compiling C is not supported on this platform yet (it is on {})",
+                        bun_cc::Target::SUPPORTED
+                    ),
+                );
+                return Err(AnyError::ParserError);
+            };
             // The compiler names files with `str`s (they end up in `#include` lookups and diagnostics).
             let Ok(filename) = core::str::from_utf8(file_path.text) else {
                 // logger OOM-only
@@ -2612,10 +2623,15 @@ pub mod parse_worker {
             // borrow is sound. Routed through the audited `StoreStr` arena-erasure
             // path (single `from_raw_parts` in `StoreStr::slice`); replace with
             // `Source<'arena>` once that lifetime is threaded through `Success`/Graph.
-            contents: match compiled_c {
-                Some(bir) => std::borrow::Cow::Owned(bir),
-                None => std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
-            },
+            // The compiled form goes in the arena with the `Source`: the arena runs no
+            // destructors, so a buffer this `Source` owned would never be freed.
+            contents: std::borrow::Cow::Borrowed(
+                ast::StoreStr::new(match &compiled_c {
+                    Some(bir) => bump.alloc_slice_copy(bir),
+                    None => entry_contents,
+                })
+                .slice(),
+            ),
             contents_is_recycled: false,
             ..Default::default()
         });

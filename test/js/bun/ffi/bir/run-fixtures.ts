@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isGlibc, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
 // Where Bun's own C compiler (bun_cc + JavaScriptCore's B3) has run these tests.
-export const supported = (isLinux && !isArm64) || (isMacOS && isArm64) || (isWindows && !isArm64 && microsoftHeaders());
+export const supported = (isGlibc && !isArm64) || (isMacOS && isArm64) || (isWindows && !isArm64 && microsoftHeaders());
 
 // Visual Studio's and the Windows SDK's headers: named by a developer prompt, or where the compiler looks for them.
 function microsoftHeaders() {

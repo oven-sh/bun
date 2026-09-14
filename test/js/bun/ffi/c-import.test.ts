@@ -1,18 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { supported } from "./bir/run-fixtures";
 
 // `import … from "./x.c"` compiles the file with Bun's own C compiler (bun_cc + JavaScriptCore's B3).
-// These have run on Linux x64, macOS arm64 and Windows x64.
-const supported =
-  (isLinux && !isArm64) ||
-  (isMacOS && isArm64) ||
-  // (with Visual Studio's and the Windows SDK's headers, which the C in these tests includes)
-  (isWindows &&
-    !isArm64 &&
-    existsSync(join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Windows Kits", "10", "Include")));
-
 // C's stdout is in text mode on Windows: "\r\n" there.
 const text = async (stream: ReadableStream<Uint8Array>) => (await stream.text()).replaceAll("\r\n", "\n");
 // What `bun build --compile --outfile name` makes.
@@ -35,6 +26,48 @@ const mathC = /* c */ `
   static int hidden(void) { return 1; }
   int uses_hidden(void) { return hidden() + 41; }
 `;
+
+// Where compiled C does not run yet, saying so is all that importing a `.c` file does; asking for the file
+// itself is what it always was.
+describe.skipIf(supported)("where C is not supported", () => {
+  const files = {
+    "add.c": "int add(int a, int b) { return a + b; }\n",
+    "compiles.ts": `import { add } from "./add.c"; console.log(add(1, 2));`,
+    "path.ts": `import path from "./add.c" with { type: "file" }; console.log(typeof path, (await Bun.file(path).text()).length);`,
+    "text.ts": `import source from "./add.c" with { type: "text" }; console.log(source.length);`,
+  };
+
+  test("importing it is an error that names the platforms", async () => {
+    using dir = tempDir("c-import-unsupported", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["compiles.ts"]);
+    expect(stderr).toContain("compiling C is not supported on this platform yet");
+    expect(stderr).toContain("Linux x64 (glibc), macOS arm64 and Windows x64");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("so is building it", async () => {
+    using dir = tempDir("c-import-unsupported", files);
+    const { stderr, exitCode } = await run(String(dir), ["build", "--target", "bun", "compiles.ts", "--outdir", "out"]);
+    expect(stderr).toContain("Compiling C is not supported on this platform yet");
+    expect(exitCode).toBe(1);
+  });
+
+  test("and running it", async () => {
+    using dir = tempDir("c-import-unsupported", { "main.c": "int main(void) { return 0; }\n" });
+    const { stderr, exitCode } = await run(String(dir), ["main.c"]);
+    expect(stderr).toContain("compiling C is not supported on this platform yet");
+    expect(exitCode).toBe(1);
+  });
+
+  test.each(["path.ts", "text.ts"])("%s: the file itself is there for the asking", async entry => {
+    using dir = tempDir("c-import-unsupported", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), [entry]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(entry === "path.ts" ? "string 40\n" : "40\n");
+    expect(exitCode).toBe(0);
+  });
+});
 
 describe.skipIf(!supported)("importing a .c file", () => {
   test.concurrent("named, default, dynamic and require all see the file's non-static functions", async () => {

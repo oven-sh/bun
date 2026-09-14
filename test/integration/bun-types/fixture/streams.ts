@@ -57,10 +57,26 @@ expectType(node_stream.bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
 expectType(node_stream.text()).is<Promise<string>>();
 expectType(node_stream.blob()).is<Promise<Blob>>();
 
+{
+  // https://github.com/oven-sh/bun/issues/29401
+  declare const plainStream: ReadableStream;
+  expectType(plainStream.text()).is<Promise<string>>();
+  expectType(plainStream.bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
+  expectType(plainStream.json()).is<Promise<any>>();
+  expectType(plainStream.blob()).is<Promise<Blob>>();
+
+  // Global ReadableStream and node:stream/web ReadableStream are assignable to each other
+  const _toNode: NodeStreamReadableStream = plainStream;
+  const _fromNode: ReadableStream = node_stream;
+}
+
 Bun.file("./foo.csv").stream().pipeThrough(new TextDecoderStream()).pipeThrough(new TextEncoderStream());
 
 Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("gzip")).pipeThrough(new DecompressionStream("gzip"));
-Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("brotli")).pipeThrough(new DecompressionStream("brotli"));
+Bun.file("./foo.csv")
+  .stream()
+  .pipeThrough(new CompressionStream("brotli"))
+  .pipeThrough(new DecompressionStream("brotli"));
 Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("zstd")).pipeThrough(new DecompressionStream("zstd"));
 
 Bun.file("./foo.csv")

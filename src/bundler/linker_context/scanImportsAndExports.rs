@@ -1675,6 +1675,7 @@ mod __css_validation {
         // composes from itself, so bind as shared.
         let css_ast: &BundlerStyleSheet = col_ref!(css_asts)[id].as_deref().unwrap();
         let import_records: &[ImportRecord] = col_ref!(import_records_list)[id].as_slice();
+        let source: &Source = &col_ref!(input_files)[id];
 
         // Validate cross-file "composes: ... from" named imports
         for composes in css_ast.composes.values() {
@@ -1694,21 +1695,19 @@ mod __css_validation {
                 else {
                     continue;
                 };
+                let other_source: &Source =
+                    &col_ref!(input_files)[record.source_index.get() as usize];
                 for name in compose.names.slice() {
                     let name_v = name.v();
                     if !other_css_ast.local_scope.contains(name_v) {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
-                        let _ = this.log_disjoint().add_error_fmt(
-                            &col_ref!(input_files)[record.source_index.get() as usize],
+                        this.log_disjoint().add_error_fmt(
+                            source,
                             compose.loc,
                             format_args!(
                                 "The name \"{}\" never appears in \"{}\" as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                 bstr::BStr::new(name_v),
-                                bstr::BStr::new(
-                                    &col_ref!(input_files)[record.source_index.get() as usize]
-                                        .path
-                                        .pretty
-                                ),
+                                bstr::BStr::new(&other_source.path.pretty),
                             ),
                         );
                     }

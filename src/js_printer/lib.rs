@@ -6283,9 +6283,7 @@ pub(crate) mod __gated_printer {
                                 Loader::Xml => {
                                     self.print_whitespacer(ws!(b" with { type: \"xml\" }"))
                                 }
-                                Loader::C => {
-                                    self.print_whitespacer(ws!(b" with { type: \"c\" }"))
-                                }
+                                Loader::C => self.print_whitespacer(ws!(b" with { type: \"c\" }")),
                                 Loader::Wasm => {
                                     self.print_whitespacer(ws!(b" with { type: \"wasm\" }"))
                                 }

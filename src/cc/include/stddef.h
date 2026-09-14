@@ -17,7 +17,11 @@ typedef double max_align_t;
 typedef __PTRDIFF_TYPE__ ptrdiff_t;
 typedef __SIZE_TYPE__ size_t;
 typedef __WCHAR_TYPE__ wchar_t;
-typedef union { long long __ll; long double __ld; void *__p; } max_align_t;
+typedef union {
+    long long __ll;
+    long double __ld;
+    void* __p;
+} max_align_t;
 #ifdef _WIN32
 /* The Windows C runtimes' <stddef.h> (Microsoft's through vcruntime.h, MinGW's and TinyCC's directly)
    also has these, and their other headers count on it. */
@@ -27,7 +31,7 @@ typedef __PTRDIFF_TYPE__ ssize_t;
 #endif
 
 #undef NULL
-#define NULL ((void *)0)
+#define NULL ((void*)0)
 #define offsetof(type, member) __builtin_offsetof(type, member)
 
 #endif

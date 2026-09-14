@@ -244,11 +244,11 @@ int scanBuffer(const char* buffer, const char* format, va_list arguments)
 
 }
 
-#define BUN_C_VARIADIC(call)          \
-    va_list arguments;                \
-    va_start(arguments, format);      \
-    int result = call;                \
-    va_end(arguments);                \
+#define BUN_C_VARIADIC(call)     \
+    va_list arguments;           \
+    va_start(arguments, format); \
+    int result = call;           \
+    va_end(arguments);           \
     return result;
 
 extern "C" int Bun__CModule__vprintf(const char* format, va_list arguments) { return printToStream(standardStream(1), format, arguments); }

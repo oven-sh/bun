@@ -2527,7 +2527,11 @@ pub mod parse_worker {
             // The compiler names files with `str`s (they end up in `#include` lookups and diagnostics).
             let Ok(filename) = core::str::from_utf8(file_path.text) else {
                 // logger OOM-only
-                let _ = log.add_error(None, Loc::EMPTY, b"Cannot compile a C file whose path is not valid UTF-8");
+                let _ = log.add_error(
+                    None,
+                    Loc::EMPTY,
+                    b"Cannot compile a C file whose path is not valid UTF-8",
+                );
                 return Err(AnyError::ParserError);
             };
             // The other C entry points of `bun build a.c b.c ...`, linked into this one.
@@ -2536,7 +2540,11 @@ pub mod parse_worker {
                 for path in topts.c_link_sources.iter() {
                     let Ok(name) = core::str::from_utf8(path) else {
                         // logger OOM-only
-                        let _ = log.add_error(None, Loc::EMPTY, b"Cannot compile a C file whose path is not valid UTF-8");
+                        let _ = log.add_error(
+                            None,
+                            Loc::EMPTY,
+                            b"Cannot compile a C file whose path is not valid UTF-8",
+                        );
                         return Err(AnyError::ParserError);
                     };
                     match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
@@ -2546,15 +2554,25 @@ pub mod parse_worker {
                             let _ = log.add_error_fmt(
                                 None,
                                 Loc::EMPTY,
-                                format_args!("Cannot read \"{}\": {}", name, bstr::BStr::new(error.name())),
+                                format_args!(
+                                    "Cannot read \"{}\": {}",
+                                    name,
+                                    bstr::BStr::new(error.name())
+                                ),
                             );
                             return Err(AnyError::ParserError);
                         }
                     }
                 }
             }
-            let mut units = vec![bun_cc::Unit { path: filename, contents: entry_contents }];
-            units.extend(linked.iter().map(|(contents, name)| bun_cc::Unit { path: name, contents }));
+            let mut units = vec![bun_cc::Unit {
+                path: filename,
+                contents: entry_contents,
+            }];
+            units.extend(linked.iter().map(|(contents, name)| bun_cc::Unit {
+                path: name,
+                contents,
+            }));
             let compilation = bun_cc::compile(&units, c_target, log);
             // Whether or not it compiled: fixing a header is how a header's error gets fixed.
             task.also_depends_on = compilation

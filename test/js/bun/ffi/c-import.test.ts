@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync } from "fs";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // `import … from "./x.c"` compiles the file with Bun's own C compiler (bun_cc + JavaScriptCore's B3).

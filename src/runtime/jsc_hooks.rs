@@ -3794,7 +3794,12 @@ export default db;
 
         if file.loader == Loader::C {
             // `bun build` embedded the C file's BIR under its name.
-            let exports = crate::ffi::c_module::load(global, spec, Some(file.contents.as_bytes()), &mut |_| {})?;
+            let exports = crate::ffi::c_module::load(
+                global,
+                spec,
+                Some(file.contents.as_bytes()),
+                &mut |_| {},
+            )?;
             return Ok(Some(ResolvedSource {
                 jsvalue_for_export: exports,
                 source_url: specifier.clone(),

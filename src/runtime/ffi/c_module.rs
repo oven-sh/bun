@@ -45,7 +45,9 @@ impl ExternResolver {
             return address;
         }
         #[cfg(windows)]
-        if let Some(address) = windows_libraries(name).or_else(|| windows_runtime::find(name.as_bytes())) {
+        if let Some(address) =
+            windows_libraries(name).or_else(|| windows_runtime::find(name.as_bytes()))
+        {
             return address;
         }
         glibc_static_stub(name.as_bytes()).unwrap_or(core::ptr::null_mut())
@@ -63,7 +65,11 @@ mod windows_runtime {
 
     macro_rules! binary {
         ($name:ident, $int:ty, $op:ident) => {
-            unsafe extern "C" fn $name(out: *mut $int, a: *const $int, b: *const $int) -> *mut $int {
+            unsafe extern "C" fn $name(
+                out: *mut $int,
+                a: *const $int,
+                b: *const $int,
+            ) -> *mut $int {
                 // SAFETY: the compiled code passes the addresses of three 16-byte objects of its own.
                 unsafe {
                     let (a, b) = (a.read_unaligned(), b.read_unaligned());
@@ -161,7 +167,9 @@ mod windows_runtime {
             // Microsoft's compiler turns a call to either into one to the function the runtime exports
             // under another name.
             b"_setjmp" => return super::windows_libraries(bun_core::zstr!("__intrinsic_setjmp")),
-            b"_setjmpex" => return super::windows_libraries(bun_core::zstr!("__intrinsic_setjmpex")),
+            b"_setjmpex" => {
+                return super::windows_libraries(bun_core::zstr!("__intrinsic_setjmpex"));
+            }
             b"atexit" => Bun__CModule__atexit as *mut c_void,
             b"at_quick_exit" => Bun__CModule__at_quick_exit as *mut c_void,
             _ => return None,
@@ -317,7 +325,10 @@ fn compile_to_bir(
         )));
     };
     let mut log = bun_ast::Log::default();
-    let unit = bun_cc::Unit { path: filename, contents: source };
+    let unit = bun_cc::Unit {
+        path: filename,
+        contents: source,
+    };
     let compilation = bun_cc::compile(&[unit], bun_cc::Target::host(), &mut log);
     for file in &compilation.files_read {
         on_file_read(file.as_bytes());
@@ -378,7 +389,10 @@ pub fn load_bir(global_this: &JSGlobalObject, bir: &[u8]) -> JsResult<JSValue> {
             &raw mut module,
         )
     })?;
-    assert!(!module.is_null(), "Bun__CModule__create succeeded without a module");
+    assert!(
+        !module.is_null(),
+        "Bun__CModule__create succeeded without a module"
+    );
     // `__attribute__((destructor))` functions run when the process ends, after what the program
     // itself registers with atexit while it runs.
     unsafe extern "C" fn run_at_exit(handler: unsafe extern "C" fn()) {
@@ -513,7 +527,8 @@ pub fn run_main_if_any(
         .collect();
     let strings = strings.leak();
     let argc = strings.len();
-    let mut argv: Vec<*const core::ffi::c_char> = strings.iter().map(|string| string.as_ptr()).collect();
+    let mut argv: Vec<*const core::ffi::c_char> =
+        strings.iter().map(|string| string.as_ptr()).collect();
     argv.push(core::ptr::null());
     let argv = argv.leak().as_ptr();
 

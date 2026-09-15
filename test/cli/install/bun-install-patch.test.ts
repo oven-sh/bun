@@ -1,9 +1,10 @@
 import { $ } from "bun";
-import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { rmSync } from "fs";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { rm } from "fs/promises";
 import {
   bunEnv,
   bunExe,
+  DirectoryTree,
   normalizeBunSnapshot as normalizeBunSnapshot_,
   runBunInstall,
   tempDir,
@@ -16,863 +17,658 @@ const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
   str = str.replace(/.*Resolved, downloaded and extracted.*\n?/g, "");
   str = str.replaceAll("fstatat()", "stat()");
-  return str;
+  return str.trim();
 };
 
-setDefaultTimeout(1000 * 60 * 5);
+// Each test spawns two to seven debug builds of bun, and up to 20 tests run at once.
+setDefaultTimeout(60 * 1000);
 
-describe("patch", async () => {
-  const is_even_patch = /* patch */ `diff --git a/index.js b/index.js
-index 832d92223a9ec491364ee10dcbe3ad495446ab80..bc652e496c165a7415880ef4520c0ab302bf0765 100644
---- a/index.js
-+++ b/index.js
-@@ -10,5 +10,6 @@
-  var isOdd = require('is-odd');
+// Every install in this file resolves against this registry, so no test reaches the public npm
+// registry. `is-even`, `is-odd` and `@zackradisic/hls-dl` are stand-ins for the npm packages of the
+// same name and version: is-even@1.0.0 depends on is-odd@^0.1.2, and is-odd has a 3.0.1 too.
+const registry = new VerdaccioRegistry();
 
-  module.exports = function isEven(i) {
-+  console.log("HI");
-    return !isOdd(i);
+beforeAll(async () => {
+  await registry.start();
+});
+
+afterAll(() => {
+  registry.stop();
+});
+
+type Env = Record<string, string | undefined>;
+
+/**
+ * The env for bun processes in a project: resolve from the local registry and install through a
+ * cache inside the project. CI exports one BUN_INSTALL_CACHE_DIR for the whole file, so the env has
+ * to set it for concurrent projects to have separate caches.
+ */
+function projectEnv(dir: string): Env {
+  return { ...bunEnv, NPM_CONFIG_REGISTRY: registry.registryUrl(), BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
+}
+
+/** A temp dir with `files`, plus the env that points bun processes in it at the registry. */
+function createProject(prefix: string, files: DirectoryTree) {
+  const dir = tempDir(prefix, files);
+  return {
+    dir: String(dir),
+    env: projectEnv(String(dir)),
+    [Symbol.asyncDispose]: () => dir[Symbol.asyncDispose](),
   };
-`;
-  const is_even_patch2 = /* patch */ `diff --git a/index.js b/index.js
-index 832d92223a9ec491364ee10dcbe3ad495446ab80..217353bf51861fe4fdba68cb98bc5f361c7730e1 100644
+}
+
+async function runBun(cwd: string, env: Env, ...args: string[]) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// The lines `bun install` and `bun patch --commit` print on stderr while they work. Anything else
+// on stderr is a warning or an error.
+const installProgress = /^(Resolving dependencies|Resolved, downloaded and extracted \[\d+\]|Saved lockfile)\r?\n/gm;
+
+/** Runs bun, asserts that it succeeded with nothing but install progress on stderr, and returns its stdout. */
+async function bunOk(cwd: string, env: Env, ...args: string[]) {
+  const { stdout, stderr, exitCode } = await runBun(cwd, env, ...args);
+  expect(stderr.replace(installProgress, "")).toBe("");
+  expect(exitCode, stderr).toBe(0);
+  return stdout;
+}
+
+const file = (dir: string, ...path: string[]) => Bun.file(join(dir, ...path));
+
+/** The `patchedDependencies` of the project's package.json, and the same entries in bun.lock. */
+async function expectPatchedDependencies(dir: string, expected: Record<string, string>) {
+  expect((await file(dir, "package.json").json()).patchedDependencies).toEqual(expected);
+  const lockfile = await file(dir, "bun.lock").text();
+  for (const [key, path] of Object.entries(expected)) {
+    expect(lockfile).toContain(`"${key}": "${path}"`);
+  }
+}
+
+/** What `bun patch` prints once it has prepared `folder` for editing. */
+function patchMessage(name: string, folder: string) {
+  return `To patch ${name}, edit the following folder:\n\n  ${folder}\n\nOnce you're done with your changes, run:\n\n  bun patch --commit '${folder}'`;
+}
+
+/** Makes the stand-in's exported function log `message` right before it returns. */
+async function addLogStatement(indexJs: string, message: string) {
+  const source = await Bun.file(indexJs).text();
+  expect(source).toContain("\n  return ");
+  await Bun.write(indexJs, source.replace("\n  return ", `\n  console.log(${JSON.stringify(message)});\n  return `));
+}
+
+describe.concurrent("patch", () => {
+  // Patches against the stand-ins. is-even@1.0.0/index.js is
+  //
+  //   'use strict';
+  //
+  //   var isOdd = require('is-odd');
+  //
+  //   module.exports = function isEven(i) {
+  //     if (typeof i !== 'number') {
+  //       throw new TypeError('is-even expects a number.');
+  //     }
+  //     return !isOdd(i);
+  //   };
+  //
+  // and is-odd@0.1.2/index.js is the same shape without the require, so `isOdd` opens on line 3.
+  const isEvenPatch = (message: string) => /* patch */ `diff --git a/index.js b/index.js
 --- a/index.js
 +++ b/index.js
-@@ -5,10 +5,11 @@
-  * Released under the MIT License.
-  */
-
--'use strict';
-+"use strict";
-
--var isOdd = require('is-odd');
-+var isOdd = require("is-odd");
-
-  module.exports = function isEven(i) {
-+  console.log("lmao");
-    return !isOdd(i);
-  };
+@@ -5,3 +5,4 @@
+ module.exports = function isEven(i) {
++  console.log("${message}");
+   if (typeof i !== 'number') {
+     throw new TypeError('is-even expects a number.');
 `;
-
-  const is_odd_patch = /* patch */ `diff --git a/index.js b/index.js
-index c8950c17b265104bcf27f8c345df1a1b13a78950..084439e9692a1e94a759d1a34a47282a1d145a30 100644
+  const isOddPatch = (message: string) => /* patch */ `diff --git a/index.js b/index.js
 --- a/index.js
 +++ b/index.js
-@@ -5,16 +5,17 @@
-  * Released under the MIT License.
-  */
-
--'use strict';
-+"use strict";
-
--var isNumber = require('is-number');
-+var isNumber = require("is-number");
-
+@@ -3,3 +3,4 @@
  module.exports = function isOdd(i) {
-+  console.log("Hi from isOdd!");
-   if (!isNumber(i)) {
--    throw new TypeError('is-odd expects a number.');
-+    throw new TypeError("is-odd expects a number.");
-   }
-   if (Number(i) !== Math.floor(i)) {
--    throw new RangeError('is-odd expects an integer.');
-+    throw new RangeError("is-odd expects an integer.");
-   }
-   return !!(~~i & 1);
- };
++  console.log("${message}");
+   if (typeof i !== 'number') {
+     throw new TypeError('is-odd expects a number.');
 `;
 
-  const is_odd_patch2 = /* patch */ `diff --git a/index.js b/index.js
-index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2a5825852 100644
---- a/index.js
-+++ b/index.js
-@@ -5,16 +5,17 @@
-  * Released under the MIT License.
-  */
+  const packageJson = (dependencies: Record<string, string>, patchedDependencies?: Record<string, string>) =>
+    JSON.stringify({ name: "bun-patch-test", module: "index.ts", type: "module", dependencies, patchedDependencies });
 
--'use strict';
-+"use strict";
+  // Calls is-even, which calls the is-odd@0.1.2 nested under it, so a patch on either prints first.
+  const indexTs = /* ts */ `import isEven from 'is-even'; isEven(2); console.log('done')`;
 
--var isNumber = require('is-number');
-+var isNumber = require("is-number");
+  test("should patch a dependency when its dependencies are not hoisted", async () => {
+    // is-even depends on is-odd@^0.1.2, and the root's is-odd@3.0.1 is the one that gets hoisted.
+    await using project = createProject("patch-not-hoisted", {
+      "package.json": packageJson(
+        { "is-even": "1.0.0", "is-odd": "3.0.1" },
+        { "is-even@1.0.0": "patches/is-even@1.0.0.patch" },
+      ),
+      patches: { "is-even@1.0.0.patch": isEvenPatch("is-even patched") },
+      "index.ts": indexTs,
+    });
+    const { dir, env } = project;
 
- module.exports = function isOdd(i) {
-+  console.log("lmao");
-   if (!isNumber(i)) {
--    throw new TypeError('is-odd expects a number.');
-+    throw new TypeError("is-odd expects a number.");
-   }
-   if (Number(i) !== Math.floor(i)) {
--    throw new RangeError('is-odd expects an integer.');
-+    throw new RangeError("is-odd expects an integer.");
-   }
-   return !!(~~i & 1);
- };
-`;
+    const { stdout, stderr, exitCode } = await runBun(dir, env, "install");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Saved lockfile"
+    `);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
 
-  const filepathEscape: (x: string) => string =
-    process.platform === "win32"
-      ? (s: string) => {
-          const charsToEscape = new Set(["/", ":"]);
-          return s
-            .split("")
-            .map(c => (charsToEscape.has(c) ? "_" : c))
-            .join("");
-        }
-      : (x: string) => x;
+      + is-even@1.0.0
+      + is-odd@3.0.1
 
-  const versions: [version: string, patchVersion?: string][] = [["1.0.0"]];
+      3 packages installed"
+    `);
+    expect(exitCode).toBe(0);
 
-  describe("should patch a dependency when its dependencies are not hoisted", async () => {
-    // is-even depends on is-odd ^0.1.2 and we add is-odd 3.0.1, which should be hoisted
-    for (const [version, patchVersion_] of versions) {
-      const patchFilename = filepathEscape(`is-even@${version}.patch`);
-      const patchVersion = patchVersion_ ?? version;
-      test(version, async () => {
-        await using filedir = tempDir("patch1", {
-          "package.json": JSON.stringify({
-            "name": "bun-patch-test",
-            "module": "index.ts",
-            "type": "module",
-            "patchedDependencies": {
-              [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
-            },
-            "dependencies": {
-              "is-even": version,
-              "is-odd": "3.0.1",
-            },
-          }),
-          patches: {
-            [patchFilename]: is_even_patch,
-          },
-          "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
-        });
-        console.log("TEMP:", filedir);
-        await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-        const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
-        expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toContain("HI\n");
-      });
-    }
+    expect({
+      hoisted: (await file(dir, "node_modules", "is-odd", "package.json").json()).version,
+      nested: (await file(dir, "node_modules", "is-even", "node_modules", "is-odd", "package.json").json()).version,
+    }).toEqual({ hoisted: "3.0.1", nested: "0.1.2" });
+    expect(await file(dir, "node_modules", "is-even", "index.js").text()).toContain('console.log("is-even patched");');
+    await expectPatchedDependencies(dir, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" });
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-even patched\ndone\n");
   });
 
   test("should patch a non-hoisted dependency", async () => {
-    await using filedir = tempDir("patch1", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "patchedDependencies": {
-          [`is-odd@0.1.2`]: `patches/is-odd@0.1.2.patch`,
-        },
-        "dependencies": {
-          "is-even": "1.0.0",
-          "is-odd": "3.0.1",
-        },
-      }),
-      patches: {
-        "is-odd@0.1.2.patch": is_odd_patch,
-      },
-      "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
+    await using project = createProject("patch-nested", {
+      "package.json": packageJson(
+        { "is-even": "1.0.0", "is-odd": "3.0.1" },
+        { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" },
+      ),
+      patches: { "is-odd@0.1.2.patch": isOddPatch("is-odd patched") },
+      "index.ts": indexTs,
     });
-    console.log("TEMP:", filedir);
-    await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-    const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
-    expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toContain("Hi from isOdd!\n");
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
+
+    // Only the nested 0.1.2 is patched, the hoisted 3.0.1 is not.
+    expect(await file(dir, "node_modules", "is-even", "node_modules", "is-odd", "index.js").text()).toContain(
+      'console.log("is-odd patched");',
+    );
+    expect(await file(dir, "node_modules", "is-odd", "index.js").text()).not.toContain("console.log");
+    await expectPatchedDependencies(dir, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" });
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-odd patched\ndone\n");
   });
 
-  describe("should patch a dependency", async () => {
-    for (const [version, patchVersion_] of versions) {
-      const patchFilename = filepathEscape(`is-even@${version}.patch`);
-      const patchVersion = patchVersion_ ?? version;
-      test(version, async () => {
-        await using filedir = tempDir("patch1", {
-          "package.json": JSON.stringify({
-            "name": "bun-patch-test",
-            "module": "index.ts",
-            "type": "module",
-            "patchedDependencies": {
-              [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
-            },
-            "dependencies": {
-              "is-even": version,
-            },
-          }),
-          patches: {
-            [patchFilename]: is_even_patch,
-          },
-          "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
-        });
-        console.log("TEMP:", filedir);
-        await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-        const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
-        expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toContain("HI\n");
-      });
-    }
+  test("should patch a dependency", async () => {
+    await using project = createProject("patch-dep", {
+      "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+      patches: { "is-even@1.0.0.patch": isEvenPatch("is-even patched") },
+      "index.ts": indexTs,
+    });
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
+
+    expect(await file(dir, "node_modules", "is-even", "index.js").text()).toMatchInlineSnapshot(`
+      "'use strict';
+
+      var isOdd = require('is-odd');
+
+      module.exports = function isEven(i) {
+        console.log("is-even patched");
+        if (typeof i !== 'number') {
+          throw new TypeError('is-even expects a number.');
+        }
+        return !isOdd(i);
+      };
+      "
+    `);
+    await expectPatchedDependencies(dir, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" });
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-even patched\ndone\n");
   });
 
   test("should patch a transitive dependency", async () => {
-    const version = "0.1.2";
-    const patchFilename = filepathEscape(`is-odd@${version}.patch`);
-    await using filedir = tempDir("patch1", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "patchedDependencies": {
-          [`is-odd@${version}`]: `patches/${patchFilename}`,
-        },
-        "dependencies": {
-          "is-even": "1.0.0",
-        },
-      }),
-      patches: {
-        [patchFilename]: is_odd_patch,
-      },
-      "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
+    await using project = createProject("patch-transitive", {
+      "package.json": packageJson({ "is-even": "1.0.0" }, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" }),
+      patches: { "is-odd@0.1.2.patch": isOddPatch("is-odd patched") },
+      "index.ts": indexTs,
     });
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
 
-    await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-    const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
-    expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toContain("Hi from isOdd!\n");
+    expect(await file(dir, "node_modules", "is-odd", "index.js").text()).toMatchInlineSnapshot(`
+      "'use strict';
+
+      module.exports = function isOdd(i) {
+        console.log("is-odd patched");
+        if (typeof i !== 'number') {
+          throw new TypeError('is-odd expects a number.');
+        }
+        return !!(~~i & 1);
+      };
+      "
+    `);
+    await expectPatchedDependencies(dir, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" });
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-odd patched\ndone\n");
   });
 
-  describe("should patch a dependency after it was already installed", async () => {
-    for (const [version, patchVersion_] of versions) {
-      const patchfileName = filepathEscape(`is-even@${version}.patch`);
-      const patchVersion = patchVersion_ ?? version;
-      test(version, async () => {
-        await using filedir = tempDir("patch1", {
-          "package.json": JSON.stringify({
-            "name": "bun-patch-test",
-            "module": "index.ts",
-            "type": "module",
-            "dependencies": {
-              "is-even": version,
-            },
-          }),
-          patches: {
-            [patchfileName]: is_even_patch,
-          },
-          "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
-        });
-
-        console.log("File", filedir);
-
-        await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-
-        await $`echo ${JSON.stringify({
-          "name": "bun-patch-test",
-          "module": "index.ts",
-          "type": "module",
-          "patchedDependencies": {
-            [`is-even@${patchVersion}`]: `patches/${patchfileName}`,
-          },
-          "dependencies": {
-            "is-even": version,
-          },
-        })} > package.json`
-          .env(bunEnv)
-          .cwd(filedir);
-
-        await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-
-        const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
-        expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toContain("HI\n");
-      });
-    }
-  });
-
-  it("should patch a transitive dependency after it was already installed", async () => {
-    await using filedir = tempDir("patch1", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
-          "is-even": "1.0.0",
-        },
-      }),
-      patches: {
-        "is-odd@0.1.2.patch": is_odd_patch,
-      },
-      "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
+  test("should patch a dependency after it was already installed", async () => {
+    await using project = createProject("patch-installed", {
+      "package.json": packageJson({ "is-even": "1.0.0" }),
+      patches: { "is-even@1.0.0.patch": isEvenPatch("is-even patched") },
+      "index.ts": indexTs,
     });
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
+    expect(await file(dir, "node_modules", "is-even", "index.js").text()).not.toContain("console.log");
 
-    console.log("File", filedir);
+    await Bun.write(
+      join(dir, "package.json"),
+      packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+    );
+    const { stdout, stderr, exitCode } = await runBun(dir, env, "install");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Saved lockfile"
+    `);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
 
-    await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
+      + is-even@1.0.0
 
-    await $`echo ${JSON.stringify({
-      "name": "bun-patch-test",
-      "module": "index.ts",
-      "type": "module",
-      "patchedDependencies": {
-        "is-odd@0.1.2": "patches/is-odd@0.1.2.patch",
-      },
-      "dependencies": {
-        "is-even": "1.0.0",
-      },
-    })} > package.json`
-      .env(bunEnv)
-      .cwd(filedir);
+      1 package installed"
+    `);
+    expect(exitCode).toBe(0);
 
-    await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-
-    const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
-    expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toContain("Hi from isOdd!\n");
+    expect(await file(dir, "node_modules", "is-even", "index.js").text()).toContain('console.log("is-even patched");');
+    await expectPatchedDependencies(dir, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" });
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-even patched\ndone\n");
   });
 
-  describe("should update a dependency when the patchfile changes", async () => {
-    $.throws(true);
-    for (const [version, patchVersion_] of versions) {
-      const patchFilename = filepathEscape(`is-even@${version}.patch`);
-      const patchVersion = patchVersion_ ?? version;
-      test(version, async () => {
-        await using filedir = tempDir("patch1", {
-          "package.json": JSON.stringify({
-            "name": "bun-patch-test",
-            "module": "index.ts",
-            "type": "module",
-            "patchedDependencies": {
-              [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
-            },
-            "dependencies": {
-              "is-even": version,
-            },
-          }),
-          patches: {
-            [patchFilename]: is_even_patch2,
-          },
-          "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
-        });
-
-        await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-
-        await $`echo ${is_even_patch2} > patches/is-even@${version}.patch; ${bunExe()} i`.env(bunEnv).cwd(filedir);
-
-        const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
-        expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toContain("lmao\n");
-      });
-    }
-  });
-
-  describe("should work when patches are removed", async () => {
-    for (const [version, patchVersion_] of versions) {
-      const patchFilename = filepathEscape(`is-even@${version}.patch`);
-      const patchVersion = patchVersion_ ?? version;
-      test(version, async () => {
-        await using filedir = tempDir("patch1", {
-          "package.json": JSON.stringify({
-            "name": "bun-patch-test",
-            "module": "index.ts",
-            "type": "module",
-            "patchedDependencies": {
-              [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
-            },
-            "dependencies": {
-              "is-even": version,
-            },
-          }),
-          patches: {
-            [patchFilename]: is_even_patch2,
-          },
-          "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
-        });
-
-        console.log("FILEDIR", filedir);
-
-        await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-
-        await $`echo ${JSON.stringify({
-          "name": "bun-patch-test",
-          "module": "index.ts",
-          "type": "module",
-          "patchedDependencies": {
-            [`is-odd@0.1.2`]: `patches/is-odd@0.1.2.patch`,
-          },
-          "dependencies": {
-            "is-even": version,
-          },
-        })} > package.json`
-          .env(bunEnv)
-          .cwd(filedir);
-
-        await $`echo ${is_odd_patch} > patches/is-odd@0.1.2.patch; ${bunExe()} i`.env(bunEnv).cwd(filedir);
-
-        const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
-        expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toContain("Hi from isOdd!\n");
-        expect(stdout.toString()).not.toContain("lmao\n");
-      });
-    }
-  });
-
-  it("should update a transitive dependency when the patchfile changes", async () => {
-    $.throws(true);
-    await using filedir = tempDir("patch1", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "patchedDependencies": {
-          "is-odd@0.1.2": "patches/is-odd@0.1.2.patch",
-        },
-        "dependencies": {
-          "is-even": "1.0.0",
-        },
-      }),
-      patches: {
-        ["is-odd@0.1.2.patch"]: is_odd_patch2,
-      },
-      "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
+  test("should patch a transitive dependency after it was already installed", async () => {
+    await using project = createProject("patch-transitive-installed", {
+      "package.json": packageJson({ "is-even": "1.0.0" }),
+      patches: { "is-odd@0.1.2.patch": isOddPatch("is-odd patched") },
+      "index.ts": indexTs,
     });
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
+    expect(await file(dir, "node_modules", "is-odd", "index.js").text()).not.toContain("console.log");
 
-    await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
+    await Bun.write(
+      join(dir, "package.json"),
+      packageJson({ "is-even": "1.0.0" }, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" }),
+    );
+    await bunOk(dir, env, "install");
 
-    await $`echo ${is_odd_patch2} > patches/is-odd@0.1.2.patch; ${bunExe()} i`.env(bunEnv).cwd(filedir);
-
-    const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
-    expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toContain("lmao\n");
+    expect(await file(dir, "node_modules", "is-odd", "index.js").text()).toContain('console.log("is-odd patched");');
+    await expectPatchedDependencies(dir, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" });
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-odd patched\ndone\n");
   });
 
-  it("should update a scoped package", async () => {
-    const patchfile = /* patch */ `diff --git a/private/var/folders/wy/3969rv2x63g63jf8jwlcb2x40000gn/T/.b7f7d77b9ffdd3ee-00000000.tmp/index.js b/index.js
+  test("should update a dependency when the patchfile changes", async () => {
+    await using project = createProject("patch-changed", {
+      "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+      patches: { "is-even@1.0.0.patch": isEvenPatch("is-even patched") },
+      "index.ts": indexTs,
+    });
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-even patched\ndone\n");
+
+    // The patch path in package.json is unchanged, only the file's contents are.
+    await Bun.write(join(dir, "patches", "is-even@1.0.0.patch"), isEvenPatch("is-even patched again"));
+    const { stdout, stderr, exitCode } = await runBun(dir, env, "install");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`"Resolving dependencies"`);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      + is-even@1.0.0
+
+      1 package installed"
+    `);
+    expect(exitCode).toBe(0);
+
+    expect(await file(dir, "node_modules", "is-even", "index.js").text()).toContain(
+      'console.log("is-even patched again");',
+    );
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-even patched again\ndone\n");
+  });
+
+  test("should work when patches are removed", async () => {
+    await using project = createProject("patch-removed", {
+      "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+      patches: { "is-even@1.0.0.patch": isEvenPatch("is-even patched") },
+      "index.ts": indexTs,
+    });
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-even patched\ndone\n");
+
+    // Drop the is-even patch and patch is-odd instead.
+    await Bun.write(
+      join(dir, "package.json"),
+      packageJson({ "is-even": "1.0.0" }, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" }),
+    );
+    await Bun.write(join(dir, "patches", "is-odd@0.1.2.patch"), isOddPatch("is-odd patched"));
+    await bunOk(dir, env, "install");
+
+    expect(await file(dir, "node_modules", "is-even", "index.js").text()).not.toContain("console.log");
+    expect(await file(dir, "node_modules", "is-odd", "index.js").text()).toContain('console.log("is-odd patched");');
+    await expectPatchedDependencies(dir, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" });
+    expect(await file(dir, "bun.lock").text()).not.toContain("is-even@1.0.0.patch");
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-odd patched\ndone\n");
+  });
+
+  test("should update a transitive dependency when the patchfile changes", async () => {
+    await using project = createProject("patch-transitive-changed", {
+      "package.json": packageJson({ "is-even": "1.0.0" }, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" }),
+      patches: { "is-odd@0.1.2.patch": isOddPatch("is-odd patched") },
+      "index.ts": indexTs,
+    });
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-odd patched\ndone\n");
+
+    await Bun.write(join(dir, "patches", "is-odd@0.1.2.patch"), isOddPatch("is-odd patched again"));
+    await bunOk(dir, env, "install");
+
+    expect(await file(dir, "node_modules", "is-odd", "index.js").text()).toContain(
+      'console.log("is-odd patched again");',
+    );
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("is-odd patched again\ndone\n");
+  });
+
+  test("should update a scoped package", async () => {
+    // Adds index.js and points `main` at it. The second hunk's context is lines 2 to 5 of the
+    // stand-in's package.json.
+    const patchfile = /* patch */ `diff --git a/index.js b/index.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..6edc0598a84632c41d9c770cfbbad7d99e2ab624
 --- /dev/null
 +++ b/index.js
-@@ -0,0 +1,4 @@
-+
+@@ -0,0 +1,3 @@
 +module.exports = () => {
-+    return 'PATCHED!'
-+}
++  return 'PATCHED!';
++};
 diff --git a/package.json b/package.json
-index aa7c7012cda790676032d1b01d78c0b69ec06360..6048e7cb462b3f9f6ac4dc21aacf9a09397cd4be 100644
 --- a/package.json
 +++ b/package.json
-@@ -2,7 +2,7 @@
-    "name": "@zackradisic/hls-dl",
-    "version": "0.0.1",
-    "description": "",
--  "main": "dist/hls-dl.commonjs2.js",
-+  "main": "./index.js",
-    "dependencies": {
-      "m3u8-parser": "^4.5.0",
-      "typescript": "^4.0.5"
+@@ -2,4 +2,4 @@
+   "name": "@zackradisic/hls-dl",
+   "version": "0.0.1",
+   "description": "",
+-  "main": "dist/hls-dl.commonjs2.js"
++  "main": "./index.js"
 `;
 
-    $.throws(true);
-    await using filedir = tempDir("patch1", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "patchedDependencies": {
-          "@zackradisic/hls-dl@0.0.1": "patches/thepatch.patch",
-        },
-        "dependencies": {
-          "@zackradisic/hls-dl": "0.0.1",
-        },
-      }),
-      patches: {
-        ["thepatch.patch"]: patchfile,
-      },
+    await using project = createProject("patch-scoped", {
+      "package.json": packageJson(
+        { "@zackradisic/hls-dl": "0.0.1" },
+        { "@zackradisic/hls-dl@0.0.1": "patches/thepatch.patch" },
+      ),
+      patches: { "thepatch.patch": patchfile },
       "index.ts": /* ts */ `import hlsDl from '@zackradisic/hls-dl'; console.log(hlsDl())`,
     });
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
 
-    await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-
-    const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
-    expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toContain("PATCHED!\n");
+    const installed = join(dir, "node_modules", "@zackradisic", "hls-dl");
+    expect({
+      main: (await file(installed, "package.json").json()).main,
+      index: await file(installed, "index.js").text(),
+    }).toEqual({ main: "./index.js", index: "module.exports = () => {\n  return 'PATCHED!';\n};\n" });
+    await expectPatchedDependencies(dir, { "@zackradisic/hls-dl@0.0.1": "patches/thepatch.patch" });
+    expect(await bunOk(dir, env, "run", "index.ts")).toBe("PATCHED!\n");
   });
 
-  it("shouldn't infinite loop on failure to apply patch", async () => {
+  test("shouldn't infinite loop on failure to apply patch", async () => {
+    // The patch targets a path that does not exist inside the package.
     const badPatch = /* patch */ `diff --git a/index.js b/node_modules/is-even/index.js
-index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e960172bb 100644
 --- a/index.js
 +++ b/node_modules/is-even/index.js
-@@ -10,5 +10,6 @@
-  var isOdd = require('is-odd');
-
-  module.exports = function isEven(i) {
+@@ -5,3 +5,4 @@
+ module.exports = function isEven(i) {
 +  console.log('hi')
-    return !isOdd(i);
-  };
+   if (typeof i !== 'number') {
+     throw new TypeError('is-even expects a number.');
 `;
 
-    await using filedir = tempDir("patch1", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
-          "is-even": "1.0.0",
-        },
-      }),
-      patches: {
-        "is-even@1.0.0.patch": badPatch,
-      },
+    await using project = createProject("patch-bad", {
+      "package.json": packageJson({ "is-even": "1.0.0" }),
+      patches: { "is-even@1.0.0.patch": badPatch },
       "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven())`,
     });
-    console.log(filedir);
+    const { dir, env } = project;
     {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--linker=hoisted"],
-        env: bunEnv,
-        cwd: filedir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(exitCode).toBe(0);
-      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`"Saved lockfile"`);
+      const { stdout, stderr, exitCode } = await runBun(dir, env, "install", "--linker=hoisted");
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "Resolving dependencies
+        Saved lockfile"
+      `);
       expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
         "bun install <version> (<revision>)
 
         + is-even@1.0.0
 
-        5 packages installed"
+        2 packages installed"
       `);
+      expect(exitCode).toBe(0);
     }
     {
-      const pkgjsonWithPatch = {
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "patchedDependencies": {
-          "is-even@1.0.0": "patches/is-even@1.0.0.patch",
-        },
-        "dependencies": {
-          "is-even": "1.0.0",
-        },
-      };
-
-      await Bun.write(join(filedir, "package.json"), JSON.stringify(pkgjsonWithPatch));
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--linker=hoisted"],
-        env: bunEnv,
-        cwd: filedir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(exitCode).toBe(1);
+      await Bun.write(
+        join(dir, "package.json"),
+        packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+      );
+      const { stdout, stderr, exitCode } = await runBun(dir, env, "install", "--linker=hoisted");
       expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
         "Resolving dependencies
         error: failed applying patch file: ENOENT: No such file or directory (stat())
         error: failed to apply patchfile (patches/is-even@1.0.0.patch)"
       `);
       expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+      expect(exitCode).toBe(1);
     }
   });
 
   describe("bun patch with --linker=isolated", () => {
-    const patchEnv = bunEnv;
-
     test("should create patch for package and commit it", async () => {
-      await using filedir = tempDir("patch-isolated", {
+      await using project = createProject("patch-isolated", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-isolated-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": {
-            "is-even": "1.0.0",
-          },
+          name: "bun-patch-isolated-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: { "is-even": "1.0.0" },
         }),
         "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(2));`,
       });
+      const { dir, env } = project;
+      await bunOk(dir, env, "install", "--linker=isolated");
 
-      // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
+      const folder = "node_modules/is-even";
+      const { stdout, stderr, exitCode } = await runBun(dir, env, "patch", "is-even");
+      expect(stderr).toBe("");
+      expect(stdout).toContain(patchMessage("is-even", folder));
+      expect(exitCode).toBe(0);
 
-      // Run bun patch command
-      const { stdout: patchStdout } = await $`${bunExe()} patch is-even`.env(patchEnv).cwd(filedir);
-      const patchOutput = patchStdout.toString();
-      const relativePatchPath =
-        patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
-        patchOutput.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
-      expect(relativePatchPath).toBeTruthy();
-      const patchPath = join(filedir, relativePatchPath!);
+      // `bun patch --commit` writes the patch file, records it in package.json and bun.lock, and
+      // reinstalls with it applied.
+      await addLogStatement(join(dir, folder, "index.js"), "PATCHED with isolated linker!");
+      await bunOk(dir, env, "patch", "--commit", folder);
 
-      // Edit the patched package
-      const indexPath = join(patchPath, "index.js");
-      const originalContent = await Bun.file(indexPath).text();
-      const modifiedContent = originalContent.replace(
-        "module.exports = function isEven(i) {",
-        'module.exports = function isEven(i) {\n  console.log("PATCHED with isolated linker!");',
-      );
-      await Bun.write(indexPath, modifiedContent);
-
-      // Commit the patch
-      const { stderr: commitStderr } = await $`${bunExe()} patch --commit '${relativePatchPath}'`
-        .env(patchEnv)
-        .cwd(filedir);
-
-      // With isolated linker, there may be some stderr output during patch commit
-      // but it should not contain actual errors
-      const commitStderrText = commitStderr.toString();
-      expect(commitStderrText).not.toContain("error:");
-      expect(commitStderrText).not.toContain("panic:");
-
-      // Verify patch file was created
-      const patchFile = join(filedir, "patches", "is-even@1.0.0.patch");
-      expect(await Bun.file(patchFile).exists()).toBe(true);
-
-      // Verify package.json was updated
-      const pkgJson = await Bun.file(join(filedir, "package.json")).json();
-      expect(pkgJson.patchedDependencies).toEqual({
-        "is-even@1.0.0": "patches/is-even@1.0.0.patch",
-      });
-
-      // Run the code to verify patch was applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(filedir);
-      expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toContain("PATCHED with isolated linker!");
+      expect(await file(dir, "patches", "is-even@1.0.0.patch").text()).toMatchInlineSnapshot(`
+        "diff --git a/index.js b/index.js
+        index ee70c77f2b65f68afaf722c170ed909ccd3a679e..97b2d355ea9d33b726d01857a29b97951c6f38d7 100644
+        --- a/index.js
+        +++ b/index.js
+        @@ -6,5 +6,6 @@ module.exports = function isEven(i) {
+           if (typeof i !== 'number') {
+             throw new TypeError('is-even expects a number.');
+           }
+        +  console.log("PATCHED with isolated linker!");
+           return !isOdd(i);
+         };
+        "
+      `);
+      await expectPatchedDependencies(dir, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" });
+      expect(await bunOk(dir, env, "run", "index.ts")).toBe("PATCHED with isolated linker!\ntrue\n");
     });
 
     test("should patch transitive dependency with isolated linker", async () => {
-      await using filedir = tempDir("patch-isolated-transitive", {
+      await using project = createProject("patch-isolated-transitive", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-isolated-transitive-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": {
-            "is-even": "1.0.0",
-          },
+          name: "bun-patch-isolated-transitive-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: { "is-even": "1.0.0" },
         }),
         "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(3));`,
       });
+      const { dir, env } = project;
+      await bunOk(dir, env, "install", "--linker=isolated");
 
-      // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
+      // By name, and again by name and version: both find the only is-odd in the tree.
+      const folder = "node_modules/is-odd";
+      expect(await bunOk(dir, env, "patch", "is-odd")).toContain(patchMessage("is-odd", folder));
+      expect(await bunOk(dir, env, "patch", "is-odd@0.1.2")).toContain(patchMessage("is-odd", folder));
 
-      await $`${bunExe()} patch is-odd`.env(patchEnv).cwd(filedir);
+      await addLogStatement(join(dir, folder, "index.js"), "Transitive patch with isolated!");
+      await bunOk(dir, env, "patch", "--commit", folder);
+      await expectPatchedDependencies(dir, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" });
 
-      // Patch transitive dependency (is-odd)
-      const { stdout: patchStdout } = await $`${bunExe()} patch is-odd@0.1.2`.env(patchEnv).cwd(filedir);
-      const patchOutput = patchStdout.toString();
-      const relativePatchPath =
-        patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
-        patchOutput.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
-      expect(relativePatchPath).toBeTruthy();
-      const patchPath = join(filedir, relativePatchPath!);
+      // The next install puts the patched package in the store, where is-even resolves it from.
+      expect(normalizeBunSnapshot(await bunOk(dir, env, "install", "--linker", "isolated"))).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
 
-      // Edit the patched package
-      const indexPath = join(patchPath, "index.js");
-      const originalContent = await Bun.file(indexPath).text();
-      const modifiedContent = originalContent.replace(
-        "module.exports = function isOdd(i) {",
-        'module.exports = function isOdd(i) {\n  console.log("Transitive patch with isolated!");',
-      );
-      await Bun.write(indexPath, modifiedContent);
-
-      // Commit the patch
-      const { stderr: commitStderr } = await $`${bunExe()} patch --commit '${relativePatchPath}'`
-        .env(patchEnv)
-        .cwd(filedir);
-
-      await $`${bunExe()} i --linker isolated`.env(patchEnv).cwd(filedir);
-
-      // With isolated linker, there may be some stderr output during patch commit
-      // but it should not contain actual errors
-      const commitStderrText = commitStderr.toString();
-      expect(commitStderrText).not.toContain("error:");
-      expect(commitStderrText).not.toContain("panic:");
-
-      // Verify patch was applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(filedir);
-      expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toContain("Transitive patch with isolated!");
+        1 package installed"
+      `);
+      expect(
+        await file(dir, "node_modules", ".bun", "is-odd@0.1.2", "node_modules", "is-odd", "index.js").text(),
+      ).toContain('console.log("Transitive patch with isolated!");');
+      expect(await bunOk(dir, env, "run", "index.ts")).toBe("Transitive patch with isolated!\nfalse\n");
     });
 
     test("should handle scoped packages with isolated linker", async () => {
-      await using filedir = tempDir("patch-isolated-scoped", {
+      await using project = createProject("patch-isolated-scoped", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-isolated-scoped-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": {
-            "@zackradisic/hls-dl": "0.0.1",
-          },
+          name: "bun-patch-isolated-scoped-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: { "@zackradisic/hls-dl": "0.0.1" },
         }),
-        "index.ts": /* ts */ `import hlsDl from '@zackradisic/hls-dl'; console.log("Testing scoped package");`,
+        "index.ts": /* ts */ `import hlsDl from '@zackradisic/hls-dl'; console.log(hlsDl());`,
       });
+      const { dir, env } = project;
+      await bunOk(dir, env, "install", "--linker=isolated");
+      expect(await bunOk(dir, env, "run", "index.ts")).toBe("not patched\n");
 
-      // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
+      const folder = "node_modules/@zackradisic/hls-dl";
+      expect(await bunOk(dir, env, "patch", "@zackradisic/hls-dl")).toContain(
+        patchMessage("@zackradisic/hls-dl", folder),
+      );
 
-      // Patch scoped package
-      const { stdout: patchStdout } = await $`${bunExe()} patch @zackradisic/hls-dl`.env(patchEnv).cwd(filedir);
-      const patchOutput = patchStdout.toString();
-      const relativePatchPath =
-        patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
-        patchOutput.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
-      expect(relativePatchPath).toBeTruthy();
-      const patchPath = join(filedir, relativePatchPath!);
-
-      // Create a new index.js in the patched package
-      const indexPath = join(patchPath, "index.js");
-      await Bun.write(indexPath, `module.exports = () => 'SCOPED PACKAGE PATCHED with isolated!';`);
-
-      // Update package.json to point to the new index.js
-      const pkgJsonPath = join(patchPath, "package.json");
+      // Add an index.js and point `main` at it.
+      await Bun.write(join(dir, folder, "index.js"), `module.exports = () => 'SCOPED PACKAGE PATCHED with isolated!';`);
+      const pkgJsonPath = join(dir, folder, "package.json");
       const pkgJson = await Bun.file(pkgJsonPath).json();
       pkgJson.main = "./index.js";
       await Bun.write(pkgJsonPath, JSON.stringify(pkgJson, null, 2));
+      await bunOk(dir, env, "patch", "--commit", folder);
 
-      // Commit the patch
-      const { stderr: commitStderr } = await $`${bunExe()} patch --commit '${relativePatchPath}'`
-        .env(patchEnv)
-        .cwd(filedir);
+      const patchPath = "patches/@zackradisic%2Fhls-dl@0.0.1.patch";
+      await expectPatchedDependencies(dir, { "@zackradisic/hls-dl@0.0.1": patchPath });
 
-      // With isolated linker, there may be some stderr output during patch commit
-      // but it should not contain actual errors
-      const commitStderrText = commitStderr.toString();
-      expect(commitStderrText).not.toContain("error:");
-      expect(commitStderrText).not.toContain("panic:");
+      // For an added file, the a/ path is the folder bun diffed rather than a path in the package.
+      const [firstLine, ...rest] = (await file(dir, patchPath).text()).split("\n");
+      expect(firstLine).toMatch(/^diff --git a\/.* b\/index\.js$/);
+      expect(rest.join("\n")).toMatchInlineSnapshot(`
+        "new file mode 100644
+        index 0000000000000000000000000000000000000000..da9666e70d80cbc1ae062154779e278852484c7e
+        --- /dev/null
+        +++ b/index.js
+        @@ -0,0 +1 @@
+        +module.exports = () => 'SCOPED PACKAGE PATCHED with isolated!';
+        \\ No newline at end of file
+        diff --git a/package.json b/package.json
+        index 1829f35024e638a4c2ba4e894d73f7000a2ab090..18c5d9a79a5ebbc96b745e579d0789c145ee9988 100644
+        --- a/package.json
+        +++ b/package.json
+        @@ -2,5 +2,5 @@
+           "name": "@zackradisic/hls-dl",
+           "version": "0.0.1",
+           "description": "",
+        -  "main": "dist/hls-dl.commonjs2.js"
+        +  "main": "./index.js"
+         }
+        \\ No newline at end of file
+        "
+      `);
 
-      // Update index.ts to actually use the patched module
-      await Bun.write(
-        join(filedir, "index.ts"),
-        /* ts */ `import hlsDl from '@zackradisic/hls-dl'; console.log(hlsDl());`,
-      );
-
-      // Verify patch was applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(filedir);
-      expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toContain("SCOPED PACKAGE PATCHED with isolated!");
+      expect(await bunOk(dir, env, "run", "index.ts")).toBe("SCOPED PACKAGE PATCHED with isolated!\n");
     });
 
     test("should work with workspaces and isolated linker", async () => {
-      await using filedir = tempDir("patch-isolated-workspace", {
-        "package.json": JSON.stringify({
-          "name": "workspace-root",
-          "workspaces": ["packages/*"],
-        }),
+      await using project = createProject("patch-isolated-workspace", {
+        "package.json": JSON.stringify({ name: "workspace-root", workspaces: ["packages/*"] }),
         packages: {
           app: {
-            "package.json": JSON.stringify({
-              "name": "app",
-              "dependencies": {
-                "is-even": "1.0.0",
-              },
-            }),
+            "package.json": JSON.stringify({ name: "app", dependencies: { "is-even": "1.0.0" } }),
             "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(4));`,
           },
         },
       });
+      const { dir, env } = project;
+      await bunOk(dir, env, "install", "--linker=isolated");
 
-      // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
+      // Patch from the workspace root.
+      const folder = "node_modules/is-even";
+      expect(await bunOk(dir, env, "patch", "is-even")).toContain(patchMessage("is-even", folder));
+      await addLogStatement(join(dir, folder, "index.js"), "WORKSPACE PATCH with isolated!");
+      await bunOk(dir, env, "patch", "--commit", folder);
 
-      // Patch from workspace root
-      const { stdout: patchStdout } = await $`${bunExe()} patch is-even`.env(patchEnv).cwd(filedir);
-      const patchOutput = patchStdout.toString();
-      const relativePatchPath =
-        patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
-        patchOutput.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
-      expect(relativePatchPath).toBeTruthy();
-      const patchPath = join(filedir, relativePatchPath!);
-
-      // Edit the patched package
-      const indexPath = join(patchPath, "index.js");
-      const originalContent = await Bun.file(indexPath).text();
-      const modifiedContent = originalContent.replace(
-        "module.exports = function isEven(i) {",
-        'module.exports = function isEven(i) {\n  console.log("WORKSPACE PATCH with isolated!");',
+      // The root package.json records the patch, and the member resolves the patched package.
+      await expectPatchedDependencies(dir, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" });
+      expect((await file(dir, "packages", "app", "package.json").json()).patchedDependencies).toBeUndefined();
+      expect(await bunOk(join(dir, "packages", "app"), env, "run", "index.ts")).toBe(
+        "WORKSPACE PATCH with isolated!\ntrue\n",
       );
-      await Bun.write(indexPath, modifiedContent);
-
-      // Commit the patch
-      const { stderr: commitStderr } = await $`${bunExe()} patch --commit '${relativePatchPath}'`
-        .env(patchEnv)
-        .cwd(filedir);
-
-      // With isolated linker, there may be some stderr output during patch commit
-      // but it should not contain actual errors
-      const commitStderrText = commitStderr.toString();
-      expect(commitStderrText).not.toContain("error:");
-      expect(commitStderrText).not.toContain("panic:");
-
-      // Verify root package.json was updated
-      const rootPkgJson = await Bun.file(join(filedir, "package.json")).json();
-      expect(rootPkgJson.patchedDependencies).toEqual({
-        "is-even@1.0.0": "patches/is-even@1.0.0.patch",
-      });
-
-      // Run from workspace package to verify patch was applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(join(filedir, "packages", "app"));
-      expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toContain("WORKSPACE PATCH with isolated!");
     });
 
     test("should preserve patch after reinstall with isolated linker", async () => {
-      await using filedir = tempDir("patch-isolated-reinstall", {
+      await using project = createProject("patch-isolated-reinstall", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-isolated-reinstall-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": {
-            "is-even": "1.0.0",
-          },
+          name: "bun-patch-isolated-reinstall-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: { "is-even": "1.0.0" },
         }),
         "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(6));`,
       });
+      const { dir, env } = project;
+      await bunOk(dir, env, "install", "--linker=isolated");
 
-      // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
+      const folder = "node_modules/is-even";
+      expect(await bunOk(dir, env, "patch", "is-even")).toContain(patchMessage("is-even", folder));
+      await addLogStatement(join(dir, folder, "index.js"), "REINSTALL TEST with isolated!");
+      await bunOk(dir, env, "patch", "--commit", folder);
 
-      // Create and commit a patch
-      const { stdout: patchStdout } = await $`${bunExe()} patch is-even`.env(patchEnv).cwd(filedir);
-      const patchOutput = patchStdout.toString();
-      const relativePatchPath =
-        patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
-        patchOutput.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
-      expect(relativePatchPath).toBeTruthy();
-      const patchPath = join(filedir, relativePatchPath!);
+      // Delete node_modules and reinstall from the lockfile.
+      await rm(join(dir, "node_modules"), { recursive: true, force: true });
+      expect(normalizeBunSnapshot(await bunOk(dir, env, "install", "--linker=isolated"))).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
 
-      const indexPath = join(patchPath, "index.js");
-      const originalContent = await Bun.file(indexPath).text();
-      const modifiedContent = originalContent.replace(
-        "module.exports = function isEven(i) {",
-        'module.exports = function isEven(i) {\n  console.log("REINSTALL TEST with isolated!");',
+        + is-even@1.0.0
+
+        2 packages installed"
+      `);
+
+      expect(await file(dir, "node_modules", "is-even", "index.js").text()).toContain(
+        'console.log("REINSTALL TEST with isolated!");',
       );
-      await Bun.write(indexPath, modifiedContent);
-
-      await $`${bunExe()} patch --commit '${relativePatchPath}'`.env(patchEnv).cwd(filedir);
-
-      // Delete node_modules and reinstall with isolated linker
-      rmSync(join(filedir, "node_modules"), { force: true, recursive: true });
-      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
-
-      // Verify patch is still applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(filedir);
-      expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toContain("REINSTALL TEST with isolated!");
+      expect(await bunOk(dir, env, "run", "index.ts")).toBe("REINSTALL TEST with isolated!\ntrue\n");
     });
 
     test("should handle multiple patches with isolated linker", async () => {
-      await using filedir = tempDir("patch-isolated-multiple", {
+      await using project = createProject("patch-isolated-multiple", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-isolated-multiple-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": {
-            "is-even": "1.0.0",
-            "is-odd": "3.0.1",
-          },
+          name: "bun-patch-isolated-multiple-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: { "is-even": "1.0.0", "is-odd": "3.0.1" },
         }),
         "index.ts": /* ts */ `
           import isEven from 'is-even';
@@ -881,77 +677,30 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
           console.log(isOdd(9));
         `,
       });
+      const { dir, env } = project;
+      await bunOk(dir, env, "install", "--linker=isolated");
 
-      // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
+      // First is-even, then the root's is-odd@3.0.1 (is-even's own is-odd is 0.1.2).
+      expect(await bunOk(dir, env, "patch", "is-even")).toContain(patchMessage("is-even", "node_modules/is-even"));
+      await addLogStatement(join(dir, "node_modules", "is-even", "index.js"), "is-even PATCHED with isolated!");
+      await bunOk(dir, env, "patch", "--commit", "node_modules/is-even");
 
-      // Patch first package (is-even)
-      const { stdout: patchStdout1 } = await $`${bunExe()} patch is-even`.env(patchEnv).cwd(filedir);
-      const patchOutput1 = patchStdout1.toString();
-      const relativePatchPath1 =
-        patchOutput1.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
-        patchOutput1.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
-      expect(relativePatchPath1).toBeTruthy();
-      const patchPath1 = join(filedir, relativePatchPath1!);
+      expect(await bunOk(dir, env, "patch", "is-odd@3.0.1")).toContain(patchMessage("is-odd", "node_modules/is-odd"));
+      await addLogStatement(join(dir, "node_modules", "is-odd", "index.js"), "is-odd PATCHED with isolated!");
+      await bunOk(dir, env, "patch", "--commit", "node_modules/is-odd");
 
-      const indexPath1 = join(patchPath1, "index.js");
-      const originalContent1 = await Bun.file(indexPath1).text();
-      const modifiedContent1 = originalContent1.replace(
-        "module.exports = function isEven(i) {",
-        'module.exports = function isEven(i) {\n  console.log("is-even PATCHED with isolated!");',
-      );
-      await Bun.write(indexPath1, modifiedContent1);
-
-      const { stderr: commitStderr1 } = await $`${bunExe()} patch --commit '${relativePatchPath1}'`
-        .env(patchEnv)
-        .cwd(filedir);
-      // Check for errors
-      const commitStderrText1 = commitStderr1.toString();
-      expect(commitStderrText1).not.toContain("error:");
-      expect(commitStderrText1).not.toContain("panic:");
-
-      // Patch second package (is-odd hoisted version)
-      const { stdout: patchStdout2 } = await $`${bunExe()} patch is-odd@3.0.1`.env(patchEnv).cwd(filedir);
-      const patchOutput2 = patchStdout2.toString();
-      const relativePatchPath2 =
-        patchOutput2.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
-        patchOutput2.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
-      expect(relativePatchPath2).toBeTruthy();
-      const patchPath2 = join(filedir, relativePatchPath2!);
-
-      const indexPath2 = join(patchPath2, "index.js");
-      const originalContent2 = await Bun.file(indexPath2).text();
-      const modifiedContent2 = originalContent2.replace(
-        "module.exports = function isOdd(value) {",
-        'module.exports = function isOdd(value) {\n  console.log("is-odd PATCHED with isolated!");',
-      );
-      await Bun.write(indexPath2, modifiedContent2);
-
-      const { stderr: commitStderr2 } = await $`${bunExe()} patch --commit '${relativePatchPath2}'`
-        .env(patchEnv)
-        .cwd(filedir);
-      // Check for errors
-      const commitStderrText2 = commitStderr2.toString();
-      expect(commitStderrText2).not.toContain("error:");
-      expect(commitStderrText2).not.toContain("panic:");
-
-      // Verify both patches were applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(filedir);
-      expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toContain("is-even PATCHED with isolated!");
-      expect(stdout.toString()).toContain("is-odd PATCHED with isolated!");
-
-      // Verify package.json has both patches
-      const pkgJson = await Bun.file(join(filedir, "package.json")).json();
-      expect(pkgJson.patchedDependencies).toEqual({
+      await expectPatchedDependencies(dir, {
         "is-even@1.0.0": "patches/is-even@1.0.0.patch",
         "is-odd@3.0.1": "patches/is-odd@3.0.1.patch",
       });
+      expect(await bunOk(dir, env, "run", "index.ts")).toBe(
+        "is-even PATCHED with isolated!\ntrue\nis-odd PATCHED with isolated!\ntrue\n",
+      );
     });
   });
 });
 
-describe("removing a patched dependency", () => {
+describe.concurrent("removing a patched dependency", () => {
   // A patch that only adds a new file applies cleanly to any package contents.
   const isOddNewFilePatch = `diff --git a/bun-patch-test.txt b/bun-patch-test.txt
 new file mode 100644
@@ -963,76 +712,61 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
 `;
 
   test("install with an empty cache downloads the package unpatched", async () => {
-    await using filedir = tempDir("patch-remove", {
+    await using project = createProject("patch-remove", {
       "package.json": JSON.stringify({
         name: "remove-patch-test",
-        dependencies: {
-          "is-odd": "3.0.1",
-        },
-        patchedDependencies: {
-          "is-odd@3.0.1": "patches/is-odd@3.0.1.patch",
-        },
+        dependencies: { "is-odd": "3.0.1" },
+        patchedDependencies: { "is-odd@3.0.1": "patches/is-odd@3.0.1.patch" },
       }),
-      patches: {
-        "is-odd@3.0.1.patch": isOddNewFilePatch,
-      },
+      patches: { "is-odd@3.0.1.patch": isOddNewFilePatch },
     });
+    const { dir } = project;
 
     // First install: bun.lock records the patched dependency and the patch is applied.
-    {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: filedir,
-        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(filedir, "cache-with-patch") },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("error:");
-      expect(exitCode).toBe(0);
-    }
-    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(true);
-    expect(await Bun.file(join(filedir, "bun.lock")).text()).toContain("patchedDependencies");
+    const envWithPatch = { ...project.env, BUN_INSTALL_CACHE_DIR: join(dir, "cache-with-patch") };
+    expect(normalizeBunSnapshot(await bunOk(dir, envWithPatch, "install"))).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      + is-odd@3.0.1
+
+      1 package installed"
+    `);
+    expect(await file(dir, "node_modules", "is-odd", "bun-patch-test.txt").text()).toBe("patched\n");
+    await expectPatchedDependencies(dir, { "is-odd@3.0.1": "patches/is-odd@3.0.1.patch" });
 
     // Remove the patch from package.json (bun.lock still references it) and
     // install again with an empty cache so the package has to be downloaded.
     await Bun.write(
-      join(filedir, "package.json"),
-      JSON.stringify({
-        name: "remove-patch-test",
-        dependencies: {
-          "is-odd": "3.0.1",
-        },
-      }),
+      join(dir, "package.json"),
+      JSON.stringify({ name: "remove-patch-test", dependencies: { "is-odd": "3.0.1" } }),
     );
 
     // This used to panic with `called Option::unwrap() on a None value` while
     // creating the download task: the patch entry had already been moved out of
     // `lockfile.patched_dependencies` into the to-remove list.
-    {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: filedir,
-        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(filedir, "cache-empty") },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("error:");
-      expect(exitCode).toBe(0);
-    }
+    const envEmptyCache = { ...project.env, BUN_INSTALL_CACHE_DIR: join(dir, "cache-empty") };
+    expect(normalizeBunSnapshot(await bunOk(dir, envEmptyCache, "install"))).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      + is-odd@3.0.1
+
+      1 package installed"
+    `);
 
     // The package is reinstalled without the patch.
-    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "package.json")).json()).toMatchObject({
-      name: "is-odd",
-      version: "3.0.1",
+    expect({
+      installed: await file(dir, "node_modules", "is-odd", "package.json").json(),
+      patched: await file(dir, "node_modules", "is-odd", "bun-patch-test.txt").exists(),
+      lockfileHasPatches: (await file(dir, "bun.lock").text()).includes("patchedDependencies"),
+    }).toEqual({
+      installed: { name: "is-odd", version: "3.0.1", main: "index.js" },
+      patched: false,
+      lockfileHasPatches: false,
     });
-    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(false);
-    expect(await Bun.file(join(filedir, "bun.lock")).text()).not.toContain("patchedDependencies");
   });
 });
 
-describe("patchedDependencies contents_hash", () => {
+describe.concurrent("patchedDependencies contents_hash", () => {
   // A patch that creates node_modules/is-odd/m.js; `hunk` is the @@ line.
   const patchHeader = (hunk: string) =>
     "diff --git a/m.js b/m.js\n" +
@@ -1052,17 +786,11 @@ describe("patchedDependencies contents_hash", () => {
       patches: { "p.patch": patch },
     });
 
+  // The projects of one test share `cacheDir`, so a patched package's cache entry is keyed by the
+  // hash of the patch contents alone.
   const install = async (cwd: string, cacheDir: string) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const stdout = await bunOk(cwd, { ...projectEnv(cwd), BUN_INSTALL_CACHE_DIR: cacheDir }, "install");
+    expect(stdout).toContain("1 package installed");
   };
 
   const installedMjs = (dir: string) => Bun.file(join(dir, "node_modules", "is-odd", "m.js")).text();
@@ -1087,18 +815,20 @@ describe("patchedDependencies contents_hash", () => {
     const cache = String(sharedCache);
 
     await install(String(projA), cache);
-    expect(await installedMjs(String(projA))).toContain("AAAAAAAA");
+    expect(await installedMjs(String(projA))).toBe(
+      `module.exports="xxx07QaaaaaU18fmtAHABCDEFGHIJKLMNOPAAAAAAAAgMsUw5DUklmnopqrstuvwxyz";\n`,
+    );
 
     await install(String(projB), cache);
-    const mB = await installedMjs(String(projB));
-    expect(mB).toContain("BBBBBBBB");
-    expect(mB).not.toContain("AAAAAAAA");
+    expect(await installedMjs(String(projB))).toBe(
+      `module.exports="xxx07QaaaaaU18fmtAHABCDEFGHIJKLMNOPBBBBBBBBgMsUw5DUklmnopqrstuvwxyz";\n`,
+    );
 
     // A non-colliding control patch (different size, different content) has
     // always gone to its own cache entry.
     using projC = mkProject("proj-ctl", header + `+module.exports="control payload";\n`);
     await install(String(projC), cache);
-    expect(await installedMjs(String(projC))).toContain("control payload");
+    expect(await installedMjs(String(projC))).toBe(`module.exports="control payload";\n`);
   });
 
   test("patches that differ only after the first 64 KiB get distinct cache entries", async () => {
@@ -1119,7 +849,7 @@ describe("patchedDependencies contents_hash", () => {
     const cache = String(sharedCache);
 
     await install(String(projA), cache);
-    expect(await installedMjs(String(projA))).toContain("TAIL_AAAA");
+    expect(await installedMjs(String(projA))).toEndWith(`\nmodule.exports="TAIL_AAAA";\n`);
 
     await install(String(projB), cache);
     const mB = await installedMjs(String(projB));
@@ -1136,16 +866,6 @@ describe("patchedDependencies contents_hash", () => {
 // install failed with "Couldn't find patch file" because the dependency's patch
 // path was resolved against the consumer's root (#13531).
 describe("patchedDependencies declared by a dependency", () => {
-  const registry = new VerdaccioRegistry();
-
-  beforeAll(async () => {
-    await registry.start();
-  });
-
-  afterAll(() => {
-    registry.stop();
-  });
-
   // Adds a file, so it applies to any version of the package.
   const noDepsPatch = `diff --git a/patched.txt b/patched.txt
 new file mode 100644

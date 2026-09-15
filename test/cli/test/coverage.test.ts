@@ -57,6 +57,448 @@ export class Y {
   );
 });
 
+/** Runs `bun test --coverage` in `dir` with the text and lcov reporters. */
+async function runCoverage(dir: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--coverage-dir=cov"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+  /** The rows of the text table, without the dashed rules. */
+  const table = stderr
+    .split("\n")
+    .filter(line => line.includes(" | "))
+    .map(line => line.trimEnd());
+  const lcov = readFileSync(path.join(dir, "cov", "lcov.info"), "utf-8");
+
+  /** The text table row for `file` plus the lcov `DA:` records for it. */
+  const of = (file: string) => {
+    const row = table.find(line => line.startsWith(` ${file} `));
+    expect({ stderr, row }).toMatchObject({ row: expect.any(String) });
+
+    const record = lcov.split("end_of_record").find(record => record.includes(`SF:${file}\n`))!;
+    const hits: Record<number, number> = {};
+    for (const [, line, count] of record.matchAll(/^DA:(\d+),(\d+)$/gm)) {
+      hits[Number(line)] = Number(count);
+    }
+    /** Per source line (1-based): hit, missed, or not an executable line at all. */
+    const status = (lineCount: number) =>
+      Object.fromEntries(
+        Array.from({ length: lineCount }, (_, i) => {
+          const line = i + 1;
+          return [line, !(line in hits) ? "-" : hits[line] > 0 ? "hit" : "MISSED"];
+        }),
+      );
+    return { row: row!, record, status };
+  };
+  return { table, of };
+}
+
+/** Runs `bun test --coverage` in `dir` and returns the text table row for `file` plus the lcov `DA:` records for it. */
+async function coverageOf(dir: string, file: string) {
+  return (await runCoverage(dir)).of(file);
+}
+
+const skipTestFiles = `[test]\ncoverageSkipTestFiles = true\n`;
+
+test.concurrent("coverage blames the statements that never ran, not the braces around them", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": skipTestFiles,
+    "lib.js": `export function earlyReturn(a) {
+  if (a > 0) {
+    return a;
+  }
+  return -a;
+}
+export function untakenElse(a) {
+  if (a) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+export function guarded(f) {
+  try {
+    return f();
+  } catch (e) {
+    return e;
+  }
+}
+export function make() {
+  return {
+    get(n) {
+      if (n !== undefined) {
+        return n;
+      }
+      return -1;
+    },
+  };
+}
+export function neverCalled(a) {
+  // a comment inside a function that never runs
+  const b = a + 1;
+
+  return b * 2;
+}
+export function neverCalledOneLiner() { return 1; }
+`,
+    "lib.test.js": `import { test, expect } from "bun:test";
+import { earlyReturn, untakenElse, guarded, make } from "./lib.js";
+test("only the happy paths", () => {
+  expect(earlyReturn(2)).toBe(2);
+  expect(untakenElse(true)).toBe(1);
+  expect(guarded(() => 3)).toBe(3);
+  expect(make().get(4)).toBe(4);
+});
+`,
+  });
+
+  const { row, status } = await coverageOf(String(dir), "lib.js");
+  expect(row).toBe(" lib.js    |   71.43 |   60.00 | 5,10-11,17-18,27,31,33,35,37");
+  expect(status(37)).toEqual({
+    1: "hit",
+    2: "hit",
+    3: "hit",
+    4: "-", // `}` closing the if block: the dead block after `return a` starts here
+    5: "MISSED",
+    6: "-",
+    7: "hit",
+    8: "hit",
+    9: "hit",
+    10: "MISSED", // `} else {`
+    11: "MISSED",
+    12: "-",
+    13: "-",
+    14: "hit",
+    15: "hit",
+    16: "hit",
+    17: "MISSED", // `} catch (e) {`
+    18: "MISSED",
+    19: "-",
+    20: "-",
+    21: "hit",
+    22: "hit",
+    23: "hit",
+    24: "hit",
+    25: "hit",
+    26: "-",
+    27: "MISSED", // `return -1`: the executed `},` after it must not count as this line
+    28: "-",
+    29: "hit", // `};` ends the executed return statement
+    30: "-",
+    31: "MISSED", // uncalled function: its declaration line...
+    32: "-", // ...but not the comment
+    33: "MISSED",
+    34: "-", // ...nor the blank line
+    35: "MISSED", // ...and its last statement
+    36: "-",
+    37: "MISSED", // uncalled function written on one line
+  });
+});
+
+// JSC gives the initializer it synthesizes for class fields a range spanning the whole file and
+// cuts it out of the module's top-level block, which then comes back as inverted ranges like
+// `[file_length, 0]`. Those used to be walked as `0..file_length`, marking every line of any
+// file declaring a class field as executed.
+test.concurrent("coverage of a file with class fields still reports its unexecuted lines", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": skipTestFiles,
+    "lib.js": `export class WithField {
+  count = 0;
+}
+export function pick(a) {
+  if (a) {
+    return 1;
+  }
+  return 2;
+}
+`,
+    "lib.test.js": `import { test, expect } from "bun:test";
+import { WithField, pick } from "./lib.js";
+test("pick", () => {
+  expect(new WithField().count).toBe(0);
+  expect(pick(true)).toBe(1);
+});
+`,
+  });
+
+  const { row, record, status } = await coverageOf(String(dir), "lib.js");
+  expect(row).toBe(" lib.js    |  100.00 |   85.71 | 8");
+  expect(status(9)).toEqual({
+    1: "hit",
+    2: "hit",
+    3: "hit",
+    4: "hit",
+    5: "hit",
+    6: "hit",
+    7: "-",
+    8: "MISSED",
+    9: "-",
+  });
+  // `pick` is the only function: the constructor JSC synthesizes for `WithField` is not one.
+  expect(record).toContain("\nFNF:1\nFNH:1\n");
+});
+
+// Shapes from #8290, #7025 and #29691: uncalled methods are reported on their own lines, and the
+// constructors JSC synthesizes (base class, class expression, derived class) are neither counted
+// as uncalled functions nor charged to the first line of the file.
+test.concurrent("coverage of classes counts methods, not synthesized constructors", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": skipTestFiles,
+    "classes.js": `export class Base {
+  calls = [];
+  async consume(event) {
+    this.calls.push(event);
+  }
+  covered() { return 1; }
+  another() { return 2; }
+}
+export const factory = () => class {};
+export class Derived extends factory() {}
+`,
+    // The file from #8290: blank lines and four-space indentation between the members. The
+    // uncalled `consume` was reported as `3-5` (shifted onto `calls = []`) and `another` not at all.
+    "live.mock.mjs": `export class MockLive {
+
+    calls = []
+
+    async consume(event) {
+        this.calls.push({ consume: { event } })
+    }
+
+    covered() { return 1 }
+
+    another() { return 2 }
+}
+`,
+    "classes.test.js": `import { test, expect } from "bun:test";
+import { Base, Derived } from "./classes.js";
+import { MockLive } from "./live.mock.mjs";
+test("covered", () => {
+  expect(new Base().covered()).toBe(1);
+  expect(Derived.name).toBe("Derived");
+  expect(new MockLive().covered()).toBe(1);
+});
+`,
+  });
+
+  const { of } = await runCoverage(String(dir));
+  const { row, record, status } = of("classes.js");
+  // consume, covered, another and factory; covered and factory ran.
+  expect(record).toContain("\nFNF:4\nFNH:2\n");
+  expect(row).toMatch(/^ classes\.js +\|   50\.00 \| +\d+\.\d\d \| 3-4,7$/);
+  expect(status(10)).toMatchObject({
+    3: "MISSED",
+    4: "MISSED",
+    5: "-",
+    6: "hit",
+    7: "MISSED",
+    9: "hit",
+    10: "hit",
+  });
+
+  const mock = of("live.mock.mjs");
+  expect(mock.record).toContain("\nFNF:3\nFNH:1\n");
+  expect(mock.row).toMatch(/^ live\.mock\.mjs \|   33\.33 \| +\d+\.\d\d \| 5-6,11$/);
+  expect(mock.status(12)).toEqual({
+    1: "hit",
+    2: "-",
+    3: "hit",
+    4: "-",
+    5: "MISSED",
+    6: "MISSED",
+    7: "-",
+    8: "-",
+    9: "hit",
+    10: "-",
+    11: "MISSED",
+    12: "hit",
+  });
+});
+
+test.concurrent("coverageIgnoreSourcemaps reports the line of the dead statement itself", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `${skipTestFiles}coverageIgnoreSourcemaps = true\n`,
+    // Transpiles to itself line for line, so the generated line numbers are the source's.
+    "lib.js": `export function earlyReturn(a) {
+  if (a > 0) {
+    return a;
+  }
+  return -a;
+}
+`,
+    "lib.test.js": `import { test, expect } from "bun:test";
+import { earlyReturn } from "./lib.js";
+test("positive", () => {
+  expect(earlyReturn(2)).toBe(2);
+});
+`,
+  });
+
+  const { row, status } = await coverageOf(String(dir), "lib.js");
+  expect(row).toBe(" lib.js    |  100.00 |   75.00 | 5");
+  expect(status(6)).toEqual({
+    1: "hit",
+    2: "hit",
+    3: "hit",
+    4: "-",
+    5: "MISSED",
+    6: "-",
+  });
+});
+
+// The file from #5307, in TypeScript: the type annotations are stripped, so generated columns
+// differ from the source's and every byte goes through the source map. The `return result` that
+// the test never reaches was reported as covered, with the column below 100% but empty.
+test.concurrent("coverage of a TypeScript file reports the unreached tail of a nested function", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": skipTestFiles,
+    "table.ts": `export function make() {
+  const cache: Record<number, number> = {}
+  return {
+    get(n: number) {
+      const result = cache[n]
+      if (result === undefined) {
+        const v = n * 2
+        cache[n] = v
+        return v
+      }
+      return result
+    },
+  }
+}
+export const table = make()
+`,
+    "table.test.ts": `import { test, expect } from "bun:test";
+import { table } from "./table";
+test("get", () => {
+  expect(table.get(1)).toBe(2);
+  expect(table.get(2)).toBe(4);
+});
+`,
+  });
+
+  const { row, status } = await coverageOf(String(dir), "table.ts");
+  expect(row).toBe(" table.ts  |  100.00 |   91.67 | 11");
+  expect(status(15)).toEqual({
+    1: "hit",
+    2: "hit",
+    3: "hit",
+    4: "hit",
+    5: "hit",
+    6: "hit",
+    7: "hit",
+    8: "hit",
+    9: "hit",
+    10: "-", // `}` closing the if block
+    11: "MISSED",
+    12: "-", // `},`
+    13: "hit", // `}` ends the executed return statement
+    14: "-",
+    15: "hit",
+  });
+});
+
+// Every shape of the uncovered-lines column, in TypeScript: a run that starts on line 1 (the old
+// reporter used line 0 as "no run yet"), isolated lines, a run followed by an isolated line, and a
+// lone line (the old reporter dropped a trailing single-line run, #9008). The classes have no
+// constructor of their own, so JSC's synthesized ones must not count as functions (#7025).
+test.concurrent("coverage prints every uncovered run and counts no synthesized constructors", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": skipTestFiles,
+    "classes.ts": `export class Base {
+  #x = 0;
+  get x(): number {
+    return this.#x;
+  }
+  set x(v: number) {
+    this.#x = v;
+  }
+}
+export class Derived extends Base {
+  y = 1;
+}
+`,
+    "line1.ts": `export function miss(): never {
+  throw new Error("a");
+}
+export function also(): never {
+  throw new Error("b");
+}
+export function ok2() { return "ok"; }
+`,
+    "many.ts": `export function check(n: number): string {
+  if (n === 1) {
+    throw new Error("one");
+  }
+  if (n === 2) {
+    throw new Error("two");
+  }
+  if (n === 3) {
+    throw new Error("three");
+  }
+  return "ok";
+}
+`,
+    "mix.ts": `export function mix(n: number): string {
+  if (n === 1) {
+    n += 1;
+    throw new Error("a");
+  }
+  const x = n * 2;
+  if (x === -1) {
+    throw new Error("b");
+  }
+  return "ok";
+}
+`,
+    "one.ts": `export function only(n: number): string {
+  if (n < 0) {
+    throw new Error("negative");
+  }
+  return "ok";
+}
+`,
+    "demo.test.ts": `import { test, expect } from "bun:test";
+import { Base, Derived } from "./classes";
+import { ok2 } from "./line1";
+import { check } from "./many";
+import { mix } from "./mix";
+import { only } from "./one";
+test("paths", () => {
+  const d = new Derived();
+  d.x = 5;
+  expect(d.x).toBe(5);
+  expect(d.y).toBe(1);
+  expect(new Base().x).toBe(0);
+  expect(ok2()).toBe("ok");
+  expect(check(0)).toBe("ok");
+  expect(mix(2)).toBe("ok");
+  expect(only(1)).toBe("ok");
+});
+`,
+  });
+
+  const { table, of } = await runCoverage(String(dir));
+  expect(table).toEqual([
+    "File        | % Funcs | % Lines | Uncovered Line #s",
+    "All files   |   86.67 |   64.00 |",
+    " classes.ts |  100.00 |  100.00 |",
+    " line1.ts   |   33.33 |   20.00 | 1-2,4-5",
+    " many.ts    |  100.00 |   62.50 | 3,6,9",
+    " mix.ts     |  100.00 |   62.50 | 3-4,8",
+    " one.ts     |  100.00 |   75.00 | 3",
+  ]);
+  // The getter and the setter; `miss`, `also` and `ok2`.
+  expect(of("classes.ts").record).toContain("\nFNF:2\nFNH:2\n");
+  expect(of("line1.ts").record).toContain("\nFNF:3\nFNH:1\n");
+});
+
 test("coverage excludes node_modules directory", () => {
   using dir = tempDir("cov", {
     "node_modules/pi/index.js": `
@@ -192,8 +634,8 @@ test("should call only some functions", () => {
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
-All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 6
+All files      |   75.00 |   75.00 |
+ include-me.ts |   50.00 |   50.00 | 6-7
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 
@@ -385,7 +827,7 @@ test("should call both functions", () => {
 SF:include-me.ts
 FNF:1
 FNH:1
-DA:2,11
+DA:2,10
 DA:3,17
 LF:2
 LH:2
@@ -397,9 +839,9 @@ FNH:1
 DA:2,40
 DA:3,41
 DA:4,39
-DA:6,42
-DA:7,39
-DA:8,36
+DA:6,41
+DA:7,37
+DA:8,35
 DA:9,2
 LF:7
 LH:7

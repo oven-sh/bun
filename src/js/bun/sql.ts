@@ -26,7 +26,10 @@ enum ReservedConnectionState {
 interface TransactionState {
   connectionState: ReservedConnectionState;
   reject: (err: Error) => void;
-  storedError?: Error | null | undefined;
+  /// ROLLBACK statements in flight after a callback threw. While non-zero, a
+  /// disconnect leaves the rejection to the code awaiting the ROLLBACK, which
+  /// attaches the callback error as `cause`.
+  rollbacks: number;
   queries: Set<Query<any, any>>;
 }
 
@@ -37,6 +40,15 @@ interface ReserveAbortState {
   promiseWithResolvers: { promise: Promise<any>; resolve: (value: any) => void; reject: (reason?: any) => void };
   onConnected: ((err: Error | null, pooledConnection: any) => void) | null;
   onAbort: (() => void) | null;
+}
+
+/// Returns `error` with `cause` attached. A dropped connection rejects every
+/// waiter with one shared error object, so the cause goes on a copy.
+function withCause(error: unknown, cause: unknown): unknown {
+  if (!Error.isError(error) || "cause" in error) return error;
+  const copy = new Error(error.message, { cause });
+  Object.setPrototypeOf(copy, Object.getPrototypeOf(error));
+  return Object.assign(copy, error);
 }
 
 function settleReservedTransaction(
@@ -255,7 +267,7 @@ const SQL: typeof Bun.SQL = function SQL(
       query.reject(err);
     }
 
-    if (err) {
+    if (err && this.rollbacks === 0) {
       return reject(err);
     }
   }
@@ -334,7 +346,7 @@ const SQL: typeof Bun.SQL = function SQL(
     const state: TransactionState = {
       connectionState: ReservedConnectionState.acceptQueries,
       reject,
-      storedError: null,
+      rollbacks: 0,
       queries: new Set(),
     };
 
@@ -585,6 +597,7 @@ const SQL: typeof Bun.SQL = function SQL(
     const state: TransactionState = {
       connectionState: ReservedConnectionState.acceptQueries,
       reject,
+      rollbacks: 0,
       queries: new Set(),
     };
 
@@ -819,7 +832,14 @@ const SQL: typeof Bun.SQL = function SQL(
         return result;
       } catch (err) {
         if (!(state.connectionState & ReservedConnectionState.closed)) {
-          await run_internal_transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
+          state.rollbacks++;
+          try {
+            await run_internal_transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
+          } catch (rollback_err) {
+            throw withCause(rollback_err, err);
+          } finally {
+            state.rollbacks--;
+          }
         }
         throw err;
       }
@@ -871,15 +891,16 @@ const SQL: typeof Bun.SQL = function SQL(
       await run_internal_transaction_sql(COMMIT_COMMAND);
       return resolve(transaction_result);
     } catch (err) {
-      try {
-        if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
+      if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
+        state.rollbacks++;
+        try {
           if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
             await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
           }
           await run_internal_transaction_sql(ROLLBACK_COMMAND);
+        } catch (rollback_err) {
+          return reject(withCause(rollback_err, err));
         }
-      } catch (err) {
-        return reject(err);
       }
       return reject(err);
     } finally {

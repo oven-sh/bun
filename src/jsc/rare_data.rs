@@ -32,7 +32,7 @@ use super::uuid::UUID;
 //   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
 //   - `node_fs_stat_watcher_scheduler`
-//     → erased `*mut c_void` slot; high tier lazy-inits.
+//     → moved to `bun_runtime::jsc_hooks::RuntimeState` (typed `RefPtr`).
 //   - the `bun test --isolate` watcher/server registries → moved to
 //     `bun_runtime::jsc_hooks::ActiveHandles` so the entries keep their
 //     concrete types.
@@ -249,10 +249,6 @@ pub struct RareData {
     /// Held for the VM's lifetime so the weak-cache entry never tombstones.
     pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
 
-    /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
-    /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
-    pub(crate) node_fs_stat_watcher_scheduler: Option<NonNull<c_void>>,
-
     /// `bun_runtime::node::memory_pressure::MemoryPressureWatcher` — erased
     /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
     pub(crate) memory_pressure_watcher: Option<NonNull<c_void>>,
@@ -326,7 +322,6 @@ impl Default for RareData {
             ws_client_group_: SocketGroup::default(),
             ws_client_tls_group: SocketGroup::default(),
             default_client_ssl_ctx: None,
-            node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
@@ -662,13 +657,6 @@ impl RareData {
     }
 
     // ── trivial field accessors ────────────────────────────────────────────
-
-    /// Raw slot — lazy-init body lives in `bun_runtime::node::node_fs_stat_watcher`
-    /// (`StatWatcherScheduler::init` is higher-tier).
-    #[inline]
-    pub fn node_fs_stat_watcher_scheduler_slot(&mut self) -> &mut Option<NonNull<c_void>> {
-        &mut self.node_fs_stat_watcher_scheduler
-    }
 
     /// Raw slot — lazy-init body lives in `bun_runtime::node::memory_pressure`.
     #[inline]

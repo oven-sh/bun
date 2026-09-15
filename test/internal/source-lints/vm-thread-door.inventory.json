@@ -126,15 +126,7 @@
     ]
   },
   "src/runtime/node/fs_events.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": [
-      "CoreFoundation",
-      "FSEventsLoop"
-    ],
-    "unsafe impl Sync": [
-      "CoreFoundation",
-      "FSEventsLoop"
-    ]
+    "thread spawn": 1
   },
   "src/runtime/node/memory_pressure.rs": {
     "thread spawn": 1
@@ -158,7 +150,8 @@
   "src/runtime/node/node_fs_stat_watcher.rs": {
     "WorkPool::schedule*": 2,
     "owned_task!": [
-      "InitialStatTask"
+      "InitialStatTask",
+      "StatPassTask"
     ]
   },
   "src/runtime/node/node_process.rs": {
@@ -170,13 +163,7 @@
     "WorkPool::schedule*": 1
   },
   "src/runtime/node/path_watcher.rs": {
-    "thread spawn": 2,
-    "unsafe impl Send": [
-      "PathWatcherManager"
-    ],
-    "unsafe impl Sync": [
-      "PathWatcherManager"
-    ]
+    "thread spawn": 2
   },
   "src/runtime/node/types.rs": {
     "unsafe impl Send": [

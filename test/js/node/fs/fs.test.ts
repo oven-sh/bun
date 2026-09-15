@@ -5016,6 +5016,7 @@ it("fs.constants", () => {
       UV_FS_O_FILEMAP: 536870912,
       O_TRUNC: 512,
       O_APPEND: 8,
+      O_NOFOLLOW: 16777216,
       S_IRUSR: 256,
       S_IWUSR: 128,
       F_OK: 0,
@@ -5820,6 +5821,120 @@ it.if(isWindows)("writing to windows hidden file is possible", () => {
   writeFileSync(join(temp, "file.txt"), "Hello World");
   const content = readFileSync(join(temp, "file.txt"), "utf8");
   expect(content).toBe("Hello World");
+});
+
+describe.if(isWindows)("O_NOFOLLOW on Windows", () => {
+  const { O_RDONLY, O_WRONLY, O_CREAT, O_TRUNC, O_NOFOLLOW } = constants;
+
+  // A junction (`mklink /J`) and a file symlink, each next to its target.
+  function setup() {
+    const dir = tempDir("fs-open-nofollow", { "target-dir": { "inner.txt": "inner" }, "target.txt": "target data" });
+    const root = String(dir);
+    const mklink = spawnSync(
+      ["cmd.exe", "/d", "/c", "mklink", "/J", join(root, "junction"), join(root, "target-dir")],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    expect({ stderr: mklink.stderr.toString(), exitCode: mklink.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    symlinkSync(join(root, "target.txt"), join(root, "file-link"), "file");
+    return dir;
+  }
+
+  function inoOfOpen(file: string, flags: number) {
+    const fd = openSync(file, flags);
+    try {
+      return fstatSync(fd, { bigint: true }).ino;
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  function readOpen(file: string, flags: number) {
+    const fd = openSync(file, flags);
+    try {
+      return readFileSync(fd, "utf8");
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  it.each(["junction", "file-link"])("openSync opens a %s itself", name => {
+    using dir = setup();
+    const link = join(String(dir), name);
+    const target = statSync(link, { bigint: true }).ino;
+    const self = lstatSync(link, { bigint: true }).ino;
+    expect(self).not.toBe(target);
+    expect({
+      follow: inoOfOpen(link, O_RDONLY),
+      nofollow: inoOfOpen(link, O_RDONLY | O_NOFOLLOW),
+    }).toEqual({ follow: target, nofollow: self });
+  });
+
+  it("a file symlink has no data of its own", () => {
+    using dir = setup();
+    const link = join(String(dir), "file-link");
+    expect({
+      follow: readOpen(link, O_RDONLY),
+      nofollow: readOpen(link, O_RDONLY | O_NOFOLLOW),
+    }).toEqual({ follow: "target data", nofollow: "" });
+  });
+
+  it("a write does not reach the target of a file symlink", () => {
+    using dir = setup();
+    const root = String(dir);
+    const link = join(root, "file-link");
+
+    const fd = openSync(link, O_WRONLY | O_NOFOLLOW);
+    try {
+      writeSync(fd, "written");
+    } finally {
+      closeSync(fd);
+    }
+    // writeFileSync opens through NtCreateFile, openSync through libuv.
+    writeFileSync(link, "written", { flag: O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW });
+    expect(readFileSync(join(root, "target.txt"), "utf8")).toBe("target data");
+
+    writeFileSync(link, "written");
+    expect(readFileSync(join(root, "target.txt"), "utf8")).toBe("written");
+  });
+
+  it("promises.open and fs.open open a junction itself", async () => {
+    using dir = setup();
+    const link = join(String(dir), "junction");
+    const self = lstatSync(link, { bigint: true }).ino;
+
+    const handle = await promises.open(link, O_RDONLY | O_NOFOLLOW);
+    try {
+      expect((await handle.stat({ bigint: true })).ino).toBe(self);
+    } finally {
+      await handle.close();
+    }
+
+    const fd = await promisify(fs.open)(link, O_RDONLY | O_NOFOLLOW);
+    try {
+      expect(fstatSync(fd, { bigint: true }).ino).toBe(self);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("has no effect on a path that is not a link", () => {
+    using dir = setup();
+    const root = String(dir);
+    expect(readOpen(join(root, "target.txt"), O_RDONLY | O_NOFOLLOW)).toBe("target data");
+    expect(inoOfOpen(join(root, "target-dir"), O_RDONLY | O_NOFOLLOW)).toBe(
+      statSync(join(root, "target-dir"), { bigint: true }).ino,
+    );
+
+    const fd = openSync(join(root, "new.txt"), O_WRONLY | O_CREAT | O_NOFOLLOW);
+    try {
+      writeSync(fd, "new");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(join(root, "new.txt"), "utf8")).toBe("new");
+  });
 });
 
 it("fs.ReadStream allows functions", () => {

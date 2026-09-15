@@ -54,6 +54,17 @@ impl<Value> GuardedBy<Value, Mutex> {
             mutex: Mutex::new(),
         }
     }
+
+    /// `None` if the lock is held. Only for the [`Mutex`] backend: [`RawMutex`]
+    /// is deliberately `lock`/`unlock`-only.
+    #[inline]
+    pub fn try_lock(&self) -> Option<GuardedLock<'_, Value, Mutex>> {
+        if self.mutex.try_lock() {
+            Some(GuardedLock { guarded: self })
+        } else {
+            None
+        }
+    }
 }
 
 impl<Value, M: RawMutex> GuardedBy<Value, M> {

@@ -99,6 +99,10 @@ mod posix {
     /// reflects listener presence.
     struct MemoryPressureWatcher {
         poll: Option<NonNull<FilePoll>>,
+        /// `some total=` of the PSI file when the trigger was armed, then
+        /// at the last emitted event. See `psi_growth_reached_threshold`.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        psi_some_total: u64,
     }
 
     fn take_watcher(vm: &mut VirtualMachine) -> Option<Box<MemoryPressureWatcher>> {
@@ -153,6 +157,55 @@ mod posix {
     /// `some 150000 200000` and rejects the 200 ms window with `EINVAL`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) const PSI_TRIGGER: &[u8] = b"some 150000 2000000\0";
+
+    /// The threshold in `PSI_TRIGGER`, in microseconds.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const PSI_THRESHOLD_US: u64 = 150_000;
+
+    /// The `some total=` field of a PSI file, in microseconds.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) fn parse_psi_some_total(contents: &[u8]) -> Option<u64> {
+        use bun_core::strings;
+        let line = strings::split(contents, b"\n").find_map(|line| line.strip_prefix(b"some "))?;
+        let digits = &line[strings::index_of(line, b"total=")? + "total=".len()..];
+        let end = digits.iter().take_while(|b| b.is_ascii_digit()).count();
+        core::str::from_utf8(&digits[..end]).ok()?.parse().ok()
+    }
+
+    /// Reads the PSI file behind the trigger. `pread` at offset 0 rewinds
+    /// the seq_file, so the same fd can be read again and again.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn read_psi_file(fd: Fd, buf: &mut [u8; 256]) -> Option<&[u8]> {
+        let n = bun_sys::pread(fd, buf, 0).ok()?;
+        Some(&buf[..n])
+    }
+
+    /// Whether a `POLLPRI` on the trigger fd reports real pressure.
+    ///
+    /// `psi_trigger_create()` in `kernel/sched/psi.c` seeds every trigger's
+    /// window from `total[PSI_POLL]`, but an unprivileged trigger is then
+    /// evaluated against `total[PSI_AVGS]`. `total[PSI_POLL]` only advances
+    /// while a privileged trigger exists, so on most hosts the first stall
+    /// after arming reports all stall since boot as "growth" and fires the
+    /// trigger. The inflated growth is carried in `prev_growth` for one more
+    /// window, so a second stall can fire it again. Both are false events.
+    ///
+    /// A real event needs `PSI_THRESHOLD_US` of growth inside one window.
+    /// Growth since the last accepted event (or since arming) is at least
+    /// that, so the check drops only the false events. `last_total` moves
+    /// to the current value on each accepted event. An unreadable file
+    /// keeps the kernel's verdict.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) fn psi_growth_reached_threshold(last_total: &mut u64, contents: &[u8]) -> bool {
+        let Some(total) = parse_psi_some_total(contents) else {
+            return true;
+        };
+        if total.saturating_sub(*last_total) < PSI_THRESHOLD_US {
+            return false;
+        }
+        *last_total = total;
+        true
+    }
 
     /// Open a PSI memory file and write a trigger. Tries the system-wide
     /// `/proc/pressure/memory` first, then the current cgroup's file.
@@ -217,8 +270,20 @@ mod posix {
         if slot(vm).is_some() {
             return;
         }
+        let poll = register_os_watch(global);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let psi_some_total = poll
+            .and_then(|poll| {
+                // SAFETY: fresh hive slot, not yet handed out.
+                let fd = unsafe { poll.as_ref() }.fd;
+                let mut buf = [0u8; 256];
+                parse_psi_some_total(read_psi_file(fd, &mut buf)?)
+            })
+            .unwrap_or(0);
         let watcher = Box::new(MemoryPressureWatcher {
-            poll: register_os_watch(global),
+            poll,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            psi_some_total,
         });
         *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
     }
@@ -261,6 +326,23 @@ mod posix {
             drop(take_watcher(vm));
             deinit_poll(poll);
             return;
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let Some(raw) = *slot(vm) else {
+                return;
+            };
+            // SAFETY: slot is populated only by `install` with a
+            // `Box<MemoryPressureWatcher>`, and nothing else borrows it
+            // while the poll dispatch runs.
+            let watcher = unsafe { raw.cast::<MemoryPressureWatcher>().as_mut() };
+            let mut buf = [0u8; 256];
+            if let Some(contents) = read_psi_file(poll.fd, &mut buf)
+                && !psi_growth_reached_threshold(&mut watcher.psi_some_total, contents)
+            {
+                return;
+            }
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -463,6 +545,36 @@ pub(crate) fn js_psi_trigger(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = global;
+        Ok(JSValue::NULL)
+    }
+}
+
+/// `memoryPressurePsiFilter(armed, ...polls)`: runs the PSI event filter
+/// over file contents. `armed` is the file as read when the trigger was
+/// armed, each of `polls` is the file as read on one `POLLPRI`. Returns
+/// whether each poll emits. `null` where there is no PSI backend.
+#[bun_jsc::host_fn]
+pub(crate) fn js_psi_filter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let args = frame.arguments();
+        let Some((armed, polls)) = args.split_first() else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "memoryPressurePsiFilter() expects the file contents at arm time"
+            )));
+        };
+        let mut last_total = posix::parse_psi_some_total(&armed.to_utf8(global)?).unwrap_or(0);
+        JSValue::create_array_from_iter(global, polls.iter(), |contents| {
+            let contents = contents.to_utf8(global)?;
+            Ok(JSValue::js_boolean(posix::psi_growth_reached_threshold(
+                &mut last_total,
+                &contents,
+            )))
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        let _ = (global, frame);
         Ok(JSValue::NULL)
     }
 }

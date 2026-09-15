@@ -270,6 +270,52 @@ const files = {
         console.log("E3", req("pkg2"));
       },
 
+      async manifest() {
+        // A miss through a package.json's "imports" or "exports" map checks
+        // whether the file still has the bytes that were parsed.
+        // "#alias" added to the package.json next to the importer.
+        write(path.join("m1", "package.json"), JSON.stringify({ name: "m1", imports: {} }));
+        write(path.join("m1", "impl.cjs"), "");
+        const m1 = requireFrom("m1");
+        res("S1", () => m1.resolve("#alias"));
+        write(path.join("m1", "package.json"), JSON.stringify({ name: "m1", imports: { "#alias": "./impl.cjs" } }));
+        res("S2", () => m1.resolve("#alias"));
+        // The same with the package.json above the importer, and no "imports" at first.
+        write(path.join("m2", "package.json"), JSON.stringify({ name: "m2" }));
+        write(path.join("m2", "impl.cjs"), "");
+        fs.mkdirSync(path.join("m2", "src", "deep"), { recursive: true });
+        const m2 = requireFrom(path.join("m2", "src", "deep"));
+        res("T1", () => m2.resolve("#alias"));
+        write(path.join("m2", "package.json"), JSON.stringify({ name: "m2", imports: { "#alias": "./impl.cjs" } }));
+        res("T2", () => m2.resolve("#alias"));
+        // A subpath added to the "exports" of an installed package.
+        write(nm("m3", "package.json"), JSON.stringify({ name: "m3", exports: { ".": "./i.cjs" } }));
+        write(nm("m3", "i.cjs"), "");
+        write(nm("m3", "sub.cjs"), "");
+        res("U1", () => require.resolve("m3/sub"));
+        write(nm("m3", "package.json"), JSON.stringify({ name: "m3", exports: { ".": "./i.cjs", "./sub": "./sub.cjs" } }));
+        res("U2", () => require.resolve("m3/sub"));
+        // A package that imports itself by name, from below its root.
+        write(path.join("m4", "package.json"), JSON.stringify({ name: "m4", exports: { ".": "./i.cjs" } }));
+        write(path.join("m4", "sub.cjs"), "");
+        fs.mkdirSync(path.join("m4", "src"));
+        const m4 = requireFrom(path.join("m4", "src"));
+        res("V1", () => m4.resolve("m4/sub"));
+        write(path.join("m4", "package.json"), JSON.stringify({ name: "m4", exports: { ".": "./i.cjs", "./sub": "./sub.cjs" } }));
+        res("V2", () => m4.resolve("m4/sub"));
+        // A package.json with the alias created between the importer and the old one.
+        write(path.join("m5", "package.json"), JSON.stringify({ name: "m5" }));
+        write(path.join("m5", "inner", "impl.cjs"), "");
+        fs.mkdirSync(path.join("m5", "inner", "src"));
+        const m5 = requireFrom(path.join("m5", "inner", "src"));
+        res("X1", () => m5.resolve("#alias"));
+        write(path.join("m5", "inner", "package.json"), JSON.stringify({ name: "inner", imports: { "#alias": "./impl.cjs" } }));
+        res("X2", () => m5.resolve("#alias"));
+        // A map that did not change keeps failing.
+        res("W1", () => m1.resolve("#other"));
+        res("W2", () => require.resolve("m3/hidden"));
+      },
+
       async build() {
         // Bun.build() shares the cache across calls. Five shapes of "installed
         // after the first build failed".
@@ -461,6 +507,29 @@ describe.concurrent("a failed resolution sees files and packages created after t
       "E1 OK 1.0.0
       E2 ERR ENOENT reading "<dir>/node_modules/pkg2/lib1.js"
       E3 OK 2.0.0"
+      ,
+      }
+    `);
+  });
+
+  test("an imports or exports entry added to a package.json after the miss", async () => {
+    expect(await runGroup("manifest")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "S1 ERR MODULE_NOT_FOUND
+      S2 OK m1/impl.cjs
+      T1 ERR MODULE_NOT_FOUND
+      T2 OK m2/impl.cjs
+      U1 ERR MODULE_NOT_FOUND
+      U2 OK node_modules/m3/sub.cjs
+      V1 ERR MODULE_NOT_FOUND
+      V2 OK m4/sub.cjs
+      X1 ERR MODULE_NOT_FOUND
+      X2 OK m5/inner/impl.cjs
+      W1 ERR MODULE_NOT_FOUND
+      W2 ERR MODULE_NOT_FOUND"
       ,
       }
     `);

@@ -581,6 +581,10 @@ enum TouchedKind {
     /// A searched level, or a `node_modules` directory. Dropped with a
     /// `NoNodeModules` level above it that gained one, so its parent link is rebuilt.
     SearchLevel,
+    /// A lookup went through this directory's `package.json`, or found none here
+    /// on the way to one: its `imports` or `exports` map had no match. Dropped
+    /// when the file no longer has the bytes that were parsed, or exists now.
+    PackageJson,
 }
 
 #[derive(Clone, Copy)]
@@ -2556,6 +2560,12 @@ impl<'a> Resolver<'a> {
         record_touched(TouchedKind::SearchLevel, dir, b"");
     }
 
+    /// A lookup that missed depended on the `package.json` of `dir`, or on its absence.
+    #[inline]
+    fn record_package_json(&self, dir: &[u8]) {
+        record_touched(TouchedKind::PackageJson, dir, b"");
+    }
+
     /// Check each recorded negative on disk and drop the cached directories that
     /// disagree. Returns whether anything was dropped.
     fn bust_touched_dirs(&mut self) -> bool {
@@ -2565,8 +2575,9 @@ impl<'a> Resolver<'a> {
         touched.recording = false;
 
         let mut busted = false;
-        // Indices of the `NoNodeModules` records whose directory has one now.
-        let mut gained_node_modules: Vec<usize> = Vec::new();
+        // Indices of the records whose directory is rebuilt with every walked level
+        // inside it: a `NoNodeModules` that has one now, a `PackageJson` that changed.
+        let mut changed_levels: Vec<usize> = Vec::new();
         {
             let mut buf = bun_paths::path_buffer_pool::get();
             let mut seen: Vec<u64> = Vec::with_capacity(touched.records.len());
@@ -2592,23 +2603,30 @@ impl<'a> Resolver<'a> {
                     }
                     TouchedKind::NoNodeModules => {
                         if Self::path_exists(&mut buf, &[dir, b"node_modules"]) {
-                            gained_node_modules.push(i);
+                            changed_levels.push(i);
                         }
                     }
                     TouchedKind::SearchLevel => {}
+                    TouchedKind::PackageJson => {
+                        if self.package_json_changed_on_disk(dir) {
+                            changed_levels.push(i);
+                        }
+                    }
                 }
             }
         }
         // `load_node_modules` reaches a level through the parent link of the level
-        // below it, so every level up to the one that gained `node_modules` is rebuilt.
-        for &gained in &gained_node_modules {
-            let gained_dir = touched.records[gained].dir(&touched.bytes);
+        // below it, so every level up to the one that changed is rebuilt.
+        for &changed in &changed_levels {
+            let changed_dir = touched.records[changed].dir(&touched.bytes);
             for record in &touched.records {
                 let dir = record.dir(&touched.bytes);
                 if matches!(
                     record.kind,
-                    TouchedKind::NoNodeModules | TouchedKind::SearchLevel
-                ) && Self::is_dir_or_inside(dir, gained_dir)
+                    TouchedKind::NoNodeModules
+                        | TouchedKind::SearchLevel
+                        | TouchedKind::PackageJson
+                ) && Self::is_dir_or_inside(dir, changed_dir)
                 {
                     busted |= self.bust_dir_cache(dir);
                 }
@@ -2644,6 +2662,23 @@ impl<'a> Resolver<'a> {
         }
         buf[len] = 0;
         bun_sys::exists_z(bun_core::ZStr::from_buf(&buf[..], len))
+    }
+
+    /// Whether `dir`'s `package.json` no longer has the bytes the cached one was
+    /// parsed from, or exists where the cache has none. A directory that is not
+    /// cached has nothing stale to drop.
+    fn package_json_changed_on_disk(&mut self, dir: &[u8]) -> bool {
+        let Some(dir_info) = self.dir_cache_mut().get(dir) else {
+            return false;
+        };
+        let Some(package_json) = dir_info.package_json() else {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            return Self::path_exists(&mut buf, &[dir, b"package.json"]);
+        };
+        match bun_sys::File::read_from(FD::cwd(), package_json.source.path.text) {
+            Ok(bytes) => bytes[..] != package_json.source_contents[..],
+            Err(_) => true,
+        }
     }
 
     /// Both are cache keys: absolute, no trailing separator unless a root.
@@ -2742,10 +2777,16 @@ impl<'a> Resolver<'a> {
         let mut is_self_reference = false;
 
         // Find the parent directory with the "package.json" file
+        let is_subpath_import = import_path.starts_with(b"#") && !forbid_imports;
         let mut dir_info_package_json: Option<DirInfoRef> = Some(dir_info);
         while let Some(d) = dir_info_package_json {
             if d.package_json.is_some() {
                 break;
+            }
+            if is_subpath_import {
+                self.record_package_json(d.abs_path);
+            } else {
+                self.record_search_level(d.abs_path);
             }
             dir_info_package_json = d.get_parent();
         }
@@ -2753,6 +2794,9 @@ impl<'a> Resolver<'a> {
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
         if let Some(_dir_info_package_json) = dir_info_package_json {
             let package_json = _dir_info_package_json.package_json().unwrap();
+            if is_subpath_import {
+                self.record_package_json(_dir_info_package_json.abs_path);
+            }
 
             if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
                 let r = self.load_package_imports(
@@ -2986,6 +3030,7 @@ impl<'a> Resolver<'a> {
                                         return MatchStatus::Success;
                                     }
 
+                                    self.record_package_json(abs_package_path);
                                     self.extension_order = prev_extension_order;
                                     if let Some(d) = self.debug_logs.as_mut() {
                                         d.decrease_indent();

@@ -36,6 +36,7 @@ const dir = String(
     // Every opener takes the host's state object: nothing here depends on `globals`.
     "data.txt": "0123456789",
     "entry.js": "export const a = 1;",
+    "ticker.mjs": `setInterval(() => state.ticks++, 1);`,
     "app.mjs": `
       import net from "node:net";
       import http from "node:http";
@@ -166,6 +167,12 @@ const dir = String(
           const channel = new BroadcastChannel("isolation-" + state.tag);
           channel.onmessage = () => state.ticks++;
           state.close = () => channel.close();
+        },
+        nestedGraph(state) {
+          // A graph this graph's code makes, with a context of its own.
+          const inner = new Bun.ModuleGraph({ isolateIO: true, globals: { state } });
+          state.close = () => inner.dispose();
+          return inner.import(import.meta.dir + "/ticker.mjs");
         },
         messagePort(state) {
           // The host keeps the other port and posts to it.
@@ -892,6 +899,7 @@ const kinds: Record<string, Kind> = {
       }
     },
   },
+  nestedGraph: { alive: state => ticks(state) },
   messagePort: { alive: state => ticks(state, () => state.port.postMessage(1)) },
   eventTargetTimer: { alive: state => ticks(state) },
   serveWebSocket: {
@@ -1030,6 +1038,49 @@ describe.concurrent("ModuleGraph isolation: what a disposed graph opens is close
         await until(async () => !(await kinds[kind].alive(state)));
       } finally {
         state.close?.();
+      }
+    });
+  }
+});
+
+describe.concurrent("ModuleGraph isolation: fs.watchFile of one path by several owners", () => {
+  // node:fs keeps one StatWatcher per path for all the listeners of fs.watchFile(path): per owner,
+  // or disposing the graph that happened to make it would silence everybody watching that file.
+  for (const first of ["graph", "host"] as const) {
+    test(first + " watches first: dispose() stops the graph's listener and only it", async () => {
+      using disposed = await newGraph();
+      using live = await newGraph();
+      const states = {
+        disposed: newState("watchFile-shared-disposed"),
+        live: newState("watchFile-shared-live"),
+        host: newState("watchFile-shared-host"),
+      };
+      states.live.file = states.host.file = states.disposed.file;
+      const watch = {
+        graph: () => disposed.graph.run(() => disposed.app.open.watchFile(states.disposed)),
+        host: () => hostApp.open.watchFile(states.host),
+      };
+      try {
+        watch[first]();
+        watch[first === "graph" ? "host" : "graph"]();
+        live.graph.run(() => live.app.open.watchFile(states.live));
+        // Changes the file until each of `watching` has heard of a change made after the call.
+        const allHear = async (watching: State[]) => {
+          const before = watching.map(state => state.ticks);
+          await until(async () => {
+            writeFileSync(states.disposed.file, String(Math.random()));
+            await hostTimerTurns(5);
+            return watching.every((state, i) => state.ticks !== before[i]);
+          });
+        };
+        await allHear([states.disposed, states.live, states.host]);
+
+        disposed.graph.dispose();
+        const heardAtDispose = states.disposed.ticks;
+        await allHear([states.live, states.host]);
+        expect(states.disposed.ticks).toBe(heardAtDispose);
+      } finally {
+        for (const state of Object.values(states)) state.close?.();
       }
     });
   }
@@ -1630,7 +1681,7 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
     SQL: "owned", // module-graph-io: Bun.SQL pool
     sql: "owned",
     postgres: "owned",
-    ModuleGraph: "owned", // a graph made inside a graph is the inner code's to dispose; its context is its own
+    ModuleGraph: "owned", // nestedGraph: a graph made by a graph's code is stopped with it
     dns: "job",
     file: "job",
     write: "job",
@@ -1752,11 +1803,12 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
     redis: "redis",
     S3Client: "s3",
     s3: "s3",
+    ModuleGraph: "nestedGraph",
     SQL: "postgres", // and "mysql"
     sql: "postgres",
     postgres: "postgres",
   };
-  const elsewhere = ["Terminal", "ModuleGraph"]; // module-graph-io.test.ts, module-graph.test.ts
+  const elsewhere = ["Terminal"]; // module-graph-io.test.ts
   const owned = Object.keys(classified).filter(name => classified[name] === "owned");
   expect(owned.filter(name => !elsewhere.includes(name) && !(kindOf[name] in kinds))).toEqual([]);
 });

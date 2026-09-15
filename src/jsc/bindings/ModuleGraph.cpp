@@ -670,6 +670,9 @@ JSIsolatedModuleGraph::JSIsolatedModuleGraph(VM& vm, Structure* structure, Ref<W
 JSIsolatedModuleGraph* JSIsolatedModuleGraph::create(VM& vm, Zig::GlobalObject* globalObject, Structure* structure, JSModuleLoader* loader, JSObject* onError)
 {
     Ref context = WebCore::ScriptExecutionContext::createForModuleGraph(*globalObject->scriptExecutionContext());
+    // Made by a graph's script, the new graph is one more thing that graph opened.
+    if (auto* creator = globalObject->currentScriptExecutionContext(); creator->isForModuleGraph())
+        creator->ownGraphContext(context.get());
     auto* cell = new (NotNull, allocateCell<JSIsolatedModuleGraph>(vm)) JSIsolatedModuleGraph(vm, structure, WTF::move(context), loader, onError);
     cell->finishCreation(vm, globalObject);
     return cell;

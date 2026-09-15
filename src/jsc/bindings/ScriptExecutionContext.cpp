@@ -103,11 +103,22 @@ void ScriptExecutionContext::stop()
     ASSERT(isContextThread());
     bool alreadyStopped = std::exchange(m_isStopped, true);
     Bun__ScriptExecutionContext__stop(m_bunVM, m_bunContext);
+    // (Stopping one runs its close handlers, which can create another.)
+    for (auto& owned : copyToVectorOf<Ref<ScriptExecutionContext>>(m_ownedGraphContexts))
+        owned->stop();
     if (alreadyStopped)
         return;
     // Closing its socket queued a WebSocket's close event: events stop reaching the context's
     // objects (and its workers are terminated) after that has been dispatched.
     Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stopActiveDOMObjects(); }));
+}
+
+void ScriptExecutionContext::ownGraphContext(ScriptExecutionContext& made)
+{
+    ASSERT(isForModuleGraph() && made.isForModuleGraph());
+    m_ownedGraphContexts.add(made);
+    if (isStopped())
+        made.stop();
 }
 
 void ScriptExecutionContext::moduleGraphDestroyed()

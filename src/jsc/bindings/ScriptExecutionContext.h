@@ -87,6 +87,9 @@ public:
     JSC::JSObject* moduleGraph() const { return m_moduleGraph.get(); }
     // A graph's context stops everything it owns, for good. The global keeps running.
     void stop();
+    // `made` is the context of a graph that script running in this (graph's) context created: one
+    // more thing it opened, stopped with it (at once, if this one already has).
+    void ownGraphContext(ScriptExecutionContext& made);
     // The graph was collected (a GC finalizer: nothing can be stopped here): stop() from the
     // event loop, which is what then lets go of this context.
     void moduleGraphDestroyed();
@@ -198,6 +201,7 @@ private:
     JSC::Weak<JSC::JSObject> m_moduleGraph;
 
     WeakHashSet<ActiveDOMObject> m_activeDOMObjects;
+    WeakHashSet<ScriptExecutionContext> m_ownedGraphContexts;
     // Registered in the observer's constructor, removed in its destructor, both
     // on this context's thread: plain pointers, nothing allocated per observer.
     HashSet<ContextDestructionObserver*> m_destructionObservers;

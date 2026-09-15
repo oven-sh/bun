@@ -184,6 +184,7 @@ fn make_client<'a>(
         proxy_headers,
         proxy_authorization: None,
         proxy_tunnel: None,
+        socks: None,
         h2: None,
         h3: None,
         pending_h2: None,
@@ -740,6 +741,7 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
+                    client.socks = None;
                     client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
                     drop(core::mem::take(&mut client.custom_ssl_ctx));
@@ -824,7 +826,9 @@ impl<'a> AsyncHTTP<'a> {
         // `reevaluate_proxy_for_redirect` can freely drop/replace it. The
         // original's copy stays `None`.
         debug_assert!(self.client.proxy_authorization.is_none());
-        if let Some(proxy) = &self.client.http_proxy {
+        if let Some(proxy) = &self.client.http_proxy
+            && !proxy.is_socks()
+        {
             self.client.proxy_authorization = build_proxy_authorization(proxy);
         }
 

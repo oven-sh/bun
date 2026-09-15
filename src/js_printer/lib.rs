@@ -7325,7 +7325,6 @@ impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
 
 pub struct Writer<C: WriterContext> {
     pub ctx: C,
-    pub(crate) written: i32,
     pub(crate) err: Option<crate::Error>,
     pub(crate) orig_err: Option<crate::Error>,
 }
@@ -7334,7 +7333,6 @@ impl<C: WriterContext> Writer<C> {
     pub fn init(ctx: C) -> Self {
         Self {
             ctx,
-            written: -1,
             err: None,
             orig_err: None,
         }
@@ -7372,18 +7370,12 @@ impl<C: WriterContext> Writer<C> {
 
     pub(crate) fn advance(&mut self, count: u64) {
         self.ctx.advance_by(count);
-        // PERF: output never approaches 2 GiB; the checked add of
-        // a u64→i32 here was a measurable branch in the per-token print path.
-        // Keep the debug-mode overflow check without paying for it in release.
-        debug_assert!(count <= i32::MAX as u64);
-        self.written = self.written.wrapping_add(count as i32);
     }
 
     #[inline]
     pub(crate) fn print_byte(&mut self, b: u8) {
         match self.ctx.write_byte(b) {
             Ok(n) => {
-                self.written = self.written.wrapping_add(n as i32);
                 if n == 0 {
                     self.err = Some(crate::Error::WriteFailed);
                 }
@@ -7399,7 +7391,6 @@ impl<C: WriterContext> Writer<C> {
     pub(crate) fn print_slice(&mut self, s: &[u8]) {
         match self.ctx.write_all(s) {
             Ok(n) => {
-                self.written = self.written.wrapping_add(n as i32);
                 if n < s.len() {
                     self.err = Some(if n == 0 {
                         crate::Error::WriteFailed
@@ -7421,9 +7412,10 @@ impl<C: WriterContext> Writer<C> {
 }
 
 impl<C: WriterContext> WriterTrait for Writer<C> {
+    /// Index of the last byte in `ctx`'s buffer, -1 when it is empty.
     #[inline]
     fn written(&self) -> i32 {
-        self.written
+        self.ctx.slice().len() as i32 - 1
     }
     #[inline]
     fn prev_char(&self) -> u8 {

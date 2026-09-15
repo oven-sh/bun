@@ -1,6 +1,6 @@
-import { file, spawn, version, type Socket } from "bun";
+import { file, S3Client, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { bunEnv, bunExe, exampleSite, isLinux, tempDir } from "harness";
 import net from "net";
 import { join } from "node:path";
 import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
@@ -350,6 +350,93 @@ for (const { body, fn } of bodyTypes) {
           const subject = fn(Bun.file(`${dir}/data.txt`).slice(3, 8));
           expect(subject.body).toBeInstanceOf(ReadableStream);
           expect([Buffer.from(await subject.bytes()).toString(), subject.bodyUsed]).toEqual(["defgh", true]);
+        });
+      });
+
+      // procfs files are regular files whose st_size is 0, so a stream that
+      // trusts stat as a byte budget ends before it reads anything. The body
+      // getter must read to EOF like Bun.file().stream() does.
+      describe.skipIf(!isLinux)("made from a procfs Bun.file()", () => {
+        const path = "/proc/version";
+
+        test("the body stream reads the whole file", async () => {
+          const expected = await Bun.file(path).text();
+          expect(expected.length).toBeGreaterThan(0);
+          const drain = async (stream: ReadableStream<Uint8Array>) => {
+            let text = "";
+            for await (const chunk of stream) text += Buffer.from(chunk).toString();
+            return text;
+          };
+          expect({
+            "for await": await drain(fn(Bun.file(path)).body!),
+            "Bun.readableStreamToText": await Bun.readableStreamToText(fn(Bun.file(path)).body!),
+            "new Response(body).text()": await new Response(fn(Bun.file(path)).body).text(),
+          }).toEqual({
+            "for await": expected,
+            "Bun.readableStreamToText": expected,
+            "new Response(body).text()": expected,
+          });
+        });
+
+        test("the body getter does not make a later text() on the same Bun.file() empty", async () => {
+          const expected = await Bun.file(path).text();
+          const file = Bun.file(path);
+          expect(fn(file).body).toBeInstanceOf(ReadableStream);
+          expect(await file.text()).toBe(expected);
+        });
+
+        // clone() stats the file to learn whether it can be read twice. That
+        // cached stat (a regular file, st_size 0) must not turn the buffered
+        // read of either copy, or of the Bun.file() itself, into "".
+        test("clone() reads the whole file on both copies", async () => {
+          const expected = await Bun.file(path).text();
+          const file = Bun.file(path);
+          const original = fn(file);
+          const clone = original.clone();
+          const streamed = fn(Bun.file(path));
+          expect(streamed.body).toBeInstanceOf(ReadableStream);
+          const streamedClone = streamed.clone();
+          expect({
+            clone: await clone.text(),
+            original: await original.text(),
+            "clone after .body": await streamedClone.text(),
+            "original after .body": await streamed.text(),
+            "Bun.file() afterwards": await file.text(),
+          }).toEqual({
+            clone: expected,
+            original: expected,
+            "clone after .body": expected,
+            "original after .body": expected,
+            "Bun.file() afterwards": expected,
+          });
+        });
+      });
+
+      // An S3 object has no local size either, so the body stream must fetch
+      // the whole object, not a zero-length range. (A Response made from an
+      // S3 file is a redirect by design, so only Request applies.)
+      describe.skipIf(body !== Request)("made from an S3 file", () => {
+        test("the body stream downloads the whole object", async () => {
+          const payload = Buffer.alloc(100, "0123456789").toString();
+          const ranges: (string | null)[] = [];
+          using server = Bun.serve({
+            port: 0,
+            fetch(req) {
+              const range = req.headers.get("range");
+              ranges.push(range);
+              const match = range && /^bytes=(\d+)-(\d*)$/.exec(range);
+              if (!match) return new Response(payload, { headers: { "Content-Type": "text/plain" } });
+              const start = Number(match[1]);
+              const end = match[2] === "" ? payload.length - 1 : Number(match[2]);
+              return new Response(payload.slice(start, end + 1), {
+                status: 206,
+                headers: { "Content-Type": "text/plain", "Content-Range": `bytes ${start}-${end}/${payload.length}` },
+              });
+            },
+          });
+          const s3 = new S3Client({ endpoint: server.url.href, accessKeyId: "x", secretAccessKey: "y", bucket: "b" });
+          const text = await Bun.readableStreamToText(fn(s3.file("key")).body!);
+          expect({ text, ranges }).toEqual({ text: payload, ranges: [null] });
         });
       });
     });

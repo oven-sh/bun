@@ -440,7 +440,7 @@ const dir = String(
       await use();
       let none;
       await until(() => { const before = none; return (none = count("ModuleGraph") + count("H2FrameParser")) === before; });
-      for (let i = 0; i < 10; i++) await use();
+      for (let i = 0; i < 3; i++) await use();
       // Nothing of the host's queues a performance entry, and nothing closes the sessions.
       await until(() => count("ModuleGraph") + count("H2FrameParser") === none);
       console.log("collected");

@@ -2599,7 +2599,12 @@ impl<'a> StringBuilder<'a> {
     fn count_with_hash(&mut self, slice: &[u8], hash: u64) {
         self.assert_not_allocated();
 
-        if !self.string_pool.contains(hash) {
+        // A hash hit with different bytes is a collision, and `append` stores it too.
+        let already_pooled = match self.string_pool.get(hash) {
+            Some(existing) => strings::eql(existing.slice(self.string_bytes.as_slice()), slice),
+            None => false,
+        };
+        if !already_pooled {
             self.cap += slice.len();
         }
     }
@@ -2644,21 +2649,37 @@ impl<'a> StringBuilder<'a> {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
-        if !string_entry.found_existing {
-            // See `append_without_pool` — safe indexing into the region
-            // `allocate()` already resized.
-            let start = self.off + self.len;
-            let end = start + slice.len();
-            self.string_bytes[start..end].copy_from_slice(slice);
-            let final_slice = &self.string_bytes[start..end];
-            self.len += slice.len();
-
-            *string_entry.value_ptr = SemverString::init(self.string_bytes.as_slice(), final_slice);
+        if string_entry.found_existing {
+            let existing = *string_entry.value_ptr;
+            if strings::eql(existing.slice(self.string_bytes.as_slice()), slice) {
+                return T::from_pooled(existing, hash);
+            }
+            return self.append_without_pool::<T>(slice, hash);
         }
+
+        // Safe indexing into the region `allocate()` already resized.
+        let start = self.off + self.len;
+        let end = start + slice.len();
+        self.string_bytes[start..end].copy_from_slice(slice);
+        let final_slice = &self.string_bytes[start..end];
+        self.len += slice.len();
+        *string_entry.value_ptr = SemverString::init(self.string_bytes.as_slice(), final_slice);
 
         debug_assert!(self.len <= self.cap);
 
         T::from_pooled(*string_entry.value_ptr, hash)
+    }
+
+    /// Stores a string whose hash collides with a different pooled string.
+    fn append_without_pool<T: StringBuilderType>(&mut self, slice: &[u8], hash: u64) -> T {
+        debug_assert!(self.ptr.is_some());
+        let start = self.off + self.len;
+        let end = start + slice.len();
+        self.string_bytes[start..end].copy_from_slice(slice);
+        let final_slice = &self.string_bytes[start..end];
+        self.len += slice.len();
+        debug_assert!(self.len <= self.cap);
+        T::from_init(self.string_bytes.as_slice(), final_slice, hash)
     }
 }
 

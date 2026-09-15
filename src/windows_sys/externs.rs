@@ -767,29 +767,6 @@ pub mod ntdll {
             ProcessInformationLength: ULONG,
             ReturnLength: *mut ULONG,
         ) -> NTSTATUS;
-
-        pub fn NtReadFile(
-            FileHandle: HANDLE,
-            Event: HANDLE,
-            ApcRoutine: *mut c_void,
-            ApcContext: *mut c_void,
-            IoStatusBlock: *mut IO_STATUS_BLOCK,
-            Buffer: *mut c_void,
-            Length: ULONG,
-            ByteOffset: *const LARGE_INTEGER,
-            Key: *const ULONG,
-        ) -> NTSTATUS;
-        pub fn NtWriteFile(
-            FileHandle: HANDLE,
-            Event: HANDLE,
-            ApcRoutine: *mut c_void,
-            ApcContext: *mut c_void,
-            IoStatusBlock: *mut IO_STATUS_BLOCK,
-            Buffer: *const c_void,
-            Length: ULONG,
-            ByteOffset: *const LARGE_INTEGER,
-            Key: *const ULONG,
-        ) -> NTSTATUS;
     }
     pub use super::RtlNtStatusToDosError;
 }
@@ -909,22 +886,6 @@ pub mod kernel32 {
         pub fn GetConsoleScreenBufferInfo(
             hConsoleOutput: HANDLE,
             lpConsoleScreenBufferInfo: *mut CONSOLE_SCREEN_BUFFER_INFO,
-        ) -> BOOL;
-        /// `FillConsoleOutputAttribute` (`wincon.h`).
-        pub fn FillConsoleOutputAttribute(
-            hConsoleOutput: HANDLE,
-            wAttribute: WORD,
-            nLength: DWORD,
-            dwWriteCoord: COORD,
-            lpNumberOfAttrsWritten: *mut DWORD,
-        ) -> BOOL;
-        /// `FillConsoleOutputCharacterW` (`wincon.h`).
-        pub fn FillConsoleOutputCharacterW(
-            hConsoleOutput: HANDLE,
-            cCharacter: WCHAR,
-            nLength: DWORD,
-            dwWriteCoord: COORD,
-            lpNumberOfCharsWritten: *mut DWORD,
         ) -> BOOL;
         /// `SetConsoleCursorPosition` (`wincon.h`).
         pub fn SetConsoleCursorPosition(hConsoleOutput: HANDLE, dwCursorPosition: COORD) -> BOOL;

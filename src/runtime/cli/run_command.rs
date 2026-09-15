@@ -25,6 +25,7 @@ use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_watcher::restart_on_change;
 use bun_which::which;
 
 use crate::cli;
@@ -2331,6 +2332,23 @@ impl RunCommand {
             );
         }
 
+        // Under --watch an entry file that is missing waits for the next save
+        // instead of ending the session (an editor that saves by rename leaves
+        // it away for a moment). Stamped before the first look at the file.
+        let watched_entry = if ctx.debug.hot_reload == cli::command::HotReload::Watch
+            && Self::names_a_module(target_name)
+        {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            paths::resolve_path::join_abs_string_buf_checked::<paths::resolve_path::platform::Auto>(
+                ctx.args.absolute_working_dir.as_deref().unwrap_or(b""),
+                &mut buf[..],
+                &[target_name],
+            )
+            .map(restart_on_change::Input::with_dir)
+        } else {
+            None
+        };
+
         // ── try fast run (file exists & not a dir → boot VM) ────────────────
         if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {
             return Ok(true);
@@ -2673,19 +2691,14 @@ impl RunCommand {
                     <&'static str>::from(loader),
                 );
             } else {
-                let default_loader = Self::default_loader_for(target_name);
-                if default_loader
-                    .map(Loader::is_javascript_like_or_json)
-                    .unwrap_or(false)
-                    || (!target_name.is_empty()
-                        && (target_name[0] == b'.'
-                            || target_name[0] == b'/'
-                            || paths::is_absolute(target_name)))
-                {
+                if Self::names_a_module(target_name) {
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>Module not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
+                    if let Some(entry) = &watched_entry {
+                        restart_on_change::restart_after_change(entry);
+                    }
                 } else if !paths::extension(target_name).is_empty() {
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>File not found \"<b>{}<r>\"",
@@ -2702,6 +2715,16 @@ impl RunCommand {
         }
 
         Ok(false)
+    }
+
+    /// Whether a `bun run` target that was not found names a module (a path,
+    /// or a name with a JavaScript-like extension) and not a script or a binary.
+    fn names_a_module(target: &[u8]) -> bool {
+        Self::default_loader_for(target)
+            .map(Loader::is_javascript_like_or_json)
+            .unwrap_or(false)
+            || (!target.is_empty()
+                && (target[0] == b'.' || target[0] == b'/' || paths::is_absolute(target)))
     }
 
     /// Fast-path file probe: if `target` resolves to an existing regular file,

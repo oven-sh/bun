@@ -2,7 +2,7 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -462,6 +462,173 @@ it.skipIf(isWindows)(
 
     watchee.kill("SIGKILL");
     await watchee.exited;
+  },
+  30000,
+);
+
+// A --watch start that fails before the VM exists (bunfig.toml does not parse,
+// the entry file is missing) has no file watcher, so it has to wait for the
+// file it could not use, then pick up later saves as usual. Each `waitFor`
+// consumes the output up to its match, so a repeated line is seen once per run.
+function streamWaiter(name: string, stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  let consumed = 0;
+  return {
+    waitFor: async (needle: string) => {
+      let at: number;
+      while ((at = output.indexOf(needle, consumed)) === -1) {
+        const { value, done } = await reader.read();
+        // The pipes survive the restart, so a closed one means the session ended.
+        if (done) throw new Error(`${name} closed before ${JSON.stringify(needle)}: ${JSON.stringify(output)}`);
+        output += decoder.decode(value, { stream: true });
+      }
+      consumed = at + needle.length;
+    },
+  };
+}
+
+function spawnWatch(cmd: string[], cwd: string) {
+  const proc = spawn({ cmd: [bunExe(), ...cmd], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+  return { proc, stdout: streamWaiter("stdout", proc.stdout), stderr: streamWaiter("stderr", proc.stderr) };
+}
+
+const entrySource = (version: string) => `console.log("run ${version}");\nsetInterval(() => {}, 1 << 30);\n`;
+
+// An editor that saves by rename leaves the entry file away for a moment (#8520).
+// "./entry" resolves to entry.mjs, so only its directory shows the file's return.
+it.concurrent.each(["entry.mjs", "./entry"])(
+  "--watch waits for an entry file that is missing when the process restarts (%s)",
+  async target => {
+    using dir = tempDir("watch-restart-entry-missing", { "entry.mjs": entrySource("v0") });
+    const cwd = String(dir);
+    const { proc, stdout, stderr } = spawnWatch(["--watch", target], cwd);
+    await using _ = proc;
+
+    await stdout.waitFor("run v0");
+    renameSync(join(cwd, "entry.mjs"), join(cwd, "entry.mjs~"));
+    await stderr.waitFor(`Module not found "${target}"`);
+    writeFileSync(join(cwd, "entry.mjs~"), entrySource("v1"));
+    renameSync(join(cwd, "entry.mjs~"), join(cwd, "entry.mjs"));
+    await stdout.waitFor("run v1");
+    writeFileSync(join(cwd, "entry.mjs"), entrySource("v2"));
+    await stdout.waitFor("run v2");
+  },
+  30000,
+);
+
+// #22404: the entry file is the output of a build that has not run yet.
+it.concurrent(
+  "--watch waits for an entry file that does not exist yet",
+  async () => {
+    using dir = tempDir("watch-first-start-entry-missing", {});
+    const cwd = String(dir);
+    const { proc, stdout, stderr } = spawnWatch(["--watch", "dist/index.js"], cwd);
+    await using _ = proc;
+
+    await stderr.waitFor(`Module not found "dist/index.js"`);
+    mkdirSync(join(cwd, "dist"));
+    writeFileSync(join(cwd, "dist", "index.js"), entrySource("v0"));
+    await stdout.waitFor("run v0");
+    writeFileSync(join(cwd, "dist", "index.js"), entrySource("v1"));
+    await stdout.waitFor("run v1");
+  },
+  30000,
+);
+
+it.concurrent("--watch still exits when the target is not a file", async () => {
+  using dir = tempDir("watch-script-not-found", { "package.json": `{ "name": "watch-script-not-found" }` });
+  await using proc = spawn({
+    cmd: [bunExe(), "--watch", "nope"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: "",
+    stderr: `error: Script not found "nope"`,
+    exitCode: 1,
+  });
+});
+
+const preloadBunfig = `preload = ["./pre.mjs"]\n`;
+const preloadFixture = {
+  "bunfig.toml": preloadBunfig,
+  "pre.mjs": `globalThis.pre = "pre";\n`,
+  "dep.mjs": `export const dep = "v0";\n`,
+  "entry.mjs": `import { dep } from "./dep.mjs";\nconsole.log("run", dep, globalThis.pre);\nsetInterval(() => {}, 1 << 30);\n`,
+};
+
+it.concurrent(
+  "--watch waits for a bunfig.toml that does not parse when the process restarts",
+  async () => {
+    using dir = tempDir("watch-restart-bunfig-broken", preloadFixture);
+    const cwd = String(dir);
+    const { proc, stdout, stderr } = spawnWatch(["--watch", "entry.mjs"], cwd);
+    await using _ = proc;
+
+    await stdout.waitFor("run v0 pre");
+    writeFileSync(join(cwd, "bunfig.toml"), `preload = [\n`);
+    writeFileSync(join(cwd, "dep.mjs"), `export const dep = "v1";\n`);
+    await stderr.waitFor("Unterminated array");
+    writeFileSync(join(cwd, "bunfig.toml"), preloadBunfig);
+    await stdout.waitFor("run v1 pre");
+    writeFileSync(join(cwd, "dep.mjs"), `export const dep = "v2";\n`);
+    await stdout.waitFor("run v2 pre");
+  },
+  30000,
+);
+
+// On Windows the first process is not yet the child of a watcher manager, so
+// this start restarts through a different path than the one above.
+it.concurrent(
+  "--watch waits for a bunfig.toml that does not parse on the first start",
+  async () => {
+    using dir = tempDir("watch-first-start-bunfig-broken", { ...preloadFixture, "bunfig.toml": `preload = [\n` });
+    const cwd = String(dir);
+    const { proc, stdout, stderr } = spawnWatch(["--watch", "entry.mjs"], cwd);
+    await using _ = proc;
+
+    await stderr.waitFor("Unterminated array");
+    writeFileSync(join(cwd, "bunfig.toml"), preloadBunfig);
+    await stdout.waitFor("run v0 pre");
+    writeFileSync(join(cwd, "dep.mjs"), `export const dep = "v1";\n`);
+    await stdout.waitFor("run v1 pre");
+  },
+  30000,
+);
+
+it.concurrent(
+  "bun build --watch waits for a bunfig.toml that does not parse when the process restarts",
+  async () => {
+    const bunfig = `[install]\nauto = "disable"\n`;
+    // The bundle goes outside the watched directory. On Windows the watcher can
+    // drop the event of a save that follows a burst of its own output writes (#40017).
+    using dir = tempDir("watch-restart-build-bunfig-broken", {
+      "project/bunfig.toml": bunfig,
+      "project/entry.mjs": `console.log("v0");\n`,
+    });
+    const cwd = join(String(dir), "project");
+    const outdir = join(String(dir), "out");
+    const bundle = join(outdir, "entry.js");
+    const { proc, stdout, stderr } = spawnWatch(["build", "--watch", "entry.mjs", "--outdir", outdir], cwd);
+    await using _ = proc;
+
+    // One "entry.js" line per build.
+    await stdout.waitFor("entry.js");
+    writeFileSync(join(cwd, "bunfig.toml"), `[install\n`);
+    writeFileSync(join(cwd, "entry.mjs"), `console.log("v1");\n`);
+    await stderr.waitFor("failed to load bunfig");
+    writeFileSync(join(cwd, "bunfig.toml"), bunfig);
+    await stdout.waitFor("entry.js");
+    expect(await Bun.file(bundle).text()).toContain(`"v1"`);
+    writeFileSync(join(cwd, "entry.mjs"), `console.log("v2");\n`);
+    await stdout.waitFor("entry.js");
+    expect(await Bun.file(bundle).text()).toContain(`"v2"`);
   },
   30000,
 );

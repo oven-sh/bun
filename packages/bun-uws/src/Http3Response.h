@@ -73,7 +73,7 @@ struct Http3Response {
     bool write(std::string_view data, size_t *writtenPtr = nullptr) {
         Http3ResponseData *d = getHttpResponseData();
         flushHeaders();
-        if (d->backpressure.length() != 0) {
+        if (d->headersDeferred || d->backpressure.length() != 0) {
             d->backpressure.append(data.data(), data.length());
             if (writtenPtr) *writtenPtr = 0;
             us_quic_stream_want_write((us_quic_stream_t *) this, 1);
@@ -106,7 +106,9 @@ struct Http3Response {
             !(d->state & Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
             writeHeader("content-length", (uint64_t) *reportedContentLength);
         }
-        if (d->state & Http3ResponseData::HTTP_WRITE_CALLED) {
+        if (d->headersDeferred) {
+            d->endAfterDrain = true;
+        } else if (d->state & Http3ResponseData::HTTP_WRITE_CALLED) {
             us_quic_stream_shutdown((us_quic_stream_t *) this);
         } else {
             writeStatus("200 OK");
@@ -119,7 +121,7 @@ struct Http3Response {
     bool sendTerminatingChunk(bool /*closeConnection*/ = false) {
         Http3ResponseData *d = getHttpResponseData();
         flushHeaders();
-        if (d->backpressure.length() != 0) {
+        if (d->headersDeferred || d->backpressure.length() != 0) {
             d->endAfterDrain = true;
             us_quic_stream_want_write((us_quic_stream_t *) this, 1);
             return false;
@@ -179,6 +181,11 @@ struct Http3Response {
     /* Called from Http3Context's on_stream_writable. */
     bool drain() {
         Http3ResponseData *d = getHttpResponseData();
+        if (d->headersDeferred) {
+            d->headersDeferred = false;
+            sendBufferedHeaders(d, false);
+            if (d->headersDeferred) return false;
+        }
         while (d->backpressure.length() != 0) {
             int w = us_quic_stream_write((us_quic_stream_t *) this,
                 d->backpressure.data(), (unsigned) d->backpressure.length());
@@ -204,13 +211,24 @@ private:
     }
 
     void sendBufferedHeaders(Http3ResponseData *d, bool endStream) {
+        /* hdrs holds offsets into hdrBuf. Resolve them in a copy, so a refused
+         * block stays intact for drain() to send again. */
         const char *base = d->hdrBuf.span().data();
-        for (auto &h : d->hdrs) {
+        WTF::Vector<us_quic_header_t, 16> resolved(d->hdrs);
+        for (auto &h : resolved) {
             h.name = base + (uintptr_t) h.name;
             h.value = base + (uintptr_t) h.value;
         }
-        us_quic_stream_send_headers((us_quic_stream_t *) this,
-            d->hdrs.mutableSpan().data(), (unsigned) d->hdrs.size(), endStream);
+        int r = us_quic_stream_send_headers((us_quic_stream_t *) this,
+            resolved.span().data(), (unsigned) resolved.size(), endStream);
+        if (r == US_QUIC_SEND_HEADERS_RETRY) {
+            /* The 100 Continue block is still unsent (#33082). endStream is
+             * only a shutdown after the send, so endAfterDrain carries it. */
+            d->headersDeferred = true;
+            if (endStream) d->endAfterDrain = true;
+            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            return;
+        }
         d->hdrBuf.shrink(0);
         d->hdrs.shrink(0);
     }
@@ -235,7 +253,7 @@ private:
             d->state |= Http3ResponseData::HTTP_WRITE_CALLED;
         }
 
-        if (d->backpressure.length() != 0) {
+        if (d->headersDeferred || d->backpressure.length() != 0) {
             if (optional) return false;
             d->backpressure.append(data.data(), data.length());
             d->endAfterDrain = true;

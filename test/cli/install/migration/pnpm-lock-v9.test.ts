@@ -2722,6 +2722,241 @@ importers:
     });
   });
 
+  // The settings moved out of `pnpm` / pnpm-workspace.yaml are edited into package.json in memory while the
+  // lockfile loads; the file is only written together with bun.lock.
+  describe("package.json edits", () => {
+    const packageJson = `{
+  "name": "root",
+  "private": true,
+  "dependencies": {
+    "a": "workspace:*",
+    "foo": "file:vendor/foo"
+  },
+  "pnpm": {
+    "overrides": {
+      "left-pad": "1.3.0"
+    }
+  }
+}
+`;
+    const migratedPackageJson = {
+      name: "root",
+      private: true,
+      dependencies: { a: "workspace:*", foo: "file:vendor/foo" },
+      overrides: { "left-pad": "1.3.0" },
+      workspaces: ["packages/*"],
+    };
+    const files = {
+      "package.json": packageJson,
+      "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+      "vendor/foo/package.json": JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        scripts: { postinstall: "echo foo-postinstall" },
+      }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+overrides:
+  left-pad: 1.3.0
+
+importers:
+
+  .:
+    dependencies:
+      a:
+        specifier: workspace:*
+        version: link:packages/a
+      foo:
+        specifier: file:vendor/foo
+        version: file:vendor/foo
+
+  packages/a: {}
+
+packages:
+
+  foo@file:vendor/foo:
+    resolution: {directory: vendor/foo, type: directory}
+    version: 1.0.0
+
+snapshots:
+
+  foo@file:vendor/foo: {}
+`,
+    };
+    const movedLine = "moved pnpm.overrides to overrides, pnpm-workspace.yaml to workspaces in package.json";
+    const frozenNote =
+      "note: the lockfile is frozen, so the migration from pnpm-lock.yaml was not written to bun.lock and package.json; run 'bun install' and commit the result";
+
+    async function expectUntouched(dir: string) {
+      expect(await Bun.file(join(dir, "package.json")).text()).toBe(packageJson);
+      expect(existsSync(join(dir, "bun.lock"))).toBe(false);
+    }
+
+    test.concurrent.each([
+      ["install --frozen-lockfile", ["install", "--frozen-lockfile"]],
+      ["ci", ["ci"]],
+      ["install --production", ["install", "--production"]],
+    ])("bun %s installs the migrated lockfile without writing package.json or bun.lock", async (_, args) => {
+      using dir = tempDir("pnpm-v9-package-json-frozen", files);
+
+      const { stdout, stderr, exitCode } = await run(String(dir), ...args);
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stderr).toContain(frozenNote);
+      expect(stderr).not.toContain(movedLine);
+      expect(stdout + stderr).not.toContain("Saved");
+      await expectUntouched(String(dir));
+      expect(await installedPackageJson(String(dir), "", "foo")).toMatchObject({ name: "foo", version: "1.0.0" });
+      expect(await installedPackageJson(String(dir), "", "a")).toStrictEqual({ name: "a", version: "1.0.0" });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("install --frozen-lockfile fails once the lockfile and package.json disagree", async () => {
+      using dir = tempDir("pnpm-v9-package-json-frozen-stale", {
+        ...files,
+        "pnpm-lock.yaml": files["pnpm-lock.yaml"].replace("left-pad: 1.3.0", "left-pad: 1.2.0"),
+      });
+
+      const { stderr, exitCode } = await run(String(dir), "install", "--frozen-lockfile");
+
+      expect(stderr).toContain("error: lockfile had changes, but lockfile is frozen");
+      expect(stderr).toContain("note: overrides in package.json changed since pnpm-lock.yaml was saved");
+      expect(exitCode).toBe(1);
+      expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(packageJson);
+      expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    });
+
+    test.concurrent.each([
+      ["install --dry-run", ["install", "--dry-run"]],
+      ["install --no-save", ["install", "--no-save"]],
+      ["outdated", ["outdated"]],
+      ["pm why a", ["pm", "why", "a"]],
+      ["pm untrusted", ["pm", "untrusted"]],
+    ])("bun %s leaves package.json and bun.lock alone", async (_, args) => {
+      using dir = tempDir("pnpm-v9-package-json-read-only", files);
+
+      const { stdout, stderr, exitCode } = await run(String(dir), ...args);
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stderr).not.toContain("note:");
+      expect(stdout + stderr).not.toContain("moved ");
+      expect(stdout + stderr).not.toContain("Saved");
+      await expectUntouched(String(dir));
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent.each([
+      ["install", ["install"]],
+      ["install --lockfile-only", ["install", "--lockfile-only"]],
+      ["pm migrate", ["pm", "migrate"]],
+      // pm migrate saves bun.lock whatever install flags are passed, so package.json has to follow it.
+      ["pm migrate --dry-run", ["pm", "migrate", "--dry-run"]],
+    ])("bun %s writes the edited package.json together with bun.lock", async (_, args) => {
+      using dir = tempDir("pnpm-v9-package-json-written", files);
+
+      const { stderr, exitCode } = await run(String(dir), ...args);
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stderr.split(movedLine).length - 1).toBe(1);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual(migratedPackageJson);
+      expect(await bunLockOf(String(dir))).toContain(`"packages/a": {`);
+      expect(exitCode).toBe(0);
+
+      const written = await Bun.file(join(String(dir), "package.json")).text();
+      const frozen = await run(String(dir), "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.stderr).not.toContain("migrated lockfile");
+      expect(frozen.exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(written);
+    });
+
+    test.concurrent("remove keeps the edits the migration made to package.json", async () => {
+      using dir = tempDir("pnpm-v9-package-json-remove", files);
+
+      const { stderr, exitCode } = await run(String(dir), "remove", "foo");
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr.split(movedLine).length - 1).toBe(1);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        ...migratedPackageJson,
+        dependencies: { a: "workspace:*" },
+      });
+      expect(await bunLockOf(String(dir))).not.toContain("foo");
+      expect(exitCode).toBe(0);
+
+      const frozen = await run(String(dir), "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
+    });
+
+    test.concurrent("add writes its own edit and the migration's edits in one package.json", async () => {
+      using dir = tempDir("pnpm-v9-package-json-add", {
+        ...files,
+        "vendor/bar/package.json": JSON.stringify({ name: "bar", version: "1.0.0" }),
+      });
+
+      const { stderr, exitCode } = await run(String(dir), "add", "./vendor/bar");
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr.split(movedLine).length - 1).toBe(1);
+      const written = await Bun.file(join(String(dir), "package.json")).json();
+      expect(written).toMatchObject({
+        overrides: migratedPackageJson.overrides,
+        workspaces: migratedPackageJson.workspaces,
+      });
+      expect(written).not.toHaveProperty("pnpm");
+      expect(Object.keys(written.dependencies).sort()).toStrictEqual(["a", "bar", "foo"]);
+      expect(await bunLockOf(String(dir))).toContain(`"bar":`);
+      expect(exitCode).toBe(0);
+
+      const frozen = await run(String(dir), "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
+    });
+
+    test.concurrent("install --silent writes both files without printing", async () => {
+      using dir = tempDir("pnpm-v9-package-json-silent", files);
+
+      const { stdout, stderr, exitCode } = await run(String(dir), "install", "--silent");
+
+      expect(stdout).toBe("");
+      expect(stderr).toBe("");
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual(migratedPackageJson);
+      expect(existsSync(join(String(dir), "bun.lock"))).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("pm trust writes the edited package.json along with the lockfile it saves", async () => {
+      using dir = tempDir("pnpm-v9-package-json-pm-trust", files);
+
+      const install = await run(String(dir), "install", "--frozen-lockfile");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      await expectUntouched(String(dir));
+
+      const { stdout, stderr, exitCode } = await run(String(dir), "pm", "trust", "foo");
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain(movedLine);
+      expect(stdout).toContain("1 script ran across 1 package");
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        ...migratedPackageJson,
+        trustedDependencies: ["foo"],
+      });
+      const bunLock = await bunLockOf(String(dir));
+      expect(bunLock).toContain(`"packages/a": {`);
+      expect(bunLock).toContain(`"trustedDependencies": [`);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test.concurrent("link: version with a semver specifier resolves to the workspace (pnpm/pnpm#7712)", async () => {
     // save-workspace-protocol=false / link-workspace-packages shape
     using dir = fixture("v9-link-semver-specifier");

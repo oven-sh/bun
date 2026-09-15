@@ -412,6 +412,108 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// The bundler has no transform for a module that starts with "use server".
+// Bundling one used to abort the process ("TODO: registerServerReference" on a
+// bundler thread), so saving a server-action file took down every route.
+const useServerError = (file: string) => `${file}:1:1: error: "use server" is not supported yet`;
+devTest('saving a "use server" module is a build error', {
+  framework: minimalFramework,
+  files: {
+    "actions.ts": `
+      export async function save() {
+        return "saved";
+      }
+    `,
+    "routes/index.ts": `
+      import { save } from '../actions';
+      export default async function (req, meta) {
+        return new Response('Hello, ' + (await save()) + '!');
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("Hello, saved!");
+
+    await dev.write(
+      "actions.ts",
+      `
+        "use server";
+        export async function save() {
+          return "saved";
+        }
+      `,
+    );
+    {
+      await using c = await dev.client("/", { errors: [useServerError("actions.ts")] });
+    }
+
+    await dev.write(
+      "actions.ts",
+      `
+        export async function save() {
+          return "saved again";
+        }
+      `,
+    );
+    await dev.fetch("/").equals("Hello, saved again!");
+  },
+});
+devTest('a "use server" module that exists at startup is a build error', {
+  framework: minimalFramework,
+  files: {
+    "actions.ts": `
+      "use server";
+      export async function save() {
+        return "saved";
+      }
+    `,
+    "routes/index.ts": `
+      import { save } from '../actions';
+      export default async function (req, meta) {
+        return new Response('Hello, ' + (await save()) + '!');
+      }
+    `,
+    "routes/other.ts": `
+      export default function (req, meta) {
+        return new Response('other');
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/", { errors: [useServerError("actions.ts")] });
+    }
+    // A route that does not import the module still works.
+    await dev.fetch("/other").equals("other");
+  },
+});
+// With a separate SSR graph, a "use server" module with nothing to wrap got
+// past the parser and aborted on the bundler's main thread instead
+// ('TODO: "use server"').
+devTest('a "use server" module with no exports is a build error', {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "setup.ts": `
+      "use server";
+      globalThis.didSetup = true;
+    `,
+    "routes/index.ts": `
+      import '../setup';
+      export default function (req, meta) {
+        return new Response('setup: ' + globalThis.didSetup);
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [useServerError("setup.ts")] });
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

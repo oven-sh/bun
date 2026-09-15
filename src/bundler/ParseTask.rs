@@ -2667,7 +2667,18 @@ pub mod parse_worker {
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
         let ast_result: core::result::Result<JSAst, AnyError> =
-            if !is_empty || loader.handles_empty_file() {
+            if use_directive == UseDirective::Server {
+                // No graph can bundle this module yet: the server needs each export wrapped
+                // in the framework's register call, and the browser needs stubs that call the
+                // server in place of the module's code. Every later step that handles
+                // `UseDirective::Server` is a `todo_panic!`.
+                log.add_range_error(
+                    Some(source),
+                    UseDirective::range(entry_contents),
+                    b"\"use server\" is not supported yet",
+                );
+                Err(crate::Error::ParserError)
+            } else if !is_empty || loader.handles_empty_file() {
                 get_ast(
                     log,
                     transpiler,

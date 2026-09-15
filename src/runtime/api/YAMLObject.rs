@@ -317,13 +317,8 @@ impl Stringifier {
         self.stringify_unwrapped(global, unwrapped, false)
     }
 
-    /// `unwrapped` has been through `unwrap_boxed_primitive`.
-    ///
-    /// `after_key` is set when the value follows a block-style mapping key and its `:`.
-    /// The value then writes its own separator: a space before inline content
-    /// (a scalar, `[]`, `{}`), a newline before block content. Deciding here,
-    /// from what is actually printed, keeps the output valid when a getter
-    /// returns something different on each access.
+    /// `unwrapped` has been through `unwrap_boxed_primitive`. With `after_key` the value
+    /// follows a block-style mapping key and writes its own separator after the `:`.
     fn stringify_unwrapped(
         &mut self,
         global: &JSGlobalObject,

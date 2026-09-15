@@ -1977,26 +1977,34 @@ impl Package<u64> {
                     // borrow has a named place to point at.
                     let workspace_str = *dependency_version.workspace();
                     let workspace = workspace_str.slice(buf);
-                    let path =
-                        string_builder.append::<String>(if workspace == b"*" {
+                    // An empty spec names no workspace and no path, so it resolves like `*`.
+                    let path = string_builder.append::<String>(
+                        if workspace == b"*"
+                            || strings::trim(workspace, &strings::WHITESPACE_CHARS).is_empty()
+                        {
                             b"*"
                         } else {
                             'brk: {
+                                let top_level_dir = FileSystem::instance().top_level_dir();
                                 let mut buf2 = bun_paths::path_buffer_pool::get();
                                 let rel =
                                     resolve_path::relative_platform::<path::platform::Auto, false>(
-                                        FileSystem::instance().top_level_dir(),
+                                        top_level_dir,
                                         resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                                            FileSystem::instance().top_level_dir(),
+                                            top_level_dir,
                                             &mut buf2.0,
                                             &[source.path.name().dir, workspace],
                                         ),
                                     );
+                                // if rel is empty, the path is the root package
+                                if rel.is_empty() {
+                                    break 'brk b".";
+                                }
                                 #[cfg(windows)]
                                 {
                                     // With ALWAYS_COPY=false, `rel` may borrow
                                     // RELATIVE_TO_BUF (resolve_path.rs early returns at L450/457/500/
-                                    // 522) or be `b""`. Re-deriving a slice of the common-path buf
+                                    // 522). Re-deriving a slice of the common-path buf
                                     // would yield stale bytes in those cases. Copy `rel` into the
                                     // common-path scratch when it isn't already there, then convert
                                     // and return that — returning `rel`'s bytes
@@ -2013,8 +2021,7 @@ impl Package<u64> {
                                     // otherwise `rel` borrows a disjoint allocation.
                                     let common = unsafe { &mut *common_raw };
                                     if !rel_is_common {
-                                        // `rel` is into a disjoint thread-local (RELATIVE_TO_BUF)
-                                        // or `b""` (len==0 → no read).
+                                        // `rel` is into a disjoint thread-local (RELATIVE_TO_BUF).
                                         common[..len].copy_from_slice(rel);
                                     }
                                     let s: &mut [u8] = &mut common[..len];
@@ -2024,7 +2031,8 @@ impl Package<u64> {
                                 #[cfg(not(windows))]
                                 break 'brk rel;
                             }
-                        });
+                        },
+                    );
                     debug_assert!(path.len() > 0);
                     debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
                     dependency_version.value.workspace = path;

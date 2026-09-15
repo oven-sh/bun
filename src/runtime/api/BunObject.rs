@@ -2435,10 +2435,23 @@ pub mod JSZlib {
         let mut level: Option<i32> = None;
         let mut library = Library::Zlib;
         let mut window_bits: i32 = 0;
+        let defaults = zlib::Options::default();
+        let mut mem_level = defaults.mem_level;
+        let mut strategy = defaults.strategy;
 
         if let Some(options_val) = options_val_ {
             if let Some(window) = options_val.get(global_this, "windowBits")? {
                 window_bits = window.coerce::<i32>(global_this)?;
+                library = Library::Zlib;
+            }
+
+            if let Some(value) = options_val.get(global_this, "memLevel")? {
+                mem_level = value.coerce::<i32>(global_this)?;
+                library = Library::Zlib;
+            }
+
+            if let Some(value) = options_val.get(global_this, "strategy")? {
+                strategy = value.coerce::<i32>(global_this)?;
                 library = Library::Zlib;
             }
 
@@ -2479,6 +2492,8 @@ pub mod JSZlib {
                         window_bits: 15,
                         gzip: is_gzip,
                         level: level.unwrap_or(6),
+                        mem_level,
+                        strategy,
                         ..Default::default()
                     },
                 ) {

@@ -771,12 +771,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     };
     // A per-request closure has no identity a pool key could compare.
     let bypass_pool = !check_server_identity.is_empty();
+    // The session's callbacks stay on the session, which the request keeps alive.
+    let mut session_check_server_identity = false;
     if let Some(session) = session.filter(|_| !request_has_tls) {
         ssl_config = session.ssl_config();
         reject_unauthorized = session.reject_unauthorized().unwrap_or(reject_unauthorized);
-        if let Some(callback) = session.check_server_identity() {
-            check_server_identity = callback;
-        }
+        session_check_server_identity = session.check_server_identity().is_some();
     }
 
     // unix: string | undefined
@@ -1022,7 +1022,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             on_stats = obj.get_fetch_option_function(global_this, jsc::FetchOptionName::OnStats)?;
         }
     }
-    let on_stats = on_stats.or_else(|| session.and_then(|c| c.on_stats()));
+    let session_on_stats = on_stats.is_none() && session.is_some_and(|s| s.on_stats().is_some());
     let pool = session.map(|c| c.pool()).unwrap_or_default();
 
     // signal: AbortSignal | null | undefined;
@@ -1964,6 +1964,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             Some(callback) => jsc::strong::Optional::create(callback, global_this),
             None => jsc::strong::Optional::empty(),
         },
+        session_check_server_identity,
+        session_on_stats,
     };
 
     let _ = FetchTasklet::queue(

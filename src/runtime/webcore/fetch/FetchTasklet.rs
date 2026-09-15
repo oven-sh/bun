@@ -144,6 +144,9 @@ pub struct FetchTasklet {
     /// The `Bun.FetchSession` of this request, kept from being collected (and
     /// closing its pool) while the request can still park a socket there.
     pub(crate) fetch_session: StrongOptional,
+    /// The callback is the session's, which holds it; `fetch_session` holds the session.
+    pub(crate) session_check_server_identity: bool,
+    pub(crate) session_on_stats: bool,
     pub(crate) reject_unauthorized: bool,
     pub(crate) upgraded_connection: bool,
     pub(crate) unix_socket_path: Box<[u8]>,
@@ -1176,7 +1179,7 @@ impl FetchTasklet {
         &mut self,
         certificate_info: &CertificateInfo,
     ) -> Result<(), Option<JSValue>> {
-        let Some(check_server_identity) = self.check_server_identity.get() else {
+        let Some(check_server_identity) = self.check_server_identity_callback() else {
             return Err(None);
         };
         check_server_identity.ensure_still_alive();
@@ -1250,14 +1253,32 @@ impl FetchTasklet {
         }
     }
 
+    /// The request's own `checkServerIdentity`, else its session's.
+    fn check_server_identity_callback(&self) -> Option<JSValue> {
+        self.check_server_identity.get().or_else(|| {
+            if !self.session_check_server_identity {
+                return None;
+            }
+            self.fetch_session
+                .get()
+                .and_then(super::fetch_session::js::check_server_identity_get_cached)
+        })
+    }
+
     /// The HTTP thread is done with the request: hand `onStats` what its last
     /// connection did, before the promise or the body learn how it ended.
     fn report_connection_stats(&mut self, http_thread_is_done: bool) {
-        if !self.on_stats.has() {
-            return;
-        }
-        let on_stats = core::mem::replace(&mut self.on_stats, StrongOptional::empty());
-        let Some(callback) = on_stats.get() else {
+        // Once per request: the request's own callback, else its session's.
+        let own = core::mem::take(&mut self.on_stats);
+        let from_session = core::mem::take(&mut self.session_on_stats);
+        let Some(callback) = own.get().or_else(|| {
+            if !from_session {
+                return None;
+            }
+            self.fetch_session
+                .get()
+                .and_then(super::fetch_session::js::on_stats_get_cached)
+        }) else {
             return;
         };
         let global_this = self.global_this;
@@ -2011,6 +2032,8 @@ impl FetchTasklet {
             check_server_identity: fetch_options.check_server_identity,
             on_stats: fetch_options.on_stats,
             fetch_session: fetch_options.fetch_session,
+            session_check_server_identity: fetch_options.session_check_server_identity,
+            session_on_stats: fetch_options.session_on_stats,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             unix_socket_path: fetch_options.unix_socket_path,
@@ -2067,7 +2090,10 @@ impl FetchTasklet {
                 fetch_options.forced_protocol,
                 Some(http::Protocol::Http2 | http::Protocol::Http3)
             );
-        if fetch_tasklet.check_server_identity.has() && !advisory_on_pinned_protocol {
+        if (fetch_tasklet.check_server_identity.has()
+            || fetch_tasklet.session_check_server_identity)
+            && !advisory_on_pinned_protocol
+        {
             fetch_tasklet
                 .signal_store
                 .cert_errors
@@ -2145,7 +2171,7 @@ impl FetchTasklet {
                 compress: fetch_options.compress,
                 pool: fetch_options.pool,
                 bypass_pool: fetch_options.bypass_pool,
-                collect_stats: fetch_tasklet.on_stats.has(),
+                collect_stats: fetch_tasklet.on_stats.has() || fetch_tasklet.session_on_stats,
             },
         )));
         // enable streaming the write side
@@ -2751,6 +2777,9 @@ pub struct FetchOptions {
     pub(crate) bypass_pool: bool,
     pub(crate) on_stats: StrongOptional,
     pub(crate) fetch_session: StrongOptional,
+    /// The callback is the session's, which holds it; `fetch_session` holds the session.
+    pub(crate) session_check_server_identity: bool,
+    pub(crate) session_on_stats: bool,
 }
 
 /// Where a request's proxy comes from.

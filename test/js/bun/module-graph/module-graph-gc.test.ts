@@ -172,6 +172,19 @@ class Lifetimes {
     // failure message (the result is a failure whatever these find).
     const turn = () => new Promise<void>(resolve => setTimeout(resolve, 0));
     const probes: [string, () => Promise<void>][] = [
+      // (First, so that what the heap snapshot above changed is not credited to a later probe.)
+      ["timer callbacks again", collect],
+      // If what holds it is something the timer path writes only for a repeating timer, the next
+      // repeating timer to fire replaces it.
+      [
+        "timer callbacks, after an unrelated interval fired once and cleared itself",
+        async () => {
+          await new Promise<void>(resolve => {
+            const interval = setInterval(() => (clearInterval(interval), resolve()), 1);
+          });
+          await collect();
+        },
+      ],
       ["a setImmediate callback", () => new Promise<void>(resolve => setImmediate(() => (Bun.gc(true), resolve())))],
       ["a microtask", async () => (await Promise.resolve(), void Bun.gc(true))],
       [

@@ -154,9 +154,9 @@ use bun_jsc::AbortSignalRef;
 use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
-    ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
-    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects, StringOrBuffer,
-    ThreadIsolated, ThreadIsolatedArg, VectorArrayBuffer,
+    ArgumentsSlice, Dirent, DirentName, Encoding, FdArgExt as _, FileSystemFlags,
+    FileSystemFlagsKind, NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects,
+    StringOrBuffer, ThreadIsolated, ThreadIsolatedArg, VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
@@ -3368,15 +3368,12 @@ pub mod args {
     }
     impl Readdir<'_> {
         pub(crate) fn tag(&self) -> ret::ReaddirTag {
-            match self.encoding {
-                Encoding::Buffer => ret::ReaddirTag::Buffers,
-                _ => {
-                    if self.with_file_types {
-                        ret::ReaddirTag::WithFileTypes
-                    } else {
-                        ret::ReaddirTag::Files
-                    }
-                }
+            if self.with_file_types {
+                ret::ReaddirTag::WithFileTypes
+            } else if self.encoding == Encoding::Buffer {
+                ret::ReaddirTag::Buffers
+            } else {
+                ret::ReaddirTag::Files
             }
         }
     }
@@ -9133,7 +9130,11 @@ impl ReaddirEntry for Dirent {
         encoding: Encoding,
     ) {
         entries.push(Dirent {
-            name: webcore::encoding::to_bun_string(utf8_name, encoding),
+            name: if encoding == Encoding::Buffer {
+                DirentName::Buffer(Buffer::from_string(utf8_name).expect("oom"))
+            } else {
+                DirentName::String(webcore::encoding::to_bun_string(utf8_name, encoding))
+            },
             path: dirent_path.clone(),
             kind,
         });
@@ -9143,13 +9144,19 @@ impl ReaddirEntry for Dirent {
         utf16_name: &[u16],
         dirent_path: &BunString,
         kind: sys::FileKind,
-        _encoding: Encoding,
-        _re_encoding_buffer: Option<&mut PathBuffer>,
+        encoding: Encoding,
+        re_encoding_buffer: Option<&mut PathBuffer>,
     ) {
-        // Windows Dirent always clones the raw UTF-16
-        // name (no re-encoding) and skips the lstatat() DT_UNKNOWN fallback.
         entries.push(Dirent {
-            name: BunString::clone_utf16(utf16_name),
+            name: if encoding == Encoding::Buffer {
+                let utf8_path =
+                    strings::paths::from_w_path(&mut re_encoding_buffer.unwrap()[..], utf16_name);
+                DirentName::Buffer(Buffer::from_string(utf8_path.as_bytes()).expect("oom"))
+            } else {
+                // String names preserve the raw UTF-16 and skip the lstatat()
+                // DT_UNKNOWN fallback used on POSIX.
+                DirentName::String(BunString::clone_utf16(utf16_name))
+            },
             path: dirent_path.clone(),
             kind,
         });
@@ -9164,10 +9171,14 @@ impl ReaddirEntry for Dirent {
         apply_encoding: bool,
     ) {
         entries.push(Dirent {
-            name: if apply_encoding {
-                webcore::encoding::to_bun_string(utf8_name, encoding)
+            name: if encoding == Encoding::Buffer {
+                DirentName::Buffer(Buffer::from_string(utf8_name).expect("oom"))
             } else {
-                BunString::clone_utf8(utf8_name)
+                DirentName::String(if apply_encoding {
+                    webcore::encoding::to_bun_string(utf8_name, encoding)
+                } else {
+                    BunString::clone_utf8(utf8_name)
+                })
             },
             path: dirent_path.clone(),
             kind,

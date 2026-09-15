@@ -1676,8 +1676,22 @@ bun_core::comptime_string_map! {
 /// When using the async iterator, the `fs.Dir` object will be automatically
 /// closed after the iterator exits.
 /// @since v12.12.0
+pub enum DirentName {
+    String(bun_core::String),
+    Buffer(Buffer),
+}
+
+impl DirentName {
+    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        match self {
+            Self::String(name) => name.into_js(global),
+            Self::Buffer(mut name) => name.to_node_buffer(global),
+        }
+    }
+}
+
 pub struct Dirent {
-    pub name: bun_core::String,
+    pub name: DirentName,
     pub path: bun_core::String,
     // not publicly exposed
     pub(crate) kind: DirentKind,
@@ -1695,7 +1709,7 @@ unsafe extern "C" {
     safe fn Bun__Dirent__toJS(
         global: &JSGlobalObject,
         kind: i32,
-        name: bun_core::String,
+        name: JSValue,
         path: bun_core::String,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JSValue;
@@ -1726,11 +1740,12 @@ impl Dirent {
             DirentKind::SymLink => UV_DIRENT_LINK,
             DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => UV_DIRENT_UNKNOWN,
         };
+        let name = self.name.into_js(global_object)?;
         bun_jsc::from_js_host_call(global_object, || {
             Bun__Dirent__toJS(
                 global_object,
                 kind_int,
-                self.name,
+                name,
                 self.path,
                 cached_previous_path_jsvalue,
             )

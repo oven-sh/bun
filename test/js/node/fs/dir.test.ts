@@ -202,6 +202,45 @@ describe("opendirSync string encoding shorthand", () => {
   });
 });
 
+describe("opendir buffer encoding", () => {
+  it("returns Buffer entry names from sync and async directories", async () => {
+    const dirname = path.join(os.tmpdir(), "opendir-buffer-" + String(Math.random() * 100).substring(0, 6));
+    fs.mkdirSync(dirname);
+    fs.writeFileSync(path.join(dirname, "entry.txt"), "x");
+    try {
+      const syncEntries = fs.readdirSync(dirname, { encoding: "buffer", withFileTypes: true });
+      expect(syncEntries[0]?.name).toEqual(Buffer.from("entry.txt"));
+
+      const asyncEntries = await fs.promises.readdir(dirname, { encoding: "buffer", withFileTypes: true });
+      expect(asyncEntries[0]?.name).toEqual(Buffer.from("entry.txt"));
+
+      const syncDir = fs.opendirSync(dirname, { encoding: "buffer" });
+      expect(syncDir.readSync()?.name).toEqual(Buffer.from("entry.txt"));
+      syncDir.closeSync();
+
+      const asyncDir = await fs.promises.opendir(dirname, { encoding: "buffer" });
+      expect((await asyncDir.read())?.name).toEqual(Buffer.from("entry.txt"));
+      await asyncDir.close();
+    } finally {
+      fs.rmSync(dirname, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== "linux")("preserves non-UTF-8 entry bytes", async () => {
+    const dirname = path.join(os.tmpdir(), "opendir-buffer-raw-" + String(Math.random() * 100).substring(0, 6));
+    fs.mkdirSync(dirname);
+    const rawName = Buffer.from([0xff]);
+    fs.writeFileSync(Buffer.concat([Buffer.from(dirname + path.sep), rawName]), "x");
+    try {
+      const dir = await fs.promises.opendir(dirname, { encoding: "buffer" });
+      expect((await dir.read())?.name).toEqual(rawName);
+      await dir.close();
+    } finally {
+      fs.rmSync(dirname, { recursive: true, force: true });
+    }
+  });
+});
+
 // Node's Dir implements Symbol.dispose / Symbol.asyncDispose so it composes
 // with `using` / `await using`. Disposing an already-closed Dir is a no-op.
 describe("Dir explicit resource management", () => {

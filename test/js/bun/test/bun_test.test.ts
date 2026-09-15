@@ -18,8 +18,7 @@ test("describe/test", async () => {
   }).toMatchInlineSnapshot(`
     {
       "exitCode": 1,
-      "stderr": 
-    "test/js/bun/test/bun_test.fixture.ts:
+      "stderr": "test/js/bun/test/bun_test.fixture.ts:
 
     # Unhandled error between tests
     -------------------------------
@@ -137,10 +136,8 @@ test("describe/test", async () => {
      10 fail
      1 error
      2 snapshots, 10 expect() calls
-    Ran 46 tests across 1 file."
-    ,
-      "stdout": 
-    "bun test <version> (<revision>)
+    Ran 46 tests across 1 file.",
+      "stdout": "bun test <version> (<revision>)
     enter
     exit
     describe 1
@@ -211,8 +208,7 @@ test("describe/test", async () => {
     after-inside-test: afterAll2
     after-inside-test: afterEach2
     after-inside-test: afterEach3
-    after-inside-test: afterAll3"
-    ,
+    after-inside-test: afterAll3",
     }
   `);
 });

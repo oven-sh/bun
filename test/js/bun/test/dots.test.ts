@@ -18,8 +18,7 @@ test("dots 1", async () => {
   }).toMatchInlineSnapshot(`
     {
       "exitCode": 1,
-      "stderr": 
-    "....................
+      "stderr": "....................
 
     test/js/bun/test/dots.fixture.ts:
     (fail) failing filterin
@@ -34,8 +33,7 @@ test("dots 1", async () => {
     10 skip
     10 todo
     3 fail
-    Ran 33 tests across 1 file."
-    ,
+    Ran 33 tests across 1 file.",
       "stdout": "bun test <version> (<revision>)",
     }
   `);
@@ -64,8 +62,7 @@ test("dots 2", async () => {
   }).toMatchInlineSnapshot(`
     {
       "exitCode": 1,
-      "stderr": 
-    "..........
+      "stderr": "..........
 
     test/js/bun/test/printing/dots/dots1.fixture.ts:
     Hello, world!
@@ -96,8 +93,7 @@ test("dots 2", async () => {
     43 pass
     10 skip
     2 fail
-    Ran 55 tests across 3 files."
-    ,
+    Ran 55 tests across 3 files.",
     }
   `);
 });

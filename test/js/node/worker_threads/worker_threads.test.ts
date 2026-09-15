@@ -1325,6 +1325,36 @@ test("dropping a transferred port notifies its peer", async () => {
   port1.close();
 });
 
+// Same, across threads: a port transferred to a worker that exits before draining its
+// inbox goes down with that inbox. The surviving peer must get 'close' and release the
+// loop, or a parent with a 'message' listener on it never exits (the listener refs the
+// port, and nothing is left to unref it).
+test.concurrent("a port stranded in an exited worker's inbox closes its peer", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker, MessageChannel } = require("worker_threads");
+       const { port1, port2 } = new MessageChannel();
+       const w = new Worker("process.exit(0)", { eval: true });
+       w.postMessage({ port: port2 }, [port2]); // queued; the worker never reads it
+       port1.on("message", () => {}); // refs port1; a missed 'close' hangs the parent
+       port1.on("close", () => console.log("port1 closed"));
+       process.on("exit", () => console.log("parent exit"));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // signalCode null => it exited on its own rather than hanging until killed.
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "port1 closed\nparent exit",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 // close() outside a dispatch drops whatever is queued; close() from inside a
 // 'message' handler lets the in-flight drain finish. Both are node's behaviour.
 test("close() drops queued messages unless it runs inside a dispatch", async () => {

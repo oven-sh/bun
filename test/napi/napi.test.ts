@@ -978,6 +978,102 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  it("completions for a Bun.ModuleGraph run in its context; once it is disposed they still run but may not run its script", async () => {
+    using dir = tempDir("napi-module-graph", {
+      "tenant.mjs": `
+        import { createRequire } from "node:module";
+        const addon = createRequire(import.meta.url)(addonPath);
+        export const ran = [];
+        export function start() {
+          addon.call_back_from_async_work(() => ran.push("async work callback"));
+          addon.resolve_from_async_work().then(() => ran.push("async work promise"));
+          addon.call_back_from_threadsafe_function(() => ran.push("threadsafe function callback"));
+        }
+        export function startIntervalFromCompletion(state) {
+          addon.call_back_from_async_work(() => {
+            setInterval(() => state.ticks++, 1);
+            state.started = true;
+          });
+        }
+      `,
+      "fixture.mjs": `
+        import { createRequire } from "node:module";
+        const addonPath = process.argv[2];
+        const addon = createRequire(import.meta.url)(addonPath);
+        const until = async condition => {
+          while (!condition()) await new Promise(resolve => setImmediate(resolve));
+        };
+        const graphs = {};
+        for (const name of ["disposed", "live"]) {
+          const graph = new Bun.ModuleGraph({ isolateIO: true, globals: { addonPath } });
+          graphs[name] = { graph, app: await graph.import(import.meta.dir + "/tenant.mjs") };
+        }
+        const hostRan = [];
+        graphs.disposed.graph.run(() => graphs.disposed.app.start());
+        graphs.live.graph.run(() => graphs.live.app.start());
+        addon.call_back_from_async_work(() => hostRan.push("async work callback"));
+        addon.resolve_from_async_work().then(() => hostRan.push("async work promise"));
+        addon.call_back_from_threadsafe_function(() => hostRan.push("threadsafe function callback"));
+        graphs.disposed.graph.dispose();
+        // The addon records every completion, the disposed graph's included.
+        await until(() => addon.completion_statuses().length === 9);
+        await until(() => graphs.live.app.ran.length === 3 && hostRan.length === 3);
+        const statuses = addon.completion_statuses().sort();
+
+        // What a live graph's completion starts is that graph's: dispose() stops it.
+        const state = { ticks: 0, started: false };
+        graphs.live.graph.run(() => graphs.live.app.startIntervalFromCompletion(state));
+        await until(() => state.started && state.ticks > 0);
+        graphs.live.graph.dispose();
+        const ticksAtDispose = state.ticks;
+        let hostTicks = 0;
+        const hostInterval = setInterval(() => hostTicks++, 1);
+        await until(() => hostTicks >= 5);
+        clearInterval(hostInterval);
+
+        console.log(JSON.stringify({
+          statuses,
+          disposed: graphs.disposed.app.ran.sort(),
+          live: graphs.live.app.ran.sort(),
+          host: hostRan.sort(),
+          ticksAfterDispose: state.ticks - ticksAtDispose,
+        }));
+        // (Whatever is still running is in the output above.)
+        process.exit(0);
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "fixture.mjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const everything = ["async work callback", "async work promise", "threadsafe function callback"];
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      // 23 is napi_cannot_run_js: what the addon is also told in a VM that is stopping. Settling a
+      // promise of the disposed graph is accepted (0) and settles nothing.
+      statuses: [
+        "async_work_callback:0",
+        "async_work_callback:0",
+        "async_work_callback:23",
+        "async_work_deferred:0",
+        "async_work_deferred:0",
+        "async_work_deferred:0",
+        "threadsafe_function_callback:0",
+        "threadsafe_function_callback:0",
+        "threadsafe_function_callback:23",
+      ],
+      disposed: [],
+      live: everything,
+      host: everything,
+      ticksAfterDispose: 0,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   describe("napi_adjust_external_memory", () => {
     it("applies negative deltas and reports the running total", async () => {
       const result = await checkSameOutput("test_napi_adjust_external_memory", []);

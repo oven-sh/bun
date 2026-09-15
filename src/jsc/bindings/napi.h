@@ -589,6 +589,14 @@ private:
     // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
+
+public:
+    // Set while a completion (async work's complete, a threadsafe function's call_js) runs for a
+    // Bun.ModuleGraph context that has stopped. The addon's callback has to run, since it owns
+    // memory only it can free; what it may not do is run that graph's script.
+    bool m_isCompletingForStoppedContext = false;
+
+private:
     JSC::VM& m_vm;
     const ::BunVmHandleRef* m_vmHandle;
     Napi::HookSet m_cleanupHooks;

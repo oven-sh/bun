@@ -1938,6 +1938,12 @@ pub(crate) fn install_isolated_packages(
         }
     }
 
+    // Must run before the thread pool starts: the probe sets umask(0) briefly.
+    #[cfg(unix)]
+    {
+        crate::bin::Linker::ensure_umask();
+    }
+
     {
         // Conditionally initialized (only when progress is shown); definite-
         // initialization analysis guarantees no use before assignment.

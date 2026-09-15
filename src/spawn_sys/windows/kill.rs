@@ -183,7 +183,7 @@ fn wide_z(s: &str) -> Vec<u16> {
 }
 
 fn until_nul(s: &[u16]) -> &[u16] {
-    &s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())]
+    &s[..bun_core::strings::index_of_any16(s, &[0]).unwrap_or(s.len())]
 }
 
 /// Writes a full-memory dump of `process` as `<image name>.<pid>.dmp`, if the

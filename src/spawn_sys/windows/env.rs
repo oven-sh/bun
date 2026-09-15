@@ -124,7 +124,7 @@ pub fn make_env_block<'a>(
 pub fn find_path(block: &[u16]) -> Option<&[u16]> {
     let mut rest = block;
     while !rest.is_empty() && rest[0] != 0 {
-        let len = rest.iter().position(|&c| c == 0).unwrap_or(rest.len());
+        let len = bun_core::strings::index_of_any16(rest, &[0]).unwrap_or(rest.len());
         let entry = &rest[..len];
         if entry.len() >= 5
             && (entry[0] == b'P' as u16 || entry[0] == b'p' as u16)
@@ -202,11 +202,16 @@ mod tests {
 
     fn block_strings(block: &[u16]) -> Vec<String> {
         assert_eq!(block.last(), Some(&0));
-        block[..block.len() - 1]
-            .split(|&c| c == 0)
-            .filter(|s| !s.is_empty())
-            .map(|s| String::from_utf16(s).unwrap())
-            .collect()
+        let mut rest = &block[..block.len() - 1];
+        let mut strings = Vec::new();
+        while !rest.is_empty() {
+            let len = bun_core::strings::index_of_any16(rest, &[0]).unwrap_or(rest.len());
+            if len != 0 {
+                strings.push(String::from_utf16(&rest[..len]).unwrap());
+            }
+            rest = &rest[(len + 1).min(rest.len())..];
+        }
+        strings
     }
 
     fn build(entries: &[&str], parent: &[(&str, &str)]) -> Vec<String> {

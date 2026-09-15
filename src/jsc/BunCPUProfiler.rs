@@ -29,6 +29,10 @@ unsafe extern "C" {
     /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is
     /// ABI-identical to a non-null `VM*`.
     safe fn Bun__startCPUProfiler(vm: &mut VM);
+    /// Same `&mut VM` contract as `Bun__startCPUProfiler`.
+    safe fn Bun__drainCPUProfilerIfNeeded(vm: &mut VM);
+    /// Same `&mut VM` contract as `Bun__startCPUProfiler`.
+    safe fn Bun__stopCPUProfilerIfRunning(vm: &mut VM);
     /// `Option<&mut BunString>` is ABI-identical to a nullable `*mut BunString`
     /// via the guaranteed null-pointer optimization; the C++ side writes a +1
     /// ref into each non-null out-param and ignores nulls.
@@ -39,6 +43,8 @@ unsafe extern "C" {
     );
     /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
     safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
+    /// Plain by-value `bool`; sets a thread-local flag.
+    safe fn Bun__setCPUProfilerCollectMarkdown(collect: bool);
 }
 
 pub fn set_sampling_interval(interval: u32) {
@@ -50,6 +56,21 @@ pub fn set_sampling_interval(interval: u32) {
 
 pub fn start_cpu_profiler(vm: &mut VM) {
     Bun__startCPUProfiler(vm);
+}
+
+/// Whether profiles on this thread also build the per-function stats for `--cpu-prof-md`.
+pub fn set_collect_markdown(collect: bool) {
+    Bun__setCPUProfilerCollectMarkdown(collect);
+}
+
+/// Stops a profiler that was never stopped (inspector or worker sessions) and frees its data.
+pub(crate) fn stop_cpu_profiler_if_running(vm: &mut VM) {
+    Bun__stopCPUProfilerIfRunning(vm);
+}
+
+/// Folds pending samples into the profile and releases the JS objects they reference.
+pub fn drain_cpu_profiler_if_needed(vm: &mut VM) {
+    Bun__drainCPUProfilerIfNeeded(vm);
 }
 
 pub(crate) fn stop_and_write_profile(

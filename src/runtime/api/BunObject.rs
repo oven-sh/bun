@@ -2530,9 +2530,14 @@ pub mod JSZlib {
                     bun_libdeflate::Encoding::Deflate
                 };
 
+                // libdeflate checks the output space once per block, then reads the input again to emit it.
+                let input = buffer
+                    .slice_copied_if_shared()
+                    .map_err(|_| global_this.throw_out_of_memory())?;
+
                 let mut list: Vec<u8> = Vec::new();
                 let result = compressor
-                    .compress_to_vec(compressed, &mut list, encoding)
+                    .compress_to_vec(&input, &mut list, encoding)
                     .map_err(|_| global_this.throw_out_of_memory())?;
                 if result.status != bun_libdeflate::Status::Success {
                     drop(list);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunRun, isWindows, nodeExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, nodeExe, tempDir, tempDirWithFiles } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -113,6 +113,72 @@ test("allowHalfOpen: false should work on client-side", async () => {
       .map(s => s.trim())
       .filter(s => s),
   ).toEqual(["Hello, World", "Received FIN"]);
+});
+
+// Regression test for #39723: over a Windows named pipe, client.end() closed the whole
+// pipe handle instead of half-closing the write side, so the server's reply to the
+// final write never reached the client (test-net-pingpong, 1000 !== 1001).
+// Runs the same ping-pong over a unix socket elsewhere.
+test("allowHalfOpen: reply to the final write before end() is still delivered (pipe transport)", async () => {
+  using dir = tempDir("net-pipe-pingpong", {
+    "pingpong-fixture.js": `
+      const net = require("net");
+      const path = require("path");
+      const N = 3;
+      const PIPE =
+        process.platform === "win32"
+          ? "\\\\\\\\.\\\\pipe\\\\bun-halfopen-pingpong-" + process.pid
+          : path.join(__dirname, "pingpong.sock");
+      let count = 0;
+      let sentFinalPing = false;
+      const server = net.createServer({ allowHalfOpen: true }, socket => {
+        socket.setEncoding("utf8");
+        socket.on("data", data => {
+          if (data !== "PING") {
+            console.error("server got " + JSON.stringify(data));
+            process.exit(1);
+          }
+          socket.write("PONG");
+        });
+        socket.on("end", () => socket.end());
+        socket.on("close", () => server.close());
+      });
+      server.listen(PIPE, () => {
+        const client = net.createConnection(PIPE);
+        client.setEncoding("utf8");
+        client.on("connect", () => client.write("PING"));
+        client.on("data", data => {
+          if (data !== "PONG") {
+            console.error("client got " + JSON.stringify(data));
+            process.exit(1);
+          }
+          count++;
+          if (sentFinalPing) return;
+          if (count < N) {
+            client.write("PING");
+          } else {
+            sentFinalPing = true;
+            client.write("PING");
+            client.end();
+          }
+        });
+        client.on("close", () => {
+          console.log("count = " + count + " expected " + (N + 1));
+          process.exit(count === N + 1 ? 0 : 1);
+        });
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pingpong-fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("count = 4 expected 4\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 // A paused allowHalfOpen socket whose AF_UNIX peer writes a tail and closes (EPOLLHUP while paused) must keep

@@ -75,11 +75,9 @@ impl JSXPragma {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Error {
-    UTF8Fail,
     OutOfMemory,
     SyntaxError,
     UnexpectedSyntax,
-    ParserError,
     Backtrack,
 }
 bun_core::impl_tag_error!(Error);
@@ -156,7 +154,6 @@ pub struct LexerSnapshot<'a> {
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
     pub(crate) jsx_pragma: JSXPragma,
-    pub(crate) source_mapping_url: Option<js_ast::Span>,
     pub(crate) number: f64,
     pub(crate) rescan_close_brace_as_template_token: bool,
     pub(crate) prev_error_loc: Loc,
@@ -226,7 +223,6 @@ pub struct Lexer<'a> {
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
     pub(crate) jsx_pragma: JSXPragma,
-    pub(crate) source_mapping_url: Option<js_ast::Span>,
     pub(crate) number: f64,
     pub(crate) rescan_close_brace_as_template_token: bool,
     pub(crate) prev_error_loc: Loc,
@@ -341,7 +337,6 @@ impl<'a> Lexer<'a> {
             code_point: self.code_point,
             identifier: self.identifier,
             jsx_pragma: self.jsx_pragma,
-            source_mapping_url: self.source_mapping_url,
             number: self.number,
             rescan_close_brace_as_template_token: self.rescan_close_brace_as_template_token,
             prev_error_loc: self.prev_error_loc,
@@ -379,7 +374,6 @@ impl<'a> Lexer<'a> {
         self.code_point = original.code_point;
         self.identifier = original.identifier;
         self.jsx_pragma = original.jsx_pragma;
-        self.source_mapping_url = original.source_mapping_url;
         self.number = original.number;
         self.rescan_close_brace_as_template_token = original.rescan_close_brace_as_template_token;
         self.prev_error_loc = original.prev_error_loc;
@@ -2208,12 +2202,7 @@ impl<'a> Lexer<'a> {
             && chunk.starts_with(b" sourceMappingURL=")
         {
             // Check includes space for prefix
-            return PragmaArg::scan_source_mapping_url_value(
-                self.start,
-                offset_for_errors,
-                chunk,
-                &mut self.source_mapping_url,
-            );
+            return PragmaArg::scan_source_mapping_url_value(chunk);
         }
 
         0
@@ -2257,7 +2246,6 @@ impl<'a> Lexer<'a> {
             code_point: -1,
             identifier: b"",
             jsx_pragma: JSXPragma::default(),
-            source_mapping_url: None,
             number: 0.0,
             rescan_close_brace_as_template_token: false,
             prev_error_loc: Loc::EMPTY,
@@ -3464,47 +3452,15 @@ impl PragmaArg {
     // These can be extremely long, so we use SIMD.
     /// "//# sourceMappingURL=data:/adspaoksdpkz"
     ///                       ^^^^^^^^^^^^^^^^^^
-    pub(crate) fn scan_source_mapping_url_value(
-        start: usize,
-        offset_for_errors: usize,
-        chunk: &[u8],
-        result: &mut Option<js_ast::Span>,
-    ) -> usize {
-        const PREFIX: u32 = " sourceMappingURL=".len() as u32;
-        let url_and_rest_of_code = &chunk[PREFIX as usize..]; // Slice containing only the potential argument
+    /// Returns the number of bytes to skip: the prefix plus the URL.
+    pub(crate) fn scan_source_mapping_url_value(chunk: &[u8]) -> usize {
+        const PREFIX: usize = " sourceMappingURL=".len();
+        let url_and_rest_of_code = &chunk[PREFIX..];
 
-        let url_len: usize = 'brk: {
-            if let Some(delimiter_pos_in_arg) =
-                strings::index_of_space_or_newline_or_non_ascii(url_and_rest_of_code, 0)
-            {
-                // SIMD found the delimiter at index 'delimiter_pos_in_arg' relative to url start.
-                // The argument's length is exactly this index.
-                break 'brk delimiter_pos_in_arg as usize;
-            } else {
-                // SIMD found no delimiter in the entire url.
-                // The argument is the whole chunk.
-                break 'brk url_and_rest_of_code.len();
-            }
-        };
+        let url_len = strings::index_of_space_or_newline_or_non_ascii(url_and_rest_of_code, 0)
+            .map_or(url_and_rest_of_code.len(), |pos| pos as usize);
 
-        // Now we have the correct argument length (url_len) and the argument text.
-        let url = &url_and_rest_of_code[0..url_len];
-
-        // Calculate absolute start location of the argument
-        let absolute_arg_start = start + offset_for_errors + PREFIX as usize;
-
-        *result = Some(js_ast::Span {
-            range: Range {
-                len: i32::try_from(url_len).expect("int cast"), // Correct length
-                loc: Loc {
-                    start: i32::try_from(absolute_arg_start).expect("int cast"),
-                }, // Correct start
-            },
-            text: js_ast::StoreStr::new(url),
-        });
-
-        // Return total length consumed from the start of the chunk
-        PREFIX as usize + url_len // Correct total length
+        PREFIX + url_len
     }
 
     pub(crate) fn scan(

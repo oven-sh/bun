@@ -193,7 +193,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // same slot in the link as the C++ archive. Rust `include!`s codegen
   // `.rs` outputs (written as side effects of the generate-classes /
   // bundle-modules / generate-jssink edges), so the codegen output set
-  // is forwarded as implicit inputs of the workspace crates to order it first.
+  // is forwarded to order the workspace crates after it (order-only; the
+  // crates' dep-info then tracks exactly the files they read).
   //
   // cpp-only: skip rust entirely (runs on a separate CI machine).
   let rustObjects: string[] = [];
@@ -210,8 +211,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
     depsByName.set(rustArgon2.name, rustArgon2Dep);
     rustObjects = emitRust(n, cfg, {
-      codegenInputs: codegen.rustInputs,
-      codegenOrderOnly: codegen.rustOrderOnly,
+      codegenOrderOnly: [...codegen.rustInputs, ...codegen.rustOrderOnly],
       rustSources: sources.rust,
       vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
     });
@@ -585,8 +585,7 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const codegen = emitCodegen(n, cfg, sources);
 
   const rustObjects = emitRust(n, cfg, {
-    codegenInputs: codegen.rustInputs,
-    codegenOrderOnly: codegen.rustOrderOnly,
+    codegenOrderOnly: [...codegen.rustInputs, ...codegen.rustOrderOnly],
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
   });
@@ -701,8 +700,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const codegen = emitCodegen(n, cfg, sources);
 
   const rustObjects = emitRust(n, cfg, {
-    codegenInputs: codegen.rustInputs,
-    codegenOrderOnly: codegen.rustOrderOnly,
+    codegenOrderOnly: [...codegen.rustInputs, ...codegen.rustOrderOnly],
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
   });
@@ -923,13 +921,8 @@ function emitDuplicateSymbolCheck(
   // section rustc embeds in compiler_builtins on Mach-O. Use the tools rustup ships for rustc's LLVM
   // (component llvm-tools, `<sysroot>/lib/rustlib/<host>/bin`); they read clang's older output too. If
   // they are missing the scan reports every unreadable input and fails, with a hint.
-  const llvmMajor = (v: string | undefined) => (v === undefined ? undefined : Number(v.split(".")[0]));
-  const rustLlvmNewer =
-    llvmMajor(cfg.rustLlvmVersion) !== undefined &&
-    llvmMajor(cfg.clangVersion) !== undefined &&
-    llvmMajor(cfg.rustLlvmVersion)! > llvmMajor(cfg.clangVersion)!;
   const rustBin =
-    rustLlvmNewer && cfg.rustSysroot !== undefined && cfg.rustHostTriple !== undefined
+    cfg.rustLlvmNewer && cfg.rustSysroot !== undefined && cfg.rustHostTriple !== undefined
       ? join(cfg.rustSysroot, "lib", "rustlib", cfg.rustHostTriple, "bin")
       : undefined;
   const rustTool = (name: string, fallback: string): string => {

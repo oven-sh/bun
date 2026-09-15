@@ -15,31 +15,42 @@
  * of the edge, so a flag change rebuilds exactly the units it touches.
  */
 
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
 import { writeIfChanged } from "../fs.ts";
 import type { Ninja } from "../ninja.ts";
-import { quote, quoteArgs } from "../shell.ts";
-import { planPath } from "./plan.ts";
+import { quote } from "../shell.ts";
+import { streamPath } from "../stream.ts";
+import { type PlanInput, planInputPath, planPath } from "./plan.ts";
 import {
   type ManifestContext,
-  type RustGraph,
   type RustUnit,
-  depfilePath,
+  externDeps,
   externPath,
   transitiveLinkInputs,
   unitManifest,
 } from "./units.ts";
 
-const runScript = resolve(import.meta.dirname, "run.ts");
-const planScript = resolve(import.meta.dirname, "plan.ts");
-const planScriptDeps = [planScript, resolve(import.meta.dirname, "toml.ts")]; // what the planner runs
+const here = import.meta.dirname;
+const runScript = resolve(here, "run.ts");
+const planScript = resolve(here, "plan.ts");
+/** What each build-time entry point loads: an edit to any of these reruns its edges (the convention for every build-time script in this system). */
+const runScriptDeps = [
+  runScript,
+  resolve(here, "cargo-env.ts"),
+  resolve(here, "..", "jobserver.ts"),
+  resolve(here, "..", "fs.ts"),
+];
+const planScriptDeps = [planScript, resolve(here, "toml.ts"), resolve(here, "..", "fs.ts")];
 
 export function registerRustUnitRules(n: Ninja, cfg: Config): void {
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
-  const run = `${cfg.jsRuntime} ${q(runScript)}`;
+  // run.ts runs under Bun whatever runs configure: it is started ~3× per crate (meta, its monitor, codegen), so
+  // runtime startup is on the critical path (bun: ~20 ms, node: ~80 ms), and on Windows the jobserver client
+  // needs bun:ffi (jobserver.ts).
+  const run = `${q(cfg.bun)} ${q(runScript)}`;
 
   // Depfiles: run.ts rewrites rustc's dep-info (all emitted artifacts as targets, `# env-dep` comments)
   // into `$depfile` with just this edge's outputs. deps=gcc moves it into .ninja_deps.
@@ -67,9 +78,12 @@ export function registerRustUnitRules(n: Ninja, cfg: Config): void {
     // output.json is rewritten only when the directives change, so an unchanged rerun rebuilds nothing downstream.
     restat: true,
   });
+  // Through stream.ts like the other cargo/dep edges: cargo's registry and crate-download progress streams to the
+  // terminal (it has a TTY UI worth the console pool on a cold cache), and stream.ts points cargo at the system CA
+  // bundle (CARGO_HTTP_CAINFO) the way the environment expects.
   n.rule("rust_plan", {
-    command: `${cfg.jsRuntime} ${q(planScript)} --cwd=$cwd $env $out $cargo $rustc $triple $rustflags -- $args`,
-    description: "cargo plan → $out",
+    command: `${cfg.jsRuntime} ${q(streamPath)} cargo --console ${cfg.jsRuntime} ${q(planScript)} $planinput $plan`,
+    description: "cargo plan → $plan",
     // plan.json is written only if the graph changed; then build.ninja (which depends on it) is regenerated.
     restat: true,
     pool: "console",
@@ -77,63 +91,55 @@ export function registerRustUnitRules(n: Ninja, cfg: Config): void {
 }
 
 export interface RustPlanEdgeInputs {
-  cargo: string;
-  rustc: string;
-  triple: string;
-  rustflags: string[];
-  /** `cargo build` args (after `build`) */
-  args: string[];
-  env: Record<string, string>;
-  /** Cargo.lock, workspace manifests, rust-toolchain.toml, vendored-crate fetch stamps */
+  input: PlanInput;
+  /** cargo and rustc binaries, Cargo.lock, workspace manifests, rust-toolchain.toml, vendored-crate fetch stamps */
   inputs: string[];
-  orderOnly: string[];
 }
 
-/** The edge producing `<buildDir>/rust/plan.json`. Returns its path (an input of build.ninja's regen edge). */
+/**
+ * The edge producing `<buildDir>/rust/plan.json`. What to plan (cargo args/env, rustc, triple, rustflags) goes into
+ * `rust/plan.input.json` at configure — writeIfChanged, an input of the edge, so a changed argument re-plans.
+ * Returns the plan's path (an input of build.ninja's regen edge).
+ */
 export function emitRustPlan(n: Ninja, cfg: Config, p: RustPlanEdgeInputs): string {
   const hostWin = cfg.host.os === "windows";
   const out = planPath(cfg.buildDir);
+  const input = planInputPath(cfg.buildDir);
+  mkdirSync(join(cfg.buildDir, "rust"), { recursive: true });
+  writeIfChanged(input, JSON.stringify(p.input, null, 2) + "\n");
   n.build({
     outputs: [out],
     rule: "rust_plan",
-    inputs: [],
+    inputs: [input],
     implicitInputs: [...p.inputs, ...planScriptDeps],
-    orderOnlyInputs: p.orderOnly,
-    vars: {
-      cwd: quote(cfg.cwd, hostWin),
-      env: Object.entries(p.env)
-        .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
-        .join(" "),
-      cargo: quote(p.cargo, hostWin),
-      rustc: quote(p.rustc, hostWin),
-      triple: p.triple,
-      rustflags: quote(p.rustflags.join("\x1f"), hostWin),
-      args: quoteArgs(p.args, hostWin),
-    },
+    vars: { planinput: quote(input, hostWin), plan: quote(out, hostWin) },
   });
   return out;
 }
 
 export interface RustEdgeInputs {
   /**
-   * Generated `.rs` files the workspace crates `include!`, and anything else that must exist before a workspace
-   * crate compiles (the Windows shim). Order-only: rustc's dep-info names every `include!`d file, so from the
-   * second build on exactly the crate that includes a changed file rebuilds.
+   * What must exist before a workspace crate compiles: generated `.rs` files the crates `include!` and the codegen
+   * phony. Order-only, through one `rust-codegen-ready` phony: rustc's dep-info names every `include!`d file, so from
+   * the second build on exactly the crate that includes a changed file rebuilds.
    */
-  codegenInputs: string[];
   codegenOrderOnly: string[];
+  /**
+   * Stamps of edges whose real product reaches a crate as an undeclared side effect (the Windows shim: bun_install
+   * `include_bytes!` the copied .exe, of which only the stamp is a declared output). Implicit inputs of the workspace
+   * crates: ninja stats the .exe before that edge runs, so its dep-info entry alone would lag one build behind.
+   */
+  implicitInputs: string[];
   /** Fetch stamps of vendored crates: order-only for everything (the plan already required them). */
   vendorStamps: string[];
 }
 
-/**
- * Emit every unit's edges and write the unit manifests; sweep artifacts of units no longer in the graph.
- * Returns the root staticlib path.
- */
-export function emitRustUnits(n: Ninja, cfg: Config, ctx: ManifestContext, inputs: RustEdgeInputs): string {
-  const { graph } = ctx;
+/** Emit every unit's edges and write the unit manifests. Returns the root staticlib path. */
+export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeInputs): string {
+  const { cfg, graph } = ctx;
   const hostWin = cfg.host.os === "windows";
   mkdirSync(join(graph.dir, "units"), { recursive: true });
+  n.phony("rust-codegen-ready", inputs.codegenOrderOnly);
 
   for (const unit of graph.units) {
     const manifest = unitManifest(ctx, unit);
@@ -142,23 +148,21 @@ export function emitRustUnits(n: Ninja, cfg: Config, ctx: ManifestContext, input
     const vars = {
       manifest: quote(unit.manifestPath, hostWin),
       crate: unit.crateName,
-      // a ninja `depfile =` binding, read as a path (never part of a command): no shell quoting
-      depfile: manifest.depfile ?? "",
+      depfile: manifest.depfile, // a ninja `depfile =` binding, read as a path (never part of a command): no shell quoting
       what: "",
     };
     // What rebuilds this unit: the artifacts it names with --extern (rmeta for pipelined lib deps, rlib/dylib
-    // otherwise), its build script's output.json, its manifest; sources and `include!`d files come from the depfile.
-    const externs = unit.deps
-      .filter(d => d.unit.kind !== "build-script" && d.unit.kind !== "build-script-run" && d.unit.kind !== "staticlib")
-      .map(d => externPath(unit, d.unit));
-    const scriptOut = unit.buildScript !== undefined ? [unit.buildScript.output] : [];
-    const common = [unit.manifestPath, ...scriptOut];
-    const orderOnly = [
-      ...inputs.vendorStamps,
-      ...(unit.isLocal ? [...inputs.codegenInputs, ...inputs.codegenOrderOnly] : []),
-    ];
+    // otherwise), its build script's output.json, its manifest, the driver scripts; sources and `include!`d files
+    // come from the depfile.
+    const externs = externDeps(unit).map(d => externPath(unit, d.unit));
+    const scriptOut =
+      manifest.kind !== "build-script-run" && manifest.buildScriptOutput !== undefined
+        ? [manifest.buildScriptOutput]
+        : [];
+    const common = [unit.manifestPath, ...scriptOut, ...runScriptDeps, ...(unit.isLocal ? inputs.implicitInputs : [])];
+    const orderOnly = [...inputs.vendorStamps, ...(unit.isLocal ? ["rust-codegen-ready"] : [])];
 
-    switch (unit.kind) {
+    switch (manifest.kind) {
       case "lib":
         n.build({
           outputs: [unit.rmeta!],
@@ -182,61 +186,37 @@ export function emitRustUnits(n: Ninja, cfg: Config, ctx: ManifestContext, input
         // (cargo: a linking unit gets Artifact::All edges to all of them). A direct dependency's rlib being done
         // says nothing about *its* dependencies' rlibs: those edges were released on `.rmeta`.
         const all = transitiveLinkInputs(unit).map(u => u.output);
-        const what = unit.kind === "staticlib" ? ` → ${cfg.libPrefix}${unit.crateName}${cfg.libSuffix}` : "";
+        const what = manifest.kind === "staticlib" ? ` → ${cfg.libPrefix}${unit.crateName}${cfg.libSuffix}` : "";
         n.build({
           outputs: [unit.output],
           rule: "rust_rustc",
           inputs: [],
-          implicitInputs: [...new Set([...externs, ...all, ...common])],
+          implicitInputs: [...new Set([...externs, ...all, ...common, ...manifest.depBuildScriptOutputs])],
           orderOnlyInputs: orderOnly,
           vars: { ...vars, what },
         });
         break;
       }
-      case "build-script-run": {
-        const compiled = unit.deps.find(d => d.unit.kind === "build-script")!.unit;
-        const linksDeps = unit.deps.filter(d => d.unit.kind === "build-script-run").map(d => d.unit.output);
+      case "build-script-run":
         n.build({
           outputs: [unit.output],
           rule: "rust_build_script",
           inputs: [],
-          implicitInputs: [compiled.output, ...linksDeps, unit.manifestPath],
+          implicitInputs: [
+            manifest.script.program,
+            ...manifest.script.linksDeps.map(d => d.output),
+            unit.manifestPath,
+            ...runScriptDeps,
+          ],
           orderOnlyInputs: orderOnly,
           vars,
         });
         break;
-      }
     }
   }
-
-  // Stale artifact removal. Everything a unit writes carries its hash in the name (`libfoo-<hash>.rlib`,
-  // `foo-<hash>.d`, `build/foo-<hash>/`, `units/foo-<hash>.json`); a name with a hash no current unit has is a
-  // leftover from an earlier plan or flag set. cargo lets these accumulate; here they would also be visible to
-  // `-L dependency=` crate lookup, so they go.
-  const live = new Set(graph.units.map(u => u.hash));
-  const sweep = (dirPath: string) => {
-    let entries: string[] = [];
-    try {
-      entries = readdirSync(dirPath);
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      const m = /-([0-9a-f]{16})(?:[./]|$)/.exec(e);
-      if (m !== null && !live.has(m[1]!)) rmSync(join(dirPath, e), { recursive: true, force: true });
-    }
-  };
-  for (const platformDir of new Set(
-    graph.units.map(u => (u.platform === "host" ? join(graph.dir, "host") : join(graph.dir, u.platform))),
-  )) {
-    sweep(join(platformDir, "deps"));
-    sweep(join(platformDir, "build"));
-  }
-  sweep(join(graph.dir, "units"));
 
   n.phony("bun-rust", [graph.root.output]);
   return graph.root.output;
 }
 
-export { depfilePath };
-export type { RustGraph, RustUnit };
+export type { RustUnit };

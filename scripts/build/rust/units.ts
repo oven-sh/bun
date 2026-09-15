@@ -9,8 +9,8 @@
  * choice is not obvious. What is deliberately different from cargo:
  *
  * - Layout: `<buildDir>/rust/{host,<triple>}/{deps,build,incremental}` instead
- *   of cargo's `target/` tree, and one hash per unit (cargo keeps two, one for
- *   symbols and one for file names; nothing but cargo reads either).
+ *   of cargo's `target/` tree; the two per-unit hashes (symbols, file names)
+ *   follow cargo's split but are computed here rather than being cargo's values.
  * - Diagnostics: human-readable straight from rustc for units that are not
  *   pipelined; JSON (rendered by `run.ts`) only where the metadata artifact
  *   notification is needed.
@@ -23,7 +23,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.ts";
 import { assert } from "../error.ts";
+import { type BuildScriptOutput, dylibPathVar, envify } from "./cargo-env.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
+
+export type { BuildScriptOutput };
+export { envify };
 
 export type UnitKind = "lib" | "proc-macro" | "staticlib" | "build-script" | "build-script-run";
 
@@ -58,8 +62,17 @@ export interface RustUnit {
   deps: UnitDep[];
   /** For lib/staticlib/proc-macro units of a package with a build script: that script's run unit (its `--cfg`s, env and OUT_DIR apply here). */
   buildScript: RustUnit | undefined;
-  /** 16 hex digits: `-C metadata`, `-C extra-filename`, directory names. */
+  /**
+   * 16 hex digits: `-C extra-filename`, directory and manifest names. Covers everything that changes the output,
+   * target rustflags included, so an artifact built with other flags is never picked up under the same name.
+   */
   hash: string;
+  /**
+   * 16 hex digits: `-C metadata` (rustc mixes it into every symbol). Like cargo's `c_metadata` it leaves the
+   * rustflags out, so an instrumented and an optimized PGO build — or any two builds differing only in flags — mangle
+   * identically; and std crates hash by their path inside the sysroot, not relative to the checkout.
+   */
+  symbolHash: string;
 
   // ─── derived paths (absolute) ───
   /** `--out-dir` */
@@ -94,7 +107,7 @@ export interface RustGraph {
 export function buildRustGraph(cfg: Config, plan: RustPlan, targetRustflags: string[]): RustGraph {
   const dir = join(cfg.buildDir, "rust");
   const triple = plan.target.triple;
-  const platDir = (platform: string) => join(dir, platform === "host" ? "host" : platform);
+  const platDir = (platform: string) => join(dir, platform);
   const g = plan.unitGraph;
   assert(g.roots.length === 1, `rust plan: expected one root unit, got ${g.roots.length}`);
 
@@ -138,6 +151,7 @@ export function buildRustGraph(cfg: Config, plan: RustPlan, targetRustflags: str
       deps: [],
       buildScript: undefined,
       hash: "",
+      symbolHash: "",
       outDir: "",
       output: "",
       rmeta: undefined,
@@ -168,38 +182,53 @@ export function buildRustGraph(cfg: Config, plan: RustPlan, targetRustflags: str
     }
   });
 
-  // Hashes (topological; the unit graph is a DAG). One value serves as `-C metadata` (symbol
-  // disambiguation: must differ wherever two builds of one crate name can meet — host vs target,
-  // sysroot std vs build-std std, feature sets) and as `-C extra-filename`/directory name (must change
-  // when the output would, so a stale artifact is never picked up under the new name).
-  const hashOf = (unit: RustUnit): string => {
-    if (unit.hash !== "") return unit.hash;
+  // Hashes, computed topologically over the DAG. `symbolHash` (→ `-C metadata`) must differ wherever two builds
+  // of one crate name can meet in a link — host vs target, sysroot std vs build-std std, feature sets — and must
+  // *not* differ between builds meant to have identical symbols (PGO generate/use), so it excludes the rustflags.
+  // `hash` (→ file names) additionally covers the rustflags. cargo: compute_metadata's c_metadata vs unit_id.
+  const packageKey = (unit: RustUnit): string =>
+    unit.isStd
+      ? relative(plan.rustc.sysroot, unit.pkg.manifest_path)
+      : unit.pkg.source === null
+        ? relative(plan.workspaceRoot, unit.pkg.manifest_path)
+        : unit.pkg.id;
+  const digest = (parts: unknown[]): string =>
+    createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
+  const identity = (unit: RustUnit): unknown[] => {
     const u = g.units[unit.index]!;
-    const h = createHash("sha256");
-    h.update(
-      JSON.stringify([
-        2, // bump to invalidate every artifact
-        // path packages by workspace-relative manifest path so the hash does not depend on the checkout location
-        unit.pkg.source === null ? relative(plan.workspaceRoot, unit.pkg.manifest_path) : unit.pkg.id,
-        u.target.name,
-        u.target.kind,
-        u.target.crate_types,
-        unit.platform,
-        u.mode,
-        [...unit.features].sort(),
-        u.profile,
-        unit.isStd,
-        plan.rustc.version,
-        plan.rustc.commitHash,
-        plan.rustc.host,
-        unit.platform === "host" ? [] : targetRustflags.filter(f => !f.startsWith("--remap-path-prefix")),
-        unit.deps.map(d => [d.externName, hashOf(d.unit)]),
-        unit.buildScript !== undefined ? hashOf(unit.buildScript) : null,
-      ]),
-    );
-    return (unit.hash = h.digest("hex").slice(0, 16));
+    return [
+      3, // bump to invalidate every artifact
+      packageKey(unit),
+      u.target.name,
+      u.target.kind,
+      u.target.crate_types,
+      unit.platform,
+      u.mode,
+      [...unit.features].sort(),
+      u.profile,
+      unit.isStd,
+      plan.rustc.version,
+      plan.rustc.commitHash,
+      plan.rustc.host,
+    ];
   };
-  for (const unit of units) hashOf(unit);
+  const hashesOf = (unit: RustUnit): void => {
+    if (unit.hash !== "") return;
+    for (const d of unit.deps) hashesOf(d.unit);
+    if (unit.buildScript !== undefined) hashesOf(unit.buildScript);
+    unit.symbolHash = digest([
+      ...identity(unit),
+      unit.deps.map(d => [d.externName, d.unit.symbolHash]),
+      unit.buildScript?.symbolHash ?? null,
+    ]);
+    unit.hash = digest([
+      ...identity(unit),
+      unit.platform === "host" ? [] : targetRustflags.filter(f => !f.startsWith("--remap-path-prefix")),
+      unit.deps.map(d => [d.externName, d.unit.hash]),
+      unit.buildScript?.hash ?? null,
+    ]);
+  };
+  for (const unit of units) hashesOf(unit);
 
   // Paths. File names come from `rustc --print file-names` for the unit's platform (cargo: TargetInfo::rustc_outputs).
   for (const unit of units) {
@@ -259,56 +288,60 @@ export function buildRustGraph(cfg: Config, plan: RustPlan, targetRustflags: str
 // ───────────────────────────────────────────────────────────────────────────
 
 /** Written to `unit.manifestPath` at configure; the edge depends on it, so any change here rebuilds the unit. */
-export interface UnitManifest {
+export type UnitManifest = RustcUnitManifest | BuildScriptRunManifest;
+
+interface ManifestCommon {
   crateName: string;
-  kind: UnitKind;
-  /** The compiler (build-script-run: unused). */
-  rustc: string;
+  /** The unit's file-name hash; also how run.ts recognizes a process working on this unit. */
+  hash: string;
   cwd: string;
-  /** rustc argv without the program (build-script-run: empty). Build-script-derived `--cfg`/`--check-cfg`/`-L`/`-l` and `rustc-env` are appended by run.ts from `buildScriptOutput`. */
-  args: string[];
   env: Record<string, string>;
-  /** Every file the unit produces that ninja knows about. */
-  outputs: string[];
-  rmeta: string | undefined;
-  /** rustc's dep-info output and the depfile run.ts derives from it for ninja. */
-  depInfo: string | undefined;
-  depfile: string | undefined;
-  /** The package's build-script `output.json`, when its directives apply to this unit. */
-  buildScriptOutput: string | undefined;
-  /** `output.json` of every (transitive) dependency with a build script: their `rustc-link-search` paths apply here too (cargo add_native_deps). */
-  depBuildScriptOutputs: string[];
+  /** The file ninja knows this unit by: rlib (lib), dylib (proc-macro), archive (staticlib), executable (build-script), output.json (build-script-run). */
+  output: string;
+  /** The ninja depfile run.ts writes for the unit's (first) edge. */
+  depfile: string;
   /**
    * The dynamic-library search path for the process (proc-macro dylibs, anything a build script loads): the variable
    * for this host and what to put in front of its inherited value — composed by run.ts at build time so that the
    * user's PATH/LD_LIBRARY_PATH is not frozen into every manifest.
    */
   libraryPath: { variable: string; prepend: string[] };
-  /** build-script-run only. */
-  script:
-    | {
-        program: string;
-        outDir: string;
-        /** `output.json` of each direct dependency with a `links` key → `DEP_<LINKS>_<KEY>` env. */
-        linksDeps: { links: string; output: string }[];
-        /** package `rust-version`, for the `cargo::` (two-colon) syntax gate. */
-        rustVersion: string | null;
-        manifestDir: string;
-        /** Path package: without `rerun-if-*` directives cargo reruns the script when any file of the package changes. */
-        local: boolean;
-        /**
-         * `rerun-if-env-changed`: the variables the script named on its last run, with the values configure saw.
-         * Configure runs before every build, so a changed value changes this manifest and reruns the script — cargo's
-         * behaviour, minus builds that bypass configure and invoke ninja directly.
-         */
-        trackedEnv: Record<string, string>;
-      }
-    | undefined;
 }
 
-/** cargo `envify`: upper-case, `-` → `_`. */
-function envify(s: string): string {
-  return s.toUpperCase().replace(/-/g, "_");
+/** A rustc invocation: lib, proc-macro, staticlib or build-script compile. */
+export interface RustcUnitManifest extends ManifestCommon {
+  kind: "lib" | "proc-macro" | "staticlib" | "build-script";
+  rustc: string;
+  /** rustc argv without the program. Build-script-derived `-L`/`-l`/`-C link-arg`/`--cfg`/`--check-cfg` and `rustc-env` are added by run.ts. */
+  args: string[];
+  /** lib units: the `.rmeta` the same rustc produces ahead of `output`. */
+  rmeta: string | undefined;
+  /** rustc's dep-info output, which run.ts rewrites into `depfile`. */
+  depInfo: string;
+  /** The package's build-script `output.json`, when the package has one (its directives apply here). */
+  buildScriptOutput: string | undefined;
+  /** `output.json` of every transitive same-platform dependency with a build script: their `rustc-link-search` paths apply here too (cargo add_native_deps). */
+  depBuildScriptOutputs: string[];
+}
+
+/** A build-script execution. */
+export interface BuildScriptRunManifest extends ManifestCommon {
+  kind: "build-script-run";
+  script: {
+    program: string;
+    outDir: string;
+    /** `output.json` of each direct dependency with a `links` key → `DEP_<LINKS>_<KEY>` env. */
+    linksDeps: { links: string; output: string }[];
+    manifestDir: string;
+    /** Path package: warnings are shown, and without `rerun-if-*` directives the script reruns when any file of the package changes. */
+    local: boolean;
+    /**
+     * `rerun-if-env-changed`: the variables the script named on its last run, with the values configure saw.
+     * Configure runs before every build, so a changed value changes this manifest and reruns the script — cargo's
+     * behaviour, minus builds that bypass configure and invoke ninja directly.
+     */
+    trackedEnv: Record<string, string>;
+  };
 }
 
 /** `CARGO_PKG_*` / `CARGO_MANIFEST_*` (cargo: `Compilation::fill_env`) — set for rustc and for build scripts alike, empty string when the manifest lacks the field. */
@@ -336,11 +369,6 @@ function packageEnv(pkg: MetadataPackage, cargo: string): Record<string, string>
   };
 }
 
-/** The dynamic-library search path variable for the machine running the build (cargo: `paths::dylib_path_envvar`). */
-export function dylibPathVar(hostOs: string): string {
-  return hostOs === "windows" ? "PATH" : hostOs === "darwin" ? "DYLD_FALLBACK_LIBRARY_PATH" : "LD_LIBRARY_PATH";
-}
-
 export interface ManifestContext {
   cfg: Config;
   graph: RustGraph;
@@ -352,20 +380,26 @@ export interface ManifestContext {
   linker: { host: string | undefined; target: string };
   cargo: string;
   rustdoc: string;
-  /** Available parallelism, for NUM_JOBS. */
-  jobs: number;
 }
 
 export function unitManifest(ctx: ManifestContext, unit: RustUnit): UnitManifest {
+  if (unit.kind === "build-script-run") return buildScriptRunManifest(ctx, unit);
+  return rustcUnitManifest(ctx, unit);
+}
+
+/** cargo: the host deps dir (proc-macro dylibs a build script or rustc may load) goes in front of the inherited search path. */
+function libraryPath(ctx: ManifestContext): ManifestCommon["libraryPath"] {
+  return { variable: dylibPathVar(ctx.cfg.host.os), prepend: [ctx.graph.hostDeps] };
+}
+
+function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManifest {
   const { cfg, graph } = ctx;
   const plan = graph.plan;
-  const hostOs = cfg.host.os;
   const isHost = unit.platform === "host";
-  // cargo: the host deps dir (proc-macro dylibs a build script or rustc may load) goes in front of the inherited search path.
-  const libraryPath = { variable: dylibPathVar(hostOs), prepend: [graph.hostDeps] };
-
-  if (unit.kind === "build-script-run") return buildScriptRunManifest(ctx, unit, libraryPath);
-
+  assert(
+    unit.kind !== "build-script-run" && unit.depInfo !== undefined,
+    `rust plan: ${unit.crateName} is not a rustc unit`,
+  );
   const args: string[] = [];
   const local = unit.isLocal;
   // cargo `add_path_args`: path packages compile with cwd = workspace root and a relative source path (this is what
@@ -411,7 +445,7 @@ export function unitManifest(ctx: ManifestContext, unit: RustUnit): UnitManifest
   // [lints] (local packages only), then `--check-cfg` from `unexpected_cfgs.check-cfg`.
   const lints: ManifestLints | undefined = plan.lints[unit.pkg.id];
   if (local && lints !== undefined) {
-    for (const l of lints.lints) args.push(`--${l.level}=${l.name}`);
+    args.push(...lints.flags);
     for (const c of lints.checkCfg) args.push("--check-cfg", c);
   }
   for (const f of p.rustflags ?? []) args.push(f);
@@ -436,7 +470,7 @@ export function unitManifest(ctx: ManifestContext, unit: RustUnit): UnitManifest
       ? `cfg(feature, values(${declared.map(f => JSON.stringify(f)).join(", ")}))`
       : "cfg(feature, values())",
   );
-  args.push("-C", `metadata=${unit.hash}`);
+  args.push("-C", `metadata=${unit.symbolHash}`);
   if (unit.kind !== "staticlib") args.push("-C", `extra-filename=-${unit.hash}`);
   if (p.rpath) args.push("-C", "rpath");
   args.push("--out-dir", unit.outDir);
@@ -445,7 +479,7 @@ export function unitManifest(ctx: ManifestContext, unit: RustUnit): UnitManifest
   if (linker !== undefined) args.push("-C", `linker=${linker}`);
   // cargo: incremental for path packages only, and never when CI is set.
   if (p.incremental && local && !cfg.ci)
-    args.push("-C", `incremental=${join(graph.dir, isHost ? "host" : unit.platform, "incremental")}`);
+    args.push("-C", `incremental=${join(graph.dir, unit.platform, "incremental")}`);
   const strip = stripArg(p.strip);
   if (strip !== undefined) args.push("-C", `strip=${strip}`);
   if (unit.isStd) args.push("-Z", "force-unstable-if-unmarked");
@@ -454,8 +488,7 @@ export function unitManifest(ctx: ManifestContext, unit: RustUnit): UnitManifest
 
   // ─── --extern (cargo build_deps_args / extern_args) ───
   let externOpts = false;
-  for (const d of sortedDeps(unit)) {
-    if (d.unit.kind === "build-script" || d.unit.kind === "build-script-run" || d.unit.kind === "staticlib") continue;
+  for (const d of externDeps(unit)) {
     // `priv`: packages using cargo's `public-dependency` feature (the std crates) mark non-public deps so rustc's
     // exported_private_dependencies lint can see them.
     const priv = unit.kind === "lib" && !d.public && plan.publicDependency.includes(unit.pkg.id);
@@ -484,37 +517,29 @@ export function unitManifest(ctx: ManifestContext, unit: RustUnit): UnitManifest
   if (unit.buildScript !== undefined) env.OUT_DIR = unit.buildScript.scriptOutDir!;
   if (unit.isStd) env.RUSTC_BOOTSTRAP = "1";
 
-  const outputs = [unit.output];
   return {
-    crateName: unit.crateName,
     kind: unit.kind,
+    crateName: unit.crateName,
+    hash: unit.hash,
     rustc: plan.rustc.path,
     cwd,
     args,
     env,
-    outputs,
+    output: unit.output,
     rmeta: unit.rmeta,
     depInfo: unit.depInfo,
-    depfile: depfilePath(unit),
+    depfile: `${unit.depInfo}.ninja`,
     buildScriptOutput: unit.buildScript?.output,
-    depBuildScriptOutputs: transitiveLinkInputs(unit)
+    // cargo build_scripts.to_link: the package's own script, then those of linkable dependencies on the *same*
+    // platform — a proc-macro's (host) subgraph contributes its dylib, not its native search paths.
+    depBuildScriptOutputs: transitiveLinkInputs(unit, "same-platform")
       .map(d => d.buildScript?.output)
       .filter((o): o is string => o !== undefined),
-    libraryPath,
-    script: undefined,
+    libraryPath: libraryPath(ctx),
   };
 }
 
-/** The ninja depfile run.ts writes for the unit's (first) edge. */
-export function depfilePath(unit: RustUnit): string | undefined {
-  return unit.depInfo === undefined ? undefined : `${unit.depInfo}.ninja`;
-}
-
-function buildScriptRunManifest(
-  ctx: ManifestContext,
-  unit: RustUnit,
-  libraryPath: UnitManifest["libraryPath"],
-): UnitManifest {
+function buildScriptRunManifest(ctx: ManifestContext, unit: RustUnit): BuildScriptRunManifest {
   const { cfg, graph } = ctx;
   const plan = graph.plan;
   const isHost = unit.platform === "host";
@@ -531,7 +556,6 @@ function buildScriptRunManifest(
     ...ctx.baseEnv,
     ...packageEnv(unit.pkg, ctx.cargo),
     OUT_DIR: unit.scriptOutDir!,
-    NUM_JOBS: String(ctx.jobs),
     TARGET: info.triple,
     HOST: plan.rustc.host,
     OPT_LEVEL: p.opt_level,
@@ -562,7 +586,6 @@ function buildScriptRunManifest(
   if (p.debug_assertions) cfgs.set("debug_assertions", []);
   for (const [name, values] of cfgs) env[`CARGO_CFG_${envify(name)}`] = values.join(",");
   env.CARGO_CFG_FEATURE = unit.features.join(",");
-  delete env.RUSTFLAGS;
 
   const trackedEnv: Record<string, string> = {};
   if (existsSync(unit.output)) {
@@ -587,24 +610,18 @@ function buildScriptRunManifest(
       return { links: d.unit.pkg.links, output: d.unit.output };
     });
   return {
+    kind: "build-script-run",
     crateName: unit.crateName,
-    kind: unit.kind,
-    rustc: plan.rustc.path,
+    hash: unit.hash,
     cwd: dirname(unit.pkg.manifest_path),
-    args: [],
     env,
-    outputs: [unit.output],
-    rmeta: undefined,
-    depInfo: undefined,
+    output: unit.output,
     depfile: join(unit.outDir, "output.d"),
-    buildScriptOutput: undefined,
-    depBuildScriptOutputs: [],
-    libraryPath,
+    libraryPath: libraryPath(ctx),
     script: {
       program: compiled.unit.output,
       outDir: unit.scriptOutDir!,
       linksDeps,
-      rustVersion: unit.pkg.rust_version,
       manifestDir: dirname(unit.pkg.manifest_path),
       local: unit.isLocal,
       trackedEnv,
@@ -612,11 +629,14 @@ function buildScriptRunManifest(
   };
 }
 
-/** cargo passes `--extern`s in dependency order sorted by (crate name, …); rustc does not care, but a stable order keeps manifests stable. */
-function sortedDeps(unit: RustUnit): UnitDep[] {
-  return [...unit.deps].sort((a, b) =>
-    a.externName < b.externName ? -1 : a.externName > b.externName ? 1 : a.unit.index - b.unit.index,
-  );
+/**
+ * The dependencies a unit names with `--extern` (cargo `extern_args`: linkable targets only — not build scripts),
+ * in a stable order (cargo sorts by crate name; rustc does not care, but stable manifests do).
+ */
+export function externDeps(unit: RustUnit): UnitDep[] {
+  return unit.deps
+    .filter(d => d.unit.kind === "lib" || d.unit.kind === "proc-macro")
+    .sort((a, b) => (a.externName < b.externName ? -1 : a.externName > b.externName ? 1 : a.unit.index - b.unit.index));
 }
 
 /**
@@ -667,12 +687,18 @@ function stripArg(s: UnitGraphUnit["profile"]["strip"]): string | undefined {
   return lower === "none" || lower === "false" ? undefined : lower;
 }
 
-/** All target-platform rlibs and proc-macro dylibs the root's link reads: cargo gives a linking unit `Artifact::All` edges to every transitive dependency. */
-export function transitiveLinkInputs(unit: RustUnit): RustUnit[] {
+/**
+ * Every lib/proc-macro unit reachable through `--extern` edges: what a linking unit reads (cargo gives it
+ * `Artifact::All` edges to all of them). With `"same-platform"` the walk does not descend into dependencies built
+ * for the other platform (a target unit's proc-macros and everything beneath them): that is cargo's
+ * `build_scripts.to_link`, the set whose native search paths apply.
+ */
+export function transitiveLinkInputs(unit: RustUnit, scope: "all" | "same-platform" = "all"): RustUnit[] {
   const seen = new Set<RustUnit>();
   const walk = (u: RustUnit) => {
-    for (const d of u.deps) {
-      if (d.unit.kind === "build-script" || d.unit.kind === "build-script-run" || seen.has(d.unit)) continue;
+    for (const d of externDeps(u)) {
+      if (seen.has(d.unit)) continue;
+      if (scope === "same-platform" && d.unit.platform !== unit.platform) continue;
       seen.add(d.unit);
       walk(d.unit);
     }

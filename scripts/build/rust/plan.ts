@@ -22,8 +22,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { writeIfChanged } from "../fs.ts";
 import { parseToml, type TomlTable, type TomlValue } from "./toml.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -112,31 +113,36 @@ export interface RustcTargetInfo {
   /** `rustc --print cfg` lines, with the target rustflags applied (what cargo hands build scripts as `CARGO_CFG_*`). */
   cfg: string[];
   /** `[prefix, suffix]` per crate type from `rustc --print file-names`, e.g. rlib → ["lib", ".rlib"], bin → ["", ".exe"]. */
-  fileNames: Record<"rlib" | "dylib" | "proc-macro" | "staticlib" | "bin", [string, string]>;
+  fileNames: Record<"rlib" | "proc-macro" | "staticlib" | "bin", [string, string]>;
   /** `rustc --print split-debuginfo`: the `-C split-debuginfo` values this target accepts (cargo drops the profile's setting otherwise). */
   splitDebuginfo: string[];
-  /** `rustc --print sysroot` + `/lib/rustlib/<triple>/lib`. */
-  targetLibdir: string;
-}
-
-/** One `[lints]` entry as cargo turns it into a rustc flag (`lints_to_rustflags`). */
-export interface ManifestLint {
-  /** `warnings`, `clippy::too_many_arguments`, … */
-  name: string;
-  level: "allow" | "warn" | "deny" | "forbid";
-  priority: number;
 }
 
 export interface ManifestLints {
-  lints: ManifestLint[];
+  /** `--deny=warnings`, `--allow=clippy::too_many_arguments`, … in cargo's order */
+  flags: string[];
   /** `[lints.rust.unexpected_cfgs] check-cfg = [...]` */
   checkCfg: string[];
 }
 
+/** What configure asks the planner for: `rust/plan.input.json`, the plan edge's input (rust/emit.ts). */
+export interface PlanInput {
+  cwd: string;
+  cargo: string;
+  rustc: string;
+  triple: string;
+  /** rust.ts's target rustflags (the `rustc --print cfg` probe applies them, as cargo does) */
+  rustflags: string[];
+  /** `cargo build` argv after `build` */
+  args: string[];
+  /** the subset of the cargo environment that shapes the plan (`planEnv`) */
+  env: Record<string, string>;
+}
+
 export interface RustPlan {
-  version: 1;
-  /** The `cargo build` argv (after `build`) and env the graph was planned with — informational, and part of what invalidates the plan. */
-  plannedWith: { args: string[]; env: Record<string, string> };
+  version: typeof PLAN_VERSION;
+  /** What the graph was planned for; a plan for anything else is not used (`readPlan`). */
+  plannedWith: PlanInput;
   rustc: { path: string; version: string; commitHash: string | null; host: string; sysroot: string };
   unitGraph: UnitGraph;
   /** By package id: every package the unit graph mentions, workspace + registry + (with -Zbuild-std) the std workspace. */
@@ -146,16 +152,19 @@ export interface RustPlan {
   /** Package ids whose manifest enables `cargo-features = ["public-dependency"]` (the std crates): their non-public deps are passed as `--extern priv:…`. */
   publicDependency: string[];
   workspaceRoot: string;
-  workspaceMembers: string[];
   host: RustcTargetInfo;
   /** Absent when host == target and no `--target` was planned (never the case for bun today: rust.ts always passes --target). */
   target: RustcTargetInfo;
 }
 
-export const PLAN_VERSION = 1;
+export const PLAN_VERSION = 2;
 
 export function planPath(buildDir: string): string {
   return join(buildDir, "rust", "plan.json");
+}
+
+export function planInputPath(buildDir: string): string {
+  return join(buildDir, "rust", "plan.input.json");
 }
 
 /**
@@ -164,21 +173,26 @@ export function planPath(buildDir: string): string {
  * arguments (profile/ASAN/LTO toggles change the graph). In every such case configure emits just the plan edge,
  * ninja runs it, and the reconfigure it triggers picks the fresh plan up.
  */
-export function readPlan(buildDir: string, plannedWith: RustPlan["plannedWith"]): RustPlan | undefined {
+export function readPlan(buildDir: string, input: PlanInput): RustPlan | undefined {
   const path = planPath(buildDir);
   if (!existsSync(path)) return undefined;
-  let plan: RustPlan;
+  let plan: RustPlan | undefined;
   try {
     plan = JSON.parse(readFileSync(path, "utf8")) as RustPlan;
   } catch {
-    // Truncated or otherwise unreadable (the planner was killed mid-write before it wrote atomically, disk
-    // full, …): ninja considers the file up to date, so remove it to make the plan edge run again.
-    rmSync(path, { force: true });
-    return undefined;
+    plan = undefined; // truncated or otherwise unreadable (disk full, …)
   }
-  if (plan.version !== PLAN_VERSION) return undefined;
-  if (JSON.stringify(plan.plannedWith) !== JSON.stringify(plannedWith)) return undefined;
-  return plan;
+  if (
+    plan !== undefined &&
+    plan.version === PLAN_VERSION &&
+    JSON.stringify(plan.plannedWith) === JSON.stringify(input)
+  ) {
+    return plan;
+  }
+  // Not a plan for this configuration. The plan edge reruns because its input file changed; removing the stale
+  // plan as well means nothing (a lost .ninja_log, a hand-run ninja) can mistake it for current.
+  rmSync(path, { force: true });
+  return undefined;
 }
 
 /** The subset of the cargo environment that shapes the plan (recorded in it, compared by `readPlan`). */
@@ -191,77 +205,62 @@ export function planEnv(env: Record<string, string>): Record<string, string> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Build-time CLI:  plan.ts [--cwd=DIR] [--env=K=V]... <plan.json> <cargo> <rustc> <target-triple> <rustflags \x1f-joined> -- <cargo build args...>
+// Build-time CLI:  plan.ts <plan.input.json> <plan.json>
 // ───────────────────────────────────────────────────────────────────────────
 
 function run(
   cmd: string,
   args: string[],
-  opts: { env?: Record<string, string | undefined>; cwd?: string } = {},
+  opts: { env?: Record<string, string | undefined>; inheritStderr?: boolean } = {},
 ): string {
   const r = spawnSync(cmd, args, {
     encoding: "utf8",
     maxBuffer: 1 << 30,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", opts.inheritStderr ? "inherit" : "pipe"],
     env: { ...process.env, ...opts.env },
-    cwd: opts.cwd,
   });
+  if (r.error) throw r.error;
   if (r.status !== 0) {
-    process.stderr.write(r.stderr ?? "");
+    if (!opts.inheritStderr) process.stderr.write(r.stderr ?? "");
     throw new Error(`${cmd} ${args.slice(0, 4).join(" ")} … exited with ${r.status ?? r.signal}`);
   }
   return r.stdout;
 }
 
-function targetInfo(
-  rustc: string,
-  triple: string,
-  rustflags: string[],
-  env: Record<string, string | undefined>,
-): RustcTargetInfo {
-  // cargo: TargetInfo::new — one rustc process printing sysroot, cfg and the file names of a probe crate per crate type,
-  // with the *target* rustflags applied (host probes get none when --target is in play).
-  const probe = (crateType: string): [string, string] => {
-    const out = run(
-      rustc,
-      [
-        "-",
-        "--crate-name",
-        "___",
-        "--print=file-names",
-        `--crate-type=${crateType}`,
-        `--target=${triple}`,
-        ...rustflags,
-      ],
-      { env },
-    )
-      .trim()
-      .split("\n");
-    // dylib-ish types print the library first; bin prints one name. `___` splits prefix from suffix.
-    const first = out.find(l => l.includes("___")) ?? out[0]!;
-    const [prefix, suffix] = first.split("___") as [string, string];
-    return [prefix, suffix];
-  };
-  const sysroot = run(rustc, ["--print=sysroot", `--target=${triple}`, ...rustflags], { env }).trim();
-  return {
-    triple,
-    cfg: run(rustc, ["--print=cfg", `--target=${triple}`, ...rustflags], { env })
+/**
+ * cargo `TargetInfo::new`: one rustc process compiling an empty probe crate from stdin that prints the file name
+ * it would produce per crate type, then sysroot, the accepted split-debuginfo values and the cfg values — with the
+ * *target* rustflags applied (host probes get none when --target is in play). Sections come back in argument
+ * order; the sysroot line (known in advance) separates the file names from the rest.
+ */
+function targetInfo(rustc: string, triple: string, rustflags: string[], sysroot: string): RustcTargetInfo {
+  const crateTypes = ["rlib", "proc-macro", "staticlib", "bin"] as const;
+  const probe = (types: readonly string[], prints: string[]) =>
+    run(rustc, [
+      "-",
+      "--crate-name",
+      "___",
+      "--print=file-names",
+      ...types.map(t => `--crate-type=${t}`),
+      ...prints,
+      `--target=${triple}`,
+      ...rustflags,
+    ])
       .split("\n")
-      .map(l => l.trim())
-      .filter(l => l.length > 0),
-    fileNames: {
-      rlib: probe("rlib"),
-      dylib: probe("dylib"),
-      "proc-macro": probe("proc-macro"),
-      staticlib: probe("staticlib"),
-      bin: probe("bin"),
-    },
-    splitDebuginfo: run(rustc, ["--print=split-debuginfo", `--target=${triple}`, ...rustflags], { env })
-      .split("\n")
-      .map(l => l.trim())
-      .filter(l => l.length > 0),
-    targetLibdir: join(sysroot, "lib", "rustlib", triple, "lib"),
-  };
+      .map(l => l.trim());
+  const out = probe(crateTypes, ["--print=sysroot", "--print=split-debuginfo", "--print=cfg"]);
+  const sysrootAt = out.indexOf(sysroot);
+  if (sysrootAt < 0) throw new Error(`rustc --print probe for ${triple}: no sysroot line in\n${out.join("\n")}`);
+  const split = (line: string): [string, string] => line.split("___") as [string, string];
+  let names = out.slice(0, sysrootAt);
+  // One artifact per crate type on every target bun builds for; where a type yields several (dylib + import
+  // library), ask per type and take the first, as cargo does.
+  if (names.length !== crateTypes.length) names = crateTypes.map(t => probe([t], [])[0]!);
+  const fileNames = Object.fromEntries(crateTypes.map((t, i) => [t, split(names[i]!)])) as RustcTargetInfo["fileNames"];
+  const rest = out.slice(sysrootAt + 1).filter(l => l.length > 0);
+  const splitDebuginfo = rest.filter(l => l === "off" || l === "packed" || l === "unpacked");
+  const cfg = rest.slice(splitDebuginfo.length);
+  return { triple, cfg, fileNames, splitDebuginfo };
 }
 
 /**
@@ -290,9 +289,9 @@ function workspaceManifestOf(manifest: TomlTable, manifestPath: string): TomlTab
 /**
  * cargo `lints_to_rustflags` (src/cargo/util/toml/mod.rs): the package's `[lints]` table — or the
  * workspace's `[workspace.lints]` when the package says `lints.workspace = true` — flattened to
- * (tool, name, level, priority), `cargo::` lints dropped, sorted by priority ascending then name
- * descending; each becomes `--<level>=<name>` (`<tool>::<name>` for tool lints). The
- * `unexpected_cfgs` lint's `check-cfg` list becomes `--check-cfg` args after them.
+ * `--<level>=<name>` flags (`<tool>::<name>` for tool lints), `cargo` lints dropped, sorted by
+ * (priority ascending, bare lint name descending, flag). The `unexpected_cfgs` lint's `check-cfg`
+ * list becomes `--check-cfg` args after them.
  */
 function manifestLints(manifest: TomlTable, manifestPath: string): ManifestLints | undefined {
   let table = manifest.lints as TomlTable | undefined;
@@ -302,77 +301,81 @@ function manifestLints(manifest: TomlTable, manifestPath: string): ManifestLints
       ((workspaceManifestOf(manifest, manifestPath).workspace as TomlTable | undefined)?.lints as
         | TomlTable
         | undefined) ?? {};
-  const lints: ManifestLint[] = [];
+  const lints: { priority: number; lint: string; flag: string }[] = [];
   const checkCfg: string[] = [];
   for (const [tool, entries] of Object.entries(table)) {
     if (tool === "workspace" || tool === "cargo") continue;
     for (const [lint, spec] of Object.entries(entries as TomlTable)) {
       const conf: { level?: TomlValue; priority?: TomlValue; "check-cfg"?: TomlValue } =
         typeof spec === "string" ? { level: spec } : (spec as TomlTable);
-      const name = tool === "rust" ? lint : `${tool}::${lint}`;
+      if (typeof conf.level !== "string" || !["allow", "warn", "deny", "forbid"].includes(conf.level)) {
+        throw new Error(`${manifestPath}: lint ${tool}.${lint} has no valid level`);
+      }
       lints.push({
-        name,
-        level: conf.level as ManifestLint["level"],
         priority: typeof conf.priority === "number" ? conf.priority : 0,
+        lint,
+        flag: `--${conf.level}=${tool === "rust" ? lint : `${tool}::${lint}`}`,
       });
       if (tool === "rust" && lint === "unexpected_cfgs" && Array.isArray(conf["check-cfg"]))
         checkCfg.push(...(conf["check-cfg"] as string[]));
     }
   }
-  lints.sort((a, b) => a.priority - b.priority || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
-  return { lints, checkCfg };
+  const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  lints.sort((a, b) => a.priority - b.priority || cmp(b.lint, a.lint) || cmp(a.flag, b.flag));
+  return { flags: lints.map(l => l.flag), checkCfg };
 }
 
 if (process.argv[1] === import.meta.filename) {
-  const argv = process.argv.slice(2);
-  const invokedFrom = process.cwd();
-  const passedEnv: Record<string, string> = {};
-  // `--cwd=DIR` / `--env=K=V` first (ninja has no per-edge environment; same convention as stream.ts).
-  while (argv[0]?.startsWith("--cwd=") || argv[0]?.startsWith("--env=")) {
-    const opt = argv.shift()!;
-    if (opt.startsWith("--cwd=")) process.chdir(opt.slice("--cwd=".length));
-    else {
-      const kv = opt.slice("--env=".length);
-      const eq = kv.indexOf("=");
-      process.env[kv.slice(0, eq)] = kv.slice(eq + 1);
-      passedEnv[kv.slice(0, eq)] = kv.slice(eq + 1);
-    }
-  }
-  const dashdash = argv.indexOf("--");
-  const [outArg, cargo, rustc, triple, rustflagsJoined] = argv.slice(0, dashdash);
-  // ninja passes $out relative to the build directory it ran us from.
-  const out = outArg === undefined ? undefined : resolve(invokedFrom, outArg);
-  const cargoArgs = argv.slice(dashdash + 1);
-  if (!out || !cargo || !rustc || !triple || rustflagsJoined === undefined || dashdash < 0) {
-    process.stderr.write("usage: plan.ts <plan.json> <cargo> <rustc> <triple> <rustflags> -- <cargo build args>\n");
+  const [inputArg, outArg] = process.argv.slice(2);
+  if (!inputArg || !outArg) {
+    process.stderr.write("usage: plan.ts <plan.input.json> <plan.json>\n");
     process.exit(2);
   }
-  const rustflags = rustflagsJoined.length > 0 ? rustflagsJoined.split("\x1f") : [];
-  const env = process.env as Record<string, string>;
+  // ninja passes paths relative to the build directory it runs in; cargo runs from the workspace.
+  const out = resolve(outArg);
+  const input = JSON.parse(readFileSync(resolve(inputArg), "utf8")) as PlanInput;
+  process.chdir(input.cwd);
+  for (const [k, v] of Object.entries(input.env)) process.env[k] = v;
+  const { cargo, rustc, triple, rustflags, args: cargoArgs } = input;
 
-  // 1. The unit graph, for exactly the build cargo would have run. (Downloads any missing registry crates as a side effect, like the build would.)
-  const unitGraph = JSON.parse(run(cargo, ["build", ...cargoArgs, "-Zunstable-options", "--unit-graph"])) as UnitGraph;
+  const vV = run(rustc, ["-vV"]);
+  const host = /^host:\s*(\S+)/m.exec(vV)?.[1];
+  if (host === undefined) throw new Error(`rustc -vV did not report a host triple:\n${vV}`);
+  const sysroot = run(rustc, ["--print=sysroot"]).trim();
+
+  // 1. The unit graph, for exactly the build cargo would have run. Downloads any missing registry crates as a side
+  //    effect, like the build would — stderr (cargo's progress) goes to the terminal.
+  const unitGraph = JSON.parse(
+    run(cargo, ["build", ...cargoArgs, "-Zunstable-options", "--unit-graph"], { inheritStderr: true }),
+  ) as UnitGraph;
   if (unitGraph.version !== 1) throw new Error(`cargo --unit-graph version ${unitGraph.version}, expected 1`);
 
-  // 2. Package facts. The workspace's own metadata, plus the std workspace's when -Zbuild-std put std units in the graph.
-  const vV = run(rustc, ["-vV"]);
-  const host = /^host:\s*(\S+)/m.exec(vV)?.[1]!;
-  const sysroot = run(rustc, ["--print=sysroot"]).trim();
+  // 2. Package facts: the workspace's metadata, plus the std workspace's when -Zbuild-std put std units in the graph.
+  //    --filter-platform keeps cargo from resolving (and downloading) crates that only other targets use.
+  const platforms = [...new Set([host, triple])].flatMap(t => ["--filter-platform", t]);
   const packages: Record<string, MetadataPackage> = {};
-  const meta = JSON.parse(run(cargo, ["metadata", "--format-version=1", "--locked"])) as {
+  const meta = JSON.parse(
+    run(cargo, ["metadata", "--format-version=1", "--locked", ...platforms], { inheritStderr: true }),
+  ) as {
     packages: MetadataPackage[];
     workspace_root: string;
-    workspace_members: string[];
   };
   for (const p of meta.packages) packages[p.id] = p;
   if (unitGraph.units.some(u => u.is_std)) {
     const stdManifest = join(sysroot, "lib", "rustlib", "src", "rust", "library", "Cargo.toml");
     // RUSTC_BOOTSTRAP: the std manifests use nightly cargo features; cargo's own build-std resolve sets the same.
-    // --all-features: `packages` only lists what some feature set reaches, and -Zbuild-std-features decides which optional std deps (backtrace: addr2line, miniz_oxide, …) are in the graph.
+    // --all-features: `packages` only lists what some feature set reaches, and -Zbuild-std-features decides which
+    // optional std deps (backtrace: addr2line, miniz_oxide, …) are in the graph. The std workspace is vendored with
+    // the rust-src component (its Cargo.lock is complete), so this resolves offline.
     const stdMeta = JSON.parse(
-      run(cargo, ["metadata", "--format-version=1", "--locked", "--all-features", "--manifest-path", stdManifest], {
-        env: { RUSTC_BOOTSTRAP: "1" },
-      }),
+      run(
+        cargo,
+        ["metadata", "--format-version=1", "--locked", "--all-features", ...platforms, "--manifest-path", stdManifest],
+        {
+          env: { RUSTC_BOOTSTRAP: "1" },
+          inheritStderr: true,
+        },
+      ),
     ) as { packages: MetadataPackage[] };
     for (const p of stdMeta.packages) packages[p.id] ??= p;
   }
@@ -381,6 +384,8 @@ if (process.argv[1] === import.meta.filename) {
       throw new Error(`unit graph references ${u.pkg_id}, which cargo metadata did not report`);
   }
 
+  // 3. Manifest facts cargo's JSON does not export: [lints] (local packages only — cargo passes lint flags to
+  //    path, non-std packages) and the public-dependency cargo feature (std crates).
   const lints: Record<string, ManifestLints> = {};
   const publicDependency: string[] = [];
   const seen = new Set<string>();
@@ -388,18 +393,18 @@ if (process.argv[1] === import.meta.filename) {
     if (seen.has(u.pkg_id)) continue;
     seen.add(u.pkg_id);
     const pkg = packages[u.pkg_id]!;
+    if (pkg.source !== null && !u.is_std) continue;
     const manifest = parseToml(readFileSync(pkg.manifest_path, "utf8"), pkg.manifest_path);
     if (Array.isArray(manifest["cargo-features"]) && manifest["cargo-features"].includes("public-dependency"))
       publicDependency.push(u.pkg_id);
-    // cargo passes lint flags to local (path, non-std) packages only.
-    if (pkg.source !== null || u.is_std) continue;
+    if (u.is_std) continue;
     const l = manifestLints(manifest, pkg.manifest_path);
     if (l !== undefined) lints[u.pkg_id] = l;
   }
 
   const plan: RustPlan = {
     version: PLAN_VERSION,
-    plannedWith: { args: cargoArgs, env: planEnv(passedEnv) },
+    plannedWith: input,
     rustc: {
       path: rustc,
       version: /^release:\s*(\S+)/m.exec(vV)?.[1] ?? "?",
@@ -408,30 +413,19 @@ if (process.argv[1] === import.meta.filename) {
       sysroot,
     },
     unitGraph,
-    packages: Object.fromEntries(Object.entries(packages).filter(([id]) => unitGraph.units.some(u => u.pkg_id === id))),
+    packages: Object.fromEntries(Object.entries(packages).filter(([id]) => seen.has(id))),
     lints,
     publicDependency,
     workspaceRoot: meta.workspace_root,
-    workspaceMembers: meta.workspace_members,
-    host: targetInfo(rustc, host, [], env),
-    target: targetInfo(rustc, triple, rustflags, env),
+    host: targetInfo(rustc, host, [], sysroot),
+    target: targetInfo(rustc, triple, rustflags, sysroot),
   };
-  // writeIfChanged: an identical re-plan (touched Cargo.toml, same graph) leaves plan.json's mtime alone, so restat prunes the reconfigure.
-  // Only if changed (an identical re-plan must not bump the mtime and reconfigure), and atomically (configure
-  // reads this file; a partial write must never look like a plan).
-  const json = JSON.stringify(plan, null, 1) + "\n";
-  if (!existsSync(out) || readFileSync(out, "utf8") !== json) {
-    mkdirSync(dirname(out), { recursive: true });
-    writeFileSync(`${out}.tmp`, json);
-    renameSync(`${out}.tmp`, out);
+  // Only if changed: an identical re-plan (touched Cargo.toml, same graph) must not bump the mtime and reconfigure (restat).
+  writeIfChanged(out, JSON.stringify(plan) + "\n");
+  const by = new Map<string, number>();
+  for (const u of unitGraph.units) {
+    const kind = `${u.mode === "run-custom-build" ? "run " : ""}${u.target.kind[0]}${u.platform ? "" : " (host)"}`;
+    by.set(kind, (by.get(kind) ?? 0) + 1);
   }
-  const by: Record<string, number> = {};
-  for (const u of unitGraph.units)
-    by[`${u.mode === "run-custom-build" ? "run " : ""}${u.target.kind[0]}${u.platform ? "" : " (host)"}`] =
-      (by[`${u.mode === "run-custom-build" ? "run " : ""}${u.target.kind[0]}${u.platform ? "" : " (host)"}`] ?? 0) + 1;
-  console.log(
-    `${unitGraph.units.length} units: ${Object.entries(by)
-      .map(([k, n]) => `${n} ${k}`)
-      .join(", ")}`,
-  );
+  console.log(`${unitGraph.units.length} units: ${[...by].map(([k, n]) => `${n} ${k}`).join(", ")}`);
 }

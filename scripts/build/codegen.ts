@@ -721,9 +721,8 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(output);
-  // bun_runtime/build.rs panics if this file is absent, so the rust_build edge
-  // must wait on it — `rustInputs` is the implicit-dep list the
-  // cargo edge consumes.
+  // bun_runtime `include!`s this file, so the workspace crate edges must wait
+  // on it — `rustInputs` is the list they are ordered after (rust.ts).
   o.rustInputs.push(output);
 }
 
@@ -1000,12 +999,11 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
   o.all.push(...outputs);
   o.cppSources.push(outputs[0]!); // .cpp
   o.cppHeaders.push(outputs[1]!, outputs[2]!); // .h + .lut.h
-  // bun_runtime/build.rs panics if generated_jssink.rs is absent, so the
-  // rust_build edge must order after this codegen step — `rustInputs` is the
-  // implicit-dep list the cargo edge consumes (same as generated_host_exports).
-  // Without this, `mode: "rust-only"` (CI's build-rust job, which compiles no
-  // C++ so nothing else pulls JSSink.cpp/.h) never runs this edge and cargo
-  // hits the missing file.
+  // bun_runtime `include!`s generated_jssink.rs, so the workspace crate edges
+  // must order after this codegen step — `rustInputs` is the list they wait
+  // on (same as generated_host_exports). Without this, `mode: "rust-only"`
+  // (CI's build-rust job, which compiles no C++ so nothing else pulls
+  // JSSink.cpp/.h) never runs this edge and rustc hits the missing file.
   o.rustInputs.push(jssinkRs);
 }
 

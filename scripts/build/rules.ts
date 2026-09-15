@@ -49,7 +49,7 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
   // codegen, esbuild, bun_install + codegen/stamps dir stamps
   registerCodegenRules(n, cfg);
 
-  // rust_build
+  // rust_plan, rust_meta/rust_codegen/rust_rustc/rust_build_script, rust_shim
   registerRustRules(n, cfg);
 
   // shim_dylib (darwin+asan only)

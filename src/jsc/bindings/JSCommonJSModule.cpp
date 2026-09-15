@@ -632,6 +632,15 @@ JSC_DEFINE_CUSTOM_GETTER(getterLoaded, (JSC::JSGlobalObject * globalObject, JSC:
     return JSValue::encode(jsBoolean(thisObject->hasEvaluated));
 }
 
+extern "C" bool Bun__VirtualMachine__isInPreload(void* /* BunVM */);
+
+// Bun treats --import as an alias of --preload, so unlike Node this also
+// reports true inside --import scripts.
+JSC_DEFINE_CUSTOM_GETTER(getterIsPreloading, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    return JSValue::encode(jsBoolean(Bun__VirtualMachine__isInPreload(defaultGlobalObject(globalObject)->bunVM())));
+}
+
 JSC_DEFINE_CUSTOM_SETTER(setterPaths,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -791,6 +800,7 @@ static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
+    { "isPreloading"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, getterIsPreloading, 0 } },
     { "loaded"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterLoaded, setterLoaded } },
     { "parent"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterParent, setterParent } },
     { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
@@ -854,6 +864,13 @@ public:
             clientData(vm)->builtinNames().requireNativeModulePrivateName(),
             0,
             jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+
+        this->putDirectBuiltinFunction(
+            vm,
+            globalObject,
+            JSC::Identifier::fromString(vm, "load"_s),
+            WebCore::commonJSModulePrototypeLoadCodeGenerator(vm),
+            0);
     }
 };
 

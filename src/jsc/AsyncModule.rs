@@ -865,9 +865,11 @@ impl AsyncModule {
                 .string_bytes
                 .as_slice(),
         );
-        let resolution_fmt = result
-            .resolution
-            .fmt(string_bytes.slice(), bun_core::fmt::PathSep::Any);
+        let resolution_fmt = bun_core::fmt::redacted(
+            result
+                .resolution
+                .fmt(string_bytes.slice(), bun_core::fmt::PathSep::Any),
+        );
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
@@ -933,13 +935,15 @@ impl AsyncModule {
                 "{} downloading package '{}@{}'",
                 e,
                 bstr::BStr::new(result.name),
-                result.resolution.fmt(
-                    vm.package_manager()
-                        .lockfile
-                        .buffers
-                        .string_bytes
-                        .as_slice(),
-                    bun_core::fmt::PathSep::Any,
+                bun_core::fmt::redacted(
+                    result.resolution.fmt(
+                        vm.package_manager()
+                            .lockfile
+                            .buffers
+                            .string_bytes
+                            .as_slice(),
+                        bun_core::fmt::PathSep::Any,
+                    )
                 )
             );
         }

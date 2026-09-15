@@ -102,8 +102,6 @@ mod bun_paths {
             |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
         )
     }
-    /// `joinAbsStringBuf` (value-dispatched); `None` when the normalized result
-    /// does not fit `buf`.
     pub(super) fn join_abs_string_buf_checked<'b>(
         cwd: &'b [u8],
         buf: &'b mut [u8],
@@ -2449,9 +2447,6 @@ impl<'a> Resolver<'a> {
             return false;
         }
 
-        // A specifier has no length bound. A path that does not fit a path buffer
-        // cannot name a real directory, so `dir_info_cached_maybe_log` never caches
-        // one, and there is nothing to bust.
         let mut buf = ::bun_paths::path_buffer_pool::get();
         let Some(joined) = bun_paths::join_abs_string_buf_checked(
             bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
@@ -2459,6 +2454,7 @@ impl<'a> Resolver<'a> {
             &[specifier],
             bun_paths::Platform::AUTO,
         ) else {
+            // Longer than any cache key (see `dir_info_cached_maybe_log`).
             return false;
         };
         let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);

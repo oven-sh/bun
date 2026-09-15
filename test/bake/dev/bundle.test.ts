@@ -100,10 +100,10 @@ devTest("importing a file before it is created", {
     await c.expectMessage("value: 456");
   },
 });
-// A specifier has no length bound. The dev server joined one into a fixed-size
-// path buffer twice after a failed resolution, once to bust the resolver's
-// directory cache and once to watch the directory it names. Both aborted the
-// whole process on the rebuild that followed the save.
+// Past MAX_PATH_BYTES on every platform (4 KiB posix, ~96 KiB Windows).
+const pastPathBuffer = (isWindows ? 96 : 4) * 1024 + 1024;
+// After a failed resolution the dev server joins the specifier into a path buffer
+// twice: to bust the resolver's directory cache, then to watch the directory it names.
 devTest("unresolved import of a specifier longer than a path buffer", {
   files: {
     "index.html": emptyHtmlFile({
@@ -116,7 +116,7 @@ devTest("unresolved import of a specifier longer than a path buffer", {
     await using c = await dev.client("/");
     await c.expectMessage("value: 123");
 
-    const specifier = "./" + Buffer.alloc(5000, "d/").toString() + "x";
+    const specifier = "./" + Buffer.alloc(pastPathBuffer, "d/").toString() + "x";
     await dev.write("index.ts", `import ${JSON.stringify(specifier)};`, {
       errors: [`index.ts:1:8: error: Could not resolve: "${specifier}"`],
     });
@@ -127,15 +127,13 @@ devTest("unresolved import of a specifier longer than a path buffer", {
     await c.expectMessage("value: 456");
   },
 });
-// A CSS url() without "./" skips the resolver's directory cache bust, so this
-// reaches only DirectoryWatchStore.track_resolution_failure. Sized past
-// MAX_PATH_BYTES on every platform (4 KiB posix, ~96 KiB Windows).
+// A CSS url() without "./" skips the cache bust and reaches only the directory watch.
 devTest("unresolved css url() longer than a path buffer", {
   files: {
     "index.html": emptyHtmlFile({ styles: ["styles.css"] }),
     "styles.css": `
       body {
-        background-image: url(${Buffer.alloc((isWindows ? 96 : 4) * 1024 + 1024, "a").toString()});
+        background-image: url(${Buffer.alloc(pastPathBuffer, "a").toString()});
       }
     `,
   },

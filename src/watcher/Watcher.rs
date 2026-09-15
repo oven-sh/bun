@@ -128,6 +128,9 @@ pub struct Watcher {
     /// `watch_loop_cycle`; owned by the watcher thread.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) eventlist_index_scratch: Vec<platform::EventListIndex>,
+    /// Watchlist indices of the `BUN_WATCHER_TRACE` directory, snapshotted per cycle.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) trace_dir_index_scratch: Vec<WatchItemIndex>,
 
     pub(crate) ctx: *mut (),
     pub(crate) on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
@@ -205,6 +208,8 @@ impl Watcher {
             evict_list_i: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            trace_dir_index_scratch: Vec::new(),
             thread_lock: ThreadLock::init_unlocked(),
         });
 

@@ -5,6 +5,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::collections::VecDeque;
 
 use bun_alloc::Arena;
 use bun_ast::Loader;
@@ -200,10 +201,21 @@ pub struct RuntimeTranspilerStore {
     pub(crate) generation_number: AtomicU32,
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
+    /// Jobs no pool thread has started, oldest first; see [`TranspileRunner`].
+    unstarted: Guarded<VecDeque<UnstartedJob>>,
+    /// Finished jobs, pushed by pool threads in completion order.
     pub(crate) queue: Queue,
+    /// JS thread only. The order finished jobs go back to JSC in.
+    order: FulfillOrder,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
+
+struct UnstartedJob(NonNull<TranspilerJob>);
+// SAFETY: a slot in the VM's store, queued together with a `TranspileRunner`
+// whose `Ticket` the VM's teardown waits for; only the pool thread that pops
+// it touches it until it is dispatched back to the JS thread.
+unsafe impl Send for UnstartedJob {}
 
 impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
@@ -211,8 +223,94 @@ impl Default for RuntimeTranspilerStore {
             generation_number: AtomicU32::new(0),
             store: TranspilerJobStore::init(),
             enabled: true,
+            unstarted: Guarded::new(VecDeque::new()),
             queue: Queue::new(),
+            order: FulfillOrder::default(),
         }
+    }
+}
+
+/// Hands finished jobs back to JSC in the order `transpile()` scheduled them,
+/// not the order pool threads finish them, so that which of several
+/// concurrently loading module graphs JSC evaluates first (it evaluates a graph
+/// once its last fetch settles) is the same on every run.
+#[derive(Default)]
+struct FulfillOrder {
+    next_seq: u64,
+    /// Sequence number of the next job to hand back.
+    next_to_fulfill: u64,
+    /// Finished jobs waiting for an older one; slot `i` is job `next_to_fulfill + i`.
+    parked: VecDeque<Option<NonNull<TranspilerJob>>>,
+}
+
+impl FulfillOrder {
+    fn schedule(&mut self) -> u64 {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        seq
+    }
+
+    fn park(&mut self, seq: u64, job: NonNull<TranspilerJob>) {
+        let slot = seq
+            .checked_sub(self.next_to_fulfill)
+            .expect("a finished transpile job is never older than the next one to hand back")
+            as usize;
+        if self.parked.len() <= slot {
+            self.parked.resize(slot + 1, None);
+        }
+        debug_assert!(self.parked[slot].is_none());
+        self.parked[slot] = Some(job);
+    }
+
+    fn next_is_ready(&self) -> bool {
+        matches!(self.parked.front(), Some(Some(_)))
+    }
+
+    fn take_next(&mut self) -> Option<NonNull<TranspilerJob>> {
+        if !self.next_is_ready() {
+            return None;
+        }
+        self.next_to_fulfill += 1;
+        let job = self.parked.pop_front().flatten();
+        if self.parked.is_empty() && self.parked.capacity() > 1024 {
+            self.parked = VecDeque::new();
+        }
+        job
+    }
+
+    fn take_all_parked(&mut self) -> impl Iterator<Item = NonNull<TranspilerJob>> + use<> {
+        core::mem::take(&mut self.parked).into_iter().flatten()
+    }
+}
+
+/// One per scheduled job. Runs the oldest unstarted job, not its own, so a
+/// burst starts in request order although the pool runs tasks newest-first.
+/// Holds the VM's `Ticket` from `schedule` until that job is dispatched back.
+struct TranspileRunner {
+    store: *const RuntimeTranspilerStore,
+    ticket: crate::Ticket,
+    task: WorkPoolTask,
+}
+
+// SAFETY: carries a `Ticket`; the VM (and `store`, a field of it) outlives it.
+bun_threading::owned_task!(TranspileRunner, task);
+
+impl TranspileRunner {
+    #[allow(clippy::boxed_local)] // `owned_task!`'s required signature
+    fn run_owned(self: Box<Self>) {
+        let job = {
+            // SAFETY: `self.ticket` keeps the VM and its store alive; one job
+            // is queued per runner, so the pop cannot come back empty.
+            let mut unstarted = unsafe { (*self.store).unstarted.lock() };
+            let job = unstarted.pop_front();
+            if unstarted.is_empty() && unstarted.capacity() > 1024 {
+                *unstarted = VecDeque::new();
+            }
+            job.expect("one unstarted transpile job per runner")
+        };
+        // SAFETY: the slot is live and no other thread touches it until it is
+        // dispatched back to the JS thread.
+        unsafe { TranspilerJob::run_from_worker_thread(job.0, &self.ticket) };
     }
 }
 
@@ -233,81 +331,89 @@ impl RuntimeTranspilerStore {
     /// VM teardown (JS thread, heap alive, script forbidden; called on every
     /// turn of the wait): jobs already handed back whose completion will not
     /// run release their source, log and module promise here instead. Queued ⇒
-    /// the pool thread's last touch of the slot was the push (its ticket was
-    /// moved out first), so the slot is this thread's again.
+    /// the pool thread's last touch of the slot was the push (the ticket lives
+    /// in the runner), so the slot is this thread's again. So are parked jobs.
     pub fn release_queued_jobs_for_teardown(&mut self) {
         let batch = self.queue.pop_batch();
         let mut iter = batch.iterator();
-        loop {
-            let job = iter.next();
-            if job.is_null() {
-                break;
-            }
-            // SAFETY: a live job popped from the intrusive queue; see fn doc.
-            unsafe {
-                (*job).promise.deinit();
-                (*job).reset_for_pool();
-                self.store.put(job);
-            }
+        while let Some(job) = NonNull::new(iter.next()) {
+            self.release_unfulfilled(job);
+        }
+        for job in self.order.take_all_parked() {
+            self.release_unfulfilled(job);
         }
     }
 
-    /// Fulfil every completed job's module promise. This drain is a dispatcher:
-    /// each fulfilment is a JS entry of its own, so what one leaves pending is
-    /// folded here and the drain goes on; the VM's termination ends it, with
-    /// the rest of the batch back on the queue (each still has its own posted
-    /// task, or the teardown release, to pick it up).
-    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
-    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
-    // a field of `VirtualMachine`). Field-level derefs only.
-    pub fn run_from_js_thread(
-        &mut self,
+    fn release_unfulfilled(&mut self, job: NonNull<TranspilerJob>) {
+        let job = job.as_ptr();
+        // SAFETY: a finished job this thread owns again; see
+        // `release_queued_jobs_for_teardown`.
+        unsafe {
+            (*job).promise.deinit();
+            (*job).reset_for_pool();
+            self.store.put(job);
+        }
+    }
+
+    /// Fulfil the module promise of every finished job whose turn has come.
+    /// Each fulfilment is a JS entry of its own: an error one leaves pending is
+    /// reported here and the drain goes on. The VM's termination ends it; jobs
+    /// not yet fulfilled stay parked for a later drain or the teardown release.
+    ///
+    /// # Safety
+    /// JS thread; `this` is the live VM's store. Fulfilment and the drain run
+    /// JS, which can call `transpile()` or tick the loop into this function
+    /// again, so `this` is only dereferenced between those calls, never across.
+    pub unsafe fn run_from_js_thread(
+        this: *mut Self,
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
     ) {
-        let batch = self.queue.pop_batch();
+        // SAFETY: per fn contract; no JS runs while the batch is parked.
+        unsafe {
+            let batch = (*this).queue.pop_batch();
+            let mut iter = batch.iterator();
+            while let Some(job) = NonNull::new(iter.next()) {
+                // a live finished job; the pool thread never touches `seq`.
+                let seq = (*job.as_ptr()).seq;
+                bun_core::scoped_log!(
+                    RuntimeTranspilerStore,
+                    "finished({}, seq {}, next to fulfill {})",
+                    bstr::BStr::new((*job.as_ptr()).path.text),
+                    seq,
+                    (*this).order.next_to_fulfill
+                );
+                (*this).order.park(seq, job);
+            }
+        }
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
-        let mut iter = batch.iterator();
-        let mut job = iter.next();
         let mut first = true;
-        while !job.is_null() {
+        // SAFETY (every `(*this)` below): per fn contract, a fresh short deref.
+        while unsafe { (*this).order.next_is_ready() } {
             if !first {
                 // if there are more, we need to drain the microtasks from the previous run
                 // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
                 let drained =
                     unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
                 if drained.is_err() {
-                    self.requeue(job, &mut iter);
                     return;
                 }
             }
             first = false;
-            // SAFETY: `job` is a live job popped from the intrusive queue.
-            let fulfilled = unsafe { (*job).run_from_js_thread() };
-            job = iter.next();
+            let Some(job) = (unsafe { (*this).order.take_next() }) else {
+                break;
+            };
+            // SAFETY: `job` is a live finished job this thread popped from the queue.
+            let fulfilled = unsafe { (*job.as_ptr()).run_from_js_thread() };
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
-                    self.requeue(job, &mut iter);
                     return;
                 }
             }
         }
         // immediately after this is called, the microtasks will be drained again.
-    }
-
-    /// Put `job` and the rest of a popped batch back: each still has its posted
-    /// task (or the teardown release) to pick it up.
-    fn requeue(
-        &mut self,
-        mut job: *mut TranspilerJob,
-        iter: &mut unbounded_queue::BatchIterator<TranspilerJob>,
-    ) {
-        while let Some(unrun) = NonNull::new(job) {
-            job = iter.next();
-            self.queue.push(unrun);
-        }
     }
 
     pub fn transpile(
@@ -343,47 +449,60 @@ impl RuntimeTranspilerStore {
             }
         }
 
+        let seq = self.order.schedule();
+
         // Build the job by value and `get_init` it into the hive — the `Box`
         // alloc, `JSInternalPromise::create`, and `StrongOptional::create`
         // above all happen *before* the slot is claimed, so an OOM/throw on
         // that path no longer leaves a claimed-but-uninit `TranspilerJob` (which
         // carries `Log`/`String`/`StrongOptional` drop glue) for the next
         // `put()` to drop.
-        let job: *mut TranspilerJob = self
-            .store
-            .get_init(TranspilerJob {
-                non_threadsafe_input_specifier: input_specifier,
-                path: owned_path,
-                global_this: BackRef::new(global_object),
-                non_threadsafe_referrer: referrer,
-                vm,
-                ticket: None,
-                log: bun_ast::Log::init(),
-                loader,
-                promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
-                poll_ref: KeepAlive::default(),
-                resolved_source,
-                generation_number: self.generation_number.load(Ordering::SeqCst),
-                parse_error: None,
-                work_task: WorkPoolTask {
-                    node: Default::default(),
-                    callback: TranspilerJob::run_from_worker_thread,
-                },
-                next: unbounded_queue::Link::new(),
-            })
-            .as_ptr();
+        let job: NonNull<TranspilerJob> = self.store.get_init(TranspilerJob {
+            non_threadsafe_input_specifier: input_specifier,
+            path: owned_path,
+            global_this: BackRef::new(global_object),
+            non_threadsafe_referrer: referrer,
+            vm,
+            log: bun_ast::Log::init(),
+            loader,
+            promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
+            poll_ref: KeepAlive::default(),
+            resolved_source,
+            generation_number: self.generation_number.load(Ordering::SeqCst),
+            seq,
+            parse_error: None,
+            next: unbounded_queue::Link::new(),
+        });
         if cfg!(debug_assertions) {
             bun_core::scoped_log!(
                 RuntimeTranspilerStore,
-                "transpile({}, {}, async)",
+                "transpile({}, {}, async, seq {})",
                 bstr::BStr::new(path.text),
                 // SAFETY: job fully initialized above
-                <&'static str>::from(unsafe { (*job).loader })
+                <&'static str>::from(unsafe { (*job.as_ptr()).loader }),
+                seq
             );
         }
-        // SAFETY: job fully initialized above
-        unsafe { (*job).schedule() };
+        self.schedule(job);
         promise.cast::<c_void>()
+    }
+
+    fn schedule(&mut self, job: NonNull<TranspilerJob>) {
+        // SAFETY: `job` was fully initialized by `transpile()` on this, the JS
+        // thread; the VM owns the store the slot lives in.
+        let vm = unsafe {
+            (*job.as_ptr()).poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+            (*job.as_ptr()).vm
+        };
+        // Pool threads pop through a raw pointer, so lock even with `&mut self`.
+        self.unstarted.lock().push_back(UnstartedJob(job));
+        // SAFETY: JS thread; `vm` is the live VM that owns this store.
+        let (store, ticket) = unsafe { (ptr::addr_of!((*vm).transpiler_store), (*vm).ticket()) };
+        WorkPool::schedule_new(TranspileRunner {
+            store,
+            ticket,
+            task: WorkPoolTask::default(),
+        });
     }
 }
 
@@ -411,18 +530,15 @@ pub struct TranspilerJob {
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
     pub(crate) vm: *mut VirtualMachine,
-    /// Held from `schedule` until the pool thread has dispatched the job back:
-    /// the job's own slot, the transpiler it copies and the store queue it
-    /// pushes to are all VM-owned, and the VM's teardown waits for the ticket.
-    pub(crate) ticket: Option<crate::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
+    /// Position in the store's scheduling order; see [`FulfillOrder`].
+    pub(crate) seq: u64,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
     pub(crate) resolved_source: ResolvedSource,
-    pub(crate) work_task: WorkPoolTask,
     /// INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
     pub(crate) next: unbounded_queue::Link<TranspilerJob>,
 }
@@ -499,8 +615,8 @@ impl TranspilerJob {
         // replacement a second time).
     }
 
-    /// Pool thread: hand the slot back. `ticket` was moved out of `self`
-    /// first — the JS thread may reuse the slot the moment it is queued.
+    /// Pool thread: hand the slot back. `ticket` is the runner's, not in the
+    /// slot: the JS thread may reuse the slot the moment it is queued.
     fn dispatch_to_main_thread(&mut self, ticket: &crate::Ticket) {
         let vm = self.vm;
         // SAFETY: the VM outlives the ticket (it owns the store).
@@ -557,35 +673,21 @@ impl TranspilerJob {
         )
     }
 
-    fn schedule(&mut self) {
-        // Note: the KeepAlive takes an
-        // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
-        // `bun_runtime::init`).
-        self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
-        // SAFETY: JS thread; the VM owns the store this slot lives in.
-        self.ticket = Some(unsafe { (*self.vm).ticket() });
-        WorkPool::schedule(&raw mut self.work_task);
-    }
-
-    unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
-        // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
-        // slot — safe-fn coerces) for the `work_task` field initialised in
-        // `transpile`; the WorkPool calls back with exactly that field, so
-        // `from_field_ptr!` recovers the live `TranspilerJob` parent.
-        let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
-        // The slot lives inside the VM, which waits for this ticket, so it is
+    /// # Safety
+    /// Pool thread only; `this` was queued by `RuntimeTranspilerStore::schedule`
+    /// and no thread has started it. `ticket` is the runner's, for this VM.
+    unsafe fn run_from_worker_thread(this: NonNull<TranspilerJob>, ticket: &crate::Ticket) {
+        let this = this.as_ptr();
+        // The slot lives inside the VM, which waits for `ticket`, so it is
         // alive throughout. Transpile only while the VM still runs script;
         // either way hand the job back to the JS thread, which completes or
         // releases it.
-        // SAFETY: as above; set in `schedule`.
-        let ticket =
-            unsafe { (*this).ticket.take() }.expect("scheduled transpile job holds a ticket");
         if ticket.script_allowed() {
             // SAFETY: live slot, exclusively ours until dispatched.
-            unsafe { (*this).run(&ticket) };
+            unsafe { (*this).run(ticket) };
         } else {
             // SAFETY: as above.
-            unsafe { (*this).dispatch_to_main_thread(&ticket) };
+            unsafe { (*this).dispatch_to_main_thread(ticket) };
         }
     }
 

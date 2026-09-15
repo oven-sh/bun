@@ -8,7 +8,6 @@ import {
   expectMaxObjectTypeCount,
   isASAN,
   isDebug,
-  isWindows,
   runFixtureMaxRSS,
   tempDir,
 } from "harness";

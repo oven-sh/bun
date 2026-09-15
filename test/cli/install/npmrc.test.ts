@@ -172,16 +172,17 @@ registry = http://localhost:${registry.port}/
     const npmrc = (port: number) => `registry=http://localhost:${port}/\n//localhost:${port}/:_authToken=token\n`;
     const pkg = { "pkg/package.json": JSON.stringify({ name: "npmrc-lookup", version: "0.0.1" }) };
 
-    // `publish --dry-run` never contacts the registry, but it still requires a token
-    // for it and prints which registry it picked up, so it shows which .npmrc was read.
-    // bunEnv spreads process.env and CI runners commonly export XDG_CONFIG_HOME, so it
-    // is removed here and each case passes back exactly the value it is testing.
-    async function publishDryRun(dir: string, envOverride: Record<string, string>) {
+    // bunEnv spreads process.env, and CI runners commonly export XDG_CONFIG_HOME or
+    // (via actions/setup-node) NPM_CONFIG_USERCONFIG, so both are removed here and each
+    // case passes back exactly the variables it is testing.
+    async function publish(dir: string, envOverride: Record<string, string>, ...args: string[]) {
       const spawnEnv = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
       delete spawnEnv.XDG_CONFIG_HOME;
+      delete spawnEnv.NPM_CONFIG_USERCONFIG;
+      delete spawnEnv.npm_config_userconfig;
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "publish", "--dry-run"],
+        cmd: [bunExe(), "publish", ...args],
         cwd: join(dir, "pkg"),
         env: { ...spawnEnv, ...envOverride },
         stdout: "pipe",
@@ -190,6 +191,10 @@ registry = http://localhost:${registry.port}/
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     }
+
+    // `publish --dry-run` never contacts the registry, but it still requires a token
+    // for it and prints which registry it picked up, so it shows which .npmrc was read.
+    const publishDryRun = (dir: string, envOverride: Record<string, string>) => publish(dir, envOverride, "--dry-run");
 
     const usesRegistry = (port: number) => ({
       stdout: expect.stringContaining(`Registry: http://localhost:${port}/\n`),
@@ -221,6 +226,81 @@ registry = http://localhost:${registry.port}/
       using dir = tempDir("npmrc-xdg-empty", { ...pkg, "home/.npmrc": npmrc(1) });
       const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "" });
       expect(result).toEqual(usesRegistry(1));
+    });
+
+    // npm's `userconfig` option: the path of the per-user .npmrc, settable through
+    // NPM_CONFIG_USERCONFIG like any other npm config option.
+    it.concurrent("uses $NPM_CONFIG_USERCONFIG instead of $XDG_CONFIG_HOME/.npmrc and $HOME/.npmrc", async () => {
+      using dir = tempDir("npmrc-userconfig", {
+        ...pkg,
+        "home/.npmrc": npmrc(1),
+        "xdg/.npmrc": npmrc(2),
+        "elsewhere/ci.npmrc": npmrc(3),
+      });
+      const result = await publishDryRun(String(dir), {
+        XDG_CONFIG_HOME: join(String(dir), "xdg"),
+        NPM_CONFIG_USERCONFIG: join(String(dir), "elsewhere", "ci.npmrc"),
+      });
+      expect(result).toEqual(usesRegistry(3));
+    });
+
+    it.concurrent("accepts lowercase $npm_config_userconfig", async () => {
+      using dir = tempDir("npmrc-userconfig-lowercase", {
+        ...pkg,
+        "home/.npmrc": npmrc(1),
+        "elsewhere/ci.npmrc": npmrc(2),
+      });
+      const result = await publishDryRun(String(dir), {
+        npm_config_userconfig: join(String(dir), "elsewhere", "ci.npmrc"),
+      });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
+    it.concurrent("uses $HOME/.npmrc when $NPM_CONFIG_USERCONFIG is empty", async () => {
+      using dir = tempDir("npmrc-userconfig-empty", { ...pkg, "home/.npmrc": npmrc(1) });
+      const result = await publishDryRun(String(dir), { NPM_CONFIG_USERCONFIG: "" });
+      expect(result).toEqual(usesRegistry(1));
+    });
+
+    it.concurrent("the project .npmrc still overrides $NPM_CONFIG_USERCONFIG", async () => {
+      using dir = tempDir("npmrc-userconfig-project", {
+        ...pkg,
+        "elsewhere/ci.npmrc": npmrc(1),
+        "pkg/.npmrc": npmrc(2),
+      });
+      const result = await publishDryRun(String(dir), {
+        NPM_CONFIG_USERCONFIG: join(String(dir), "elsewhere", "ci.npmrc"),
+      });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
+    // https://github.com/oven-sh/bun/issues/14824: actions/setup-node with `registry-url`
+    // writes $RUNNER_TEMP/.npmrc with the contents below and exports NPM_CONFIG_USERCONFIG
+    // pointing at it; the token itself is only present as $NODE_AUTH_TOKEN.
+    it.concurrent("reads the .npmrc written by actions/setup-node, expanding ${NODE_AUTH_TOKEN}", async () => {
+      const { promise: authorization, resolve } = Promise.withResolvers<string | null>();
+      using mockRegistry = Bun.serve({
+        port: 0,
+        fetch(req) {
+          resolve(req.headers.get("authorization"));
+          return new Response("{}");
+        },
+      });
+      const { port } = mockRegistry;
+      using dir = tempDir("npmrc-setup-node", {
+        ...pkg,
+        "runner-temp/.npmrc": `//localhost:${port}/:_authToken=\${NODE_AUTH_TOKEN}\nregistry=http://localhost:${port}/\nalways-auth=true\n`,
+      });
+      const result = await publish(String(dir), {
+        NPM_CONFIG_USERCONFIG: join(String(dir), "runner-temp", ".npmrc"),
+        NODE_AUTH_TOKEN: "npm_token-from-the-workflow-env",
+      });
+      expect(result).toEqual({
+        stdout: expect.stringContaining(" + npmrc-lookup@0.0.1\n"),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(await authorization).toBe("Bearer npm_token-from-the-workflow-env");
     });
   });
 

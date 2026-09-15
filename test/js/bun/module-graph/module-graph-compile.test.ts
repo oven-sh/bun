@@ -223,6 +223,8 @@ async function build(combo: Combo) {
   };
 }
 const builds = combos.map(build);
+// Each is awaited in its own beforeAll; until then a failed one is not an unhandled rejection.
+for (const started of builds) started.catch(() => {});
 
 for (const [index, combo] of combos.entries()) {
   describe(`ModuleGraph in a compiled executable (${combo.name})`, () => {

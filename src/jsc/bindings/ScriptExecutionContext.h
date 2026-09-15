@@ -131,10 +131,6 @@ public:
     // target's thread when the work whose completion this is was initiated, or Regular for work no
     // script there initiated.
     WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task);
-    // postTaskTo() for a task that hands script the outcome of work it asked for (it settles a
-    // promise): not run if `identifier` is a Bun.ModuleGraph's context that has stopped by then.
-    // Housekeeping a stopped context still needs (a worker reporting that it exited) uses postTaskTo().
-    WEBCORE_EXPORT static bool postResultTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& result);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
 
     WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();

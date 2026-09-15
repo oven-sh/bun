@@ -1380,7 +1380,8 @@ impl Interpreter {
             .base()
             .map_or(NodeId::INTERPRETER, |b| b.parent);
         let y = self.child_done(parent, id, 1);
-        if let Some((reject, error)) = rejection {
+        // The promise of a disposed graph's script never settles.
+        if let Some((reject, error)) = rejection.filter(|_| !self.context_stopped()) {
             let global_this = self
                 .global_this_ref()
                 .expect("take_failure returned a rejection on the Js path");

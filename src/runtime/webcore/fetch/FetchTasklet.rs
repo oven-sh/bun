@@ -896,6 +896,8 @@ impl FetchTasklet {
             }
             self.mutex.unlock();
             if is_done {
+                self.poll_ref
+                    .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
                 // SAFETY: `self` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(self));
             }

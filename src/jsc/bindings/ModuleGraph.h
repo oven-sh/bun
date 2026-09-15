@@ -109,6 +109,8 @@ private:
     Ref<WebCore::ScriptExecutionContext> m_context;
 };
 
+JSC_DECLARE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph);
+
 inline WebCore::ScriptExecutionContext* JSModuleGraph::context() const
 {
     auto* isolated = dynamicDowncast<JSIsolatedModuleGraph>(const_cast<JSModuleGraph*>(this));

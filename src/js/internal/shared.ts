@@ -323,6 +323,8 @@ function stopPerf(target, key, context) {
  * One registered observer of node-only entry types. The PerformanceObserver
  * wrapper in node:perf_hooks owns one of these when it observes such a type.
  */
+const isFrameOfStoppedModuleGraph = $newCppFunction("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph", 1);
+
 class NodeEntryObserver {
   callback;
   owner;
@@ -332,6 +334,7 @@ class NodeEntryObserver {
   // Entries are delivered in the context the observer was made in, not the one of whatever
   // produced the entry: set from a Bun.ModuleGraph that is then disposed, the immediate would be
   // cancelled with `scheduled` left true, and this observer would never be called again.
+  // An observer made in a graph goes with it: see bufferEntry.
   frame;
 
   constructor(callback, owner) {
@@ -362,6 +365,12 @@ class NodeEntryObserver {
 
   bufferEntry(entry) {
     if (!this.types.has(entry.entryType)) {
+      return;
+    }
+    // Its graph was disposed: nothing of it runs again, so it would buffer for ever (and keep
+    // the entry type produced for nobody).
+    if (isFrameOfStoppedModuleGraph(this.frame)) {
+      this.disconnect();
       return;
     }
     this.buffer.push(entry);

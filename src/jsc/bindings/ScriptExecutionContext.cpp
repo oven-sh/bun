@@ -270,16 +270,6 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
     return true;
 }
 
-bool ScriptExecutionContext::postResultTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& result)
-{
-    return postTaskTo(identifier, loopKind, [identifier, result = WTF::move(result)](ScriptExecutionContext& realm) mutable {
-        RefPtr context = getScriptExecutionContext(identifier);
-        if (!context || (context->isForModuleGraph() && context->isStopped()))
-            return;
-        result(realm);
-    });
-}
-
 void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
 {
 #if ASSERT_ENABLED

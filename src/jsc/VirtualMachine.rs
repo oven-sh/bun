@@ -1114,6 +1114,15 @@ impl VirtualMachine {
         unsafe { Bun__currentGraphContext(self.global()).as_ref() }
     }
 
+    /// The context that tracks the timers set under `id`: a graph's, or the one standing in for
+    /// graphs that are gone.
+    pub fn timer_context(&self, id: crate::ContextId) -> Option<&crate::ScriptExecutionContext> {
+        if id == self.dead_context.id() {
+            return Some(&self.dead_context);
+        }
+        self.graph_context(id)
+    }
+
     /// The `Bun.ModuleGraph` context `id` names, until it is freed.
     pub fn graph_context(&self, id: crate::ContextId) -> Option<&crate::ScriptExecutionContext> {
         if self.graph_contexts.count() == 0
@@ -1262,9 +1271,17 @@ impl VirtualMachine {
         }
         if id == self.dead_context.id() {
             fn stop_dead(_: *mut ()) -> crate::JsResult<()> {
-                let _ = VirtualMachine::get()
-                    .dead_context
-                    .stop(crate::StopReason::Disposed);
+                let vm = VirtualMachine::get();
+                let _ = vm.dead_context.stop(crate::StopReason::Disposed);
+                if let Some(hooks) = runtime_hooks() {
+                    // SAFETY: live per-thread VM on the JS thread.
+                    unsafe {
+                        (hooks.cancel_timers)(
+                            VirtualMachine::get_mut_ptr(),
+                            Some(vm.dead_context.id()),
+                        )
+                    };
+                }
                 Ok(())
             }
             if !self.dead_context.stop_again_is_queued() {

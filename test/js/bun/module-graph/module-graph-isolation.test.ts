@@ -77,6 +77,64 @@ const dir = String(
       // Does not keep the process running; says so if something else does.
       setTimeout(() => { console.log("and the process is still running"); process.exit(1); }, 3000).unref();
     `,
+    // What a disposed graph left in something of the realm's. Each in a process of its own: they count objects.
+    "left-behind-tenant.mjs": `
+      import { PerformanceObserver } from "node:perf_hooks";
+      export const observeHttp = () => new PerformanceObserver(() => {}).observe({ entryTypes: ["http"] });
+      // Each promise's reaction holds a FormData: alive for as long as the promise is kept.
+      export const digests = count => {
+        const data = new Uint8Array(8 << 20);
+        for (let i = 0; i < count; i++) { const held = new FormData(); crypto.subtle.digest("SHA-256", data).then(() => held); }
+      };
+    `,
+    "observer-of-a-disposed-graph.mjs": `
+      import http from "node:http";
+      import { heapStats } from "bun:jsc";
+      const server = http.createServer((request, response) => response.end("ok"));
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const get = () => new Promise(resolve => http.get({ port: server.address().port, host: "127.0.0.1", agent: false }, response => { response.resume(); response.on("end", resolve); }));
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      // ("control": the same requests with no observer anywhere.)
+      if (process.argv[2] === "observe") graph.run(() => app.observeHttp());
+      graph.dispose();
+      const objects = () => { Bun.gc(true); const counts = heapStats().objectTypeCounts; return (counts.Object ?? 0) + (counts.Array ?? 0); };
+      for (let i = 0; i < 10; i++) await get();
+      const before = objects();
+      const requests = 100;
+      for (let i = 0; i < requests; i++) await get();
+      console.log(JSON.stringify({ requests, kept: objects() - before }));
+      server.close();
+    `,
+    "subtle-of-a-disposed-graph.mjs": `
+      import { heapStats } from "bun:jsc";
+      const count = () => heapStats().objectTypeCounts.FormData;
+      const keep = new FormData(), baseline = count();
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      graph.run(() => app.digests(20));
+      const started = count() - baseline;
+      graph.dispose();
+      // The same work asked for afterwards has finished: the graph's had too.
+      await crypto.subtle.digest("SHA-256", new Uint8Array(8 << 20));
+      let kept = started;
+      for (let turn = 0; turn < 200 && kept !== 0; turn++) {
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(true);
+        kept = count() - baseline;
+      }
+      console.log(JSON.stringify({ started, kept }), keep.constructor.name);
+    `,
+    "disposes-then-opens.mjs": `
+      const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/app.mjs");
+      // Queued inside the graph's context, so it runs there, and after the dispose() below.
+      graph.run(() => app.call(() => queueMicrotask(() => { Promise.resolve(app.open[kind](state, ...args)).catch(() => {}); })));
+      graph.dispose();
+      console.log("disposed");
+      setTimeout(() => { console.log("and the process is still running"); process.exit(1); }, 3000).unref();
+    `,
     "app.mjs": `
       import net from "node:net";
       import http from "node:http";
@@ -1218,7 +1276,9 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
         request.on("close", () => session.close());
         request.end();
       });
-    const hostPort = await hostApp.serveHttp2Once(newState("http2-date-host"));
+    const hostServer = http2.createServer((request, response) => response.end("host"));
+    await new Promise<void>(resolve => hostServer.listen(0, "127.0.0.1", resolve));
+    const hostPort = (hostServer.address() as { port: number }).port;
     try {
       {
         using made = await newGraph();
@@ -1230,6 +1290,7 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
       expect(Math.abs(Date.parse(await dateOf(hostPort)) - (now + 60_000))).toBeLessThan(5_000);
     } finally {
       setSystemTime();
+      hostServer.close();
     }
   });
 
@@ -1846,6 +1907,29 @@ describe.concurrent("ModuleGraph isolation: what a disposed graph had open does 
   }
 });
 
+describe.concurrent("ModuleGraph isolation: what a disposed graph opens does not keep the process running", () => {
+  for (const kind of Object.keys(kinds)) {
+    test(kind, async () => {
+      const state = newState(kind + "-late-exits");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          join(dir, "disposes-then-opens.mjs"),
+          kind,
+          JSON.stringify(state),
+          JSON.stringify(kinds[kind].args?.(state) ?? []),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("disposed\n");
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 describe.concurrent("ModuleGraph isolation: a disposed graph cannot keep itself running", () => {
   // What was open at dispose() may tell the graph once that it closed, and that handler may start
   // the next thing. If that one reported back too, a loop that retries on failure would go on for
@@ -1876,6 +1960,42 @@ describe.concurrent("ModuleGraph isolation: a disposed graph cannot keep itself 
 // module-graph-io.test.ts) shows dispose() closing it. "job": its work runs on a thread pool; the
 // "background work" test says which completions are dropped once the graph is disposed. "pure": nothing
 // outlives the call. "host": process-wide on purpose (the graph's host decides who may use it).
+describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behind in what is the realm's", () => {
+  const runs = async (script: string, ...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, script), ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout: stdout.trim(), exitCode };
+  };
+  test("its node:perf_hooks observer is disconnected: the host's requests are not buffered for it", async () => {
+    const [observed, control] = await Promise.all(
+      ["observe", "control"].map(async mode => {
+        const { stdout, exitCode } = await runs("observer-of-a-disposed-graph.mjs", mode);
+        return { ...(JSON.parse(stdout) as { requests: number; kept: number }), exitCode };
+      }),
+    );
+    // An entry buffered for the observer is a dozen objects: kept for every request, that is
+    // twelve times `requests` more than the control keeps.
+    expect({
+      more: observed.kept - control.kept < observed.requests,
+      exitCodes: [observed.exitCode, control.exitCode],
+    }).toEqual({
+      more: true,
+      exitCodes: [0, 0],
+    });
+  });
+  test("the promises of its crypto.subtle operations in flight are released, not kept unsettled", async () => {
+    expect(await runs("subtle-of-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"started":20,"kept":0} FormData`,
+      exitCode: 0,
+    });
+  });
+});
+
 test("ModuleGraph isolation: every property of Bun is classified", () => {
   const classified: Record<string, "owned" | "job" | "pure" | "host"> = {
     $: "owned", // shell

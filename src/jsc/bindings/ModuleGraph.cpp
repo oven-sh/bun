@@ -355,6 +355,14 @@ static JSIsolatedModuleGraph* isolatedModuleGraphOfFrame(VM& vm, JSValue asyncCo
     return dynamicDowncast<JSIsolatedModuleGraph>(frame->getDirect(vm, WebCore::builtinNames(vm).graphPublicName()));
 }
 
+// For built-ins that keep something of a graph's in a registry of the realm's (node:perf_hooks'
+// observers): whether `frame`, the async context it was made in, is of a disposed graph.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* graph = isolatedModuleGraphOfFrame(globalObject->vm(), callFrame->argument(0));
+    return JSValue::encode(jsBoolean(graph && graph->context().isStopped()));
+}
+
 JSIsolatedModuleGraph* currentIsolatedModuleGraph(Zig::GlobalObject* globalObject)
 {
     return isolatedModuleGraphOfFrame(globalObject->vm(), globalObject->m_asyncContextData.get()->getInternalField(0));
@@ -651,6 +659,10 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
     m_requireMap->clear(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     m_requireCache.clear();
+    // Only its status was still of use (mainPath); fulfilled, it holds the main module's namespace.
+    if (m_mainImport && m_mainImport->status() == JSPromise::Status::Rejected)
+        m_mainPath.clear();
+    m_mainImport.clear();
 }
 
 // ─── JSIsolatedModuleGraph ───────────────────────────────────────────────────────────

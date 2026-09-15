@@ -363,6 +363,27 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
     expect(Object.keys(after).filter(type => after[type] > baseline[type])).toEqual([]);
   });
 
+  test("a disposed graph the host still holds keeps none of its modules", async () => {
+    await (async () => {
+      const graph = new ModuleGraph({ globals: { TAG: "warm" } });
+      await graph.import(file("esm.mjs"));
+    })();
+    const types = ["JSModuleRecord", "JSModuleEnvironment"];
+    const baseline = await baselineOf(...types);
+    const held: Graph[] = [];
+    await (async () => {
+      for (let i = 0; i < 8; i++) {
+        const graph = new ModuleGraph({ globals: { TAG: "held" + i } });
+        await graph.import(file("esm.mjs"));
+        graph.dispose();
+        held.push(graph);
+      }
+    })();
+    const after = await settle(baseline);
+    expect(Object.keys(after).filter(type => after[type] > baseline[type])).toEqual([]);
+    expect(held.length).toBe(8);
+  });
+
   test("overlay symbol tables of graphs that are gone are not retained", async () => {
     const make = async (names: number) => {
       for (let i = 0; i < names; i++) {

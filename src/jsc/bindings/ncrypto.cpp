@@ -998,6 +998,26 @@ std::optional<std::string> X509View::getSignatureAlgorithmOID() const
     return std::string(buf, static_cast<size_t>(len));
 }
 
+static std::optional<int64_t> asn1TimeToPosix(const ASN1_TIME* time)
+{
+    int64_t seconds;
+    // _nonstandard: the X509 parser accepts a UTCTime "+hhmm" offset, and Node (OpenSSL) applies it.
+    if (time == nullptr || !ASN1_TIME_to_posix_nonstandard(time, &seconds)) return std::nullopt;
+    return seconds;
+}
+
+std::optional<int64_t> X509View::getValidFromTime() const
+{
+    if (cert_ == nullptr) return std::nullopt;
+    return asn1TimeToPosix(X509_get0_notBefore(cert_));
+}
+
+std::optional<int64_t> X509View::getValidToTime() const
+{
+    if (cert_ == nullptr) return std::nullopt;
+    return asn1TimeToPosix(X509_get0_notAfter(cert_));
+}
+
 DataPointer X509View::getSerialNumber() const
 {
     ClearErrorOnReturn clearErrorOnReturn;

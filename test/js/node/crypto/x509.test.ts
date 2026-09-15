@@ -161,6 +161,75 @@ describe("X509Certificate.prototype property descriptors", () => {
   });
 });
 
+describe("X509Certificate validFromDate / validToDate", () => {
+  // Self-signed, CN=localhost. Both times are GeneralizedTime, so another four-digit year can be
+  // written over them without changing any DER length. That breaks the signature, which
+  // X509Certificate does not check.
+  const notBefore = "00200101000000Z";
+  const notAfter = "00751231235959Z";
+  const templatePem = `-----BEGIN CERTIFICATE-----
+MIIBPTCB46ADAgECAgIQADAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv
+c3QwIhgPMDAyMDAxMDEwMDAwMDBaGA8wMDc1MTIzMTIzNTk1OVowFDESMBAGA1UE
+AwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEJC2RuReWuXPw
+IXWc22JNB/Jwkm4uGiaO1cRhQh6gF7kTLflBzbp6vAnZIB3ukIRPh1syrqVuEPuB
+ugLCAXxsoqMhMB8wHQYDVR0OBBYEFDYYVTNtjOn8v4bS9+yhJX5DS0A1MAoGCCqG
+SM49BAMCA0kAMEYCIQDgLDP/kZnwdTEpvTsMQKhLWg4NeiH62qkajleA8tWF8QIh
+AJSCZhtcwld0QcIt8+FsNj13xry7oItjmw9/n1dicxIW
+-----END CERTIFICATE-----`;
+
+  // The same certificate with the validity rewritten as UTCTime "200101000000-0530" and
+  // "301231235959+0100". RFC 5280 forbids the offset, but BoringSSL and OpenSSL both parse it.
+  const utcOffsetPem = `-----BEGIN CERTIFICATE-----
+MIIBQTCB56ADAgECAgIQADAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv
+c3QwJhcRMjAwMTAxMDAwMDAwLTA1MzAXETMwMTIzMTIzNTk1OSswMTAwMBQxEjAQ
+BgNVBAMMCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABCQtkbkX
+lrlz8CF1nNtiTQfycJJuLhomjtXEYUIeoBe5Ey35Qc26erwJ2SAd7pCET4dbMq6l
+bhD7gboCwgF8bKKjITAfMB0GA1UdDgQWBBQ2GFUzbYzp/L+G0vfsoSV+Q0tANTAK
+BggqhkjOPQQDAgNJADBGAiEA4Cwz/5GZ8HUxKb07DECoS1oODXoh+tqpGo5XgPLV
+hfECIQCUgmYbXMJXdEHCLfPhbDY9d8a8u6CLY5sPf59XYnMSFg==
+-----END CERTIFICATE-----`;
+
+  function certForYear(year: string) {
+    const der = Buffer.from(new X509Certificate(templatePem).raw);
+    der.write(year, der.indexOf(notBefore), "latin1");
+    der.write(year, der.indexOf(notAfter), "latin1");
+    return new X509Certificate(der);
+  }
+
+  // The printed year "30" used to be parsed back as 2030, so a certificate that expired in the
+  // year 30 looked valid to `cert.validToDate > new Date()`.
+  test("a year below 100 is not moved to 1950-2049", () => {
+    const cert = new X509Certificate(templatePem);
+    expect({
+      validFrom: cert.validFrom,
+      validFromDate: cert.validFromDate.toISOString(),
+      validTo: cert.validTo,
+      validToDate: cert.validToDate.toISOString(),
+    }).toEqual({
+      validFrom: "Jan  1 00:00:00 20 GMT",
+      validFromDate: "0020-01-01T00:00:00.000Z",
+      validTo: "Dec 31 23:59:59 75 GMT",
+      validToDate: "0075-12-31T23:59:59.000Z",
+    });
+    expect(certForYear("0030").validToDate < new Date()).toBe(true);
+  });
+
+  test.each(["0000", "0049", "0050", "0099", "0100", "1601", "1969", "1970", "2038", "2049", "2050", "9999"])(
+    "GeneralizedTime year %s",
+    year => {
+      const cert = certForYear(year);
+      expect(cert.validFromDate.toISOString()).toBe(`${year}-01-01T00:00:00.000Z`);
+      expect(cert.validToDate.toISOString()).toBe(`${year}-12-31T23:59:59.000Z`);
+    },
+  );
+
+  test("a UTCTime timezone offset is applied", () => {
+    const cert = new X509Certificate(utcOffsetPem);
+    expect(cert.validFromDate.toISOString()).toBe("2020-01-01T05:30:00.000Z");
+    expect(cert.validToDate.toISOString()).toBe("2030-12-31T22:59:59.000Z");
+  });
+});
+
 describe("X509Certificate with an empty subject/issuer DN", () => {
   // Self-signed, `openssl req -x509 -subj "/"`: both names are empty sequences.
   const emptyDN = `-----BEGIN CERTIFICATE-----

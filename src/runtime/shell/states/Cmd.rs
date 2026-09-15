@@ -445,10 +445,12 @@ impl Cmd {
         use crate::jsc::js_promise::Status;
         use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
 
-        if interp.as_cmd(this).redirect_body.is_some() {
+        let me = interp.as_cmd(this);
+        // An argv that expanded to nothing runs no command and reads no body.
+        if me.redirect_body.is_some() || me.args.first().is_none_or(|a| a.is_empty()) {
             return None;
         }
-        let node = interp.as_cmd(this).ast_node();
+        let node = me.ast_node();
         let Some(ast::Redirect::JsBuf(val)) = &node.redirect_file else {
             return None;
         };

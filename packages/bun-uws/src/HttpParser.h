@@ -484,6 +484,18 @@ struct HttpResponseData;
             return remainingStreamingBytes != 0;
         }
 
+        /* Hands the fallback buffer to the caller, which becomes its owner. A
+         * request head that arrived split over two reads is parsed out of this
+         * buffer, so the HttpRequest the parse loop is dispatching right now
+         * holds string_views into it. HttpContext::onClose calls this before it
+         * destructs the parser under that dispatch. The move keeps the heap
+         * block, so the views stay valid: consumePostPadded reserves at least
+         * MINIMUM_HTTP_POST_PADDING bytes before it parses out of the buffer,
+         * which is past every short string optimization threshold. */
+        std::string takeFallbackBuffer() {
+            return std::move(fallback);
+        }
+
         /* Maximum number of trailer fields surfaced to JS (the section size cap
          * already bounds memory; this matches the regular-header count cap). */
         static constexpr unsigned MAX_TRAILER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 1;

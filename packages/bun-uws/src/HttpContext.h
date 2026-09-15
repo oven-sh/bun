@@ -248,6 +248,19 @@ private:
         /* Call filter */
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
 
+        /* This socket is closing from inside its own parse frame: a request
+         * handler called server.stop(true), or a response completed and the
+         * connection close gate fired. The HttpRequest that frame is
+         * dispatching holds string_views into the parser's fallback buffer when
+         * its head arrived split over two reads, and the handler can still
+         * materialise the headers from it (lazily, or through the post-handler
+         * snapshot). Give those bytes to the parse frame, which outlives every
+         * dispatch that can view them, instead of freeing them with the parser
+         * below. */
+        if (httpContextData->parsingSocket == s && httpContextData->parsedFallbackHolder) {
+            *httpContextData->parsedFallbackHolder = httpResponseData->takeFallbackBuffer();
+        }
+
         bool nodeHttpTunnelAfterBody = false;
         if constexpr (IsNodeHttp) nodeHttpTunnelAfterBody = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) != 0;
         if(httpResponseData->isConnectRequest || nodeHttpTunnelAfterBody) {
@@ -391,6 +404,13 @@ private:
         struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
         httpContextData->parsingSocket = s;
         httpResponseData->isIdle = false;
+
+        /* Owns the parser's fallback buffer once a close below hands it over
+         * (see onClose). It is freed when this frame returns, after the last
+         * dispatch that can hold string_views into it. */
+        std::string parsedFallback;
+        std::string *prevParsedFallbackHolder = httpContextData->parsedFallbackHolder;
+        httpContextData->parsedFallbackHolder = &parsedFallback;
 
         /* node:http compat: maintain the headers/request timeout window (see
          * the requestHandler/dataHandler hooks and the post-parse check). */
@@ -651,6 +671,7 @@ private:
         /* Mark that we are no longer parsing Http */
         httpContextData->flags.isParsingHttp = false;
         httpContextData->parsingSocket = prevParsingSocket;
+        httpContextData->parsedFallbackHolder = prevParsedFallbackHolder;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             /* node:http compat: parse errors surface as the server's 'clientError'

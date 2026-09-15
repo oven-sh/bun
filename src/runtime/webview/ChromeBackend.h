@@ -277,27 +277,37 @@ enum class Method : uint8_t {
 // passed as JSON-escaped arguments at the end — avoids Chrome's
 // callFunctionOn dance for one string + one number.
 //
-// The predicate: attached + has size + in viewport + stable for 2 frames
-// + elementFromPoint at center returns the element (not obscured). Returns
-// the center coords as [cx, cy]; throws on timeout.
+// The predicate: attached + has size + in viewport + stable across two
+// distinct animation frames + elementFromPoint at center returns the element
+// (not obscured). Returns the center coords as [cx, cy]; throws on timeout.
+//
+// Every sample is taken after an `await rAF`, and a match only counts when
+// the rAF timestamp advanced, so a just-started animation cannot look stable
+// at its from-keyframe (Playwright's _checkElementIsStable does the same).
+// The rAF wait races a setTimeout bound to the deadline so the timeout
+// contract holds when the renderer is not producing frames.
 constexpr ASCIILiteral kActionabilityIIFE = R"js((async (sel, timeout) => {
 const deadline = performance.now() + timeout;
-let last;
+let last, lastT;
 for (;;) {
+  const t = await new Promise(f => {
+    const id = setTimeout(f, Math.max(0, deadline - performance.now()));
+    requestAnimationFrame(t => { clearTimeout(id); f(t); });
+  });
+  if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
   const el = document.querySelector(sel);
   if (el) {
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
-      if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
+      if (last && t !== lastT && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
         const hit = document.elementFromPoint(cx, cy);
         if (hit === el || el.contains(hit)) return [cx, cy];
       }
       last = { l: r.left, t: r.top, w: r.width, h: r.height };
     } else last = undefined;
   } else last = undefined;
-  if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
-  await new Promise(f => requestAnimationFrame(f));
+  lastT = t;
 }
 }))js"_s;
 
@@ -309,7 +319,10 @@ for (;;) {
   const el = document.querySelector(sel);
   if (el) { el.scrollIntoView({ block, behavior: 'instant' }); return; }
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "'";
-  await new Promise(f => requestAnimationFrame(f));
+  await new Promise(f => {
+    const id = setTimeout(f, Math.max(0, deadline - performance.now()));
+    requestAnimationFrame(t => { clearTimeout(id); f(t); });
+  });
 }
 }))js"_s;
 

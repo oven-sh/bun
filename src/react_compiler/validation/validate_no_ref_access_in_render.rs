@@ -778,6 +778,17 @@ fn validate_no_ref_access_in_render_impl(
                             ref_env,
                             &mut inner_errors,
                         );
+                        // Not in upstream: the TypeScript original throws when the fixpoint of
+                        // `inner` does not converge, which ends each enclosing fixpoint too. The
+                        // upstream port records a ref read and continues with `changed` still
+                        // set, so each of them runs all 10 of its passes: 10^depth passes.
+                        if inner_errors
+                            .iter()
+                            .any(|error| error.category == ErrorCategory::Invariant)
+                        {
+                            errors.append(&mut inner_errors);
+                            return RefAccessType::None;
+                        }
                         let (return_type, read_ref_effect) = if inner_errors.is_empty() {
                             (result, false)
                         } else {

@@ -2382,14 +2382,18 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
 // whose header does not fit keeps the stack it has.
 //
 // The length is what is under test, so the child needs a string of about 2 GiB and the test skips on
-// small machines (the gate source-too-large.test.ts uses). One child runs every case, so that string
-// is allocated once. `repeat` of one character is used instead of `Buffer.alloc(n, fill).toString()`:
-// JSC fills it in one pass, and it does not hold a second 2 GiB.
+// small machines. One child runs every case, so that string is allocated once. `repeat` of one
+// character is used instead of `Buffer.alloc(n, fill).toString()`: JSC fills it in one pass, and it does
+// not hold a second 2 GiB (1.2 s and 2.4 GB against 2.6 s and 4.4 GB in a debug ASAN build).
 //
 // The child touches about 3.5 GB of pages, which takes 2 to 3 seconds in a debug ASAN build and more
 // on a loaded machine. That is too close to the default 5 second limit, so this one test carries its
 // own ceiling.
-test.skipIf(totalmem() < 10 * 1024 ** 3)(
+//
+// Inside a container totalmem() reports the host's RAM. process.constrainedMemory() reports the
+// cgroup limit there. This is the gate blob-oom.test.ts uses.
+const memoryForLongStrings = Math.min(totalmem(), process.constrainedMemory() || Infinity);
+test.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
   "node:vm does not abort the process when text it joins passes the string length limit",
   async () => {
     const fixture = `
@@ -2432,7 +2436,7 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
       }
       await report("error thrown by a script", () => thrownBy("throw error"));
       // A source line over 1024 characters is left out of the header. A second join builds that header.
-      await report("error thrown from a line too long for the header", () => thrownBy("throw error;" + " ".repeat(2000)));
+      await report("error thrown from a line too long for the header", () => thrownBy("throw error;" + Buffer.alloc(2000, " ").toString()));
 
       // The header of a compile-time SyntaxError goes in front of what Error.prepareStackTrace returned.
       await report("SyntaxError from new Script", () => {

@@ -13,7 +13,7 @@ import {
   nodeExeMatchingAbi,
   tempDir,
 } from "harness";
-import { join } from "path";
+import { join, resolve } from "path";
 
 // The napi-app addons don't link against bun, so existing binaries stay valid
 // across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
@@ -1580,6 +1580,47 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(stdout.trim()).toBe("create_error_status=0");
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
+  });
+
+  // A crash report produced while bun is inside an addon's code (here a
+  // napi_fatal_error, which is reported like any panic) says which addon, so
+  // that a report is attributable even when nothing in the stack names it.
+  describe("the crash report names the native module", () => {
+    async function crashReport(code: string, where: string): Promise<string> {
+      await using proc = spawn({
+        // The trailing flag keeps debug builds from symbolizing the trace with
+        // llvm-symbolizer, which is slow; the attribution line is printed before it.
+        cmd: [bunExe(), "-e", code, "--debug-crash-handler-use-trace-string"],
+        env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(`NAPI FATAL ERROR: ${where} crash_report_addon`);
+      expect(exitCode).not.toBe(0);
+      return stderr;
+    }
+    const addon = JSON.stringify(join(__dirname, "napi-app/build/Debug/crash_report_addon.node"));
+
+    it("while loading it", async () => {
+      const onLoadAddon = join(__dirname, "napi-app/build/Debug/crash_report_on_load_addon.node");
+      const stderr = await crashReport(`require(${JSON.stringify(onLoadAddon)})`, "register");
+      // The line carries the path as require() handed it to dlopen; resolve() evens out the separators.
+      const named = stderr.match(/Crashed while loading native module: (.*)\n/)?.[1];
+      expect(named && resolve(named)).toBe(resolve(onLoadAddon));
+    });
+
+    it("in one of its methods", async () => {
+      const stderr = await crashReport(`require(${addon}).crashInMethod()`, "method");
+      expect(stderr).toMatch(/Crashed while running native module: file:\/\/.*\/crash_report_addon\.node\n/);
+    });
+
+    it("in one of its finalizers", async () => {
+      // The finalizer runs when the object is collected, or else when the
+      // environment is torn down at exit; both paths are attributed.
+      const stderr = await crashReport(`require(${addon}).crashInFinalizer()`, "finalizer");
+      expect(stderr).toMatch(/Crashed while running native module: file:\/\/.*\/crash_report_addon\.node\n/);
+    });
   });
 
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {

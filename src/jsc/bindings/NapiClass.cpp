@@ -65,7 +65,11 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);
     Bun::NapiHandleScope handleScope(uncheckedDowncast<Zig::GlobalObject>(globalObject));
 
-    JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
+    JSValue ret;
+    {
+        Bun::NativeModuleCrashScope crashScope(Bun::NativeModuleCrashScope::Running, napi->env()->moduleNameForCrashReport());
+        ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
+    }
     napi_set_last_error(napi->env(), napi_ok);
     napi->env()->throwPendingException();
     RETURN_IF_EXCEPTION(scope, {});

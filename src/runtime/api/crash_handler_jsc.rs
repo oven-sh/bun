@@ -24,6 +24,10 @@ pub(crate) mod js_bindings {
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
             ("panic", __jsc_host_js_panic),
+            (
+                "panicInsideNativeModule",
+                __jsc_host_js_panic_inside_native_module,
+            ),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
             ("abort", __jsc_host_js_abort),
@@ -130,6 +134,26 @@ pub(crate) mod js_bindings {
     fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None);
+    }
+
+    /// `panicInsideNativeModule(name)`: panics as if inside a callback of the native module `name`.
+    #[bun_jsc::host_fn]
+    fn js_panic_inside_native_module(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let name = BunString::from_js(frame.argument(0), global)?.to_utf8();
+        let mut name_z = BoundedArray::<u8, 1024>::default();
+        if name_z.append_slice(name.slice()).is_err() || name_z.append(0).is_err() {
+            return Err(global.throw(format_args!("name is too long")));
+        }
+        crash_handler::suppress_core_dumps_if_necessary();
+        // The panic never returns, so `name_z` outlives the guard.
+        let _in_module = crash_handler::enter_native_module(
+            crash_handler::NativeModuleKind::Running,
+            name_z.const_slice().as_ptr().cast(),
+        );
+        crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
     }
 
     #[bun_jsc::host_fn]

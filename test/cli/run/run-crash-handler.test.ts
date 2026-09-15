@@ -1,8 +1,9 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
+import { inflateSync } from "node:zlib";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -629,6 +630,140 @@ describe("automatic crash reporter", () => {
       expect(sent).toBe(true);
     });
   }
+});
+
+// The panic message of an uploaded trace string `{base}/{version}/{payload}`,
+// decoded the way bun.report does: after the platform, command and format
+// characters, 7 characters of commit and two VLQs of feature bits come the
+// frames (one VLQ each, `_` or `=` for a frame without an offset, a leading 1
+// introducing a name of the following length) up to a VLQ of 0, then the
+// reason: `0` and the zlib-compressed message in base64.
+function decodeUploadedPanicMessage(payload: string): string {
+  const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let i = 3 + 7;
+  function vlq(): number {
+    let value = 0;
+    for (let shift = 0; ; shift += 5) {
+      const digit = digits.indexOf(payload[i++]);
+      if (digit < 0) throw new Error(`bad VLQ digit at ${i - 1} of ${payload}`);
+      value += (digit & 31) * 2 ** shift;
+      if (!(digit & 32)) return value % 2 ? -Math.floor(value / 2) : value / 2;
+    }
+  }
+  vlq();
+  vlq();
+  for (;;) {
+    if (payload[i] === "_" || payload[i] === "=") {
+      i++;
+      continue;
+    }
+    const frame = vlq();
+    if (frame === 0) break;
+    if (frame === 1) {
+      i += vlq();
+      vlq();
+    }
+  }
+  expect(payload[i]).toBe("0");
+  return inflateSync(Buffer.from(payload.slice(i + 1), "base64")).toString();
+}
+
+// A panic (a Rust panic!, a napi_fatal_error) raised while bun is inside a
+// native module's code has bun frames only, so the report has to say which
+// module it was: a line under the panic locally, and a suffix on the uploaded
+// message. bun.report's fingerprint for a panic includes the message, so Sentry
+// groups these per module. The suffix carries the path from the last
+// node_modules directory on, never the user's directories. The hook stands in
+// for a callback of a module at the given path.
+test("a panic inside a native module names the module locally and in the uploaded message", async () => {
+  const uploaded = Promise.withResolvers<string>();
+  using server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      uploaded.resolve(new URL(request.url).pathname);
+      return new Response("OK");
+    },
+  });
+  // `old_node_modules` is a user directory that merely ends in the word; the
+  // real `node_modules` before it is the one the uploaded name starts after.
+  const modulePath = "/home/someone/app/node_modules/@scope/pkg/old_node_modules/pkg.node";
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `require("bun:internal-for-testing").crash_handler.panicInsideNativeModule(${JSON.stringify(modulePath)})`,
+    ],
+    env: mergeWindowEnvs([
+      bunEnv,
+      {
+        BUN_CRASH_REPORT_URL: server.url.origin,
+        BUN_ENABLE_CRASH_REPORTING: "1",
+        GITHUB_ACTIONS: undefined,
+        CI: undefined,
+      },
+    ]),
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`Crashed while running native module: ${modulePath}\n`);
+  expect(exitCode).not.toBe(0);
+
+  const pathname = await uploaded.promise;
+  // `/` is also a VLQ and base64 digit, so the payload cannot be split out on it.
+  const payload = pathname.match(/^\/[^/]+\/(.*)\/ack$/)?.[1];
+  expect(payload, pathname).toBeDefined();
+  expect(decodeUploadedPanicMessage(payload!)).toBe(
+    "invoked crashByPanic() handler (running native module @scope/pkg/old_node_modules/pkg.node)",
+  );
+});
+
+// process.dlopen can run inside another crash handler action: with
+// --install=fallback, resolving a package that is not installed holds the
+// resolver action while bun waits for the registry, and that wait runs the
+// event loop, microtasks included. The module being loaded used to go into the
+// same slot as that action, asserting it was empty on the way in and clearing
+// it on the way out. It is a slot of its own now, restored to what it replaced,
+// so a dlopen in that position neither asserts nor costs a later crash its
+// `Crashed while resolving a module` line.
+test("process.dlopen inside the resolver action leaves that action in place", async () => {
+  using dir = tempDir("crash-handler-dlopen-inside-resolver", {
+    "package.json": JSON.stringify({ name: "box", version: "0.0.0" }),
+    "index.ts": `
+      import { crash_handler } from "bun:internal-for-testing";
+      Promise.resolve().then(() => {
+        try {
+          process.dlopen({ exports: {} }, "/nonexistent-addon.node");
+        } catch {}
+        crash_handler.panic();
+      });
+      try {
+        import.meta.resolve("some-package-that-is-not-installed-xyz", import.meta.url);
+      } catch {}
+      console.log("the microtask did not run inside the resolver");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--install=fallback", "--debug-crash-handler-use-trace-string", "index.ts"],
+    cwd: String(dir),
+    // Nothing listens there: auto-install queues the request, runs the event
+    // loop while it waits (which is when the microtask runs), then gives up.
+    env: { ...noReportEnv, BUN_CONFIG_REGISTRY: "http://127.0.0.1:1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The microtask's own panic is the crash, so dlopen itself did not assert,
+  // and the script never got past the resolve, so the microtask ran inside it.
+  expect(stderr).toContain("invoked crashByPanic() handler");
+  expect(stdout).toBe("");
+  // The resolver action is only recorded by builds with assertions on.
+  if (isDebug || isASAN) {
+    expect(stderr).toContain("Crashed while resolving a module\n");
+  }
+  expect(exitCode).not.toBe(0);
 });
 
 test.if(isWindows)(

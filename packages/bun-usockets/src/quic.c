@@ -1211,9 +1211,13 @@ void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int)
  * client is abandoning the upload short — the server's lsquic will
  * CONNECTION_CLOSE on the mismatch (RFC 9114 §4.1.2). RESET_STREAM is
  * the wire-level "I'm cancelling this send" and lets the server treat it
- * as a stream-level cancellation rather than a malformed message. */
+ * as a stream-level cancellation rather than a malformed message.
+ * Sends nothing once lsquic_stream_close/shutdown has run, so call it first. */
 void us_quic_stream_reset(us_quic_stream_t *s) {
-    if (s->stream) lsquic_stream_maybe_reset(s->stream, 0x10C, 1);
+    if (!s->stream) return;
+    /* do_close=0: with no reset due, maybe_reset's own close shuts only the read half. */
+    lsquic_stream_maybe_reset(s->stream, 0x10C, 0);
+    lsquic_stream_close(s->stream);
 }
 
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {

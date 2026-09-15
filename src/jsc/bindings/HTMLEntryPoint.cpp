@@ -37,6 +37,8 @@ extern "C" JSPromise* Bun__loadHTMLEntryPoint(Zig::GlobalObject* globalObject)
     if (!promise) [[unlikely]] {
         BUN_PANIC("Failed to load HTML entry point");
     }
+    // The VM reports a rejected entry point promise itself, as with the handled promise from JSC::loadAndEvaluateModule().
+    promise->markAsHandled();
     return promise;
 }
 

@@ -203,6 +203,7 @@ fn task_callback(
         unique_key_for_additional_file: bun_ast::StoreStr::EMPTY,
         content_hash_for_additional_file: 0,
         package_name: bun_ast::StoreStr::EMPTY,
+        input_source_map: None,
     })
 }
 

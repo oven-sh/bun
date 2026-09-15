@@ -944,10 +944,11 @@ describe("Bun.wrapAnsi", () => {
 
   // The input sizes each row (a Vector of characters) and the list of rows of a line (a Vector
   // of rows). WTF::Vector::append() calls CRASH() when the buffer cannot grow, so both aborted
-  // the process: the row list at 57,934,259 rows (128 MB of one-letter words at columns 1), one
-  // UTF-16 row at about 860 million characters. Now wrapAnsi() throws a catchable out-of-memory
-  // error. The child runs with a 64 KiB synthetic allocation limit, which brings the bounds down
-  // to 2048 rows, and to 65,536 Latin-1 or 32,768 UTF-16 characters in a row.
+  // the process: the row list at 51,821,029 rows (104 MB of one-letter words at columns 1), a
+  // UTF-16 row of 900 million characters when the next word arrives. Now wrapAnsi() throws a
+  // catchable out-of-memory error. The child runs with a 64 KiB synthetic allocation limit, which
+  // brings the bounds down to 2048 rows, and to 65,536 Latin-1 or 32,768 UTF-16 characters in a
+  // row.
   describe("a row or a row list that cannot grow", () => {
     const outOfMemory = "RangeError: Out of memory";
 

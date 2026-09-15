@@ -234,6 +234,38 @@ Bun.serve({
 
 Bun sends the logs over the existing HMR WebSocket connection.
 
+### Allowed hosts
+
+In development, HTML routes, their bundled assets under `/_bun/*`, and the HMR WebSocket only answer requests whose `Host` header is `localhost`, a `*.localhost` name, an IP address, or the `hostname` you passed to `Bun.serve()`. Any other `Host` gets a `403 Forbidden` response. This stops a DNS rebinding attack, where a web page points its own domain at `127.0.0.1` and reads your bundled source code from the dev server.
+
+If you reach the dev server through another name, such as an mDNS name (`mybox.local`), a tunnel (ngrok, cloudflared), or an entry in `/etc/hosts`, list that name in `allowedHosts`.
+
+```ts title="src/backend.ts" icon="/icons/typescript.svg"
+import homepage from "./index.html";
+
+Bun.serve({
+  development: {
+    // Hostnames without a port. A leading "." also allows every subdomain.
+    allowedHosts: ["mybox.local", ".ngrok-free.app"],
+  },
+
+  routes: {
+    "/": homepage,
+  },
+});
+```
+
+The same option is available in `bunfig.toml`, which also covers `bun ./index.html`. A value passed to `Bun.serve()` takes precedence.
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+allowedHosts = ["mybox.local", ".ngrok-free.app"]
+```
+
+A leading `.` trusts every subdomain of that domain, so only use it for domains you control or that a tunnel provider controls. Pass `allowedHosts: true` to turn the check off. This removes the DNS rebinding protection, so prefer an explicit list.
+
+The tunnel or proxy must pass the `Host` header through unchanged. The HMR WebSocket also checks that the browser's `Origin` matches the request's `Host`, and `allowedHosts` does not change that check. If a proxy rewrites `Host` to `localhost`, the page loads without `allowedHosts`, but the HMR WebSocket is rejected because its `Origin` is the public name.
+
 ### Development vs Production
 
 | Feature             | Development           | Production  |

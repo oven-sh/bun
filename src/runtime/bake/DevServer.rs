@@ -1347,37 +1347,37 @@ pub(super) enum DevHandlerId {
     Request,
 }
 
-/// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
-/// DevTools `/.well-known/...` route. A rebound origin
-/// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
-/// non-loopback / non-IP / non-configured hostnames prevents the attacker's
-/// page from reading bundled source via same-origin fetch.
+/// DNS-rebinding guard for `/_bun/...` internal routes, the HMR WebSocket,
+/// the HTML routes, and the Chrome DevTools `/.well-known/...` route. A
+/// rebound origin (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`;
+/// rejecting non-loopback / non-IP / non-configured hostnames prevents the
+/// attacker's page from reading bundled source via same-origin fetch.
+/// `allowedHosts` extends the list; it does not relax `is_allowed_dev_origin`.
 pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
-    is_allowed_host_header(
-        req,
-        dev.server.as_ref().map(|server| &server.config().address),
-    )
+    is_allowed_host_header(req, dev.server.as_ref().map(|server| server.config()))
 }
 
 pub(crate) fn is_allowed_host_header(
     req: &Request,
-    address: Option<&crate::server::server_config::Address>,
+    config: Option<&crate::server::server_config::ServerConfig>,
 ) -> bool {
+    use crate::server::server_config::{Address, AllowedHosts};
+
+    let allowed_hosts = config.map(|config| &config.allowed_hosts);
+    if matches!(allowed_hosts, Some(AllowedHosts::Any)) {
+        return true;
+    }
     let Some(host) = req.header(b"host") else {
         return false;
     };
     let host = host_without_port(host);
+    if host.is_empty() {
+        return false;
+    }
     if strings::eql_case_insensitive_ascii(host, b"localhost", true) {
         return true;
     }
-    const DOT_LOCALHOST: &[u8] = b".localhost";
-    if host.len() > DOT_LOCALHOST.len()
-        && strings::eql_case_insensitive_ascii(
-            &host[host.len() - DOT_LOCALHOST.len()..],
-            DOT_LOCALHOST,
-            true,
-        )
-    {
+    if has_domain_suffix(host, b".localhost") {
         return true;
     }
     let ip = if host.first() == Some(&b'[') && host.last() == Some(&b']') {
@@ -1388,13 +1388,31 @@ pub(crate) fn is_allowed_host_header(
     if bun_core::ip_address::is_ip_address(ip) {
         return true;
     }
-    if let Some(crate::server::server_config::Address::Tcp {
+    if let Some(Address::Tcp {
         hostname: Some(h), ..
-    }) = address
+    }) = config.map(|config| &config.address)
     {
-        return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
+        if strings::eql_case_insensitive_ascii(host, h.as_bytes(), true) {
+            return true;
+        }
+    }
+    if let Some(AllowedHosts::List(list)) = allowed_hosts {
+        return list.iter().any(|entry| {
+            if entry.first() == Some(&b'.') {
+                strings::eql_case_insensitive_ascii(host, &entry[1..], true)
+                    || has_domain_suffix(host, entry)
+            } else {
+                strings::eql_case_insensitive_ascii(host, entry, true)
+            }
+        });
     }
     false
+}
+
+/// `a.example.com` matches `.example.com`; `.example.com` alone does not.
+fn has_domain_suffix(host: &[u8], suffix: &[u8]) -> bool {
+    host.len() > suffix.len()
+        && strings::eql_case_insensitive_ascii(&host[host.len() - suffix.len()..], suffix, true)
 }
 
 /// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).
@@ -1437,16 +1455,8 @@ fn is_allowed_dev_origin(req: &Request) -> bool {
         return false;
     };
     let origin_host = host_without_port(&origin[scheme_end + 3..]);
-    if strings::eql_case_insensitive_ascii(origin_host, b"localhost", true) {
-        return true;
-    }
-    const DOT_LOCALHOST: &[u8] = b".localhost";
-    if origin_host.len() > DOT_LOCALHOST.len()
-        && strings::eql_case_insensitive_ascii(
-            &origin_host[origin_host.len() - DOT_LOCALHOST.len()..],
-            DOT_LOCALHOST,
-            true,
-        )
+    if strings::eql_case_insensitive_ascii(origin_host, b"localhost", true)
+        || has_domain_suffix(origin_host, b".localhost")
     {
         return true;
     }
@@ -1461,7 +1471,13 @@ fn is_allowed_dev_origin(req: &Request) -> bool {
 fn host_forbidden(resp: AnyResponse) {
     resp.corked(move || {
         resp.write_status(b"403 Forbidden");
-        resp.end(b"Blocked: Host header does not match the dev server", false);
+        resp.end(
+            b"Blocked: Host header does not match the dev server.\n\
+              To allow this hostname, add it to allowedHosts: \
+              \"development.allowedHosts\" in Bun.serve(), \
+              or \"allowedHosts\" under [serve.static] in bunfig.toml.\n",
+            false,
+        );
     });
 }
 

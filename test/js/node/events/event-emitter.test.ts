@@ -738,6 +738,37 @@ describe("EventEmitter error handling", () => {
 
     expect(handled).toBe(true);
   });
+
+  // process is backed by the native emitter; errorMonitor listeners there must
+  // see 'error' before the handlers do, like on any other EventEmitter.
+  test("errorMonitor on process", () => {
+    const seen: unknown[][] = [];
+    const monitor = (...args: unknown[]) => seen.push(["monitor", ...args]);
+    const onceMonitor = (...args: unknown[]) => seen.push(["once monitor", ...args]);
+    const handler = (...args: unknown[]) => seen.push(["handler", ...args]);
+    const err = new Error("on process");
+    try {
+      process.on(EventEmitter.errorMonitor, monitor);
+      process.once(EventEmitter.errorMonitor, onceMonitor);
+      process.on("error", handler);
+      expect(process.emit("error", err, 1)).toBe(true);
+      expect(process.emit("error", err, 2)).toBe(true);
+      expect(seen).toEqual([
+        ["monitor", err, 1],
+        ["once monitor", err, 1],
+        ["handler", err, 1],
+        ["monitor", err, 2],
+        ["handler", err, 2],
+      ]);
+      expect(process.listenerCount(EventEmitter.errorMonitor)).toBe(1);
+    } finally {
+      process.removeListener("error", handler);
+      process.removeListener(EventEmitter.errorMonitor, monitor);
+      process.removeListener(EventEmitter.errorMonitor, onceMonitor);
+    }
+    expect(process.listenerCount(EventEmitter.errorMonitor)).toBe(0);
+    expect(process.listenerCount("error")).toBe(0);
+  });
 });
 
 describe("EventEmitter captureRejections", () => {

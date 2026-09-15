@@ -597,11 +597,13 @@ Bun preserves dependencies that use pnpm's `catalog:` protocol:
 
 ### Configuration Migration
 
-Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pnpm-workspace.yaml`:
+Bun copies the following pnpm configuration into the root `package.json`:
 
-- **Overrides**: Moved from `pnpm.overrides` to root-level `overrides` in `package.json`
-- **Patched Dependencies**: Moved from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
-- **Workspace Overrides**: Applied from `pnpm-workspace.yaml` to root `package.json`
+- **Overrides**: Copied from `pnpm.overrides` to root-level `overrides` in `package.json`
+- **Patched Dependencies**: Copied from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
+- **Workspace Overrides**: Copied from `overrides` and `patchedDependencies` in `pnpm-workspace.yaml` to the same root-level fields
+
+Bun leaves the `pnpm` field of `package.json` as it is. pnpm reads its configuration from that field and ignores the root-level fields, so `pnpm install --frozen-lockfile` keeps working for teammates who still use pnpm. Bun reads the root-level fields and ignores the `pnpm` field.
 
 ### Requirements and limitations
 
@@ -612,7 +614,7 @@ Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pn
 - Relative `link:` dependencies and git dependencies with a sub-directory (`resolution.path`) are not supported
 - If migration fails for any of these reasons, Bun prints why and resolves from scratch instead
 
-After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.
+Once nobody on the repository uses pnpm anymore, you can remove `pnpm-lock.yaml`, `pnpm-workspace.yaml`, and the `pnpm` field of `package.json`.
 
 ---
 

@@ -4003,6 +4003,98 @@ describe.concurrent("bundler", () => {
     },
     external: ["external-pkg", "@scope/external-pkg", "{{root}}/external-file"],
   });
+  // https://github.com/oven-sh/bun/issues/14011
+  // The argument of require.resolve() stays as written at every call site.
+  // The resolved path on the build machine must not reach the output.
+  const requireResolveArguments = (out: string) => out.match(/\.resolve\("[^"]*"\)/g);
+  itBundled("default/RequireResolveKeepsRelativeSpecifier", {
+    files: {
+      "/entry.js": `console.log(require.resolve("./dep.js"));`,
+      "/dep.js": `module.exports = 1;`,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(requireResolveArguments(api.readFile("/out.js"))).toEqual(['.resolve("./dep.js")']);
+    },
+  });
+  // Two modules resolve the same file. Only the module that discovered the
+  // file first got the absolute path, and which module that was changed from
+  // build to build.
+  itBundled("default/RequireResolveKeepsSpecifierAtEverySite", {
+    files: {
+      "/entry.js": `require("./a.js"); require("./b.js");`,
+      "/a.js": `console.log("a", require.resolve("./dep.js"));`,
+      "/b.js": `console.log("b", require.resolve("./dep.js"));`,
+      "/dep.js": `module.exports = 1;`,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(requireResolveArguments(api.readFile("/out.js"))).toEqual([
+        '.resolve("./dep.js")',
+        '.resolve("./dep.js")',
+      ]);
+    },
+  });
+  itBundled("default/RequireResolveKeepsPackageSpecifier", {
+    files: {
+      "/entry.js": `console.log(require.resolve("zz-b"), require.resolve("zz-b/sub.js"));`,
+      "/node_modules/zz-b/package.json": `{"name": "zz-b", "main": "index.js"}`,
+      "/node_modules/zz-b/index.js": `module.exports = 1;`,
+      "/node_modules/zz-b/sub.js": `module.exports = 2;`,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(requireResolveArguments(api.readFile("/out.js"))).toEqual(['.resolve("zz-b")', '.resolve("zz-b/sub.js")']);
+    },
+  });
+  itBundled("default/RequireResolveKeepsSpecifierNextToRequire", {
+    files: {
+      "/entry.js": `console.log(require("./dep.js"), require.resolve("./dep.js"), require.resolve("ext-pkg"));`,
+      "/dep.js": `module.exports = 1;`,
+    },
+    target: "node",
+    format: "cjs",
+    external: ["ext-pkg"],
+    onAfterBundle(api) {
+      expect(requireResolveArguments(api.readFile("/out.js"))).toEqual(['.resolve("./dep.js")', '.resolve("ext-pkg")']);
+    },
+  });
+  // The target is copied to the output directory under a hashed name. The
+  // argument still stays as written.
+  itBundled("default/RequireResolveKeepsSpecifierOfCopiedFile", {
+    files: {
+      "/entry.js": `console.log(require.resolve("./addon.node"), require.resolve("./data.bin"));`,
+      "/addon.node": `addon`,
+      "/data.bin": `data`,
+    },
+    target: "node",
+    format: "cjs",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(requireResolveArguments(api.readFile("/out/entry.js"))).toEqual([
+        '.resolve("./addon.node")',
+        '.resolve("./data.bin")',
+      ]);
+    },
+  });
+  // At run time the specifier resolves against the directory of the bundle.
+  itBundled("default/RequireResolveResolvesNextToTheBundle", {
+    files: {
+      "/src/entry.js": `console.log(require(require.resolve("./dep.js")));`,
+      "/src/dep.js": `module.exports = "source";`,
+    },
+    runtimeFiles: {
+      "/out/dep.js": `module.exports = "shipped with the bundle";`,
+    },
+    entryPoints: ["/src/entry.js"],
+    outfile: "/out/entry.js",
+    target: "node",
+    format: "cjs",
+    run: { stdout: "shipped with the bundle" },
+  });
   itBundled("default/InjectMissing", {
     files: {
       "/entry.js": ``,

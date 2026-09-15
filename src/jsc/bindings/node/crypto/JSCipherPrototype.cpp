@@ -56,6 +56,10 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     WTF::String dataString = WTF::nullString();
     WTF::String encodingString = WTF::nullString();
 
+    if (!dataValue.isString() && !dynamicDowncast<JSC::JSArrayBufferView>(dataValue)) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, dataValue);
+    }
+
     JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 

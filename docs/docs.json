@@ -124,7 +124,7 @@
           {
             "group": "Concurrency",
             "icon": "split",
-            "pages": ["/runtime/workers"]
+            "pages": ["/runtime/workers", "/runtime/webgpu"]
           },
           {
             "group": "Process & System",

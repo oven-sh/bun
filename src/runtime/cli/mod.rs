@@ -818,26 +818,21 @@ pub mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
+    /// Case-insensitive argv[0] suffix match; Windows also drops a trailing `.exe` (#36826).
+    fn invoked_as(argv0: &[u8], name: &[u8]) -> bool {
+        let mut argv0 = argv0;
+        if cfg!(windows) && strings::ends_with_case_insensitive_ascii(argv0, b".exe") {
+            argv0 = &argv0[..argv0.len() - b".exe".len()];
+        }
+        strings::ends_with_case_insensitive_ascii(argv0, name)
+    }
+
     fn is_bun_x(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
-        }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"bunx")
-        }
+        invoked_as(argv0, b"bunx")
     }
 
     fn is_node(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
-        }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"node")
-        }
+        invoked_as(argv0, b"node")
     }
 
     /// Cheap argv prescan for the dominant `bun <path>` / `bun .` shape.

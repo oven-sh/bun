@@ -27,7 +27,7 @@ src/jsc/bindings/v8/
 ├── V8*.cpp                 # V8 class implementations
 ├── shim/                   # Internal implementation details
 │   ├── Handle.h            # Handle and ObjectLayout implementation
-│   ├── HandleScopeBuffer.h # Handle scope memory management
+│   ├── HandleScopeBuffer.h # The V8 handles of one handle scope (the scope itself is Bun::HandleScopeImpl, shared with Node-API)
 │   ├── TaggedPointer.h     # V8-style tagged pointer implementation
 │   ├── Map.h               # V8 Map objects for inline function compatibility
 │   ├── GlobalInternals.h   # V8 global state management
@@ -233,6 +233,7 @@ For `ObjectTemplate` or `FunctionTemplate` implementations, see existing pattern
 - All V8 values must be created within an active handle scope
 - Use `isolate->currentHandleScope()->createLocal<T>()` to create handles
 - Handle scopes automatically clean up when destroyed
+- Node-API and the V8 API share one handle scope implementation, `Bun::HandleScopeImpl` (`src/jsc/bindings/napi_handle_scope.h`). `v8::HandleScope` and `Bun::NapiHandleScope` both open one, and `currentHandleScope()` returns the V8 handle storage of the innermost one, so V8 calls made from a Node-API callback work without any V8 scope of their own. Addons built against Node 26 headers never construct Bun's `v8::HandleScope` at all (it is inline); their scopes reach Bun only through `HandleScope::Extend` and `DeleteExtensions`.
 
 ### JSC Integration
 

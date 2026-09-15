@@ -59,7 +59,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellmanGroup { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSECDH { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForTTYWrapObject { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForNapiHandleScopeImpl { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForHandleScopeImpl { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStrongRootBlock { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiTypeTag { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNativePromiseContext { nullptr };
@@ -68,7 +68,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSMIMEType { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSMIMEParams { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForV8GlobalInternals { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForHandleScopeBuffer { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFunctionTemplate { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForV8Function { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSNodeHTTPServerSocket { nullptr };

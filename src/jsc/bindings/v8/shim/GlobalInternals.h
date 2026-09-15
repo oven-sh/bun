@@ -7,9 +7,11 @@
 #include "../V8Isolate.h"
 #include "Oddball.h"
 
-namespace v8 {
+namespace Bun {
+class HandleScopeImpl;
+}
 
-class HandleScope;
+namespace v8 {
 
 namespace shim {
 
@@ -40,11 +42,6 @@ public:
         return m_objectTemplateStructure.getInitializedOnMainThread(globalObject);
     }
 
-    JSC::Structure* handleScopeBufferStructure(JSC::JSGlobalObject* globalObject) const
-    {
-        return m_handleScopeBufferStructure.getInitializedOnMainThread(globalObject);
-    }
-
     JSC::Structure* functionTemplateStructure(JSC::JSGlobalObject* globalObject) const
     {
         return m_functionTemplateStructure.getInitializedOnMainThread(globalObject);
@@ -55,9 +52,12 @@ public:
         return m_v8FunctionStructure.getInitializedOnMainThread(globalObject);
     }
 
-    HandleScopeBuffer* globalHandles() const { return m_globalHandles.getInitializedOnMainThread(this); }
+    // Where v8::Global handles live: a scope that is never closed.
+    HandleScopeBuffer* globalHandles();
 
-    HandleScope* currentHandleScope() const { return m_currentHandleScope; }
+    // The V8 handles of the innermost open scope (GlobalObject::m_currentHandleScopeImpl). Aborts
+    // without one, like V8: Bun opens a scope around every native callback it makes.
+    HandleScopeBuffer* currentHandleScope();
 
     // Escape-slot reservations for live EscapableHandleScopes, keyed by the
     // scope's stack address. The slot is reserved at scope construction (so it
@@ -105,8 +105,6 @@ public:
         GlobalInternals* m_internals;
     };
 
-    void setCurrentHandleScope(HandleScope* handleScope) { m_currentHandleScope = handleScope; }
-
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcPrologueCallbacks() { return m_gcPrologueCallbacks; }
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcEpilogueCallbacks() { return m_gcEpilogueCallbacks; }
     WTF::Vector<std::pair<NearHeapLimitCallback, void*>>& nearHeapLimitCallbacks() { return m_nearHeapLimitCallbacks; }
@@ -126,15 +124,13 @@ public:
 private:
     Zig::GlobalObject* m_globalObject;
     JSC::LazyClassStructure m_objectTemplateStructure;
-    JSC::LazyClassStructure m_handleScopeBufferStructure;
     JSC::LazyClassStructure m_functionTemplateStructure;
     JSC::LazyClassStructure m_v8FunctionStructure;
-    HandleScope* m_currentHandleScope;
     WTF::HashMap<void*, EscapeReservation> m_escapeReservations;
-    // No inline capacity for the same ASAN reason as
-    // HandleScopeBuffer::m_rawGrants (cells are swept without destructors).
+    // No inline capacity: in-cell inline Vector storage would leave stale ASAN container
+    // annotations behind (this cell is swept without running destructors).
     WTF::Vector<TaggedPointer*> m_activeReturnValueSlots;
-    JSC::LazyProperty<GlobalInternals, HandleScopeBuffer> m_globalHandles;
+    JSC::LazyProperty<GlobalInternals, Bun::HandleScopeImpl> m_globalHandles;
 
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcPrologueCallbacks;
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcEpilogueCallbacks;
@@ -151,7 +147,6 @@ private:
     void finishCreation(JSC::VM& vm);
     GlobalInternals(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject)
         : Base(vm, structure)
-        , m_currentHandleScope(nullptr)
         , m_undefinedValue(Oddball::Kind::kUndefined)
         , m_nullValue(Oddball::Kind::kNull)
         , m_trueValue(Oddball::Kind::kTrue)

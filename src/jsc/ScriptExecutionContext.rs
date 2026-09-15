@@ -12,6 +12,7 @@ use core::ptr;
 
 use crate::virtual_machine::SweepResult;
 use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
+use bun_sys::FdExt as _;
 
 pub use bun_event_loop::ContextId;
 
@@ -33,8 +34,8 @@ pub enum AbortCause {
     /// Its `AbortSignal` fired; the value is `signal.reason`.
     Signal(JSValue),
     /// The context it belongs to is stopping, or had stopped when the handle
-    /// was armed. Script is forbidden for [`StopReason::VmTeardown`]; otherwise
-    /// a close handler the owner dispatches still runs.
+    /// was armed. Nothing is reported to its script: script is forbidden for
+    /// [`StopReason::VmTeardown`], and a `Bun.ModuleGraph` that was disposed hears nothing more.
     ContextStopped(StopReason),
 }
 
@@ -58,48 +59,14 @@ pub struct ScriptExecutionContext {
     /// A graph's context: its `WebCore::ScriptExecutionContext`, which owns this
     /// one and the ActiveDOMObjects (workers, WebSockets) the graph's script made.
     dom_context: core::cell::Cell<*mut core::ffi::c_void>,
-    /// The last event-loop iteration in which an immediate this (disposed
-    /// graph's) stopped context sets still runs; 0: none does. Its close
-    /// handlers run as `dispose()` stops it, and node:net emits 'close' from an
-    /// immediate a few turns after that. Anything it sets later is cancelled.
-    closing_until: core::cell::Cell<u64>,
+    /// Descriptors only this context's script can close, and will not once it has stopped: the
+    /// one a node:fs stream opened for itself. Its script is told nothing, so the stream never
+    /// reaches the `close` of its own `_destroy`.
+    owned_fds: JsCell<Vec<bun_sys::Fd>>,
     /// The timers script of a graph's context set that have not been freed
     /// (`TimerObjectInternals` / `AbortSignal` `Timeout`), so stopping it
     /// cancels exactly those. A VM's own contexts walk the timer heap.
     timers: JsCell<bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer>>,
-}
-
-/// While one is alive, native code is telling script that something of its own
-/// closed (a socket's `close` handler, a child process's `onExit`): the callback
-/// is called even if it was handed over inside the context of a
-/// `Bun.ModuleGraph` that has since been disposed. Any other callback
-/// of such a graph is dropped where it would be called.
-pub struct TeardownNotification<'a> {
-    global: &'a crate::JSGlobalObject,
-    /// Whether entering counted: a graph with a context may first exist only once inside.
-    counted: bool,
-}
-
-impl<'a> TeardownNotification<'a> {
-    pub fn enter(global: &'a crate::JSGlobalObject) -> Self {
-        Self {
-            global,
-            counted: Bun__ModuleGraph__enterTeardownNotification(global),
-        }
-    }
-}
-
-impl Drop for TeardownNotification<'_> {
-    fn drop(&mut self) {
-        if self.counted {
-            Bun__ModuleGraph__leaveTeardownNotification(self.global);
-        }
-    }
-}
-
-unsafe extern "C" {
-    safe fn Bun__ModuleGraph__enterTeardownNotification(global: &crate::JSGlobalObject) -> bool;
-    safe fn Bun__ModuleGraph__leaveTeardownNotification(global: &crate::JSGlobalObject);
 }
 
 /// What a pointer in a graph context's timer set points at.
@@ -121,7 +88,7 @@ impl Default for ScriptExecutionContext {
             socket_groups: JsCell::new(None),
             stop_again_queued: JsCell::new(false),
             dom_context: core::cell::Cell::new(ptr::null_mut()),
-            closing_until: core::cell::Cell::new(0),
+            owned_fds: JsCell::new(Vec::new()),
             timers: JsCell::new(Default::default()),
         }
     }
@@ -195,10 +162,32 @@ impl ScriptExecutionContext {
         self.stop_again_queued.set(false);
         let result = self.stop_handles(reason);
         self.close_sockets();
+        for fd in self.owned_fds.replace(Vec::new()) {
+            fd.close();
+        }
         result
     }
 
-    /// Close every client socket of a graph's context (their close handlers run).
+    /// `fd` is closed when this context stops, unless [`disown_fd`](Self::disown_fd) came first.
+    /// One that has already stopped closes it now.
+    pub fn own_fd(&self, fd: bun_sys::Fd) {
+        if self.is_stopped() {
+            fd.close();
+            return;
+        }
+        self.owned_fds.with_mut(|fds| fds.push(fd));
+    }
+
+    /// Its script is about to close `fd` itself (the number may be another file's right after).
+    pub fn disown_fd(&self, fd: bun_sys::Fd) {
+        self.owned_fds.with_mut(|fds| {
+            if let Some(index) = fds.iter().position(|owned| *owned == fd) {
+                fds.swap_remove(index);
+            }
+        });
+    }
+
+    /// Close every client socket of a graph's context (its script is told nothing).
     fn close_sockets(&self) {
         if let Some(groups) = self
             .socket_groups
@@ -217,19 +206,6 @@ impl ScriptExecutionContext {
 
     pub(crate) fn stopped_for(&self) -> Option<StopReason> {
         *self.stopped.get()
-    }
-
-    /// node:net's longest close path: end, destroy on the next tick, two deferrals, the emit.
-    const CLOSING_ITERATIONS: u64 = 6;
-
-    /// `dispose()` is stopping the context in loop iteration `now`.
-    pub(crate) fn begin_closing(&self, now: u64) {
-        self.closing_until.set(now + Self::CLOSING_ITERATIONS);
-    }
-
-    /// Whether an immediate set by this stopped context in loop iteration `now` still runs.
-    pub fn is_closing(&self, now: u64) -> bool {
-        now <= self.closing_until.get()
     }
 
     /// A timer script of this (graph's) context set exists from here.
@@ -324,6 +300,7 @@ impl ScriptExecutionContext {
             // of the handle is touched after it.
             unsafe {
                 self.unlink(&*newest);
+                (*newest).context_stopped.set(true);
                 ((*newest).on_abort)(newest, AbortCause::ContextStopped(reason));
             }
         }
@@ -343,8 +320,8 @@ pub struct AbortHandle {
     context: JsCell<*const ScriptExecutionContext>,
     on_abort: AbortFn,
     signal: JsCell<Option<AbortSignalRef>>,
-    /// Armed in a context that had already stopped: script of a disposed graph opened it.
-    opened_after_stop: core::cell::Cell<bool>,
+    /// Its context stopped it, or had already stopped when it was armed.
+    context_stopped: core::cell::Cell<bool>,
 }
 
 impl AbortHandle {
@@ -356,7 +333,7 @@ impl AbortHandle {
             context: JsCell::new(ptr::null()),
             on_abort: Self::owner_aborted::<O>,
             signal: JsCell::new(None),
-            opened_after_stop: core::cell::Cell::new(false),
+            context_stopped: core::cell::Cell::new(false),
         }
     }
 
@@ -365,12 +342,12 @@ impl AbortHandle {
         !self.context.get().is_null()
     }
 
-    /// What was open when its graph was disposed tells the graph's script once that it closed
-    /// (a rejection, `onExit`). What that script opens afterwards is closed without a word: a
-    /// notification would run it again, and it could open the next one, for as long as it likes.
+    /// The owner's context stopped it (or had already stopped when it was armed): what is left of
+    /// the work is released, and none of it is reported. A `Bun.ModuleGraph` that was disposed
+    /// hears nothing more from the event loop, as a terminated worker does not.
     #[inline]
-    pub fn opened_after_stop(&self) -> bool {
-        self.opened_after_stop.get()
+    pub fn context_stopped(&self) -> bool {
+        self.context_stopped.get()
     }
 
     #[inline]
@@ -396,7 +373,7 @@ impl AbortHandle {
             }
             context.push(this);
             if context.is_stopped() {
-                (*this).opened_after_stop.set(true);
+                (*this).context_stopped.set(true);
                 // Script of a disposed graph is still opening things: they go on
                 // the next turn of the loop, not under the caller that is arming.
                 crate::VirtualMachineRef::get()

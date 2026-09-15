@@ -80,8 +80,8 @@ impl Taskable for FetchTasklet {
     unsafe fn release_unrun(this: *mut Self) {
         FetchTasklet::deref(this);
     }
-    /// `on_progress_update` decides: a fetch in flight when its context stopped rejects once, and one
-    /// made by a context that had already stopped reports nothing (`opened_after_stop`).
+    /// `on_progress_update` decides: a fetch whose context stopped reports nothing, and what is left
+    /// of it is released there.
     unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
         bun_event_loop::TaskContext::Always
     }
@@ -894,7 +894,7 @@ impl FetchTasklet {
         let vm = self.global_this.bun_vm();
         // teardown forbade script: we cannot touch JS. A fetch() made by script of a graph that
         // had already been disposed is aborted the same way: nothing of it is reported.
-        if !vm.script_allowed() || self.abort_handle.opened_after_stop() {
+        if !vm.script_allowed() || self.abort_handle.context_stopped() {
             // The certificate will never be checked; release the parked
             // HTTP-thread socket instead of leaving it occupying an active
             // request slot until the idle timeout.

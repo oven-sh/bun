@@ -473,7 +473,7 @@ describe("ModuleGraph GC: isolateIO", () => {
     expect(await lifetimes.stillAlive("with a pending timer", "with a captured async context")).toEqual([]);
   });
 
-  test("dispose() and a collection in the same tick: close handlers are still told, then the graph goes", async () => {
+  test("dispose() and a collection in the same tick: no close handler is called, and the graph goes", async () => {
     const lifetimes = new Lifetimes();
     const state = control();
     await (async () => {
@@ -486,8 +486,7 @@ describe("ModuleGraph GC: isolateIO", () => {
     })();
     Bun.gc(true);
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
-    // (The Worker object itself is unreferenced once terminated, so its listener may go with it.)
-    expect(state.heard.filter(what => what !== "worker close").sort()).toEqual(["client close", "server socket close"]);
+    expect(state.heard).toEqual([]);
     expect(await accepts(state.tcpPort)).toBe(false);
   });
 

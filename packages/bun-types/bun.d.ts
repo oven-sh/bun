@@ -5507,14 +5507,14 @@ declare module "bun" {
      * had not run yet never will. Code from the
      * graph that is still referenced keeps working, and its errors still go
      * to `onError`. With `isolateIO`, everything the graph's code opened
-     * is closed, along with any graph its code made. What was open is told
-     * once that it closed: `close` handlers (sockets, `WebSocket`,
-     * `net.Socket`, a child process's `onExit`) are still called, and an
-     * operation in flight (a `fetch()`, a connecting socket) rejects or emits
-     * `'error'`; its other callbacks are not called. Whatever it opens
-     * afterwards is closed at once and reports nothing. This is not a
-     * sandbox: a process it spawns is started and then killed, and
-     * synchronous calls run to completion.
+     * is closed, along with any graph its code made, and the graph hears
+     * nothing of it, like a worker that was terminated: no `close` handler,
+     * `onExit` or `'error'` event is called, and its pending promises (a
+     * `fetch()`, a child's `exited`, a file read) never settle. What it
+     * had already queued as microtasks still runs once; whatever that starts
+     * does not start, and stays pending. This is not a sandbox: a process
+     * `Bun.spawn` starts is started and then killed, and synchronous calls
+     * run to completion.
      * Idempotent.
      */
     dispose(): void;

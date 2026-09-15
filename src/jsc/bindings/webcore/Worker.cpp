@@ -78,7 +78,6 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     }
 
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));
-    worker->m_madeInStoppedContext = context.isStopped();
     worker->suspendIfNeeded();
 
     auto started = worker->m_contextProxy->startWorkerGlobalScope(url);
@@ -134,17 +133,11 @@ void Worker::dispatchEvent(Event& event)
 {
     if (m_wasTerminated || !m_contextProxy->hasPendingActivity())
         return;
-    // A Bun.ModuleGraph's context stops its objects from a queued task; a message that was
-    // queued ahead of it is not delivered either.
-    if (auto* context = scriptExecutionContext(); context && context->isStopped())
-        return;
     EventTargetWithInlineData::dispatchEvent(event);
 }
 
 void Worker::dispatchCloseEvent(Event& event)
 {
-    if (m_madeInStoppedContext)
-        return;
     EventTargetWithInlineData::dispatchEvent(event);
 }
 

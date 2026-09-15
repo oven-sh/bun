@@ -338,6 +338,34 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     Binding::to_js_boxed(module, global)
 }
 
+/// `(fd)`: a node:fs stream opened `fd` for itself. If the script that is running is a
+/// `Bun.ModuleGraph`'s, the descriptor is closed when that graph is disposed: nothing is reported to
+/// a disposed graph, so the stream never gets to close it.
+#[bun_jsc::host_fn]
+pub(crate) fn own_stream_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_sys_jsc::FdJsc as _;
+    if let (Some(context), Some(fd)) = (
+        global.bun_vm().current_graph_context(),
+        bun_sys::Fd::from_js(frame.argument(0)),
+    ) {
+        context.own_fd(fd);
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+/// `(fd)`: the stream is closing `fd` itself.
+#[bun_jsc::host_fn]
+pub(crate) fn disown_stream_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_sys_jsc::FdJsc as _;
+    if let (Some(context), Some(fd)) = (
+        global.bun_vm().current_graph_context(),
+        bun_sys::Fd::from_js(frame.argument(0)),
+    ) {
+        context.disown_fd(fd);
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
 /// exact argument parser `fs.rm` uses and return the parsed options, so node's
 /// `internal/fs/utils` `validateRmOptionsSync` tests exercise the production

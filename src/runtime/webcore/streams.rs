@@ -519,6 +519,7 @@ impl Pending {
         self.future = PendingFuture::Promise {
             promise: prom,
             global_this: BackRef::new(global_object),
+            context: global_object.bun_vm().current_context().id(),
         };
         self.state = PendingState::Pending;
         prom
@@ -574,7 +575,8 @@ impl bun_event_loop::Taskable for Pending {
     unsafe fn release_unrun(this: *mut Self) {
         Pending::release_without_running(this);
     }
-    /// Fulfils a pending read of a stream. Its source does not record which context reads it.
+    /// `Pending::run` checks the context whose script is reading: most sources call it from their
+    /// own completion, not through this task.
     unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
         bun_event_loop::TaskContext::Always
     }
@@ -587,6 +589,8 @@ pub enum PendingFuture {
         promise: *mut JSPromise,
         // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
         global_this: BackRef<JSGlobalObject>,
+        /// The context whose script is reading (it asked for this promise).
+        context: bun_jsc::ContextId,
     },
     Handler(PendingHandler),
 }
@@ -629,7 +633,17 @@ impl Pending {
             PendingFuture::Promise {
                 promise,
                 global_this,
-            } => StreamResult::fulfill_promise(&mut self.result, *promise, global_this),
+                context,
+            } => {
+                // Most sources fulfil a read from their own completion, not from a queued task:
+                // the read of a `Bun.ModuleGraph` that was disposed meanwhile never settles.
+                if !global_this.bun_vm().is_context_live(*context) {
+                    JSPromise::opaque_ref(*promise).to_js().unprotect();
+                    self.result = StreamResult::Done;
+                    return;
+                }
+                StreamResult::fulfill_promise(&mut self.result, *promise, global_this)
+            }
             PendingFuture::Handler(h) => {
                 // Reset self.result to Done here —
                 // verify no caller reads it after run().
@@ -2699,6 +2713,8 @@ pub(crate) type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 pub struct BufferAction {
     tag: BufferActionTag,
     promise: JSPromiseStrong,
+    /// The context whose script asked (as `PendingFuture::Promise`).
+    context: bun_jsc::ContextId,
 }
 
 #[repr(u8)]
@@ -2716,7 +2732,18 @@ impl BufferAction {
         Self {
             tag,
             promise: JSPromiseStrong::init(global),
+            context: global.bun_vm().current_context().id(),
         }
+    }
+
+    /// Whether the promise is still to be settled. Not for a `Bun.ModuleGraph` that was disposed
+    /// meanwhile: the stream ends there like everything else it had, unreported.
+    fn is_reported(&mut self, global: &JSGlobalObject) -> bool {
+        let live = global.bun_vm().is_context_live(self.context);
+        if !live {
+            self.swap();
+        }
+        live
     }
 
     pub(crate) const fn tag(&self) -> BufferActionTag {
@@ -2726,12 +2753,18 @@ impl BufferAction {
     /// Settle the buffered `text()`/`json()`/`bytes()`/`blob()` promise.
     /// Terminal like the other settle primitives (`Pending::run`).
     pub(crate) fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) {
+        if !self.is_reported(global) {
+            return;
+        }
         let settled = blob.wrap(jsc::AnyPromise::Normal(self.swap()), global, self.tag());
         crate::dispatch::fold(settled);
     }
 
     /// Terminal like [`fulfill`](Self::fulfill).
     pub(crate) fn reject(&mut self, global: &JSGlobalObject, err: &StreamError) {
+        if !self.is_reported(global) {
+            return;
+        }
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         let settled = JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)));
         crate::dispatch::fold(settled);

@@ -3676,8 +3676,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
     }
 
-    // import() from code of a disposed Bun.ModuleGraph rejects rather than
-    // loading into the graph's (dropped) registry.
+    // import() from code of a disposed Bun.ModuleGraph does not load into the graph's (dropped)
+    // registry. Called by the host (a function of the graph it still holds) it rejects. Run by the
+    // disposed graph itself (something it had queued) it stays pending, like everything such a
+    // graph starts: a loop that retries a rejection at once never yields to the event loop.
+    if (auto* context = defaultGlobalObject(globalObject)->currentScriptExecutionContext(); context->isForModuleGraph() && context->isStopped()) {
+        if (auto* graph = Bun::moduleGraphOfLoader(globalObject, loader); graph && graph->disposed())
+            return JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    }
     if (Bun::throwIfModuleGraphDisposed(globalObject, scope, loader))
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 

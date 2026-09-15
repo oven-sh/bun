@@ -892,6 +892,10 @@ pub struct NewSource<C: SourceContext> {
     /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
     /// interior-mutable.
     pub is_closed: Cell<bool>,
+    /// The context of the script that started reading ([`Self::start_from_js`]). The stream's
+    /// end is not reported to a `Bun.ModuleGraph` that was disposed meanwhile: closing the JS
+    /// stream settles every read its script is waiting on.
+    pub reader_context: Cell<Option<jsc::ContextId>>,
 }
 
 impl<C: SourceContext + Default> Default for NewSource<C> {
@@ -906,6 +910,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             this_jsvalue: jsc::JsRef::empty(),
             wrapper_unrooted: Cell::new(false),
             is_closed: Cell::new(false),
+            reader_context: Cell::new(None),
         }
     }
 }
@@ -1106,9 +1111,15 @@ impl<C: SourceContext> NewSource<C> {
         p.close(None);
     }
 
+    fn is_reader_live(&self) -> bool {
+        self.reader_context
+            .get()
+            .is_none_or(|context| self.global_this().bun_vm().is_context_live(context))
+    }
+
     /// Tell the C++ `JSNativeStreamSourceAdapter` (if a stream consumer attached one) that the native side closed.
     pub fn on_close(&mut self) {
-        if self.cancelled {
+        if self.cancelled || !self.is_reader_live() {
             return;
         }
         // A finalized wrapper reads `None` here (see `this_jsvalue`), so a close after GC is a no-op.
@@ -1133,6 +1144,9 @@ impl<C: SourceContext> NewSource<C> {
 
     /// A stream that [`ReadableStream::lock_native`] locked has no reader or controller, so its source ends it: errored with `err`, else closed.
     pub fn end_locked_stream(&self, err: Option<&streams::StreamError>) {
+        if !self.is_reader_live() {
+            return;
+        }
         let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
             return;
         };
@@ -1335,6 +1349,8 @@ impl<C: SourceContext> NewSource<C> {
         _call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         self.global_this = Some(bun_ptr::BackRef::new(global_this));
+        self.reader_context
+            .set(Some(global_this.bun_vm().current_context().id()));
         match self.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),

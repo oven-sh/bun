@@ -2,7 +2,7 @@
 // for timers and I/O: what its code opens belongs to it, and dispose() closes all of it.
 import { afterAll, describe, expect, test } from "bun:test";
 import fs, { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import nodeTls from "node:tls";
@@ -49,6 +49,16 @@ async function accepts(port: number): Promise<boolean> {
   try {
     const socket = await Bun.connect({ hostname: "127.0.0.1", port, socket: { data() {} } });
     socket.end();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether process `pid` still exists (a child that exited is gone once it has been reaped). */
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
     return true;
   } catch {
     return false;
@@ -156,7 +166,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     }
   });
 
-  test("dispose() closes the graph's client sockets and aborts its in-flight fetch; the graph's own close handlers hear of it", async () => {
+  test("dispose() closes the graph's client sockets and aborts its in-flight fetch; the graph hears nothing of it", async () => {
     const dir = fixture({
       "clients.mjs": `
         import net from "node:net";
@@ -168,8 +178,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
           ws.onclose = () => heard.push("WebSocket close");
           const nodeSocket = await new Promise((resolve, reject) => { const s = net.connect(tcpPort, "127.0.0.1", () => resolve(s)); s.on("error", reject); });
           nodeSocket.on("close", () => heard.push("net.Socket close"));
-          const response = fetch("http://127.0.0.1:" + httpPort + "/hang").then(() => "resolved", e => "rejected");
-          return { response, nodeSocket };
+          fetch("http://127.0.0.1:" + httpPort + "/hang").then(() => heard.push("fetch resolved"), () => heard.push("fetch rejected"));
         }
       `,
     });
@@ -197,20 +206,18 @@ describe.concurrent("ModuleGraph isolateIO", () => {
 
     const graph = new Bun.ModuleGraph({ isolateIO: true });
     const app = await graph.import(join(dir, "clients.mjs"));
-    const { response, nodeSocket } = await graph.run(() => app.connect(listener.port, server.port));
-    // What the host holds of the graph's is told too.
-    const hostHeard = new Promise<void>(resolve => nodeSocket.once("close", () => resolve()));
+    await graph.run(() => app.connect(listener.port, server.port));
     await requestSeen.promise;
 
     graph.dispose();
 
-    await Promise.all([tcpClosed.promise, wsClosed.promise, requestAborted.promise, hostHeard]);
-    expect(await response).toBe("rejected");
-    await until(() => app.heard.length === 3);
-    expect([...app.heard].sort()).toEqual(["Bun.connect close", "WebSocket close", "net.Socket close"]);
+    // The other ends see all three go.
+    await Promise.all([tcpClosed.promise, wsClosed.promise, requestAborted.promise]);
+    await hostTimerTurns();
+    expect(app.heard).toEqual([]);
   });
 
-  test("after dispose() an immediate loop of the graph ends, and callbacks that are not close notifications are dropped", async () => {
+  test("after dispose() nothing of the graph is called: not a close handler, not a child's messages, not its exit", async () => {
     const dir = fixture({
       "child.mjs": `
         process.on("SIGTERM", () => {});
@@ -222,7 +229,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         export async function start(port, childPath) {
           await Bun.connect({ hostname: "127.0.0.1", port, socket: {
             data() {},
-            // Told of the close, then tries to keep itself running.
+            // (Would keep itself running from here, if it were told.)
             close() { const spin = () => { spins++; setImmediate(spin); }; spin(); },
           } });
           const child = Bun.spawn({
@@ -242,23 +249,13 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     // The child ignores the SIGTERM dispose() sends and keeps talking (on Windows it is terminated).
     const child = await graph.run(() => app.start(listener.port, join(dir, "child.mjs")));
     try {
+      const atDispose = app.counts();
       graph.dispose();
-
-      await until(() => app.counts().spins > 0);
-      let settled = app.counts();
-      await until(async () => {
-        await hostTimerTurns();
-        const now = app.counts();
-        const same = now.spins === settled.spins && now.messages === settled.messages;
-        settled = now;
-        return same;
-      });
-      if (!isWindows) expect(settled.exited).toBe(0);
       child.kill("SIGKILL");
-      await child.exited;
-      // Its exit is a close notification.
-      await until(() => app.counts().exited === 1);
-      expect(app.counts()).toEqual({ ...settled, exited: 1 });
+      // Reaped all the same, though nobody is told (`child.exited` stays pending).
+      await until(() => !isRunning(child.pid));
+      await hostTimerTurns();
+      expect(app.counts()).toEqual({ ...atDispose, spins: 0, exited: 0 });
     } finally {
       child.kill("SIGKILL");
     }
@@ -273,10 +270,10 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     const graph = new Bun.ModuleGraph({ isolateIO: true });
     const { child } = await graph.import(join(dir, "spawn.mjs"));
     try {
-      expect(child.killed).toBe(false);
+      expect(isRunning(child.pid)).toBe(true);
       graph.dispose();
-      await child.exited;
-      expect(child.signalCode).toBe("SIGTERM");
+      // (Nothing is reported, to the host holding the graph's Subprocess either.)
+      await until(() => !isRunning(child.pid));
     } finally {
       child.kill("SIGKILL");
     }
@@ -578,13 +575,14 @@ describe.concurrent("ModuleGraph isolateIO", () => {
       "late.mjs": `
         export let ticks = 0;
         export let dialed = "pending";
-        export const open = async () => {
+        export let bound = "pending";
+        // Nothing it starts settles, either way: a loop that retries on failure must not keep a disposed graph running.
+        export const open = () => {
           setInterval(() => { ticks++; }, 1);
-          const udp = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
-          // Reports nothing, either way: a loop that redials on failure must not keep a disposed graph running.
+          Bun.udpSocket({ hostname: "127.0.0.1", port: 0 }).then(() => { bound = "bound"; }, () => { bound = "failed"; });
           Bun.connect({ hostname: "127.0.0.1", port: globalThis.__moduleGraphIoLatePort, socket: { data() {}, close() { dialed = "closed"; } } })
             .then(() => { dialed = "connected"; }, () => { dialed = "refused"; });
-          return { port: Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("late") }).port, udp: udp.port };
+          return Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("late") }).port;
         };
         export const tick = () => ticks;
       `,
@@ -599,15 +597,14 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     const graph = new Bun.ModuleGraph({ isolateIO: true });
     const app = await graph.import(join(dir, "late.mjs"));
     graph.dispose();
-    const { port, udp } = await graph.run(() => app.open());
+    const port = graph.run(() => app.open());
     await until(async () => !(await accepts(port)));
-    const rebound = await until(() => Bun.udpSocket({ hostname: "127.0.0.1", port: udp }).catch(() => undefined));
-    rebound.close();
     delete (globalThis as any).__moduleGraphIoLatePort;
     await hostTimerTurns();
-    expect({ ticks: app.tick(), dialed: app.dialed, lateClients }).toEqual({
+    expect({ ticks: app.tick(), dialed: app.dialed, bound: app.bound, lateClients }).toEqual({
       ticks: 0,
       dialed: "pending",
+      bound: "pending",
       lateClients: 0,
     });
   });

@@ -2182,9 +2182,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
         }
 
-        // Outside a notification the callback of a stopped graph is dropped where it would be called.
-        let _notification =
-            (!handlers.opened_after_stop).then(|| bun_jsc::TeardownNotification::enter(&global));
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(e)])?;
         }

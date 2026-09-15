@@ -492,7 +492,7 @@ Agent.prototype._evictSession = function _evictSession(key) {
   delete this._sessionCache.map[key];
 };
 
-const { shouldUseEnvProxy } = require("node:_http_agent");
+const { globalAgentAccessors } = require("node:_http_agent");
 
 // Like Node's https.Server constructor: default ALPNProtocols to ['http/1.1']
 // when neither ALPNProtocols nor ALPNCallback was given, and store the
@@ -525,15 +525,11 @@ function createServer(options, requestListener) {
 
 var https = {
   Agent,
-  globalAgent: new Agent({
-    keepAlive: true,
-    scheduling: "lifo",
-    timeout: 5000,
-    proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
-  }),
   Server: http.Server,
   createServer,
   get,
   request,
 };
+Object.defineProperty(https, "globalAgent", globalAgentAccessors(Agent));
+
 export default https;

@@ -41,6 +41,11 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
+// A stream opens its descriptor for itself and closes it from its _destroy. A Bun.ModuleGraph that
+// was disposed is told nothing more, so its streams never get there: the graph's context closes
+// what they had opened. (A descriptor the caller passed in is the caller's.)
+const ownStreamFd = $newRustFunction("node_fs_binding.rs", "ownStreamFd", 1);
+const disownStreamFd = $newRustFunction("node_fs_binding.rs", "disownStreamFd", 1);
 
 const {
   read: fileHandlePrototypeRead,
@@ -256,6 +261,8 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
         callback(err);
       } else {
         this.fd = fd;
+        // Only this stream closes it: see closeAfterSync.
+        if (this[kFs] === fs) ownStreamFd(fd);
         callback();
         this.emit("open", this.fd);
         this.emit("ready");
@@ -362,6 +369,7 @@ function close(stream, err, cb) {
 }
 
 function closeAfterSync(stream, err, cb) {
+  if (stream[kFs] === fs) disownStreamFd(stream.fd);
   stream[kFs].close(stream.fd, er => {
     cb(er || err);
   });

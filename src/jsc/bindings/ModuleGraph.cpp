@@ -523,23 +523,7 @@ bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject* globalObject, JSV
     if (!state || !state->hasIsolatedGraphs)
         return false;
     JSIsolatedModuleGraph* graph = isolatedModuleGraphOfFrame(globalObject->vm(), asyncContext);
-    return graph && graph->context().isStopped() && !state->teardownNotificationDepth;
-}
-
-// bun_jsc::TeardownNotification. Entering returns whether it counted (some graph has a context
-// of its own), which is what leaving is then told.
-extern "C" bool Bun__ModuleGraph__enterTeardownNotification(JSGlobalObject* globalObject)
-{
-    auto* state = defaultGlobalObject(globalObject)->m_moduleGraphs.get();
-    if (!state || !state->hasIsolatedGraphs)
-        return false;
-    state->teardownNotificationDepth++;
-    return true;
-}
-
-extern "C" void Bun__ModuleGraph__leaveTeardownNotification(JSGlobalObject* globalObject)
-{
-    defaultGlobalObject(globalObject)->m_moduleGraphs->teardownNotificationDepth--;
+    return graph && graph->context().isStopped();
 }
 
 // ─── JSModuleGraph ───────────────────────────────────────────────────────────────────

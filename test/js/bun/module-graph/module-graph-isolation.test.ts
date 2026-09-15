@@ -83,6 +83,18 @@ const dir = String(
       import { PerformanceObserver } from "node:perf_hooks";
       export const observeHttp = () => new PerformanceObserver(() => {}).observe({ entryTypes: ["http"] });
       // Each promise's reaction holds a FormData: alive for as long as the promise is kept.
+      // Streams in the middle of their work: each holds a descriptor only it would close.
+      export const streams = async (path, count) => {
+        const opened = [];
+        for (let i = 0; i < count; i++) {
+          const read = fs.createReadStream(path, { highWaterMark: 1 });
+          read.on("data", () => read.pause());
+          const write = fs.createWriteStream(path + ".out-" + i);
+          write.write("x");
+          opened.push(new Promise(resolve => read.once("data", resolve)), new Promise(resolve => write.once("open", resolve)));
+        }
+        await Promise.all(opened);
+      };
       export const opens = (path, count) => { for (let i = 0; i < count; i++) fs.promises.open(path, "r").then(handle => handle.close(), () => {}); };
       // unwrapKey("jwk") of bytes that are not a JWK rejects from its first step.
       export async function failingUnwraps(count) {
@@ -130,6 +142,17 @@ const dir = String(
       await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ leftOpen: descriptors() - before }));
     `,
+    "streams-of-a-disposed-graph.mjs": `
+      import fs from "node:fs";
+      const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      const before = descriptors();
+      await graph.run(() => app.streams(import.meta.path, 16));
+      const open = descriptors() - before;
+      graph.dispose();
+      console.log(JSON.stringify({ open, leftOpen: descriptors() - before }));
+    `,
     "subtle-after-a-disposed-graph.mjs": `
       const graph = new Bun.ModuleGraph({ isolateIO: true });
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
@@ -159,6 +182,7 @@ const dir = String(
       }
       console.log(JSON.stringify({ started, kept }), keep.constructor.name);
     `,
+    "loads-at-once.mjs": `export default 1;`,
     "disposes-while-opening.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
       // (What the opener had queued still runs, in a world that was closed under it: what that throws is the graph's.)
@@ -590,6 +614,9 @@ const dir = String(
         "MessageChannel": () => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(1); }),
         "Bun.udpSocket": () => Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data() {} } }).then(socket => new Promise(resolve => setTimeout(() => { socket.close(); resolve(); }, 1))),
         "child_process.exec": () => promisify(childProcess.exec)("exit 0"),
+        // (While the graph lives each load takes turns of the event loop. Rejected at once by a disposed
+        // graph, it would be retried at once: a loop of microtasks the host never gets out of.)
+        "import() of a module it has not loaded": () => import("./loads-at-once.mjs?" + Math.random().toString(36).slice(2)),
         "a worker_threads Worker, until it exits": () => new Promise((resolve, reject) => { const worker = new ThreadWorker("", { eval: true }); worker.on("exit", resolve); worker.on("error", reject); }),
         "Bun.listen and a Bun.connect to it, until the client has closed": () => new Promise((resolve, reject) => {
           const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
@@ -602,6 +629,44 @@ const dir = String(
       export function serveHttp2Once(state) {
         const server = http2.createServer((request, response) => response.end(state.tag));
         return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      }
+      // One of each thing that can tell its owner that it ended, with every handler it has noting
+      // what it hears. state.close() ends them all from outside (what the host does with its own).
+      export async function everythingThatReports(state, ports, bun) {
+        const note = what => state.heard.push(what);
+        const socket = await Bun.connect({ hostname: "127.0.0.1", port: ports.tcp, socket: {
+          open(socket) { socket.write("tag:" + state.tag + "\\n"); },
+          data() {}, end() { note("Bun.connect end"); }, close() { note("Bun.connect close"); }, error() { note("Bun.connect error"); },
+        } });
+        const netSocket = net.connect(ports.tcp, "127.0.0.1");
+        for (const event of ["end", "close", "error"]) netSocket.on(event, () => note("net.Socket " + event));
+        await new Promise(resolve => netSocket.on("connect", resolve));
+        const ws = new WebSocket("ws://127.0.0.1:" + ports.http + "/ws?tag=" + state.tag);
+        await new Promise(resolve => { ws.onopen = resolve; });
+        ws.onclose = () => note("WebSocket close");
+        ws.onerror = () => note("WebSocket error");
+        const controller = new AbortController();
+        fetch("http://127.0.0.1:" + ports.http + "/hang?tag=" + state.tag + "-fetch", { signal: controller.signal }).then(() => note("fetch fulfilled"), () => note("fetch rejected"));
+        const request = http.get({ host: "127.0.0.1", port: ports.http, path: "/hang?tag=" + state.tag + "-http", agent: false });
+        for (const event of ["error", "close", "response"]) request.on(event, () => note("http.ClientRequest " + event));
+        const child = Bun.spawn({ cmd: [bun, "-e", "setInterval(() => {}, 1000)"], stdio: ["ignore", "pipe", "ignore"], onExit() { note("Bun.spawn onExit"); } });
+        child.exited.then(() => note("Bun.spawn exited"));
+        new Response(child.stdout).text().then(() => note("Bun.spawn stdout ended"), () => note("Bun.spawn stdout failed"));
+        const nodeChild = childProcess.spawn(bun, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "pipe", "ignore"] });
+        for (const event of ["exit", "close", "error"]) nodeChild.on(event, () => note("ChildProcess " + event));
+        nodeChild.stdout.on("end", () => note("ChildProcess stdout end"));
+        nodeChild.stdout.resume();
+        const worker = new ThreadWorker("setInterval(() => {}, 1000)", { eval: true });
+        for (const event of ["exit", "error"]) worker.on(event, () => note("Worker " + event));
+        await new Promise(resolve => worker.on("online", resolve));
+        const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") });
+        const interval = setInterval(() => { state.ticks++; }, 1);
+        state.pids = [child.pid, nodeChild.pid];
+        state.close = () => {
+          socket.end(); netSocket.destroy(); ws.close(); controller.abort(); request.destroy();
+          child.kill(); nodeChild.kill(); worker.terminate(); clearInterval(interval);
+          server.stop(true).then(() => note("server.stop() fulfilled"));
+        };
       }
       // What script can make happen with something it opens before anybody could close it: a
       // datagram sent, a server announced.
@@ -1271,6 +1336,90 @@ describe.concurrent("ModuleGraph isolation: what a disposed graph opens is close
   }
 });
 
+test("ModuleGraph isolation: a disposed graph hears nothing of what it had open", async () => {
+  const ports = { tcp: hostTcp.port, http: hostHttp.port };
+  const gone = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  // The host first: ended from outside, everything does report.
+  const hostState = newState("reports-host") as State & { pids: number[] };
+  await hostApp.everythingThatReports(hostState, ports, bunExe());
+  hostState.close!();
+  await until(() => hostState.heard.includes("server.stop() fulfilled") && hostState.pids.every(gone));
+  await until(() =>
+    [
+      "Bun.connect close",
+      "net.Socket close",
+      "WebSocket close",
+      "fetch rejected",
+      "http.ClientRequest close",
+      "Bun.spawn onExit",
+      "Bun.spawn exited",
+      "Bun.spawn stdout ended",
+      "ChildProcess exit",
+      "ChildProcess close",
+      "ChildProcess stdout end",
+      "Worker exit",
+    ].every(what => hostState.heard.includes(what)),
+  );
+
+  using made = await newGraph();
+  const state = newState("reports") as State & { pids: number[] };
+  await made.graph.run(() => made.app.everythingThatReports(state, ports, bunExe()));
+  await until(() =>
+    ["tcp:reports", "ws:reports", "http:reports-fetch", "http:reports-http"].every(tag => connected.has(tag)),
+  );
+  const ticksAtDispose = state.ticks;
+  made.graph.dispose();
+  // All of it is closed, killed and reaped: the host's ends and the process table say so.
+  await until(
+    () => !["tcp:reports", "ws:reports", "http:reports-fetch", "http:reports-http"].some(tag => connected.has(tag)),
+  );
+  await until(() => state.pids.every(gone));
+  await hostTimerTurns();
+  expect({ heard: state.heard, ticksSinceDispose: state.ticks - ticksAtDispose }).toEqual({
+    heard: [],
+    ticksSinceDispose: 0,
+  });
+});
+
+test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts nothing and announces nothing", async () => {
+  using made = await newGraph();
+  const state = newState("late-spawn");
+  const marker = join(dir, "late-spawn-ran.txt");
+  made.graph.run(() =>
+    made.app.call(() =>
+      queueMicrotask(() => {
+        const child = require("node:child_process").spawn(bunExe(), [
+          "-e",
+          `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`,
+        ]);
+        for (const event of ["spawn", "exit", "close", "error"]) child.on(event, () => state.heard.push(event));
+        state.pid = child.pid;
+      }),
+    ),
+  );
+  made.graph.dispose();
+  // The same child, started afterwards by the host, has run and exited: the graph's would have too.
+  const hostMarker = join(dir, "late-spawn-host-ran.txt");
+  await Bun.spawn({
+    cmd: [bunExe(), "-e", `require("fs").writeFileSync(${JSON.stringify(hostMarker)}, "ran")`],
+    env: bunEnv,
+  }).exited;
+  await hostTimerTurns();
+  expect({ host: existsSync(hostMarker), graph: existsSync(marker), pid: state.pid, heard: state.heard }).toEqual({
+    host: true,
+    graph: false,
+    pid: undefined,
+    heard: [],
+  });
+});
+
 describe.concurrent("ModuleGraph isolation: a disposed graph sends nothing and announces nothing", () => {
   // What it opens is closed from the event loop, a moment later: nothing may happen in between.
   for (const order of ["disposed in the turn that opens", "opens after it was disposed"] as const) {
@@ -1367,7 +1516,7 @@ describe.concurrent("ModuleGraph isolation: fs.watchFile of one path by several 
 });
 
 describe("ModuleGraph isolation: what is the host's, or the realm's, survives a graph that used it", () => {
-  test("a keep-alive http.Agent of the host's: a request the host queued behind the graph's is served after dispose()", async () => {
+  test("a keep-alive http.Agent of the host's: the socket a graph's request made it open is still the host's", async () => {
     // One socket: the host's request waits for the graph's, which is in flight when the graph is disposed.
     const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
     try {
@@ -1376,6 +1525,10 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
       await until(() => connected.has("http:agent-of-the-host"));
       const hosts = hostApp.getThrough(agent, hostHttp.port, "/release?tag=nobody");
       made.graph.dispose();
+      await hostTimerTurns();
+      // Not closed with the graph: the request is answered on it, and the host's follows on the same socket.
+      expect(connected.has("http:agent-of-the-host")).toBe(true);
+      await fetch(`http://127.0.0.1:${hostHttp.port}/release?tag=agent-of-the-host`);
       await hosts;
     } finally {
       agent.destroy();
@@ -1702,7 +1855,7 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     expect(log.sort()).toEqual(["await", "microtask", "nextTick", "then"]);
   });
 
-  test("dispose() from inside the graph's own close handler is a no-op, and the host can still use what it holds", async () => {
+  test("after dispose() no close handler of the graph is called, and the host can still use what it holds", async () => {
     using made = await newGraph();
     const { graph, app } = made;
     const state = newState("held");
@@ -1718,7 +1871,6 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
             data() {},
             close() {
               state.heard.push("close");
-              graph.dispose();
             },
           },
         }),
@@ -1726,8 +1878,9 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     );
     const held = { ...state, port: server.port, tag: "held" };
     graph.dispose();
-    await until(() => state.heard.length > 0);
-    expect(state.heard).toEqual(["close"]);
+    await until(() => !connected.has("tcp:" + state.tag));
+    await hostTimerTurns();
+    expect(state.heard).toEqual([]);
     expect(await servesTag(held)).toBe(false);
     // The host's handle to the closed server is inert, not dangerous.
     expect(() => server.stop(true)).not.toThrow();
@@ -2161,6 +2314,10 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test.skipIf(isWindows)("the files its fs.promises.open() calls in flight opened are closed", async () => {
     expect(await runs("files-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"leftOpen":0}`, exitCode: 0 });
   });
+  // (A disposed graph is told nothing, so its streams never get to close what they opened.)
+  test.skipIf(isWindows)("the files its node:fs streams had open are closed", async () => {
+    expect(await runs("streams-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"open":32,"leftOpen":0}`, exitCode: 0 });
+  });
   test("crypto.subtle operations it had rejected early do not stop the host's later ones from settling", async () => {
     // (If they do, the host's await never finishes and the process exits with nothing printed.)
     expect(await runs("subtle-after-a-disposed-graph.mjs")).toEqual({
@@ -2545,10 +2702,9 @@ test("ModuleGraph isolation: background work of a disposed graph does not settle
   made.graph.dispose();
   // The same work in the host, started afterwards, has all finished: the graph's would have too.
   await Promise.all(names.map(name => Promise.resolve(hostApp.background[name]()).catch(() => {})));
-  await until(() => mustSettle.every(name => Bun.peek.status(started[name]) !== "pending"));
   await hostTimerTurns();
   const settled = pending.filter(name => Bun.peek.status(started[name]) !== "pending");
-  expect(settled.filter(name => !mayStillSettle.includes(name))).toEqual(mustSettle);
+  expect(settled.filter(name => !mayStillSettle.includes(name))).toEqual([]);
 });
 
 // Completions that do not know which graph started them still resolve their promise, so the graph's
@@ -2562,8 +2718,6 @@ const mayStillSettle = [
   // Computed inside the call; the callback is a process.nextTick, and what a graph had queued still runs.
   "crypto.randomInt",
 ];
-// The exit of a child the graph started is a close notification: its code hears of it.
-const mustSettle = ["child_process.exec", "Bun.spawn().exited"];
 
 describe.concurrent(
   "ModuleGraph isolation: background work under way when its graph is disposed does not settle into it",
@@ -2582,11 +2736,7 @@ describe.concurrent(
         hostApp.race(name, 8, hostState, () => {});
         await until(() => hostState.ticks === 8);
         await hostTimerTurns();
-        const expected = mustSettle.includes(name)
-          ? 8 // each is told once
-          : mayStillSettle.includes(name)
-            ? expect.any(Number)
-            : state.settledAtDispose;
+        const expected = mayStillSettle.includes(name) ? expect.any(Number) : state.settledAtDispose;
         expect({ settled: state.ticks }).toEqual({ settled: expected });
       });
     }

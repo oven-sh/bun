@@ -10,6 +10,11 @@ const { kDestroyOnRead } = require("internal/net/symbols");
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
 const kRequestAsyncResource = Symbol("requestAsyncResource");
+// The async context an Agent was made in. Its sockets are opened in that Bun.ModuleGraph's context
+// (or the host's), not in that of whichever request needed one: a disposed graph's sockets close
+// without a word, and an agent of the host's that a graph had used would wait on them for ever.
+const kOwnerFrame = Symbol("ownerFrame");
+const AsyncContextFrame = require("internal/async_context_frame");
 
 function freeSocketErrorListener(err) {
   const socket = this;
@@ -25,6 +30,7 @@ function Agent(options): void {
   EventEmitter.$call(this);
 
   this.options = { __proto__: null, ...options };
+  this[kOwnerFrame] = AsyncContextFrame.current();
 
   this.defaultPort = this.options.defaultPort || 80;
   this.protocol = this.options.protocol || "http:";
@@ -240,12 +246,10 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
   const freeSockets = this.freeSockets[name];
   let socket;
   if (freeSockets) {
-    // node:net hears of a native close a tick after it happened, so a socket can be gone while
-    // `destroyed` still says otherwise: one opened by a Bun.ModuleGraph that was just disposed
-    // must not be handed to a request made in the same turn.
-    do {
-      socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
-    } while (socket && (socket.destroyed || socket._handle?.readyState < 0));
+    while (freeSockets.length && freeSockets[0].destroyed) {
+      freeSockets.shift();
+    }
+    socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
     if (!freeSockets.length) delete this.freeSockets[name];
   }
 
@@ -317,7 +321,11 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     options.keepAliveInitialDelay = this.keepAliveMsecs;
   }
 
-  const newSocket = this.createConnection(options, oncreate);
+  const ownerFrame = this[kOwnerFrame];
+  const newSocket =
+    ownerFrame?.graph === AsyncContextFrame.current()?.graph
+      ? this.createConnection(options, oncreate)
+      : AsyncContextFrame.run(ownerFrame, this.createConnection, this, options, oncreate);
   if (newSocket && !newSocket[kWaitForProxyTunnel]) oncreate(null, newSocket);
 };
 
@@ -434,16 +442,7 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
 
   if (req && options) {
     req[kRequestOptions] = undefined;
-    // In the context the request was made in, not in that of the socket that just went away: if
-    // that socket was a disposed Bun.ModuleGraph's, a socket opened from its close handler
-    // would be closed at once, and the request it was for would wait for ever.
-    req[kRequestAsyncResource].runInAsyncScope(
-      this.createSocket,
-      this,
-      req,
-      options,
-      onSocketCreatedForPending.bind(undefined, req),
-    );
+    this.createSocket(req, options, onSocketCreatedForPending.bind(undefined, req));
   }
 };
 
@@ -555,13 +554,42 @@ function shouldUseEnvProxy() {
   return true;
 }
 
-export default {
-  Agent,
-  globalAgent: new Agent({
-    keepAlive: true,
-    scheduling: "lifo",
-    timeout: 5000,
-    proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
-  }),
-  shouldUseEnvProxy,
-};
+/** `globalAgent` for an agent class: the realm's, and one for each Bun.ModuleGraph whose script asks
+ *  (made on first use, in that graph's context, so the sockets it keeps alive are the graph's). */
+function globalAgentAccessors(AgentClass) {
+  const make = () =>
+    new AgentClass({
+      keepAlive: true,
+      scheduling: "lifo",
+      timeout: 5000,
+      proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
+    });
+  let ofRealm = make();
+  const ofGraphs = new WeakMap();
+  return {
+    get() {
+      const graph = AsyncContextFrame.current()?.graph;
+      if (graph === undefined) return ofRealm;
+      let agent = ofGraphs.get(graph);
+      if (agent === undefined) ofGraphs.set(graph, (agent = make()));
+      return agent;
+    },
+    set(agent) {
+      const graph = AsyncContextFrame.current()?.graph;
+      if (graph === undefined) ofRealm = agent;
+      else ofGraphs.set(graph, agent);
+    },
+    enumerable: true,
+    configurable: true,
+  };
+}
+
+export default Object.defineProperty(
+  {
+    Agent,
+    globalAgentAccessors,
+    shouldUseEnvProxy,
+  },
+  "globalAgent",
+  globalAgentAccessors(Agent),
+);

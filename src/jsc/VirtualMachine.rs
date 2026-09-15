@@ -1361,9 +1361,6 @@ impl VirtualMachine {
     ) -> SweepResult {
         // SAFETY: fn contract.
         let context = unsafe { context.as_ref() };
-        if reason == crate::StopReason::Disposed && !context.is_stopped() {
-            context.begin_closing(self.loop_iteration());
-        }
         let result = context.stop(reason);
         if reason != crate::StopReason::Disposed {
             context.stop_dom_objects();

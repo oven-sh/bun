@@ -76,10 +76,6 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     if (!context || !context->globalObject())
         return;
     ASSERT(context->isContextThread());
-    // A Bun.ModuleGraph's context stops its objects (closing this) from a queued task; a message that
-    // was queued ahead of it is not delivered either.
-    if (context->isStopped())
-        return;
 
     auto* globalObject = context->jsGlobalObject();
     auto& vm = JSC::getVM(globalObject);

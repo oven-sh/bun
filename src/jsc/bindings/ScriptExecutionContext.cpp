@@ -108,8 +108,8 @@ void ScriptExecutionContext::stop()
         owned->stop();
     if (alreadyStopped)
         return;
-    // Closing its socket queued a WebSocket's close event: events stop reaching the context's
-    // objects (and its workers are terminated) after that has been dispatched.
+    // Its objects are stopped (its workers terminated) from the queue, not under whatever script
+    // is disposing; nothing reaches their listeners from here on either way (isJSExecutionForbidden).
     Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stopActiveDOMObjects(); }));
 }
 
@@ -285,6 +285,10 @@ void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionOb
 
 bool ScriptExecutionContext::isJSExecutionForbidden()
 {
+    // A Bun.ModuleGraph that was disposed hears nothing more: no listener, callback or message
+    // of its context is called, as none is once the VM was asked to stop.
+    if (m_parent && m_isStopped)
+        return true;
     JSC::VM* vm = realm().m_vm;
     return !vm || WebCore::clientData(*vm)->isStoppingOrStopped(*vm);
 }

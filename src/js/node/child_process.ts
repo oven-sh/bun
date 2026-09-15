@@ -1404,6 +1404,13 @@ class ChildProcess extends EventEmitter {
       validateArray(options.args, "options.args");
       spawnargs = this.spawnargs = options.args;
     }
+    // What script of a disposed Bun.ModuleGraph starts does not start, and reports nothing: a
+    // child without a handle, as after a failed spawn, but with no 'error' and no 'close'.
+    if (require("internal/shared").isStoppedModuleGraphRunning()) {
+      this.#handle = null;
+      return;
+    }
+
     // normalizeSpawnargs has already prepended argv0 to the spawnargs array
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
     // so we have to set argv0 to spawnargs[0] and cmd[0] to file

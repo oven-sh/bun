@@ -1106,9 +1106,8 @@ impl Subprocess<'_> {
         // `&mut`-taking methods without tripping borrowck.
         let event_loop = (*jsc_vm).event_loop();
 
-        // A child spawned by script of a graph that had already been disposed was killed at
-        // once, and its exit is not reported.
-        if !is_sync && !self.abort_handle.opened_after_stop() {
+        // The exit of a child whose `Bun.ModuleGraph` was disposed (it was killed then) is not reported.
+        if !is_sync && !self.abort_handle.context_stopped() {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
                     // SAFETY: event_loop points into the live VM and outlives this scope.
@@ -1178,7 +1177,6 @@ impl Subprocess<'_> {
                         did_update_has_pending_activity = true;
                     }
 
-                    let _notification = bun_jsc::TeardownNotification::enter(global_this);
                     // SAFETY: event_loop points into the live VM.
                     unsafe { (*event_loop).run_callback(callback, global_this, this_value, &args) };
                 }

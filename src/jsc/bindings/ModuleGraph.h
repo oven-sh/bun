@@ -135,8 +135,6 @@ public:
     WTF::HashMap<WTF::String, unsigned> overlayShapes;
     // Some graph of the global has (had) a context of its own.
     bool hasIsolatedGraphs { false };
-    // Native code is telling a graph that something of its own closed.
-    unsigned teardownNotificationDepth { 0 };
     // The async context native code entered from the top of the event loop
     // (VirtualMachine::enter_context): what a microtask checkpoint there goes back to.
     JSC::Strong<JSC::Unknown> enteredFromEventLoop;
@@ -184,8 +182,7 @@ private:
 };
 
 // Whether a callback that captured `asyncContext` when it was handed to native code is not to
-// be called: it was handed over inside the context of a graph that has since been disposed,
-// and what is calling is not a close notification (bun_jsc::TeardownNotification).
+// be called: it was handed over inside the context of a graph that has since been disposed.
 bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject*, JSC::JSValue asyncContext);
 
 // What GlobalObject::drainMicrotasks resets the async context to when no script is on the stack:

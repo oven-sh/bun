@@ -1419,7 +1419,15 @@ pub trait AutoInstaller {
     fn lockfile_dependencies_buf(&self) -> &[Dependency];
     fn lockfile_resolutions_buf(&self) -> &[PackageID];
     fn lockfile_string_bytes(&self) -> &[u8];
-    fn lockfile_resolve(&self, name: &[u8], version: &DependencyVersion) -> Option<PackageID>;
+    /// `version_buf` holds the strings `version` was parsed against (a
+    /// package.json's bytes, the lockfile's string buffer, or the import
+    /// specifier itself).
+    fn lockfile_resolve(
+        &self,
+        name: &[u8],
+        version: &DependencyVersion,
+        version_buf: &[u8],
+    ) -> Option<PackageID>;
     fn lockfile_legacy_package_to_dependency_id(
         &self,
         package_id: PackageID,
@@ -1468,11 +1476,11 @@ pub trait AutoInstaller {
     ) -> EnqueueResult;
 
     // ── Dependency parsing ─────────────────────────────────────────────────
-    // `&mut self`: `parse_with_tag` records `npm:`-aliased deps into
-    // `pm.known_npm_aliases`, so the impl needs a
-    // mutable manager handle even though parsing is otherwise pure.
+    // The strings of the result are offsets into the buffer of `sliced`. The
+    // parse does not record `npm:` aliases in the manager: those are read with
+    // the lockfile's string bytes.
     fn parse_dependency(
-        &mut self,
+        &self,
         name: SemverString,
         name_hash: Option<u64>,
         version: &[u8],
@@ -1480,7 +1488,7 @@ pub trait AutoInstaller {
         log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     fn parse_dependency_with_tag(
-        &mut self,
+        &self,
         name: SemverString,
         name_hash: u64,
         version: &[u8],

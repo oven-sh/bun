@@ -170,9 +170,10 @@ impl hooks::AutoInstaller for PackageManager {
         &self,
         name: &[u8],
         version: &hooks::DependencyVersion,
+        version_buf: &[u8],
     ) -> Option<PackageID> {
         self.lockfile
-            .resolve_package_from_name_and_version(name, version)
+            .resolve_package_from_name_and_version(name, version, version_buf)
     }
 
     fn lockfile_legacy_package_to_dependency_id(
@@ -395,22 +396,32 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     // ── Dependency parsing ────────────────────────────────────────────────
+    //
+    // No alias registry: `known_npm_aliases` is read with the lockfile's string
+    // bytes, and these versions hold offsets into the resolver's buffer.
+    // `clone_with_different_buffers` records the alias once the dependency is
+    // copied into the lockfile.
 
     fn parse_dependency(
-        &mut self,
+        &self,
         name: SemverString,
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        // `pm` is threaded so `parse_with_tag` can record `npm:` aliases into
-        // `pm.known_npm_aliases`.
-        dependency::parse(name, name_hash, version, sliced, log, Some(self))
+        dependency::parse(
+            name,
+            name_hash,
+            version,
+            sliced,
+            log,
+            None::<&mut PackageManager>,
+        )
     }
 
     fn parse_dependency_with_tag(
-        &mut self,
+        &self,
         name: SemverString,
         name_hash: u64,
         version: &[u8],
@@ -418,15 +429,7 @@ impl hooks::AutoInstaller for PackageManager {
         sliced: &SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        dependency::parse_with_tag(
-            name,
-            Some(name_hash),
-            version,
-            tag,
-            sliced,
-            log,
-            Some(self as &mut dyn dependency::NpmAliasRegistry),
-        )
+        dependency::parse_with_tag(name, Some(name_hash), version, tag, sliced, log, None)
     }
 
     fn infer_dependency_tag(&self, dep: &[u8]) -> hooks::DependencyVersionTag {

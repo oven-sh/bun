@@ -125,6 +125,10 @@ pub struct PostgresSQLConnection {
     // so `vm_mut()`'s `&mut *as_ptr()` is sound.
     pub(crate) vm: BackRef<VirtualMachine>,
     pub(crate) statements: JsCell<PreparedStatementsMap>,
+    /// Transaction status byte from the last ReadyForQuery; gates the
+    /// re-prepare retry (a retry inside a transaction block masks 0A000/26000
+    /// with 25P02).
+    pub(crate) tx_status: Cell<protocol::TransactionStatusIndicator>,
     pub(crate) prepared_statement_id: Cell<u64>,
     pub(crate) pending_activity_count: AtomicU32,
     // Self-wrapper back-ref (the JS object that owns this payload). Stored as a
@@ -1179,6 +1183,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
             ),
             statements: JsCell::new(PreparedStatementsMap::default()),
+            tx_status: Cell::new(protocol::TransactionStatusIndicator::I),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
@@ -1530,6 +1535,22 @@ impl PostgresSQLConnection {
         {
             self.requests.with_mut(|q| q.pop_front());
         }
+    }
+
+    /// Remove the cache entry for `stmt` unless re-entrant JS already replaced it.
+    fn evict_statement(&self, stmt: &PostgresSQLStatement) {
+        let stmt_ptr: *const PostgresSQLStatement = core::ptr::from_ref(stmt);
+        self.statements.with_mut(|m| {
+            let name = &stmt.signature.name[..];
+            if m.get(name).is_some_and(|p| {
+                core::ptr::eq(
+                    p.as_ref().map_or(core::ptr::null(), |p| p.as_ptr()),
+                    stmt_ptr,
+                )
+            }) {
+                m.remove(name);
+            }
+        });
     }
 
     pub(crate) fn has_query_running(&self) -> bool {
@@ -2456,7 +2477,8 @@ impl PostgresSQLConnection {
                 // parameter_status dropped at scope end
             }
             MessageType::ReadyForQuery => {
-                let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                let ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                self.tx_status.set(ready_for_query.status);
 
                 if self.status.get() != Status::Connected
                     && !matches!(self.authentication_state.get(), AuthenticationState::Ok)
@@ -2932,6 +2954,7 @@ impl PostgresSQLConnection {
                     debug!("ErrorResponse: {}", err);
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
+                let invalidates = err.invalidates_prepared_statement();
                 // Convert to JS while we still own `err` — materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
                 let js_err =
@@ -2943,18 +2966,43 @@ impl PostgresSQLConnection {
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
                         // The request still holds another ref; this cannot drop to 0.
-                        let stmt_ptr: *const PostgresSQLStatement = core::ptr::from_ref(&*stmt);
-                        self.statements.with_mut(|m| {
-                            let name = &stmt.signature.name[..];
-                            if m.get(name).is_some_and(|p| {
-                                core::ptr::eq(
-                                    p.as_ref().map_or(core::ptr::null(), |p| p.as_ptr()),
-                                    stmt_ptr,
-                                )
-                            }) {
-                                m.remove(name);
+                        self.evict_statement(stmt);
+                    } else if stmt.status == StatementStatus::Prepared
+                        && invalidates
+                        && !stmt.signature.prepared_statement_name.is_empty()
+                    {
+                        // Server-side named statement gone or stale: evict so
+                        // later queries with this signature re-prepare.
+                        self.evict_statement(stmt);
+                        // Retry only when no other Bind/Execute responses are
+                        // already on the wire and the session is idle (inside a
+                        // transaction the retry Parse would be rejected 25P02).
+                        if !request.flags.get().reprepared
+                            && self.tx_status.get() == protocol::TransactionStatusIndicator::I
+                            && self.pipelined_requests.get() <= 1
+                            && self.nonpipelinable_requests.get() == 0
+                        {
+                            debug!("re-preparing invalidated statement (SQLSTATE {})", err);
+                            self.finish_request(&request);
+                            let id = self.prepared_statement_id.get();
+                            self.prepared_statement_id.set(id + 1);
+                            stmt.reset_for_reprepare(id);
+                            if let Some(statement) = request.statement.get().as_ref() {
+                                let _ = self.statements.with_mut(|m| {
+                                    m.put(&statement.signature.name, Some(statement.clone()))
+                                });
                             }
-                        });
+                            request.status.set(QueryStatus::Pending);
+                            request.update_flags(|f| {
+                                f.reprepared = true;
+                                f.binary = false;
+                            });
+                            self.note_request_pending();
+                            self.update_ref();
+                            return Ok(());
+                        }
+                        // Leave the statement Prepared so the last pipelined
+                        // sibling's ErrorResponse can still re-prepare it.
                     }
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.

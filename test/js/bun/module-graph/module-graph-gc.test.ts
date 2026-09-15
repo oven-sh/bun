@@ -193,6 +193,21 @@ class Lifetimes {
     }
     for (let i = 0; i < 3 && remaining().length; i++) await collect();
     const afterContinuation = `then 3 more from timer callbacks after a continuation (not a timer callback) recursed 256 frames: ${beforeContinuation - remaining().length} of ${beforeContinuation} collected`;
+    // The snapshot collects with JavaScriptCore's own full collection, not Bun.gc(true) (which first drops
+    // cached code): that alone, from timer callbacks.
+    const beforeFullGC = remaining().length;
+    for (let i = 0; i < 3 && remaining().length; i++) {
+      await new Promise<void>(resolve => setTimeout(() => (require("bun:jsc").fullGC(), setTimeout(resolve, 0)), 0));
+    }
+    const afterFullGC = `then 3 of bun:jsc's fullGC() from timer callbacks: ${beforeFullGC - remaining().length} of ${beforeFullGC} collected`;
+    // It also parses a large JSON text and drops it: that much allocation, then the same collections.
+    const beforeChurn = remaining().length;
+    if (beforeChurn)
+      void JSON.parse(
+        JSON.stringify(Array.from({ length: 200_000 }, (_, i) => ({ id: i, edges: [i, i + 1], name: "cell" + i }))),
+      );
+    for (let i = 0; i < 3 && remaining().length; i++) await collect();
+    const afterChurn = `then 3 more from timer callbacks after parsing and dropping a large JSON text: ${beforeChurn - remaining().length} of ${beforeChurn} collected`;
     // A heap snapshot that is thrown away (it collects by itself), then the same collections:
     // separates what taking the snapshot does from what analysing it (a lot of script) does.
     const beforeSnapshot = remaining().length;
@@ -204,6 +219,8 @@ class Lifetimes {
       ...survivors,
       afterRecursing,
       afterContinuation,
+      afterFullGC,
+      afterChurn,
       afterSnapshot,
       ...(remaining().length ? whatRetainsGraphs() : []),
     ];

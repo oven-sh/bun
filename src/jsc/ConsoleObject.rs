@@ -5693,14 +5693,13 @@ pub mod formatter {
 pub(crate) extern "C" fn Bun__ConsoleObject__count(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
-    ptr: *const u8,
-    len: usize,
+    label: &BunString,
 ) {
     // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
     // set-once `VirtualMachine.console` box.
     let this = unsafe { vm_console_mut(global_this) };
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
+    let label = label.to_utf8();
+    let slice: &[u8] = &label;
     let hash = bun_wyhash::hash(slice);
     // we don't want to store these strings, it will take too much memory
     let counter = this.counts.get_or_put(hash).expect("unreachable");
@@ -5734,15 +5733,12 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
 pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
-    ptr: *const u8,
-    len: usize,
+    label: &BunString,
 ) {
     // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
     // set-once `VirtualMachine.console` box.
     let this = unsafe { vm_console_mut(global_this) };
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
-    let hash = bun_wyhash::hash(slice);
+    let hash = bun_wyhash::hash(&label.to_utf8());
     // we don't delete it because deleting is implemented via tombstoning
     if let Some(v) = this.counts.get_mut(&hash) {
         *v = 0;
@@ -5760,11 +5756,9 @@ thread_local! {
 pub(crate) extern "C" fn Bun__ConsoleObject__time(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
-    chars: *const u8,
-    len: usize,
+    label: &BunString,
 ) {
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let id = bun_wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
+    let id = bun_wyhash::hash(&label.to_utf8());
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
         PENDING_TIME_LOGS_LOADED.with(|c| c.set(true));
@@ -5783,15 +5777,14 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
 pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
-    chars: *const u8,
-    len: usize,
+    label: &BunString,
 ) {
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         return;
     }
 
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
+    let label = label.to_utf8();
+    let slice: &[u8] = &label;
     let id = bun_wyhash::hash(slice);
     // Replace the slot with `None`, returning the previous value.
     let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.get_mut(&id).map(|slot| slot.take()))
@@ -5803,7 +5796,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
-    match len {
+    match slice.len() {
         0 => Output::print_errorln(format_args!("")),
         _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(slice))),
     }
@@ -5816,8 +5809,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
 pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     _console: *mut ConsoleObject,
     global: &JSGlobalObject,
-    chars: *const u8,
-    len: usize,
+    label: &BunString,
     args: *const JSValue,
     args_len: usize,
 ) {
@@ -5825,8 +5817,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
         return;
     }
 
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
+    let label = label.to_utf8();
+    let slice: &[u8] = &label;
     let id = bun_wyhash::hash(slice);
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
@@ -5835,7 +5827,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
-    match len {
+    match slice.len() {
         0 => {}
         _ => Output::print_error(format_args!(" {}", bstr::BStr::new(slice))),
     }
@@ -5913,8 +5905,6 @@ console_noop_hooks!(str: Bun__ConsoleObject__profile, Bun__ConsoleObject__profil
 pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
-    _chars: *const u8,
-    _len: usize,
 ) {
     // TODO: this does an extra JSONStringify and we don't need it to!
     let snapshot: [JSValue; 1] = [global_this.generate_heap_snapshot()];

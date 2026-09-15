@@ -12,7 +12,7 @@ class ThrowScope;
 }
 
 namespace Bun {
-// UTF-8 bytes for a consumer that takes a pointer and a length. No NUL terminator: a `const char*` consumer needs `tryGetUTF8()`, which always copies.
+// UTF-8 bytes for a consumer that takes a pointer and a length. No NUL terminator: a `const char*` consumer needs `Bun::tryUTF8`, which always copies.
 class UTF8View {
 public:
     // std::nullopt when the string does not convert: 2^30 Latin-1 characters or more, or a UTF-8 form of 2^31 bytes or more.
@@ -58,5 +58,9 @@ private:
 Ref<WTF::StringImpl> threadShareableCopy(const WTF::StringImpl&);
 Ref<WTF::StringImpl> makeThreadShareable(WTF::StringImpl&);
 WTF::String toCrossThreadShareable(const WTF::String&);
+
+// A NUL-terminated UTF-8 copy, for a `const char*` consumer. Where `utf8()` asserts (the strings that
+// `UTF8View::tryCreate` refuses, ASCII included), this throws `RangeError: Out of memory` and returns a null CString.
+WTF::CString tryUTF8(JSC::JSGlobalObject*, JSC::ThrowScope&, WTF::StringView);
 
 }

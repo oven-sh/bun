@@ -3359,6 +3359,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     return JSValue::encode(groups);
 }
 
+// The name comes from JS, so the message can pass `String::MaxLength`. It is then `RangeError: Out of memory`.
+static void throwUnknownCredential(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, ASCIILiteral prefix, const String& name)
+{
+    MessageBuilder message;
+    message.append(prefix, name);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+}
+
 static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
 {
     if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
@@ -3366,18 +3374,20 @@ static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
 
     auto str = value.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto utf8 = str.utf8();
-    auto name = utf8.data();
     struct passwd pwd;
     struct passwd* pp = nullptr;
     char buf[8192];
 
-    if (getpwnam_r(name, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
-        return jsNumber(pp->pw_uid);
+    // The entry, name included, has to fit in `buf`, so a longer name cannot match. It must not reach the lookup
+    // either: nss-systemd asserts on a name of 4 MiB, and `utf8()` asserts on one of 2^30 characters.
+    if (str.length() < sizeof(buf)) {
+        auto utf8 = str.utf8();
+        if (getpwnam_r(utf8.data(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+            return jsNumber(pp->pw_uid);
+        }
     }
 
-    auto message = makeString("User identifier does not exist: "_s, str);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+    throwUnknownCredential(throwScope, globalObject, "User identifier does not exist: "_s, str);
     return {};
 }
 
@@ -3388,18 +3398,19 @@ static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
 
     auto str = value.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto utf8 = str.utf8();
-    auto name = utf8.data();
     struct group pwd;
     struct group* pp = nullptr;
     char buf[8192];
 
-    if (getgrnam_r(name, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
-        return jsNumber(pp->gr_gid);
+    // A name that does not fit in `buf` cannot match: see maybe_uid_by_name.
+    if (str.length() < sizeof(buf)) {
+        auto utf8 = str.utf8();
+        if (getgrnam_r(utf8.data(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+            return jsNumber(pp->gr_gid);
+        }
     }
 
-    auto message = makeString("Group identifier does not exist: "_s, str);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+    throwUnknownCredential(throwScope, globalObject, "Group identifier does not exist: "_s, str);
     return {};
 }
 
@@ -3575,6 +3586,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     if (user.isString()) {
         auto str = user.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        // No user has a name that does not fit in a passwd entry: see maybe_uid_by_name.
+        if (str.length() >= sizeof(buf)) [[unlikely]] {
+            throwUnknownCredential(scope, globalObject, "User identifier does not exist: "_s, str);
+            return {};
+        }
         userNameUTF8 = str.utf8();
         userName = userNameUTF8.data();
     } else {

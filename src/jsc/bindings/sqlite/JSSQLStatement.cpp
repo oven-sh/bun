@@ -1206,7 +1206,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
     RETURN_IF_EXCEPTION(scope, {});
     static CString sqlite3_lib_path_storage;
     static String selectedSQLitePath;
-    auto requestedPathUTF8 = requestedPath.utf8();
+    auto requestedPathUTF8 = Bun::tryUTF8(lexicalGlobalObject, scope, requestedPath);
     RETURN_IF_EXCEPTION(scope, {});
     {
         WTF::Locker locker { sqlite3_handle_lock };
@@ -1374,8 +1374,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         return {};
     }
 
+    auto attachedNameUtf8 = Bun::tryUTF8(lexicalGlobalObject, scope, attachedName);
+    RETURN_IF_EXCEPTION(scope, {});
+
     sqlite3_int64 length = -1;
-    unsigned char* data = sqlite3_serialize(db, attachedName.utf8().data(), &length, 0);
+    unsigned char* data = sqlite3_serialize(db, attachedNameUtf8.data(), &length, 0);
     if (data == nullptr && length) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory"_s));
         return {};
@@ -1426,9 +1429,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
 
     auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
     RETURN_IF_EXCEPTION(scope, {});
-    auto entryPointUtf8 = entryPointStr.utf8();
+    auto entryPointUtf8 = Bun::tryUTF8(lexicalGlobalObject, scope, entryPointStr);
+    RETURN_IF_EXCEPTION(scope, {});
     const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointUtf8.data();
-    auto extensionStringUtf8 = extensionString.utf8();
+    auto extensionStringUtf8 = Bun::tryUTF8(lexicalGlobalObject, scope, extensionString);
+    RETURN_IF_EXCEPTION(scope, {});
     char* error;
     int rc = sqlite3_load_extension(db, extensionStringUtf8.data(), entryPoint, &error);
 
@@ -1800,8 +1805,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
 
     JSValue finalizationTarget = callFrame->argument(2);
 
+    auto pathUtf8 = Bun::tryUTF8(lexicalGlobalObject, scope, path);
+    RETURN_IF_EXCEPTION(scope, {});
+
     sqlite3* db = nullptr;
-    int statusCode = sqlite3_open_v2(path.utf8().data(), &db, openFlags, nullptr);
+    int statusCode = sqlite3_open_v2(pathUtf8.data(), &db, openFlags, nullptr);
 
     if (statusCode != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
@@ -1953,7 +1961,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     CString fileNameStr;
 
     if (databaseFileName.isString()) {
-        fileNameStr = databaseFileName.toWTFString(lexicalGlobalObject).utf8();
+        auto fileName = databaseFileName.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        fileNameStr = Bun::tryUTF8(lexicalGlobalObject, scope, fileName);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

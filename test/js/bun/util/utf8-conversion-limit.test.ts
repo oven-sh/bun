@@ -16,13 +16,36 @@
 // SQLite: the limit is 1e9 bytes in the bundled SQLite and 2 GiB in the system
 // SQLite that macOS loads. Each answer shows that SQLite got the string's buffer,
 // where a copy reports "Out of memory".
+//
+// A C API that takes a `const char*` (a path, SQL text, a name) needs a copy with
+// a NUL terminator, so it cannot borrow. `bun:sqlite` and `node:sqlite` made that
+// copy with `utf8()`, which asserts the same way, and now throw
+// `RangeError: Out of memory` through `Bun::tryUTF8`. The console label functions
+// convert the label in Rust, which has no such limit. A user or group name is
+// bounded before the lookup instead (the last test).
 import { decodeURIComponentSIMD } from "bun:internal-for-testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tls } from "harness";
 import crypto from "node:crypto";
 import Module from "node:module";
 import { totalmem } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+// On macOS bun loads the system libsqlite3.dylib. Apple builds it without the
+// session extension and without extension loading, and each of those calls says
+// so before it reads its strings (node-sqlite.test.ts has the same probes).
+const succeeds = (run: () => void) => {
+  try {
+    run();
+    return true;
+  } catch {
+    return false;
+  }
+};
+const sqliteHasSession = succeeds(() => new DatabaseSync(":memory:").createSession());
+const sqliteHasLoadExtension = succeeds(() => new DatabaseSync(":memory:", { allowExtension: true }).close());
 
 // Each case prints its line as soon as it finishes. If a case aborts the child,
 // the diff shows which one.
@@ -31,9 +54,11 @@ const fixture = `
   import { Database } from "bun:sqlite";
   import crypto from "node:crypto";
   import Module from "node:module";
+  import { DatabaseSync, backup } from "node:sqlite";
 
   const cert = new crypto.X509Certificate(${JSON.stringify(tls.cert)});
   const db = new Database(":memory:");
+  const nodeDb = new DatabaseSync(":memory:", { allowExtension: ${sqliteHasLoadExtension} });
 
   const cases = {
     "X509Certificate#checkHost": text => cert.checkHost(text),
@@ -50,6 +75,41 @@ const fixture = `
     "decodeURIComponentSIMD": text => decodeURIComponentSIMD(text),
     // The value of a cookie is converted only when the header has a "%" in it.
     "new Bun.CookieMap": text => new Bun.CookieMap("a=%41" + text),
+
+    "new Database": text => new Database(text),
+    "Database#serialize": text => db.serialize(text),
+    "Database#fileControl": text => db.fileControl(text, 10, 0),
+    "new DatabaseSync": text => new DatabaseSync(text),
+    "DatabaseSync#exec": text => nodeDb.exec(text),
+    "DatabaseSync#prepare": text => nodeDb.prepare(text),
+    "SQLTagStore#get": text => nodeDb.createTagStore().get([text]),
+    "DatabaseSync#location": text => nodeDb.location(text),
+    "DatabaseSync#serialize": text => nodeDb.serialize(text),
+    "DatabaseSync#deserialize dbName": text => nodeDb.deserialize(new Uint8Array(8), { dbName: text }),
+    "DatabaseSync#function name": text => nodeDb.function(text, () => 1),
+    "DatabaseSync#aggregate name": text => nodeDb.aggregate(text, { start: 0, step: sum => sum }),
+    "StatementSync#get parameter": text => nodeDb.prepare("SELECT length(?) AS n").get(text),
+    "StatementSync#get function result": text => {
+      nodeDb.function("result", () => text);
+      return nodeDb.prepare("SELECT result()").get();
+    },
+    "backup path": text => backup(nodeDb, text),
+    "backup source": text => backup(nodeDb, ":memory:", { source: text }),
+    "backup target": text => backup(nodeDb, ":memory:", { target: text }),
+    ...(${sqliteHasLoadExtension} ? {
+      "Database#loadExtension path": text => db.loadExtension(text),
+      "Database#loadExtension entryPoint": text => db.loadExtension("extension", text),
+      "DatabaseSync#loadExtension path": text => nodeDb.loadExtension(text),
+      "DatabaseSync#loadExtension entryPoint": text => nodeDb.loadExtension("extension", text),
+    } : {}),
+    ...(${sqliteHasSession} ? {
+      "DatabaseSync#createSession db": text => nodeDb.createSession({ db: text }),
+      "DatabaseSync#createSession table": text => nodeDb.createSession({ table: text }),
+    } : {}),
+    // A property key is hashed: 0.1 seconds for 1 GiB in a release build, 10 seconds in a debug build.
+    ...(${isDebug} ? {} : {
+      "StatementSync#get named parameter key": text => nodeDb.prepare("SELECT $a").get({ [text]: 1 }),
+    }),
   };
   let text = "\\u00e9".repeat(2 ** 30);
   for (const [name, run] of Object.entries(cases)) {
@@ -63,12 +123,27 @@ const fixture = `
 
   text = undefined;
   Bun.gc(true);
-  try {
-    const { n } = cases["Statement#get parameter"]("q".repeat(2 ** 30));
-    console.log("ASCII parameter: " + (n === 2 ** 30 ? "SQLite got the string" : "length " + n));
-  } catch (e) {
-    const tooBigForSQLite = e.message === "string or blob too big";
-    console.log("ASCII parameter: " + (tooBigForSQLite ? "SQLite got the string" : e.name + ": " + e.message));
+  const ascii = "q".repeat(2 ** 30);
+  const asciiParameter = name => {
+    try {
+      const { n } = cases[name](ascii);
+      console.log("ASCII " + name + ": " + (n === 2 ** 30 ? "SQLite got the string" : "length " + n));
+    } catch (e) {
+      const tooBigForSQLite = e.message === "string or blob too big";
+      console.log("ASCII " + name + ": " + (tooBigForSQLite ? "SQLite got the string" : e.name + ": " + e.message));
+    }
+  };
+  asciiParameter("Statement#get parameter");
+
+  // The ASCII scan and the hash of 1 GiB are unoptimized in a debug build: 6 seconds for each row above, 14 for each below.
+  if (!${isDebug}) {
+    asciiParameter("StatementSync#get parameter");
+
+    // With a timer for another label, these look the label up and print nothing.
+    console.time("another label");
+    for (const name of ["timeLog", "timeEnd", "countReset", "time"]) {
+      console.log("console." + name + ": returned " + console[name](ascii));
+    }
   }
 `;
 
@@ -104,11 +179,68 @@ test.skipIf(totalmem() < 8 * 1024 ** 3)(
         "Statement#get parameter: RangeError: Out of memory",
         "decodeURIComponentSIMD: RangeError: Out of memory",
         "new Bun.CookieMap: RangeError: Out of memory",
-        "ASCII parameter: SQLite got the string",
+        ...[
+          "new Database",
+          "Database#serialize",
+          "Database#fileControl",
+          "new DatabaseSync",
+          "DatabaseSync#exec",
+          "DatabaseSync#prepare",
+          "SQLTagStore#get",
+          "DatabaseSync#location",
+          "DatabaseSync#serialize",
+          "DatabaseSync#deserialize dbName",
+          "DatabaseSync#function name",
+          "DatabaseSync#aggregate name",
+          "StatementSync#get parameter",
+          "StatementSync#get function result",
+          "backup path",
+          "backup source",
+          "backup target",
+          ...(sqliteHasLoadExtension
+            ? [
+                "Database#loadExtension path",
+                "Database#loadExtension entryPoint",
+                "DatabaseSync#loadExtension path",
+                "DatabaseSync#loadExtension entryPoint",
+              ]
+            : []),
+          ...(sqliteHasSession ? ["DatabaseSync#createSession db", "DatabaseSync#createSession table"] : []),
+          ...(isDebug ? [] : ["StatementSync#get named parameter key"]),
+        ].map(name => `${name}: RangeError: Out of memory`),
+        "ASCII Statement#get parameter: SQLite got the string",
+        ...(isDebug
+          ? []
+          : [
+              "ASCII StatementSync#get parameter: SQLite got the string",
+              "console.timeLog: returned undefined",
+              "console.timeEnd: returned undefined",
+              "console.countReset: returned undefined",
+              "console.time: returned undefined",
+            ]),
       ],
       stderr: "",
       exitCode: 0,
     });
+  },
+  30_000,
+);
+
+// console.count prints its label, so it has a child of its own. The parent counts
+// the bytes and does not keep them. A debug build takes 28 seconds for this label.
+test.skipIf(isDebug || totalmem() < 8 * 1024 ** 3)(
+  "console.count prints a label of 2**30 characters",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.count("q".repeat(2 ** 30));`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let bytes = 0;
+    for await (const chunk of proc.stdout) bytes += chunk.length;
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ bytes, stderr, exitCode }).toEqual({ bytes: 2 ** 30 + ": 1\n".length, stderr: "", exitCode: 0 });
   },
   30_000,
 );
@@ -124,6 +256,15 @@ test.each([
   using db = new Database(":memory:");
   db.run(`CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('${text}')`);
 
+  // The path, the SQL text, the function name and the parameter name are `const char*`. The parameter and the function result are a pointer and a length.
+  using dir = tempDir("utf8-conversion-limit", {});
+  const path = join(String(dir), `${text}.sqlite`);
+  using fileDb = new Database(path);
+  fileDb.run("CREATE TABLE t (v TEXT)");
+  const nodeDb = new DatabaseSync(path);
+  nodeDb.exec(`INSERT INTO t VALUES ('${text}')`);
+  nodeDb.function(text, () => text);
+
   expect({
     checkHost: cert.checkHost(text),
     checkEmail: cert.checkEmail(text),
@@ -137,6 +278,12 @@ test.each([
     parameter: db.prepare("SELECT ? AS v").get(text),
     decode: decodeURIComponentSIMD("%41" + text),
     cookie: new Bun.CookieMap("a=%41" + text).get("a"),
+    open: fileDb.query("SELECT v FROM t").get(),
+    nodeOpen: nodeDb.location(),
+    nodeExec: { ...nodeDb.prepare("SELECT v FROM t").get() },
+    nodeParameter: { ...nodeDb.prepare("SELECT ? AS v").get(text) },
+    nodeFunction: { ...nodeDb.prepare(`SELECT "${text}"() AS v`).get() },
+    nodeNamedParameter: { ...nodeDb.prepare("SELECT $cl\u00e9 AS v").get({ "$cl\u00e9": text }) },
   }).toEqual({
     checkHost: undefined,
     checkEmail: undefined,
@@ -149,5 +296,105 @@ test.each([
     parameter: { v: text },
     decode: "A" + text,
     cookie: "A" + text,
+    open: { v: text },
+    nodeOpen: path,
+    nodeExec: { v: text },
+    nodeParameter: { v: text },
+    nodeFunction: { v: text },
+    nodeNamedParameter: { v: text },
+  });
+  nodeDb.close();
+});
+
+// The label functions key their table by the UTF-8 bytes of the label and print those bytes. The escapes stay
+// escapes in the child's source, so that it builds the Latin-1, 16-bit and lone surrogate strings itself.
+test("a short console label of each encoding converts as before", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      String.raw`
+        for (const label of [undefined, "", "ascii", "caf\u00e9", "caf\u00e9 \u{1F600}", "lone \ud800 surrogate"]) {
+          console.count(label);
+          console.count(label);
+          console.countReset(label);
+          console.count(label);
+          console.time(label);
+          console.timeLog(label, "extra");
+          console.timeEnd(label);
+        }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const labels = ["default", "", "ascii", "caf\u00e9", "caf\u00e9 \u{1F600}", "lone \ufffd surrogate"];
+  expect({
+    stdout: stdout.split("\n"),
+    stderr: stderr.replace(/^\[.+?s\]/gm, "[time]").split("\n"),
+    exitCode,
+  }).toEqual({
+    stdout: [...labels.flatMap(label => [`${label}: 1`, `${label}: 2`, `${label}: 1`]), ""],
+    stderr: [
+      ...labels.flatMap(label => (label ? [`[time] ${label} extra`, `[time] ${label}`] : ["[time] extra", "[time]"])),
+      "",
+    ],
+    exitCode: 0,
   });
 });
+
+// A user or group name went to getpwnam_r / getgrnam_r through `utf8()` as well. A passwd or group entry has to
+// fit in the 8192 byte buffer that the lookup fills, so a longer name cannot match, and it no longer reaches the
+// lookup. Where nss-systemd is configured, a name of 4 MiB aborted the process inside the lookup
+// (`Assertion '_nn_ <= ALLOCA_MAX' failed`), long before the 2**30 characters that `utf8()` asserts on.
+test.skipIf(isWindows)(
+  "a user or group name too long for a passwd or group entry is an unknown credential",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const cases = {
+          "setuid": name => process.setuid(name),
+          "seteuid": name => process.seteuid(name),
+          "setgid": name => process.setgid(name),
+          "setegid": name => process.setegid(name),
+          "setgroups": name => process.setgroups([name]),
+          "initgroups user": name => process.initgroups(name, 0),
+          "initgroups extraGroup": name => process.initgroups(0, name),
+        };
+        for (const length of [8192, 4 * 1024 * 1024]) {
+          for (const [key, run] of Object.entries(cases)) {
+            try {
+              console.log(key + ": returned " + run("q".repeat(length)));
+            } catch (e) {
+              console.log(key + ": " + e.code + ": " + e.message.replace(/q+$/, match => "q x " + match.length));
+            }
+          }
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = (length: number) => [
+      `setuid: ERR_UNKNOWN_CREDENTIAL: User identifier does not exist: q x ${length}`,
+      `seteuid: ERR_UNKNOWN_CREDENTIAL: User identifier does not exist: q x ${length}`,
+      `setgid: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
+      `setegid: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
+      `setgroups: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
+      `initgroups user: ERR_UNKNOWN_CREDENTIAL: User identifier does not exist: q x ${length}`,
+      `initgroups extraGroup: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
+    ];
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [...expected(8192), ...expected(4 * 1024 * 1024)],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

@@ -348,23 +348,48 @@ static OUTDATED_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-const AUDIT_PARAMS: &[ParamType] = &[
-    clap::param!(
-        "<POS> ...                              Check installed packages for vulnerabilities"
-    ),
-    clap::param!("--json                                 Output in JSON format"),
+static AUDIT_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!(
+            "<POS> ...                              Check installed packages for vulnerabilities"
+        ),
+        clap::param!("--json                                 Output in JSON format"),
+        clap::param!(
+            "--audit-level <STR>                    Only print advisories with severity greater than or equal to \\<level\\> (low, moderate, high, critical)"
+        ),
+        clap::param!(
+            "--ignore <STR>...                      Ignore advisories by GHSA or numeric advisory ID (repeatable)"
+        ),
+        clap::param!(
+            "-L, --latest                           Also apply fixes your declared ranges exclude, rewriting package.json"
+        ),
+    ]
+];
+
+const AUDIT_HELP_PARAMS: &[ParamType] = &[
     clap::param!(
         "--audit-level <STR>                    Only print advisories with severity greater than or equal to \\<level\\> (low, moderate, high, critical)"
     ),
     clap::param!(
+        "-p, --production                       Skip packages that are only needed by devDependencies (alias: --prod)"
+    ),
+    clap::param!(
+        "--omit <dev|optional|peer>...          Skip packages that are only needed by the given dependency types: dev, optional, or peer (repeatable)"
+    ),
+    clap::param!(
         "--ignore <STR>...                      Ignore advisories by GHSA or numeric advisory ID (repeatable)"
+    ),
+    clap::param!("--json                                 Output in JSON format"),
+    clap::param!(
+        "--dry-run                              Show what bun audit fix would change without changing anything"
     ),
     clap::param!(
         "-L, --latest                           Also apply fixes your declared ranges exclude, rewriting package.json"
     ),
+    clap::param!("--cwd <STR>                            Set a specific cwd"),
+    clap::param!("-h, --help                             Print this help menu"),
 ];
-
-static AUDIT_PARAMS_FULL: &[ParamType] = concat_params![SHARED_PARAMS, AUDIT_PARAMS];
 
 static INFO_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
@@ -1108,7 +1133,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/audit<r
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(AUDIT_PARAMS);
+                clap::simple_help(AUDIT_HELP_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1247,10 +1272,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Subcommand::Why => WHY_PARAMS,
             Subcommand::Dedupe => DEDUPE_PARAMS,
             Subcommand::Prune => PRUNE_PARAMS,
-
-            // TODO: we will probably want to do this for other *_params. this way extra params
-            // are not included in the help text
-            Subcommand::Audit => AUDIT_PARAMS_FULL,
+            Subcommand::Audit => AUDIT_PARAMS,
             Subcommand::Info => INFO_PARAMS,
         };
 

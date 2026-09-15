@@ -2009,7 +2009,10 @@ impl TestCommand {
         vm.ensure_debugger(false)?;
 
         let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
-        scanner.rules.path_ignore_patterns = ctx.test_options.path_ignore_patterns.clone();
+        scanner
+            .rules
+            .path_ignore_patterns
+            .clone_from(&ctx.test_options.path_ignore_patterns);
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)

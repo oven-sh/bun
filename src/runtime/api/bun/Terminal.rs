@@ -1471,6 +1471,9 @@ impl Terminal {
             let r = w.write(bytes);
             (r, w.has_pending_data())
         });
+        // The writer can close inside `write()` and keep the bytes; no drain follows them.
+        let writer_done = self.flags.get().contains(Flags::WRITER_DONE);
+        let has_pending = has_pending && !writer_done;
         self.writer_has_buffered.set(has_pending);
         if has_pending {
             // Keep the wrapper rooted for the pending drain dispatch; a write
@@ -1480,7 +1483,7 @@ impl Terminal {
         // A second write() can drain what an earlier one buffered; on_write saw
         // the cleared flag, so fire drain here (outside `with_mut`).
         #[cfg(unix)]
-        if had_buffered && !has_pending {
+        if had_buffered && !has_pending && !writer_done {
             self.on_writer_ready();
         }
         #[cfg(not(unix))]

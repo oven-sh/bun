@@ -6261,11 +6261,7 @@ impl<'a> Resolver<'a> {
                             // rewrite inside `symlink()` is serialized on `Entry.mutex`.
                             unsafe { entry.symlink(rfs_ptr, self.store_fd) }
                         }
-                        // The directory was opened above, so it exists, but the
-                        // parent's cached listing predates it (for example a
-                        // symlink created in `node_modules` after the first
-                        // resolution through it). Stat it directly so a symlink
-                        // still resolves to its real path.
+                        // The parent listing was cached before this directory existed.
                         None => {
                             // SAFETY: `rfs_ptr` points at the process-global RealFS;
                             // `kind` only does syscalls and string interning.
@@ -6293,10 +6289,8 @@ impl<'a> Resolver<'a> {
                         }
                         info.abs_real_path = symlink;
                     } else if !parent_.abs_real_path.is_empty() {
-                        // this might leak a little i'm not sure
                         let parts = [parent_.abs_real_path, base];
-                        // NOTE: split into two statements so the two `&mut FileSystem`
-                        // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
+                        // Two statements so the two `fs_ref()` borrows do not overlap.
                         let joined = self
                             .fs_ref()
                             .abs_buf(&parts, bufs!(dir_info_uncached_filename));

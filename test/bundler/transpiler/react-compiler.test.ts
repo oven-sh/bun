@@ -2009,6 +2009,193 @@ describe("bundler", () => {
     }
   }
 
+  // The bundler prints an import under the name of the export it links to:
+  // `defaultTheme` below prints as `theme`. A compiled function gets new
+  // symbols for its parameters, its locals and its temporaries (`t0`, `$`).
+  // The renamer has to number them like the symbols of any other function, or
+  // a local with the name of that export shadows it:
+  // `let theme = custom ?? theme`.
+  for (const target of ["bun", "browser"] as const) {
+    for (const minifyIdentifiers of [false, true]) {
+      itBundled(`react-compiler/LocalNamedLikeAnExportItReads-${target}-identifiers=${minifyIdentifiers}`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import * as forms from "./forms";
+            const lines: string[] = [];
+            const check = (flag?: boolean) => {
+              if (flag) throw "thrown";
+            };
+            for (const [name, form] of Object.entries(forms)) {
+              try {
+                lines.push(name + "=" + form({ custom: "mine", flag: true, list: [{ x: 1 }, { x: 2 }], check }));
+                lines.push(name + "=" + form({ list: [{ x: 3 }], check }));
+              } catch (e) {
+                lines.push(name + " threw " + e);
+              }
+            }
+            console.log(lines.join("\\n"));
+          `,
+          "/forms.tsx": /* tsx */ `
+            import { useEffect, useState, memo, forwardRef } from "react";
+            import * as values from "./values";
+            import {
+              Wrapped as BaseWrapped,
+              theme as defaultTheme,
+              custom as defaultCustom,
+              item as defaultItem,
+              s as format,
+              e as suffix,
+              t0 as first,
+              t1 as second,
+              $ as dollar,
+            } from "./values";
+
+            export function Local({ custom }) {
+              useEffect(() => {});
+              const theme = custom ?? defaultTheme;
+              return theme;
+            }
+            export function useLocal({ custom }) {
+              useEffect(() => {});
+              let theme = defaultTheme;
+              if (custom) theme = custom + "/" + defaultTheme;
+              return theme;
+            }
+            export const MemoLocal = memo(({ custom }) => {
+              useEffect(() => {});
+              const theme = custom ?? defaultTheme;
+              return theme;
+            });
+            export function Parameter({ custom }) {
+              useEffect(() => {});
+              return (custom ?? "none") + " " + defaultCustom;
+            }
+            export function NamespaceMember({ flag }) {
+              useEffect(() => {});
+              const theme = flag ? values.theme : "none";
+              return theme;
+            }
+            // The compiler hoists a callback that captures nothing to module
+            // level. Its parameter is a new symbol too.
+            export function OutlinedParameter({ list }) {
+              useEffect(() => {});
+              return list.map(item => item.x + defaultItem.y).join(",") + ";" + list.map(s => format(s.x)).join(",");
+            }
+            export function NestedParameter({ list, custom }) {
+              useEffect(() => {});
+              return list.map(item => item.x + defaultItem.y + (custom ?? "")).join(",");
+            }
+            export function CatchBinding({ flag, check }) {
+              useEffect(() => {});
+              try {
+                check(flag);
+              } catch (e) {
+                return e + suffix;
+              }
+              return "none" + suffix;
+            }
+            // The props object is \`t0\`, the memo cache is \`$\`, and the value
+            // of a memo block is \`t1\`.
+            export function Temporaries({ custom }) {
+              const [count] = useState(1);
+              const all = [String(custom), count, first, second, dollar];
+              return all.join(" ");
+            }
+            // A function expression declares its own name in its own scope.
+            // The compiled function keeps that name, so it is still numbered.
+            export const OwnNameForwardRef = forwardRef(function Wrapped({ custom }, ref) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "forwardRef" }) + ">";
+            });
+            export const OwnNameMemo = memo(function Wrapped({ custom }) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "memo" }) + ">";
+            });
+            export const OwnNamePlain = function Wrapped({ custom }) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "plain" }) + ">";
+            };
+          `,
+          "/values.ts": /* ts */ `
+            export const theme = "dark";
+            export const custom = "CUSTOM";
+            export const item = { y: 10 };
+            export function s(value: number) {
+              return "<" + value + ">";
+            }
+            export const e = "!";
+            export const t0 = "T0";
+            export const t1 = "T1";
+            export const $ = "DOLLAR";
+            export function Wrapped({ custom, by }: { custom?: string; by: string }) {
+              return by + ":" + custom;
+            }
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+          "/node_modules/react/index.js": /* js */ `
+            export function useEffect() {}
+            export function useState(value) {
+              return [value, () => {}];
+            }
+            export function memo(component) {
+              return component;
+            }
+            export function forwardRef(component) {
+              return component;
+            }
+          `,
+          "/node_modules/react/compiler-runtime.js": /* js */ `
+            export function c(size) {
+              return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+            }
+          `,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target,
+        minifyIdentifiers,
+        run: {
+          stdout: `
+            CatchBinding=thrown!
+            CatchBinding=none!
+            Local=mine
+            Local=dark
+            MemoLocal=mine
+            MemoLocal=dark
+            NamespaceMember=dark
+            NamespaceMember=none
+            NestedParameter=11mine,12mine
+            NestedParameter=13
+            OutlinedParameter=11,12;<1>,<2>
+            OutlinedParameter=13;<3>
+            OwnNameForwardRef=<forwardRef:mine>
+            OwnNameForwardRef=<forwardRef:undefined>
+            OwnNameMemo=<memo:mine>
+            OwnNameMemo=<memo:undefined>
+            OwnNamePlain=<plain:mine>
+            OwnNamePlain=<plain:undefined>
+            Parameter=mine CUSTOM
+            Parameter=none CUSTOM
+            Temporaries=mine 1 T0 T1 DOLLAR
+            Temporaries=undefined 1 T0 T1 DOLLAR
+            useLocal=mine/dark
+            useLocal=dark
+          `,
+        },
+        onAfterBundle(api) {
+          if (minifyIdentifiers) return;
+          const out = api.readFile("/out.js");
+          // Every function above compiled: the compiler outlines the empty
+          // effect callback (client) or drops the effect (ssr).
+          expect(out).not.toMatch(/\(\(\) => \{\s*\}\)/);
+          // A local that shares its name with nothing the function reads
+          // keeps it.
+          expect(out).toMatch(/function Local\(t0\) \{\s*let \{ custom \} = t0;/);
+        },
+      });
+    }
+  }
+
   // The compiler lowers the call the visit pass made of each JSX element into
   // HIR and builds a new call from that. Both steps have to use the call shape
   // of the file's JSX runtime. The classic runtime, and `key` after a spread in
@@ -2157,6 +2344,142 @@ describe("bundler", () => {
     },
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });
+
+  // `a.b = a = c` and `a[i] = i++` read `a` and `i` for the member target
+  // before the right-hand side runs. The compiler removes assignments and
+  // propagates constants by the order of its own instructions, so it has to
+  // lower the target's object and key first too.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/MemberAssignmentReadsTargetBeforeRightHandSide-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const props = { items: [1, 2, 3], key: "next", flag: true };
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              lines.push(name + "=" + Form(props).props.children);
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          function values(head, next = "next") {
+            const out = [];
+            for (let node = head; node; node = node[next]) out.push(node.v);
+            return out.join();
+          }
+
+          export function AppendInLoop(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail.next = tail = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+          export function AppendTwice(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            tail.next = tail = { v: p.items[0], next: null };
+            tail.next = tail = { v: p.items[1], next: null };
+            return <div>{values(head)}</div>;
+          }
+          export function AppendInCallback(p) {
+            const list = items => {
+              const head = { v: 0, next: null };
+              let tail = head;
+              for (const x of items) {
+                tail.next = tail = { v: x, next: null };
+              }
+              return values(head);
+            };
+            return <div>{list(p.items)}</div>;
+          }
+          export function AppendWithComputedKey(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail[p.key] = tail = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+          export function AppendWithNumericKey(p) {
+            const head = { v: 0, 0: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail[0] = tail = { v: x, 0: null };
+            }
+            return <div>{values(head, 0)}</div>;
+          }
+          export function ConstantOnTheRight(p) {
+            let v = {};
+            const first = v;
+            if (p.flag) {
+              v.z = v = 80;
+            }
+            return <div>{JSON.stringify([first, v])}</div>;
+          }
+          export function KeyIsReassignedOnTheRight(p) {
+            let key = "a";
+            const o = {};
+            if (p.flag) {
+              o[key] = key = "b";
+            }
+            return <div>{JSON.stringify([o, key])}</div>;
+          }
+          export function KeyIsIncrementedOnTheRight() {
+            const arr = [];
+            let i = 0;
+            arr[i] = i++;
+            arr[i] = i++;
+            return <div>{JSON.stringify([arr, i])}</div>;
+          }
+          // The right-hand side is the member assignment here, so it already ran first.
+          export function MemberAssignmentOnTheRight(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail = tail.next = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          AppendInCallback=0,1,2,3
+          AppendInLoop=0,1,2,3
+          AppendTwice=0,1,2
+          AppendWithComputedKey=0,1,2,3
+          AppendWithNumericKey=0,1,2,3
+          ConstantOnTheRight=[{"z":80},80]
+          KeyIsIncrementedOnTheRight=[[0,1],2]
+          KeyIsReassignedOnTheRight=[{"a":"b"},"b"]
+          MemberAssignmentOnTheRight=0,1,2,3
+        `,
+      },
+    });
+  }
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

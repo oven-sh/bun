@@ -2044,6 +2044,8 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // The client request counts against the peer's SETTINGS_MAX_CONCURRENT_STREAMS.
+  HoldsRequestSlot = 1 << 10, // 10000000000 = 1024
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -5044,12 +5046,14 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("aborted");
       }
       self.#connections--;
+      self.#releaseRequestSlot(stream);
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
     streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
 
       self.#connections--;
+      self.#releaseRequestSlot(stream);
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
@@ -5075,6 +5079,7 @@ class ClientHttp2Session extends Http2Session {
         stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
+        self.#releaseRequestSlot(stream);
         if (stream.readable && !stream.rstCode) {
           // Clean close while data is still buffered on the readable side: node defers the
           // destroy until the consumer drains it ('end'), so a late-attaching reader does not
@@ -5904,6 +5909,7 @@ class ClientHttp2Session extends Http2Session {
     // Set once a stream id was allocated (streamStart incremented #connections); validation
     // throws before that point must not decrement.
     let connectionsCounted = false;
+    let trackedRequest: ClientHttp2Stream | undefined;
     try {
       // node validates arguments synchronously and only defers session-state failures
       // (destroyed/closed/GOAWAY) to the returned stream, so bad options throw even on
@@ -6250,15 +6256,17 @@ class ClientHttp2Session extends Http2Session {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
+      this.#trackActiveRequest(req);
+      trackedRequest = req;
       if (typeof options === "undefined") {
         this.#parser.request(stream_id, req, wireHeaders, sensitiveNames);
       } else {
         this.#parser.request(stream_id, req, wireHeaders, sensitiveNames, options);
       }
+      trackedRequest = undefined;
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }
-      this.#trackActiveRequest(req);
       // node corks every Http2Stream until its native handle is assigned (always at least one tick
       // after request() returns), so body chunks written synchronously after request() are buffered
       // and flushed together through _writev.
@@ -6268,6 +6276,7 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitEventNT, req, "ready");
       return req;
     } catch (e: any) {
+      if (trackedRequest !== undefined) this.#releaseRequestSlot(trackedRequest);
       if (connectionsCounted) {
         this.#connections--;
         process.nextTick(emitErrorNT, this, e, this.#connections === 0 && this.#closed);
@@ -6280,11 +6289,13 @@ class ClientHttp2Session extends Http2Session {
   // stream closes, then tries to submit queued requests.
   #trackActiveRequest(req: ClientHttp2Stream) {
     this.#activeRequestCount++;
-    // 'close' comes before the setImmediate from which _destroy() or close() sends RST_STREAM.
-    req.once("close", () => setImmediate(() => this.#releaseRequestSlot()));
+    req[bunHTTP2StreamStatus] |= StreamState.HoldsRequestSlot;
   }
 
-  #releaseRequestSlot() {
+  // Called where the native side reports the stream closed: the peer stops counting it there.
+  #releaseRequestSlot(req: ClientHttp2Stream) {
+    if ((req[bunHTTP2StreamStatus] & StreamState.HoldsRequestSlot) === 0) return;
+    req[bunHTTP2StreamStatus] &= ~StreamState.HoldsRequestSlot;
     this.#activeRequestCount--;
     this.#flushPendingRequests();
   }
@@ -6319,6 +6330,7 @@ class ClientHttp2Session extends Http2Session {
         continue;
       }
       req[kSetStreamId](stream_id);
+      this.#trackActiveRequest(req);
       try {
         if (typeof options === "undefined") {
           parser.request(stream_id, req, wireHeaders, sensitiveNames);
@@ -6333,6 +6345,8 @@ class ClientHttp2Session extends Http2Session {
         // never reached the wire either, so the teardown must not write RST_STREAM for an id the
         // peer considers idle.
         this.#connections--;
+        req[bunHTTP2StreamStatus] &= ~StreamState.HoldsRequestSlot;
+        this.#activeRequestCount--;
         req[kNeverAnnounced] = true;
         if (!req.destroyed) req.destroy(err);
         continue;
@@ -6340,7 +6354,6 @@ class ClientHttp2Session extends Http2Session {
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }
-      this.#trackActiveRequest(req);
       process.nextTick(emitEventNT, req, "ready");
     }
   }

@@ -2065,11 +2065,13 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
+        // Written before the dispatch: the handler can submit a request, and its HEADERS come after.
+        let _ = self.write(&buffer);
         if rst_code == ErrorCode::NO_ERROR {
             self.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamEnd,
                 identifier,
-                JSValue::js_number(stream.state as u8 as f64),
+                JSValue::js_number(StreamState::CLOSED as u8 as f64),
             );
         } else {
             self.dispatch_with_extra(
@@ -2078,8 +2080,6 @@ impl H2FrameParser {
                 JSValue::js_number(rst_code.0 as f64),
             );
         }
-
-        let _ = self.write(&buffer);
     }
 
     pub(crate) fn send_go_away(

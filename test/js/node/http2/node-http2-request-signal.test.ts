@@ -3,8 +3,8 @@
  * with an AbortError (lib/internal/http2/core.js request()). The stream is destroyed before the
  * queued DATA frames are dropped, so the abort does not look like a completed write.
  *
- * The RST_STREAM of a destroyed request goes out before the HEADERS frame of the next request
- * that was queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS.
+ * A request that was queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS is sent when the open
+ * request is closed on the wire: after its RST_STREAM, or when both sides sent END_STREAM.
  *
  * Works with both:
  *   bun bd test test/js/node/http2/node-http2-request-signal.test.ts
@@ -50,8 +50,9 @@ function setting(id: number, value: number) {
  *   rstCode          settles with the error code of the first RST_STREAM frame, or with null if
  *                    the connection closes without one
  * wireLength(n) and windowExhausted reject if the connection ends first.
+ * With `respond`, the server answers a request that ends on its HEADERS frame with 200 and a body.
  */
-async function clientAgainstRawServer(settings = Buffer.alloc(0)) {
+async function clientAgainstRawServer(settings = Buffer.alloc(0), { respond = false } = {}) {
   const wire: string[] = [];
   const wireWaiters: { n: number; resolve: () => void }[] = [];
   const windowExhausted = Promise.withResolvers<void>();
@@ -95,8 +96,14 @@ async function clientAgainstRawServer(settings = Buffer.alloc(0)) {
         buf = buf.subarray(9 + len);
         if (type === F.SETTINGS && !(flags & 1)) socket.write(frame(F.SETTINGS, 1, 0));
         else if (type === F.PING && !(flags & 1)) socket.write(frame(F.PING, 1, 0, payload));
-        else if (type === F.HEADERS) record(`HEADERS ${streamId}`);
-        else if (type === F.RST_STREAM) {
+        else if (type === F.HEADERS) {
+          record(`HEADERS ${streamId}`);
+          if (respond && flags & 1) {
+            // 0x88 is the HPACK static table entry ":status: 200".
+            socket.write(frame(F.HEADERS, 0x4 /* END_HEADERS */, streamId, Buffer.from([0x88])));
+            socket.write(frame(F.DATA, 0x1 /* END_STREAM */, streamId, Buffer.alloc(1000, 0x41)));
+          }
+        } else if (type === F.RST_STREAM) {
           record(`RST_STREAM ${streamId}`);
           rstCode.resolve(payload.readUInt32BE(0));
         } else if (type === F.DATA && (received += len) >= INITIAL_WINDOW) windowExhausted.resolve();
@@ -259,7 +266,7 @@ describe("session.request(headers, { signal })", () => {
 
 // The peer counts a stream as open until the RST_STREAM arrives. A HEADERS frame that overtakes
 // it exceeds the peer's SETTINGS_MAX_CONCURRENT_STREAMS, and the peer refuses the new stream.
-describe("a request queued behind SETTINGS_MAX_CONCURRENT_STREAMS is sent after the RST_STREAM", () => {
+describe("a request queued behind SETTINGS_MAX_CONCURRENT_STREAMS is sent when the open request is closed on the wire", () => {
   async function cancelFirstOfTwo(cancel: (first: http2.ClientHttp2Stream, controller: AbortController) => void) {
     const { session, wire, wireLength, close } = await clientAgainstRawServer(
       setting(SETTINGS_MAX_CONCURRENT_STREAMS, 1),
@@ -280,7 +287,7 @@ describe("a request queued behind SETTINGS_MAX_CONCURRENT_STREAMS is sent after 
     }
   }
 
-  test("when a signal aborts the open request", async () => {
+  test("after the RST_STREAM, when a signal aborts the open request", async () => {
     assert.deepStrictEqual(await cancelFirstOfTwo((first, controller) => controller.abort()), [
       "HEADERS 1",
       "RST_STREAM 1",
@@ -288,7 +295,7 @@ describe("a request queued behind SETTINGS_MAX_CONCURRENT_STREAMS is sent after 
     ]);
   });
 
-  test("when destroy(err) closes the open request", async () => {
+  test("after the RST_STREAM, when destroy(err) closes the open request", async () => {
     assert.deepStrictEqual(await cancelFirstOfTwo(first => first.destroy(new Error("stop"))), [
       "HEADERS 1",
       "RST_STREAM 1",
@@ -296,7 +303,7 @@ describe("a request queued behind SETTINGS_MAX_CONCURRENT_STREAMS is sent after 
     ]);
   });
 
-  test("when a diagnostics_channel subscriber destroys the request before request() returns", async () => {
+  test("after the RST_STREAM, when a diagnostics_channel subscriber destroys the request before request() returns", async () => {
     const { session, wire, wireLength, close } = await clientAgainstRawServer(
       setting(SETTINGS_MAX_CONCURRENT_STREAMS, 1),
     );
@@ -320,6 +327,30 @@ describe("a request queued behind SETTINGS_MAX_CONCURRENT_STREAMS is sent after 
       );
     } finally {
       dc.unsubscribe("http2.client.stream.start", onStreamStart);
+      close();
+    }
+  });
+
+  test("when the response ended, even if nothing reads its body", async () => {
+    const { session, wire, wireLength, close } = await clientAgainstRawServer(
+      setting(SETTINGS_MAX_CONCURRENT_STREAMS, 1),
+      { respond: true },
+    );
+    try {
+      const first = session.request({ ":path": "/first" });
+      first.on("error", () => {});
+      const response = once(first, "response");
+      const second = session.request({ ":path": "/second" });
+      second.on("error", () => {});
+      second.resume();
+
+      await response;
+      await wireLength(2);
+      assert.deepStrictEqual(
+        { wire, firstDestroyed: first.destroyed },
+        { wire: ["HEADERS 1", "HEADERS 3"], firstDestroyed: false },
+      );
+    } finally {
       close();
     }
   });

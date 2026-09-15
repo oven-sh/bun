@@ -592,8 +592,32 @@ pub struct PackageUpdateInfo {
     pub(crate) original_version_literal: Box<[u8]>,
     // set by the post-install write-back; the install summary still needs the entry
     pub(crate) written_back: bool,
+    /// Registered by `package_json_editor::record_catalog_originals`: the name's `catalog:` rows carry the move, so the install summary reports it through them.
+    pub(crate) catalog_entry: bool,
     pub(crate) original_version_string_buf: Box<[u8]>,
     pub(crate) original_version: Option<Semver::Version>,
+}
+
+impl PackageUpdateInfo {
+    pub(crate) fn set_original_version(&mut self, version: Semver::Version, buf: &[u8]) {
+        let detached = DetachedVersion::new(version, buf);
+        self.original_version = Some(detached.version);
+        self.original_version_string_buf = detached.buf;
+    }
+}
+
+/// A version copied out of a lockfile string buffer (which cleaning rebuilds); its tag strings live in `buf`.
+pub(crate) struct DetachedVersion {
+    pub(crate) version: Semver::Version,
+    pub(crate) buf: Box<[u8]>,
+}
+
+impl DetachedVersion {
+    pub(crate) fn new(version: Semver::Version, string_buf: &[u8]) -> DetachedVersion {
+        let mut buf = vec![0u8; version.tag.pre.len() + version.tag.build.len()].into_boxed_slice();
+        let version = version.clone_into(string_buf, &mut buf, &mut 0);
+        DetachedVersion { version, buf }
+    }
 }
 
 pub struct CatalogUpdateInfo {
@@ -603,6 +627,24 @@ pub struct CatalogUpdateInfo {
     pub original_version_literal: Box<[u8]>,
     /// Set by package_json_editor::resolve_catalog_literals; None leaves the entry as written.
     pub new_version_literal: Option<Box<[u8]>>,
+    /// What the entry's rows resolved to in the loaded lockfile (`package_json_editor::record_catalog_originals`); the install summary's `from` for them.
+    pub(crate) original: Option<DetachedVersion>,
+}
+
+impl CatalogUpdateInfo {
+    /// Index of the entry a `catalog:<catalog_name>` row named `dep_name` resolves through: one spelled exactly like the row first, else the `catalog:` / `catalog:default` equivalent.
+    pub(crate) fn position(
+        infos: &[CatalogUpdateInfo],
+        catalog_name: &[u8],
+        dep_name: &[u8],
+    ) -> Option<usize> {
+        let position = |matches: fn(&[u8], &[u8]) -> bool| {
+            infos.iter().position(|info| {
+                &*info.dep_name == dep_name && matches(&info.catalog_name, catalog_name)
+            })
+        };
+        position(|a, b| a == b).or_else(|| position(lockfile::CatalogMap::same_name))
+    }
 }
 
 pub struct UpdateTargetWorkspace {

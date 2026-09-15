@@ -1,0 +1,39 @@
+{
+	"name": "@types/scoped__no-deps",
+	"versions": {
+		"1.0.0": {
+			"name": "@types/scoped__no-deps",
+			"version": "1.0.0",
+			"_id": "@types/scoped__no-deps@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-5er1EF/cBn8AfvHdcUTvUzBJgUutYioyKNWFjCChWm/yozPGBYWSLU99jKbsiLrOOFF3HOEaN1dviee6hTJymQ==",
+				"shasum": "3e035c43bbebb1ff18834a63bf0513d596313b4b",
+				"tarball": "http://localhost:4873/@types/scoped__no-deps/-/@types/scoped__no-deps-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:28.386Z",
+		"created": "2023-11-01T22:05:28.386Z",
+		"1.0.0": "2023-11-01T22:05:28.386Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"scoped__no-deps-1.0.0.tgz": {
+			"shasum": "3e035c43bbebb1ff18834a63bf0513d596313b4b",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-a68300e3ff5c4137",
+	"_id": "@types/scoped__no-deps",
+	"readme": "ERROR: No README data found!"
+}

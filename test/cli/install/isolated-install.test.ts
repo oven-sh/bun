@@ -2908,6 +2908,139 @@ describe("global virtual store", () => {
     expect(readlinkSync(entry)).toMatch(/links[\/\\]no-deps@1\.0\.0-[0-9a-f]{16}$/);
   });
 
+  // `peer-deps-fixed` peers on `no-deps`. TypeScript type-checks a package's
+  // declaration files at their realpath and resolves their imports by walking
+  // node_modules upward from there, falling back to `@types/*`. From
+  // `<cache>/links/` that walk can never reach the project's `@types`
+  // packages, so entries whose peers are typed by a project-installed
+  // `@types/*` package must stay project-local (issue #36795).
+  test("entries with @types-typed peers stay project-local", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-peer-types",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "1.0.0",
+          "@types/no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const peerEntry = (await readdirSorted(bunDir)).find(e => e.startsWith("peer-deps-fixed@1.0.0"));
+    expect(peerEntry).toBeDefined();
+
+    // The entry is a real project-local directory, not a symlink into
+    // `<cache>/links/`.
+    expect(lstatSync(join(bunDir, peerEntry!)).isSymbolicLink()).toBe(false);
+    expect(lstatSync(join(bunDir, peerEntry!)).isDirectory()).toBe(true);
+    expect(existsSync(join(bunDir, peerEntry!, "node_modules", "peer-deps-fixed", "package.json"))).toBe(true);
+    expect(existsSync(join(bunDir, peerEntry!, "node_modules", "no-deps", "package.json"))).toBe(true);
+
+    // The hidden hoisted layer keeps `@types/no-deps` reachable from the
+    // entry via the upward node_modules walk.
+    expect(existsSync(join(bunDir, "node_modules", "@types", "no-deps", "package.json"))).toBe(true);
+
+    // Packages without peers are unaffected and still share globally.
+    expect(lstatSync(join(bunDir, "no-deps@1.0.0")).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(bunDir, "no-deps@1.0.0"))).toMatch(/links[\/\\]no-deps@1\.0\.0-[0-9a-f]{16}$/);
+  });
+
+  // Scoped peer names use DefinitelyTyped mangling: `@scoped/no-deps` is
+  // typed by `@types/scoped__no-deps`.
+  test("entries with scoped @types-typed peers stay project-local", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-scoped-peer-types",
+        dependencies: {
+          "scoped-peer-deps": "1.0.0",
+          "@scoped/no-deps": "1.0.0",
+          "@types/scoped__no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const peerEntry = (await readdirSorted(bunDir)).find(e => e.startsWith("scoped-peer-deps@1.0.0"));
+    expect(peerEntry).toBeDefined();
+
+    expect(lstatSync(join(bunDir, peerEntry!)).isSymbolicLink()).toBe(false);
+    expect(lstatSync(join(bunDir, peerEntry!)).isDirectory()).toBe(true);
+    expect(existsSync(join(bunDir, peerEntry!, "node_modules", "@scoped", "no-deps", "package.json"))).toBe(true);
+    expect(existsSync(join(bunDir, "node_modules", "@types", "scoped__no-deps", "package.json"))).toBe(true);
+  });
+
+  test("peer entries without a matching @types package stay in the global store", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-peer-no-types",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const peerEntry = (await readdirSorted(bunDir)).find(e => e.startsWith("peer-deps-fixed@1.0.0"));
+    expect(peerEntry).toBeDefined();
+
+    // No `@types/no-deps` in the project, so nothing for TypeScript to lose:
+    // the entry shares globally.
+    expect(lstatSync(join(bunDir, peerEntry!)).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(bunDir, peerEntry!))).toMatch(
+      /links[\/\\]peer-deps-fixed@1\.0\.0\+[0-9a-f]{16}-[0-9a-f]{16}$/,
+    );
+  });
+
+  test("peer entries that depend on the @types package themselves stay in the global store", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-peer-own-types",
+        dependencies: {
+          "peer-deps-with-own-types": "1.0.0",
+          "no-deps": "1.0.0",
+          "@types/no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const peerEntry = (await readdirSorted(bunDir)).find(e => e.startsWith("peer-deps-with-own-types@1.0.0"));
+    expect(peerEntry).toBeDefined();
+
+    // `peer-deps-with-own-types` declares `@types/no-deps` as a real
+    // dependency, so the types are resolvable inside the store entry itself
+    // and it can keep sharing globally.
+    expect(lstatSync(join(bunDir, peerEntry!)).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(bunDir, peerEntry!))).toMatch(
+      /links[\/\\]peer-deps-with-own-types@1\.0\.0\+[0-9a-f]{16}-[0-9a-f]{16}$/,
+    );
+    expect(
+      existsSync(join(readlinkSync(join(bunDir, peerEntry!)), "node_modules", "@types", "no-deps", "package.json")),
+    ).toBe(true);
+  });
+
   test("survives node_modules wipe", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 

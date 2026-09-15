@@ -744,7 +744,7 @@ test.each(stoppedRequests)("server.stop(true) inside the handler of %s aborts it
 // itself when an async handler ends the dispatch. Under a sanitizer it is a
 // heap-use-after-free; without one the headers come back as the bytes of
 // whatever allocation took the block over.
-test.each(["lazy", "async"])(
+test.concurrent.each(["lazy", "async"])(
   "a request head split over two reads survives server.stop(true) in the handler (%s headers)",
   async mode => {
     await using proc = Bun.spawn({
@@ -764,10 +764,12 @@ test.each(["lazy", "async"])(
             finish();
           }
 
-          // Native allocations of many sizes. On a build with no sanitizer they
-          // take over the freed block, so a view into it reads their bytes.
+          // Native allocations of many sizes around the size of the freed block
+          // (about 430 bytes). On a build with no sanitizer they take it over,
+          // so a view into it reads their bytes. The names stay far below the
+          // shortest platform path limit (1024 bytes on macOS).
           function churn() {
-            for (let n = 64; n < 1200; n += 8) {
+            for (let n = 64; n < 768; n += 8) {
               const name = Buffer.alloc(n, 0x5a).toString();
               try { Bun.resolveSync("./" + name, "/tmp"); } catch {}
               try { existsSync("/tmp/" + name); } catch {}

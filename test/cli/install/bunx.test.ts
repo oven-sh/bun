@@ -1108,14 +1108,14 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
           env: { ...env, npm_config_registry: ctx.registry_url },
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({
-          stdout: "",
-          stderr: invocationCase.explicitPackage
+        expect(stdout).toBe("");
+        expect(stderr).toBe(
+          invocationCase.explicitPackage
             ? "error: Package no-bin does not provide a binary named what-bin\n"
             : "error: could not determine executable to run for package no-bin\n",
-          exitCode: 1,
-        });
+        );
         expect(requests).toEqual([]);
+        expect(exitCode).toBe(1);
       });
     });
 
@@ -1141,13 +1141,16 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
           };
           let packageDir: string;
           if (location === "cache") {
-            expect(await run()).toMatchObject({ exitCode: 0 });
+            const initial = await run();
+            expect(initial.stdout).toBe("");
+            expect(initial.stderr).toContain("Saved lockfile");
             expect(await Bun.file(join(ctx.package_dir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
             await rm(join(ctx.package_dir, "what-bin.txt"));
             const entries = (await readdirSorted(env.BUN_TMPDIR)).filter(entry => entry.startsWith("bunx-"));
             expect(entries).toHaveLength(1);
             packageDir = join(env.BUN_TMPDIR, entries[0], "node_modules", "what-bin");
             await rm(join(packageDir, "what-bin.js"));
+            expect(initial.exitCode).toBe(0);
           } else {
             packageDir = join(ctx.package_dir, "node_modules", "what-bin");
             await mkdir(packageDir, { recursive: true });
@@ -1160,8 +1163,10 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
           expect(await Bun.file(join(packageDir, "what-bin.js")).exists()).toBe(false);
 
           const result = await run();
-          expect(result).toMatchObject({ stdout: "", exitCode: 0 });
+          expect(result.stdout).toBe("");
+          expect(result.stderr).toContain("Resolving dependencies");
           expect(await Bun.file(join(ctx.package_dir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
+          expect(result.exitCode).toBe(0);
         });
       });
     });

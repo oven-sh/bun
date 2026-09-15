@@ -205,7 +205,13 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
 // Known divergences from upstream — Bun produces a different (or no) result.
 // Grow this from CI; each entry must say why.
 // `__proto__: null`: a fixture named "constructor" exists.
-const TODO: Record<string, string> = Object.assign(Object.create(null), {});
+const TODO: Record<string, string> = Object.assign(Object.create(null), {
+  // Upstream lowers `x += 5` to a store and then a new read of `x`, and prints
+  // that read as a stray `x;` after the memo block that declares `x`. The read
+  // splits `getX` and the JSX into two memo blocks: `_c(2)`. Bun keeps the value
+  // of the store, so there is no stray read and one block holds both: `_c(1)`.
+  "hoisting-invalid-tdz-let": "a compound assignment has the value of its store, so no stray read splits the scope",
+});
 
 // `minify: { syntax: true }` runs the parser's visit-phase folding and the
 // nested-block statement mangler before the React Compiler sees the function

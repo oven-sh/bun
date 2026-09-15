@@ -159,7 +159,7 @@ const kOnUpgradedClose = Symbol("kOnUpgradedClose");
 const kupgraded = Symbol("kupgraded");
 // On the raw handle of an adopted fd: the TLS socket that adopted it.
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
-// On that TLS socket, once the fd has closed: the wrapped socket waits for this socket to close it.
+// On that TLS socket: the fd closed, and the socket it wraps waits to be closed with it.
 const kOwesRawClose = Symbol("kOwesRawClose");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
@@ -279,20 +279,17 @@ function onUpgradedClose(self, connection) {
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
-// The close of an adopted fd calls the wrapped socket's close handler, then the TLS socket's. TLS took over the reads, so the
-// EOF or the read error is the TLS socket's to report: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
-// The wrapped socket only closes, with the TLS socket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
+// The wrapped socket reports nothing and closes with the TLS socket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
 function closeWithTLSSocket(self, raw) {
   const tlsSocket = raw[kAdoptedTLSRaw];
   if (!tlsSocket || tlsSocket[kupgraded] !== self) return false;
   if (self.destroyed) return true;
-  // Its 'end' closes the wrapped socket. Its _destroy does when it is destroyed before that.
   tlsSocket[kOwesRawClose] = true;
-  // A _destroy that deferred the close of its handle has returned by now. Its 'error' is already queued.
+  // A _destroy that deferred the close of its handle has returned by now.
   if (tlsSocket.destroyed) process.nextTick(closeOwedRaw, tlsSocket, self);
   return true;
 }
-// Runs after the TLS socket queued its 'error' and before its 'close', so the wrapped socket's 'close' lands between them.
+// _destroy calls this after it queued 'error': node's order is 'error', wrapped socket 'close', 'close'.
 function closeOwedRaw(self, upgraded) {
   if (!self[kOwesRawClose]) return;
   self[kOwesRawClose] = false;

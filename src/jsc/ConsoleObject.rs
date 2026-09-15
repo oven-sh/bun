@@ -4305,24 +4305,22 @@ pub mod formatter {
                 let mut nonempty_count: u32 = 1;
 
                 while (i as u64) < len {
+                    if i > jsc::MAX_ARRAY_INDEX {
+                        // An arguments object's `length` can exceed the index space.
+                        if empty_start.is_none() {
+                            empty_start = Some(i);
+                        }
+                        break;
+                    }
                     let element = value.get_direct_index(self.global_this, i)?;
                     if element.is_empty() {
                         if empty_start.is_none() {
                             empty_start = Some(i);
                         }
-                        if js_type.is_array() {
-                            // Skip the whole run of holes at once: probing each
-                            // index is O(length), and a sparse array's length
-                            // can be 2^32 - 1 with no elements at all.
-                            match value.next_present_index(i + 1) {
-                                Some(next) if (next as u64) < len => i = next,
-                                _ => break,
-                            }
-                        } else {
-                            // Arguments objects store their elements outside
-                            // the butterfly; their length is small, so probe
-                            // each index like before.
-                            i += 1;
+                        // Skip the run of holes at once: probing each index is O(length).
+                        match value.next_present_index(i + 1) {
+                            Some(next) if (next as u64) < len => i = next,
+                            _ => break,
                         }
                         continue;
                     }

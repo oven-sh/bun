@@ -588,6 +588,106 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+// JSC has three kinds of arguments objects: DirectArguments (sloppy function), ScopedArguments
+// (sloppy function with a parameter captured by a closure) and ClonedArguments (strict function).
+// The first two keep the arguments outside the regular indexed property storage. This file is a
+// module, so its own functions are strict; the body of a `new Function` is sloppy regardless.
+const argumentsObjectKinds = [
+  ["direct", new Function("return arguments")],
+  ["scoped", new Function("a", "const f = () => a; return arguments")],
+  [
+    "cloned",
+    function () {
+      return arguments;
+    },
+  ],
+];
+// Only a sloppy function's arguments object has `callee` as a data property (a strict one has a
+// throwing accessor), so this tells the first two kinds from the third.
+const isSloppyArguments = a => "value" in Object.getOwnPropertyDescriptor(a, "callee");
+
+it.each(argumentsObjectKinds)("Bun.inspect %s arguments object with holes and extra indexes", (kind, args) => {
+  expect(isSloppyArguments(args())).toBe(kind !== "cloned");
+  let a = args(1, 2, 3);
+  delete a[1];
+  expect(Bun.inspect(a)).toBe("[ 1, empty item, 3 ]");
+  a = args(1, 2, 3);
+  delete a[2];
+  expect(Bun.inspect(a)).toBe("[ 1, 2, empty item ]");
+  // Runs of more than one deleted argument, each followed by an argument that is still there.
+  a = args(1, 2, 3, 4, 5, 6, 7);
+  for (const i of [1, 2, 4, 5]) delete a[i];
+  a.length = 9;
+  expect(Bun.inspect(a)).toBe("[ 1, 2 x empty items, 4, 2 x empty items, 7, 2 x empty items ]");
+  // A deleted argument that is assigned again lives in the regular indexed storage. Here it
+  // comes after a hole and before an argument that was never deleted.
+  a = args(1, 2, 3, 4);
+  delete a[1];
+  delete a[2];
+  a[2] = "x";
+  expect(Bun.inspect(a)).toBe('[ 1, empty item, "x", 4 ]');
+  a = args(1, 2, 3);
+  Object.defineProperty(a, 1, { value: "x", enumerable: false });
+  expect(Bun.inspect(a)).toBe('[ 1, "x", 3 ]');
+  a = args(1, 2, 3);
+  a.length = 2;
+  expect(Bun.inspect(a)).toBe("[ 1, 2 ]");
+  a = args();
+  a.length = 3;
+  expect(Bun.inspect(a)).toBe("[ 3 x empty items ]");
+  // An index past the arguments themselves lands in the regular indexed storage
+  // and only shows once `length` covers it, like any other array-like.
+  a = args(1, 2, 3);
+  a[5] = 6;
+  expect(Bun.inspect(a)).toBe("[ 1, 2, 3 ]");
+  a.length = 8;
+  expect(Bun.inspect(a)).toBe("[ 1, 2, 3, 2 x empty items, 6, 2 x empty items ]");
+  delete a[2];
+  a[1_000_000] = "far";
+  a.length = 1_000_002;
+  expect(Bun.inspect(a)).toBe('[\n  1, 2, 3 x empty items, 6, 999994 x empty items, "far", empty item\n]');
+});
+
+// Unlike an array's, an arguments object's `length` is an ordinary writable property: it can be
+// anything at all (past 2^32 - 1, a getter) with only a handful of elements behind it, so it must
+// not drive an index-by-index probe either. In a child for the same reason as above.
+it("Bun.inspect arguments object with a huge length summarizes holes without iterating them", async () => {
+  // Code given to -e without a require() is a module as well, so the same three definitions.
+  const code = `
+    const direct = new Function("return arguments");
+    const scoped = new Function("a", "const f = () => a; return arguments");
+    class K { static cloned() { return arguments; } }
+    const isSloppyArguments = ${isSloppyArguments};
+    for (const args of [direct, scoped, K.cloned]) {
+      const a = args(1, 2, 3);
+      console.log(isSloppyArguments(a));
+      a.length = 2 ** 32;
+      console.log(a);
+      const b = args(1, 2, 3);
+      delete b[1];
+      b[70] = 70;
+      b[4294967294] = "max";
+      Object.defineProperty(b, "length", { get: () => 2 ** 50 });
+      console.log(Bun.inspect({ b }));
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const formatted =
+    "[\n  1, 2, 3, 4294967293 x empty items\n]\n" +
+    '{\n  b: [\n    1, empty item, 3, 67 x empty items, 70, 4294967223 x empty items, "max", 1125895611875329 x empty items\n  ],\n}\n';
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "true\n" + formatted + "true\n" + formatted + "false\n" + formatted,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // A property lookup that throws while an object is being formatted (a Proxy trap in the
 // prototype chain, a lazily initialized property whose initializer throws, a module namespace
 // export that is still in its temporal dead zone) used to leave the exception pending: the

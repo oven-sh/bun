@@ -127,13 +127,6 @@ pub enum ParseTaskStage {
 // Result
 // ───────────────────────────────────────────────────────────────────────────
 
-impl bun_event_loop::TaskOwner for Result {
-    /// A step of the bundle: what the build reports is its completion's to decide.
-    fn task_context(&self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
-    }
-}
-
 /// The information returned to the Bundler thread when a parse finishes.
 pub(crate) struct Result {
     pub(crate) task: EventLoop::Task,

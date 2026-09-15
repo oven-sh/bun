@@ -658,13 +658,6 @@ fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
 /// promise.
 pub type HTMLRewriterTransform = RewriterPipe;
 
-impl bun_event_loop::TaskOwner for RewriterPipe {
-    /// As a callback task: the pull of the next chunk of input, which checks the pipe's context.
-    fn task_context(&self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
-    }
-}
-
 /// Streaming pipe for one `HTMLRewriter::transform()`: receives input bytes
 /// via [`SinkHandle::HTMLRewriter`], feeds them through lol-html (suspending
 /// when a content handler returns a pending Promise), and emits output either

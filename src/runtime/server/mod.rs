@@ -225,13 +225,6 @@ bun_jsc::impl_abort_handle_owner!(
     }
 );
 
-impl<const SSL: bool, const DEBUG: bool> bun_event_loop::TaskOwner for NewServer<SSL, DEBUG> {
-    /// A callback task queued for the server is a step of its own teardown.
-    fn task_context(&self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
-    }
-}
-
 pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) app: Option<*mut uws_sys::NewApp<SSL>>,
     pub(crate) listener: Option<*mut uws_sys::app::ListenSocket<SSL>>,
@@ -1961,18 +1954,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // scheduleDeinit can be called inside a finalizer.
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
+            let app = self.app.unwrap();
             // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
             // (non-null for the server's lifetime); single-threaded JS
             // context, `&mut` scoped to this call.
             unsafe {
                 (*self.vm_mut()).enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                    std::ptr::from_mut::<Self>(self),
-                    |this| {
-                        // SAFETY: the task below, queued after this one, is what frees the server.
-                        if let Some(app) = (*this).app {
-                            // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                            bun_opaque::opaque_deref_mut(app).close();
-                        }
+                    app,
+                    |app| {
+                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                        bun_opaque::opaque_deref_mut(app).close();
                         Ok(())
                     },
                 ));

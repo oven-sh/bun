@@ -717,11 +717,6 @@ impl ErrorDeferred {
             // enqueued task (VM-owned), so a `BackRef` captures the invariant.
             global_this: bun_ptr::BackRef<JSGlobalObject>,
         }
-        impl bun_event_loop::TaskOwner for Context {
-            fn task_context(&self) -> bun_event_loop::TaskContext {
-                bun_event_loop::TaskContext::Of(self.asking)
-            }
-        }
         impl Context {
             // `bun_event_loop::ManagedTask::new` expects
             // `fn(*mut T) -> bun_event_loop::JsResult<()>` (tier-0 `bun_core::JsError`).
@@ -730,6 +725,8 @@ impl ErrorDeferred {
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { bun_core::heap::take(this) };
                 let global = this.global_this.get();
+                // For the script that asked: once its context has stopped the error goes to nobody.
+                let _context = global.bun_vm().enter_context(this.asking);
                 this.deferred.reject(global)
             }
         }

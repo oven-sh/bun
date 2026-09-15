@@ -1415,17 +1415,9 @@ impl VirtualMachine {
     /// stopped context `id`: they go on the next turn of the loop, before the
     /// context can be freed.
     pub(crate) fn stop_graph_context_again(&mut self, id: crate::ContextId) {
-        /// The VM's own sweep (of a context that has stopped).
-        struct StopAgain(crate::ContextId);
-        impl bun_event_loop::TaskOwner for StopAgain {
-            /// Runs for a context that has stopped.
-            fn task_context(&self) -> bun_event_loop::TaskContext {
-                bun_event_loop::TaskContext::Always
-            }
-        }
-        fn stop_again(this: *mut StopAgain) -> crate::JsResult<()> {
+        fn stop_again(id: *mut crate::ContextId) -> crate::JsResult<()> {
             // SAFETY: boxed below for this task.
-            let StopAgain(id) = *unsafe { Box::from_raw(this) };
+            let id = *unsafe { Box::from_raw(id) };
             let vm = VirtualMachine::get().as_mut();
             if let Some(context) = vm.graph_context(id).map(NonNull::from) {
                 // SAFETY: registered ⇒ not freed.
@@ -1460,7 +1452,7 @@ impl VirtualMachine {
         {
             // (Owned: released with the task if the VM goes before it runs.)
             self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(
-                Box::into_raw(Box::new(StopAgain(id))),
+                Box::into_raw(Box::new(id)),
                 stop_again,
             ));
         }
@@ -7783,12 +7775,5 @@ impl Drop for ContextScope<'_> {
             // SAFETY: the realm entered above; it is reachable from this frame until here.
             Bun__ModuleGraph__leaveContext(unsafe { &*self.entered }, self.previous);
         }
-    }
-}
-
-impl bun_event_loop::TaskOwner for VirtualMachine {
-    /// A callback task queued for the VM is the VM's own sweep.
-    fn task_context(&self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
     }
 }

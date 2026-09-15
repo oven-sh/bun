@@ -595,13 +595,6 @@ mod windows_impl {
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 
-    impl bun_event_loop::TaskOwner for WriteFileWindows {
-        /// A step of the write: its completion checks its context.
-        fn task_context(&self) -> bun_event_loop::TaskContext {
-            bun_event_loop::TaskContext::Always
-        }
-    }
-
     pub(crate) struct WriteFileWindows {
         pub(crate) io_request: uv::fs_t,
         pub(crate) file_blob: Blob,

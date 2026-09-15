@@ -94,14 +94,6 @@ const SCHEDULED_PRERESERVE_MAX: usize = 256 * 1024 * 1024;
 
 use http::signals::BodyReceiveMode;
 
-impl bun_event_loop::TaskOwner for FetchTasklet {
-    /// As a callback task: the hop that resumes the request body's stream, which releases the ref
-    /// taken for it.
-    fn task_context(&self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
-    }
-}
-
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct FetchTasklet {
     // Heap-allocated `FetchRequestBodySink` (a `JSSink`). FetchTasklet owns the

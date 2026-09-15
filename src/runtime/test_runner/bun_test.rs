@@ -1511,12 +1511,6 @@ impl RefData {
     }
 }
 
-impl bun_event_loop::TaskOwner for RunTestsTask {
-    fn task_context(&self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
-    }
-}
-
 pub struct RunTestsTask {
     pub(crate) weak: BunTestPtrWeak,
     // `GlobalRef` (not a borrow): the JSGlobalObject is stored across the task

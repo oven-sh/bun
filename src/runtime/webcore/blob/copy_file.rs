@@ -1058,14 +1058,6 @@ impl TryWith {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-impl bun_event_loop::TaskOwner for CopyFileWindows<'_> {
-    /// A step of the copy: its completion checks its context.
-    fn task_context(&self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
-    }
-}
-
-#[cfg(windows)]
 pub struct CopyFileWindows<'a> {
     pub(crate) destination_file_store: RefPtr<Store>,
     pub(crate) source_file_store: RefPtr<Store>,

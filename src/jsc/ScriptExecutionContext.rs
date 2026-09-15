@@ -582,11 +582,3 @@ unsafe extern "C" fn Bun__ScriptExecutionContext__release(
     // SAFETY: fn contract.
     unsafe { (*vm).release_graph_context(ptr::NonNull::new_unchecked(context)) }
 }
-
-impl bun_event_loop::TaskOwner for ScriptExecutionContext {
-    /// A callback task queued for a context is the VM's sweep of it: it runs after the context
-    /// has stopped.
-    fn task_context(&self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
-    }
-}

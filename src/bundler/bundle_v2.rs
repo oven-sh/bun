@@ -1126,12 +1126,6 @@ pub mod bv2_impl {
                 }
                 }
             }
-            impl bun_event_loop::TaskOwner for Resolve {
-                /// As a callback task: the answer on its way back to the bundle, which is waiting for it.
-                fn task_context(&self) -> bun_event_loop::TaskContext {
-                    bun_event_loop::TaskContext::Always
-                }
-            }
             impl bun_event_loop::Taskable for Resolve {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolve;
@@ -1343,12 +1337,6 @@ pub mod bv2_impl {
                             default_loader,
                             is_server_side,
                         );
-                }
-            }
-            impl bun_event_loop::TaskOwner for Load {
-                /// As a callback task: the answer on its way back to the bundle, which is waiting for it.
-                fn task_context(&self) -> bun_event_loop::TaskContext {
-                    bun_event_loop::TaskContext::Always
                 }
             }
             impl bun_event_loop::Taskable for Load {

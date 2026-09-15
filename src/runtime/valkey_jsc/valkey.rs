@@ -287,13 +287,6 @@ enum SubscribeHandled {
     Fallthrough,
 }
 
-impl bun_event_loop::TaskOwner for DeferredFailure {
-    /// Commands in flight when their client closed reject once.
-    fn task_context(&self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
-    }
-}
-
 struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,

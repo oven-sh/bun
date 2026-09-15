@@ -339,6 +339,16 @@ pub mod expect {
                 Self::Le => matches!(r, GreaterThan | Equal),
             }
         }
+        /// `a <rel> b`. The caller checked that each side is a Number or a BigInt.
+        pub(super) fn holds(self, global: &JSGlobalObject, a: JSValue, b: JSValue) -> bool {
+            if !a.is_big_int() && !b.is_big_int() {
+                self.cmp_f64(a.as_number(), b.as_number())
+            } else if a.is_big_int() {
+                self.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(a, b, global))
+            } else {
+                self.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(b, a, global))
+            }
+        }
     }
 
     impl Expect {
@@ -382,13 +392,7 @@ pub mod expect {
             }
 
             let not = this.flags.get().not();
-            let mut pass = if !value.is_big_int() && !other_value.is_big_int() {
-                rel.cmp_f64(value.as_number(), other_value.as_number())
-            } else if value.is_big_int() {
-                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other_value, global))
-            } else {
-                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other_value, value, global))
-            };
+            let mut pass = rel.holds(global, value, other_value);
 
             if not { pass = !pass; }
             if pass { return Ok(JSValue::UNDEFINED); }

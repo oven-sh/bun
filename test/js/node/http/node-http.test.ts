@@ -5,8 +5,9 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, exampleSite, nodeExe, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
+import { X509Certificate } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
 import http, {
@@ -1418,6 +1419,127 @@ describe("node https server", async () => {
       });
     });
   };
+
+  it("setSecureContext updates future handshakes without closing existing connections", async () => {
+    const replacement = {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem")),
+      minVersion: "TLSv1.2" as const,
+    };
+    const server = createHttpsServer(httpsOptions, (_req, res) => res.end("ok"));
+    const url = await listen(server, "https");
+    const connect = async () => {
+      const socket = tlsConnect({
+        host: "127.0.0.1",
+        port: Number(url.port),
+        rejectUnauthorized: false,
+      });
+      await once(socket, "secureConnect");
+      return socket;
+    };
+    let existing;
+    let renewed;
+    try {
+      existing = await connect();
+      const originalFingerprint = existing.getPeerCertificate().fingerprint256;
+
+      server.setSecureContext(replacement);
+      renewed = await connect();
+
+      const replacementFingerprint = renewed.getPeerCertificate().fingerprint256;
+      expect(replacementFingerprint).not.toBe(originalFingerprint);
+      expect(existing.getPeerCertificate().fingerprint256).toBe(originalFingerprint);
+      expect(existing.destroyed).toBe(false);
+      renewed.destroy();
+      renewed = undefined;
+
+      for (let iteration = 0; iteration < 8; iteration++) {
+        const useReplacement = iteration % 2 === 0;
+        server.setSecureContext(useReplacement ? replacement : httpsOptions);
+        const probe = await connect();
+        try {
+          expect(probe.getPeerCertificate().fingerprint256).toBe(
+            useReplacement ? replacementFingerprint : originalFingerprint,
+          );
+          expect(existing.destroyed).toBe(false);
+        } finally {
+          probe.destroy();
+        }
+      }
+    } finally {
+      existing?.destroy();
+      renewed?.destroy();
+      server.close();
+    }
+  });
+
+  it("setSecureContext accepts a PFX-only replacement and its embedded CA", async () => {
+    const fixtures = path.join(import.meta.dir, "../test/fixtures/keys");
+    const clientKey = nodefs.readFileSync(path.join(fixtures, "agent1-key.pem"));
+    const clientCert = nodefs.readFileSync(path.join(fixtures, "agent1-cert.pem"));
+    const server = createHttpsServer({ ...httpsOptions, requestCert: true, rejectUnauthorized: false }, (_req, res) =>
+      res.end("ok"),
+    );
+    const url = await listen(server, "https");
+    const controller = new AbortController();
+    const accepted = once(server, "secureConnection", { signal: controller.signal });
+    let client;
+    try {
+      server.setSecureContext({
+        pfx: nodefs.readFileSync(path.join(fixtures, "agent1.pfx")),
+        passphrase: "sample",
+      });
+      client = tlsConnect({
+        host: "127.0.0.1",
+        port: Number(url.port),
+        key: clientKey,
+        cert: clientCert,
+        rejectUnauthorized: false,
+      });
+      const [, [serverSocket]] = await Promise.all([once(client, "secureConnect"), accepted]);
+
+      expect(client.getPeerCertificate().fingerprint256).toBe(new X509Certificate(clientCert).fingerprint256);
+      expect(serverSocket.authorized).toBe(true);
+    } finally {
+      controller.abort();
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  const systemNode = nodeExe();
+  const pfxDefaultCARuntimes: Array<[string, string]> = [["Bun", bunExe()]];
+  if (systemNode) pfxDefaultCARuntimes.push(["Node", systemNode]);
+  it.each(pfxDefaultCARuntimes)(
+    "PFX CAs remain additive to default CAs across HTTPS server lifecycles in %s",
+    async (runtime, executable) => {
+      const fixtures = path.join(import.meta.dir, "../test/fixtures/keys");
+      await using proc = Bun.spawn({
+        cmd: [executable, path.join(import.meta.dir, "node-http-set-secure-context-pfx.node.mjs")],
+        env: {
+          ...bunEnv,
+          NODE_EXTRA_CA_CERTS: path.join(fixtures, "ca2-cert.pem"),
+          TLS_FIXTURES_DIR: fixtures,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ runtime, result: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+        runtime,
+        result: JSON.stringify({
+          liveTrust: { pfxCA: true, defaultCA: true },
+          relistenTrust: { pfxCA: true, defaultCA: true },
+          beforeListenTrust: { pfxCA: true, defaultCA: true },
+          initialTrust: { pfxCA: true, defaultCA: true },
+          explicitTrust: { pfxCA: true, defaultCA: false },
+        }),
+        exitCode: 0,
+        failureDetail: "",
+      });
+    },
+  );
   it("is marked encrypted (#5867)", async () => {
     const { server, url, done } = await createServer(async (req, res) => {
       expect(req.connection.encrypted).toBe(true);

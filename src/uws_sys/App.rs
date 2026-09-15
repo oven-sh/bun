@@ -150,6 +150,23 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
 
+    pub fn set_secure_context(
+        &mut self,
+        opts: &BunSocketContextOptions,
+        additional_ca: &BunSocketContextOptions,
+    ) -> bool {
+        // SAFETY: self is a live app and the CA pointers remain valid for the duration of the call.
+        unsafe {
+            c::uws_app_set_secure_context(
+                Self::SSL_FLAG,
+                self.as_raw(),
+                *opts,
+                additional_ca.ca,
+                additional_ca.ca_count,
+            ) != 0
+        }
+    }
+
     pub(crate) fn publish_with_options(
         &mut self,
         topic: &[u8],
@@ -655,6 +672,13 @@ pub mod c {
         );
 
         pub(crate) safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);
+        pub(crate) fn uws_app_set_secure_context(
+            ssl_flag: c_int,
+            app: &mut uws_app_t,
+            options: BunSocketContextOptions,
+            additional_ca: *const *const c_char,
+            additional_ca_count: c_uint,
+        ) -> c_int;
     }
 
     #[repr(C)]

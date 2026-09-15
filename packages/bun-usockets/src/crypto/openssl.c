@@ -3277,6 +3277,23 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
   return SSL_TLSEXT_ERR_OK;
 }
 
+void us_listen_socket_set_ssl_ctx(struct us_listen_socket_t *ls, SSL_CTX *ctx) {
+  if (ls->ssl_ctx == ctx) return;
+
+  SSL_CTX_up_ref(ctx);
+  SSL_CTX *previous = ls->ssl_ctx;
+  ls->ssl_ctx = ctx;
+
+  if (ls->sni) {
+    SSL_CTX_set_tlsext_servername_callback(ctx, sni_cb);
+  }
+  if (ls->on_server_name) {
+    SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+  }
+
+  if (previous) SSL_CTX_free(previous);
+}
+
 int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
                                      const char *hostname_pattern,
                                      SSL_CTX *ctx, void *user) {

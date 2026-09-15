@@ -103,6 +103,8 @@ pub struct WebWorker {
     parent_poll_ref: JsCell<KeepAlive>,
     /// Taken by the parent to join the OS thread.
     join_handle: JsCell<Option<JoinHandle<()>>>,
+    /// The last `worker.cpuUsage()` answer, which the next one never goes below.
+    last_cpu_usage: Cell<bun_sys::ThreadCpuUsage>,
 
     // ---- Worker-thread only -----------------------------------------------------
     // Mutated only on the worker thread, but through `&self` because other
@@ -425,6 +427,7 @@ impl WebWorker {
             vm: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
+            last_cpu_usage: Cell::new(bun_sys::ThreadCpuUsage::default()),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
@@ -558,6 +561,52 @@ impl WebWorker {
             // safepoint and its loop woken.
             handle.request_termination();
         }
+    }
+
+    /// One `worker.cpuUsage()` answer in microseconds. `measured`: the worker's own reading is in.
+    #[unsafe(export_name = "WebWorker__cpuUsage")]
+    pub(crate) extern "C" fn cpu_usage(
+        this: *mut WebWorker,
+        measured: bool,
+        user_micros: &mut f64,
+        system_micros: &mut f64,
+    ) -> bool {
+        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        let read = {
+            // `shutdown()` unpublishes the handle under this lock, so `Some` is a live thread.
+            let handle = this.vm_handle.lock();
+            handle
+                .as_ref()
+                .and(this.join_handle.get().as_ref())
+                .and_then(bun_sys::ThreadCpuUsage::of)
+        };
+        let now = match read {
+            Some(read) => read,
+            None if measured => bun_sys::ThreadCpuUsage {
+                user: *user_micros as u64,
+                system: *system_micros as u64,
+            },
+            None => return false,
+        };
+        let usage = now.never_below(this.last_cpu_usage.get());
+        this.last_cpu_usage.set(usage);
+        *user_micros = usage.user as f64;
+        *system_micros = usage.system as f64;
+        true
+    }
+
+    /// The calling thread's CPU times in microseconds. Worker thread.
+    #[unsafe(export_name = "WebWorker__currentThreadCpuUsage")]
+    pub(crate) extern "C" fn current_thread_cpu_usage(
+        user_micros: &mut f64,
+        system_micros: &mut f64,
+    ) -> bool {
+        let Some(usage) = bun_sys::ThreadCpuUsage::current() else {
+            return false;
+        };
+        *user_micros = usage.user as f64;
+        *system_micros = usage.system as f64;
+        true
     }
 
     /// The parent is releasing this thread: drop the keep-alive on the parent's

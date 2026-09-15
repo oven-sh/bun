@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isFreeBSD, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1553,6 +1553,78 @@ test("getHeapStatistics settles when terminated mid-request", async () => {
       e => e?.code,
     ),
   ).resolves.toMatch(/^(ok|ERR_WORKER_NOT_RUNNING)$/);
+});
+
+describe("a worker that does not return to its event loop", () => {
+  // The worker spins until the parent sets the flag, and the parent sets it only once the calls have
+  // settled: a call that waits for the worker's event loop never settles.
+  test.concurrent.each(["while its entry module evaluates", "inside a message handler"])(
+    "answers cpuUsage() and getHeapStatistics() %s",
+    async where => {
+      const flag = new Int32Array(new SharedArrayBuffer(4));
+      const spin = `parentPort.postMessage("spinning"); while (Atomics.load(workerData, 0) === 0) {}`;
+      const worker = new Worker(
+        `const { parentPort, workerData } = require("node:worker_threads");
+        ${where === "inside a message handler" ? `parentPort.once("message", () => { ${spin} });` : spin}`,
+        { eval: true, workerData: flag },
+      );
+      try {
+        const spinning = once(worker, "message");
+        if (where === "inside a message handler") worker.postMessage("go");
+        await spinning;
+
+        const statistics = await worker.getHeapStatistics();
+        expect(statistics.used_heap_size).toBeGreaterThan(0);
+        expect(statistics.total_physical_size).toBeGreaterThan(0);
+
+        // FreeBSD has no way to read another thread's CPU times, so cpuUsage() still asks the worker there.
+        if (!isFreeBSD) {
+          // The operating system may account CPU time in ticks as long as several milliseconds.
+          let usage = await worker.cpuUsage();
+          while (usage.user + usage.system === 0) usage = await worker.cpuUsage();
+          const since = await worker.cpuUsage(usage);
+          expect(since.user).toBeGreaterThanOrEqual(0);
+          expect(since.system).toBeGreaterThanOrEqual(0);
+        }
+
+        // Each answer lets the parent's event loop turn, so a loop that polls does not starve it.
+        let turned = false;
+        setImmediate(() => (turned = true));
+        while (!turned) await worker.getHeapStatistics();
+
+        expect(Atomics.load(flag, 0)).toBe(0);
+      } finally {
+        Atomics.store(flag, 0, 1);
+        await worker.terminate();
+      }
+    },
+  );
+
+  test.concurrent("getHeapStatistics() follows the heap as the worker collects", async () => {
+    // [0] ends the worker's loop. [1] lets it retain what it allocates, up to 64 MB, set once `before` is read.
+    const flags = new Int32Array(new SharedArrayBuffer(8));
+    const worker = new Worker(
+      `const { parentPort, workerData } = require("node:worker_threads");
+      parentPort.postMessage("spinning");
+      const retained = [];
+      while (Atomics.load(workerData, 0) === 0) {
+        const chunk = new Array(1024).fill(retained.length);
+        if (Atomics.load(workerData, 1) === 1 && retained.length < 8192) retained.push(chunk);
+      }`,
+      { eval: true, workerData: flags },
+    );
+    try {
+      await once(worker, "message");
+      const { used_heap_size: before } = await worker.getHeapStatistics();
+      Atomics.store(flags, 1, 1);
+      let after = before;
+      while (after < before + 16 * 1024 * 1024) after = (await worker.getHeapStatistics()).used_heap_size;
+      expect(Atomics.load(flags, 0)).toBe(0);
+    } finally {
+      Atomics.store(flags, 0, 1);
+      await worker.terminate();
+    }
+  });
 });
 
 test("*Internal introspection methods are DontEnum on Worker.prototype", () => {

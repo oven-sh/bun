@@ -108,6 +108,42 @@ JSVMClientData::~JSVMClientData()
     if (vmHandle)
         Bun__VmHandle__release(std::exchange(vmHandle, nullptr));
 }
+
+namespace {
+// The worker thread holds a ref on its proxy for longer than its VM lives.
+class WorkerHeapStatisticsPublisher final : public JSC::HeapObserver {
+    WTF_MAKE_NONCOPYABLE(WorkerHeapStatisticsPublisher);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WorkerHeapStatisticsPublisher);
+
+public:
+    WorkerHeapStatisticsPublisher(JSC::Heap& heap, WorkerMessagingProxy& worker)
+        : m_heap(heap)
+        , m_worker(worker)
+    {
+        m_heap.addObserver(this);
+    }
+
+    ~WorkerHeapStatisticsPublisher() final
+    {
+        m_heap.removeObserver(this);
+        m_worker.publishHeapStatistics(std::nullopt);
+    }
+
+private:
+    void willGarbageCollect() final {}
+
+    // The end of a collection, with the mutator stopped. Heap::size() would walk every block.
+    void didGarbageCollect(JSC::CollectionScope scope) final
+    {
+        size_t size = scope == JSC::CollectionScope::Full ? m_heap.sizeAfterLastFullCollection() : m_heap.sizeAfterLastEdenCollection();
+        m_worker.publishHeapStatistics(WorkerMessagingProxy::HeapStatistics { size, m_heap.capacity(), m_heap.extraMemorySize() });
+    }
+
+    JSC::Heap& m_heap;
+    WorkerMessagingProxy& m_worker;
+};
+}
+
 void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 {
     auto provider = WebCore::createBuiltinsSourceProvider();
@@ -115,6 +151,8 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     clientData->bunVM = bunVM;
     clientData->m_isWorkerVM = !!worker;
     clientData->m_isNodeWorkerVM = worker && worker->options().kind == WorkerOptions::Kind::Node;
+    if (worker)
+        clientData->m_workerHeapStatistics = makeUnique<WorkerHeapStatisticsPublisher>(vm->heap, *worker);
     clientData->vmHandle = Bun__VmHandle__retain(bunVM);
     clientData->vmHandleState = Bun__VmHandle__stateAddress(clientData->vmHandle);
     vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {

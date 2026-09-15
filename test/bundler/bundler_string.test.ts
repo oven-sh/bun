@@ -218,4 +218,36 @@ describe("bundler", () => {
       true`,
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/32576
+  // Only --minify-syntax may turn a quoted string into a template literal to print `\n` as a raw line break.
+  const quoteTests: Record<string, { expr: string; captureRaw: string; minifySyntax?: true; minifyWhitespace?: true }> =
+    {
+      NewlineStaysEscaped: { expr: '"Hello\\nWorld"', captureRaw: '"Hello\\nWorld"' },
+      NewlineStaysEscapedMinifyWhitespace: {
+        expr: '"Hello\\nWorld"',
+        captureRaw: '"Hello\\nWorld"',
+        minifyWhitespace: true,
+      },
+      NewlineBecomesTemplateMinifySyntax: {
+        expr: '"Hello\\nWorld"',
+        captureRaw: "`Hello\nWorld`",
+        minifySyntax: true,
+      },
+      // The quotes alone decide: `'` costs nothing, `"` costs one escape.
+      NewlineAndDoubleQuotePicksSingleQuote: { expr: '"x\\"y\\nz"', captureRaw: "'x\"y\\nz'" },
+      // A string with both quotes is a template literal with or without minify, so its `\n` prints raw.
+      BothQuotesPickTemplate: { expr: '"a\'b\\"c"', captureRaw: "`a'b\"c`" },
+      BothQuotesAndNewlinePickTemplate: { expr: '"a\'b\\"c\\nd"', captureRaw: "`a'b\"c\nd`" },
+    };
+  for (const [key, { expr, captureRaw, minifySyntax, minifyWhitespace }] of Object.entries(quoteTests)) {
+    itBundled(`string/Quote${key}`, {
+      files: {
+        "index.ts": `capture(${expr});`,
+      },
+      capture: [captureRaw],
+      minifySyntax,
+      minifyWhitespace,
+    });
+  }
 });

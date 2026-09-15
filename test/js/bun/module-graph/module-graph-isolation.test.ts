@@ -138,6 +138,10 @@ const dir = String(
       export const imports = (specifier, count) => {
         for (let i = 0; i < count; i++) import(specifier + "?tenant" + i).then(() => heard.push("fulfilled"), error => heard.push("rejected: " + error.code));
       };
+      // import() on a graph it was handed, and what that settles with.
+      export const importsInto = (other, specifier) => {
+        other.import(specifier).then(() => heard.push("fulfilled"), error => heard.push("rejected: " + error.code));
+      };
       // FileHandles nobody closes and nobody keeps.
       export const forgetsFileHandles = async (path, count) => { for (let i = 0; i < count; i++) await fs.promises.open(path, "r"); };
       // One the host is handed, with a stream over another.
@@ -275,6 +279,62 @@ const dir = String(
     "not-loaded-yet-tla.mjs": `
       await new Promise(resolve => setImmediate(resolve));
       export const loaded = true;
+    `,
+    // Evaluation that parks in a top-level await until the host says, and tells the host it is there.
+    "parks-in-tla.mjs": `
+      parked();
+      await gate;
+      export const loaded = true;
+    `,
+    "imports-through-another-graph.mjs": `
+      const gate = Promise.withResolvers(), parked = Promise.withResolvers();
+      const globals = { gate: gate.promise, parked: parked.resolve };
+      const asker = new Bun.ModuleGraph({ isolateIO: true }), loads = new Bun.ModuleGraph({ isolateIO: true, globals });
+      const app = await asker.import(import.meta.dir + "/left-behind-tenant.mjs");
+      const specifier = import.meta.dir + "/parks-in-tla.mjs";
+      asker.run(() => app.importsInto(loads, specifier));
+      await parked.promise;
+      const out = {};
+      if (process.argv[2] === "the one that asked") {
+        asker.dispose();
+        gate.resolve();
+        // The module finishes in the graph that loads it (the host's import of it waits for that).
+        out.host = await loads.import(specifier).then(() => "fulfilled", error => "rejected: " + error.code);
+      } else {
+        loads.dispose();
+        gate.resolve();
+      }
+      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+      out.askerHeard = app.heard;
+      console.log(JSON.stringify(out));
+      process.exit(0);
+    `,
+    "host-import-parked-at-dispose.mjs": `
+      const parked = Promise.withResolvers();
+      const graph = new Bun.ModuleGraph({ isolateIO: true, globals: { gate: new Promise(() => {}), parked: parked.resolve } });
+      let settled = "pending";
+      graph.import(import.meta.dir + "/parks-in-tla.mjs").then(() => (settled = "fulfilled"), error => (settled = "rejected: " + error.code));
+      await parked.promise;
+      graph.dispose();
+      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ settled }));
+      process.exit(0);
+    `,
+    "broadcast-channel-of-a-disposed-graph.mjs": `
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const hostEvent = Promise.withResolvers();
+      let outcome = "did not run";
+      // What is left of a disposed graph's script: a reaction to a promise of the host's.
+      graph.run(() => void hostEvent.promise.then(() => {
+        try { const channel = new BroadcastChannel("of-a-disposed-graph"); channel.postMessage(1); channel.close(); outcome = "said nothing"; }
+        catch (error) { outcome = "threw " + error.name; }
+      }));
+      graph.dispose();
+      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+      hostEvent.resolve();
+      await hostEvent.promise;
+      console.log(JSON.stringify({ outcome }));
+      process.exit(0);
     `,
     "imports-of-a-disposed-graph.mjs": `
       const graph = new Bun.ModuleGraph({ isolateIO: true });
@@ -2662,6 +2722,30 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       });
     },
   );
+  test("an import() its script asked another graph for says nothing to it; the graph that loads finishes the module", async () => {
+    expect(await runs("imports-through-another-graph.mjs", "the one that asked")).toEqual({
+      stdout: `{"host":"fulfilled","askerHeard":[]}`,
+      exitCode: 0,
+    });
+  });
+  test("a graph that asked a graph since disposed for an import() is told", async () => {
+    expect(await runs("imports-through-another-graph.mjs", "the one that loads")).toEqual({
+      stdout: `{"askerHeard":["rejected: ERR_INVALID_STATE"]}`,
+      exitCode: 0,
+    });
+  });
+  test("the host's import() of a module parked in a top-level await rejects", async () => {
+    expect(await runs("host-import-parked-at-dispose.mjs")).toEqual({
+      stdout: `{"settled":"rejected: ERR_INVALID_STATE"}`,
+      exitCode: 0,
+    });
+  });
+  test("a BroadcastChannel its leftover script makes and posts to says nothing", async () => {
+    expect(await runs("broadcast-channel-of-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"outcome":"said nothing"}`,
+      exitCode: 0,
+    });
+  });
   test("the files it held open are closed: a writer, bun:sqlite and node:sqlite databases, a FileHandle, a stream", async () => {
     expect(await runs("open-files-of-a-disposed-graph.mjs")).toEqual({
       stdout: JSON.stringify({

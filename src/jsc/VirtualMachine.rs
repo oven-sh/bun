@@ -1466,6 +1466,7 @@ impl VirtualMachine {
             let id = self.context_ids.next();
             if id != self.root_context.id()
                 && id != self.vm_context.id()
+                && id != self.dead_context.id()
                 && !self.graph_contexts.contains(&id)
             {
                 break id;

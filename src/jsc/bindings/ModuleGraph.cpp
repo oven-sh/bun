@@ -582,6 +582,9 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_onError);
     visitor.append(thisObject->m_mainPath);
     visitor.append(thisObject->m_mainImport);
+    Locker locker { thisObject->cellLock() };
+    for (auto& pending : thisObject->m_pendingImports)
+        visitor.append(pending.result);
 }
 DEFINE_VISIT_CHILDREN(JSModuleGraph);
 
@@ -620,18 +623,51 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
             m_mainPath.clear();
         return nullptr;
     }
-    // The loader marks its promise handled (import() in script derives one from it): so is what is
-    // returned here derived, by a reaction of JSC's own with no handler, so that a failure nobody
-    // handles is reported.
+    // The loader marks its promise handled (import() in script derives one from it): what is
+    // returned here is the caller's own, so that a failure nobody handles is reported, that
+    // dispose() can reject it whatever stage the load is at, and that it says nothing to a caller
+    // that is a disposed graph's script (settleImport).
     JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
-    result->pipeFrom(vm, loaded);
+    {
+        Locker locker { cellLock() };
+        m_pendingImports.append({ WriteBarrier<JSPromise>(vm, this, result), globalObject->currentScriptExecutionContext()->identifier() });
+    }
+    loaded->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsModuleGraphImportFulfilled), globalObject->thenable(jsModuleGraphImportRejected), jsUndefined(),
+        InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), this, result));
     if (becomesMain)
         m_mainImport.set(vm, this, result);
     return result;
 }
 
-// Drops the loader's registry and the graph's CommonJS cache. An import() that has not settled
-// rejects if it was waiting for a file, and otherwise never settles. Code of the graph that is still running keeps what it closes over, as usual: its
+// A disposed graph's script hears nothing, from the promises of another graph's import() either.
+static bool hearsNothing(WebCore::ScriptExecutionContextIdentifier caller)
+{
+    auto* context = WebCore::ScriptExecutionContext::getScriptExecutionContext(caller);
+    return !context || (context->isForModuleGraph() && context->isStopped());
+}
+
+void JSModuleGraph::settleImport(Zig::GlobalObject* globalObject, JSPromise* result, bool rejected, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    WebCore::ScriptExecutionContextIdentifier caller = 0;
+    {
+        Locker locker { cellLock() };
+        auto index = m_pendingImports.findIf([&](auto& pending) { return pending.result.get() == result; });
+        if (index == notFound)
+            return;
+        caller = m_pendingImports[index].caller;
+        m_pendingImports.removeAt(index);
+    }
+    if (hearsNothing(caller))
+        return;
+    if (rejected)
+        result->reject(vm, value);
+    else
+        result->resolve(globalObject, vm, value);
+}
+
+// Drops the loader's registry and the graph's CommonJS cache. An import() of this graph that has
+// not settled rejects (for a caller that still hears). Code of the graph that is still running keeps what it closes over, as usual: its
 // import() finds the graph through the overlay's @moduleLoader and rejects, its require()
 // throws, and onError stays for its errors.
 void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
@@ -644,6 +680,20 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
     // child processes, workers.
     if (auto* context = this->context())
         context->stop();
+    // What the graph's script had under way is discarded, so an import() of this graph that has not
+    // settled never would: whoever called and still hears is told. (After the stop: the graph's own
+    // script, which called import() on itself, does not.) A graph without a context discards
+    // nothing: its imports are left to finish.
+    MarkedArgumentBuffer rejected;
+    if (this->context()) {
+        Locker locker { cellLock() };
+        for (auto& pending : std::exchange(m_pendingImports, {})) {
+            if (!hearsNothing(pending.caller))
+                rejected.append(pending.result.get());
+        }
+    }
+    for (size_t i = 0; i < rejected.size(); ++i)
+        uncheckedDowncast<JSPromise>(rejected.at(i))->reject(vm, createModuleGraphDisposedError(globalObject));
     m_requireMap->clear(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     m_requireCache.clear();
@@ -952,3 +1002,17 @@ void initJSModuleGraphClassStructure(LazyClassStructure::Initializer& init)
 }
 
 } // namespace Bun
+
+BUN_DEFINE_HOST_FUNCTION(jsModuleGraphImportFulfilled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* pending = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->argument(1));
+    uncheckedDowncast<Bun::JSModuleGraph>(pending->internalField(JSC::InternalFieldTuple::Field::Slot0).get())->settleImport(defaultGlobalObject(globalObject), uncheckedDowncast<JSC::JSPromise>(pending->internalField(JSC::InternalFieldTuple::Field::Slot1).get()), false, callFrame->argument(0));
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+BUN_DEFINE_HOST_FUNCTION(jsModuleGraphImportRejected, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* pending = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->argument(1));
+    uncheckedDowncast<Bun::JSModuleGraph>(pending->internalField(JSC::InternalFieldTuple::Field::Slot0).get())->settleImport(defaultGlobalObject(globalObject), uncheckedDowncast<JSC::JSPromise>(pending->internalField(JSC::InternalFieldTuple::Field::Slot1).get()), true, callFrame->argument(0));
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}

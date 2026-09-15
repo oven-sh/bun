@@ -1098,17 +1098,15 @@ impl JSValue {
         }
     }
 
-    /// `get` without the per-call `StringImpl` and atom-table probe.
-    pub fn get_fetch_option(
+    /// `get` for a key that is one of `BunCommonStrings.h`'s, without the
+    /// per-call `StringImpl` and atom-table probe.
+    pub fn get_common_string(
         self,
         global: &JSGlobalObject,
-        name: crate::FetchOptionName,
+        key: crate::CommonString,
     ) -> JsResult<Option<JSValue>> {
         debug_assert!(self.is_object());
-        debug_assert_eq!(Bun__FetchOptionName__count(), crate::FetchOptionName::COUNT);
-        let v = host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__getFetchOption(self, global, name as u8)
-        })?;
+        let v = host_fn::from_js_host_call_generic(global, || key.get_property(self, global))?;
         if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() {
             Ok(None)
         } else {
@@ -1257,16 +1255,17 @@ impl JSValue {
         v.function_or_nullish(global, property)
     }
 
-    /// `get_function` for a `FetchOptionName`.
-    pub fn get_fetch_option_function(
+    /// `get_function` for a key that is one of `BunCommonStrings.h`'s; `name` is for the error.
+    pub fn get_common_string_function(
         self,
         global: &JSGlobalObject,
-        name: crate::FetchOptionName,
+        key: crate::CommonString,
+        name: &[u8],
     ) -> JsResult<Option<JSValue>> {
-        let Some(v) = self.get_fetch_option(global, name)? else {
+        let Some(v) = self.get_common_string(global, key)? else {
             return Ok(None);
         };
-        v.function_or_nullish(global, name.as_str().as_bytes())
+        v.function_or_nullish(global, name)
     }
 
     /// `self` as the value of the option `name`: a function, or absent when nullish.
@@ -2047,12 +2046,6 @@ unsafe extern "C" {
     safe fn JSC__JSValue__coerceToInt32(this: JSValue, global: &JSGlobalObject) -> i32;
     safe fn JSC__JSValue__coerceToInt64(this: JSValue, global: &JSGlobalObject) -> i64;
     safe fn JSC__JSValue__fastGet(this: JSValue, global: &JSGlobalObject, builtin: u8) -> JSValue;
-    safe fn JSC__JSValue__getFetchOption(
-        this: JSValue,
-        global: &JSGlobalObject,
-        name: u8,
-    ) -> JSValue;
-    safe fn Bun__FetchOptionName__count() -> u8;
     safe fn JSC__JSValue__jsonStringify(
         this: JSValue,
         global: &JSGlobalObject,

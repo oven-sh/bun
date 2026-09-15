@@ -23,6 +23,27 @@
 // These ones don't need to be in BunBuiltinNames.h
 // If we don't use it as an identifier name, but we want to avoid allocating the string frequently, put it in this list.
 #define BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(macro) \
+    macro(envALL_PROXY, "ALL_PROXY") \
+    macro(envAllProxy, "all_proxy") \
+    macro(envHTTPS_PROXY, "HTTPS_PROXY") \
+    macro(envHttpsProxy, "https_proxy") \
+    macro(envHTTP_PROXY, "HTTP_PROXY") \
+    macro(envHttpProxy, "http_proxy") \
+    macro(envNO_PROXY, "NO_PROXY") \
+    macro(envNoProxy, "no_proxy") \
+    macro(fetchOptionCompress, "compress") \
+    macro(fetchOptionDecompress, "decompress") \
+    macro(fetchOptionKeepalive, "keepalive") \
+    macro(fetchOptionMaxRedirects, "maxRedirects") \
+    macro(fetchOptionOnStats, "onStats") \
+    macro(fetchOptionProtocol, "protocol") \
+    macro(fetchOptionProxy, "proxy") \
+    macro(fetchOptionS3, "s3") \
+    macro(fetchOptionSession, "session") \
+    macro(fetchOptionTimeout, "timeout") \
+    macro(fetchOptionTls, "tls") \
+    macro(fetchOptionUnix, "unix") \
+    macro(fetchOptionVerbose, "verbose") \
     macro(httpACL, "ACL") \
     macro(httpBIND, "BIND") \
     macro(httpCHECKOUT, "CHECKOUT") \

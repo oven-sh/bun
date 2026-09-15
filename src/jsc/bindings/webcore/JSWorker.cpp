@@ -78,6 +78,151 @@
 namespace WebCore {
 using namespace JSC;
 
+static bool isNodeWorkerBooleanExecArgv(const String& flag)
+{
+    return flag == "--enable-source-maps"_s
+        || flag == "--no-addons"_s
+        || flag == "--no-deprecation"_s
+        || flag == "--no-ffi-cc"_s
+        || flag == "--no-warnings"_s
+        || flag == "--pending-deprecation"_s
+        || flag == "--preserve-symlinks"_s
+        || flag == "--preserve-symlinks-main"_s
+        || flag == "--throw-deprecation"_s
+        || flag == "--tls-max-v1.2"_s
+        || flag == "--tls-max-v1.3"_s
+        || flag == "--tls-min-v1.0"_s
+        || flag == "--tls-min-v1.1"_s
+        || flag == "--tls-min-v1.2"_s
+        || flag == "--tls-min-v1.3"_s
+        || flag == "--trace-deprecation"_s
+        || flag == "--trace-env"_s
+        || flag == "--trace-env-js-stack"_s
+        || flag == "--trace-env-native-stack"_s
+        || flag == "--trace-events-enabled"_s
+        || flag == "--trace-exit"_s
+        || flag == "--trace-warnings"_s
+        || flag == "--use-system-ca"_s;
+}
+
+static bool isNodeWorkerValueExecArgv(const String& flag)
+{
+    return flag == "-C"_s
+        || flag == "--conditions"_s
+        || flag == "--diagnostic-dir"_s
+        || flag == "--disable-warning"_s
+        || flag == "--dns-result-order"_s
+        || flag == "--max-http-header-size"_s
+        || flag == "--network-family-autoselection-attempt-timeout"_s
+        || flag == "--redirect-warnings"_s
+        || flag == "--tls-keylog"_s
+        || flag == "--trace-event-categories"_s
+        || flag == "--trace-event-file-pattern"_s
+        || flag == "--unhandled-rejections"_s;
+}
+
+static bool isNodeWorkerDisallowedExecArgv(const String& flag)
+{
+    return flag == "--perf-basic-prof"_s
+        || flag == "--perf-basic-prof-only-functions"_s
+        || flag == "--perf-prof"_s
+        || flag == "--perf-prof-unwinding-info"_s
+        || flag == "--stack-trace-limit"_s
+        || flag == "--title"_s
+        || flag == "--use-bundled-ca"_s
+        || flag == "--use-openssl-ca"_s
+        || flag == "--zero-fill-buffers"_s;
+}
+
+static std::optional<String> parseNodeWorkerExecArgv(const Vector<String>& execArgv, Vector<String>& outputPreloads, size_t& evalPreloadCount, size_t& bunPreloadCount, size_t& requirePreloadCount, WorkerEvalMode& evalMode)
+{
+    Vector<String> bunPreloads;
+    Vector<String> requirePreloads;
+    Vector<String> importPreloads;
+
+    for (size_t i = 0; i < execArgv.size(); i++) {
+        const String& argument = execArgv[i];
+        size_t equals = argument.find('=');
+        bool hasInlineValue = equals != notFound;
+        String flag = hasInlineValue ? argument.left(equals) : argument;
+
+        bool isBunPreload = flag == "--preload"_s;
+        bool isRequire = flag == "--require"_s || flag == "-r"_s;
+        bool isImport = flag == "--import"_s;
+        if (isBunPreload || isRequire || isImport) {
+            if (flag == "-r"_s && hasInlineValue)
+                return makeString("Initiated Worker with invalid execArgv flags: "_s, argument);
+
+            String value;
+            if (hasInlineValue) {
+                value = argument.substring(equals + 1);
+                if (value.isEmpty())
+                    return makeString("Initiated Worker with invalid execArgv flags: "_s, argument, " requires an argument"_s);
+            } else {
+                if (i + 1 >= execArgv.size() || execArgv[i + 1].startsWith("-"_s))
+                    return makeString("Initiated Worker with invalid execArgv flags: "_s, flag, " requires an argument"_s);
+                value = execArgv[++i];
+            }
+
+            if (isBunPreload)
+                bunPreloads.append(WTF::move(value));
+            else if (isRequire)
+                requirePreloads.append(WTF::move(value));
+            else
+                importPreloads.append(WTF::move(value));
+            continue;
+        }
+
+        if (flag == "--input-type"_s) {
+            String value;
+            if (hasInlineValue) {
+                value = argument.substring(equals + 1);
+                if (value.isEmpty())
+                    return makeString("Initiated Worker with invalid execArgv flags: "_s, flag, " requires an argument"_s);
+            } else if (i + 1 < execArgv.size() && !execArgv[i + 1].startsWith("-"_s)) {
+                value = execArgv[++i];
+            } else {
+                return makeString("Initiated Worker with invalid execArgv flags: "_s, flag, " requires an argument"_s);
+            }
+            if (value == "module"_s || value == "module-typescript"_s)
+                evalMode = WorkerEvalMode::Module;
+            else if (value == "commonjs"_s || value == "commonjs-typescript"_s)
+                evalMode = WorkerEvalMode::CommonJS;
+            else
+                evalMode = WorkerEvalMode::Auto;
+            continue;
+        } else if (isNodeWorkerBooleanExecArgv(flag)) {
+            continue;
+        } else if (isNodeWorkerValueExecArgv(flag)) {
+            if (hasInlineValue) {
+                if (!argument.substring(equals + 1).isEmpty())
+                    continue;
+            } else if (i + 1 < execArgv.size() && !execArgv[i + 1].startsWith("-"_s)) {
+                i++;
+                continue;
+            }
+            return makeString("Initiated Worker with invalid execArgv flags: "_s, flag, " requires an argument"_s);
+        } else if (flag == "--inspect"_s || flag == "--inspect-brk"_s || flag == "--inspect-port"_s) {
+            continue;
+        } else if (!isNodeWorkerDisallowedExecArgv(flag)) {
+            // The complete option parser lives above this binding. Preserve
+            // previously accepted flags instead of rejecting valid Node
+            // options that this local list does not need to interpret.
+            continue;
+        }
+
+        return makeString("Initiated Worker with invalid execArgv flags: "_s, argument);
+    }
+
+    bunPreloadCount = bunPreloads.size();
+    requirePreloadCount = requirePreloads.size();
+    outputPreloads.appendVector(WTF::move(bunPreloads));
+    outputPreloads.appendVector(WTF::move(requirePreloads));
+    evalPreloadCount = outputPreloads.size();
+    outputPreloads.appendVector(WTF::move(importPreloads));
+    return std::nullopt;
+}
+
 // Functions
 
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_terminate);
@@ -163,7 +308,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     // every option has validated (below).
     bool shareEnv = false;
     JSValue nodeWorkerObject {};
-    if (callFrame->argumentCount() == 3) {
+    if (callFrame->argumentCount() >= 3) {
         nodeWorkerObject = callFrame->argument(2);
         options.kind = WorkerOptions::Kind::Node;
     }
@@ -199,6 +344,14 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         RETURN_IF_EXCEPTION(throwScope, {});
         if (eval) {
             options.evalMode = eval.toBoolean(lexicalGlobalObject);
+        }
+
+        if (options.evalMode && options.kind == WorkerOptions::Kind::Node && callFrame->argumentCount() >= 4) {
+            auto evalSource = callFrame->argument(3);
+            if (evalSource.isString()) {
+                options.evalSource = evalSource.toWTFString(lexicalGlobalObject).isolatedCopy();
+                RETURN_IF_EXCEPTION(throwScope, {});
+            }
         }
 
         auto preloadModulesValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "preload"_s));
@@ -335,6 +488,12 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
             });
             RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTF::move(execArgv));
+            if (options.kind == WorkerOptions::Kind::Node) {
+                if (auto error = parseNodeWorkerExecArgv(*options.execArgv, options.execArgvPreloadModules, options.execArgvEvalPreloadCount, options.execArgvBunPreloadCount, options.execArgvRequirePreloadCount, options.execArgvEvalMode)) {
+                    throwScope.throwException(lexicalGlobalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, *error));
+                    return encodedJSValue();
+                }
+            }
         }
     }
 

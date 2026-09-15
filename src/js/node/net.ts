@@ -255,6 +255,9 @@ function endNT(socket, callback, err) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
+function cancelWriteNT(callback) {
+  callback(new ErrnoException(uv().UV_ECANCELED, "write"));
+}
 // Shared-fd TLS pair teardown: mirrors node's close ordering, where the
 // close-callbacks phase runs after the check phase (lib/net.js close path in
 // node v26.3.0), so destroy()-time setImmediates still see the pair alive.
@@ -2279,10 +2282,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
+    if (canceledWrite !== undefined) process.nextTick(cancelWriteNT, canceledWrite);
   } else {
     callback(err);
     // Node's order: 'error', then the canceled write's callback, then 'close'.
-    if (canceledWrite !== undefined) process.nextTick(canceledWrite, new ErrnoException(uv().UV_ECANCELED, "write"));
+    if (canceledWrite !== undefined) process.nextTick(cancelWriteNT, canceledWrite);
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
@@ -2673,7 +2677,7 @@ function fdSinkWrite(self, sink, buf, callback) {
 
 function settleSinkWrite(self, err?) {
   const callback = self[kSyncWriteCallback];
-  // destroy() already settled it with ECANCELED.
+  // destroy() took it to settle it with ECANCELED.
   if (callback === undefined) return;
   self[kSyncWriteCallback] = undefined;
   callback(err);

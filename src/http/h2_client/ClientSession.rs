@@ -290,6 +290,11 @@ impl ClientSession {
         Self::enter(this, |s| s.stream_request_body(async_http_id, ended));
     }
 
+    /// `WriteMessageType::LengthMismatch`; see [`Self::fail_request_body`].
+    pub(crate) fn fail_request_body_by_http_id(this: SessionPtr, async_http_id: u32) {
+        Self::enter(this, |s| s.fail_request_body(async_http_id));
+    }
+
     /// HTTP-thread wake-up from `resumeReceive`; see [`Self::resume_receive`].
     pub(crate) fn resume_receive_by_http_id(this: SessionPtr, async_http_id: u32) {
         Self::enter(this, |s| s.resume_receive(async_http_id));
@@ -1003,6 +1008,24 @@ impl ClientSession {
         }
         self.rearm_timeout();
         self.maybe_release();
+    }
+
+    /// Fails the request only while its stream body is still the one being sent.
+    fn fail_request_body(&mut self, async_http_id: u32) {
+        let Some(stream) = self.stream_for_http_id(async_http_id) else {
+            return;
+        };
+        let sending_stream_body = stream_mut(stream).client_mut().is_some_and(|client| {
+            matches!(
+                client.state.original_request_body,
+                HTTPRequestBody::Stream(_)
+            )
+        });
+        if sending_stream_body {
+            self.detach_with_failure(stream, crate::Error::RequestBodyLengthMismatch);
+            self.rearm_timeout();
+            self.maybe_release();
+        }
     }
 
     fn reap_aborted(&mut self) {

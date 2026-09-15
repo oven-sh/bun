@@ -203,6 +203,8 @@ pub struct WriteMessage {
 pub enum WriteMessageType {
     Data = 0,
     End = 1,
+    /// The stream body broke its declared Content-Length; a no-op once that body was dropped.
+    LengthMismatch = 2,
 }
 
 pub struct ShutdownMessage {
@@ -613,6 +615,7 @@ impl HttpThread {
             for write in &queued_writes {
                 let message = write.kind;
                 let ended = message == WriteMessageType::End;
+                let mismatch = message == WriteMessageType::LengthMismatch;
 
                 if let Some(socket_ptr) = abort_tracker().get(&write.async_http_id) {
                     match *socket_ptr {
@@ -622,19 +625,20 @@ impl HttpThread {
                             }
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
-                                if let crate::HTTPRequestBody::Stream(stream) =
-                                    &mut client.state.original_request_body
-                                {
-                                    stream.ended = ended;
-                                    client.flush_stream::<true>(socket);
+                                client.on_request_stream_message::<true>(message, socket);
+                            } else if let Some(session) = tagged.session() {
+                                if mismatch {
+                                    h2::ClientSession::fail_request_body_by_http_id(
+                                        session,
+                                        write.async_http_id,
+                                    );
+                                } else {
+                                    h2::ClientSession::stream_body_by_http_id(
+                                        session,
+                                        write.async_http_id,
+                                        ended,
+                                    );
                                 }
-                            }
-                            if let Some(session) = tagged.session() {
-                                h2::ClientSession::stream_body_by_http_id(
-                                    session,
-                                    write.async_http_id,
-                                    ended,
-                                );
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -643,22 +647,25 @@ impl HttpThread {
                             }
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
-                                if let crate::HTTPRequestBody::Stream(stream) =
-                                    &mut client.state.original_request_body
-                                {
-                                    stream.ended = ended;
-                                    client.flush_stream::<false>(socket);
+                                client.on_request_stream_message::<false>(message, socket);
+                            } else if let Some(session) = tagged.session() {
+                                if mismatch {
+                                    h2::ClientSession::fail_request_body_by_http_id(
+                                        session,
+                                        write.async_http_id,
+                                    );
+                                } else {
+                                    h2::ClientSession::stream_body_by_http_id(
+                                        session,
+                                        write.async_http_id,
+                                        ended,
+                                    );
                                 }
-                            }
-                            if let Some(session) = tagged.session() {
-                                h2::ClientSession::stream_body_by_http_id(
-                                    session,
-                                    write.async_http_id,
-                                    ended,
-                                );
                             }
                         }
                     }
+                } else if mismatch {
+                    h3::ClientContext::fail_request_body_by_http_id(write.async_http_id);
                 } else {
                     h3::ClientContext::stream_body_by_http_id(write.async_http_id, ended);
                 }

@@ -68,14 +68,51 @@ impl JavaScript {
 impl JavaScript {
     // For now, we're not going to cache JavaScript ASTs.
     // It's probably only relevant when bundling for production.
+    //
+    /// When the source is not UTF-8, `*source` is replaced with a copy decoded the way
+    /// Node.js decodes a script. The locations in the returned AST refer to that copy.
     pub(crate) fn parse<'a>(
         &self,
         bump: &'a Bump,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
         log: &mut bun_ast::Log,
-        source: &'a bun_ast::Source,
+        source: &mut &'a bun_ast::Source,
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
+        self.parse_impl(bump, opts, defines, log, source, true)
+    }
+
+    /// The lexer found bytes that are not UTF-8. It only learns that while it
+    /// decodes them, so a valid file pays nothing and never gets here.
+    #[cold]
+    fn parse_decoded<'a>(
+        &self,
+        bump: &'a Bump,
+        opts: js_parser::ParserOptions<'a>,
+        defines: &'a Define,
+        log: &mut bun_ast::Log,
+        source: &mut &'a bun_ast::Source,
+    ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
+        let decoded = strings::replace_invalid_utf8(source.contents(), bump);
+        *source = bump.alloc(bun_ast::Source {
+            contents: std::borrow::Cow::Borrowed(bun_ast::StoreStr::new(decoded).slice()),
+            ..(**source).clone()
+        });
+        // `false`: parse whatever `decoded` holds, so this cannot recurse again.
+        self.parse_impl(bump, opts, defines, log, source, false)
+    }
+
+    fn parse_impl<'a>(
+        &self,
+        bump: &'a Bump,
+        mut opts: js_parser::ParserOptions<'a>,
+        defines: &'a Define,
+        log: &mut bun_ast::Log,
+        source_slot: &mut &'a bun_ast::Source,
+        stop_on_ill_formed_utf8: bool,
+    ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
+        let source: &'a bun_ast::Source = *source_slot;
+        opts.features.stop_on_ill_formed_utf8 = stop_on_ill_formed_utf8;
         let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;
         let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
@@ -87,6 +124,10 @@ impl JavaScript {
         };
 
         let result = match parser.parse() {
+            // `temp_log` holds messages about text that was read wrong; drop it.
+            Ok(js_parser::Result::NotUtf8(opts)) => {
+                return self.parse_decoded(bump, *opts, defines, log, source_slot);
+            }
             Ok(r) => {
                 // The parser halts on every logged error.
                 debug_assert_eq!(temp_log.errors, 0);

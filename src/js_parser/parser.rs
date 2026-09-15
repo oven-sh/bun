@@ -221,6 +221,11 @@ pub mod Runtime {
         /// This comment must never be used manually.
         pub dont_bundle_twice: bool,
 
+        /// Return `Result::NotUtf8` when the lexer steps over bytes that are not
+        /// UTF-8, so the caller can parse the decoded text instead. Off: such
+        /// bytes are read the way they always were.
+        pub stop_on_ill_formed_utf8: bool,
+
         /// This is a list of packages which even when require() is used, we will
         /// instead convert to ESM import statements.
         ///
@@ -298,6 +303,7 @@ pub mod Runtime {
                 auto_polyfill_require: false,
                 replace_exports: ReplaceableExportMap::default(),
                 dont_bundle_twice: false,
+                stop_on_ill_formed_utf8: false,
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
                 unwrap_commonjs_to_esm: false,

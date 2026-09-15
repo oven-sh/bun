@@ -1405,7 +1405,7 @@ impl<'a> Transpiler<'a> {
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
-        let source: &'a bun_ast::Source = arena.alloc('brk: {
+        let mut source: &'a bun_ast::Source = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
                 break 'brk virtual_source.clone();
             }
@@ -1517,21 +1517,6 @@ impl<'a> Transpiler<'a> {
             // the erasure.
             let contents: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
-            // JavaScript source text is UTF-8 (see `ParseTask`). `RETURN_FILE_ONLY`
-            // callers and a WebAssembly binary get the bytes as they are.
-            let contents: &'static [u8] = if !RETURN_FILE_ONLY
-                && loader.is_javascript_like()
-                && !contents.starts_with(b"\0asm")
-            {
-                // SAFETY: the copy lives in `arena`, which also holds `source`.
-                unsafe {
-                    bun_ptr::detach_lifetime_ref::<[u8]>(strings::replace_invalid_utf8(
-                        contents, arena,
-                    ))
-                }
-            } else {
-                contents
-            };
             match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair { path, contents })
             {
                 Ok(s) => break 'brk s,
@@ -1726,9 +1711,13 @@ impl<'a> Transpiler<'a> {
                 // the real `parse` lives on `crate::cache::JavaScript`. Both
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
-                let parsed = match crate::cache::JavaScript::init()
-                    .parse(arena, opts, define, log, source)
-                {
+                let parsed = match crate::cache::JavaScript::init().parse(
+                    arena,
+                    opts,
+                    define,
+                    log,
+                    &mut source,
+                ) {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
                 };
@@ -1823,6 +1812,9 @@ impl<'a> Transpiler<'a> {
                         empty: false,
                         source_contents_backing: source_backing,
                     },
+                    js_ast::Result::NotUtf8(_) => {
+                        unreachable!("`cache::JavaScript::parse` parses the decoded text itself")
+                    }
                 });
             }
             // TODO: use lazy export AST

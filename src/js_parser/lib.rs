@@ -229,6 +229,9 @@ pub enum Result<'a> {
     AlreadyBundled(AlreadyBundled),
     Cached,
     Ast(Box<Ast<'a>>),
+    /// Only with `features.stop_on_ill_formed_utf8`: the source is not UTF-8 and
+    /// nothing was parsed. Holds the options so the caller can parse the decoded text.
+    NotUtf8(Box<ParserOptions<'a>>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

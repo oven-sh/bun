@@ -938,7 +938,6 @@ devTest("an export name with a byte that is not UTF-8 is a syntax error", {
       errors: [
         `m0.ts:1:14: error: The constant "v" must be initialized`,
         `m0.ts:1:15: error: Expected ";" but found "\uFFFD"`,
-        `m0.ts:1:16: error: Unexpected \uFFFD`,
       ],
     });
   },

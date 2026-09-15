@@ -798,13 +798,15 @@ pub mod parse_worker {
         opts: ParserOptions<'static>,
         bump: &'static Bump,
         resolver: *mut Resolver,
-        source: &'static Source,
+        // The JavaScript arm replaces it when it had to decode the file (see `cache::JavaScript::parse`).
+        source_slot: &mut &'static Source,
         loader: Loader,
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
+        let source: &'static Source = *source_slot;
 
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`.
         // `options` and `resolver` are disjoint fields of `Transpiler`; reborrowing
@@ -822,16 +824,23 @@ pub mod parse_worker {
                 // field drift is a hard error) before the move.
                 let fallback_opts = opts.clone_for_lazy_export();
                 let module_type = opts.module_type;
-                return if let Some(res) =
-                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
-                {
+                let parsed = (crate::cache::JavaScript {}).parse(
+                    bump,
+                    opts,
+                    &topts.define,
+                    log,
+                    source_slot,
+                )?;
+                let source: &'static Source = *source_slot;
+                return if let Some(res) = parsed {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
                         bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
                         bun_js_parser::Result::Cached
-                        | bun_js_parser::Result::AlreadyBundled(_) => {
-                            unreachable!("bundler parse never yields Cached/AlreadyBundled")
+                        | bun_js_parser::Result::AlreadyBundled(_)
+                        | bun_js_parser::Result::NotUtf8(_) => {
+                            unreachable!("bundler parse never yields Cached/AlreadyBundled/NotUtf8")
                         }
                     }
                 } else if module_type == options::ModuleType::Esm {
@@ -2377,12 +2386,7 @@ pub mod parse_worker {
         }
         *step = Step::Parse;
 
-        // JavaScript source text is UTF-8; decode before `source` is built so offsets match.
-        let entry_contents: &[u8] = if loader.is_javascript_like() {
-            strings::replace_invalid_utf8(entry.contents.as_slice(), bump)
-        } else {
-            entry.contents.as_slice()
-        };
+        let entry_contents: &[u8] = entry.contents.as_slice();
         let is_empty = strings::is_all_whitespace(entry_contents);
 
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the
@@ -2427,7 +2431,7 @@ pub mod parse_worker {
 
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
         // `&'bump Source` parameter is satisfied (`bump` is the same arena).
-        let source: &'static Source = bump.alloc(Source {
+        let mut source: &'static Source = bump.alloc(Source {
             // `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
             // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
             // field-by-field across the type boundary.
@@ -2679,7 +2683,7 @@ pub mod parse_worker {
                     opts,
                     bump,
                     resolver,
-                    source,
+                    &mut source,
                     loader,
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,

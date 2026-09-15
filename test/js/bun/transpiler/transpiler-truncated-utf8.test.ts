@@ -44,3 +44,45 @@ describe.skipIf(!(isLinux || isMacOS))("Bun.Transpiler.transformSync with trunca
     });
   });
 });
+
+test("Bun.Transpiler reads source bytes that are not UTF-8 the way TextDecoder does", async () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  // \xA9 cannot start a sequence. \xE9 and \xE2\x82 start one that the next byte
+  // does not continue. \xED\xA0\x80 is an encoded surrogate.
+  const source = Buffer.from(
+    '/*! \xA9 */ console.log("s\xA9 caf\xE9", /^r\xA9$/, "\xED\xA0\x80", "p\xE2\x82q");\n',
+    "latin1",
+  );
+  const expected = '/*! \uFFFD */\nconsole.log("s\uFFFD caf\uFFFD", /^r\uFFFD$/, "\uFFFD\uFFFD\uFFFD", "p\uFFFDq");\n';
+  expect(transpiler.transformSync(source)).toBe(expected);
+  expect(await transpiler.transform(source)).toBe(expected);
+  // U+FFFD that is really in the text is not a decoding error.
+  expect(transpiler.transformSync('console.log("ok \uFFFD \u00E9", /\uFFFD/);')).toBe(
+    'console.log("ok \uFFFD \u00E9", /\uFFFD/);\n',
+  );
+});
+
+// The lexer is what notices that a file is not UTF-8, so every kind of ill-formed
+// sequence has to be noticed when it is the only one in the file.
+test("a string literal holds what TextDecoder gives for each kind of byte sequence", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  const decoder = new TextDecoder();
+  // One lead byte from each class: continuation bytes, overlong leads, 2-byte, the
+  // 3-byte leads with a restricted second byte (E0, ED), 4-byte (F0, F4), too big.
+  const leads = [
+    0x80, 0xa9, 0xbf, 0xc0, 0xc1, 0xc2, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5, 0xf7,
+    0xf8, 0xff,
+  ];
+  const mismatches: string[] = [];
+  for (const lead of leads) {
+    for (const second of [0x41, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf]) {
+      for (const rest of [[], [0x80], [0x80, 0x80], [0xbf, 0x41]]) {
+        const bytes = Buffer.from([lead, second, ...rest]);
+        const source = Buffer.concat([Buffer.from('globalThis.literal = "'), bytes, Buffer.from('";')]);
+        (0, eval)(transpiler.transformSync(source));
+        if ((globalThis as any).literal !== decoder.decode(bytes)) mismatches.push(bytes.toString("hex"));
+      }
+    }
+  }
+  expect(mismatches).toEqual([]);
+});

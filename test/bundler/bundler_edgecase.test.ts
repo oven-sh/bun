@@ -4296,7 +4296,7 @@ describe("bundler", () => {
       "/entry.js": latin1("export const v\xFB0 = 1;\n"),
     },
     bundleErrors: {
-      "/entry.js": ['Expected ";" but found "\uFFFD"', 'The constant "v" must be initialized', "Unexpected \uFFFD"],
+      "/entry.js": ['Expected ";" but found "\uFFFD"', 'The constant "v" must be initialized'],
     },
   });
 });

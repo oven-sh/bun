@@ -207,9 +207,17 @@ pub mod lexer_step {
     /// inline into `next()` (perf showed it as a separate ~2.6% symbol with
     /// the multibyte decode folded in). `cold` parks this in `.text.unlikely`
     /// and survives LTO's IPO inliner.
+    ///
+    /// Sets `*ill_formed` when the bytes at `*current` are not UTF-8. The lexer learns that
+    /// nowhere else: each bulk skip it does stops at a non-ASCII byte, so all of them come here.
     #[cold]
     #[inline(never)]
-    pub fn next_codepoint_multibyte(contents: &[u8], current: &mut usize, first: u8) -> CodePoint {
+    pub fn next_codepoint_multibyte(
+        contents: &[u8],
+        current: &mut usize,
+        first: u8,
+        ill_formed: &mut bool,
+    ) -> CodePoint {
         let len = contents.len();
         let cp_len = wtf8_byte_sequence_length_with_invalid(first) as usize;
         let avail = len - *current;
@@ -218,33 +226,41 @@ pub mod lexer_step {
         // may still be 1 for invalid lead bytes (0x80-0xBF, 0xF8-0xFF) — those must yield the
         // raw byte, NOT the EOF sentinel, so the main lex loop falls through to its syntax-error
         // arm instead of silently emitting TEndOfFile mid-stream.
-        let code_point: CodePoint = if cp_len == 1 {
-            first as CodePoint
-        } else if avail < cp_len {
+        if cp_len == 1 {
+            *ill_formed = true;
+            *current += 1;
+            return first as CodePoint;
+        }
+        if avail < cp_len {
             // truncated multibyte at EOF
-            -1
-        } else {
-            let mut quad = [0u8; 4];
-            // SAFETY: `*current < len` (checked by caller), `cp_len ∈ 2..=4`, and
-            // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
-            // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
-            // never read.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    contents.as_ptr().add(*current),
-                    quad.as_mut_ptr(),
-                    cp_len,
-                );
-            }
-            decode_wtf8_rune_t_multibyte(quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
-        };
+            *ill_formed = true;
+            *current += cp_len;
+            return -1;
+        }
 
-        *current += if code_point != UNICODE_REPLACEMENT as CodePoint {
-            cp_len
-        } else {
-            1
-        };
-
+        let mut quad = [0u8; 4];
+        // SAFETY: `*current < len` (checked by caller), `cp_len ∈ 2..=4`, and
+        // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
+        // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
+        // never read.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                contents.as_ptr().add(*current),
+                quad.as_mut_ptr(),
+                cp_len,
+            );
+        }
+        let code_point: CodePoint = decode_wtf8_rune_t_multibyte(quad, cp_len as u8, -1);
+        if code_point < 0 {
+            *ill_formed = true;
+            *current += 1;
+            return UNICODE_REPLACEMENT as CodePoint;
+        }
+        // An encoded surrogate is WTF-8, not UTF-8.
+        if (0xD800..=0xDFFF).contains(&code_point) {
+            *ill_formed = true;
+        }
+        *current += cp_len;
         code_point
     }
 }

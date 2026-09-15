@@ -99,6 +99,8 @@ unsafe impl JsAffine for crate::GlobalRef {}
 unsafe impl JsAffine for bun_ptr::BackRef<JSGlobalObject> {}
 // SAFETY: see the group note above.
 unsafe impl JsAffine for KeepAlive {}
+// SAFETY: made, and dropped (`graph_job_finished`), on the JS thread; not touched by the job.
+unsafe impl JsAffine for crate::virtual_machine::OwnedFdJob {}
 // SAFETY: see the group note above.
 unsafe impl JsAffine for AsyncTaskTracker {}
 // SAFETY: see the group note above.

@@ -177,6 +177,10 @@ impl ScriptExecutionContext {
         self.owned_fds.with_mut(|fds| fds.push(fd));
     }
 
+    pub(crate) fn owns_fd(&self, fd: bun_sys::Fd) -> bool {
+        self.owned_fds.get().contains(&fd)
+    }
+
     /// Its script is about to close `fd` itself (the number may be another file's right after).
     pub fn disown_fd(&self, fd: bun_sys::Fd) {
         self.owned_fds.with_mut(|fds| {

@@ -133,6 +133,17 @@ impl Default for InitOptions {
     }
 }
 
+/// See [`VirtualMachine::owned_fd_job`].
+pub struct OwnedFdJob(Option<crate::ContextId>);
+
+impl Drop for OwnedFdJob {
+    fn drop(&mut self) {
+        if let Some(owner) = self.0 {
+            VirtualMachine::get().graph_job_finished(owner);
+        }
+    }
+}
+
 /// See [`VirtualMachine::graph_jobs`].
 #[derive(Default)]
 pub struct GraphJobs {
@@ -1184,6 +1195,27 @@ impl VirtualMachine {
         for fd in fds.into_iter().flatten() {
             bun_sys::FdExt::close(fd);
         }
+    }
+
+    /// An off-thread job is about to use `fd`. If a graph context other than the running script's
+    /// owns it (the host writing through a `FileHandle` a graph made), the job counts for the
+    /// owner until the guard is dropped, on this thread: the owner's `dispose()` must not close
+    /// the descriptor under it either.
+    pub fn owned_fd_job(&self, fd: Option<bun_sys::Fd>) -> OwnedFdJob {
+        let fd = match fd {
+            Some(fd) if self.graph_contexts.count() != 0 => fd,
+            _ => return OwnedFdJob(None),
+        };
+        let current = self.current_context().id();
+        let owner = self.graph_contexts.values().iter().find_map(|context| {
+            // SAFETY: registered ⇒ not freed.
+            let context = unsafe { context.as_ref() };
+            (context.owns_fd(fd) && context.id() != current).then(|| context.id())
+        });
+        if let Some(owner) = owner {
+            self.graph_job_started(owner);
+        }
+        OwnedFdJob(owner)
     }
 
     /// `context` stopped owning `fds`. Closed now, unless a job of its is still out: a write on

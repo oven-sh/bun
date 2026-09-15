@@ -650,6 +650,8 @@ mod _async_tasks {
         pub(crate) tracker: AsyncTaskTracker,
         /// The context of the script that called.
         pub(crate) context: bun_jsc::ContextId,
+        /// Dropped with the request, on the JS thread.
+        pub(crate) _fd_job: bun_jsc::virtual_machine::OwnedFdJob,
     }
 
     #[cfg(windows)]
@@ -672,6 +674,7 @@ mod _async_tasks {
             task_args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
+            let fd_job = vm.owned_fd_job(task_args.target_fd());
             let task = Box::new(Self {
                 promise: JSPromiseStrong::init(global_object),
                 args: task_args,
@@ -685,6 +688,7 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
                 context: vm.current_context().id(),
+                _fd_job: fd_job,
             });
             vm.graph_job_started(task.context);
             // Transfer ownership to libuv: the box outlives the async request and is
@@ -1022,11 +1026,24 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
+        /// The descriptor the operation is on, if script named one (see `VirtualMachine::owned_fd_job`).
+        fn target_fd(&self) -> Option<FD> {
+            None
+        }
     }
 
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
     /// already defines.
     macro_rules! impl_fs_argument {
+    ( fd: $( $ty:ty ),+ $(,)? ) => {
+        $(
+        // SAFETY: plain data.
+        unsafe impl ThreadIsolatedArg for $ty {}
+        impl FsArgument for $ty {
+            #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
+            #[inline] fn target_fd(&self) -> Option<FD> { Some(self.fd) }
+        } )+
+    };
     ( $( $ty:ty ),+ $(,)? ) => {
         $(
         // SAFETY: `from_js_async` parses paths and data thread-isolated / pinned
@@ -1040,8 +1057,6 @@ mod _async_tasks {
     impl_fs_argument!(
         args::Rename<'static>,
         args::Truncate<'static>,
-        args::FdVectorIo,
-        args::FTruncate,
         args::Chown<'static>,
         args::Lutimes<'static>,
         args::Chmod<'static>,
@@ -1058,12 +1073,16 @@ mod _async_tasks {
         args::MkdirTemp<'static>,
         args::Readdir<'static>,
         args::Open<'static>,
-        args::Write<'static>,
-        args::Read,
         args::Exists<'static>,
         args::Access<'static>,
         args::CopyFile<'static>,
         args::Cp<'static>,
+    );
+    impl_fs_argument!(
+        fd: args::FdVectorIo,
+        args::FTruncate,
+        args::Write<'static>,
+        args::Read,
         args::Fchown,
         args::FChmod,
         args::Fstat,
@@ -1091,6 +1110,13 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
         }
+        #[inline]
+        fn target_fd(&self) -> Option<FD> {
+            match &self.path {
+                PathOrFileDescriptor::Fd(fd) => Some(*fd),
+                PathOrFileDescriptor::Path(_) => None,
+            }
+        }
     }
     impl FsArgument for args::WriteFile<'static> {
         const HAVE_ABORT_SIGNAL: bool = true;
@@ -1101,6 +1127,13 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
+        }
+        #[inline]
+        fn target_fd(&self) -> Option<FD> {
+            match &self.file {
+                PathOrFileDescriptor::Fd(fd) => Some(*fd),
+                PathOrFileDescriptor::Path(_) => None,
+            }
         }
     }
     impl FsArgument for args::AppendFile<'static> {
@@ -1113,6 +1146,10 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.0.signal.as_deref()
+        }
+        #[inline]
+        fn target_fd(&self) -> Option<FD> {
+            self.0.target_fd()
         }
     }
 
@@ -1260,6 +1297,8 @@ mod _async_tasks {
     pub struct AsyncFSJs {
         pub(crate) promise: JSPromiseStrong,
         pub(crate) tracker: AsyncTaskTracker,
+        /// Dropped with the job, on the JS thread.
+        pub(crate) _fd_job: bun_jsc::virtual_machine::OwnedFdJob,
     }
 
     impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
@@ -1345,6 +1384,7 @@ mod _async_tasks {
             tracker.did_schedule(global_object);
             let promise = JSPromiseStrong::init(global_object);
             let value = promise.value();
+            let fd_job = vm.owned_fd_job(args.target_fd());
             bun_jsc::Job::<Self>::schedule(
                 &global_object.js_thread(),
                 Self {
@@ -1353,7 +1393,11 @@ mod _async_tasks {
                     // may be niche-optimised; never construct an all-zero `Result`.
                     result: Err(sys::Error::default()),
                 },
-                AsyncFSJs { promise, tracker },
+                AsyncFSJs {
+                    promise,
+                    tracker,
+                    _fd_job: fd_job,
+                },
             );
             value
         }
@@ -2410,7 +2454,11 @@ mod _async_tasks {
                     pending_err: None,
                     pending_err_mutex: bun_threading::Mutex::default(),
                 },
-                AsyncFSJs { promise, tracker },
+                AsyncFSJs {
+                    promise,
+                    tracker,
+                    _fd_job: vm.owned_fd_job(None),
+                },
             );
             value
         }

@@ -117,10 +117,19 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                     blob.size
                         .set((bytes.len() as SizeType).min(blob.size.get()));
                 }
+                // Owned until `F::call` takes it: `wrap` does not call this for a graph that was
+                // disposed, and a raw buffer would be left behind.
+                // SAFETY: `result.buf` is the `heap::into_raw` of a boxed slice (see the producers).
+                let bytes = unsafe { bun_core::heap::take(bytes) };
                 // The `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // provides the source-location/exception-scope behaviour.
                 AnyPromise::Normal(promise).wrap(global_this, move |g| {
-                    F::call(&blob, g, bytes, Lifetime::Temporary)
+                    F::call(
+                        &blob,
+                        g,
+                        bun_core::heap::into_raw(bytes),
+                        Lifetime::Temporary,
+                    )
                 })?;
             }
             ReadFileResultType::Err(err) => {

@@ -128,10 +128,10 @@ const dir = String(
           .transform(new Response("<p>a</p><p>b</p>")).text().then(() => say("fulfilled"), error => say("rejected: " + error.message));
       };
       // More writes than the pool has threads, so most are still queued when this returns.
+      export const opensForWriting = (dir, count) => Promise.all(Array.from({ length: count }, (_, i) => fs.promises.open(dir + "/tenant-" + i, "w")));
       export const queuesWrites = async (dir, count) => {
-        const handles = await Promise.all(Array.from({ length: count }, (_, i) => fs.promises.open(dir + "/tenant-" + i, "w")));
         const data = Buffer.alloc(4 << 20, "T");
-        for (const handle of handles) handle.write(data, 0, data.length, 0).catch(() => {});
+        for (const handle of await opensForWriting(dir, count)) handle.write(data, 0, data.length, 0).catch(() => {});
       };
       // FileHandles nobody closes and nobody keeps.
       export const forgetsFileHandles = async (path, count) => { for (let i = 0; i < count; i++) await fs.promises.open(path, "r"); };
@@ -248,7 +248,11 @@ const dir = String(
       const dir = fs.mkdtempSync(import.meta.dir + "/queued-writes-");
       const graph = new Bun.ModuleGraph({ isolateIO: true });
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      await graph.run(() => app.queuesWrites(dir, 64));
+      if (process.argv[2] === "host") {
+        // The host writes through handles the graph opened: the descriptors are still the graph's.
+        const data = Buffer.alloc(4 << 20, "T");
+        for (const handle of await graph.run(() => app.opensForWriting(dir, 64))) handle.write(data, 0, data.length, 0).catch(() => {});
+      } else await graph.run(() => app.queuesWrites(dir, 64));
       graph.dispose();
       // The host's files are given the descriptor numbers the graph's had.
       const mine = Array.from({ length: 64 }, (_, i) => fs.openSync(dir + "/host-" + i, "w"));
@@ -2607,6 +2611,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
   test("writes it had queued on the thread pool never reach the files that are given its descriptors next", async () => {
     expect(await runs("queued-writes-of-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"hostFilesWrittenTo":0}`,
+      exitCode: 0,
+    });
+  });
+  test("nor do writes the host had queued through FileHandles the graph opened", async () => {
+    expect(await runs("queued-writes-of-a-disposed-graph.mjs", "host")).toEqual({
       stdout: `{"hostFilesWrittenTo":0}`,
       exitCode: 0,
     });

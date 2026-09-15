@@ -129,6 +129,49 @@ setInterval(() => {}, 1000);
   10000,
 );
 
+// `bun --watch` owns SIGINT (node parity: the watcher exits 0 on it). Its
+// handler `_exit`s from signal context, past the exit hook that writes the
+// startup termios back, so a script in raw mode (setRawMode, a keypress UI)
+// that a process group orchestrator or `kill -INT` ends left the shell with
+// `-echo -icanon -isig`.
+it.skipIf(isWindows)("--watch writes the startup termios back when SIGINT ends it", async () => {
+  using dir = tempDir("watch-sigint-termios", {
+    "raw.js": `process.stdin.setRawMode(true); console.log("RAW-ON");`,
+  });
+
+  const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+  const ECHO = 0x8;
+  const decoder = new TextDecoder();
+  let output = "";
+  const rawOn = Promise.withResolvers<void>();
+  await using terminal = new Bun.Terminal({
+    cols: 80,
+    rows: 24,
+    data(_, chunk: Uint8Array) {
+      output += decoder.decode(chunk, { stream: true });
+      if (output.includes("RAW-ON")) rawOn.resolve();
+    },
+  });
+  expect(terminal.localFlags & (ICANON | ECHO)).toBe(ICANON | ECHO);
+
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "raw.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    terminal,
+  });
+  const exitedEarly = watchee.exited.then(code => {
+    throw new Error(`watchee exited before going raw (code ${code}):\n${output}`);
+  });
+  exitedEarly.catch(() => {});
+  await Promise.race([rawOn.promise, exitedEarly]);
+  expect(terminal.localFlags & (ICANON | ECHO)).toBe(0);
+
+  watchee.kill("SIGINT");
+  expect(await watchee.exited).toBe(0);
+  expect(terminal.localFlags & (ICANON | ECHO)).toBe(ICANON | ECHO);
+});
+
 // While one thread is inside execve(2), Linux fails every clone(CLONE_FS) in
 // the process with EAGAIN until the exec has killed the other threads
 // (fs/exec.c check_unsafe_exec, kernel/fork.c copy_fs). The --watch reload

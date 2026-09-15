@@ -70,7 +70,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     ASSERT(context.isContextThread());
 
     String url = urlInit;
-    if (url.startsWith("file://"_s)) {
+    if (url.startsWith("file:"_s)) {
         WTF::URL urlObject { url };
         if (!urlObject.isValid())
             return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };

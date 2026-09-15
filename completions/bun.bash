@@ -108,6 +108,11 @@ _bun_completions_inner() {
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
     local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
 
+    if [[ "${prev}" == "=" && "${COMP_WORDS[$(( COMP_CWORD - 2 ))]}" == "--cwd" ]]; then
+        _compgen_reply -d -S / -- "${cur_word}"
+        return
+    fi
+
     case "${prev}" in
         help|--help|-h|-v|--version) return ;;
         -c|--config)      _file_arguments "!*.toml" && return ;;
@@ -249,7 +254,7 @@ _bun_completions_inner() {
             return ;;
         "")
             _compgen_reply -W "${SUBCOMMANDS}" -- "${cur_word}"
-            _long_short_completion "${GLOBAL_OPTIONS_LONG}" "${GLOBAL_OPTIONS_SHORT}"
+            _long_short_completion "${GLOBAL_OPTIONS_LONG} ${GLOBAL_OPTIONS_SHORT}"
             _read_scripts_in_package_json
             return ;;
         *)
@@ -326,7 +331,11 @@ _bunx_completions() {
     fi
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
-    if [[ "${cur_word}" == -* ]]; then
+    local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
+
+    if [[ "${prev}" == "=" && "${COMP_WORDS[$(( COMP_CWORD - 2 ))]}" == "--cwd" ]] || [[ "${prev}" == "--cwd" ]]; then
+        _compgen_reply -d -S / -- "${cur_word}"
+    elif [[ "${cur_word}" == -* ]]; then
         _compgen_reply -W "--bun --install --help -h" -- "${cur_word}"
     else
         local bins

@@ -611,7 +611,39 @@ pub mod posix_spawn {
     }
 
     #[cfg(unix)]
+    unsafe extern "C" {
+        // safe: by-value args; a bad pid is ESRCH, never UB.
+        safe fn kill(pid: pid_t, sig: c_int) -> c_int;
+    }
+
+    /// Every runtime spawn passes here (`bun_core::spawn_sync_inherit` does not).
+    #[cfg(unix)]
     pub(crate) fn spawn_z(
+        path: &CStr,
+        actions: Option<&Actions>,
+        attr: Option<&Attr>,
+        argv: *const *const c_char,
+        envp: *const *const c_char,
+    ) -> sys::Result<pid_t> {
+        let Some(_in_flight) = crate::spawn_gate::enter() else {
+            return sys::Result::Err(
+                sys::Error::from_code(sys::E::ECANCELED, SYSCALL_POSIX_SPAWN)
+                    .with_path(path.to_bytes()),
+            );
+        };
+        let result = spawn_z_inner(path, actions, attr, argv, envp);
+        // The gate closed meanwhile. If `close` gave up waiting for this spawn,
+        // the exit walk listed our children without this one.
+        if let Ok(pid) = result
+            && crate::spawn_gate::is_closed()
+        {
+            let _ = kill(pid, system::SIGKILL);
+        }
+        result
+    }
+
+    #[cfg(unix)]
+    fn spawn_z_inner(
         path: &CStr,
         actions: Option<&Actions>,
         attr: Option<&Attr>,

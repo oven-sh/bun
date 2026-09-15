@@ -4,7 +4,7 @@
 // "xn--" labels would pass ICU's uidna_nameToASCII(CHECK_BIDI | CHECK_CONTEXTJ | NONTRANSITIONAL_TO_ASCII) with the
 // hyphen and length errors ignored. Mirrors icu::UTS46::processLabel for ACE labels: the label must Punycode-decode
 // (u_strFromPunycode's rules), the decoding must be unchanged by the uts46 normalizer (valid, NFC), must not contain
-// U+FFFD or start with a combining mark. Labels that would then need the BiDi or CONTEXTJ rules are left to ICU.
+// U+FFFD, start with a combining mark, or begin with "xn--" again. Labels that would then need the BiDi or CONTEXTJ rules are left to ICU.
 // Deliberately free of WTF so it can be tested standalone against ICU.
 
 #include <unicode/uchar.h>
@@ -152,6 +152,9 @@ inline ASCIIHostPunycodeVerdict checkLabel(const CharacterType* label, size_t le
         return count == -2 ? ASCIIHostPunycodeVerdict::NeedsFullCheck : ASCIIHostPunycodeVerdict::Invalid;
     if (!count)
         return ASCIIHostPunycodeVerdict::NeedsFullCheck;
+    // UTS #46 4.1 criterion 4 (Unicode 15.1): the decoded label must not begin with "xn--" either.
+    if (count >= 4 && codePoints[0] == 'x' && codePoints[1] == 'n' && codePoints[2] == '-' && codePoints[3] == '-')
+        return ASCIIHostPunycodeVerdict::Invalid;
 
     UChar utf16[maxCodePoints * 2];
     int32_t utf16Length = 0;

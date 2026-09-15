@@ -100,3 +100,17 @@ describe("url.domainToUnicode", () => {
     });
   }
 });
+
+// UTS #46 4.1 criterion 4: a label must not begin with "xn--" once it is Punycode-decoded.
+// Node rejects the host, so both functions return "". ICU's ToUnicode would otherwise hand back
+// the label with a U+FFFD marker appended.
+describe("nested xn-- labels", () => {
+  test.each([
+    ["xn--xn--zca-hia", "xn--zca£"],
+    ["xn--xn---epa", "xn--é"],
+    ["a.xn--xn--ab-gva.b", "xn--abé"],
+    ["xn--xn--zca-7pj", "xn--zcaا (RTL: rejected before the BiDi rules hand it to ICU)"],
+  ])("'%s' (decodes to %s) is rejected", input => {
+    expect([url.domainToASCII(input), url.domainToUnicode(input)]).toEqual(["", ""]);
+  });
+});

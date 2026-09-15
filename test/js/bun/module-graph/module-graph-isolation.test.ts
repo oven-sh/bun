@@ -743,6 +743,25 @@ const dir = String(
         writer.on("error", () => {}).write("the graph\x27s", error => { told.wrote = error ? error.code : "wrote"; });
       });
     `,
+    "listens-and-reads-its-address.mjs": `
+      import http from "node:http";
+      import net from "node:net";
+      export const heard = [];
+      // What every server does: the 'listening' callback reads the port it was given.
+      export const listen = () => {
+        for (const [name, server] of [["http", http.createServer(() => {})], ["net", net.createServer(() => {})]])
+          server.listen(0, "127.0.0.1", () => heard.push(name + " " + typeof server.address().port));
+      };
+    `,
+    "disposed-in-the-turn-it-listens.mjs": `
+      // No onError, and no handler of the host's: an error in the graph's leftover code would end this process.
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/listens-and-reads-its-address.mjs");
+      graph.run(() => app.listen());
+      graph.dispose();
+      for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ heard: app.heard }));
+    `,
     "its-own-streams-after-it-was-disposed.mjs": `
       const [data, scratch] = ["/data.txt", "/scratch-own-" + process.pid].map(name => import.meta.dir + name);
       const graph = new Bun.ModuleGraph();
@@ -2346,62 +2365,60 @@ test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts a 
   });
 });
 
-describe.concurrent(
-  "ModuleGraph isolation: a disposed graph sends nothing, and hears only what Node's own JavaScript announces",
-  () => {
-    // What it opens is closed from the event loop, a moment later: nothing may happen in between.
-    // 'listening' is not from the event loop: node:net and node:http announce it themselves, from a
-    // process.nextTick(), which a disposed graph's script still runs. Nobody can connect.
-    for (const order of ["disposed in the turn that opens", "opens after it was disposed"] as const) {
-      test(order, async () => {
-        const received: string[] = [];
-        const hostUdp = await Bun.udpSocket({
-          hostname: "127.0.0.1",
-          port: 0,
-          socket: { data: (socket, data) => void received.push(data.toString()) },
-        });
+describe.concurrent("ModuleGraph isolation: a disposed graph sends nothing and announces nothing", () => {
+  // What it opens is closed from the event loop, a moment later: nothing may happen in between.
+  // ('listening' is not from the event loop: node:net and node:http announce it themselves, from a
+  // process.nextTick(), which a disposed graph's script still runs. They do not announce a server
+  // that is not listening: inside the handler address() would be null.)
+  for (const order of ["disposed in the turn that opens", "opens after it was disposed"] as const) {
+    test(order, async () => {
+      const received: string[] = [];
+      const hostUdp = await Bun.udpSocket({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { data: (socket, data) => void received.push(data.toString()) },
+      });
+      try {
+        // The same from the host: everything does happen when nobody is disposed.
+        const hostState = newState("effects-host");
+        hostApp.effects(hostState, hostUdp.port, tlsCertificate);
         try {
-          // The same from the host: everything does happen when nobody is disposed.
-          const hostState = newState("effects-host");
-          hostApp.effects(hostState, hostUdp.port, tlsCertificate);
-          try {
-            await until(() => hostState.heard.length === 7 && received.length === 2);
-          } finally {
-            hostState.close?.();
-          }
+          await until(() => hostState.heard.length === 7 && received.length === 2);
+        } finally {
+          hostState.close?.();
+        }
 
-          using made = await newGraph();
-          const state = newState("effects");
-          made.graph.run(() => {
-            if (order === "disposed in the turn that opens") made.app.effects(state, hostUdp.port, tlsCertificate);
-            else made.app.call(() => queueMicrotask(() => made.app.effects(state, hostUdp.port, tlsCertificate)));
-          });
-          made.graph.dispose();
-          // A datagram of the host's own, sent afterwards, has arrived: the graph's would have too.
-          const sender = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
-          try {
-            await until(() => {
-              sender.send("marker", hostUdp.port, "127.0.0.1");
-              return received.includes("marker");
-            });
-          } finally {
-            sender.close();
-          }
-          await hostTimerTurns();
-          expect({
-            heard: state.heard,
-            datagrams: received.filter(datagram => datagram === "effect:" + state.tag),
-          }).toEqual({
-            heard: ["net listening", "tls listening", "http listening", "https listening", "http2 listening"],
-            datagrams: [],
+        using made = await newGraph();
+        const state = newState("effects");
+        made.graph.run(() => {
+          if (order === "disposed in the turn that opens") made.app.effects(state, hostUdp.port, tlsCertificate);
+          else made.app.call(() => queueMicrotask(() => made.app.effects(state, hostUdp.port, tlsCertificate)));
+        });
+        made.graph.dispose();
+        // A datagram of the host's own, sent afterwards, has arrived: the graph's would have too.
+        const sender = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+        try {
+          await until(() => {
+            sender.send("marker", hostUdp.port, "127.0.0.1");
+            return received.includes("marker");
           });
         } finally {
-          hostUdp.close();
+          sender.close();
         }
-      });
-    }
-  },
-);
+        await hostTimerTurns();
+        expect({
+          heard: state.heard,
+          datagrams: received.filter(datagram => datagram === "effect:" + state.tag),
+        }).toEqual({
+          heard: [],
+          datagrams: [],
+        });
+      } finally {
+        hostUdp.close();
+      }
+    });
+  }
+});
 
 describe.concurrent("ModuleGraph isolation: fs.watchFile of one path by several owners", () => {
   // node:fs keeps one StatWatcher per path for all the listeners of fs.watchFile(path): per owner,
@@ -3276,6 +3293,9 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       stdout: `{"settled":"pending"}`,
       exitCode: 0,
     });
+  });
+  test("a server it was disposed in the turn it listened is not announced to it: its listen callback cannot fail the host", async () => {
+    expect(await runsFixture("disposed-in-the-turn-it-listens.mjs")).toEqual({ stdout: `{"heard":[]}`, exitCode: 0 });
   });
   test("a BroadcastChannel its leftover script makes and posts to says nothing, to it or to the host's listener", async () => {
     expect(await runsFixture("broadcast-channel-of-a-disposed-graph.mjs")).toEqual({

@@ -386,22 +386,10 @@ pub(crate) fn handle_template_value(
             return Ok(());
         }
 
-        if let Some(_rstream) = crate::webcore::ReadableStream::from_js(template_value, global)? {
-            let idx = out_jsobjs.len();
-            marked_argument_buffer.append(template_value);
-            out_jsobjs.push(template_value);
-            let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
-            write!(
-                cursor,
-                "{}{}{}",
-                bstr::BStr::new(LEX_JS_OBJREF_PREFIX),
-                idx,
-                LEX_JS_REF_TERMINATOR as char
-            )
-            .map_err(|_| global.throw_out_of_memory())?;
-            let n = cursor.position() as usize;
-            out_script.extend_from_slice(&jsobjref_buf[..n]);
-            return Ok(());
+        if crate::webcore::ReadableStream::from_js(template_value, global)?.is_some() {
+            return Err(global.throw(format_args!(
+                "ReadableStream is not supported as a shell redirect yet. Buffer it first, e.g. `< ${{await new Response(stream).blob()}}`, or use Bun.spawn({{ stdin: stream }})"
+            )));
         }
 
         if let Some(_req) = template_value.as_::<crate::webcore::Response>() {

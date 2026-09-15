@@ -116,6 +116,20 @@ exports[`d0 snapshot serialize edgecases 29`] = `"\`hello snapshot4 \\\`\\\`"`;
 
 exports[`d0 snapshot serialize edgecases 30`] = `"\\\`hello snapshot5 \\\`\\\`"`;
 
+exports[`d0 snapshot serialize edgecases: String with 16-bit storage 1`] = `
+String {
+  "0": "日",
+  "1": "本",
+}
+`;
+
+exports[`d0 snapshot serialize edgecases: String with ASCII text in 16-bit storage 1`] = `
+String {
+  "0": "a",
+  "1": "b",
+}
+`;
+
 exports[`d0 snapshot serialize edgecases: one 1`] = `1`;
 
 exports[`d0 snapshot serialize edgecases: one 2`] = `3`;

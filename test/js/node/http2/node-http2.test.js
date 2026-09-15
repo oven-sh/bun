@@ -1968,6 +1968,105 @@ it("http2 session.goaway() sends custom data", async done => {
   });
 });
 
+// nghttp2 refuses a GOAWAY whose payload (8 fixed bytes + opaqueData) exceeds 16384 bytes, whatever
+// MAX_FRAME_SIZE the peer advertises, and node ignores the failure: the call returns normally and
+// sends nothing. node v26.3.0 puts exactly these frames on the wire from either side. They are read
+// off a raw socket because the last call used to wrap the 24-bit length field to 0, and an HTTP/2
+// peer reads the 16 MiB that follow as new frames.
+it.each(["client", "server"])(
+  "http2 %s session.goaway() sends nothing when opaqueData does not fit a 16384-byte GOAWAY payload",
+  async sender => {
+    const SETTINGS = 4;
+    const GOAWAY = 7;
+    const WINDOW_UPDATE = 8;
+    const kMaxOpaqueData = 16384 - 8;
+    const marker = Buffer.from("end");
+    const emptySettings = Buffer.from([0, 0, 0, SETTINGS, 0, 0, 0, 0, 0]);
+    const { promise: markerOrClose, resolve, reject } = Promise.withResolvers();
+
+    // [type, payload length] of each frame up to the marker GOAWAY. Payloads are skipped, not buffered.
+    const frames = [];
+    let sawMarker = false;
+    function frameScanner(skip) {
+      const header = Buffer.alloc(9);
+      let have = 0;
+      return chunk => {
+        for (let i = 0; i < chunk.length && !sawMarker && frames.length < 16; ) {
+          if (skip > 0) {
+            const n = Math.min(skip, chunk.length - i);
+            skip -= n;
+            i += n;
+            continue;
+          }
+          const n = Math.min(header.length - have, chunk.length - i);
+          chunk.copy(header, have, i, i + n);
+          have += n;
+          i += n;
+          if (have === header.length) {
+            have = 0;
+            skip = header.readUIntBE(0, 3);
+            frames.push([header[3], skip]);
+            sawMarker = header[3] === GOAWAY && skip === 8 + marker.length;
+          }
+        }
+        if (sawMarker) resolve();
+      };
+    }
+
+    // Runs once the peer's SETTINGS is read, so that close() leaves no unread bytes and no RST behind.
+    let returned;
+    function sendGoaways(session) {
+      returned = [kMaxOpaqueData, kMaxOpaqueData + 1, 2 ** 24 - 8].map(size =>
+        session.goaway(http2.constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(size, 0x41)),
+      );
+      session.goaway(http2.constants.NGHTTP2_NO_ERROR, 0, marker);
+      session.close();
+    }
+
+    let server, client;
+    try {
+      if (sender === "client") {
+        server = net.createServer(socket => {
+          socket.on("data", frameScanner(24)); // skips the client connection preface
+          socket.on("error", reject);
+          socket.on("close", resolve);
+          socket.write(emptySettings);
+        });
+        await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+        client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+        client.on("error", reject);
+        client.once("remoteSettings", () => sendGoaways(client));
+      } else {
+        server = http2.createServer();
+        server.on("sessionError", reject);
+        server.on("session", session => session.once("remoteSettings", () => sendGoaways(session)));
+        await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+        client = net.connect(server.address().port, "127.0.0.1", () => {
+          client.write(Buffer.concat([Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), emptySettings]));
+        });
+        client.on("data", frameScanner(0));
+        client.on("error", reject);
+        client.on("close", resolve);
+      }
+      await markerOrClose;
+      expect({
+        returned,
+        // When SETTINGS, its ACK and WINDOW_UPDATE go out depends on timing, not on goaway().
+        frames: frames.filter(([type]) => type !== SETTINGS && type !== WINDOW_UPDATE),
+      }).toEqual({
+        returned: [undefined, undefined, undefined],
+        frames: [
+          [GOAWAY, 8 + kMaxOpaqueData],
+          [GOAWAY, 8 + marker.length],
+        ],
+      });
+    } finally {
+      client?.destroy();
+      server?.close();
+    }
+  },
+);
+
 it("http2 session.goaway() opaqueData survives re-entrant buffer detach over a JS Duplex", async () => {
   // The cork-flush path re-enters JS (onWrite → Duplex _write) when the transport is a JS
   // stream. If that JS detaches the opaqueData ArrayBuffer mid-write, the GOAWAY payload must
@@ -1975,7 +2074,8 @@ it("http2 session.goaway() opaqueData survives re-entrant buffer detach over a J
   const fixture = `
     const http2 = require("node:http2");
     const { Duplex } = require("node:stream");
-    const N = 64 * 1024;
+    // The most opaque data a GOAWAY carries. With its 17 header bytes it still overflows the 16 KiB cork.
+    const N = 16384 - 8;
     const GOAWAY_WIRE_SIZE = 9 + 8 + N;
     let opaque = new Uint8Array(N).fill(0x41);
     const spray = [], received = [];
@@ -2025,7 +2125,7 @@ it("http2 session.goaway() opaqueData survives re-entrant buffer detach over a J
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const result = JSON.parse(stdout.trim());
-  expect(result).toEqual({ fired: true, declared: 64 * 1024, ok: 64 * 1024 });
+  expect(result).toEqual({ fired: true, declared: 16384 - 8, ok: 16384 - 8 });
   expect(exitCode).toBe(0);
 }, 15_000);
 

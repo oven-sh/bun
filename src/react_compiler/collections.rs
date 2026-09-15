@@ -376,6 +376,11 @@ impl<K: Copy + Into<u32>, V> IdMap<K, V> {
     pub(crate) fn remove(&mut self, k: K) -> Option<V> {
         self.0.remove(&k.into())
     }
+    /// O(1) remove; does not preserve order.
+    #[inline]
+    pub(crate) fn swap_remove(&mut self, k: K) -> Option<V> {
+        self.0.swap_remove(&k.into())
+    }
     #[inline]
     pub(crate) fn iter(&self) -> impl Iterator<Item = (K, &V)>
     where

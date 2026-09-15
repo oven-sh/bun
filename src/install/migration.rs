@@ -2,7 +2,6 @@ use crate::Error;
 use bun_ast::{E, ExprData};
 use bun_core::strings;
 use bun_core::{Output, zstr};
-use bun_paths::PathBuffer;
 use bun_semver as Semver;
 use bun_semver::query::token::Wildcard;
 use bun_sys::{self, Fd, File, O};
@@ -42,7 +41,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             break 'npm;
         };
         // file closes on Drop
-        let mut lockfile_path_buf = PathBuffer::uninit();
+        let mut lockfile_path_buf = bun_paths::path_buffer_pool::get();
         let Ok(lockfile_path) = bun_sys::get_fd_path(lockfile.handle(), &mut lockfile_path_buf)
         else {
             break 'npm;

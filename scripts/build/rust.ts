@@ -496,8 +496,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // line up. Stale/partial coverage is expected (codegen drifts; prebuilt
   // WebKit isn't instrumented) — `-fprofile-use`'s C++ warnings are already
   // silenced in flags.ts; rustc just emits "no profile data" notes and skips
-  // those functions, it does not fail. Driven end-to-end by `bun run
-  // build:btg:pgo`. RUSTFLAGS only reach target crates (with `--target`), so
+  // those functions, it does not fail. Driven end-to-end by
+  // scripts/build-pgo.ts. RUSTFLAGS only reach target crates (with `--target`), so
   // host build scripts / proc-macros stay un-instrumented, which is what we
   // want. Not on Windows (the C++ PGO flags are `c.unix`-gated; keep parity).
   if (!cfg.windows && cfg.pgoGenerate) {

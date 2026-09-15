@@ -770,7 +770,10 @@ impl TimerObjectInternals {
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
-        let scheduled_time = now.add_ms(i64::from(self.interval.get()));
+        // Only `Bun.sleep()` has an `interval` below 1.
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
+        let min_delay = unsafe { (*state).timer.fake_timers.min_delay_ms() };
+        let scheduled_time = now.add_ms(i64::from(self.interval.get().max(min_delay)));
         let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
         if was_active {
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh

@@ -4,7 +4,7 @@ use core::mem;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
+use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
@@ -552,8 +552,7 @@ impl Package<u64> {
         // `package_index` / `string_bytes` only — none of which the dependency
         // pass mutates — so the reorder is observationally identical.
         let pkg_value = Package {
-            name: builder
-                .append_with_hash::<String>(self.name.slice(old_string_buf), self.name_hash),
+            name: builder.append::<String>(self.name.slice(old_string_buf)),
             bin: self.bin.clone_with_buffers(
                 old_string_buf,
                 old_extern_string_buf,
@@ -714,8 +713,8 @@ impl Package<u64> {
 
         // -- Cloning
         {
-            let package_name: ExternalString = string_builder
-                .append_with_hash::<ExternalString>(manifest.name(), manifest.pkg.name.hash);
+            let package_name: ExternalString =
+                string_builder.append::<ExternalString>(manifest.name());
             package.name_hash = package_name.hash;
             package.name = package_name.value;
             package.resolution =
@@ -772,14 +771,10 @@ impl Package<u64> {
                         }
                     }
 
-                    let name: ExternalString = string_builder.append_with_hash::<ExternalString>(
-                        key.slice(&manifest.string_buf),
-                        key.hash,
-                    );
-                    let dep_version = string_builder.append_with_hash::<String>(
-                        version_string_.slice(&manifest.string_buf),
-                        version_string_.hash,
-                    );
+                    let name: ExternalString =
+                        string_builder.append::<ExternalString>(key.slice(&manifest.string_buf));
+                    let dep_version = string_builder
+                        .append::<String>(version_string_.slice(&manifest.string_buf));
                     // `string_builder` holds the `&mut string_bytes` borrow; read
                     // through it instead of `lockfile.buffers.string_bytes`.
                     let sliced = dep_version.sliced(string_builder.string_bytes.as_slice());
@@ -1868,7 +1863,7 @@ impl Package<u64> {
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
                 let folder = *dependency_version.folder();
-                let mut folder_buf = PathBuffer::uninit();
+                let mut folder_buf = bun_paths::path_buffer_pool::get();
                 let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
                     &mut folder_buf.0,
@@ -1987,7 +1982,7 @@ impl Package<u64> {
                             b"*"
                         } else {
                             'brk: {
-                                let mut buf2 = PathBuffer::uninit();
+                                let mut buf2 = bun_paths::path_buffer_pool::get();
                                 let rel =
                                     resolve_path::relative_platform::<path::platform::Auto, false>(
                                         FileSystem::instance().top_level_dir(),
@@ -2821,7 +2816,7 @@ impl Package<u64> {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
-                        let mut cwd_buf = PathBuffer::uninit();
+                        let mut cwd_buf = bun_paths::path_buffer_pool::get();
                         // `bun_sys::getcwd` returns the byte length — slice
                         // the buffer ourselves.
                         let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;

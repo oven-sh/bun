@@ -403,6 +403,89 @@ describe("web worker", () => {
     });
   });
 
+  // As in browsers (and Node's Web Worker), the worker's implicit port opens once the entry's
+  // synchronous part has run: a message dispatched while no 'message' handler exists is dropped.
+  // node:worker_threads' parentPort is what queues until a listener is attached. #40141
+  describe("message delivery does not wait for a 'message' handler", () => {
+    async function withWorker(
+      src: string,
+      drive: (w: Worker, got: unknown[], done: PromiseWithResolvers<void>) => void,
+    ) {
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      const got: unknown[] = [];
+      const done = Promise.withResolvers<void>();
+      w.onerror = e => done.reject(e.error ?? e.message);
+      w.addEventListener("close", e => done.reject(new Error(`worker closed (${e.code}) with ${JSON.stringify(got)}`)));
+      drive(w, got, done);
+      try {
+        await done.promise;
+      } finally {
+        w.terminate();
+      }
+      return got;
+    }
+
+    // Posted while the worker is still starting: queued, and delivered once the entry has run and
+    // installed its handler — the top-level await never settling does not hold them back (#15408).
+    test("a handler installed before a top-level await that never settles receives what was queued during startup", async () => {
+      const got = await withWorker(
+        `self.onmessage = e => postMessage(e.data);
+         postMessage("installed");
+         await new Promise(() => {});`,
+        (w, got, done) => {
+          w.postMessage("early");
+          w.onmessage = e => {
+            if (e.data === "installed") return [0, 1, 2].forEach(m => w.postMessage(m));
+            got.push(e.data);
+            if (e.data === 2) done.resolve();
+          };
+        },
+      );
+      expect(got).toEqual(["early", 0, 1, 2]);
+    });
+
+    // The worker joins a BroadcastChannel first thing and installs a one-shot "probe" listener; the
+    // parent posts "probe" at construction. Its arrival proves the worker's port is live (a post
+    // that lands while the worker is still starting is buffered, and startup runs other queued
+    // tasks before it drains them), so the worker says "ready" from that handler, after removing
+    // it. The parent then posts 0..2 and answers "go". Those reach the worker as tasks in that
+    // order, so 0..2 are dispatched — to no handler — strictly before `await gate` resumes and
+    // installs one. 3 and 4 come after it.
+    test("a handler installed after a top-level await misses what was dispatched before it", async () => {
+      const gateName = "worker-gate-" + crypto.randomUUID();
+      const gate = new BroadcastChannel(gateName);
+      try {
+        const got = await withWorker(
+          `const c = new BroadcastChannel(${JSON.stringify(gateName)});
+           const gate = new Promise(go => { c.onmessage = () => { c.close(); go(); }; });
+           self.addEventListener("message", function probe(e) {
+             if (e.data !== "probe") return;
+             self.removeEventListener("message", probe);
+             c.postMessage("ready");
+           });
+           await gate;
+           self.onmessage = e => postMessage(e.data);
+           postMessage("installed");`,
+          (w, got, done) => {
+            w.postMessage("probe");
+            gate.onmessage = () => {
+              [0, 1, 2].forEach(m => w.postMessage(m));
+              gate.postMessage("go");
+            };
+            w.onmessage = e => {
+              if (e.data === "installed") return [3, 4].forEach(m => w.postMessage(m));
+              got.push(e.data);
+              if (e.data === 4) done.resolve();
+            };
+          },
+        );
+        expect(got).toEqual([3, 4]);
+      } finally {
+        gate.close();
+      }
+    });
+  });
+
   describe("terminate() races and lifecycle edges", () => {
     // A vm timeout inside a worker is a transient termination of that VM; it
     // must not leave the worker unable to run script (parent messages dropped).

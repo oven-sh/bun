@@ -168,7 +168,7 @@ impl Ls {
                 }
                 Yield::suspended()
             }
-            Tag::WaitingWriteErr => Yield::failed(),
+            Tag::WaitingWriteErr => Yield::suspended(),
             Tag::Done => Builtin::done(interp, cmd, 0),
         }
     }

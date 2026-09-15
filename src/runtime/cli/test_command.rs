@@ -13,9 +13,9 @@ use bun_dotenv as DotEnv;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_paths::{self as bun_path, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
@@ -895,7 +895,7 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        let mut junit_path_buf = PathBuffer::uninit();
+        let mut junit_path_buf = bun_paths::path_buffer_pool::get();
 
         junit_path_buf[..path.len()].copy_from_slice(path);
         junit_path_buf[path.len()] = 0;
@@ -941,6 +941,11 @@ fn should_drain_event_loop() -> bool {
 /// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
 pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
+}
+
+/// `ExitHandler::requested` at the end of a run, which does not wait for the event loop to run dry.
+pub(crate) fn exit_is_requested() -> bool {
+    !should_drain_event_loop()
 }
 
 pub struct CommandLineReporter {
@@ -1653,7 +1658,7 @@ fn write_lcov_report(
         ".lcov.info.{}.tmp",
         bun_core::fmt::hex_lower(&rand)
     );
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let tmp_path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
         relative_dir,
         &mut buf,
@@ -2672,6 +2677,7 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        vm.exit_handler.requested = exit_is_requested();
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;
@@ -2879,10 +2885,15 @@ impl TestCommand {
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
-            // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
-            // raw-ptr escape so the closure does not hold a borrowck lock on
-            // it for the loop body.
-            scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
+            let global = vm.global();
+            scopeguard::defer! {
+                // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
+                // raw-ptr escape so the closure does not hold a borrowck lock on
+                // it for the loop body.
+                unsafe { (*bun_test_root_ptr).exit_file(); }
+                // A mock.module() patch still pending must not hold up the next file.
+                bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
+            }
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
@@ -2964,6 +2975,12 @@ impl TestCommand {
             }
 
             vm.event_loop_ref().tick();
+
+            // Tests start after top-level mock.module() calls with a pending factory have patched their module.
+            while bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
+                vm.event_loop_ref().auto_tick();
+                vm.event_loop_ref().tick();
+            }
 
             'blk: {
                 // Check if bun_test is available and has tests to run

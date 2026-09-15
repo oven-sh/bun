@@ -5,7 +5,7 @@ use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, SEP, SEP_STR};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -1732,7 +1732,7 @@ impl<'a> PackageInstall<'a> {
         };
 
         #[cfg(not(windows))]
-        let mut buf2 = PathBuffer::uninit();
+        let mut buf2 = bun_paths::path_buffer_pool::get();
         #[cfg(not(windows))]
         let to_copy_buf2_offset: usize;
         #[cfg(unix)]
@@ -2053,10 +2053,10 @@ impl<'a> PackageInstall<'a> {
             && dirname_slice != dest_path.as_bytes())
         .then_some(dirname_slice);
 
-        let mut dest_buf = PathBuffer::uninit();
+        let mut dest_buf = bun_paths::path_buffer_pool::get();
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         let symlinked_path = self.cache_dir_subpath;
-        let mut to_buf = PathBuffer::uninit();
+        let mut to_buf = bun_paths::path_buffer_pool::get();
         // Open the target relative to cache_dir, then resolve its canonical path.
         // Returning a borrow of `to_buf` from an `FnMut` closure is rejected by
         // borrowck, so inline the open/getFdPath/close.
@@ -2105,7 +2105,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(windows)]
         {
             use bun_sys::windows;
-            let mut wbuf = bun_paths::WPathBuffer::uninit();
+            let mut wbuf = bun_paths::w_path_buffer_pool::get();
             // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
             // WPathBuffer of the passed length.
             let dest_path_length = unsafe {
@@ -2210,7 +2210,7 @@ impl<'a> PackageInstall<'a> {
             let target = path::resolve_path::relative(dest_dir_path, to_path);
             // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated
             // copies in stack buffers.
-            let mut target_buf = PathBuffer::uninit();
+            let mut target_buf = bun_paths::path_buffer_pool::get();
             target_buf[..target.len()].copy_from_slice(target);
             target_buf[target.len()] = 0;
             // SAFETY: NUL written above.

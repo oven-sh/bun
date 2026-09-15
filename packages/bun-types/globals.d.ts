@@ -173,9 +173,11 @@ declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
      * @param strategy Bun extension. Its `highWaterMark` (bytes, default 64 KiB) bounds how much
      * output one input chunk produces per step: the largest piece a reader receives per `read()`,
      * and how far decoding runs ahead of a slow reader. A chunk larger than that may produce up to
-     * its own size per step.
+     * its own size per step. Its `level` selects the compression level: 0-9 for the zlib formats,
+     * 0-11 for brotli (quality), 1-22 for zstd. Omitted means the format's default
+     * (zlib default, brotli 11, zstd 3).
      */
-    new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number }): CompressionStream;
+    new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number; level?: number }): CompressionStream;
   }
 >;
 
@@ -317,7 +319,7 @@ interface TextEncoder extends Bun.__internal.LibEmptyOrNodeUtilTextEncoder {
    * @param src The text to encode.
    * @param dest The array that receives the encoded bytes.
    */
-  encodeInto(src?: string, dest?: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
+  encodeInto(src: string, dest: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
 }
 declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoder",
@@ -727,6 +729,11 @@ interface ReadableStreamDefaultController<R = any> {
 }
 
 interface ReadableStreamDirectController {
+  /**
+   * Finish the stream. With no argument this flushes buffered bytes and ends,
+   * like {@link end}. With an `error`, the stream fails: buffered bytes are
+   * dropped and the consumer rejects with `error`.
+   */
   close(error?: Error): void;
   /**
    * Write a chunk directly to the destination.
@@ -741,6 +748,9 @@ interface ReadableStreamDirectController {
    *
    * The promise resolves once the destination has drained.
    * `await controller.flush(true)` is equivalent.
+   *
+   * Returns `0` once the destination has gone away (for example, the HTTP
+   * client disconnected).
    */
   write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;

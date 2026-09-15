@@ -1315,6 +1315,16 @@ unsafe fn timer_remove(
     unsafe { &mut (*state).timer }.remove(t);
 }
 
+/// For `AbortSignal::Timeout`, which turns its delay into a deadline below this tier.
+fn timer_min_delay_ms() -> u32 {
+    let all = timer_all();
+    if all.is_null() {
+        return 0;
+    }
+    // SAFETY: `all` is the live per-thread `All`; leaf hook, field read only.
+    unsafe { (*all).fake_timers.min_delay_ms() }
+}
+
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
 /// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
 ///
@@ -1332,7 +1342,7 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
         None
     };
     bun_core::heap::into_raw(Box::new(NodeFS {
-        sync_error_buf: bun_paths::PathBuffer::uninit(),
+        sync_error_buf: bun_paths::path_buffer_pool::get(),
         vm: vm_field,
     }))
     .cast::<c_void>()
@@ -1516,6 +1526,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     print_exception,
     timer_insert,
     timer_remove,
+    timer_min_delay_ms,
     default_client_ssl_ctx,
     ssl_ctx_cache_get_or_create,
     create_node_fs,
@@ -2161,7 +2172,6 @@ fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
         crate::Error::ModuleNotFound => bun_jsc::CrateError::ModuleNotFound,
         crate::Error::WriteFailed => bun_jsc::CrateError::WriteFailed,
         crate::Error::JSError | crate::Error::Js(_) => bun_jsc::CrateError::JSError,
-        crate::Error::JSErrorObject => bun_jsc::CrateError::JSErrorObject,
         _ => bun_jsc::CrateError::ParseError,
     }
 }
@@ -3648,12 +3658,8 @@ fn get_hardcoded_module(
         | HardcodedModule::NodeInternalReplHistory
         | HardcodedModule::NodeInternalUtilInspect => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
-            if !bun_core::env::IS_DEBUG {
-                let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
-                    .load(core::sync::atomic::Ordering::Relaxed);
-                if !allowed {
-                    return None;
-                }
+            if !bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis() {
+                return None;
             }
             let name: &'static str = hardcoded.into();
             Some(js_synthetic_module(name.as_bytes()))
@@ -3663,12 +3669,8 @@ fn get_hardcoded_module(
             // same as `bun:internal-for-testing`. The tag key uses the
             // generated `internal:`-prefixed canonical specifier (see
             // `generated_resolved_source_tag.rs`).
-            if !bun_core::env::IS_DEBUG {
-                let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
-                    .load(core::sync::atomic::Ordering::Relaxed);
-                if !allowed {
-                    return None;
-                }
+            if !bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis() {
+                return None;
             }
             Some(js_synthetic_module(b"internal:test/binding"))
         }
@@ -3813,6 +3815,7 @@ export default db;
                 None
             },
             is_commonjs_module: file.module_format == ModuleFormat::Cjs,
+            is_prelinked_module: file.prelinked_index != u32::MAX,
             ..ResolvedSource::default()
         });
     }

@@ -1412,19 +1412,8 @@ pub mod command {
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
     fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
-        // The AutoCommand arm swallows
-        // `error.MissingEntryPoint` from `Command.init` and prints help;
-        // every other tag (including RunCommand) propagates the error.
-        // Note: nothing currently produces `MissingEntryPoint`; bare
-        // `bun` help is served by the empty-positionals fallthrough. This arm
-        // exists in case a producer is ever added (Arguments.rs).
-        let ctx = match init(tag, log) {
-            Ok(ctx) => ctx,
-            Err(e) if tag == Tag::AutoCommand && matches!(e, crate::Error::MissingEntryPoint) => {
-                return HelpCommand::exec();
-            }
-            Err(e) => return Err(e),
-        };
+        // Bare `bun` help is served by the empty-positionals fallthrough.
+        let ctx = init(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
         if ctx.parallel || ctx.sequential {
@@ -1895,7 +1884,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 let entry = &ctx.args.entry_points[0];
                 path_buf[..entry.len()].copy_from_slice(entry);
                 path_buf[entry.len()] = 0;

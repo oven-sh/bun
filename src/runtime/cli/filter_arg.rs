@@ -63,7 +63,7 @@ fn get_candidate_package_patterns<'a>(
     // `break` → `break 'walk`.
     'walk: loop {
         'body: {
-            let mut name_buf = PathBuffer::uninit();
+            let mut name_buf = bun_paths::path_buffer_pool::get();
             let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
                 workdir,
                 &mut name_buf[..],
@@ -166,7 +166,7 @@ pub(crate) fn select_packages(
     };
 
     let mut glob_patterns: Vec<Box<[u8]>> = Vec::new();
-    let mut root_buf = PathBuffer::uninit();
+    let mut root_buf = bun_paths::path_buffer_pool::get();
     let root_dir: Box<[u8]> = get_candidate_package_patterns(
         // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded and no other `&mut Log` is live.
         unsafe { ctx.log_mut() },

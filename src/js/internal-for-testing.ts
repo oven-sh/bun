@@ -74,6 +74,8 @@ export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount
 
 export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
 
+export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",
@@ -776,6 +778,13 @@ export const dnsIsAllLoopbackOfOneFamily = $newRustFunction(
   "internal.isAllLoopbackOfOneFamilyForTesting",
   1,
 ) as (addresses: string[]) => boolean;
+
+/** The error a getaddrinfo lookup of `hostname` reports when getaddrinfo(3) returns the `EAI_*` status named `code` (`"EAI_AGAIN"`, `"EAI_FAIL"`, `"EAI_NONAME"`). */
+export const dnsGetaddrinfoError = $newRustFunction(
+  "runtime/dns_jsc/dns.rs",
+  "internal.getaddrinfoErrorForTesting",
+  2,
+) as (code: string, hostname: string) => Error & { code: string; errno: number; syscall: string; hostname: string };
 
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {

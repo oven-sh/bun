@@ -2097,6 +2097,55 @@ test("parentPort messages are delivered while a top-level await is pending", asy
   expect(replies).toEqual(["got hi", "got bye"]);
 });
 
+// parentPort is a MessagePort: it queues what the parent posts until a 'message' listener is
+// attached, and again while none is, as in Node — unlike the Web Worker global scope, which drops
+// a message dispatched while it has no handler (#40141). A second MessagePort is the gate: the
+// parent posts everything, then says "go", so the listener is attached strictly afterwards.
+describe("parentPort queues messages until a 'message' listener is attached", () => {
+  async function run(workerSrc: string, batch: unknown[]) {
+    const { port1, port2 } = new MessageChannel();
+    const w = new Worker(workerSrc, { eval: true, workerData: { gate: port2 }, transferList: [port2] });
+    w.postMessage("early");
+    const replies: unknown[] = [];
+    w.on("message", m => {
+      if (m !== "started") return replies.push(m);
+      for (const item of batch) w.postMessage(item);
+      port1.postMessage("go");
+    });
+    const [code] = await once(w, "exit");
+    port1.close();
+    return { replies, code };
+  }
+
+  test("listener attached after a top-level await", async () => {
+    const { replies, code } = await run(
+      `import { parentPort, workerData } from "worker_threads";
+       parentPort.postMessage("started");
+       await new Promise(resolve => workerData.gate.once("message", resolve));
+       parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === 2) process.exit(0); });`,
+      [0, 1, 2],
+    );
+    expect(replies).toEqual(["got early", "got 0", "got 1", "got 2"]);
+    expect(code).toBe(0);
+  });
+
+  // All five are queued before the first listener exists, so one drain batch holds them; removing
+  // the listener after the first must put the rest back, in order, for the next one.
+  test("removing the last listener pauses delivery until one is attached again", async () => {
+    const { replies, code } = await run(
+      `import { parentPort, workerData } from "worker_threads";
+       const first = m => { parentPort.postMessage("first:" + m); parentPort.off("message", first); setImmediate(() => parentPort.on("message", second)); };
+       const second = m => { parentPort.postMessage("second:" + m); if (m === 3) process.exit(0); };
+       parentPort.postMessage("started");
+       await new Promise(resolve => workerData.gate.once("message", resolve));
+       parentPort.on("message", first);`,
+      [0, 1, 2, 3],
+    );
+    expect(replies).toEqual(["first:early", "second:0", "second:1", "second:2", "second:3"]);
+    expect(code).toBe(0);
+  });
+});
+
 // A top-level await that rejects while other work keeps the loop alive fails the
 // worker at rejection time (Node), not when the loop eventually drains.
 // (Subprocess: inside `bun test` a worker's uncaught error counts as handled.)

@@ -14,7 +14,6 @@
 #include <JavaScriptCore/Operations.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/JSBoundFunction.h>
 using namespace JSC;
 
 namespace Zig {
@@ -169,24 +168,8 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
 {
     ENTER_PROTO_FUNC();
 
-    if (JSValue functionValue = callSite->function()) {
-        if (JSObject* fn = functionValue.getObject()) {
-            if (JSFunction* function = dynamicDowncast<JSFunction>(fn)) {
-                if (function->inherits<JSC::JSBoundFunction>()) {
-                    return JSC::JSValue::encode(JSC::jsBoolean(false));
-                }
-
-                if (function->isHostFunction()) {
-                    return JSC::JSValue::encode(JSC::jsBoolean(true));
-                }
-
-                if (auto* executable = function->jsExecutable()) {
-                    return JSValue::encode(jsBoolean(executable->isProgramExecutable() || executable->isModuleProgramExecutable()));
-                }
-            } else if (dynamicDowncast<InternalFunction>(functionValue)) {
-                return JSC::JSValue::encode(JSC::jsBoolean(true));
-            }
-        }
+    if (callSite->isSloppyFunctionCall()) {
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
     }
 
     JSC::JSValue thisValue = callSite->thisValue();

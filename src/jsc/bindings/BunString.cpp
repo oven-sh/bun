@@ -519,7 +519,9 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJSON(
     const BunString* bunString)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSC::JSValue result = JSC::JSONParse(globalObject, bunString->toWTFString());
+    // toWTFString() is null for an empty string, and JSONParseWithException throws nothing for null.
+    WTF::String string = !bunString->isDead() && bunString->isEmpty() ? emptyString() : bunString->toWTFString();
+    JSC::JSValue result = JSC::JSONParseWithException(globalObject, string);
 
     if (!result && !scope.exception()) {
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
@@ -585,23 +587,6 @@ extern "C" JSC::EncodedJSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexica
     auto* jsDOMURL = uncheckedDowncast<WebCore::JSDOMURL>(jsValue.asCell());
     vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
-}
-
-extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    auto str = value.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, nullptr);
-    if (str.isEmpty()) {
-        return nullptr;
-    }
-
-    auto url = WTF::URL(str);
-    if (!url.isValid() || url.isNull())
-        return nullptr;
-
-    return new WTF::URL(WTF::move(url));
 }
 
 extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)

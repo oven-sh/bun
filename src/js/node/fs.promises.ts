@@ -211,9 +211,10 @@ async function opendir(dir: string, options) {
 const ownFd = $newRustFunction("node_fs_binding.rs", "ownFd", 1);
 const isOwnedFdOpen = $newRustFunction("node_fs_binding.rs", "isOwnedFdOpen", 1);
 const releaseOwnedFd = $newRustFunction("node_fs_binding.rs", "releaseOwnedFd", 2);
+const callInOwner = $newRustFunction("node_fs_binding.rs", "callInOwner", 2);
 const kRawFd = Symbol("kRawFd");
 const kFdOwner = Symbol("kFdOwner");
-type CollectedFileHandle = { fd: number; path: string | undefined; owner: number; frame: unknown };
+type CollectedFileHandle = { fd: number; path: string | undefined; owner: number };
 
 // Node.js closes a FileHandle's fd in its native finalizer and raises
 // ERR_INVALID_STATE (DEP0137 end-of-life) when collected without close().
@@ -223,7 +224,7 @@ function registerFileHandle(handle, fd: number, path: string | undefined) {
   const owner = (handle[kFdOwner] = ownFd(fd));
   (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
     handle,
-    { fd, path, owner, frame: require("internal/async_context_frame").current() },
+    { fd, path, owner },
     handle,
   );
 }
@@ -241,8 +242,10 @@ function onFileHandleCollected(held: CollectedFileHandle) {
   );
   err.code = "ERR_INVALID_STATE";
   // Reported where the handle was opened: to a Bun.ModuleGraph's onError, if its script opened it.
-  require("internal/async_context_frame").run(held.frame, process.nextTick, process, () => {
-    throw err;
+  callInOwner(held.owner, () => {
+    process.nextTick(() => {
+      throw err;
+    });
   });
 }
 

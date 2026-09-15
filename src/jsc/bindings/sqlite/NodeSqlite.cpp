@@ -1006,11 +1006,10 @@ extern "C" void Bun__closeNodeSqliteDatabasesOfGraphContext(WebCore::ScriptExecu
                 toClose.append(entry.key);
         }
     }
-    for (auto* db : toClose) {
-        // dispose() from inside a UDF/authorizer: sqlite3_step() is on the C stack (see above).
-        if (!db->isBusy())
-            db->closeInternal();
-    }
+    // (dispose() from inside a UDF/authorizer: closeInternal() leaves the connection to the
+    // outermost BusyScope, which unwinds here, unlike at process exit.)
+    for (auto* db : toClose)
+        db->closeInternal();
 }
 
 void JSDatabaseSync::deleteTrackedSessions()

@@ -387,6 +387,20 @@ pub(crate) fn release_owned_fd(global: &JSGlobalObject, frame: &CallFrame) -> Js
     Ok(JSValue::from(context.is_some()))
 }
 
+/// `(owner, callback)`: `callback()` in the context [`own_fd`] named, so what it queues or throws
+/// is that context's script's. (By id: holding the context's async frame from a registry that
+/// lives as long as the realm would keep its graph from ever being collected.)
+#[bun_jsc::host_fn]
+pub(crate) fn call_in_owner(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let owner = frame.argument(0).coerce_to_i32(global)?;
+    let _context = (owner != 0).then(|| {
+        global
+            .bun_vm()
+            .enter_context(bun_jsc::ContextId::from_raw(owner as u32))
+    });
+    frame.argument(1).call(global, JSValue::UNDEFINED, &[])
+}
+
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
 /// exact argument parser `fs.rm` uses and return the parsed options, so node's
 /// `internal/fs/utils` `validateRmOptionsSync` tests exercise the production

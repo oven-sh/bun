@@ -12,6 +12,10 @@ type Graph = InstanceType<typeof ModuleGraph>;
 
 const dir = String(
   tempDir("module-graph-gc-", {
+    "keeps-a-file-handle.mjs": `
+      import fs from "node:fs";
+      export const handle = await fs.promises.open(import.meta.path, "r");
+    `,
     "dep.mjs": `export const dep = { tag: typeof TAG === "undefined" ? "host" : TAG };`,
     "esm.mjs": `
       import { dep } from "./dep.mjs";
@@ -532,6 +536,41 @@ describe("ModuleGraph GC: isolateIO", () => {
     const open = await Promise.all(states.flatMap(state => [accepts(state.httpPort), accepts(state.tcpPort)]));
     expect(open).toEqual(open.map(() => false));
   });
+});
+
+// node:fs remembers every open FileHandle for the life of the realm, to close the ones nobody
+// did: what it remembers of one must not hold the graph whose module holds the handle.
+describe.concurrent("ModuleGraph GC: a dropped graph whose module keeps a FileHandle open is collected", () => {
+  for (const isolateIO of [false, true]) {
+    test(isolateIO ? "isolateIO" : "plain", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          // (node:fs reports the handle nobody closed; whoever that reaches, it is not the point here.)
+          process.on("uncaughtException", () => {});
+          let collected = false;
+          const registry = new FinalizationRegistry(() => { collected = true; });
+          await (async () => {
+            const graph = new Bun.ModuleGraph({ isolateIO: ${isolateIO}, onError() {} });
+            registry.register(graph, "graph");
+            await graph.import(${JSON.stringify(join(dir, "keeps-a-file-handle.mjs"))});
+          })();
+          for (let i = 0; i < 200 && !collected; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
+          console.log(JSON.stringify({ collected }));
+          process.exit(0);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe(`{"collected":true}`);
+      expect(exitCode).toBe(0);
+    });
+  }
 });
 
 test("ModuleGraph GC: survives collecting continuously", async () => {

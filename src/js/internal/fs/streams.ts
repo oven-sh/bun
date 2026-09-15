@@ -66,7 +66,7 @@ function reportClosedByOwner(syscall: string, report: (er: Error) => void) {
 function badFileDescriptor(syscall: string) {
   const err: any = new Error("EBADF: bad file descriptor, " + syscall);
   err.code = "EBADF";
-  err.errno = -9;
+  err.errno = process.platform === "win32" ? -4083 : -9;
   err.syscall = syscall;
   return err;
 }

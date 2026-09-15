@@ -707,38 +707,47 @@ void ImportMetaObject::finishCreation(VM& vm)
     });
 }
 
-// HoistedModuleBindingRaw in src/js_printer/lib.rs.
-struct BunHoistedModuleBinding {
-    const char* declaration;
-    const char* variable;
-    const char* importMetaProperty;
-};
-extern "C" bool Bun__hoistedModuleBinding(size_t index, BunHoistedModuleBinding* out);
+// The text of `HoistedModuleBinding::ALL[index]` in src/js_printer/lib.rs. Null after the last one.
+extern "C" const char* Bun__hoistedModuleBindingDeclaration(size_t index);
 
 void ImportMetaObject::initializeHoistedBindings(JSGlobalObject* globalObject, JSModuleRecord* record)
 {
+    // In the order of `HoistedModuleBinding::ALL`: the variable, and the value that its declaration reads.
+    struct Binding {
+        JSString* (Bun::CommonStrings::*variable)();
+        JSCell* (*value)(ImportMetaObject*);
+    };
+    static constexpr Binding bindings[] = {
+        { &Bun::CommonStrings::requireString, [](ImportMetaObject* meta) -> JSCell* { return meta->requireProperty.getInitializedOnMainThread(meta); } },
+        { &Bun::CommonStrings::underscoreDirnameString, [](ImportMetaObject* meta) -> JSCell* { return meta->dirProperty.getInitializedOnMainThread(meta); } },
+        { &Bun::CommonStrings::underscoreFilenameString, [](ImportMetaObject* meta) -> JSCell* { return meta->pathProperty.getInitializedOnMainThread(meta); } },
+    };
+    ASSERT(!Bun__hoistedModuleBindingDeclaration(std::size(bindings)));
+
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // The declarations are at the start of the source, in table order, with nothing between them.
     StringView source = record->sourceCode().view();
     JSModuleEnvironment* environment = record->moduleEnvironment();
-    BunHoistedModuleBinding binding;
-    for (size_t i = 0; Bun__hoistedModuleBinding(i, &binding); i++) {
-        auto declaration = ASCIILiteral::fromLiteralUnsafe(binding.declaration);
+    for (size_t i = 0; i < std::size(bindings); i++) {
+        auto declaration = ASCIILiteral::fromLiteralUnsafe(Bun__hoistedModuleBindingDeclaration(i));
         if (!source.startsWith(declaration))
             continue;
         source = source.substring(declaration.length());
 
-        Identifier variable = Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(binding.variable));
+        Identifier variable = (Bun::commonStrings(vm).*bindings[i].variable)()->toIdentifier(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        ASSERT(StringView(declaration).contains(variable.string()));
         // A variable that no function captures is on the stack of the module body, and only the body reads it.
         SymbolTableEntry::Fast entry = environment->symbolTable()->get(variable.impl());
         if (entry.isNull() || !entry.varOffset().isScope())
             continue;
 
-        // The same read as in the declaration. This import.meta is new, so no user code runs.
-        JSValue value = get(globalObject, Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(binding.importMetaProperty)));
+        JSCell* value = bindings[i].value(this);
         RETURN_IF_EXCEPTION(scope, );
+        if (!value)
+            continue;
         bool putResult = false;
         symbolTablePutTouchWatchpointSet(environment, globalObject, variable, value, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
         RETURN_IF_EXCEPTION(scope, );

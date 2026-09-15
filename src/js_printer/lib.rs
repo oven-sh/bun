@@ -7796,7 +7796,7 @@ enum HoistedModuleBinding {
 }
 
 impl HoistedModuleBinding {
-    /// In the order `print_ast` prints them.
+    /// In the order `print_ast` prints them. `initializeHoistedBindings` has a table in the same order.
     const ALL: [Self; 3] = [Self::Require, Self::Dirname, Self::Filename];
 
     /// The exact text that `print_ast` prints.
@@ -7808,46 +7808,14 @@ impl HoistedModuleBinding {
             Self::Filename => c"var __filename=import.meta.path;",
         }
     }
-
-    /// The variable that `declaration` declares.
-    const fn variable(self) -> &'static core::ffi::CStr {
-        match self {
-            Self::Require => c"require",
-            Self::Dirname => c"__dirname",
-            Self::Filename => c"__filename",
-        }
-    }
-
-    /// The property of `import.meta` that `declaration` reads.
-    const fn import_meta_property(self) -> &'static core::ffi::CStr {
-        match self {
-            Self::Require => c"require",
-            Self::Dirname => c"dir",
-            Self::Filename => c"path",
-        }
-    }
 }
 
-/// `HoistedModuleBinding` for C++ (`BunHoistedModuleBinding` in ImportMetaObject.cpp).
-#[repr(C)]
-struct HoistedModuleBindingRaw {
-    declaration: *const core::ffi::c_char,
-    variable: *const core::ffi::c_char,
-    import_meta_property: *const core::ffi::c_char,
-}
-
-/// Entry `index` of `HoistedModuleBinding::ALL`. Returns false after the last one.
+/// The declaration of entry `index` of `HoistedModuleBinding::ALL`. Null after the last one.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__hoistedModuleBinding(index: usize, out: &mut HoistedModuleBindingRaw) -> bool {
-    let Some(binding) = HoistedModuleBinding::ALL.get(index) else {
-        return false;
-    };
-    *out = HoistedModuleBindingRaw {
-        declaration: binding.declaration().as_ptr(),
-        variable: binding.variable().as_ptr(),
-        import_meta_property: binding.import_meta_property().as_ptr(),
-    };
-    true
+extern "C" fn Bun__hoistedModuleBindingDeclaration(index: usize) -> *const core::ffi::c_char {
+    HoistedModuleBinding::ALL
+        .get(index)
+        .map_or(core::ptr::null(), |binding| binding.declaration().as_ptr())
 }
 
 pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(

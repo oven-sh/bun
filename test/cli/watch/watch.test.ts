@@ -523,10 +523,10 @@ setInterval(() => {}, 1e6);
   });
 }
 
-// The same state needs no failed lookup. A program that writes a file next to
-// its sources (a pid file, a log, a sqlite db) causes a directory event, and
-// the watcher busts the directory cache for it. A module the program imports
-// lazily after that re-reads the directory.
+// The same state needs no failed lookup. A program that creates an entry next
+// to its sources (a pid file, a log, a cache directory) causes a directory
+// event, and the watcher busts the directory cache for it. A module the
+// program imports lazily after that re-reads the directory.
 it.skipIf(isWindows)(
   "--watch sees a rename over save after the program wrote into its own directory and then imported lazily",
   async () => {
@@ -534,15 +534,22 @@ it.skipIf(isWindows)(
       "trace.log": "",
       "src/a.js": `export const a = 1;`,
       "src/lazy.js": `export const lazy = "lazy";`,
+      "src/fence/b.js": `export {};`,
       "src/entry.js": `import { a } from "./a.js";
-import { statSync, writeFileSync } from "node:fs";
+import "./fence/b.js";
+import { mkdirSync, readFileSync, statSync } from "node:fs";
 const trace = process.env.BUN_WATCHER_TRACE;
-const traceSize = statSync(trace).size;
+const start = statSync(trace).size;
+// The log keys each event by the watched path. kqueue does not log the changed name.
+const logged = dir => readFileSync(trace, "latin1").slice(start).includes("/" + dir + '/"');
 // A new name on every run: kqueue reports a directory only when its entries change.
-writeFileSync("app." + crypto.randomUUID() + ".pid", String(process.pid));
-// The watcher thread logs the directory event for the write, then busts the cache.
-// kqueue does not log the changed name, so wait for the log to grow.
-while (statSync(trace).size === traceSize) await Bun.sleep(1);
+const id = crypto.randomUUID();
+mkdirSync("cache-" + id);
+while (!logged("src")) await Bun.sleep(1);
+// The watcher thread logs a batch of events, handles it, then takes the next batch. Once it
+// logs an event for another directory, it has busted the cache for this one.
+mkdirSync("fence/" + id);
+while (!logged("fence")) await Bun.sleep(1);
 const { lazy } = await import("./lazy.js");
 console.log("EVAL a =", a, lazy);
 setInterval(() => {}, 1e6);

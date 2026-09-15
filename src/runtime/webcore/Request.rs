@@ -27,7 +27,6 @@ use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
-use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
 use bun_ptr::weak_ptr::WeakPtrData;
@@ -83,6 +82,12 @@ const _: () = {
 pub struct Request {
     pub(crate) url: JsCell<BunString>,
 
+    /// Subresource integrity metadata; empty = unset.
+    pub(crate) integrity: JsCell<BunString>,
+    /// Referrer state: empty = "client", [`NO_REFERRER_SENTINEL`] = no
+    /// referrer, otherwise a serialized URL. See [`Self::get_referrer`].
+    pub(crate) referrer: JsCell<BunString>,
+
     headers: JsCell<Option<HeadersRef>>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
     // `Arc` of an opaque ZST is meaningless (its payload address is not the
@@ -104,7 +109,7 @@ pub struct Request {
     reported_estimated_size: Cell<usize>,
 }
 
-// A `#[repr(C)]` 4-byte struct for direct
+// A `#[repr(C)]` struct for direct
 // field access — `Request` is only ever passed to C++ by **pointer** with size
 // reported via the codegen'd `Request__ZigStructSize`, so the absolute size is
 // not ABI-locked. `#[repr(C)]` + `assert_ffi_layout!` make the layout
@@ -116,9 +121,10 @@ pub struct Flags {
     pub(crate) cache: FetchCacheMode,
     pub(crate) mode: FetchRequestMode,
     pub(crate) https: bool,
+    pub(crate) keepalive: bool,
 }
 
-bun_core::assert_ffi_layout!(Flags, 4, 1; redirect @ 0, cache @ 1, mode @ 2, https @ 3);
+bun_core::assert_ffi_layout!(Flags, 5, 1; redirect @ 0, cache @ 1, mode @ 2, https @ 3, keepalive @ 4);
 
 impl Default for Flags {
     fn default() -> Self {
@@ -127,9 +133,14 @@ impl Default for Flags {
             cache: FetchCacheMode::Default,
             mode: FetchRequestMode::Cors,
             https: false,
+            keepalive: false,
         }
     }
 }
+
+/// `Request.referrer` value for the spec's "no-referrer" state; the getter
+/// maps it to "".
+const NO_REFERRER_SENTINEL: &[u8] = b"no-referrer";
 
 // Heap-allocates via Box::new (global mimalloc).
 impl Request {
@@ -372,6 +383,8 @@ impl Request {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.get().byte_slice().len()
+            + self.integrity.get().byte_slice().len()
+            + self.referrer.get().byte_slice().len()
             + self.body_value().memory_cost()
     }
 
@@ -422,6 +435,8 @@ impl Request {
     ) -> Request {
         Request {
             url: JsCell::new(url),
+            integrity: JsCell::new(BunString::EMPTY),
+            referrer: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -458,6 +473,8 @@ impl Request {
         self.reported_estimated_size.set(
             self.body_value().estimated_size()
                 + self.size_of_url()
+                + self.integrity.get().byte_slice().len()
+                + self.referrer.get().byte_slice().len()
                 + core::mem::size_of::<Request>(),
         );
     }
@@ -672,8 +689,15 @@ impl Request {
         JSValue::js_empty_string(global_this)
     }
 
-    pub(crate) fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        JSValue::js_empty_string(global_this)
+    pub(crate) fn get_integrity(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        if self.integrity.get().is_empty() {
+            return Ok(JSValue::js_empty_string(global_this));
+        }
+        self.integrity.get().to_js(global_this)
+    }
+
+    pub(crate) fn get_keepalive(&self, _global_this: &JSGlobalObject) -> JSValue {
+        JSValue::js_boolean(self.flags.keepalive)
     }
 
     /// The `AbortSignal` this request was constructed with or lazily created
@@ -710,6 +734,8 @@ impl Request {
         self.headers.set(None);
 
         self.url.set(BunString::EMPTY);
+        self.integrity.set(BunString::EMPTY);
+        self.referrer.set(BunString::EMPTY);
 
         // AbortSignalRef::Drop unrefs the C++ handle.
         self.signal.set(None);
@@ -746,14 +772,16 @@ impl Request {
         fetch_redirect_to_js(self.flags.redirect, global_this)
     }
 
-    pub(crate) fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
-        if let Some(headers_ref) = self.headers_mut().as_mut() {
-            if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
-                return referrer.to_js(global_object);
-            }
+    pub(crate) fn get_referrer(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        // https://fetch.spec.whatwg.org/#dom-request-referrer
+        let referrer = self.referrer.get();
+        if referrer.is_empty() {
+            return Ok(BunString::static_(b"about:client").to_js(global_object)?);
         }
-
-        JSValue::js_empty_string(global_object)
+        if referrer.eq_ascii(NO_REFERRER_SENTINEL) {
+            return Ok(JSValue::js_empty_string(global_object));
+        }
+        referrer.to_js(global_object)
     }
 
     pub(crate) fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
@@ -953,14 +981,14 @@ enum Fields {
     Method,
     Headers,
     Body,
-    // Referrer,
+    Referrer,
     // ReferrerPolicy,
     Mode,
     // Credentials,
     Redirect,
     Cache,
-    // Integrity,
-    // Keepalive,
+    Integrity,
+    Keepalive,
     Signal,
     // Proxy,
     // Timeout,
@@ -986,6 +1014,8 @@ impl Request {
         let body_seed_ptr = body.as_ptr();
         let mut req = Request {
             url: JsCell::new(BunString::EMPTY),
+            integrity: JsCell::new(BunString::EMPTY),
+            referrer: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -1077,7 +1107,51 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
-        for &value in values_to_try {
+        // Spec step 12: a non-empty init (any present RequestInit member,
+        // including null-valued ones like `signal: null`) resets referrer to
+        // "client" before step 14 reads init.referrer — so the base Request's
+        // referrer must not be inherited. Presence is probed up-front over
+        // undici's RequestInit key set because the parsing loop below does not
+        // read every member.
+        let init_has_key: bool = 'probe: {
+            if values_to_try.len() != 2 {
+                break 'probe false;
+            }
+            // len == 2 implies values_to_try[0] is the init object.
+            let init_obj = values_to_try[0];
+            const KEYS: [&[u8]; 14] = [
+                b"method",
+                b"headers",
+                b"body",
+                b"referrer",
+                b"referrerPolicy",
+                b"mode",
+                b"credentials",
+                b"cache",
+                b"redirect",
+                b"integrity",
+                b"keepalive",
+                b"signal",
+                b"duplex",
+                b"window",
+            ];
+            let mut found = false;
+            for key in KEYS {
+                // `get` returns None for missing or undefined; Some (even
+                // null/false/"") is a present WebIDL member.
+                match init_obj.get(global_this, key) {
+                    Ok(Some(_)) => {
+                        found = true;
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
+            found
+        };
+
+        for (iter_idx, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
                 && value_type == bun_jsc::JSType::FinalObject
@@ -1119,6 +1193,34 @@ impl Request {
                     if !fields.contains(Fields::Mode) {
                         req.flags.mode = request.flags.mode;
                         fields.insert(Fields::Mode);
+                    }
+
+                    if !fields.contains(Fields::Keepalive) {
+                        req.flags.keepalive = request.flags.keepalive;
+                        fields.insert(Fields::Keepalive);
+                    }
+
+                    if !fields.contains(Fields::Integrity) {
+                        if !request.integrity.get().is_empty() {
+                            req.integrity.set(request.integrity.get().clone());
+                        }
+                        fields.insert(Fields::Integrity);
+                    }
+
+                    if !fields.contains(Fields::Referrer) {
+                        // Step 12: a non-empty init resets referrer, so only
+                        // the base iteration (last slot; judged by index since
+                        // `new Request(req, req)` aliases both slots) skips
+                        // the copy. `.referrer` is always marked handled so
+                        // the generic pass below won't re-read this Request's
+                        // `referrer` getter.
+                        let is_base_iter =
+                            values_to_try.len() == 2 && iter_idx == values_to_try.len() - 1;
+                        let skip_copy = is_base_iter && init_has_key;
+                        if !skip_copy && !request.referrer.get().is_empty() {
+                            req.referrer.set(request.referrer.get().clone());
+                        }
+                        fields.insert(Fields::Referrer);
                     }
 
                     if !fields.contains(Fields::Headers) {
@@ -1201,17 +1303,26 @@ impl Request {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
                     Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
-                        // fetch spec Request(init): `keepalive: true` with a ReadableStream
-                        // body throws before body extraction (Node's message is "keepalive").
-                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
-                            match value.get(global_this, "keepalive") {
-                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
-                                    bail!(Err(
-                                        global_this.throw_type_error(format_args!("keepalive"))
-                                    ));
-                                }
-                                Ok(_) => {}
+                        // fetch spec: extracting a ReadableStream init.body with the
+                        // request's resolved keepalive (init.keepalive if present, else
+                        // the input Request's) throws (Node's message is "keepalive").
+                        // Request sources are exempt: their body is copied, not
+                        // re-extracted, and the `keepalive` prototype accessor would
+                        // otherwise trip this.
+                        if crate::webcore::ReadableStream::is_readable_stream(body_)
+                            && value.as_::<Request>().is_none()
+                        {
+                            let keepalive = match value.get(global_this, "keepalive") {
+                                Ok(Some(keepalive)) => keepalive.to_boolean(),
+                                Ok(None) => values_to_try
+                                    .last()
+                                    .and_then(|v| v.as_::<Request>())
+                                    // SAFETY: as_ returns a live *mut Request payload
+                                    .is_some_and(|r| unsafe { (*r).flags.keepalive }),
                                 Err(e) => bail!(Err(e)),
+                            };
+                            if keepalive {
+                                bail!(Err(global_this.throw_type_error(format_args!("keepalive"))));
                             }
                         }
                         match BodyValue::from_js(global_this, body_) {
@@ -1371,6 +1482,66 @@ impl Request {
                     Err(e) => bail!(Err(e)),
                 }
             }
+
+            // Extract keepalive option: Boolean(init.keepalive) when present.
+            if !fields.contains(Fields::Keepalive) {
+                match value.get(global_this, "keepalive") {
+                    Ok(Some(keepalive_value)) => {
+                        req.flags.keepalive = keepalive_value.to_boolean();
+                        fields.insert(Fields::Keepalive);
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
+
+            // Extract integrity option: String(init.integrity) when present.
+            if !fields.contains(Fields::Integrity) {
+                match value.get(global_this, "integrity") {
+                    Ok(Some(integrity_value)) => {
+                        match BunString::from_js(integrity_value, global_this) {
+                            Ok(s) => req.integrity.set(s),
+                            Err(e) => bail!(Err(e)),
+                        }
+                        fields.insert(Fields::Integrity);
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
+
+            // Extract referrer option: "" maps to the no-referrer sentinel,
+            // anything else must parse as a URL. The step-12 gate repeats here
+            // because Request subclasses bypass the `as_direct` branch above
+            // yet still expose a `referrer` getter this would read.
+            if !fields.contains(Fields::Referrer) {
+                let is_base_iter = values_to_try.len() == 2 && iter_idx == values_to_try.len() - 1;
+                if !(is_base_iter && init_has_key) {
+                    match value.get(global_this, "referrer") {
+                        Ok(Some(referrer_value)) => {
+                            let referrer_str = match BunString::from_js(referrer_value, global_this)
+                            {
+                                Ok(s) => s,
+                                Err(e) => bail!(Err(e)),
+                            };
+                            if referrer_str.is_empty() {
+                                req.referrer.set(BunString::static_(NO_REFERRER_SENTINEL));
+                            } else {
+                                let parsed = bun_url::href_from_string(&referrer_str);
+                                if parsed.is_empty() {
+                                    bail!(Err(global_this.throw_type_error(format_args!(
+                                        "Referrer is not a valid URL."
+                                    ))));
+                                }
+                                req.referrer.set(parsed);
+                            }
+                            fields.insert(Fields::Referrer);
+                        }
+                        Ok(None) => {}
+                        Err(e) => bail!(Err(e)),
+                    }
+                }
+            }
         }
 
         if req.url.get().is_empty() {
@@ -1484,8 +1655,9 @@ impl Request {
         // The old `req.body` hive ref is intentionally NOT unref'd here:
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
-        // `url` was taken above (preserve_url) or is the empty
-        // sentinel; remaining incoming fields are None/weak/Copy by contract.
+        // The string cells (`url`/`integrity`/`referrer`) hold empty sentinels
+        // (or, for `url`, the bitwise copy above), so their skipped Drop is a
+        // no-op; remaining incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
         unsafe {
@@ -1493,6 +1665,8 @@ impl Request {
                 req,
                 Request {
                     url: JsCell::new(url),
+                    integrity: JsCell::new(self.integrity.get().clone()),
+                    referrer: JsCell::new(self.referrer.get().clone()),
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
@@ -1519,6 +1693,8 @@ impl Request {
         // without reading or dropping it.
         let mut req = Box::new(Request {
             url: JsCell::new(BunString::EMPTY),
+            integrity: JsCell::new(BunString::EMPTY),
+            referrer: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
@@ -1551,6 +1727,8 @@ impl Request {
     ) -> Request {
         Request {
             url: JsCell::new(BunString::EMPTY),
+            integrity: JsCell::new(BunString::EMPTY),
+            referrer: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),

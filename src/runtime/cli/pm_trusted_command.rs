@@ -16,7 +16,7 @@ use bun_install::package_manager_real::{
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
-    PackageID, PackageManager, Resolution,
+    PackageID, PackageManager, Resolution, ResolutionTag,
 };
 use bun_paths::AutoAbsPath;
 
@@ -24,6 +24,18 @@ use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;
 
 type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
+
+/// The installers' enqueue gate: root and workspace scripts always run.
+fn scripts_blocked_at_install(
+    lockfile: &Lockfile,
+    alias: &[u8],
+    pkg_name: &[u8],
+    resolution: &Resolution,
+) -> bool {
+    resolution.tag != ResolutionTag::Root
+        && resolution.tag != ResolutionTag::Workspace
+        && !lockfile.has_trusted_dependency(alias, pkg_name, resolution)
+}
 
 pub(crate) struct DefaultTrustedCommand;
 
@@ -97,7 +109,7 @@ impl UntrustedCommand {
             let alias = dep.name.slice(buf);
             let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
+            if scripts_blocked_at_install(lockfile, alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -318,7 +330,7 @@ impl TrustCommand {
             let alias = dep.name.slice(buf);
             let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
+            if scripts_blocked_at_install(lockfile, alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -399,7 +411,8 @@ impl TrustCommand {
 
                         for package_name_from_cli in &packages_to_trust {
                             if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(
+                                && scripts_blocked_at_install(
+                                    lockfile,
                                     alias,
                                     packages.items_name()[package_id as usize].slice(buf),
                                     resolution,

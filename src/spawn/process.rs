@@ -995,6 +995,7 @@ pub mod waiter_thread_posix {
     use super::*;
     use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
     use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
+    use bun_event_loop::MiniEventLoop::MiniEventLoop;
     use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
 
@@ -1255,19 +1256,23 @@ pub mod waiter_thread_posix {
                                     }
                                 }
                             }
-                            EventLoopHandle::Mini(mut mini) => {
+                            EventLoopHandle::Mini(mini) => {
                                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
                                     result,
                                     subprocess: process,
                                     task: AnyTaskWithExtraContext::default(),
                                 });
-                                // SAFETY: `out` just produced by heap::alloc — non-null.
+                                // SAFETY: `out` just produced by heap::alloc — non-null;
+                                // `mini` is the handle's live loop (`EventLoopHandle::Mini`
+                                // invariant) and this post is the last thing the waiter
+                                // thread does with it.
                                 unsafe {
                                     (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
                                         out,
                                         ResultTaskMini::<T>::run_from_main_thread_mini,
                                     );
-                                    mini.get_mut().enqueue_task_concurrent(
+                                    MiniEventLoop::enqueue_task_concurrent(
+                                        mini.as_const_ptr(),
                                         core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!(
                                             (*out).task
                                         )),

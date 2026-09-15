@@ -765,6 +765,11 @@ declare module "bun" {
 
       /**
        * Whether to render contextual errors with Bun's error page
+       *
+       * Inside a standalone executable (`bun build --compile`), the default
+       * is `false` unless the `NODE_ENV` (or `BUN_ENV`) environment variable
+       * is `development` or `test`.
+       *
        * @default process.env.NODE_ENV !== 'production'
        */
       development?: Development;

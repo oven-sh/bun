@@ -896,7 +896,15 @@ pub struct NewSource<C: SourceContext> {
     /// end is not reported to a `Bun.ModuleGraph` that was disposed meanwhile: closing the JS
     /// stream settles every read its script is waiting on.
     pub reader_context: Cell<Option<jsc::ContextId>>,
+    /// Armed while this is the source of a stream script of a `Bun.ModuleGraph` was given: what it
+    /// reads from (a file, a child's pipe nobody is reading) is closed with that graph.
+    pub abort_handle: jsc::AbortHandle,
 }
+
+jsc::impl_abort_handle_owner!([C: SourceContext] NewSource<C>, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live.
+    unsafe { (*this).cancel() }
+});
 
 impl<C: SourceContext + Default> Default for NewSource<C> {
     fn default() -> Self {
@@ -911,6 +919,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             wrapper_unrooted: Cell::new(false),
             is_closed: Cell::new(false),
             reader_context: Cell::new(None),
+            abort_handle: jsc::AbortHandle::for_owner::<Self>(),
         }
     }
 }
@@ -1274,6 +1283,11 @@ impl<C: SourceContext> NewSource<C> {
         out_value.ensure_still_alive();
         if self.this_jsvalue.is_empty() {
             self.this_jsvalue = jsc::JsRef::init_weak(out_value);
+            if let Some(context) = global_this.bun_vm().current_graph_context() {
+                // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
+                // context when this is dropped.
+                unsafe { jsc::AbortHandle::arm_owner(core::ptr::from_mut(self), context) };
+            }
         }
         from_native(global_this, out_value)
     }
@@ -1333,6 +1347,11 @@ impl<C: SourceContext> NewSource<C> {
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        // Cancelled with its graph: a read its leftover code still makes stays pending. ("Done"
+        // would let that code carry on with what it takes for the whole of the data.)
+        if self.abort_handle.context_stopped() {
+            return Ok(jsc::JSPromise::create(global_this).to_js());
+        }
         let this_jsvalue = call_frame.this();
         let [view, flags] = call_frame.arguments_as_array::<2>();
         view.ensure_still_alive();

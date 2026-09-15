@@ -80,6 +80,7 @@ const dir = String(
     // What a disposed graph left in something of the realm's. Each in a process of its own: they count objects.
     "left-behind-tenant.mjs": `
       import { Database } from "bun:sqlite";
+      import childProcess from "node:child_process";
       import fs from "node:fs";
       import { PerformanceObserver } from "node:perf_hooks";
       import { DatabaseSync } from "node:sqlite";
@@ -111,6 +112,8 @@ const dir = String(
         }
         await Promise.all(opened);
       };
+      // Children with piped stdio that say nothing: nobody is reading the pipes to their end.
+      export const quietChildren = (bun, count) => { for (let i = 0; i < count; i++) childProcess.spawn(bun, ["-e", "setInterval(() => {}, 1000)"]); };
       // FileHandles nobody closes and nobody keeps.
       export const forgetsFileHandles = async (path, count) => { for (let i = 0; i < count; i++) await fs.promises.open(path, "r"); };
       // One the host is handed, with a stream over another.
@@ -162,6 +165,19 @@ const dir = String(
       await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ leftOpen: descriptors() - before }));
     `,
+    "pipes-of-a-disposed-graph.mjs": `
+      import fs from "node:fs";
+      const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      const before = descriptors();
+      graph.run(() => app.quietChildren(process.execPath, 8));
+      const open = descriptors() - before;
+      graph.dispose();
+      // Killed, then reaped from the event loop: their pipes are closed by then at the latest.
+      while (descriptors() > before) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ opened: open >= 16, leftOpen: descriptors() - before }));
+    `,
     "open-files-of-a-disposed-graph.mjs": `
       import fs from "node:fs";
       const descriptors = () => (process.platform === "win32" ? 0 : fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length);
@@ -173,7 +189,8 @@ const dir = String(
       const kept = await graph.run(() => app.keepsFilesOpen(dir));
       const open = descriptors() - before;
       graph.dispose();
-      const leftOpen = descriptors() - before;
+      // (A writer with a write under way closes when that write returns, a few turns later.)
+      while (descriptors() > before) await new Promise(resolve => setImmediate(resolve));
       // On Windows an open file pins its directory: the rename works once every one of them is closed.
       for (;;) {
         try {
@@ -187,7 +204,6 @@ const dir = String(
       const message = fn => { try { fn(); return "returned"; } catch (error) { return error.message; } };
       console.log(JSON.stringify({
         open: process.platform === "win32" ? 5 : open,
-        leftOpen,
         hostUses: [message(() => kept.db.run("select 1")), message(() => kept.statement.get()), message(() => kept.nodeDb.exec("select 1"))],
       }));
     `,
@@ -2404,11 +2420,16 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test.skipIf(isWindows)("the files its fs.promises.open() calls in flight opened are closed", async () => {
     expect(await runs("files-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"leftOpen":0}`, exitCode: 0 });
   });
+  test.skipIf(isWindows)("the stdio pipes of the children node:child_process spawned for it are closed", async () => {
+    expect(await runs("pipes-of-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"opened":true,"leftOpen":0}`,
+      exitCode: 0,
+    });
+  });
   test("the files it held open are closed: a writer, bun:sqlite and node:sqlite databases, a FileHandle, a stream", async () => {
     expect(await runs("open-files-of-a-disposed-graph.mjs")).toEqual({
       stdout: JSON.stringify({
         open: 5,
-        leftOpen: 0,
         hostUses: ["Database has closed", "Database has closed", "database is not open"],
       }),
       exitCode: 0,

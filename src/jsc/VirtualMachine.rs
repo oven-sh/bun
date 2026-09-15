@@ -1212,12 +1212,6 @@ impl VirtualMachine {
         }
     }
 
-    /// The event loop's iteration counter.
-    pub fn loop_iteration(&self) -> u64 {
-        // SAFETY: the thread's uSockets loop outlives the VM.
-        unsafe { (*self.uws_loop()).iteration_number() }
-    }
-
     /// The groups a client socket the running script opens joins.
     pub fn client_socket_groups(&mut self) -> &mut crate::rare_data::SocketGroups {
         let id = self.current_context().id();

@@ -37,7 +37,11 @@ pub struct InternalState<'a> {
     pub(crate) request_body: bun_ptr::RawSlice<u8>,
     pub(crate) original_request_body: HTTPRequestBody<'a>,
     pub(crate) request_sent_len: usize,
+    /// Length of the request head counted by `request_sent_len`; 0 until it is built.
+    pub(crate) request_headers_len: usize,
     pub(crate) fail: Option<Error>,
+    /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
+    pub(crate) connect_errno: i32,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
     /// 0 otherwise. The JS side turns it into the resolver error
     /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
@@ -73,6 +77,10 @@ pub struct InternalStateFlags {
     /// redirect hop / failure, so each hop re-parks independently).
     pub(crate) is_waiting_for_cert_check: bool,
     pub(crate) receive_paused: bool,
+    /// `request_sent_len` is counting the CONNECT request, not the request
+    /// `ConnectionStats` reports. Cleared where the cursor restarts for the
+    /// tunneled request.
+    pub(crate) sending_connect: bool,
     /// Set once `HTTPClient::compress_body_for_send` has run for this attempt.
     /// Guards header-retry re-entries from compressing again. Cleared by
     /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
@@ -92,6 +100,7 @@ impl InternalStateFlags {
             resend_request_body_on_redirect: false,
             is_waiting_for_cert_check: false,
             receive_paused: false,
+            sending_connect: false,
             body_compressed: false,
         }
     }
@@ -116,7 +125,9 @@ impl Default for InternalState<'_> {
             request_body: bun_ptr::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
+            request_headers_len: 0,
             fail: None,
+            connect_errno: 0,
             dns_error: 0,
             dns_hostname: None,
             request_stage: HTTPStage::Pending,

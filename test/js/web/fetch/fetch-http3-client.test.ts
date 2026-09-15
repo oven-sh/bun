@@ -1,4 +1,5 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
+import { fetchH3Internals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 
@@ -8,6 +9,7 @@ import { bunEnv, bunExe, tempDir, tls } from "harness";
 let server: Server;
 let base: string;
 const big = Buffer.alloc(256 * 1024, "abcdefghijklmnop");
+const { liveCounts } = fetchH3Internals;
 
 beforeAll(async () => {
   server = Bun.serve({
@@ -332,6 +334,54 @@ describe("fetch protocol: http3", () => {
       const res = await fetch(`${base}/hello`, h3);
       expect(await res.text()).toBe("hello over h3");
     }
+  });
+
+  test("onStats reports an h3 request, its peer, and reuse of the connection", async () => {
+    using session = new Bun.FetchSession();
+    const collected: Bun.FetchConnectionStats[] = [];
+    const body = Buffer.alloc(5000, "x");
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch(`${base}/echo`, {
+        ...h3,
+        session,
+        method: "POST",
+        body,
+        onStats: s => collected.push(s),
+      });
+      expect((await res.bytes()).length).toBe(5000);
+    }
+    const { port } = new URL(base);
+    expect(collected).toEqual([
+      {
+        bytesSent: expect.any(Number),
+        requestBodyBytesSent: 5000,
+        responseStarted: true,
+        connectionReused: false,
+        nextHopProtocol: "h3",
+        remoteAddress: expect.stringMatching(/^(127\.0\.0\.1|::1)$/),
+        remotePort: Number(port),
+        remoteFamily: expect.stringMatching(/^IPv[46]$/),
+      },
+      { ...collected[0], bytesSent: expect.any(Number), connectionReused: true },
+    ]);
+    expect(collected[0].bytesSent).toBeGreaterThan(5000);
+  });
+
+  test("a FetchSession has its own connection, and close() closes it once idle", async () => {
+    using one = new Bun.FetchSession();
+    using other = new Bun.FetchSession();
+    const text = (session: Bun.FetchSession) => fetch(`${base}/hello`, { ...h3, session }).then(r => r.text());
+    const before = liveCounts().sessions;
+    expect(await text(one)).toBe("hello over h3");
+    expect(await text(one)).toBe("hello over h3");
+    expect(liveCounts().sessions).toBe(before + 1);
+    expect(await text(other)).toBe("hello over h3");
+    expect(liveCounts().sessions).toBe(before + 2);
+    one.close();
+    while (liveCounts().sessions !== before + 1) await new Promise(resolve => setImmediate(resolve));
+    // `other` still has its connection.
+    expect(await text(other)).toBe("hello over h3");
+    expect(liveCounts().sessions).toBe(before + 1);
   });
 
   test("50 concurrent requests", async () => {

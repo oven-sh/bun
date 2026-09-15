@@ -349,21 +349,21 @@ fn on_handshake(
     this.state.response_stage = HTTPStage::ProxyHeaders;
     this.state.request_stage = HTTPStage::ProxyHeaders;
     this.state.request_sent_len = 0;
+    this.state.flags.sending_connect = false;
     let handshake_error = HTTPCertError::from_verify_error(ssl_error);
     if handshake_success {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake success");
         // handshake completed but we may have ssl errors
         this.flags.did_have_handshaking_error = handshake_error.error_no != 0;
-        if this.flags.reject_unauthorized {
-            // only reject the connection if reject_unauthorized == true
-            if this.flags.did_have_handshaking_error {
-                let err = crate::get_cert_error_from_no(handshake_error.error_no);
-                // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
-                // fresh `&mut *ctx` does not alias us.
-                ProxyTunnel::close_from_callback(proxy_nn, err);
-                return;
-            }
-
+        // only reject the connection if reject_unauthorized == true
+        if this.flags.reject_unauthorized && this.flags.did_have_handshaking_error {
+            let err = crate::get_cert_error_from_no(handshake_error.error_no);
+            // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
+            // fresh `&mut *ctx` does not alias us.
+            ProxyTunnel::close_from_callback(proxy_nn, err);
+            return;
+        }
+        if this.wants_server_identity_check() {
             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
             // Assert the wrapper is Some, then silently return
             // (no debug_assert) on the ssl-None sub-case.
@@ -419,17 +419,22 @@ fn on_handshake(
         }
     } else {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake failed");
-        // if we are here is because server rejected us, and the error_no is the cause of this
-        // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
-        if this.flags.did_have_handshaking_error && handshake_error.error_no != 0 {
+        // The wrapper reports a failed handshake together with the verify
+        // result, which is `UNABLE_TO_GET_ISSUER_CERT` by default when the peer
+        // never got as far as sending a certificate. Only a certificate that
+        // was received can be what is wrong.
+        let peer_sent_certificate = ProxyTunnel::wrapper_ssl(proxy_nn).is_some_and(|ssl| {
+            // SAFETY: the live SSL handle of the tunnel's wrapper; the chain is borrowed.
+            !unsafe { bun_boringssl_sys::SSL_get_peer_cert_chain(ssl.as_ptr()) }.is_null()
+        });
+        if this.flags.reject_unauthorized && peer_sent_certificate && handshake_error.error_no > 0 {
             let err = crate::get_cert_error_from_no(handshake_error.error_no);
             // SAFETY: `this` dead (NLL); reenter via raw ptr.
             ProxyTunnel::close_from_callback(proxy_nn, err);
             return;
         }
-        // if handshake_success it self is false, this means that the connection was rejected
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::ConnectionRefused);
+        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::TLSHandshakeFailed);
         return;
     }
 }
@@ -574,8 +579,12 @@ impl ProxyTunnel {
             None => Some(crate::http_thread().default_ssl_ctx()),
         };
         let Some(ssl_ctx) = ssl_ctx else {
-            // invalid TLS Options
-            this.close_and_fail::<IS_SSL>(crate::Error::ConnectionRefused, socket);
+            // Invalid TLS options; the errors a direct request reports for them.
+            let error = match err {
+                uws::create_bun_socket_error_t::invalid_crl => crate::Error::InvalidCRL,
+                _ => crate::Error::FailedToOpenSocket,
+            };
+            this.close_and_fail::<IS_SSL>(error, socket);
             return;
         };
         let wrapper = match ProxyTunnelWrapper::init_with_ctx(
@@ -601,7 +610,7 @@ impl ProxyTunnel {
                 }
 
                 // invalid TLS Options
-                this.close_and_fail::<IS_SSL>(crate::Error::ConnectionRefused, socket);
+                this.close_and_fail::<IS_SSL>(crate::Error::FailedToOpenSocket, socket);
                 return;
             }
         };
@@ -790,5 +799,6 @@ impl ProxyTunnel {
         client.state.request_stage = HTTPStage::ProxyHeaders;
         client.state.response_stage = HTTPStage::ProxyHeaders;
         client.state.request_sent_len = 0;
+        client.state.flags.sending_connect = false;
     }
 }

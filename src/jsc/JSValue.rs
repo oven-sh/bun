@@ -1098,6 +1098,22 @@ impl JSValue {
         }
     }
 
+    /// `get` for a key that is one of `BunCommonStrings.h`'s, without the
+    /// per-call `StringImpl` and atom-table probe.
+    pub fn get_common_string(
+        self,
+        global: &JSGlobalObject,
+        key: crate::CommonString,
+    ) -> JsResult<Option<JSValue>> {
+        debug_assert!(self.is_object());
+        let v = host_fn::from_js_host_call_generic(global, || key.get_property(self, global))?;
+        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() {
+            Ok(None)
+        } else {
+            Ok(Some(v))
+        }
+    }
+
     /// Safe to use on any JSValue.
     /// Returns true iff the value is an object whose `toString` property is a callable cell.
     pub fn implements_to_string(self, global: &JSGlobalObject) -> JsResult<bool> {
@@ -1236,16 +1252,38 @@ impl JSValue {
         let Some(v) = self.get(global, property)? else {
             return Ok(None);
         };
-        if v.is_undefined_or_null() {
+        v.function_or_nullish(global, property)
+    }
+
+    /// `get_function` for a key that is one of `BunCommonStrings.h`'s; `name` is for the error.
+    pub fn get_common_string_function(
+        self,
+        global: &JSGlobalObject,
+        key: crate::CommonString,
+        name: &[u8],
+    ) -> JsResult<Option<JSValue>> {
+        let Some(v) = self.get_common_string(global, key)? else {
+            return Ok(None);
+        };
+        v.function_or_nullish(global, name)
+    }
+
+    /// `self` as the value of the option `name`: a function, or absent when nullish.
+    fn function_or_nullish(
+        self,
+        global: &JSGlobalObject,
+        name: &[u8],
+    ) -> JsResult<Option<JSValue>> {
+        if self.is_undefined_or_null() {
             return Ok(None);
         }
-        if !v.is_cell() || !v.is_callable() {
+        if !self.is_cell() || !self.is_callable() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "{} must be a function",
-                bstr::BStr::new(property),
+                bstr::BStr::new(name),
             )));
         }
-        Ok(Some(v))
+        Ok(Some(self))
     }
     /// Missing/undefined → `None`;
     /// boolean → `Some(b)`; anything else throws `ERR_INVALID_ARG_TYPE`.

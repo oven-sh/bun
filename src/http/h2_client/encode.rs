@@ -199,6 +199,7 @@ pub(crate) fn write_request(
         &encoded,
         !has_inline_body && !is_streaming,
     );
+    client.stats.bytes_written += encoded.len() as u64;
     if encoded.capacity() > 64 * 1024 {
         encoded = Vec::new();
     }
@@ -317,6 +318,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
         HTTPRequestBody::Bytes(_) => {
             let pending = stream.pending_body;
             let sent = write_data_windowed(session, stream, pending.slice(), true, cap);
+            client.stats.add_body_bytes(sent);
             // pending_body[sent..] is a suffix of the original slice.
             stream.pending_body = bun_ptr::RawSlice::new(&pending.slice()[sent..]);
             if stream.pending_body.is_empty() {
@@ -340,6 +342,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
             let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
             let sent = write_data_windowed(session, stream, data, ended, cap);
+            client.stats.add_body_bytes(sent);
             // We still hold the lock from `acquire()` above; `sb` is the sole
             // live borrow, so reborrowing `&mut sb.buffer` is a child access.
             let buffer = &mut sb.buffer;

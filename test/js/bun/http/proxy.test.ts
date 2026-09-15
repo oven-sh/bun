@@ -2342,6 +2342,14 @@ describe("proxy resolution", () => {
       ["0177.0.0.1", "127.0.0.1", 80, false],
       ["127.0.0.1", "127.1", 80, false],
       ["127.0.0.01", "127.0.0.1", 80, false],
+      // ...nor are the other forms c-ares's inet_pton lets through
+      ["0127.0.0.1", "127.0.0.1", 80, false],
+      ["0x7f000001", "127.0.0.1", 80, false],
+      ["10", "10.0.0.0", 80, false],
+      ["127.1", "127.1.0.0", 80, false],
+      ["127.0.0.1", "127.0.0.1/8", 80, false],
+      ["::1", "::1/128", 80, false],
+      ["fd00::", "fd00::1/8", 80, false],
       // a domain entry never exempts an address, nor the other way round
       ["example.test", "127.0.0.1", 80, false],
       ["127.0.0.1", "example.test", 80, false],

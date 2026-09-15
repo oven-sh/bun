@@ -16,12 +16,12 @@ fn strip_trailing_dot(host: &[u8]) -> &[u8] {
 }
 
 /// A dotted-quad or IPv6 address, parsed the same way on every platform, with
-/// `::ffff:a.b.c.d` folded into `a.b.c.d`. The resolver's shorthand (`127.1`,
-/// `0x7f.1`) is not an address here: `fetch()` and `WebSocket` hosts arrive
-/// normalized to the dotted quad, and a host the other callers took from
-/// configuration is compared as written, like curl does.
+/// `::ffff:a.b.c.d` folded into `a.b.c.d`. The resolver's
+/// shorthand (`127.1`, `0x7f.1`) is not an address here: `fetch()` and
+/// `WebSocket` hosts arrive normalized to the dotted quad, and a host the
+/// other callers took from configuration is compared as written, like curl does.
 fn parse_ip(text: &[u8]) -> Option<IpAddr> {
-    bun_core::fmt::parse_ascii::<IpAddr>(text).map(|ip| ip.to_canonical())
+    bun_core::ip_address::parse_strict(text).map(|ip| ip.to_canonical())
 }
 
 /// Splits `host[:port]`, where `host` may be a bracketed or bare IPv6 literal.
@@ -40,17 +40,17 @@ fn split_port(entry: &[u8]) -> (&[u8], Option<&[u8]>) {
     (entry, None)
 }
 
-/// A port or a prefix length: ASCII digits only (`parse_int` would take `+8` and `8_0`).
-fn parse_digits<T: core::str::FromStr>(text: &[u8]) -> Option<T> {
+/// A port or a prefix length: ASCII digits only (`parse_unsigned` alone would take `8_0`).
+fn parse_digits<T: TryFrom<i128> + TryFrom<u128>>(text: &[u8]) -> Option<T> {
     if text.is_empty() || !text.iter().all(u8::is_ascii_digit) {
         return None;
     }
-    bun_core::fmt::parse_ascii::<T>(text)
+    bun_core::fmt::parse_unsigned::<T>(text, 10).ok()
 }
 
 fn cidr_contains(entry: &[u8], slash: usize, host: IpAddr) -> bool {
     let Some(written) =
-        bun_core::fmt::parse_ascii::<IpAddr>(bun_url::strip_ipv6_brackets(&entry[..slash]))
+        bun_core::ip_address::parse_strict(bun_url::strip_ipv6_brackets(&entry[..slash]))
     else {
         return false;
     };

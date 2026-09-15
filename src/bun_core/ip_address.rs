@@ -65,6 +65,11 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
     pton(AF_INET6, &buf[..=input.len()], &mut dst)
 }
 
+/// A dotted quad or an IPv6 address and nothing else, the same on every platform. This is `core::net`'s parser and not `ares_inet_pton`, which is `inet_net_pton` underneath: it also takes `10` (as 10.0.0.0), `127.1` (as 127.1.0.0), `0x7f000001`, zero-padded octets, a trailing `/bits`, and stops at a NUL. Use this when the parsed value is compared, not just classified.
+pub fn parse_strict(input: &[u8]) -> Option<IpAddr> {
+    crate::fmt::parse_ascii::<IpAddr>(input)
+}
+
 /// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`).
 pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     let mut buf = [0u8; 512];

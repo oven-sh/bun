@@ -390,6 +390,9 @@ let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
+// True while a client stream counts against the peer's SETTINGS_MAX_CONCURRENT_STREAMS.
+const kHoldsRequestSlot = Symbol("holdsRequestSlot");
+const kReleaseRequestSlot = Symbol("releaseRequestSlot");
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
 // takes precedence over the destroy code when streams are torn down.
@@ -2214,6 +2217,9 @@ function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
+function releaseRequestSlotNT(session: ClientHttp2Session, stream: ClientHttp2Stream) {
+  session[kReleaseRequestSlot](stream);
+}
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
 // drives the native receive window. While paused, the stream's window is not replenished; on
 // resume the deferred WINDOW_UPDATE is sent. A pending stream (no id yet) has nothing on the
@@ -2302,6 +2308,7 @@ class Http2Stream extends Duplex {
   [kSendingTrailers]: boolean = false;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
+  [kHoldsRequestSlot]: boolean = false;
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,
@@ -2653,6 +2660,10 @@ class Http2Stream extends Duplex {
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+    }
+    // After the RST_STREAM: the peer counts this stream until that frame arrives.
+    if (session && this[kHoldsRequestSlot]) {
+      setImmediate(releaseRequestSlotNT, session, this);
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error
@@ -6276,18 +6287,18 @@ class ClientHttp2Session extends Http2Session {
     }
   }
 
-  // Counts a submitted request against the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit until its
-  // stream closes, then tries to submit queued requests.
+  // Counts a submitted request against the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit until
+  // Http2Stream#_destroy releases it.
   #trackActiveRequest(req: ClientHttp2Stream) {
     this.#activeRequestCount++;
-    // The peer counts the stream until its RST_STREAM arrives, and that frame leaves from a
-    // setImmediate queued before 'close'. Release the slot after it.
-    req.once("close", () =>
-      setImmediate(() => {
-        this.#activeRequestCount--;
-        this.#flushPendingRequests();
-      }),
-    );
+    req[kHoldsRequestSlot] = true;
+  }
+
+  // Frees the slot of a destroyed request, then tries to submit queued requests.
+  [kReleaseRequestSlot](req: ClientHttp2Stream) {
+    req[kHoldsRequestSlot] = false;
+    this.#activeRequestCount--;
+    this.#flushPendingRequests();
   }
 
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots

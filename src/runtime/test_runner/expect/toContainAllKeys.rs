@@ -16,7 +16,10 @@ impl Expect {
                     'outer: while let Some(item) = itr.next()? {
                         let mut i: u32 = 0;
                         while u64::from(i) < count {
-                            if item.jest_deep_equals(expected.get_index(g, i)?, g)? { continue 'outer; }
+                            let mut key = expected.get_index(g, i)?;
+                            // Object.keys() gives strings. hasOwnProperty() converts a number key for the sibling matchers.
+                            if key.is_number() { key = JSValue::from_cell(key.to_js_string(g)?); }
+                            if item.jest_deep_equals(key, g)? { continue 'outer; }
                             i += 1;
                         }
                         pass = false; break;

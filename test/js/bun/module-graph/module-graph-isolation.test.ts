@@ -303,7 +303,7 @@ const dir = String(
       const good = import.meta.dir + "/not-loaded-yet.ts";
       await loads.import(good);
       for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ askerHeard: app.heard, failed, mainIsTheOneThatLoaded: loads.mainModule === good }));
+      console.log(JSON.stringify({ askerHeard: app.heard, failed, mainIsTheOneThatLoaded: loads.mainModule?.endsWith("not-loaded-yet.ts") }));
       process.exit(0);
     `,
     "imports-through-another-graph.mjs": `

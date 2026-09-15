@@ -932,7 +932,9 @@ const dir = String(
         "CompressionStream (off-thread)": () => new Response(new Blob([Buffer.alloc(1 << 20, "abcdefgh")]).stream().pipeThrough(new CompressionStream("gzip")).pipeThrough(new DecompressionStream("gzip"))).arrayBuffer(),
         "Bun.write(file, Blob)": () => Bun.write(dataFile + ".big", new Blob([Buffer.alloc(1 << 20, "x")])),
         // (On Windows a file sink's writes complete from the event loop.)
-        "Bun.file().writer(): write, flush, end": async () => { const writer = Bun.file(dataFile + ".sink-" + Math.random().toString(36).slice(2)).writer(); writer.write(Buffer.alloc(1 << 20, "x")); await writer.flush(); await writer.end(); },
+        "Bun.file().writer(): write, end": async () => { const writer = Bun.file(dataFile + ".sink-" + Math.random().toString(36).slice(2)).writer(); // (end() while the write is in flight: a promise on Windows, a number on POSIX.)
+          writer.write(Buffer.alloc(1 << 20, "x"));
+          await writer.end(); },
         "Bun.spawn stdin: write, end": async () => { const child = Bun.spawn({ cmd: [process.execPath, "-e", "process.stdin.resume()"], stdin: "pipe", stdout: "ignore", stderr: "ignore" }); child.stdin.write(Buffer.alloc(1 << 16, "x")); await child.stdin.end(); },
         "Bun.write(file, file)": () => Bun.write(dataFile + ".copy", Bun.file(dataFile)),
         "MessageChannel": () => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(1); }),
@@ -3052,7 +3054,7 @@ const mayStillSettle = [
   // Computed inside the call; the callback is a process.nextTick.
   "crypto.randomInt",
   // A file sink's writes complete inside write() on POSIX, from the event loop on Windows.
-  ...(isWindows ? [] : ["Bun.file().writer(): write, flush, end", "Bun.spawn stdin: write, end"]),
+  ...(isWindows ? [] : ["Bun.file().writer(): write, end", "Bun.spawn stdin: write, end"]),
 ];
 
 describe.concurrent(

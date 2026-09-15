@@ -1,8 +1,6 @@
 use core::ffi::{c_char, c_int, c_void};
 
-use bun_core::Fd;
-
-use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SslCtx, us_socket_t};
+use crate::{SocketGroup, SslCtx, us_socket_t};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for a uSockets listen socket.
@@ -40,20 +38,6 @@ impl ListenSocket {
     pub fn group(&mut self) -> &mut SocketGroup {
         // SAFETY: self is a valid listen socket; C returns a non-null group.
         unsafe { &mut *us_listen_socket_group(self) }
-    }
-
-    pub fn fd(&mut self) -> Fd {
-        let raw = us_listen_socket_get_fd(self);
-        // SOCKET → kind=system (mask bit 63); `from_native` would store the
-        // raw bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
-        #[cfg(windows)]
-        {
-            Fd::from_system(raw as *mut core::ffi::c_void)
-        }
-        #[cfg(not(windows))]
-        {
-            Fd::from_native(raw)
-        }
     }
 
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
@@ -101,7 +85,6 @@ impl ListenSocket {
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
     safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
-    safe fn us_listen_socket_get_fd(ls: &mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,

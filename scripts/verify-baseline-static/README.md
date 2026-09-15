@@ -52,10 +52,13 @@ If you're not sure which: run the binary under `qemu-x86_64 -cpu Nehalem`
 
 ### Data-in-`.text` false positives
 
-The tool linear-sweeps every byte in `.text`. There's no general way to do
-better for x86: toolchains don't emit "this byte is data" markers the way
-ARM EABI's `$d` mapping symbols do, and code/data separation in x86 binaries
-is undecidable in general
+The tool linear-sweeps every byte in `.text`, restarting the decoder at every
+symbol start (an instruction that would straddle one is discarded), so data at
+the end of a function — JSC's LLInt puts a 4-byte opcode id in front of every
+`llint_op_*` label — cannot desynchronise the decode of the functions after
+it. Within one symbol there's no general way to do better for x86: toolchains
+don't emit "this byte is data" markers the way ARM EABI's `$d` mapping symbols
+do, and code/data separation in x86 binaries is undecidable in general
 ([Schwarz & Debray 2002](https://www2.cs.arizona.edu/~debray/Publications/disasm.pdf)).
 
 MSVC inlines jump tables and small `static const` arrays into `.text` right

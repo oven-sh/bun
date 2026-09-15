@@ -18,7 +18,7 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         Self {
             v: self.v.as_ref().map(|n| n.deep_clone(bump)),
         }
@@ -190,7 +190,7 @@ impl ImportRule {
         self.layer.is_some() || self.supports.is_some() || !self.media.media_queries.is_empty()
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `url: &'static [u8]` is an arena-owned slice → identity copy;
         // `media` routes through `dc::media_list` until
         // `MediaList` gains an arena-aware `deep_clone`.
@@ -210,8 +210,6 @@ impl ImportRule {
                 dest.arena,
                 self,
                 dest.filename(),
-                dest.local_names,
-                dest.symbols,
             ))
         } else {
             None

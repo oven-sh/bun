@@ -17,7 +17,7 @@ mod ffi_body;
 /// the codegen-expected path so the dispatch table links without forcing the
 /// generator to special-case `ffi/ffi.rs`.
 pub mod ffi {
-    pub use super::ffi_body::bun__ffi__cc;
+    pub(crate) use super::ffi_body::bun__ffi__cc;
 }
 
 #[path = "FFIObject.rs"]
@@ -48,7 +48,7 @@ mod dom_call_slowpath {
                 arguments_len: usize,
             ) -> JSValue {
                 // SAFETY: C++ DOMJIT slowpath caller passes a live global and a
-                // valid `[JSValue; arguments_len]` span (ZigLazyStaticFunctions).
+                // valid `[JSValue; arguments_len]` span (ZigGeneratedCode.cpp).
                 let (global, arguments) = unsafe {
                     (&*global, core::slice::from_raw_parts(arguments_ptr, arguments_len))
                 };
@@ -76,7 +76,7 @@ mod dom_call_slowpath {
     // exceptions), so no `to_js_host_call` mapping.
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub(super) fn FFI__ptr__slowpath(
+    fn FFI__ptr__slowpath(
         global: *mut JSGlobalObject,
         this_value: JSValue,
         arguments_ptr: *const JSValue,
@@ -142,4 +142,3 @@ pub use ffi_body::FFI;
 // ABIType — single source of truth lives in abi_type.rs
 // ═════════════════════════════════════════════════════════════════════════════
 mod abi_type;
-pub use abi_type::{ABI_TYPE_LABEL, ABIType, ToCFormatter, ToJSFormatter};

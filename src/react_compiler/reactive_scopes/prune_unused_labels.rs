@@ -20,7 +20,7 @@ use crate::reactive_scopes::visitors::{
 };
 
 /// Prune unused labels from a reactive function.
-pub fn prune_unused_labels(
+pub(crate) fn prune_unused_labels(
     func: &mut ReactiveFunction,
     env: &Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {

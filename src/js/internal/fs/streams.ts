@@ -228,12 +228,6 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
   }
   const fastPath = this[kWriteStreamFastPath];
   if (this.open !== streamNoop) {
-    // if (fastPath) {
-    //   // disable fast path in this case
-    //   $assert(this[kWriteStreamFastPath] === true, "fastPath is not true");
-    //   this[kWriteStreamFastPath] = undefined;
-    // }
-
     // Backwards compat for monkey patching open().
     const orgEmit: any = this.emit;
     this.emit = function (...args) {
@@ -251,19 +245,6 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
     this.open();
   } else {
     if (fastPath) {
-      // // there is a chance that this fd is not actually correct but it will be a number
-      // if (fastPath !== true) {
-      //   // @ts-expect-error undocumented. to make this public please make it a
-      //   // getter. couldn't figure that out sorry
-      //   this.fd = fastPath._getFd();
-      // } else {
-      //   if (fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
-      //     this[kWriteStreamFastPath] = undefined;
-      //     break fast;
-      //   }
-      //   // @ts-expect-error
-      //   this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
-      // }
       callback();
       this.emit("open", this.fd);
       this.emit("ready");
@@ -403,7 +384,10 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    this.path = getValidatedPath(path);
+    // Internal $fastPath callers (writableFromFileSink) discard .path; do not
+    // resolve it - path.resolve("") needs process.cwd(), which throws when
+    // the cwd has been deleted (Node still spawns children in that state).
+    this.path = fastPath ? path : getValidatedPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;
     this.mode = mode === undefined ? 0o666 : mode;
@@ -527,7 +511,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 
     retries = bytesWritten ? 0 : retries + 1;
     size -= bytesWritten;
-    pos += bytesWritten;
+    if (pos !== undefined) pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {

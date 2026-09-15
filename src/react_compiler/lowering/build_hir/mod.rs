@@ -53,7 +53,7 @@ pub(super) use super::hir_builder::FunctionNode;
 type RefSet = std::collections::HashSet<Ref>;
 
 /// Port of upstream `lower()` (build_hir.rs:4257).
-pub fn lower(
+pub(crate) fn lower(
     func: &FunctionNode<'_>,
     _id: Option<&str>,
     host: &dyn Host,

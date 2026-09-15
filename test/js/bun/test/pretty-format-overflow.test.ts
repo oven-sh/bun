@@ -3,11 +3,11 @@
 // Platform: Windows x86_64_baseline, Bun v1.3.0
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("pretty_format should handle deeply nested objects without crashing", () => {
   test("deeply nested object with many properties", async () => {
-    const dir = tempDirWithFiles("pretty-format-overflow", {
+    await using dir = tempDir("pretty-format-overflow", {
       "nested.test.ts": `
 import { test, expect } from "bun:test";
 

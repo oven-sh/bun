@@ -1,11 +1,11 @@
 // https://github.com/oven-sh/bun/issues/25716
 // Expose `--react-fast-refresh` option in `Bun.build` JS API
 import { expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import { join } from "path";
 
 test.each(["browser", "bun"] as const)("Bun.build reactFastRefresh works with target: %s", async target => {
-  const dir = tempDirWithFiles("react-fast-refresh-test", {
+  await using dir = tempDir("react-fast-refresh-test", {
     "component.tsx": `
       import { useState } from "react";
 

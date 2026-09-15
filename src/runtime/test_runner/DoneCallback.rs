@@ -1,32 +1,18 @@
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsClass as _, JsResult};
 use bun_core::String as BunString;
+use bun_ptr::RefPtr;
 
-use crate::test_runner::bun_test::{group_begin, BunTest, RefDataPtr};
+use crate::test_runner::bun_test::{group_begin, BunTest, RefData};
 
 #[bun_jsc::JsClass(no_construct, no_constructor)] // codegen wires to_js / from_js
 pub struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
-    pub r#ref: Option<RefDataPtr>,
-    pub called: bool, // = false
+    pub(crate) r#ref: Option<RefPtr<RefData>>,
+    pub(crate) called: bool, // = false
 }
 
 impl DoneCallback {
-    // Codegen's `host_fn_finalize` calls this via `|b| DoneCallback::finalize(b)`
-    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
-    // false positive on that contract.
-    #[allow(clippy::boxed_local)]
-    pub fn finalize(mut self: Box<Self>) {
-        let _g = group_begin!();
-
-        // `RefDataPtr` = `RefPtr<RefData>` has NO `Drop` impl (see
-        // src/ptr/ref_count.rs) — must explicitly decrement before the Box
-        // frees the allocation.
-        if let Some(r) = self.r#ref.take() {
-            r.deref();
-        }
-    }
-
-    pub fn create_unbound(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn create_unbound(global: &JSGlobalObject) -> JSValue {
         let _g = group_begin!();
 
         let done_callback = DoneCallback {
@@ -41,7 +27,7 @@ impl DoneCallback {
         value
     }
 
-    pub fn bind(value: JSValue, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn bind(value: JSValue, global: &JSGlobalObject) -> JsResult<JSValue> {
         let call_fn = JSFunction::create(
             global,
             "done",
@@ -49,7 +35,7 @@ impl DoneCallback {
             1,
             Default::default(),
         );
-        call_fn.bind(global, value, &BunString::static_str("done"), 1.0, &[])
+        call_fn.bind(global, value, &BunString::static_("done"), 1.0, &[])
     }
 }
 

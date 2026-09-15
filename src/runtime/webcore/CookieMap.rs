@@ -62,7 +62,7 @@ impl CookieMapRef {
     /// Bump the refcount of a borrowed `CookieMap` and wrap it (the caller
     /// keeps its own ref; this `CookieMapRef` owns the freshly-added one).
     #[inline]
-    pub fn new_ref(cookie_map: &CookieMap) -> Self {
+    pub(crate) fn new_ref(cookie_map: &CookieMap) -> Self {
         CookieMap__ref(cookie_map);
         Self(NonNull::from(cookie_map))
     }

@@ -26,9 +26,7 @@ public:
 };
 
 struct EcKeyPairJob {
-    static EcKeyPairJob* create(JSC::JSGlobalObject*, EcKeyPairJobCtx&&, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, EcKeyPairJobCtx&&, JSC::JSValue callback);
-    void schedule();
 };
 
 } // namespace Bun

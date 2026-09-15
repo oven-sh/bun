@@ -6,10 +6,13 @@
 #include <JavaScriptCore/JSString.h>
 #include "ZigGlobalObject.h"
 
+#include <JavaScriptCore/JSBigInt.h>
+#include <JavaScriptCore/JSBigIntInlines.h>
 #if OS(WINDOWS)
 #include <JavaScriptCore/ExecutableAllocator.h>
-#include <JavaScriptCore/JSBigInt.h>
 #endif
+
+extern "C" bool JSC__JSValue__isLiveCell(JSC::EncodedJSValue);
 
 namespace Bun {
 using namespace JSC;
@@ -23,6 +26,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsUTF16String,
     JSC::JSValue value = callframe->argument(0);
     if (value.isString()) {
         WTF::String string = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (string.is8Bit()) {
             return JSValue::encode(jsBoolean(false));
         }
@@ -43,6 +47,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLatin1String,
     JSC::JSValue value = callframe->argument(0);
     if (value.isString()) {
         WTF::String string = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (string.is8Bit()) {
             return JSValue::encode(jsBoolean(true));
         }
@@ -64,6 +69,32 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStartOfFixedExecutableMemoryPool,
 }
 #endif
 
+// Test-only stand-in for JsRef::Weak; the address is only meaningful until that cell is swept.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRawCellAddress, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = callframe->argument(0);
+    if (!value.isCell())
+        return JSValue::encode(jsUndefined());
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<uint64_t>(JSValue::encode(value)))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLiveCellAtRawAddress, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint64_t bits = JSBigInt::toBigUInt64(callframe->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(JSC__JSValue__isLiveCell(static_cast<JSC::EncodedJSValue>(bits))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCollectSyncWithoutSweep, (JSGlobalObject * globalObject, CallFrame*))
+{
+    JSC::getVM(globalObject).heap.collectSync(JSC::CollectionScope::Full);
+    return JSValue::encode(jsUndefined());
+}
+
 JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -78,6 +109,21 @@ JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
     object->putDirectNativeFunction(
         vm, globalObject, JSC::Identifier::fromString(vm, "isLatin1String"_s), 1,
         jsFunctionIsLatin1String, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    object->putDirectNativeFunction(
+        vm, globalObject, JSC::Identifier::fromString(vm, "rawCellAddress"_s), 1,
+        jsFunctionRawCellAddress, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    object->putDirectNativeFunction(
+        vm, globalObject, JSC::Identifier::fromString(vm, "collectSyncWithoutSweep"_s), 0,
+        jsFunctionCollectSyncWithoutSweep, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    object->putDirectNativeFunction(
+        vm, globalObject, JSC::Identifier::fromString(vm, "isLiveCellAtRawAddress"_s), 1,
+        jsFunctionIsLiveCellAtRawAddress, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 
 #if OS(WINDOWS)

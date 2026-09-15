@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 // test:
@@ -75,7 +75,7 @@ test.concurrent("--randomize and --seed work", async () => {
 // birthday-paradox search takes several seconds and would starve siblings.
 test("--randomize: files whose u32-truncated path hashes collide get distinct per-file orders", async () => {
   // tempDirWithFiles already realpaths os.tmpdir(), so tmpRoot is canonical.
-  const tmpRoot = tempDirWithFiles("randomize-hash-collision", {});
+  await using tmpRoot = tempDir("randomize-hash-collision", {});
 
   // Birthday collision on u32 is ~77k names at 50%; at 400k the miss
   // probability is exp(-400000^2 / 2^33) ~= 8e-9.
@@ -134,7 +134,7 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
 }, 60_000);
 
 test.concurrent("randomizes order of files", async () => {
-  const dir = tempDirWithFiles(
+  await using dir = tempDir(
     "randomize-order-of-files",
     Object.fromEntries(
       Array.from({ length: 20 }, (_, i) => [

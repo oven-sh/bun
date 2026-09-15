@@ -35,7 +35,7 @@ fn statement_loc(stmt: &Stmt) -> Option<SourceLocation> {
 ///
 /// Implements the TS BlockStatement hoisting pass: identifies forward references to
 /// block-scoped bindings and emits DeclareContext instructions to hoist them.
-pub(super) fn lower_block_statement(
+fn lower_block_statement(
     builder: &mut HirBuilder,
     body: &[Stmt],
 ) -> Result<(), CompilerDiagnostic> {
@@ -155,7 +155,10 @@ fn lower_block_statement_inner(
         while h < hoist.len() && hoist[h].0 == i {
             let (_, target, loc, kind) = hoist[h];
             h += 1;
-            if builder.is_context_identifier(target) {
+            if builder
+                .environment()
+                .is_hoisted_identifier(target.inner_index())
+            {
                 continue;
             }
             let id_loc = convert_loc(loc);
@@ -491,7 +494,7 @@ fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32
 // =============================================================================
 
 #[allow(clippy::too_many_lines)]
-pub(crate) fn lower_statement(
+fn lower_statement(
     builder: &mut HirBuilder,
     stmt: &Stmt,
     label: Option<String>,

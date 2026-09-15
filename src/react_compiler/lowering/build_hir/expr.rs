@@ -668,10 +668,11 @@ fn lower_simple_assignment(
         Data::EImportIdentifier(ident) => {
             lower_simple_assignment_identifier(builder, ident.ref_, &bin.right, bin.left.loc)
         }
+        // Unlike upstream: JS evaluates the target's object and key before the right-hand side.
         Data::EDot(d) => {
-            let right = lower_expression_to_temporary(builder, &bin.right)?;
             let left_loc = convert_loc(bin.left.loc);
             let object = lower_expression_to_temporary(builder, &d.target)?;
+            let right = lower_expression_to_temporary(builder, &bin.right)?;
             let temp = lower_value_to_temporary(
                 builder,
                 InstructionValue::PropertyStore {
@@ -687,10 +688,10 @@ fn lower_simple_assignment(
             })
         }
         Data::EIndex(i) => {
-            let right = lower_expression_to_temporary(builder, &bin.right)?;
             let left_loc = convert_loc(bin.left.loc);
             let object = lower_expression_to_temporary(builder, &i.target)?;
             let temp = if let Data::ENumber(num) = &i.index.data {
+                let right = lower_expression_to_temporary(builder, &bin.right)?;
                 lower_value_to_temporary(
                     builder,
                     InstructionValue::PropertyStore {
@@ -702,6 +703,7 @@ fn lower_simple_assignment(
                 )?
             } else {
                 let prop = lower_expression_to_temporary(builder, &i.index)?;
+                let right = lower_expression_to_temporary(builder, &bin.right)?;
                 lower_value_to_temporary(
                     builder,
                     InstructionValue::ComputedStore {
@@ -984,7 +986,13 @@ fn lower_unary(
     let loc = convert_loc(bun_loc);
     match unary.op {
         UnDelete => match &unary.value.data {
-            Data::EDot(d) if d.optional_chain.is_none() => {
+            // A flagless EDot here is a visitor-folded no-op `delete`; bail like upstream.
+            Data::EDot(d)
+                if d.optional_chain.is_none()
+                    && unary.flags.contains(
+                        E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+                    ) =>
+            {
                 let object = lower_expression_to_temporary(builder, &d.target)?;
                 Ok(InstructionValue::PropertyDelete {
                     object,
@@ -992,7 +1000,12 @@ fn lower_unary(
                     loc,
                 })
             }
-            Data::EIndex(i) if i.optional_chain.is_none() => {
+            Data::EIndex(i)
+                if i.optional_chain.is_none()
+                    && unary.flags.contains(
+                        E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+                    ) =>
+            {
                 let object = lower_expression_to_temporary(builder, &i.target)?;
                 let property = lower_expression_to_temporary(builder, &i.index)?;
                 Ok(InstructionValue::ComputedDelete {
@@ -1021,6 +1034,7 @@ fn lower_unary(
             Ok(InstructionValue::UnaryExpression {
                 operator,
                 value,
+                bun_flags: unary.flags,
                 loc,
             })
         }
@@ -1208,7 +1222,7 @@ fn lower_template(
         let value = match &tmpl.head {
             E::TemplateContents::Raw(r) => {
                 let raw_bytes = r.slice();
-                if raw_bytes.contains(&b'\\') {
+                if bun_core::strings::contains_char(raw_bytes, b'\\') {
                     builder.record_error(CompilerErrorDetail {
                         category: ErrorCategory::Todo,
                         reason: "(BuildHIR::lowerExpression) Handle tagged template where cooked value is different from raw value".to_string(),
@@ -1371,34 +1385,10 @@ fn is_reorderable_expression(
             }
         }),
         Data::EDot(d) if d.optional_chain.is_none() => {
-            let mut inner = &d.target;
-            loop {
-                match &inner.data {
-                    Data::EDot(d2) if d2.optional_chain.is_none() => inner = &d2.target,
-                    Data::EIndex(i2) if i2.optional_chain.is_none() => inner = &i2.target,
-                    _ => break,
-                }
-            }
-            match &inner.data {
-                Data::EIdentifier(ident) => is_module_level_or_global(builder, ident.ref_),
-                Data::EImportIdentifier(_) => true,
-                _ => false,
-            }
+            is_member_chain_of_module_level_or_global(builder, &d.target)
         }
         Data::EIndex(i) if i.optional_chain.is_none() => {
-            let mut inner = &i.target;
-            loop {
-                match &inner.data {
-                    Data::EDot(d2) if d2.optional_chain.is_none() => inner = &d2.target,
-                    Data::EIndex(i2) if i2.optional_chain.is_none() => inner = &i2.target,
-                    _ => break,
-                }
-            }
-            match &inner.data {
-                Data::EIdentifier(ident) => is_module_level_or_global(builder, ident.ref_),
-                Data::EImportIdentifier(_) => true,
-                _ => false,
-            }
+            is_member_chain_of_module_level_or_global(builder, &i.target)
         }
         Data::EArrow(arrow) => {
             let stmts = arrow.body.stmts.slice();
@@ -1428,6 +1418,23 @@ fn is_reorderable_expression(
         Data::EInlinedEnum(e) => {
             is_reorderable_expression(builder, &e.value, allow_local_identifiers)
         }
+        _ => false,
+    }
+}
+
+/// `a.b[c].d` rooted at a module-level or global binding (no optional chaining).
+fn is_member_chain_of_module_level_or_global(builder: &HirBuilder, target: &Expr) -> bool {
+    let mut inner = target;
+    loop {
+        match &inner.data {
+            Data::EDot(d) if d.optional_chain.is_none() => inner = &d.target,
+            Data::EIndex(i) if i.optional_chain.is_none() => inner = &i.target,
+            _ => break,
+        }
+    }
+    match &inner.data {
+        Data::EIdentifier(ident) => is_module_level_or_global(builder, ident.ref_),
+        Data::EImportIdentifier(_) => true,
         _ => false,
     }
 }

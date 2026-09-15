@@ -153,21 +153,17 @@ impl<'a, T> BabyVec<'a, T> {
         self.len += 1;
     }
 
-    pub fn swap_remove(&mut self, index: usize) -> T {
+    /// `Vec::remove` parity — order-preserving removal.
+    pub fn remove(&mut self, index: usize) -> T {
         let len = self.len as usize;
-        assert!(
-            index < len,
-            "BabyVec::swap_remove index {index} >= len {len}"
-        );
-        // SAFETY: `index < len`; reading the hole then overwriting with the
-        // last element (possibly itself) is the standard swap-remove. Len is
-        // decremented before the read of `last` so the moved-from tail slot
-        // is no longer considered initialized.
+        assert!(index < len, "BabyVec::remove index {index} >= len {len}");
+        // SAFETY: `index < len`; the hole is read out before the tail
+        // `[index+1, len)` is shifted down over it, then `len` shrinks by one.
         unsafe {
-            let p = self.ptr.as_ptr();
-            let v = p.add(index).read();
+            let p = self.ptr.as_ptr().add(index);
+            let v = p.read();
+            ptr::copy(p.add(1), p, len - index - 1);
             self.len -= 1;
-            ptr::copy(p.add(self.len as usize), p.add(index), 1);
             v
         }
     }
@@ -216,20 +212,6 @@ impl<'a, T> BabyVec<'a, T> {
         }
     }
 
-    pub fn remove(&mut self, index: usize) -> T {
-        let len = self.len as usize;
-        assert!(index < len, "BabyVec::remove index {index} >= len {len}");
-        // SAFETY: `index < len`; read moves out the element, then shift the
-        // `len-1-index` initialized tail down by one. `len` decremented after.
-        unsafe {
-            let p = self.ptr.as_ptr().add(index);
-            let v = p.read();
-            ptr::copy(p.add(1), p, len - index - 1);
-            self.len -= 1;
-            v
-        }
-    }
-
     #[inline]
     pub fn truncate(&mut self, new_len: usize) {
         if new_len >= self.len as usize {
@@ -256,7 +238,7 @@ impl<'a, T> BabyVec<'a, T> {
     /// `Vec::leak` parity — forget the `BabyVec`, return the buffer as an
     /// arena-lifetime slice. Reclaimed when the arena resets/drops.
     #[inline]
-    pub fn leak(self) -> &'a mut [T] {
+    pub(crate) fn leak(self) -> &'a mut [T] {
         let me = ManuallyDrop::new(self);
         // SAFETY: `[ptr, ptr+len)` are `len` initialized `T` valid for `'a`
         // (the buffer is owned by `me.alloc`, which outlives `'a`).

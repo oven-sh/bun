@@ -6,7 +6,6 @@
 //!
 //! Run tests with `cargo test -p bun_runtime myers_diff`
 
-use core::fmt;
 use core::marker::PhantomData;
 
 // By limiting maximum string and buffer lengths, we can store u32s in the
@@ -111,13 +110,13 @@ impl<'a> Line for &'a [u16] {
 ///
 /// The `eql` dispatch is the `Line` trait. To supply a custom equality
 /// function, implement `Line` for your type.
-pub struct Differ<L, const CHECK_COMMA_DISPARITY: bool = false>(PhantomData<L>);
+pub(crate) struct Differ<L, const CHECK_COMMA_DISPARITY: bool = false>(PhantomData<L>);
 
 impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY> {
     // `V = [-MAX, MAX]`.
 
     #[inline]
-    pub(crate) fn eql(a: L, b: L) -> bool {
+    fn eql(a: L, b: L) -> bool {
         L::line_eq::<CHECK_COMMA_DISPARITY>(a, b)
     }
 
@@ -370,11 +369,7 @@ pub enum Error {
     DiffTooLarge,
     #[error("InputsTooLarge")]
     InputsTooLarge,
-    #[error("OutOfMemory")]
-    OutOfMemory,
 }
-
-bun_core::oom_from_alloc!(Error);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DiffKind {
@@ -383,31 +378,13 @@ pub enum DiffKind {
     Equal,
 }
 
-impl fmt::Display for DiffKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DiffKind::Insert => f.write_str("+"),
-            DiffKind::Delete => f.write_str("-"),
-            DiffKind::Equal => f.write_str(" "),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct Diff<T> {
-    pub kind: DiffKind,
+    pub(crate) kind: DiffKind,
     pub value: T,
 }
 
-impl<T: fmt::Display> fmt::Display for Diff<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // For `&[u8]` callers, wrap `value` in `bstr::BStr::new` at the call
-        // site to get string (rather than byte-array) output.
-        write!(f, "{} {}", self.kind, self.value)
-    }
-}
-
-pub type DiffList<T> = Vec<Diff<T>>;
+pub(crate) type DiffList<T> = Vec<Diff<T>>;
 
 // =============================================================================
 
@@ -518,7 +495,7 @@ mod tests {
     }
 }
 
-pub fn split<T>(s: &[T]) -> Vec<&[T]>
+pub(crate) fn split<T>(s: &[T]) -> Vec<&[T]>
 where
     T: PartialEq + Copy + From<u8>,
 {

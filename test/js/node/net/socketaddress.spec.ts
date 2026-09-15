@@ -1,6 +1,7 @@
 /**
  * @see https://nodejs.org/api/net.html#class-netsocketaddress
  */
+import { rss } from "harness";
 import { SocketAddress, SocketAddressInitOptions } from "node:net";
 
 let v4: SocketAddress;
@@ -116,7 +117,7 @@ describe("SocketAddress constructor", () => {
     sa = undefined;
     Bun.gc(true);
 
-    const before = process.memoryUsage();
+    const before = rss();
     if (debug) console.log("before", before);
 
     // actual test
@@ -126,10 +127,10 @@ describe("SocketAddress constructor", () => {
     sa = undefined;
     Bun.gc(true);
 
-    const after = process.memoryUsage();
+    const after = rss();
     if (debug) console.log("after", after);
 
-    expect(after.rss).toBeLessThanOrEqual(before.rss * growthFactor);
+    expect(after).toBeLessThanOrEqual(before * growthFactor);
   });
 }); // </SocketAddress constructor>
 

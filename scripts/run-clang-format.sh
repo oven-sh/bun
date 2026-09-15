@@ -32,7 +32,7 @@ echo "Finding header files..."
 while IFS= read -r -d '' file; do
     # Additional filtering for specific files and patterns
     if [[ "$file" =~ src/runtime/ffi/ffi- ]] || \
-       [[ "$file" =~ src/napi/ ]] || \
+       [[ "$file" =~ src/runtime/napi/ ]] || \
        [[ "$file" =~ src/jsc/bindings/libuv/ ]] || \
        [[ "$file" =~ src/jsc/bindings/sqlite/ ]] || \
        [[ "$file" =~ src/jsc/bindings/node/http/llhttp/ ]] || \

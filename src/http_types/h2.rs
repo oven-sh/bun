@@ -103,8 +103,6 @@ impl SettingsType {
     pub const SETTINGS_INITIAL_WINDOW_SIZE: Self = Self(0x4);
     pub const SETTINGS_MAX_FRAME_SIZE: Self = Self(0x5);
     pub const SETTINGS_MAX_HEADER_LIST_SIZE: Self = Self(0x6);
-    // Non-standard extension settings (still unsupported):
-    pub const SETTINGS_ENABLE_CONNECT_PROTOCOL: Self = Self(0x8);
 }
 
 // ─── wire helpers ───────────────────────────────
@@ -133,47 +131,24 @@ impl UInt31WithReserved {
         Self(value)
     }
     #[inline]
-    pub const fn init(value: u32, reserved: bool) -> Self {
-        Self((value & 0x7fff_ffff) | if reserved { 0x8000_0000 } else { 0 })
-    }
-    #[inline]
     pub fn from_bytes(src: &[u8]) -> Self {
         Self(u32_from_bytes(src))
     }
 }
 
 // ─── packed wire structs ────────────────────────
-//
-// `StreamPriority`, `SettingsPayloadUnit` and `FullSettingsPayload` are
-// `#[repr(C, packed)]` with integer-only fields and therefore have no padding
-// bytes and no niches. They implement `bytemuck::Pod`, so the per-`from()`
-// byte-view is the safe `bytemuck::bytes_of_mut`.
 
 /// 5-byte PRIORITY payload: BE stream identifier + weight.
 #[repr(C, packed)]
 #[derive(Copy, Clone, Default)]
 pub struct StreamPriority {
-    pub stream_identifier: u32,
-    pub weight: u8,
+    pub(crate) stream_identifier: u32,
+    pub(crate) weight: u8,
 }
-// SAFETY: `#[repr(C, packed)]` with `u32 + u8` fields — no padding, no niches,
-// every 5-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for StreamPriority {}
-// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for StreamPriority {}
 const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
 
 impl StreamPriority {
     pub const BYTE_SIZE: usize = 5;
-
-    #[inline]
-    pub fn from(dst: &mut StreamPriority, src: &[u8]) {
-        bytemuck::bytes_of_mut(dst).copy_from_slice(src);
-        // Byte-swap each field; `weight: u8` is a no-op.
-        // Brace-expr `{packed.field}` performs an unaligned copy;
-        // assignment to a packed field is an unaligned store. No `unsafe`.
-        dst.stream_identifier = u32::swap_bytes(dst.stream_identifier);
-    }
 }
 
 /// NOT `#[repr(packed)]` — the `u24` length is widened to a native `u32`
@@ -241,55 +216,4 @@ impl SettingsPayloadUnit {
             dst.value = u32::swap_bytes(dst.value);
         }
     }
-}
-
-/// 7 × (`u16` type + `u32` value) = 42 bytes.
-#[repr(C, packed)]
-#[derive(Copy, Clone)]
-pub(crate) struct FullSettingsPayload {
-    _header_table_size_type: u16,
-    pub header_table_size: u32,
-    _enable_push_type: u16,
-    pub enable_push: u32,
-    _max_concurrent_streams_type: u16,
-    pub max_concurrent_streams: u32,
-    _initial_window_size_type: u16,
-    pub initial_window_size: u32,
-    _max_frame_size_type: u16,
-    pub max_frame_size: u32,
-    _max_header_list_size_type: u16,
-    pub max_header_list_size: u32,
-    _enable_connect_protocol_type: u16,
-    pub enable_connect_protocol: u32,
-}
-// SAFETY: `#[repr(C, packed)]` with only `u16`/`u32` fields — no padding, no
-// niches, every 42-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for FullSettingsPayload {}
-// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for FullSettingsPayload {}
-const _: () =
-    assert!(core::mem::size_of::<FullSettingsPayload>() == FullSettingsPayload::BYTE_SIZE);
-
-impl Default for FullSettingsPayload {
-    fn default() -> Self {
-        Self {
-            _header_table_size_type: SettingsType::SETTINGS_HEADER_TABLE_SIZE.0,
-            header_table_size: 4096,
-            _enable_push_type: SettingsType::SETTINGS_ENABLE_PUSH.0,
-            enable_push: 1,
-            _max_concurrent_streams_type: SettingsType::SETTINGS_MAX_CONCURRENT_STREAMS.0,
-            max_concurrent_streams: u32::MAX,
-            _initial_window_size_type: SettingsType::SETTINGS_INITIAL_WINDOW_SIZE.0,
-            initial_window_size: 65535,
-            _max_frame_size_type: SettingsType::SETTINGS_MAX_FRAME_SIZE.0,
-            max_frame_size: 16384,
-            _max_header_list_size_type: SettingsType::SETTINGS_MAX_HEADER_LIST_SIZE.0,
-            max_header_list_size: 65535,
-            _enable_connect_protocol_type: SettingsType::SETTINGS_ENABLE_CONNECT_PROTOCOL.0,
-            enable_connect_protocol: 0,
-        }
-    }
-}
-impl FullSettingsPayload {
-    pub(crate) const BYTE_SIZE: usize = 42;
 }

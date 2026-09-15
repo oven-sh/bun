@@ -31,23 +31,23 @@
 #include "ExceptionOr.h"
 #include "URLDecomposition.h"
 #include <wtf/URL.h>
+#include "DOMURLBaseCache.h"
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
-class Blob;
-class ScriptExecutionContext;
-class URLRegistrable;
 class URLSearchParams;
 
 class DOMURL final : public RefCounted<DOMURL>, public CanMakeWeakPtr<DOMURL>, public URLDecomposition {
 public:
-    static ExceptionOr<Ref<DOMURL>> create(const String& url, const String& base);
+    using BaseURLCache = DOMURLBaseCache;
+
+    static ExceptionOr<Ref<DOMURL>> create(const String& url, const String& base, BaseURLCache* = nullptr);
     static ExceptionOr<Ref<DOMURL>> create(const String& url);
     WEBCORE_EXPORT ~DOMURL();
 
-    static RefPtr<DOMURL> parse(const String& url, const String& base);
-    static bool canParse(const String& url, const String& base);
+    static RefPtr<DOMURL> parse(const String& url, const String& base, BaseURLCache* = nullptr);
+    static bool canParse(const String& url, const String& base, BaseURLCache* = nullptr);
 
     const URL& href() const
     {
@@ -59,17 +59,6 @@ public:
     URLSearchParams& searchParams();
     void markSearchParamsDirty() { m_searchParamsDirty = true; }
 
-    const String& toJSON() const
-    {
-        flushPendingSearchParamsUpdate();
-        return m_url.string();
-    }
-
-    static String createObjectURL(ScriptExecutionContext&, Blob&);
-    static void revokeObjectURL(ScriptExecutionContext&, const String&);
-
-    static String createPublicURL(ScriptExecutionContext&, URLRegistrable&);
-
     size_t memoryCost() const
     {
         return sizeof(DOMURL) + m_url.string().sizeInBytes();
@@ -80,7 +69,7 @@ public:
     }
 
 private:
-    static ExceptionOr<Ref<DOMURL>> create(const String& url, const URL& base);
+    static ExceptionOr<Ref<DOMURL>> create(const String& url, const URL& base, const String& baseInput);
     DOMURL(URL&& completeURL);
 
     URL fullURL() const final

@@ -32,12 +32,17 @@ impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
     }
     #[inline]
     fn write(&mut self, buffer: &[u8]) {
+        // Same rule as `bun_io::StreamBuffer::compact`.
+        if self.cursor > 0 && self.cursor >= self.list.len() - self.cursor {
+            self.list.drain(..self.cursor);
+            self.cursor = 0;
+        }
         self.list.extend_from_slice(buffer);
     }
 }
 
 // ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────
-pub fn create_bun_socket_error_to_js(
+pub(crate) fn create_bun_socket_error_to_js(
     this: create_bun_socket_error_t,
     global_object: &JSGlobalObject,
 ) -> JSValue {
@@ -124,7 +129,7 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
 /// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
 /// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
+unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
     // kept for ABI parity with the C++ caller; TLS is now per-socket
     _ssl: bool,

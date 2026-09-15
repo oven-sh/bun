@@ -23,7 +23,7 @@ impl PacketHeader {
         })
     }
 
-    pub fn encode(self) -> [u8; 4] {
+    pub(crate) fn encode(self) -> [u8; 4] {
         [
             u8::try_from(self.length & 0xff).expect("int cast"),
             u8::try_from((self.length >> 8) & 0xff).expect("int cast"),

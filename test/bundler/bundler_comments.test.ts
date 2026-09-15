@@ -259,12 +259,51 @@ describe("single-line comments", () => {
     },
   });
 
+  // A marker that is not the first word of a `//` comment is prose, not an
+  // annotation. An unused pure call is removed even without minification, so a
+  // false match deletes code.
   itBundled("__PURE__ comment in single-line comment with text before", {
     files: {
       "/entry.js": `// some text #__PURE__\nconsole.log("hello");`,
     },
     onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("__PURE__ comment in single-line comment with tab before", {
+    files: {
+      "/entry.js": `//\t@__PURE__\nconsole.log("hello");`,
+    },
+    onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("hello");
+    },
+  });
+
+  itBundled("quoted /*#__PURE__*/ inside a single-line comment", {
+    files: {
+      "/entry.js": `function repro() {\n  // \`/*#__PURE__*/\`\n  console.log("hello");\n}\nrepro();`,
+    },
+    run: {
+      stdout: "hello",
+    },
+  });
+
+  itBundled("quoted /*#__PURE__*/ after text inside a single-line comment", {
+    files: {
+      "/entry.js": `// Wrap class inside init: \`/*#__PURE__*/ (() => { let C = class C {}; return C; })()\`\nconsole.log("hello");`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("many markers after leading whitespace in a single-line comment", {
+    files: {
+      "/entry.js": `//${Buffer.alloc(4096, " ").toString()}${Buffer.alloc(4096, "@").toString()}__PURE__\nconsole.log("hello");`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
     },
   });
 
@@ -282,6 +321,15 @@ describe("single-line comments", () => {
       "/entry.js": `// 你好 #__PURE__ 世界\nconsole.log("hello");`,
     },
     onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("__PURE__ comment in single-line comment with unicode characters after", {
+    files: {
+      "/entry.js": `// #__PURE__ 世界\nconsole.log("hello");`,
+    },
+    onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("hello");
     },
   });
@@ -291,7 +339,7 @@ describe("single-line comments", () => {
       "/entry.js": `// 🚀 #__PURE__ 🔥\nconsole.log("hello");`,
     },
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("hello");
+      api.expectFile("/out.js").toContain("hello");
     },
   });
 
@@ -300,7 +348,7 @@ describe("single-line comments", () => {
       "/entry.js": `// \uD800 #__PURE__ \uDC00\nconsole.log("hello");`,
     },
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("hello");
+      api.expectFile("/out.js").toContain("hello");
     },
   });
 

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("NODE_EXTRA_CA_CERTS", () => {
@@ -16,7 +16,7 @@ CgKCAQEAyOB7tY2Uo2lTNjJgGEhJAVZDWnHbLjbmTMP4pSXLlNMr9KdyaKE+J3xn
 xAz7TbGPHUBH5dqMzlWqEkZxcY9u9GL19SJPpC7dl8K8V5dKBwvgOubcLp4qLvZU
 -----END CERTIFICATE-----`;
 
-    const dir = tempDirWithFiles("test-extra-ca", {
+    await using dir = tempDir("test-extra-ca", {
       "extra-ca.pem": testCert,
       "test.js": `console.log('OK');`,
     });
@@ -39,7 +39,7 @@ xAz7TbGPHUBH5dqMzlWqEkZxcY9u9GL19SJPpC7dl8K8V5dKBwvgOubcLp4qLvZU
   });
 
   test("handles missing certificate file gracefully", async () => {
-    const dir = tempDirWithFiles("test-missing-ca", {
+    await using dir = tempDir("test-missing-ca", {
       "test.js": `console.log('OK');`,
     });
 
@@ -70,7 +70,7 @@ BAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX
 aWRnaXRzIFB0eSBMdGQwHhcNMTgwNDEwMDgwNzQ4WhcNMjgwNDA3MDgwNzQ4WjBF
 -----END CERTIFICATE-----`;
 
-    const dir = tempDirWithFiles("test-extra-and-system", {
+    await using dir = tempDir("test-extra-and-system", {
       "extra-ca.pem": testCert,
       "test.js": `console.log('OK');`,
     });
@@ -96,7 +96,7 @@ aWRnaXRzIFB0eSBMdGQwHhcNMTgwNDEwMDgwNzQ4WhcNMjgwNDA3MDgwNzQ4WjBF
 test("explicit ca option replaces the default trust store instead of appending to it", async () => {
   const fixtures = join(import.meta.dir, "fixtures");
 
-  const dir = tempDirWithFiles("ca-replaces-default", {
+  await using dir = tempDir("ca-replaces-default", {
     "main.js": `
       const tls = require("node:tls");
       const fs = require("node:fs");

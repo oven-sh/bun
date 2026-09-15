@@ -269,6 +269,20 @@ describe("fetch protocol: http3", () => {
     expect(await res.text()).toBe("");
   });
 
+  test.each([
+    ["a 204", "/status?code=204&body=", {}],
+    ["a 304", "/status?code=304&body=", {}],
+    ["a HEAD request", "/head", { method: "HEAD" }],
+  ])("the response to %s has a null body", async (_, path, init) => {
+    const res = await fetch(`${base}${path}`, { ...h3, ...init });
+    expect({
+      body: res.body,
+      text: await res.text(),
+      bodyUsed: res.bodyUsed,
+      cloneBody: res.clone().body,
+    }).toEqual({ body: null, text: "", bodyUsed: false, cloneBody: null });
+  });
+
   test("gzip response is decompressed", async () => {
     const res = await fetch(`${base}/gzip`, h3);
     expect(await res.text()).toBe("compressed body over h3");
@@ -620,6 +634,114 @@ describe("fetch protocol: http3", () => {
   });
 });
 
+// An aborted upload must end with RESET_STREAM. A FIN tells the server that the
+// truncated body is the whole body. If the request declared a content-length,
+// the server's lsquic answers that FIN by closing the whole connection.
+describe("aborted upload", () => {
+  let server: Server;
+  let origin: string;
+  let firstChunkRead: PromiseWithResolvers<void>;
+  let serverSaw: PromiseWithResolvers<{ body: string; received: number; contentLength: string | null }>;
+  let holdRelease: PromiseWithResolvers<void>;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      routes: {
+        "/echo": async req => new Response(await req.bytes()),
+        // Sends "first;" at once, and "last;" after `holdRelease`.
+        "/hold": () => {
+          let pulls = 0;
+          return new Response(
+            new ReadableStream({
+              async pull(ctrl) {
+                if (pulls++ === 0) return ctrl.enqueue("first;");
+                await holdRelease.promise;
+                ctrl.enqueue("last;");
+                ctrl.close();
+              },
+            }),
+          );
+        },
+        // Reports how the request body ended: "complete" after FIN, "aborted" after a reset.
+        "/upload": async req => {
+          let body = "complete";
+          let received = 0;
+          try {
+            for await (const chunk of req.body!) {
+              received += chunk.length;
+              firstChunkRead.resolve();
+            }
+          } catch {
+            body = "aborted";
+          }
+          serverSaw.resolve({ body, received, contentLength: req.headers.get("content-length") });
+          return new Response("ok");
+        },
+      },
+    });
+    origin = `https://127.0.0.1:${server.port}`;
+  });
+  afterAll(() => void server?.stop(true));
+
+  // Streams "hello " and aborts after the server has read it.
+  async function abortUpload(headers: Record<string, string> = {}) {
+    firstChunkRead = Promise.withResolvers();
+    serverSaw = Promise.withResolvers();
+    const controller = new AbortController();
+    let pulls = 0;
+    const upload = fetch(`${origin}/upload`, {
+      ...h3,
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: new ReadableStream({
+        async pull(ctrl) {
+          if (pulls++ === 0) return ctrl.enqueue("hello ");
+          await firstChunkRead.promise;
+          controller.abort();
+        },
+      }),
+    });
+    await expect(upload).rejects.toMatchObject({ name: "AbortError" });
+  }
+
+  test("the server sees an abort, not the end of the body", async () => {
+    await abortUpload();
+    expect(await serverSaw.promise).toEqual({ body: "aborted", received: 6, contentLength: null });
+  });
+
+  test("with a declared content-length, the pooled session stays usable", async () => {
+    holdRelease = Promise.withResolvers();
+    try {
+      // This response stays open on the pooled session while the upload is
+      // aborted. Its headers are in, so the client cannot move it to another
+      // session: it completes only if the server keeps the connection.
+      const held = await fetch(`${origin}/hold`, h3);
+      await abortUpload({ "content-length": "50" });
+      // The next request has a stream body on purpose. The client re-sends any
+      // other body on a fresh session, and that would hide a dead pooled session.
+      const piece = Buffer.alloc(32 * 1024, "S");
+      const res = await fetch(`${origin}/echo`, {
+        ...h3,
+        method: "POST",
+        body: pullBody(Array.from({ length: 8 }, () => piece)),
+      });
+      expect((await res.bytes()).length).toBe(8 * piece.length);
+      // The held response is released only after the server has seen the upload
+      // end. Released sooner, it completes before the server closes anything.
+      expect(await serverSaw.promise).toEqual({ body: "aborted", received: 6, contentLength: "50" });
+      holdRelease.resolve();
+      expect(await held.text()).toBe("first;last;");
+    } finally {
+      holdRelease.resolve();
+    }
+  });
+});
+
 // Stale-session retry: a request bound on session A when A's conn closes
 // (GOAWAY/CONNECTION_CLOSE) must transparently retry on a fresh session
 // instead of surfacing HTTP3StreamReset. reusePort lets B bind the same
@@ -724,6 +846,66 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     // records it and never opens a QUIC session.
     expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
     expect(stdout).toMatch(/second status=200 sessions=0\n$/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("Alt-Svc on a proxy's CONNECT reply is not applied to the tunneled origin", async () => {
+    const proxyFixture = `
+      import { fetchH3Internals } from "bun:internal-for-testing";
+      import net from "node:net";
+      import tls from "node:tls";
+      const { liveCounts } = fetchH3Internals;
+      const cert = ${JSON.stringify(tls)};
+      using origin = Bun.serve({ port: 0, tls: cert, fetch: () => new Response("from-origin") });
+      using other = Bun.serve({
+        port: 0,
+        tls: cert,
+        http3: true,
+        http1: false,
+        fetch: () => new Response("from-other"),
+      });
+      const proxy = tls.createServer({ ...cert }, client => {
+        client.on("error", () => {});
+        client.once("data", data => {
+          const target = data.toString("latin1").split(" ")[1] ?? "";
+          const [host, port] = target.split(":");
+          const upstream = net.connect(Number(port), host, () => {
+            client.write(
+              'HTTP/1.1 200 Connection Established\\r\\nAlt-Svc: h3=":' +
+                other.port +
+                '"; ma=86400\\r\\n\\r\\n',
+            );
+            client.pipe(upstream);
+            upstream.pipe(client);
+          });
+          upstream.on("error", () => client.destroy());
+        });
+      });
+      await new Promise(r => proxy.listen(0, "127.0.0.1", r));
+      const proxyUrl = "https://127.0.0.1:" + proxy.address().port;
+      const url = "https://127.0.0.1:" + origin.port + "/";
+      const opts = { tls: { rejectUnauthorized: false } };
+      {
+        const r = await fetch(url, { ...opts, proxy: proxyUrl, keepalive: false });
+        console.log("proxied body=%s", await r.text());
+      }
+      {
+        const r = await fetch(url, opts);
+        console.log("direct body=%s sessions=%d", await r.text(), liveCounts().sessions);
+      }
+      proxy.close();
+    `;
+    const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" } as Record<string, string>;
+    for (const key of ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"]) {
+      delete env[key];
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", proxyFixture],
+      env,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("proxied body=from-origin\ndirect body=from-origin sessions=0\n");
     expect(exitCode).toBe(0);
   });
 });

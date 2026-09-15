@@ -14,6 +14,7 @@ const { validateAbortSignal } = require("internal/validators");
 const { resistStopPropagation } = require("internal/shared");
 
 const defineProperties = Object.defineProperties;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
 
@@ -68,6 +69,15 @@ const SQL: typeof Bun.SQL = function SQL(
   stringOrUrlOrOptions: Bun.SQL.Options | string | undefined = undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
 ): Bun.SQL {
+  // The members below are own properties of the client, so they shadow every method of a
+  // subclass prototype with the same name, without an error. Refuse a subclass here instead.
+  // new.target is undefined for `SQL(...)` without `new`, which is supported. The check reads
+  // the prototype and not new.target itself, so that `new` on a Proxy of SQL still works.
+  if (new.target !== undefined && new.target.prototype !== SQLPrototype) {
+    throw new TypeError(
+      "Bun.SQL cannot be subclassed. Its methods are own properties of the client, so a subclass cannot override them. Wrap the client instead.",
+    );
+  }
   const connectionInfo = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
   const pool = adapterFromOptions(connectionInfo);
 
@@ -531,6 +541,7 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.transaction = reserved_sql.begin;
     reserved_sql.distributed = reserved_sql.beginDistributed;
     reserved_sql.end = reserved_sql.close;
+    ObjectSetPrototypeOf(reserved_sql, SQLPrototype);
     resolve(reserved_sql);
   }
 
@@ -855,6 +866,7 @@ const SQL: typeof Bun.SQL = function SQL(
         return await promise.finally(onSavepointFinished.bind(null, promise));
       };
     }
+    ObjectSetPrototypeOf(transaction_sql, SQLPrototype);
     let needs_rollback = false;
     try {
       await run_internal_transaction_sql(BEGIN_COMMAND);
@@ -1071,8 +1083,17 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.end = sql.close;
   sql.listen = listen;
   sql.notify = makeNotify(sql);
+  ObjectSetPrototypeOf(sql, SQLPrototype);
   return sql;
 };
+
+// JSC creates a builtin function without a `prototype` property, so `instanceof SQL` throws a
+// TypeError until one is installed. Every client is a function, so the prototype object
+// inherits from Function.prototype and a client keeps call, apply and bind.
+const SQLPrototype = Object.create(Function.prototype, {
+  constructor: { value: SQL, writable: true, configurable: true },
+});
+Object.defineProperty(SQL, "prototype", { value: SQLPrototype });
 
 var lazyDefaultSQL: Bun.SQL;
 
@@ -1173,6 +1194,7 @@ defineProperties(defaultSQLObject, {
     },
   },
 });
+ObjectSetPrototypeOf(defaultSQLObject, SQLPrototype);
 
 SQL.SQLError = SQLError;
 SQL.PostgresError = PostgresError;

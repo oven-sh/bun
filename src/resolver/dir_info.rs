@@ -28,7 +28,7 @@ pub type Index = IndexType;
 // the resolver mutex.
 //
 // `as_ptr()` exposes the raw `*mut` for the few callers that still need it
-// (the `dir_info_uncached` fill path and `MatchResult.dir_info` round-trip).
+// (the `dir_info_uncached` fill path).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Non-owning, `Copy` handle to a `DirInfo` slot in the BSSMap singleton.
@@ -90,6 +90,15 @@ impl core::fmt::Debug for DirInfoRef {
         f.debug_tuple("DirInfoRef").field(&self.0.as_ptr()).finish()
     }
 }
+
+/// Two handles are equal when they name the same slot.
+impl PartialEq for DirInfoRef {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self.0.as_ptr(), other.0.as_ptr())
+    }
+}
+
+impl Eq for DirInfoRef {}
 
 pub struct DirInfo {
     // These objects are immutable, so we can just point to the parent directory

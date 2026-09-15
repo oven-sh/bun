@@ -227,6 +227,137 @@ test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures th
   expect(span).toBeLessThan(2n ** 31n);
 });
 
+// The frames of a trace string `{base}/{version}/{payload}`, decoded the way
+// bun.report's parser decodes them. The payload is the platform, command and
+// format characters, 7 characters of commit, two VLQs of feature bits, then
+// one frame per VLQ (an offset in bun; a leading 1 introduces a name length,
+// the name, and an offset in that image; `_` is unknown; `=` is JS) until a
+// VLQ of 0 ends the list. A frame in bun's own image decodes with the object
+// `<bun>`: the encoder writes names from `[A-Za-z0-9._-]` only, so no image
+// (not even an executable named `bun`) can decode to that.
+function decodeTraceFrames(payload: string): { object: string; address: number }[] {
+  const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let i = 3 + 7;
+  function vlq(): number {
+    let value = 0;
+    for (let shift = 0; ; shift += 5) {
+      const digit = digits.indexOf(payload[i++]);
+      if (digit < 0) throw new Error(`bad VLQ digit at ${i - 1} of ${payload}`);
+      value += (digit & 31) * 2 ** shift;
+      if (!(digit & 32)) return value % 2 ? -Math.floor(value / 2) : value / 2;
+    }
+  }
+  vlq();
+  vlq();
+  const frames = [];
+  while (i < payload.length) {
+    if (payload[i] === "_" || payload[i] === "=") {
+      frames.push({ object: payload[i++] === "_" ? "?" : "js", address: 0 });
+      continue;
+    }
+    let address = vlq();
+    if (address === 0) return frames;
+    let object = "<bun>";
+    if (address === 1) {
+      const length = vlq();
+      object = payload.slice(i, i + length);
+      i += length;
+      address = vlq();
+    }
+    frames.push({ object, address });
+  }
+  throw new Error(`unterminated frame list in ${payload}`);
+}
+
+// Crashes bun with `args`, receives the report it uploads, and returns the
+// crash's stderr and exit code together with the decoded frames of the
+// uploaded trace string.
+async function uploadedCrashFrames(args: string[]) {
+  const uploaded = Promise.withResolvers<string>();
+  using server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      uploaded.resolve(new URL(request.url).pathname);
+      return new Response("OK");
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: {
+      ...bunEnv,
+      BUN_CRASH_REPORT_URL: server.url.origin,
+      BUN_ENABLE_CRASH_REPORTING: "1",
+      GITHUB_ACTIONS: undefined,
+      CI: undefined,
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // The upload comes from a curl the crashed process started, so it can arrive
+  // shortly after the exit. A process that died without reporting (for example
+  // with a JS error out of the test hook) never uploads: fail with its stderr
+  // instead of waiting for the test timeout.
+  const pathname = await Promise.race([
+    uploaded.promise,
+    Bun.sleep(2000).then(() => {
+      throw new Error(`no crash report was uploaded; exit code ${exitCode}, stderr:\n${stderr}`);
+    }),
+  ]);
+  // `/` is also a VLQ digit, so the payload cannot be split out on it.
+  const payload = pathname.match(/^\/[^/]+\/(.*)\/ack$/)?.[1];
+  expect(payload, pathname).toBeDefined();
+  return { stderr, exitCode, frames: decodeTraceFrames(payload!) };
+}
+
+// A frame outside bun's own executable is encoded with the basename of the
+// image it is in, which bun.report shows as the frame's package: that is what
+// attributes a crash inside a native addon to the addon's `.node` file.
+// Windows has always encoded DLL names this way. macOS encoded every such
+// frame as unknown, and Linux encoded them as bun offsets, which symbolized to
+// unrelated bun functions. The fault here is inside libc, so frame 0 is libc's.
+test.if(isPosix)("the uploaded trace string names the image of a frame outside bun", async () => {
+  const { stderr, exitCode, frames } = await uploadedCrashFrames([
+    path.join(import.meta.dir, "fixture-crash.js"),
+    "segfaultInDll",
+  ]);
+
+  // strlen() read from the bad pointer, possibly rounded down to its alignment.
+  expect(stderr).toContain("Segmentation fault at address 0xDEADBEE");
+
+  // Frame 0 is the faulting strlen, in libc (or, under ASAN, its interceptor
+  // in the sanitizer runtime); either way in a shared library that is not bun.
+  expect(frames[0].object).toMatch(/\.(so\b|dylib$)/);
+  expect(frames[0].address).toBeGreaterThan(0);
+  // The callers of strlen are still bun's own frames, encoded as such: the
+  // executable must not be mistaken for a foreign image, under any name.
+  expect(frames.some(frame => frame.object === "<bun>")).toBe(true);
+  expect(frames.map(frame => frame.object)).not.toContain(path.basename(bunExe()));
+  expect(exitCode).not.toBe(0);
+});
+
+// A crash used to upload at most 20 frames. An addon that aborts on the JS
+// thread has that many frames of its own and libc's before the first bun one,
+// so such reports showed no bun frame at all (Sentry BUN-4MN5), and an addon
+// thread's report (BUN-2PFR) could not be told apart from those. The capture
+// now holds 64 frames and the encoder keeps as many as fit the trace string.
+// 60 levels of JS recursion under the crash give the walk more than 20 frames
+// to find.
+test.if(isPosix)("the uploaded trace string holds more than 20 frames", async () => {
+  const { stderr, exitCode, frames } = await uploadedCrashFrames([
+    "-e",
+    `const { crash_handler } = require("bun:internal-for-testing");
+     function recurse(depth) { return depth === 0 ? crash_handler.segfault() : recurse(depth - 1) + 1; }
+     recurse(60);`,
+  ]);
+
+  expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+  expect(frames.length).toBeGreaterThan(20);
+  expect(frames.length).toBeLessThanOrEqual(64);
+  expect(exitCode).not.toBe(0);
+});
+
 // The Windows crash handler is a Vectored Exception Handler, which sees every
 // first-chance exception process-wide before frame-based SEH does. Third-party
 // DLLs injected into the process (AV/EDR agents such as BeyondTrust's

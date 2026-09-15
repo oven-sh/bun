@@ -939,7 +939,6 @@ static WTF::String generateHeapSnapshotV8(JSC::VM& vm)
 {
     vm.ensureHeapProfiler();
     auto& heapProfiler = *vm.heapProfiler();
-    heapProfiler.clearSnapshots();
 
     JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
     return builder.json();

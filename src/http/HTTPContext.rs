@@ -18,7 +18,7 @@ use bun_uws as uws;
 
 bun_core::declare_scope!(HTTPContext, hidden);
 
-const POOL_SIZE: usize = 64;
+const POOL_SIZE: usize = 128;
 const UNIX_POOL_SIZE: usize = 128;
 pub(crate) const MAX_KEEPALIVE_HOSTNAME: usize = 128;
 

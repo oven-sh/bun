@@ -850,32 +850,85 @@ test.skipIf(isWindows)("a full keep-alive pool evicts the longest-idle connectio
     });
     return { srv, connections: () => connections };
   }
-  // One more distinct origin than the pool holds (64). Without eviction the
+  // One more distinct origin than the pool holds (128). Without eviction the
   // last connection is closed instead of parked and its second request
   // opens a new one.
-  const servers = Array.from({ length: 65 }, () => makeServer());
+  const servers = Array.from({ length: 129 }, () => makeServer());
   for (const s of servers) s.srv.listen(0, "127.0.0.1");
   await Promise.all(servers.map(s => once(s.srv, "listening")));
   try {
     const urls = servers.map(s => `http://127.0.0.1:${(s.srv.address() as import("net").AddressInfo).port}/x`);
     for (const url of urls) expect(await (await fetch(url)).text()).toBe("ok");
-    expect(await (await fetch(urls[64])).text()).toBe("ok");
-    expect(servers[64].connections()).toBe(1);
+    expect(await (await fetch(urls[128])).text()).toBe("ok");
+    expect(servers[128].connections()).toBe(1);
   } finally {
     for (const s of servers) s.srv.close();
   }
 });
 
-// More concurrent requests to one origin than the pool holds (64). The origin
+// A sequential walk over more origins than the pool holds thrashes it: each
+// park evicts the origin the next request needs, so every origin reconnects
+// on every round (#42608). The pool has to hold at least this many origins.
+// Subprocess so the pool starts empty.
+test.skipIf(isWindows)("a sequential walk over 96 origins reuses every connection on the next round", async () => {
+  const origins = 96;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      const servers = Array.from({ length: ${origins} }, () => {
+        const state = { connections: 0 };
+        const srv = net.createServer(sock => {
+          state.connections++;
+          let buf = "";
+          sock.on("error", () => {});
+          sock.on("data", d => {
+            buf += d.toString("latin1");
+            let i;
+            while ((i = buf.indexOf("\\r\\n\\r\\n")) >= 0) {
+              buf = buf.slice(i + 4);
+              sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+            }
+          });
+        });
+        return { srv, state };
+      });
+      for (const s of servers) s.srv.listen(0, "127.0.0.1");
+      await Promise.all(servers.map(s => new Promise(r => s.srv.once("listening", r))));
+      const urls = servers.map(s => "http://127.0.0.1:" + s.srv.address().port + "/x");
+      const rounds = [];
+      for (let round = 0; round < 2; round++) {
+        for (const url of urls) {
+          if ((await (await fetch(url)).text()) !== "ok") throw new Error("unexpected body");
+        }
+        rounds.push(servers.reduce((n, s) => n + s.state.connections, 0));
+      }
+      console.log(JSON.stringify({ rounds }));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({ result: { rounds: [origins, origins] }, exitCode: 0 });
+});
+
+// More concurrent requests to one origin than the pool holds (128). The origin
 // answers none of them until all have arrived, so each request gets its own
-// connection. When the responses complete, 64 connections are parked and the
+// connection. When the responses complete, 128 connections are parked and the
 // rest are evicted. The origin must see each evicted one end with a clean EOF
 // ('end'), not ECONNRESET. Subprocess so the pool starts empty.
 test.concurrent.each(["http", "https"])(
   "a full keep-alive pool closes the %s connections it evicts with FIN, not RST",
   async scheme => {
-    const total = 80;
-    const evicted = total - 64;
+    const total = 144;
+    const evicted = total - 128;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

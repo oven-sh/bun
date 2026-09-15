@@ -428,6 +428,17 @@ bun --fetch-preconnect https://bun.com ./my-script.ts
 
 Bun automatically reuses connections to the same host. This is called **connection pooling**, and it can significantly reduce the time spent establishing connections.
 
+#### Idle connection limit
+
+When a response completes, Bun keeps the connection open so a later request to the same host can reuse it. The pool that holds these idle connections is bounded:
+
+- Each process has one pool for plain HTTP, one for HTTPS, and one for each custom `tls` configuration. Each pool holds up to 128 idle connections.
+- Connections through a proxy and HTTP/2 sessions share these pools.
+- When a pool is full, Bun closes the connection that has been idle the longest to make room for the new one.
+- Bun closes an idle connection after 5 minutes. A server can close it sooner.
+
+This bound is separate from the simultaneous connection limit below. `BUN_CONFIG_MAX_HTTP_REQUESTS` does not change it.
+
 #### Simultaneous connection limit
 
 By default, Bun limits the number of simultaneous `fetch` requests to 256, for two reasons:

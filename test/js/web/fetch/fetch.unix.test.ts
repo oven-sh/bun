@@ -484,9 +484,9 @@ it.skipIf(isWindows)("unix keep-alive entries are not evicted by TCP pool pressu
   const sockPath = join(String(dir), "p.sock");
   const unix = makeServer();
   unix.srv.listen(sockPath);
-  // More distinct TCP origins than the TCP keep-alive pool holds, so the TCP
-  // pool fills and evicts while the unix entry sits idle.
-  const tcp = Array.from({ length: 70 }, () => makeServer());
+  // More distinct TCP origins than the TCP keep-alive pool holds (128), so the
+  // TCP pool fills and evicts while the unix entry sits idle.
+  const tcp = Array.from({ length: 136 }, () => makeServer());
   for (const t of tcp) t.srv.listen(0, "127.0.0.1");
   await Promise.all([once(unix.srv, "listening"), ...tcp.map(t => once(t.srv, "listening"))]);
   try {

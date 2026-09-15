@@ -8,6 +8,7 @@
 
 function __fish__bun_extract_cwd
     set -l tokens (commandline -cop)
+    set -l result "."
     for i in (seq 1 (count $tokens))
         set -l val ""
         if test "$tokens[$i]" = "--cwd"
@@ -15,6 +16,19 @@ function __fish__bun_extract_cwd
             if test $next_idx -le (count $tokens)
                 set val "$tokens[$next_idx]"
             end
+        else if string match -q -- "--cwd=*" "$tokens[$i]"
+            set val (string replace -- "--cwd=" "" "$tokens[$i]")
+        end
+
+        if test -n "$val"
+            set val (string trim -c '"' -- "$val")
+            set val (string trim -c "'" -- "$val")
+            set val (string replace -r '^~' "$HOME" -- "$val")
+            set result "$val"
+        end
+    end
+    echo "$result"
+end
         else if string match -q -- "--cwd=*" "$tokens[$i]"
             set val (string replace -- "--cwd=" "" "$tokens[$i]")
         end

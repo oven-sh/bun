@@ -1129,7 +1129,7 @@ _bun_run_param_script_completion() {
 
     _alternative "scripts:scripts:compadd -a scripts_list"
     _alternative "bin:bin:compadd -a bins"
-    _alternative "files:file:_files -W "${target_cwd}" -g '*.(js|ts|jsx|tsx|wasm)'"
+    _alternative "files:file:_files -W ${(q)target_cwd} -g '*.(js|ts|jsx|tsx|wasm)'"
 }
 
 _bun_link_param_package_completion() {

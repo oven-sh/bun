@@ -210,13 +210,17 @@ macro_rules! property_helper {
 
 macro_rules! logical_property_helper {
     ($self:expr, $d:expr, $ctx:expr, $prop:ident, $val:expr) => {{
-        if $self.category != PropertyCategory::Logical {
+        let val = $val;
+        // An unparsed value keeps the one before it as its fallback.
+        if $self.category != PropertyCategory::Logical
+            || ($self.$prop.is_some() && matches!(val, Property::Unparsed(_)))
+        {
             $self.flush($d, $ctx);
         }
 
         // `Property` itself
         // has no blanket `Clone`; callers pass an already-deep_clone'd `Property`.
-        $self.$prop = Some($val);
+        $self.$prop = Some(val);
         $self.category = PropertyCategory::Logical;
         $self.has_any = true;
     }};

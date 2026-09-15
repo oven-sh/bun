@@ -12,6 +12,13 @@ const {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  isBufferPath,
+  kBufferEncoding,
+  encodingFor,
+  parentPath,
+  joinDirEntry,
+  copiedLinkTarget,
+  resolvedParents,
 } = require("internal/fs/cp-sync");
 
 const {
@@ -27,7 +34,7 @@ const {
   unlink,
   utimes,
 } = require("node:fs/promises");
-const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
+const { parse } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseReject = Promise.$reject;
@@ -95,14 +102,13 @@ function getStats(src, dest, opts) {
 // checks the src and dest inodes. It starts from the deepest
 // parent and stops once it reaches the src parent or the root path.
 async function checkParentPaths(src, srcStat, dest) {
-  const srcParent = resolve(dirname(src));
-  const destParent = resolve(dirname(dest));
+  const { srcParent, destParent, destParentPath } = resolvedParents(src, dest);
   if (destParent === srcParent || destParent === parse(destParent).root) {
     return;
   }
   let destStat;
   try {
-    destStat = await stat(destParent, { bigint: true });
+    destStat = await stat(destParentPath, { bigint: true });
   } catch (err: any) {
     if (err.code === "ENOENT") return;
     throw err;
@@ -116,7 +122,7 @@ async function checkParentPaths(src, srcStat, dest) {
       code: "EINVAL",
     });
   }
-  return checkParentPaths(src, srcStat, destParent);
+  return checkParentPaths(src, srcStat, destParentPath);
 }
 
 // The native recursive copy (a single clonefile() on macOS) copies symlinks
@@ -139,7 +145,7 @@ async function treeContainsOnlyFilesAndDirs(root) {
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (entry.isDirectory()) {
-        stack.push(join(dir, entry.name));
+        stack.push(joinDirEntry(dir, entry.name));
       } else if (!entry.isFile()) {
         return false;
       }
@@ -190,7 +196,7 @@ async function cpFn(src, dest, opts, checked?) {
 }
 
 async function checkParentDir(destStat, src, dest, opts) {
-  const destParent = dirname(dest);
+  const destParent = parentPath(dest);
   const dirExists = await pathExists(destParent);
   if (dirExists) return getStatsForCopy(destStat, src, dest, opts);
   await mkdir(destParent, { recursive: true });
@@ -335,27 +341,35 @@ async function mkDirAndCopy(srcMode, src, dest, opts) {
 }
 
 async function copyDir(src, dest, opts) {
+  if (isBufferPath(src)) {
+    // opendir() cannot return entry names as bytes (#27914), readdir() can.
+    for (const name of await readdir(src, kBufferEncoding)) {
+      await copyDirEntry(src, dest, name, opts);
+    }
+    return;
+  }
   const dir = await opendir(src);
 
   for await (const { name } of dir) {
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
-    const { destStat, skipped } = await checkPaths(srcItem, destItem, opts);
-    if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts);
+    await copyDirEntry(src, dest, name, opts);
   }
 }
 
+async function copyDirEntry(src, dest, name, opts) {
+  const srcItem = joinDirEntry(src, name);
+  const destItem = joinDirEntry(dest, name);
+  const { destStat, skipped } = await checkPaths(srcItem, destItem, opts);
+  if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts);
+}
+
 async function onLink(destStat, src, dest, opts) {
-  let resolvedSrc = await readlink(src);
-  if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
-  }
+  const resolvedSrc = copiedLinkTarget(src, await readlink(src, encodingFor(src)), opts.verbatimSymlinks);
   if (!destStat) {
     return symlink(resolvedSrc, dest);
   }
   let resolvedDest;
   try {
-    resolvedDest = await readlink(dest);
+    resolvedDest = await readlink(dest, encodingFor(dest));
   } catch (err: any) {
     // Dest exists and is a regular file or directory,
     // Windows may throw UNKNOWN error. If dest already exists,
@@ -365,9 +379,7 @@ async function onLink(destStat, src, dest, opts) {
     }
     throw err;
   }
-  if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
-  }
+  resolvedDest = copiedLinkTarget(dest, resolvedDest, false);
   // stat(src) follows the link; a dangling src symlink throws ENOENT here,
   // same as before (both gated checks below only apply to directories).
   const srcStat = await stat(src);

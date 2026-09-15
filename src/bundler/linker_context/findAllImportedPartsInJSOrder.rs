@@ -4,7 +4,7 @@ use bun_collections::{AutoBitSet, HashMap, VecExt};
 
 use crate::{
     Chunk, Index, IndexInt, LinkerContext, PartRange,
-    chunk::{self, Order, ReachedWhileEvaluating},
+    chunk::{self, Order},
     js_meta::Wrap,
 };
 use bun_core::perf;
@@ -23,30 +23,17 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     // files that run something when loaded; the rest (and every file without
     // code splitting) map to `u32::MAX`.
     let mut chunk_of_file: Vec<u32> = vec![u32::MAX; this.graph.files.len()];
-    // For `nest_cross_chunk_imports`; only kept where the build has a split `require()`.
-    let mut files_that_run: Vec<u32> = Vec::new();
-    let mut chunk_can_require: Vec<bool> = Vec::new();
-    let mut file_can_require: Option<Box<[bool]>> = None;
+    // Per chunk, how many of its files run something when loaded.
+    let mut files_that_run: Vec<u32> = vec![0; chunks.len()];
     if this.graph.code_splitting {
-        file_can_require = this.files_that_can_require_a_chunk();
-        if file_can_require.is_some() {
-            files_that_run.resize(chunks.len(), 0);
-            chunk_can_require.resize(chunks.len(), false);
-        }
-        for (chunk_index, chunk) in chunks.iter_mut().enumerate() {
-            let chunk::Content::Javascript(js) = &mut chunk.content else {
+        for (chunk_index, chunk) in chunks.iter().enumerate() {
+            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 continue;
-            };
+            }
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
                 if !this.loading_file_has_no_side_effects(source_index) {
                     chunk_of_file[source_index as usize] = chunk_index as u32;
-                    if let Some(files) = &file_can_require {
-                        files_that_run[chunk_index] += 1;
-                        if files[source_index as usize] {
-                            chunk_can_require[chunk_index] = true;
-                            js.can_require_a_chunk = true;
-                        }
-                    }
+                    files_that_run[chunk_index] += 1;
                 }
             }
         }
@@ -56,8 +43,6 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         inner: crate::linker_context_mod::GenerateChunkCtx<'a>,
         chunk_of_file: &'f [u32],
         files_that_run: &'f [u32],
-        chunk_can_require: &'f [bool],
-        file_can_require: Option<&'f [bool]>,
     }
 
     // One chunk per task. Each task writes only its own `Chunk` and, for
@@ -74,8 +59,6 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         },
         chunk_of_file: &chunk_of_file,
         files_that_run: &files_that_run,
-        chunk_can_require: &chunk_can_require,
-        file_can_require: file_can_require.as_deref(),
     };
     let chunks_len = chunks.len();
     this.worker_pool().each_ptr(
@@ -95,13 +78,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
                 &mut Vec::new(),
                 u32::try_from(index).expect("int cast"),
                 ctx.chunk_of_file,
-                ctx.file_can_require.map(|file_can_require| {
-                    ChunksBeingEvaluated::new(
-                        ctx.files_that_run,
-                        ctx.chunk_can_require,
-                        file_can_require,
-                    )
-                }),
+                ctx.files_that_run,
                 chunks_len,
             ));
         },
@@ -123,7 +100,7 @@ pub(crate) fn find_imported_parts_in_js_order(
     parts_prefix_shared: &mut Vec<PartRange>,
     chunk_index: u32,
     chunk_of_file: &[u32],
-    being_evaluated: Option<ChunksBeingEvaluated<'_>>,
+    files_that_run: &[u32],
     chunks_len: usize,
 ) -> Result<(), bun_alloc::AllocError> {
     let mut chunk_order_array: Vec<Order> =
@@ -173,7 +150,7 @@ pub(crate) fn find_imported_parts_in_js_order(
     let entry_point_chunk_indices: *mut [u32] =
         this.graph.files.slice().split_raw().entry_point_chunk_index;
 
-    let (files_in_chunk_order, parts_in_chunk_order, reached_chunks, reached_while_evaluating) = {
+    let (files_in_chunk_order, parts_in_chunk_order, reached_chunks) = {
         let mut visitor = FindImportedPartsVisitor {
             files: Vec::new(),
             part_ranges: core::mem::take(part_ranges_shared),
@@ -188,9 +165,10 @@ pub(crate) fn find_imported_parts_in_js_order(
             entry_point_chunk_indices,
             stack: Vec::new(),
             chunk_of_file,
+            files_that_run,
+            open_files: vec![0; chunks_len],
             reached_chunks: Vec::new(),
             reached_chunk_set: AutoBitSet::init_empty(chunks_len)?,
-            being_evaluated,
         };
 
         match (with_code_splitting, with_scb) {
@@ -211,14 +189,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         *parts_prefix_shared = visitor.parts_prefix;
         // visitor.visited dropped implicitly
 
-        (
-            visitor.files,
-            parts_in_chunk_order,
-            visitor.reached_chunks,
-            visitor
-                .being_evaluated
-                .map(|being_evaluated| being_evaluated.reached),
-        )
+        (visitor.files, parts_in_chunk_order, visitor.reached_chunks)
     };
 
     match &mut chunk.content {
@@ -226,9 +197,6 @@ pub(crate) fn find_imported_parts_in_js_order(
             js.files_in_chunk_order = files_in_chunk_order.into_boxed_slice();
             js.parts_in_chunk_in_order = parts_in_chunk_order.into_boxed_slice();
             js.reached_chunks_in_order = reached_chunks.into_boxed_slice();
-            js.reached_while_evaluating = reached_while_evaluating
-                .unwrap_or_default()
-                .into_boxed_slice();
         }
         // Caller only invokes this for `.javascript` chunks (see
         // `find_all_imported_parts_in_js_order`).
@@ -266,97 +234,12 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     /// The chunk of each file that runs something when loaded; `u32::MAX`
     /// for the others (and everywhere without code splitting).
     chunk_of_file: &'a [u32],
+    files_that_run: &'a [u32],
+    /// Per other chunk not reached yet, how many of its `files_that_run` the walk is inside of.
+    open_files: Vec<u32>,
     /// `JavaScriptChunk::reached_chunks_in_order` under construction.
     reached_chunks: Vec<u32>,
     reached_chunk_set: AutoBitSet,
-    /// Only where the build has a split `require()`.
-    being_evaluated: Option<ChunksBeingEvaluated<'a>>,
-}
-
-/// Which other chunks the walk is in the middle of while it reaches a chunk ("Nesting cross-chunk imports" in `README.md`).
-pub(crate) struct ChunksBeingEvaluated<'a> {
-    /// Per chunk, how many of its files run something when loaded.
-    files_that_run: &'a [u32],
-    /// Per chunk and per file, `LinkerContext::files_that_can_require_a_chunk`.
-    chunk_can_require: &'a [bool],
-    file_can_require: &'a [bool],
-    /// The walk has left a file of its own chunk that can `require()` a chunk; what it reaches next may have run already.
-    own_file_may_have_required: bool,
-    /// Per other chunk not reached yet, how many of its files that run something the walk has entered and not left.
-    open_files: Vec<u32>,
-    /// The chunks with all of them open that can be relied on, outermost first, each with `requiring_reached` at that point.
-    all_open: Vec<(u32, u32)>,
-    /// How many chunks have only some open, or all after `own_file_may_have_required` or inside another one counted here.
-    not_usable: u32,
-    /// Per chunk in `all_open`, one more than the length of `reached_chunks` when it got there; 0 for the others.
-    all_open_since: Vec<u32>,
-    /// How many of the chunks reached so far can `require()` a chunk.
-    requiring_reached: u32,
-    /// `JavaScriptChunk::reached_while_evaluating` under construction.
-    reached: Vec<ReachedWhileEvaluating>,
-}
-
-impl<'a> ChunksBeingEvaluated<'a> {
-    fn new(
-        files_that_run: &'a [u32],
-        chunk_can_require: &'a [bool],
-        file_can_require: &'a [bool],
-    ) -> Self {
-        ChunksBeingEvaluated {
-            files_that_run,
-            chunk_can_require,
-            file_can_require,
-            own_file_may_have_required: false,
-            open_files: vec![0; files_that_run.len()],
-            all_open: Vec::new(),
-            not_usable: 0,
-            all_open_since: vec![0; files_that_run.len()],
-            requiring_reached: 0,
-            reached: Vec::new(),
-        }
-    }
-
-    /// The walk enters a file that runs something, of another chunk that is not reached yet.
-    fn enter(&mut self, chunk: u32, reached: usize) {
-        self.open_files[chunk as usize] += 1;
-        let open = self.open_files[chunk as usize];
-        let all = open == self.files_that_run[chunk as usize];
-        if open > 1 && all {
-            self.not_usable -= 1;
-        }
-        if all && !self.own_file_may_have_required && self.not_usable == 0 {
-            self.all_open_since[chunk as usize] = reached as u32 + 1;
-            self.all_open.push((chunk, self.requiring_reached));
-        } else if all || open == 1 {
-            self.not_usable += 1;
-        }
-    }
-
-    /// The walk leaves the first such file of `chunk`: `chunk` is reached.
-    fn reach(&mut self, chunk: u32, reached: usize) {
-        debug_assert!(self.open_files[chunk as usize] > 0);
-        let since = core::mem::take(&mut self.all_open_since[chunk as usize]);
-        self.reached.push(if since == 0 {
-            self.not_usable -= 1;
-            ReachedWhileEvaluating {
-                since: reached as u32,
-                inside: u32::MAX,
-                requires_inside: false,
-            }
-        } else {
-            let innermost = self.all_open.pop();
-            debug_assert_eq!(innermost.map(|(chunk, _)| chunk), Some(chunk));
-            ReachedWhileEvaluating {
-                since: since - 1,
-                inside: self.all_open.last().map_or(u32::MAX, |&(chunk, _)| chunk),
-                requires_inside: innermost
-                    .is_some_and(|(_, requiring)| requiring != self.requiring_reached),
-            }
-        });
-        if self.chunk_can_require[chunk as usize] {
-            self.requiring_reached += 1;
-        }
-    }
 }
 
 #[derive(Copy, Clone)]
@@ -453,11 +336,6 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     can_be_split,
                 } => {
                     if is_file_in_chunk {
-                        if let Some(being_evaluated) = &mut self.being_evaluated
-                            && being_evaluated.file_can_require[source_index as usize]
-                        {
-                            being_evaluated.own_file_may_have_required = true;
-                        }
                         if WITH_SCB && self.c.graph.is_scb_bitset.is_set(source_index as usize) {
                             // SAFETY: `entry_point_chunk_indices` is the raw column pointer
                             // for `entry_point_chunk_index` (distinct from every
@@ -504,9 +382,6 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                             && !self.reached_chunk_set.is_set(other as usize)
                         {
                             self.reached_chunk_set.set(other as usize);
-                            if let Some(being_evaluated) = &mut self.being_evaluated {
-                                being_evaluated.reach(other, self.reached_chunks.len());
-                            }
                             self.reached_chunks.push(other);
                         }
                     }
@@ -534,13 +409,20 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                         )
                     };
 
-                    if !is_file_in_chunk && let Some(being_evaluated) = &mut self.being_evaluated {
+                    // A chunk whose files are all being evaluated goes ahead of what they import, so the loader is inside it too.
+                    if !is_file_in_chunk {
                         let other = self.chunk_of_file[source_index as usize];
                         if other != u32::MAX
                             && other != self.chunk_index
                             && !self.reached_chunk_set.is_set(other as usize)
                         {
-                            being_evaluated.enter(other, self.reached_chunks.len());
+                            self.open_files[other as usize] += 1;
+                            if self.open_files[other as usize]
+                                == self.files_that_run[other as usize]
+                            {
+                                self.reached_chunk_set.set(other as usize);
+                                self.reached_chunks.push(other);
+                            }
                         }
                     }
 

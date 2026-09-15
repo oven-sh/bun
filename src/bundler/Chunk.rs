@@ -1362,17 +1362,6 @@ impl EntryPoint {
     }
 }
 
-/// What held while the walk reached the chunks at `since..at`, for the chunk at `at` of `reached_chunks_in_order`.
-#[derive(Copy, Clone)]
-pub(crate) struct ReachedWhileEvaluating {
-    /// Every file of the chunk that runs something was being evaluated; `since == at` when that cannot be relied on.
-    pub(crate) since: u32,
-    /// The innermost other chunk that was true of when it became true of this one (`u32::MAX`: none).
-    pub(crate) inside: u32,
-    /// One of the chunks at `since..at` can `require()` a chunk.
-    pub(crate) requires_inside: bool,
-}
-
 #[derive(Default)]
 pub struct JavaScriptChunk {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
@@ -1385,10 +1374,6 @@ pub struct JavaScriptChunk {
     /// `compute_cross_chunk_dependencies` sorts this chunk's `import`
     /// statements by it.
     pub(crate) reached_chunks_in_order: Box<[u32]>,
-    /// Parallel to `reached_chunks_in_order`; see "Nesting cross-chunk imports" in `linker_context/README.md`.
-    pub(crate) reached_while_evaluating: Box<[ReachedWhileEvaluating]>,
-    /// One of the chunk's files that run something is in `LinkerContext::files_that_can_require_a_chunk`.
-    pub(crate) can_require_a_chunk: bool,
     /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
     pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,

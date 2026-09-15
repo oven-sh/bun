@@ -752,26 +752,9 @@ The renamed symbols are then used during final code generation to produce output
 
 - Analyzes imports between chunks
 - Sets up cross-chunk binding code
+- Gives every chunk an `import` of the chunks its files import their way to (`reached_chunks_in_order`) when they load wherever it does, so the chunk graph follows the file graph
 - Handles dynamic imports across chunks
 - Manages chunk metadata for dependency resolution
-- Where a build `require()`s a split ES module (`--target=bun`), lists a chunk's `import` of a chunk ahead of the ones for what that chunk's files import their way to, when the same code still runs in the same order (`nest_cross_chunk_imports`, below)
-
-**Nesting cross-chunk imports (`nest_cross_chunk_imports`)**
-
-With `--target=bun` a `require()` of a split ES module loads the target's chunk from the middle of the file making the call. The module loader skips a chunk the target imports if it is being evaluated, and runs it on the spot if it has not started. So which chunks are "being evaluated" is visible to a chunk loaded this way, and to nothing else.
-
-`reached_chunks_in_order` lists a chunk's imports in the order their first file finishes. A chunk `P` whose file imports its way to a file of chunk `A` therefore comes after `A`: when `A` runs, `P` has not started, although in the source `P`'s file is in the middle of being evaluated (it is waiting for the import that led to `A`). A `require()` in `A` whose target needs `P` then runs `P`'s files early, inside the call.
-
-The walk in `findAllImportedPartsInJSOrder.rs` records, per chunk it reaches, which other chunks had every file that runs something entered and not left at that point (`ChunksBeingEvaluated`, `reached_while_evaluating`: `since..at` are the chunks reached while that held, `inside` the chunk around it, `requires_inside` whether one of them can `require()` a chunk). `nest_cross_chunk_imports` then moves `P`'s `import` ahead of the statement for the first chunk reached inside it. The loader enters `P`, then `A` through it, and `P` is being evaluated while `A` runs, as in the source. What limits a move:
-
-- A simulated load (a chunk runs after everything it imports, imports in statement order) must run the same chunks in the same order as before: `P` imports `A` and whatever else runs in between. It must get to each of them only through chunks that were in that state when the walk reached it.
-- A file that can `require()` a chunk (`LinkerContext::files_that_can_require_a_chunk`: it holds a live split `require()`, or statically imports its way to a file that does) must run in between. Nothing else can tell the difference.
-- Every file of `P` that runs something must be open at once. A chunk with a file that has not started cannot stand for "being evaluated".
-- Nothing moves once the walk has left a file of the walking chunk's own that can `require()` a chunk (`own_file_may_have_required`). The unbundled file ran at that point and may have loaded, out of turn, what the walk goes on to reach. In the chunk it runs after every import.
-- A chunk inside one that does not move stays too (`not_usable`). Moving the inner chunk's `import` and not the outer one's would run the outer chunk's files, which import the inner one's, first.
-- Only the outermost such chunk moves in a given list. What was reached inside it is entered through it, and its own statements decide what is nested there.
-
-Builds without a split `require()` skip all of this.
 
 #### `findAllImportedPartsInJSOrder.rs`
 
@@ -781,8 +764,7 @@ Builds without a split `require()` skip all of this.
 
 - Orders files by distance from entry point
 - Handles part dependencies within chunks
-- Records the other chunks in the order the walk reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
-- Where a build `require()`s a split ES module, also records which other chunks had every such file in the middle of being evaluated while each chunk was reached (`reached_while_evaluating`)
+- Records the other chunks in the order the walk reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements. A chunk whose files with side effects are all being evaluated at once is recorded then, ahead of what they import, so the module loader is inside that chunk while those run (a split `require()` called in between sees it as being evaluated, as in the source)
 - Ensures proper evaluation order
 
 #### `findImportedCSSFilesInJSOrder.rs`

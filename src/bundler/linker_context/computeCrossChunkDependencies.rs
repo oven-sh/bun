@@ -3,7 +3,6 @@ use bun_alloc::ArenaVecExt as _;
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 
 use crate::LinkerContext;
-use crate::chunk::ReachedWhileEvaluating;
 use crate::js_meta;
 use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, debug};
 use crate::{
@@ -427,300 +426,6 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
     }
 }
 
-/// Per chunk, its `reached_chunks_in_order` reordered as "Nesting cross-chunk imports" in `README.md` says (`None`: unchanged).
-fn nest_cross_chunk_imports(
-    chunks: &[Chunk],
-) -> Result<Vec<Option<Box<[u32]>>>, bun_alloc::AllocError> {
-    let mut nested: Vec<Option<Box<[u32]>>> = Vec::new();
-    nested.resize_with(chunks.len(), || None);
-    let has_candidate = |js: &chunk::JavaScriptChunk| {
-        js.reached_while_evaluating
-            .iter()
-            .any(|reached| reached.requires_inside && reached.inside == u32::MAX)
-    };
-    if !chunks
-        .iter()
-        .any(|chunk| matches!(&chunk.content, chunk::Content::Javascript(js) if has_candidate(js)))
-    {
-        return Ok(nested);
-    }
-
-    // The chunks that run something: the ones some walk reached.
-    let mut runs = AutoBitSet::init_empty(chunks.len())?;
-    for chunk in chunks.iter() {
-        if let chunk::Content::Javascript(js) = &chunk.content {
-            for &other in js.reached_chunks_in_order.iter() {
-                runs.set(other as usize);
-            }
-        }
-    }
-    let mut rank: Vec<u32> = vec![u32::MAX; chunks.len()];
-    // A chunk's `import` statements in the order `sorted_cross_chunk_imports` gives them, made when first asked for.
-    let mut lists: Vec<Option<Vec<u32>>> = Vec::new();
-    lists.resize_with(chunks.len(), || None);
-    let mut rank_in_other: Vec<u32> = vec![u32::MAX; chunks.len()];
-    let mut list_of = |lists: &mut Vec<Option<Vec<u32>>>, of: u32| {
-        if lists[of as usize].is_some() {
-            return;
-        }
-        let mut list: Vec<u32> = Vec::new();
-        if let chunk::Content::Javascript(js) = &chunks[of as usize].content {
-            for (at, &other) in js.reached_chunks_in_order.iter().enumerate() {
-                rank_in_other[other as usize] = at as u32;
-            }
-            list.extend_from_slice(js.imports_from_other_chunks.keys());
-            list.sort_unstable_by_key(|&other| (rank_in_other[other as usize], other));
-            for &other in js.reached_chunks_in_order.iter() {
-                rank_in_other[other as usize] = u32::MAX;
-            }
-        }
-        lists[of as usize] = Some(list);
-    };
-
-    // A chunk the simulated load is inside of; what it runs must have been reached at `since..before`.
-    struct Entered {
-        chunk: u32,
-        next: u32,
-        since: u32,
-        before: u32,
-    }
-    let mut seen: Vec<u32> = vec![0; chunks.len()];
-    let mut epoch = 0u32;
-    let mut stack: Vec<Entered> = Vec::new();
-    // What a load of the chunk being looked at runs, in order.
-    let mut ran: Vec<u32> = Vec::new();
-    // How much of `ran` there is when each chunk it gets to is done, and when each `import` statement is reached.
-    let mut done_at: Vec<u32> = vec![u32::MAX; chunks.len()];
-    let mut done: Vec<u32> = Vec::new();
-    let mut statement_at: Vec<u32> = Vec::new();
-    let mut moved: Vec<bool> = Vec::new();
-    let mut candidates: Vec<(usize, usize, usize)> = Vec::new();
-    for (chunk_index, chunk) in chunks.iter().enumerate() {
-        let chunk::Content::Javascript(js) = &chunk.content else {
-            continue;
-        };
-        if !has_candidate(js) {
-            continue;
-        }
-        let reached = &js.reached_chunks_in_order;
-        let while_evaluating = &js.reached_while_evaluating;
-        list_of(&mut lists, chunk_index as u32);
-        let list = lists[chunk_index].take().unwrap_or_default();
-        for (at, &other) in reached.iter().enumerate() {
-            rank[other as usize] = at as u32;
-        }
-
-        // `(at, slot, own)`: the outermost chunks to move, where each would go and where its own statement is.
-        candidates.clear();
-        for (at, reached_while) in while_evaluating.iter().enumerate() {
-            let ReachedWhileEvaluating {
-                since,
-                inside: u32::MAX,
-                requires_inside: true,
-            } = *reached_while
-            else {
-                continue;
-            };
-            let slot = list.partition_point(|&other| rank[other as usize] < since);
-            let own =
-                slot + list[slot..].partition_point(|&other| rank[other as usize] < at as u32);
-            if own != slot && list.get(own) == Some(&reached[at]) {
-                candidates.push((at, slot, own));
-            }
-        }
-        let Some(last) = candidates.iter().map(|&(_, _, own)| own).max() else {
-            for &other in reached.iter() {
-                rank[other as usize] = u32::MAX;
-            }
-            lists[chunk_index] = Some(list);
-            continue;
-        };
-
-        epoch += 1;
-        seen[chunk_index] = epoch;
-        done_at[chunk_index] = 0;
-        done.push(chunk_index as u32);
-        ran.clear();
-        statement_at.clear();
-        for &import in &list[..=last] {
-            statement_at.push(ran.len() as u32);
-            if core::mem::replace(&mut seen[import as usize], epoch) == epoch {
-                continue;
-            }
-            list_of(&mut lists, import);
-            stack.push(Entered {
-                chunk: import,
-                next: 0,
-                since: 0,
-                before: 0,
-            });
-            while let Some(inside) = stack.last_mut() {
-                let imports = lists[inside.chunk as usize].as_deref().unwrap_or_default();
-                if let Some(&import) = imports.get(inside.next as usize) {
-                    inside.next += 1;
-                    if core::mem::replace(&mut seen[import as usize], epoch) != epoch {
-                        list_of(&mut lists, import);
-                        stack.push(Entered {
-                            chunk: import,
-                            next: 0,
-                            since: 0,
-                            before: 0,
-                        });
-                    }
-                } else {
-                    if runs.is_set(inside.chunk as usize) {
-                        ran.push(inside.chunk);
-                    }
-                    done_at[inside.chunk as usize] = ran.len() as u32;
-                    done.push(inside.chunk);
-                    stack.pop();
-                }
-            }
-        }
-
-        moved.clear();
-        moved.resize(reached.len(), false);
-        let mut any_moved = false;
-        for &(at, slot, _) in candidates.iter() {
-            let (parent, since) = (reached[at], while_evaluating[at].since);
-            let (from, to) = (statement_at[slot], done_at[parent as usize] - 1);
-            // Only a `require()` in what runs in between can tell.
-            if to < from
-                || !ran[from as usize..to as usize].iter().any(|&other| {
-                    matches!(&chunks[other as usize].content, chunk::Content::Javascript(js) if js.can_require_a_chunk)
-                })
-            {
-                continue;
-            }
-            // Entered at `slot`, `parent` has to run `ran[from..to]` and then itself.
-            epoch += 1;
-            seen[parent as usize] = epoch;
-            stack.push(Entered {
-                chunk: parent,
-                next: 0,
-                since,
-                before: at as u32,
-            });
-            let mut next = from;
-            let mut same = true;
-            while same && let Some(inside) = stack.last_mut() {
-                let imports = lists[inside.chunk as usize].as_deref().unwrap_or_default();
-                if let Some(&import) = imports.get(inside.next as usize) {
-                    inside.next += 1;
-                    if done_at[import as usize] <= from
-                        || core::mem::replace(&mut seen[import as usize], epoch) == epoch
-                    {
-                        continue;
-                    }
-                    let (since, before) = (inside.since, inside.before);
-                    let at = rank[import as usize];
-                    let around = while_evaluating
-                        .get(at as usize)
-                        .filter(|reached| reached.since < at);
-                    stack.push(Entered {
-                        chunk: import,
-                        next: 0,
-                        since: around.map_or(u32::MAX, |reached| since.max(reached.since)),
-                        before: around.map_or(0, |_| before.min(at)),
-                    });
-                } else {
-                    let Entered { chunk: ran_now, .. } = stack.pop().expect("not empty");
-                    if !runs.is_set(ran_now as usize) {
-                        continue;
-                    }
-                    same = ran.get(next as usize) == Some(&ran_now)
-                        && stack.last().is_none_or(|around| {
-                            let at = rank[ran_now as usize];
-                            around.since <= at && at < around.before
-                        });
-                    next += 1;
-                }
-            }
-            stack.clear();
-            if same && next == to + 1 {
-                moved[at] = true;
-                any_moved = true;
-            }
-        }
-
-        for other in done.drain(..) {
-            done_at[other as usize] = u32::MAX;
-        }
-        for &other in reached.iter() {
-            rank[other as usize] = u32::MAX;
-        }
-        lists[chunk_index] = Some(list);
-        if !any_moved {
-            continue;
-        }
-        let mut order: Vec<u32> = (0..reached.len() as u32).collect();
-        order.sort_unstable_by_key(|&at| {
-            if moved[at as usize] {
-                (while_evaluating[at as usize].since, 0)
-            } else {
-                (at, 1)
-            }
-        });
-        nested[chunk_index] = Some(order.iter().map(|&at| reached[at as usize]).collect());
-    }
-    debug_assert!(nested_lists_run_the_same(chunks, &nested, &runs));
-    Ok(nested)
-}
-
-/// The `import` statements as emitted run the chunks the unmoved ones run, in the same order, from every chunk.
-fn nested_lists_run_the_same(
-    chunks: &[Chunk],
-    nested: &[Option<Box<[u32]>>],
-    runs: &AutoBitSet,
-) -> bool {
-    let mut rank: Vec<u32> = vec![u32::MAX; chunks.len()];
-    let mut lists_by = |moved: bool| -> Vec<Vec<u32>> {
-        let mut lists = Vec::with_capacity(chunks.len());
-        for (chunk_index, chunk) in chunks.iter().enumerate() {
-            let chunk::Content::Javascript(js) = &chunk.content else {
-                lists.push(Vec::new());
-                continue;
-            };
-            let order: &[u32] = match &nested[chunk_index] {
-                Some(order) if moved => order,
-                _ => &js.reached_chunks_in_order,
-            };
-            for (at, &other) in order.iter().enumerate() {
-                rank[other as usize] = at as u32;
-            }
-            let mut list: Vec<u32> = js.imports_from_other_chunks.keys().to_vec();
-            list.sort_unstable_by_key(|&other| (rank[other as usize], other));
-            for &other in order.iter() {
-                rank[other as usize] = u32::MAX;
-            }
-            lists.push(list);
-        }
-        lists
-    };
-    let (unmoved, emitted) = (lists_by(false), lists_by(true));
-    let run_by = |lists: &[Vec<u32>], start: usize| -> Vec<u32> {
-        let mut ran = Vec::new();
-        let mut seen = vec![false; chunks.len()];
-        seen[start] = true;
-        let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
-        while let Some((inside, next)) = stack.last_mut() {
-            if let Some(&import) = lists[*inside].get(*next) {
-                *next += 1;
-                if !core::mem::replace(&mut seen[import as usize], true) {
-                    stack.push((import as usize, 0));
-                }
-            } else {
-                if runs.is_set(*inside) {
-                    ran.push(*inside as u32);
-                }
-                stack.pop();
-            }
-        }
-        ran
-    };
-    (0..chunks.len()).all(|start| run_by(&unmoved, start) == run_by(&emitted, start))
-}
-
 fn compute_cross_chunk_dependencies_with_chunk_metas(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
@@ -826,6 +531,29 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     other_chunk_index as u32,
                     CrossChunkImportItemList::default(),
                 );
+            }
+        }
+
+        // A chunk imports the chunks its files import their way to that load wherever it does, so the loader is inside it while they run.
+        for at in 0..chunks[chunk_index]
+            .content
+            .javascript()
+            .reached_chunks_in_order
+            .len()
+        {
+            let other = chunks[chunk_index]
+                .content
+                .javascript()
+                .reached_chunks_in_order[at];
+            if chunks[chunk_index]
+                .entry_bits
+                .subset_of(&chunks[other as usize].entry_bits)
+            {
+                let _ = chunks[chunk_index]
+                    .content
+                    .javascript_mut()
+                    .imports_from_other_chunks
+                    .get_or_put_value(other, CrossChunkImportItemList::default());
             }
         }
 
@@ -935,7 +663,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
         let mut evaluation_rank: Vec<u32> = vec![u32::MAX; chunks.len()];
-        let nested = nest_cross_chunk_imports(chunks)?;
         // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
         // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
@@ -957,15 +684,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             // write it back at loop end.
             let mut cross_chunk_prefix_stmts = Vec::<bun_ast::Stmt>::default();
 
-            let reached: &[u32] = match &nested[chunk_index] {
-                Some(nested) => nested,
-                None => {
-                    &chunks[chunk_index]
-                        .content
-                        .javascript()
-                        .reached_chunks_in_order
-                }
-            };
+            let reached = &chunks[chunk_index]
+                .content
+                .javascript()
+                .reached_chunks_in_order;
             for (rank, &other) in reached.iter().enumerate() {
                 evaluation_rank[other as usize] = rank as u32;
             }

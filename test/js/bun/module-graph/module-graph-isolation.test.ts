@@ -3932,10 +3932,11 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
     settled: "uploaded",
     requests: ["create", "part 1", "part 2", "part 3", "part 4", "complete"],
   });
-  // No later part and no completion is sent. The upload's own rollback (so the store keeps no
-  // orphaned parts) may be.
-  expect({
-    settled: ofDisposed.settled,
-    requests: requests[ofDisposed.tag].filter(request => request !== "abort"),
-  }).toEqual({ settled: undefined, requests: ["create", "part 1", "part 2"] });
+  // No later part and no completion is sent. The upload is rolled back, so that the store keeps
+  // no orphaned parts (which are billed until they expire): that request is not the script's.
+  await until(() => requests[ofDisposed.tag].includes("abort"));
+  expect({ settled: ofDisposed.settled, requests: requests[ofDisposed.tag] }).toEqual({
+    settled: undefined,
+    requests: ["create", "part 1", "part 2", "abort"],
+  });
 });

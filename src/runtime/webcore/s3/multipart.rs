@@ -868,7 +868,9 @@ impl MultiPartUpload {
 
         execute_simple_s3_request(
             &self.credentials,
-            self.context(),
+            // Not the script's request: it tells the store to drop the parts it holds (they are billed
+            // until they expire), and has to go out when the upload fails because its context stopped.
+            self.vm.root_context(),
             s3_simple_request::S3RequestOptions {
                 path: &self.path,
                 method: bun_http::Method::DELETE,

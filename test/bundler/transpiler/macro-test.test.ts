@@ -522,6 +522,26 @@ describe("a macro that runs beneath require() of an ES module", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The top-level await settles from the thread pool: the wait polls, and the reactions of the
+  // module's evaluation arrive with the completion.
+  test("a macro module that reads a file at the top level", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "value.txt": "from-macro",
+      "m.ts": [
+        `import { promises as fs } from "node:fs";`,
+        `const text = await fs.readFile(import.meta.dir + "/value.txt", "utf8");`,
+        `export function value() {`,
+        `  return text;`,
+        `}`,
+      ].join("\n"),
+      "with-macro.ts": withMacro,
+      "importer.ts": `import { inlined } from "./with-macro.ts";\nexport const seen = inlined + "!";\n`,
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["from-macro!"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test("a macro module that throws while it loads fails the require()", async () => {
     const { lines, stderr, exitCode } = await run({
       "m.ts": `throw new Error("macro module threw");\nexport function value() {\n  return 1;\n}\n`,

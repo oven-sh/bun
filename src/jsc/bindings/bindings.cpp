@@ -972,6 +972,21 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (v1Array != v2Array)
         return false;
 
+    if constexpr (checkPrototypes) {
+        // node compares array lengths with [[Get]] and ===. A Proxy's get trap can report a length
+        // its target does not have, and the own-property walk that compares proxies never reads it.
+        if (v1Array && (o1->isProxy() || o2->isProxy())) {
+            JSValue length1 = o1->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue length2 = o2->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            bool sameLength = JSC::JSValue::strictEqual(globalObject, length1, length2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!sameLength)
+                return false;
+        }
+    }
+
     if (v1Array && v2Array && !(o1->isProxy() || o2->isProxy())) {
         JSC::JSArray* array1 = uncheckedDowncast<JSC::JSArray>(v1);
         JSC::JSArray* array2 = uncheckedDowncast<JSC::JSArray>(v2);

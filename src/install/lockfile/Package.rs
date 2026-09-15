@@ -126,6 +126,36 @@ fn invalid_trusted_dependencies(
     crate::Error::InvalidPackageJSON
 }
 
+const IGNORED_PATCHED_DEPENDENCIES: &[u8] =
+    b"\"patchedDependencies\" is ignored in a workspace package. Move it to the root package.json";
+
+/// Warns once per file. The differ parses every workspace package, and one
+/// whose dependencies changed is parsed again, into the same log, when it is
+/// re-resolved.
+#[cold]
+fn warn_ignored_patched_dependencies(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    key_loc: bun_ast::Loc,
+) {
+    let warned = log.msgs.iter().any(|msg| {
+        *msg.data.text == *IGNORED_PATCHED_DEPENDENCIES
+            && msg
+                .data
+                .location
+                .as_ref()
+                .is_some_and(|location| *location.file == *source.path.text)
+    });
+    if warned {
+        return;
+    }
+    log.add_range_warning(
+        Some(source),
+        source.range_of_string(key_loc),
+        IGNORED_PATCHED_DEPENDENCIES,
+    );
+}
+
 // `SemverIntType` defaults to `u64`, the only instantiation the lockfile/PM
 // call sites name unqualified.
 //
@@ -2239,6 +2269,10 @@ impl Package<u64> {
                         }
                     }
                 }
+            }
+        } else if FEATURES.is_workspace {
+            if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+                warn_ignored_patched_dependencies(log, source, patched_deps.loc);
             }
         }
 

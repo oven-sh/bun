@@ -13,7 +13,7 @@ Features:
 
 - Generates `.patch` files that Bun applies to dependencies in `node_modules` on install
 - You can commit `.patch` files to your repository and reuse them across installs, projects, and machines
-- `"patchedDependencies"` in `package.json` keeps track of patched packages
+- `"patchedDependencies"` in `package.json` keeps track of patched packages. Bun only reads it from the root `package.json`, not from workspace packages. `bun install` warns when a workspace package declares it.
 - Patches packages in `node_modules/` while preserving the integrity of Bun's [Global Cache](/pm/global-cache)
 - Test your changes locally before committing them with `bun patch --commit <pkg>`
 - To preserve disk space and keep `bun install` fast, Bun commits patched packages to the Global Cache and shares them across projects where possible

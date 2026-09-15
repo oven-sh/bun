@@ -30,6 +30,8 @@
 
 #include "config.h"
 #include "DOMFormData.h"
+#include "ExceptionOr.h"
+#include "URLSearchParams.h"
 #include "wtf/DebugHeap.h"
 #include <wtf/URLParser.h>
 
@@ -47,8 +49,12 @@ Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context)
     return adoptRef(*new DOMFormData(context));
 }
 
-Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context, const StringView& urlEncodedString)
+ExceptionOr<Ref<DOMFormData>> DOMFormData::create(ScriptExecutionContext* context, StringView urlEncodedString)
 {
+    auto check = URLSearchParams::checkURLEncodedFormLength(urlEncodedString);
+    if (check.hasException())
+        return check.releaseException();
+
     auto newFormData = adoptRef(*new DOMFormData(context));
     for (auto& entry : WTF::URLParser::parseURLEncodedForm(urlEncodedString)) {
         newFormData->append(entry.key, entry.value);

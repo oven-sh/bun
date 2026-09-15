@@ -1127,21 +1127,20 @@ struct HttpResponseData;
              * request-line, like Node/llhttp - e.g. a stray "\r\n" sent on an
              * idle keep-alive connection must not be treated as a bad request.
              * llhttp's s_start state loops on '\r' and '\n' independently, so a
-             * leading bare LF (or bare CR) is also tolerated. Node-compat only:
-             * Bun.serve keeps rejecting a request that does not start with the
-             * request-line, so this leniency is not a Bun-native default. */
-            if constexpr (IsNodeHttp) {
-                if (isNewline((unsigned char) data[0])) [[unlikely]] {
-                    /* The enclosing loop only runs while length is non-zero, so the
-                     * first byte is known to be one; re-test only after advancing. */
-                    do {
-                        data += 1;
-                        length -= 1;
-                        consumedTotal += 1;
-                    } while (length && isNewline((unsigned char) data[0]));
-                    if (length == 0) {
-                        break;
-                    }
+             * leading bare LF (or bare CR) is also tolerated. Applies to Bun.serve
+             * as well: the RFC's own motivating case (a stray CRLF after a POST
+             * body in front of the next keep-alive request) otherwise kills that
+             * request with a 400. */
+            if (isNewline((unsigned char) data[0])) [[unlikely]] {
+                /* The enclosing loop only runs while length is non-zero, so the
+                 * first byte is known to be one; re-test only after advancing. */
+                do {
+                    data += 1;
+                    length -= 1;
+                    consumedTotal += 1;
+                } while (length && isNewline((unsigned char) data[0]));
+                if (length == 0) {
+                    break;
                 }
             }
             auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);

@@ -98,6 +98,21 @@ fn parent_dir(dir: &[u8]) -> &[u8] {
     }
 }
 
+/// The part of package-lock key `path` below key `dir`, if it is strictly inside it.
+fn path_inside<'k>(dir: &[u8], path: &'k [u8]) -> Option<&'k [u8]> {
+    path.strip_prefix(dir)?
+        .strip_prefix(b"/")
+        .filter(|rest| !rest.is_empty())
+}
+
+/// Folder inside a cache-installed dependent; the installer reads its row relative to the package.
+#[derive(Clone, Copy)]
+struct FolderInDependent<'k> {
+    path: &'k [u8],
+    /// Fallback name, as in a fresh resolve; npm writes these entries without one.
+    alias: &'k [u8],
+}
+
 struct Migrator<'a> {
     this: &'a mut Lockfile,
     manager: &'a mut PackageManager,
@@ -151,7 +166,7 @@ pub(super) fn migrate_packages(
 
     migrator.build_index()?;
 
-    let root_id = migrator.build_package(0, false, DepTag::Npm)?;
+    let root_id = migrator.build_package(0, false, DepTag::Npm, None)?;
     debug_assert_eq!(root_id, 0);
 
     let mut cursor = 0;
@@ -224,10 +239,16 @@ impl<'a> Migrator<'a> {
         if existing != INVALID_PACKAGE_ID {
             return Ok(existing);
         }
-        self.build_package(j, via_link, hint)
+        self.build_package(j, via_link, hint, None)
     }
 
-    fn build_package(&mut self, j: u32, via_link: bool, hint: DepTag) -> Result<PackageID, Error> {
+    fn build_package(
+        &mut self,
+        j: u32,
+        via_link: bool,
+        hint: DepTag,
+        folder_in_dependent: Option<FolderInDependent<'_>>,
+    ) -> Result<PackageID, Error> {
         let entries = self.entries;
         let entry = &entries[j as usize];
         let pkg = entry_object(entry);
@@ -242,6 +263,8 @@ impl<'a> Migrator<'a> {
             &ws.name
         } else if let Some(set_name) = pkg.get(b"name").and_then(|n| n.as_str()) {
             set_name
+        } else if let Some(folder) = folder_in_dependent {
+            folder.alias
         } else {
             package_name_from_path(key)
         };
@@ -344,6 +367,7 @@ impl<'a> Migrator<'a> {
             workspace_entry.is_some(),
             via_link,
             hint,
+            folder_in_dependent.map(|folder| folder.path),
         )?;
         debug!(
             "{} -> {}",
@@ -381,7 +405,9 @@ impl<'a> Migrator<'a> {
                         self.this.packages.items_resolution_mut()[existing as usize] = res;
                     }
                 }
-                self.entry_package_ids[j as usize] = existing;
+                if folder_in_dependent.is_none() {
+                    self.entry_package_ids[j as usize] = existing;
+                }
                 self.shadow(j);
                 return Ok(existing);
             }
@@ -402,8 +428,12 @@ impl<'a> Migrator<'a> {
             scripts: Default::default(),
         })?;
         self.this.get_or_put_id(id, name_hash)?;
-        self.entry_package_ids[j as usize] = id;
         self.queue.push((j, id));
+        // `build_or_get` must keep handing other dependents the entry-key build.
+        match folder_in_dependent {
+            None => self.entry_package_ids[j as usize] = id,
+            Some(_) => self.shadowed.set(j as usize),
+        }
         Ok(id)
     }
 
@@ -471,6 +501,7 @@ impl<'a> Migrator<'a> {
         is_workspace: bool,
         via_link: bool,
         hint: DepTag,
+        path_in_dependent: Option<&[u8]>,
     ) -> Result<Resolution, Error> {
         if j == 0 {
             return Ok(Resolution::init(ResTagged::Root));
@@ -517,7 +548,10 @@ impl<'a> Migrator<'a> {
             }
         }
 
-        let path = self.this.string_buf().append(key)?;
+        let path = self
+            .this
+            .string_buf()
+            .append(path_in_dependent.unwrap_or(key))?;
         Ok(Resolution::init(ResTagged::Folder(path)))
     }
 
@@ -643,6 +677,7 @@ impl<'a> Migrator<'a> {
         };
         let replace_optional_dups = matches!(res_tag, resolution::Tag::Root | resolution::Tag::Npm);
         let skip_peer_dups = res_tag == resolution::Tag::Npm;
+        let installed_from_cache = res_tag.can_enqueue_install_task();
 
         if j == 0 {
             self.link_workspaces()?;
@@ -725,15 +760,26 @@ impl<'a> Migrator<'a> {
 
                 let version_tag = version.tag;
                 let mut found = self.find_target(key, name);
+                let mut folder_in_dependent: Option<FolderInDependent<'_>> = None;
                 if let Some((t, through_link)) = found
                     && !is_local
-                    && self.is_external_folder(t, through_link)
                 {
-                    self.skip_external(t, name);
-                    found = None;
+                    if through_link && installed_from_cache {
+                        folder_in_dependent = path_inside(key, entries[t as usize].key.slice())
+                            .map(|path| FolderInDependent { path, alias: name });
+                    }
+                    if folder_in_dependent.is_none() && self.is_external_folder(t, through_link) {
+                        self.skip_external(t, name);
+                        found = None;
+                    }
                 }
                 let target = match found {
-                    Some((t, through_link)) => self.build_or_get(t, through_link, version_tag)?,
+                    Some((t, through_link)) => match folder_in_dependent {
+                        Some(folder) => {
+                            self.build_package(t, through_link, version_tag, Some(folder))?
+                        }
+                        None => self.build_or_get(t, through_link, version_tag)?,
+                    },
                     None if behavior.is_peer() || behavior.contains(Behavior::OPTIONAL) => {
                         INVALID_PACKAGE_ID
                     }

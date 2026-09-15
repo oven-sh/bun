@@ -180,6 +180,11 @@ impl BodyMixin for Request {
                 .expect("HeadersRef wraps a non-null *mut FetchHeaders")
         })
     }
+    fn get_blob_content_type(&self) -> Option<Vec<u8>> {
+        // Inside a `Bun.serve` handler the headers may still exist only on the uws request.
+        self.load_headers_from_request_context();
+        body::content_type_from_headers(BodyMixin::get_fetch_headers(self))
+    }
     #[inline]
     fn get_form_data_encoding(
         &self,
@@ -249,12 +254,8 @@ impl Request {
             return Ok(self.headers_mut().as_mut().unwrap());
         }
 
-        if let Some(req) = self.request_context.get_request() {
-            // we have a request context, so we can get the headers from it
-            self.headers.set(Some(HeadersRef::create_from_uws(
-                req.cast::<core::ffi::c_void>(),
-            )));
-        } else {
+        self.load_headers_from_request_context();
+        if self.headers.get().is_none() {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
             // Snapshot the pointer first; it stays valid across the field borrow.
@@ -295,17 +296,21 @@ impl Request {
         Ok(self.headers_mut().as_mut().unwrap())
     }
 
+    /// Creates `headers` from the live uws request if nothing has yet; no-op otherwise.
+    fn load_headers_from_request_context(&self) {
+        if self.headers.get().is_some() {
+            return;
+        }
+        if let Some(req) = self.request_context.get_request() {
+            self.headers.set(Some(HeadersRef::create_from_uws(
+                req.cast::<core::ffi::c_void>(),
+            )));
+        }
+    }
+
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
-        if self.headers.get().is_none() {
-            if let Some(req) = self.request_context.get_request() {
-                // we have a request context, so we can get the headers from it
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    req.cast::<core::ffi::c_void>(),
-                )));
-            }
-        }
-
+        self.load_headers_from_request_context();
         let headers = self.headers_mut().as_mut()?;
         if headers.is_empty() {
             return None;
@@ -322,14 +327,7 @@ impl Request {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
-        if self.headers.get().is_none() {
-            if let Some(uws_req) = self.request_context.get_request() {
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    uws_req.cast::<core::ffi::c_void>(),
-                )));
-            }
-        }
-
+        self.load_headers_from_request_context();
         if let Some(head) = self.headers_mut().as_mut() {
             if head.is_empty() {
                 return Ok(None);
@@ -342,14 +340,8 @@ impl Request {
     }
 
     pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
-        if let Some(req) = self.request_context.get_request() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
-            let req = bun_opaque::opaque_deref(req);
-            if let Some(value) = req.header(b"content-type") {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
-            }
-        }
-
+        // Through `req.headers` like `get_blob_content_type`: a handler may have set or deleted it.
+        self.load_headers_from_request_context();
         if let Some(headers) = self.headers_mut().as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
                 return Ok(Some(value.to_utf8()));

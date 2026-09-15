@@ -178,13 +178,8 @@ mod posix {
         Some(&buf[..n])
     }
 
-    /// Whether a `POLLPRI` on the trigger fd reports real pressure.
-    ///
-    /// `psi_trigger_create()` seeds an unprivileged trigger's window from
-    /// `total[PSI_POLL]`, which only moves while a privileged trigger exists,
-    /// but evaluates it against `total[PSI_AVGS]`. So the first stall after
-    /// arming counts all stall since boot as growth and fires the trigger.
-    /// A real event has `PSI_THRESHOLD_US` of growth since the last one.
+    /// Whether a `POLLPRI` reports real pressure. The kernel seeds an unprivileged
+    /// trigger from the wrong aggregator, so the first stall after arming fires it (#42783).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) fn psi_growth_reached_threshold(last_total: &mut u64, contents: &[u8]) -> bool {
         let Some(total) = parse_psi_some_total(contents) else {
@@ -538,8 +533,7 @@ pub(crate) fn js_psi_trigger(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
     }
 }
 
-/// `memoryPressurePsiFilter(armed, ...polls)`: the PSI event filter over
-/// file contents, one `bool` per poll. `null` where there is no PSI backend.
+/// `memoryPressurePsiFilter(armed, ...polls)`: one `bool` per poll, `null` off Linux.
 #[bun_jsc::host_fn]
 pub(crate) fn js_psi_filter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(any(target_os = "linux", target_os = "android"))]

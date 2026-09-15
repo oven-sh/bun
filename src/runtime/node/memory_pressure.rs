@@ -178,8 +178,7 @@ mod posix {
         Some(&buf[..n])
     }
 
-    /// Whether a `POLLPRI` reports real pressure. The kernel seeds an unprivileged
-    /// trigger from the wrong aggregator, so the first stall after arming fires it (#42783).
+    /// Whether a `POLLPRI` reports real pressure, not the false event of #42783.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) fn psi_growth_reached_threshold(last_total: &mut u64, contents: &[u8]) -> bool {
         let Some(total) = parse_psi_some_total(contents) else {

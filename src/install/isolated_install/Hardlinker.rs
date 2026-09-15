@@ -57,6 +57,24 @@ impl Hardlinker {
             bun_core::output::flush();
         }
 
+        // `linkat(2)` writes straight through a symlink planted at this store
+        // entry's `node_modules`, so open the directories the installer owns on
+        // the way to `dest` without following one. Once per package, before any
+        // file lands, and no files land if it fails.
+        #[cfg(not(windows))]
+        let prepared = crate::isolated_install::make_store_path(self.dest.slice());
+        #[cfg(windows)]
+        let prepared = {
+            let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
+            crate::isolated_install::make_store_path(
+                bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], self.dest.slice())
+                    .as_bytes(),
+            )
+        };
+        if let Err(err) = prepared {
+            return Ok(sys::Result::Err(err));
+        }
+
         #[cfg(windows)]
         {
             let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
@@ -251,6 +269,9 @@ impl Hardlinker {
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {
                         EntryKind::Directory => {
+                            // Everything above the package directory is already
+                            // a real directory (see the call before this loop),
+                            // so this only creates the package's own subpaths.
                             let _ = Fd::cwd().make_path(self.dest.slice());
                         }
                         EntryKind::File => {

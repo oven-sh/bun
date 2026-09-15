@@ -333,26 +333,53 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // TypeScript 7's native (Go-based) compiler does not expose a JS compiler API yet,
-  // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
+  // The fixture depends on typescript@latest, so this is the current stable release:
+  // since 7.0 that is the native (Go-based) compiler, which does not expose a JS
+  // compiler API, so unlike the tests above we write a real tsconfig and spawn the CLI.
   // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
-  describe("tsgo (TypeScript 7 native preview)", () => {
+  describe("TypeScript latest", () => {
     test.skipIf(isDebug)("checks without lib.dom.d.ts", async () => {
-      const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
+      const fixtureDir = await createIsolatedFixture();
 
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.compilerOptions.skipLibCheck = false;
       tsconfig.include = ["*.ts", "*.tsx"];
       await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
-      // Resolve the entrypoint from the package's own bin field; the nightly
-      // has renamed it before (bin/tsgo.js -> bin/tsgo).
-      const tsgoPkgDir = join(fixtureDir, "node_modules", "@typescript", "native-preview");
-      const tsgoPkg = await Bun.file(join(tsgoPkgDir, "package.json")).json();
-      const tsgo = join(tsgoPkgDir, typeof tsgoPkg.bin === "string" ? tsgoPkg.bin : tsgoPkg.bin.tsgo);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(fixtureDir, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: fixtureDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // TypeScript 7.1 resolves `import x from "./f" with { type: "text" }` against
+  // `declare module "*" with { type: "text" }` (microsoft/TypeScript#63931).
+  // bun-types ships those declarations in ts7.1/, reached through
+  // package.json#typesVersions, so they are invisible to the compilers above.
+  // This run checks the whole fixture through that entry point, plus the
+  // fixture/ts7.1 files that only that compiler can type.
+  // `>=7.1.0-0` takes the nightly until a 7.1 release exists, then the release.
+  describe("TypeScript 7.1", () => {
+    test.skipIf(isDebug)("checks the fixture and import attributes through ts7.1/index.d.ts", async () => {
+      const fixtureDir = await createIsolatedFixture(["typescript@>=7.1.0-0"]);
+
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.include = ["*.ts", "*.tsx", "ts7.1/*.ts"];
+      await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), tsgo, "-p", "."],
+        cmd: [bunExe(), join(fixtureDir, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
         env: bunEnv,
         cwd: fixtureDir,
         stdout: "pipe",
@@ -521,6 +548,59 @@ describe("@types/bun integration test", () => {
         `declare const e: Event;
          export const composed: [EventTarget?] = e.composedPath();`,
       );
+    });
+  });
+
+  // Also runs on debug builds: spawned tsc over a single file, like the
+  // Bun.mmap check above. @types/node@24 declares `off`/`removeListener` only
+  // on EventEmitter, not on `Process`, so the `memoryPressure` overloads in
+  // overrides.d.ts used to hide the inherited signatures and reject every
+  // other event name (#40003). @types/node >= 26 declares them on `Process`
+  // directly, which masks the bug, so this check pins @types/node@24 instead
+  // of reusing the base fixture.
+  describe("process event methods with @types/node@24", () => {
+    test("removeListener and off accept other event names", async () => {
+      const checkDir = join(TEMP_DIR, "types-node-24-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["index.ts"];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "package.json": JSON.stringify({ name: "types-node-24-check", private: true }),
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "index.ts": `process.removeListener("SIGINT", () => {});
+           process.off("unhandledRejection", () => {});
+           process.removeListener("memoryPressure", () => {});
+           process.on("memoryPressure", level => {
+             level satisfies "warning" | "critical";
+           });`,
+      });
+      await $`cd ${checkDir} && bun add @types/node@24`.quiet();
+      await cp(join(BASE_FIXTURE_DIR, "node_modules", "bun-types"), join(checkDir, "node_modules", "bun-types"), {
+        recursive: true,
+      });
+      await cp(
+        join(BASE_FIXTURE_DIR, "node_modules", "@types", "bun"),
+        join(checkDir, "node_modules", "@types", "bun"),
+        { recursive: true },
+      );
+
+      // Guard against resolution drift silently checking the wrong major.
+      const nodeTypesPkg = await Bun.file(join(checkDir, "node_modules", "@types", "node", "package.json")).json();
+      expect(nodeTypesPkg.version).toStartWith("24.");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -780,11 +860,13 @@ describe("@types/bun integration test", () => {
         "WebGLVertexArrayObjectOES",
       ]),
       diagnostics: [
+        // lib.dom's Blob has no textStream(); node:buffer's Blob declares it
+        // since @types/node 26.5.0 (added to Node.js in v24.19.0 / v26.5.0).
         {
-          code: 2322,
+          code: 2741,
           line: "24154.ts:11:3",
           message:
-            "Type 'Blob' is not assignable to type 'import(\"node:buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<NonSharedUint8Array>': blob, text, bytes, json",
+            "Property 'textStream' is missing in type 'Blob' but required in type 'import(\"node:buffer\").Blob'.",
         },
         {
           code: 2769,

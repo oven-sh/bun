@@ -77,6 +77,9 @@ devTest("image tag", {
       });
       await dev.fetch("/").expect.toInclude('alt="modified image"');
     });
+    // The image did not change, so the reloaded page keeps its URL and the asset is still served.
+    expect(await c.js`document.querySelector("img").src`).toBe(url);
+    await dev.fetch(url).expect.toBe("FIRST");
 
     // Editing image content causes a hard reload because the html must reflect the new image content
     await c.expectReload(async () => {

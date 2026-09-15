@@ -1255,6 +1255,14 @@ pub(crate) mod serialize {
                 part_name.to_css(dest)?;
                 dest.write_char(b')')?;
             }
+            PseudoElement::DetailsContent => dest.write_str(b"::details-content")?,
+            PseudoElement::PickerIcon => dest.write_str(b"::picker-icon")?,
+            PseudoElement::Checkmark => dest.write_str(b"::checkmark")?,
+            PseudoElement::PickerFunction { identifier } => {
+                dest.write_str(b"::picker(")?;
+                identifier.to_css(dest)?;
+                dest.write_char(b')')?;
+            }
             PseudoElement::Custom { name } => {
                 dest.write_str(b"::")?;
                 return dest.serialize_identifier(name);

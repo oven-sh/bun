@@ -12,6 +12,7 @@ import defaultMacro, {
   identity as identity1,
   identity as identity2,
   ireturnapromise,
+  symbolKeys,
 } from "./macro.ts" assert { type: "macro" };
 
 import * as macros from "./macro.ts" assert { type: "macro" };
@@ -36,6 +37,14 @@ test("type coercion", () => {
   expect(identity(1.5)).toBe(1.5);
   expect(identity(1)).toBe(1);
   expect(identity(true)).toBe(true);
+});
+
+// A Symbol key has no source form. The inlined object keeps the string keys
+// only, like JSON.stringify, instead of a string key named by the description.
+test("object with Symbol keys", () => {
+  const value = symbolKeys();
+  expect(value).toEqual({ v: 2 });
+  expect(Reflect.ownKeys(value)).toEqual(["v"]);
 });
 
 test("escaping", () => {
@@ -232,6 +241,69 @@ test("a macro that returns a JSON or text Response or Blob is inlined by its con
       { c: 3 },
       "data:application/octet-stream;base64,AQID",
     ]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// The classification follows the MIME essence, not the category table the runtime uses for blob types:
+// any `+json` suffix or `/json` subtype is JSON, and the JavaScript and XML `application/*` types are text.
+// The data URL keeps the raw content type, parameters included.
+test("a Response or Blob returned from a macro is classified by its MIME essence", async () => {
+  const json = '{"a":1}';
+  const cases: [type: string, body: string, expected: unknown][] = [
+    ["application/json", json, { a: 1 }],
+    ["application/json; charset=utf-8", json, { a: 1 }],
+    ["application/vnd.api+json", json, { a: 1 }],
+    ["application/ld+json", json, { a: 1 }],
+    ["application/ld+json; charset=utf-8", json, { a: 1 }],
+    ["application/manifest+json", json, { a: 1 }],
+    ["application/geo+json", json, { a: 1 }],
+    ["text/json", json, { a: 1 }],
+    ["application/javascript", "1+1", "1+1"],
+    ["application/javascript; charset=utf-8", "1+1", "1+1"],
+    ["application/x-javascript", "1+1", "1+1"],
+    ["application/ecmascript", "1+1", "1+1"],
+    ["application/xml", "<a/>", "<a/>"],
+    ["text/plain", "hi", "hi"],
+    ["text/html", "<b>hi</b>", "<b>hi</b>"],
+    ["text/javascript", "1+1", "1+1"],
+    ["text/xml", "<a/>", "<a/>"],
+    ["image/png", "png", "data:image/png;base64,cG5n"],
+    ["application/octet-stream", "bin", "data:application/octet-stream;base64,Ymlu"],
+    ["application/wasm", "wasm", "data:application/wasm;base64,d2FzbQ=="],
+    ["application/x-ndjson", '{"a":1}\n{"a":2}\n', "data:application/x-ndjson;base64,eyJhIjoxfQp7ImEiOjJ9Cg=="],
+  ];
+  using dir = tempDir("macro-mime-essence", {
+    "m.ts": [
+      `export function resp(type: string, body: string) {`,
+      `  return new Response(body, { headers: { "content-type": type } });`,
+      `}`,
+      `export function blob(type: string, body: string) {`,
+      `  return new Blob([body], { type });`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { resp, blob } from "./m.ts" with { type: "macro" };`,
+      `console.log(JSON.stringify([`,
+      ...cases.map(([type, body]) => `  resp(${JSON.stringify(type)}, ${JSON.stringify(body)}),`),
+      ...cases.map(([type, body]) => `  blob(${JSON.stringify(type)}, ${JSON.stringify(body)}),`),
+      `]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = cases.map(([, , expected]) => expected);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify([...expected, ...expected]),
     stderr: "",
   });
   expect(exitCode).toBe(0);

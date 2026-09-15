@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tmpdirSync } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -339,6 +339,8 @@ describe.concurrent("fetch-tls", () => {
         checkServerIdentity: boolean[];
         portIsolation: { a: boolean[]; b: boolean[] };
         hostIsolation: boolean[];
+        unix?: boolean[];
+        unixPathIsolation?: { b: boolean[]; c: boolean[] };
       };
     }
 
@@ -368,6 +370,14 @@ describe.concurrent("fetch-tls", () => {
             // Same port + SSLConfig, different connect hostname: no resumption.
             hostIsolation: [false, false],
           });
+          if (!isWindows) {
+            expect({ unix: r.unix, unixPathIsolation: r.unixPathIsolation }).toEqual({
+              // Second fresh connect over the same socket path resumes.
+              unix: [false, true],
+              // Same URL + SSLConfig, different socket path: no resumption.
+              unixPathIsolation: { b: [false], c: [false] },
+            });
+          }
           // A handshake rejected by checkServerIdentity (trusted chain, wrong
           // SAN) must not seed the cache. The fixture asserts each fetch
           // rejects with ERR_TLS_CERT_ALTNAME_INVALID; the client may RST

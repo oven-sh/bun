@@ -120,6 +120,14 @@ New symbols (`$`, `t0`, `c`, `_c`) are minted via the `Host` trait
 implemented by the parser's `P`; the import of `react/compiler-runtime` is
 registered via `Host::add_import_record`.
 
+Every local of a compiled function is a new symbol, also one the source
+declared. `Host::new_local` registers it in the body scope of that function
+(`Scope::generated`), and once the body is replaced the parser drops the
+symbols it declared for the old one (all but `arguments` and the own name of a
+function expression). The bundler's renamer then numbers the new symbols like
+the locals of any other function. `Host::new_generated` is for a name declared
+at module level, such as an outlined `_temp`.
+
 ### Bail-out semantics
 
 Any `bun_ast` node the port cannot lower (bundler-only synthetics: `ESpecial`,
@@ -137,3 +145,14 @@ as React Fast Refresh). At that point the visit pass has already consumed all
 resolved `RefTag::Symbol`, and JSX has been lowered to
 `E::Call { was_jsx_element: true }`. Lowering reads that call shape and
 codegen emits it, so the compiled body needs no further visiting.
+
+The visit pass emits two call shapes. The automatic runtime calls
+`jsx(type, {...props, children}, key)` (or `jsxs` / `jsxDEV`). The classic
+runtime, and the automatic runtime when `key` follows a spread, calls
+`factory(type, props | null, ...children)` with `key` left in `props`. The two
+overlap in arity, so lowering tells them apart by the callee
+(`Host::jsx_import_kind`), and codegen picks the shape the visit pass would
+(`Host::is_jsx_classic`, and whether the HIR `key` attribute follows a spread).
+The callee is not an operand of the HIR `JsxExpression`: codegen resolves the
+classic factory again (`Host::jsx_classic_factory`). Lowering rejects a factory
+that is a local of the function, because the compiler would drop it as unused.

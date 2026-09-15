@@ -13,9 +13,23 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// Look up `name` (already known to be under the standalone virtual root)
     /// and return the embedded file's canonical name slice if present.
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]>;
-    /// Whether the embedded file at `name` carries a serialized ES module record (`module_info`).
+    /// Whether the embedded file at `name` is an ES module whose record the loader can build without parsing: it carries
+    /// a serialized `module_info` body or is a module of the pre-resolved graph.
     fn has_module_info(&self, _name: &[u8]) -> bool {
         false
+    }
+    /// The pre-resolved ES module graph (`JSC::PrelinkedModuleGraph` blob) and the module-info slot table its names index
+    /// (`ModuleInfoSlotTable` bytes: `u32` count, then the slots); both empty when the executable has no graph.
+    fn prelinked_module_graph(&self) -> (&'static [u8], &'static [u8]) {
+        (&[], &[])
+    }
+    /// The graph module index of the embedded file at `name`, or `u32::MAX`.
+    fn prelinked_module_index(&self, _name: &[u8]) -> u32 {
+        u32::MAX
+    }
+    /// The canonical embedded name (module key) of graph module `index`.
+    fn prelinked_module_name(&self, _index: u32) -> Option<&'static [u8]> {
+        None
     }
     /// The embedded module `specifier` names when imported from `source_dir`: an absolute embedded path (in either
     /// path syntax), or a `./` / `../` specifier joined onto `source_dir`, looked up as spelled and then -- since every
@@ -100,4 +114,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn module_graph_load_bytes(&self) -> usize {
         0
     }
+    /// Ask the kernel to reclaim the resident pages of the embedded graph (clean file-backed pages are dropped and
+    /// re-read from the executable when touched). May block on the syscall; call off the JS thread.
+    fn page_out(&self) {}
 }

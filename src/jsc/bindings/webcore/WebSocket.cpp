@@ -1173,21 +1173,6 @@ String WebSocket::extensions() const
     return m_extensions;
 }
 
-String WebSocket::binaryType() const
-{
-    switch (m_binaryType) {
-    case BinaryType::NodeBuffer:
-        return "nodebuffer"_s;
-    case BinaryType::ArrayBuffer:
-        return "arraybuffer"_s;
-    case BinaryType::Blob:
-        return "blob"_s;
-    }
-
-    ASSERT_NOT_REACHED();
-    return String();
-}
-
 ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
 {
     if (binaryType == "blob"_s) {

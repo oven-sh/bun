@@ -63,9 +63,12 @@ export const cpuTargetFlags: Flag[] = [
     desc: "ARM64 Android: ARMv8-A base + CRC, tuned for Cortex-A78 (common big core)",
   },
   {
-    flag: ["/clang:-march=armv8-a+crc", "/clang:-mtune=ampere1"],
+    // No -mtune: Windows-on-ARM hardware is Snapdragon (Oryon / Cortex-X), and
+    // generic tuning is what MSVC, Chromium and Rust ship there. (ampere1's
+    // tuning pads every function and loop to 64 bytes.)
+    flag: "/clang:-march=armv8-a+crc",
     when: c => c.windows && c.arm64,
-    desc: "ARM64 Windows: clang-cl prefix required (/clang: passes to clang)",
+    desc: "ARM64 Windows: ARMv8-A base + CRC, generic tuning (clang-cl prefix required)",
   },
   {
     flag: "-march=nehalem",
@@ -369,6 +372,7 @@ export const globalFlags: Flag[] = [
   {
     flag: "-fno-rtti",
     when: c => c.unix,
+    lang: "cxx",
     desc: "Disable RTTI (no dynamic_cast/typeid)",
   },
   {
@@ -383,6 +387,27 @@ export const globalFlags: Flag[] = [
     when: c => c.unix,
     desc: "Keep frame pointers (for profiling and backtraces)",
   },
+
+  // ─── Hardening policy (stated, so a distro clang's vendor defaults don't decide) ───
+  {
+    // Arch/Alpine/Fedora/Ubuntu package clang with -fstack-protector-strong on
+    // by default; apt.llvm.org (CI) and upstream builds don't. Off: what bun
+    // has always shipped on Linux, FreeBSD and Android, and a canary
+    // load+check in most JSC frames is not free.
+    flag: "-fno-stack-protector",
+    when: c => c.unix && !c.darwin,
+    desc: "No stack protector (pin the toolchain-independent default)",
+  },
+  {
+    // Every clang turns the protector on for a Darwin target (level 1, what
+    // -fstack-protector asks for), the cross-compiling CI one included, so
+    // that is what bun has always shipped on macOS: about 1,250 functions of
+    // bun's own C/C++ and the vendored deps carry a canary there, as the
+    // WebKit prebuilt's do.
+    flag: "-fstack-protector",
+    when: c => c.darwin,
+    desc: "Stack protector on macOS (clang's default for Darwin targets, stated)",
+  },
   {
     // clang-cl drops /Oy- on x64 and keeps only non-leaf frames on arm64
     flag: ["/clang:-fno-omit-frame-pointer", "/clang:-mno-omit-leaf-frame-pointer"],
@@ -392,9 +417,15 @@ export const globalFlags: Flag[] = [
 
   // ─── Visibility ───
   {
-    flag: ["-fvisibility=hidden", "-fvisibility-inlines-hidden"],
+    flag: "-fvisibility=hidden",
     when: c => c.unix,
     desc: "Hidden symbol visibility (explicit exports only)",
+  },
+  {
+    flag: "-fvisibility-inlines-hidden",
+    when: c => c.unix,
+    lang: "cxx",
+    desc: "Hidden visibility for inline C++ member functions",
   },
 
   // ─── Unwinding / exception tables ───
@@ -435,12 +466,13 @@ export const globalFlags: Flag[] = [
     desc: "One section per data item",
   },
   {
-    // Address-significance table: enables safe ICF at link.
-    // Macos debug mode + this flag breaks libarchive configure ("pid_t doesn't exist").
-    // darwin cross targets get this from their own entry above (debug and
-    // release), so skip them here rather than emit the flag twice.
+    // Address-significance table: what lld's --icf=safe reads. Only where an
+    // lld links the result: darwin cross targets get it from their own entry
+    // above, and a native macOS link goes through Apple's ld, which does no
+    // ICF with it and warns about the section instead ("alignment (1) of
+    // atom 'anon-N' is too small and may result in unaligned pointers").
     flag: "-faddrsig",
-    when: c => (c.debug && c.linux) || (c.release && c.unix && !(c.darwin && c.crossTarget !== undefined)),
+    when: c => (c.debug && c.linux) || (c.release && (c.linux || c.freebsd)),
     desc: "Emit address-significance table (enables safe ICF)",
   },
 
@@ -587,14 +619,14 @@ export const bunOnlyFlags: Flag[] = [
   },
 
   // ─── Language standard ───
-  // WebKit uses gnu++ extensions on Linux; if we don't match, the first
-  // memory allocation crashes (ABI mismatch in sized delete).
-  // Not in globalFlags because deps set their own standard.
+  // Not in globalFlags because deps set their own standard (WebKit itself is
+  // -std=c++23, as its cmake builds it; the GNU-extensions dialect differs in
+  // accepted syntax and predefined macros, not ABI).
   {
     flag: "-std=gnu++23",
     when: c => c.linux || c.freebsd,
     lang: "cxx",
-    desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux/FreeBSD)",
+    desc: "C++23 with GNU extensions",
   },
   {
     flag: "-std=c++23",
@@ -1230,6 +1262,15 @@ export const linkerFlags: Flag[] = [
     desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",
   },
   {
+    // c-bindings.cpp: __wrap_execve records that an exec of this process is in
+    // flight, and __wrap_pthread_create retries the EAGAIN the kernel returns
+    // for clone(CLONE_FS) during that window (the --watch reload). Behavioral,
+    // not a version pin, so it applies to every Linux libc.
+    flag: ["-Wl,--wrap=execve", "-Wl,--wrap=pthread_create"],
+    when: c => c.linux,
+    desc: "Retry pthread_create EAGAIN caused by an in-flight execve",
+  },
+  {
     flag: ["-static-libstdc++", "-static-libgcc"],
     when: c => c.linux && c.abi === "gnu",
     desc: "Static C++ runtime (don't depend on host libstdc++)",
@@ -1325,7 +1366,7 @@ export const linkerFlags: Flag[] = [
     desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
   },
   {
-    // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage `btg`
+    // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage
     // build driven by scripts/build-pgo.ts) clang AND rustc emit `.text.hot` /
     // `.text.unlikely` section prefixes from *measured* execution counts.
     // Tell lld to keep those prefixes (it merges them into one `.text` by
@@ -1371,6 +1412,15 @@ export const linkerFlags: Flag[] = [
     flag: c => `/DEF:${slash(join(c.cwd, "src/symbols.def"))}`,
     when: c => c.windows,
     desc: "Exported symbol definition (.def format)",
+  },
+  {
+    // The exe exports symbols (the .def above), so lld-link also writes an
+    // import library — by default `<output basename>.lib`, which is the very
+    // name of the object archive cpp-only mode produces. Nothing consumes
+    // it; park it under obj/.
+    flag: c => `/IMPLIB:${slash(join(c.buildDir, "obj", `${bunExeName(c)}.import.lib`))}`,
+    when: c => c.windows,
+    desc: "Keep the exe's import library from overwriting <exe>.lib (the object archive)",
   },
   {
     flag: c => ["-exported_symbols_list", `${c.cwd}/src/symbols.txt`],

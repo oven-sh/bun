@@ -20,9 +20,6 @@ pub const MAX_FRAME_SIZE_UPPER: u32 = 16_777_215; // 2^24 - 1
 pub const DEFAULT_WINDOW_SIZE: u32 = 65_535; // 2^16 - 1
 pub const MAX_WINDOW_SIZE: u32 = 2_147_483_647; // 2^31 - 1
 
-/// Highest valid stream identifier (§5.1.1): 2^31 - 1.
-pub const MAX_STREAM_ID: u32 = 2_147_483_647;
-
 /// RFC 9113 §6 frame type registry (+ RFC 7838 ALTSVC, RFC 8336 ORIGIN).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]

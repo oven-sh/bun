@@ -80,8 +80,10 @@ export function satisfiesRange(version: string, range: string | undefined): bool
 // ───────────────────────────────────────────────────────────────────────────
 
 export interface ToolSpec {
-  /** Names to try, in order. On Windows `.exe` is appended automatically. */
+  /** Names to try, in order. On Windows `windowsExt` is appended automatically. */
   names: string[];
+  /** The file extension on Windows. Default `.exe`. npm is `npm.cmd`. */
+  windowsExt?: string;
   /** Extra search paths beyond $PATH. Tried FIRST (more specific). */
   paths?: string[];
   /** Search only `paths`, never $PATH. */
@@ -132,6 +134,16 @@ export function findBun(os: OS): string {
     names: ["bun"],
     required: true,
     hint: "Codegen requires bun (for `bun install`, `bun build`, and scripts using Bun APIs). Install: curl -fsSL https://bun.sh/install | bash",
+  })!.path;
+}
+
+/** Find npm for `--package-manager=npm`. npm ships with Node.js. */
+export function findNpm(): string {
+  return findTool({
+    names: ["npm"],
+    windowsExt: ".cmd",
+    required: true,
+    hint: "--package-manager=npm installs with npm. Install Node.js, which includes npm.",
   })!.path;
 }
 
@@ -212,7 +224,7 @@ export function clangTargetArch(clang: string): Arch | undefined {
  * Returns the absolute path or undefined (if not required).
  */
 export function findTool(spec: ToolSpec): FoundTool | undefined {
-  const exeSuffix = process.platform === "win32" ? ".exe" : "";
+  const exeSuffix = process.platform === "win32" ? (spec.windowsExt ?? ".exe") : "";
   const searchPaths = spec.pathsOnly
     ? [...(spec.paths ?? [])]
     : [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
@@ -414,11 +426,12 @@ export function resolveLlvmToolchain(
   | "ld64Lld"
   | "rustLld"
   | "rustLlvmVersion"
-  | "rustSysroot"
-  | "rustHostTriple"
   | "strip"
   | "llvmStrip"
   | "nm"
+  | "readobj"
+  | "objdump"
+  | "cxxfilt"
   | "dsymutil"
   | "ccache"
   | "rc"
@@ -538,6 +551,11 @@ export function resolveLlvmToolchain(
   // so it is only ever missing from a partial LLVM install; then the checks
   // are skipped rather than the build refused.
   const nm = findLlvmTool("llvm-nm", paths, os, { checkVersion: false, required: false })?.path;
+  // The post-link binary checks (verify-binary.ts) read the executable with
+  // these; a partial install skips the checks rather than the build.
+  const readobj = findLlvmTool("llvm-readobj", paths, os, { checkVersion: false, required: false })?.path;
+  const objdump = findLlvmTool("llvm-objdump", paths, os, { checkVersion: false, required: false })?.path;
+  const cxxfilt = findLlvmTool("llvm-cxxfilt", paths, os, { checkVersion: false, required: false })?.path;
 
   // dsymutil: required on darwin; optional elsewhere (needed only when
   // cross-compiling a darwin release from a non-darwin host).
@@ -574,7 +592,7 @@ export function resolveLlvmToolchain(
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
+  const { rustLld, rustLlvmVersion } = findRustLld(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -601,11 +619,12 @@ export function resolveLlvmToolchain(
     ld64Lld,
     rustLld,
     rustLlvmVersion,
-    rustSysroot,
-    rustHostTriple,
     strip,
     llvmStrip,
     nm,
+    readobj,
+    objdump,
+    cxxfilt,
     dsymutil,
     ccache,
     rc,
@@ -660,12 +679,8 @@ export interface CargoToolchain {
 export function findRustLld(os: OS): {
   rustLld: string | undefined;
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot` — needed for bundled `llvm-nm` even when rust-lld itself isn't used. */
-  rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
-  rustHostTriple: string | undefined;
 } {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  const none = { rustLld: undefined, rustLlvmVersion: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc =
@@ -694,7 +709,19 @@ export function findRustLld(os: OS): {
     const started = performance.now();
     spawnSync(
       rustup,
-      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
+      [
+        "-q",
+        "toolchain",
+        "install",
+        channel,
+        "--no-self-update",
+        "--profile",
+        "minimal",
+        "--component",
+        "rust-src",
+        "--component",
+        "llvm-tools",
+      ],
       {
         encoding: "utf8",
         timeout: 300_000,
@@ -716,7 +743,7 @@ export function findRustLld(os: OS): {
   // ensured. Without it the proxy, running in the repo root, applies
   // rust-toolchain.toml in full: besides selecting the channel it installs
   // every entry of its `components` and `targets` lists that is missing
-  // (rustfmt, clippy, miri, llvm-tools and the std of 11 targets — ~2.4 GB),
+  // (rustfmt, clippy, miri and the std of 11 targets — ~2.4 GB),
   // with its output piped into nowhere here. The build itself installs what
   // it needs (rust-src above, the target's std in the rust_build_cross rule),
   // and the toml still applies to anyone running cargo directly. Generous
@@ -739,7 +766,7 @@ export function findRustLld(os: OS): {
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
+  if (rustHostTriple === undefined) return { ...none, rustLlvmVersion };
 
   const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
   const candidate =
@@ -749,7 +776,7 @@ export function findRustLld(os: OS): {
         ? join(bin, "gcc-ld", "ld64.lld")
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+  return { rustLld, rustLlvmVersion };
 }
 
 /**

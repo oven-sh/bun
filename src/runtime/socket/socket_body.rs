@@ -2115,25 +2115,30 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
+        // Declared first so it drops last: ticks drain ahead of the teardown.
+        let _cleanup = CloseTeardown {
+            socket: this,
+            entered: Rc::clone(&handlers),
+        };
         // The upgradeTLS raw twin shares the same us_socket_t so it never
         // gets its own dispatch — fire its (pre-upgrade) close handler
         // here, then retire it. `raw.twin == None` so this doesn't
         // recurse, and `onClose` derefs the +1 we took at creation.
-        if let Some(raw) = this.twin.with_mut(|t| t.take()) {
+        let _pair_scope = this.twin.with_mut(|t| t.take()).map(|raw| {
+            // No tick checkpoint between the twin's close handler and this socket's own.
+            // SAFETY: the VM owns its event loop for the life of the process.
+            let scope =
+                unsafe { jsc::event_loop::EventLoop::enter_scope(handlers.vm.event_loop()) };
             // `on_close` consumes the twin's +1 via its `CloseTeardown`, so
             // hand over the raw pointer rather than letting `RefPtr::drop`
             // release it a second time. This frame is the twin's trampoline for
             // the event, so what its handlers left pending is folded here and
             // this socket's own close proceeds regardless.
             crate::dispatch::fold(Self::on_close(raw.into_this_ptr(), socket, err, reason));
-        }
-        let cleanup = CloseTeardown {
-            socket: this,
-            entered: Rc::clone(&handlers),
-        };
+            scope
+        });
 
         if this.flags.get().contains(Flags::FINALIZING) {
-            drop(cleanup);
             return Ok(());
         }
 
@@ -2142,7 +2147,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let callback = handlers.on_close();
 
         if callback.is_empty() {
-            drop(cleanup);
             return Ok(());
         }
 
@@ -2151,7 +2155,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // above is unwinding with a termination pending: it belongs to that
         // frame, so this dispatch neither enters JS over it nor claims it.
         if handlers.global_object.has_exception() {
-            drop(cleanup);
             return Ok(());
         }
 
@@ -2724,6 +2727,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                             )
                         };
                         let written: usize = usize::try_from(rc.max(0)).expect("int cast");
+                        self.bytes_written
+                            .set(self.bytes_written.get() + written as u64);
                         let leftover = total_to_write.saturating_sub(written);
                         if leftover == 0 {
                             self.buffered_data_for_node_net
@@ -2731,23 +2736,14 @@ impl<const SSL: bool> NewSocket<SSL> {
                             break 'brk rc;
                         }
 
-                        let buf_len = self.buffered_data_for_node_net.get().len() as usize;
-                        let remaining_in_buffered_len =
-                            self.buffered_data_for_node_net.get().slice()[written.min(buf_len)..]
-                                .len();
-                        let remaining_in_input_data = &buffer.slice()
-                            [(buf_len.saturating_sub(written)).min(buffer.slice().len())..];
+                        // writev order: buffered data first, then `buffer`.
+                        let buf_len = self.buffered_data_for_node_net.get().len();
+                        let input_written =
+                            written.saturating_sub(buf_len).min(buffer.slice().len());
+                        let remaining_in_input_data = &buffer.slice()[input_written..];
 
-                        if written > 0 {
-                            if remaining_in_buffered_len > 0 {
-                                self.buffered_data_for_node_net.with_mut(|b| {
-                                    // `remaining_in_buffered_len > 0` ⇒ `written < b.len()`,
-                                    // so `written..` is in-bounds; safe overlapping memmove.
-                                    b.copy_within(written.., 0);
-                                    b.truncate(remaining_in_buffered_len);
-                                });
-                            }
-                        }
+                        self.buffered_data_for_node_net
+                            .with_mut(|b| b.drain_front(written));
 
                         if !remaining_in_input_data.is_empty() {
                             // Result intentionally discarded
@@ -3187,16 +3183,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `on_connecting_error` synchronously inside `close()` and so does
         // its own `deref()`; double-releasing it would underflow.
         let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
-        // `_handle.close()` is the net.Socket `_destroy()` path — Node emits close_notify
-        // once and closes the fd without waiting for the peer's reply. `.fast_shutdown`
-        // makes `ssl_handle_shutdown` take the fast branch so the raw close runs
-        // synchronously (with `.normal` the SSL layer defers waiting for the peer, but we
-        // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
-        // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
-        // buffer, which `destroy()` after `write()` must not do. The SSL layer may
-        // defer this close behind its own ciphertext write spill
-        // (`ssl_close_after_spill`) until the kernel takes the spill or the peer's
-        // FIN arrives, with no timeout; a peer that stopped reading holds it open.
+        // `_handle.close()` is the net.Socket `_destroy()` path. Node closes the fd
+        // with no close_notify (crypto_tls.cc sends the alert only from DoShutdown,
+        // the end() path), so `.fast_shutdown` raw-closes synchronously: a bare FIN.
+        // Not `.normal`: that defers for the peer's reply while we detach + unref
+        // below, orphaning the `us_socket_t`. Not `.failure`: that arms
+        // SO_LINGER{1,0} → RST and drops data still in the kernel send buffer,
+        // which `destroy()` after `write()` must not do. The SSL layer may still
+        // defer behind its ciphertext write spill (`ssl_close_after_spill`).
         socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;

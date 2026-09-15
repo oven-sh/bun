@@ -710,7 +710,7 @@ impl AnyRoute {
                     // NOTE: `sys::exists_at_type` takes `&ZStr`; the store
                     // path is a borrowed byte slice. NUL-terminate into a path
                     // buffer for the syscall.
-                    let mut buf = bun_paths::PathBuffer::default();
+                    let mut buf = bun_paths::path_buffer_pool::get();
                     let zpath = bun_paths::resolve_path::z(store_path, &mut buf);
                     match sys::exists_at_type(sys::Fd::cwd(), zpath) {
                         Ok(sys::ExistsAtType::Directory) => {
@@ -2240,26 +2240,24 @@ where
         jsc::mark_binding!();
 
         if self.config.on_request.is_empty() {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    ctx.create_error_instance(format_args!(
-                        "fetch() requires the server to have a fetch handler"
-                    )),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                ctx,
+                ctx.create_error_instance(format_args!(
+                    "fetch() requires the server to have a fetch handler"
+                )),
+            )
+            .to_js());
         }
 
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    ctx.create_error_instance(format_args!(
-                        "fetch() expects a string but received no arguments."
-                    )),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                ctx,
+                ctx.create_error_instance(format_args!(
+                    "fetch() expects a string but received no arguments."
+                )),
+            )
+            .to_js());
         }
 
         let mut headers: Option<HeadersRef> = None;
@@ -2277,14 +2275,13 @@ where
             let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        ctx,
-                        ctx.create_error_instance(format_args!(
-                            "fetch() URL must not be a blank string."
-                        )),
-                    ),
-                );
+                return Ok(JSPromise::rejected_promise(
+                    ctx,
+                    ctx.create_error_instance(format_args!(
+                        "fetch() URL must not be a blank string."
+                    )),
+                )
+                .to_js());
             }
 
             let mut url = URL::parse(temp_url_str);
@@ -2333,11 +2330,11 @@ where
                 if let Some(body__) = opts.fast_get(ctx, jsc::BuiltinName::Body)? {
                     match Blob::get::<true, false>(ctx, body__) {
                         Ok(new_blob) => body = BodyValue::Blob(new_blob),
-                        Err(_) => {
-                            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                                ctx,
-                                ctx.create_error_instance(format_args!("fetch() received invalid body")),
-                            ));
+                        Err(err) => {
+                            return Ok(JSPromise::rejected_promise_with_caught_exception(
+                                ctx, err,
+                            )?
+                            .to_js());
                         }
                     }
                 }
@@ -2362,9 +2359,7 @@ where
         } else {
             let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err),
-            );
+            return Ok(JSPromise::rejected_promise(ctx, err).to_js());
         };
 
         // `Request::to_js` stores `self as *mut
@@ -2382,25 +2377,21 @@ where
         let response_value =
             match on_request.call(&global_this, self.js_value_assert_alive(), &[request_value]) {
                 Ok(v) => v,
-                Err(err) => global_this.take_exception(err),
+                Err(err) => {
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
+                }
             };
 
-        if response_value.is_any_error() {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    response_value,
-                ),
-            );
+        if let Some(err) = response_value.to_error() {
+            return Ok(JSPromise::rejected_promise(ctx, err).to_js());
         }
 
         if response_value.is_empty_or_undefined_or_null() {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    ctx.create_error_instance(format_args!("fetch() returned an empty value")),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                ctx,
+                ctx.create_error_instance(format_args!("fetch() returned an empty value")),
+            )
+            .to_js());
         }
 
         if response_value.as_any_promise().is_some() {
@@ -2598,12 +2589,12 @@ where
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JSValue {
         let _ = self;
         if SSL {
-            BunString::static_("https").to_js(global)
+            global.common_strings().https()
         } else {
-            BunString::static_("http").to_js(global)
+            global.common_strings().http()
         }
     }
 

@@ -5,7 +5,7 @@ use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, SEP, SEP_STR};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -1356,21 +1356,34 @@ impl<'a> PackageInstall<'a> {
                             }
                         }
                         EntryKind::File => {
+                            // `dest` can be a hardlink of `src`, which CopyFileW cannot overwrite.
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-                            if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } == 0 {
-                                if let Some(entry_dirname) =
-                                    bun_paths::Dirname::dirname_u16(entry.path.as_slice())
-                                {
-                                    let _ = bun_sys::MakePath::make_path_u16(
-                                        destination_dir_,
-                                        entry_dirname,
-                                    );
-                                    // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-                                    if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) }
-                                        != 0
-                                    {
-                                        continue;
+                            let copy_file =
+                                || unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 1) } != 0;
+                            if !copy_file() {
+                                let copied = match windows::Win32Error::get() {
+                                    windows::Win32Error::FILE_EXISTS
+                                    | windows::Win32Error::ALREADY_EXISTS => {
+                                        // SAFETY: FFI — dest is a valid NUL-terminated WStr buffer.
+                                        unsafe { windows::DeleteFileW(dest.as_ptr()) };
+                                        copy_file()
                                     }
+                                    _ => {
+                                        match bun_paths::Dirname::dirname_u16(entry.path.as_slice())
+                                        {
+                                            Some(entry_dirname) => {
+                                                let _ = bun_sys::MakePath::make_path_u16(
+                                                    destination_dir_,
+                                                    entry_dirname,
+                                                );
+                                                copy_file()
+                                            }
+                                            None => false,
+                                        }
+                                    }
+                                };
+                                if copied {
+                                    continue;
                                 }
 
                                 let err = windows::last_system_errno();
@@ -1409,14 +1422,23 @@ impl<'a> PackageInstall<'a> {
                         destination_dir_.fd(),
                         bstr::BStr::new(entry.path.as_bytes())
                     );
-                    // Open O_WRONLY|O_CREAT|O_TRUNC, mode 0o666.
+                    // The file can be a hardlink of `in_file`, and O_TRUNC would empty both.
                     let create = |path: &ZStr| {
-                        sys::openat(
-                            destination_dir_.fd(),
-                            path,
-                            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-                            0o666,
-                        )
+                        let open = || {
+                            sys::openat(
+                                destination_dir_.fd(),
+                                path,
+                                sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
+                                0o666,
+                            )
+                        };
+                        match open() {
+                            Err(err) if err.get_errno() == sys::E::EEXIST => {
+                                let _ = sys::unlinkat(destination_dir_, path);
+                                open()
+                            }
+                            result => result,
+                        }
                     };
                     let outfile = match create(entry.path) {
                         Ok(f) => f,
@@ -1710,7 +1732,7 @@ impl<'a> PackageInstall<'a> {
         };
 
         #[cfg(not(windows))]
-        let mut buf2 = PathBuffer::uninit();
+        let mut buf2 = bun_paths::path_buffer_pool::get();
         #[cfg(not(windows))]
         let to_copy_buf2_offset: usize;
         #[cfg(unix)]
@@ -2031,10 +2053,10 @@ impl<'a> PackageInstall<'a> {
             && dirname_slice != dest_path.as_bytes())
         .then_some(dirname_slice);
 
-        let mut dest_buf = PathBuffer::uninit();
+        let mut dest_buf = bun_paths::path_buffer_pool::get();
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         let symlinked_path = self.cache_dir_subpath;
-        let mut to_buf = PathBuffer::uninit();
+        let mut to_buf = bun_paths::path_buffer_pool::get();
         // Open the target relative to cache_dir, then resolve its canonical path.
         // Returning a borrow of `to_buf` from an `FnMut` closure is rejected by
         // borrowck, so inline the open/getFdPath/close.
@@ -2083,7 +2105,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(windows)]
         {
             use bun_sys::windows;
-            let mut wbuf = bun_paths::WPathBuffer::uninit();
+            let mut wbuf = bun_paths::w_path_buffer_pool::get();
             // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
             // WPathBuffer of the passed length.
             let dest_path_length = unsafe {
@@ -2188,7 +2210,7 @@ impl<'a> PackageInstall<'a> {
             let target = path::resolve_path::relative(dest_dir_path, to_path);
             // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated
             // copies in stack buffers.
-            let mut target_buf = PathBuffer::uninit();
+            let mut target_buf = bun_paths::path_buffer_pool::get();
             target_buf[..target.len()].copy_from_slice(target);
             target_buf[target.len()] = 0;
             // SAFETY: NUL written above.

@@ -456,7 +456,7 @@ impl Loader {
     fn load_ccache_path_impl(&mut self, fs: &bun_paths::fs::FileSystem) -> Result<(), AllocError> {
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let path = match self.get(b"PATH") {
             Some(p) => p,
             None => return Ok(()),
@@ -496,7 +496,7 @@ impl Loader {
         fs: &bun_paths::fs::FileSystem,
         override_node: &[u8],
     ) -> crate::Result<bool> {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
 
         let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
             Box::from(override_node)
@@ -1371,25 +1371,6 @@ impl Map {
         })
     }
 
-    /// Returns a wrapper around the env map that does not duplicate the memory of
-    /// the keys and values, but instead points into the memory of the bun env map.
-    // `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
-    // UTF-8-lossy; the lossy round-trip is accepted here.
-    #[allow(clippy::disallowed_methods)] // lossy round-trip documented above
-    pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
-        let mut env_map = bun_sys::EnvMap::default();
-        let mut it = self.map.iterator();
-        while let Some(entry) = it.next() {
-            env_map.insert(
-                String::from_utf8_lossy(entry.key_ptr).into_owned(),
-                String::from_utf8_lossy(&entry.value_ptr.value).into_owned(),
-            );
-        }
-        Ok(StdEnvMapWrapper {
-            unsafe_map: env_map,
-        })
-    }
-
     /// Build a heap-allocated Windows environment block suitable for
     /// `CreateProcessW`'s `lpEnvironment` with `CREATE_UNICODE_ENVIRONMENT`.
     ///
@@ -1560,16 +1541,6 @@ impl NullDelimitedEnvMap {
         self._storage.iter().map(|s| {
             core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
         })
-    }
-}
-
-pub struct StdEnvMapWrapper {
-    pub(crate) unsafe_map: bun_sys::EnvMap,
-}
-
-impl StdEnvMapWrapper {
-    pub fn get(&self) -> &bun_sys::EnvMap {
-        &self.unsafe_map
     }
 }
 

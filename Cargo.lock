@@ -190,7 +190,6 @@ name = "bun_ast_jsc"
 version = "0.0.0"
 dependencies = [
  "bun_ast",
- "bun_core",
  "bun_jsc",
 ]
 
@@ -282,7 +281,6 @@ dependencies = [
  "bun_wyhash",
  "bun_zstd",
  "bytemuck",
- "const_format",
  "enum-map",
  "lol_html",
  "scopeguard",
@@ -297,7 +295,6 @@ dependencies = [
  "bstr",
  "bun_ast",
  "bun_bundler",
- "bun_core",
  "bun_jsc",
  "bun_opaque",
  "bun_options_types",
@@ -376,8 +373,6 @@ dependencies = [
  "paste",
  "rustc-hash",
  "smallvec",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -465,14 +460,9 @@ dependencies = [
  "bun_paths",
  "bun_ptr",
  "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "scopeguard",
  "strum",
  "thiserror",
- "typed-arena",
 ]
 
 [[package]]
@@ -799,15 +789,11 @@ dependencies = [
  "bun_core",
  "bun_dispatch",
  "bun_errno",
- "bun_opaque",
- "bun_paths",
  "bun_ptr",
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
  "bun_uws_sys",
- "const_format",
- "enum-map",
  "enumset",
  "libc",
  "scopeguard",
@@ -856,7 +842,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_dotenv",
- "bun_http_types",
  "bun_js_parser",
  "bun_jsc",
  "bun_parsers",
@@ -929,7 +914,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_threading",
- "bun_transpiler",
  "bun_url",
  "bun_uws",
  "bun_watcher",
@@ -1095,7 +1079,6 @@ name = "bun_patch_jsc"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_core",
  "bun_jsc",
  "bun_patch",
  "bun_sys",
@@ -1105,18 +1088,13 @@ dependencies = [
 name = "bun_paths"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_core",
  "bun_errno",
  "bun_simdutf_sys",
- "bytemuck",
  "const_format",
- "enum-map",
- "enumset",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -1484,7 +1462,6 @@ dependencies = [
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
- "bun_which",
  "libc",
  "scopeguard",
  "thiserror",
@@ -2883,12 +2860,6 @@ dependencies = [
  "serde",
  "serde_json",
 ]
-
-[[package]]
-name = "typed-arena"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typenum"

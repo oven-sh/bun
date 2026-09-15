@@ -23,6 +23,8 @@ export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
 export type WebKitMode = "prebuilt" | "local";
+/** The package manager for the package.json files the build installs. */
+export type PackageManager = "bun" | "npm";
 
 /**
  * Host platform — what's running the build. Distinguish from target
@@ -43,14 +45,6 @@ export interface Host {
   arch: Arch;
   /** ".exe" on a Windows host, "" elsewhere. Mirrors Config.exeSuffix (target). */
   exeSuffix: string;
-  /**
-   * Host's Rust target triple — `host:` line from `rustc -vV`. Also the
-   * `${sysroot}/lib/rustlib/<triple>/` directory name. Stamped at
-   * `resolveConfig()` from `Toolchain.rustHostTriple` (so the toolchain
-   * probe is the single source of truth); `undefined` only when no rustc
-   * is installed.
-   */
-  rustTriple: string | undefined;
 }
 
 /**
@@ -181,6 +175,12 @@ export interface Config {
    * checkout is expected to carry whatever you're iterating on).
    */
   localDeps: Record<string, string>;
+  /**
+   * Installs the package.json files the build needs: the repo root (esbuild,
+   * the lezer C++ parser), packages/bun-error, and src/node-fallbacks. Set
+   * via `--package-manager=npm`.
+   */
+  packageManager: PackageManager;
 
   // ─── Paths (all absolute) ───
   /** Repository root. */
@@ -235,21 +235,19 @@ export interface Config {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV`. Captured once; feeds workarounds.ts. */
   rustLlvmVersion: string | undefined;
-  /**
-   * `rustc --print sysroot`. Used to locate rustc's bundled `llvm-nm` for
-   * reading LTO bitcode in `libbun_runtime.a` — clang's `llvm-nm` may lag
-   * rustc's LLVM major and reject the bitcode (#53609, #53656). Unlike
-   * `rustLld`, this is needed regardless of whether cross-language LTO is
-   * actually using rust-lld as the linker.
-   */
-  rustSysroot: string | undefined;
   strip: string;
   /** llvm-nm, for `DirectBuild.forbidUndefined`; undefined skips those checks. */
   nm: string | undefined;
+  /** llvm-readobj / llvm-objdump / llvm-cxxfilt, for verify-binary.ts; any one missing skips those checks. */
+  readobj: string | undefined;
+  objdump: string | undefined;
+  cxxfilt: string | undefined;
   /** Set when the target is darwin. Undefined on non-darwin targets. */
   dsymutil: string | undefined;
   /** Self-host bun for codegen (bun install, bun build). */
   bun: string;
+  /** npm, set only when `packageManager` is "npm". */
+  npm: string | undefined;
   /**
    * Shell-ready command prefix for running .ts subprocesses (stream.ts,
    * fetch-cli.ts, regen). Either the bun path or `node --experimental-strip-types`
@@ -366,6 +364,8 @@ export interface PartialConfig {
    * resolve against the repo root. See `Config.localDeps`.
    */
   localDeps?: string;
+  /** `bun` (default) or `npm`. See `Config.packageManager`. */
+  packageManager?: PackageManager;
   buildDir?: string;
   cacheDir?: string;
   /** Override NDK location (default: $ANDROID_NDK_ROOT etc). Only used when abi=android. */
@@ -443,10 +443,6 @@ export interface Toolchain {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV` (X.Y.Z). */
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot` — see `Config.rustSysroot`. */
-  rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — stamped onto `Host.rustTriple` at resolveConfig. */
-  rustHostTriple: string | undefined;
   strip: string;
   /**
    * llvm-strip. On Linux hosts GNU strip is the default (`strip` above) but
@@ -455,8 +451,14 @@ export interface Toolchain {
   llvmStrip: string | undefined;
   /** llvm-nm; undefined skips the per-dep undefined-symbol checks (source.ts). */
   nm: string | undefined;
+  /** For the post-link binary checks (bun.ts / verify-binary.ts); undefined skips them. */
+  readobj: string | undefined;
+  objdump: string | undefined;
+  cxxfilt: string | undefined;
   dsymutil: string | undefined;
   bun: string;
+  /** Found only when the build installs with npm. */
+  npm?: string | undefined;
   jsRuntime: string;
   esbuild: string;
   ccache: string | undefined;
@@ -520,9 +522,7 @@ export function detectHost(): Host {
             throw new BuildError(`Unsupported host architecture: ${a}`, { hint: "Bun builds on x64 or arm64" });
           })();
 
-  // rustTriple is stamped later from Toolchain.rustHostTriple in resolveConfig
-  // (the rustc probe is authoritative — distinguishes glibc/musl host etc.).
-  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "", rustTriple: undefined };
+  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "" };
 }
 
 /**
@@ -722,7 +722,6 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
  */
 export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
   const host = detectHost();
-  host.rustTriple = toolchain.rustHostTriple;
 
   // ─── Target platform ───
   const os = partial.os ?? host.os;
@@ -778,7 +777,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Android: force off. NDK ASAN deployment needs wrap.sh + runtime .so
   // shipping alongside the binary; UBSan likewise. Not worth the matrix.
   // FreeBSD: force off. Cross-compiled — we'd need to ship FreeBSD's
-  // libclang_rt.asan, and there's no -asan WebKit prebuilt for it.
+  // libclang_rt.asan (and there's no -asan WebKit prebuilt for it).
   // Darwin cross: force off. The Linux LLVM toolchain doesn't ship the
   // darwin ASAN/UBSan runtime dylibs (libclang_rt.*_osx_dynamic.dylib).
   // Windows cross: force off. The host clang doesn't ship the windows
@@ -795,26 +794,34 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // LTO: default on for CI release non-asan non-assertions builds across
-  // linux, darwin-cross, and windows-cross. All three use ThinLTO (the JSC
-  // ThinLTO miscompile was fixed upstream). The -lto WebKit prebuilts only
-  // exist for the cross toolchain, so native windows/darwin stay non-LTO.
-  const windowsCross = windows && host.os !== "windows";
-  const ltoDefault = release && (linux || darwinCross || windowsCross) && ci && !assertions && !asan;
+  // LTO (ThinLTO across bun, JSC and the Rust side): on for every release
+  // build without assertions or ASAN, locally as in CI, so a local release
+  // binary has the codegen CI ships. `--lto=off` for faster relinks. JSC
+  // takes part through the prebuilt: `lto` selects the `-lto` WebKit tarball
+  // (deps/webkit.ts prebuiltSuffix), whose archives hold the LLVM bitcode
+  // oven-sh/WebKit's CI emitted. The linker here has to read it, which rests
+  // on both repos pinning the same LLVM: tools.ts enforces LLVM_VERSION on
+  // clang and ld.lld (a native macOS link runs that clang's libLTO; lld-link
+  // and ld64.lld are looked up beside it but not version-checked).
+  const ltoDefault = release && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
-  // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
-  // Windows arm64: oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
-  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers).
-  if ((asan && lto) || abi === "android" || (windows && arm64)) {
+  // Android, FreeBSD: not enabled (never built that way; untested).
+  // Windows arm64: off — oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
+  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers when JSC
+  // goes through LTO), so forcing it off also keeps the fetch from 404ing.
+  if ((asan && lto) || abi === "android" || freebsd || (windows && arm64)) {
     lto = false;
   }
 
-  // Cross-language LTO normally tracks `lto`. Gated off only for native
-  // Windows hosts — there `ld` is the host LLVM's lld-link and no rust-lld
-  // swap is wired up, so rustc's newer-LLVM bitcode would be unreadable at
-  // link time. Both halves still LTO independently when this is false — only
-  // the Rust↔C++ inlining is lost.
+  // Cross-language LTO normally tracks `lto`. Gated off where the link
+  // could not read rustc's bitcode: on a native Windows host `ld` is the
+  // host LLVM's lld-link with no rust-lld swap wired up, and on a native
+  // macOS host Apple's ld runs LTO through clang's libLTO (no linker to swap),
+  // which cannot read bitcode from an LLVM newer than itself — so there only
+  // while rustc's LLVM is ahead of clang's. Both halves still LTO
+  // independently when this is false — only the Rust↔C++ inlining is lost.
+  // CI cross-compiles both from Linux, where the swap below applies.
   // (aarch64-musl used to be gated too: LLVM's `globalopt` segfaulted on the
   // per-crate `bun_runtime` bitcode module during the merged link, CI build
   // #53109. That bitcode shape no longer exists — the Rust side is one fat,
@@ -827,7 +834,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // newer-LLVM bitcode rustc emits under -Clinker-plugin-lto is readable at
   // link time. Windows cross does the same with the `gcc-ld/lld-link`
   // sibling (COFF flavor) — see the wantRustLld swap below.
-  const crossLangLto = lto && !(windows && host.os === "windows");
+  const clangMajor = majorOf(toolchain.clangVersion);
+  const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
+  const rustLlvmNewer = clangMajor !== undefined && rustLlvmMajor !== undefined && rustLlvmMajor > clangMajor;
+  const crossLangLto = lto && !(windows && host.os === "windows") && !(darwin && !darwinCross && rustLlvmNewer);
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
   // rustc emit raw LLVM bitcode into libbun_runtime.a. LLVM bitcode is
@@ -842,17 +852,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Tracked in workarounds.ts ("rust-lld-for-crosslang-lto") so this
   // branch self-obsoletes once clang's LLVM catches up to rustc's.
   let ld = toolchain.ld;
-  const clangMajor = majorOf(toolchain.clangVersion);
-  const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
   // Shared with the darwin-cross ld64 swap below: for darwin targets
   // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
   // the same rust-lld), so the swap composes with the cross toolchain.
-  const wantRustLld =
-    crossLangLto &&
-    toolchain.rustLld !== undefined &&
-    clangMajor !== undefined &&
-    rustLlvmMajor !== undefined &&
-    rustLlvmMajor > clangMajor;
+  const wantRustLld = crossLangLto && toolchain.rustLld !== undefined && rustLlvmNewer;
   if (wantRustLld) {
     if (windows) {
       // Windows cross: `ld` must stay a COFF driver. `toolchain.rustLld` is
@@ -1109,6 +1112,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
+  const packageManager = partial.packageManager ?? "bun";
+  if (packageManager !== "bun" && packageManager !== "npm") {
+    throw new BuildError(`Unknown packageManager: ${packageManager}`, { hint: "Use bun or npm" });
+  }
+  assert(packageManager === "bun" || toolchain.npm !== undefined, "packageManager=npm needs toolchain.npm");
+
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
   // Native darwin: ask xcode-select/xcrun. Cross-compiling from a non-darwin
@@ -1217,6 +1226,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     buildkite,
     webkit: partial.webkit ?? "prebuilt",
     localDeps: parseLocalDeps(partial.localDeps, cwd),
+    packageManager,
     cwd,
     buildDir,
     codegenDir,
@@ -1233,7 +1243,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     ld: ld64StripSwap?.ld ?? ld,
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
-    rustSysroot: toolchain.rustSysroot,
     // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
     // fully; host strip rejects foreign-arch ELF); other cross targets use
     // llvm-strip.
@@ -1245,8 +1254,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : (toolchain.llvmStrip ?? toolchain.strip)
         : toolchain.strip),
     nm: toolchain.nm,
+    readobj: toolchain.readobj,
+    objdump: toolchain.objdump,
+    cxxfilt: toolchain.cxxfilt,
     dsymutil: toolchain.dsymutil,
     bun: toolchain.bun,
+    npm: packageManager === "npm" ? toolchain.npm : undefined,
     jsRuntime: toolchain.jsRuntime,
     esbuild: toolchain.esbuild,
     ccache: toolchain.ccache,
@@ -1586,6 +1599,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
   for (const name of Object.keys(cfg.localDeps)) features.push(`local:${name}`);
+  if (cfg.packageManager !== "bun") features.push(`package-manager:${cfg.packageManager}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
   // Version pin overrides — show an identifying value so you catch "forgot
   // to revert my WebKit test branch" before the build goes weird. Strip the

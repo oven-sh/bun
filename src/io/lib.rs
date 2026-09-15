@@ -500,6 +500,7 @@ bun_dispatch::link_interface! {
         MultiRunPipeReader,
         TestParallelWorkerPipe,
         LifecycleScript,
+        InstallGit,
         SecurityScan,
     ] {
         fn has_on_read_chunk() -> bool;

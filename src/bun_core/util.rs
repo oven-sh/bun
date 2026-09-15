@@ -1224,23 +1224,6 @@ impl Stdio {
     }
 }
 
-/// Niche-packed `Option<Fd>`: the invalid-fd bit pattern is the `none` sentinel.
-/// Use instead of encoding the invalid value directly.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct FdOptional(FdBacking);
-impl FdOptional {
-    pub const NONE: FdOptional = FdOptional(Fd::INVALID.0);
-    #[inline]
-    pub const fn unwrap(self) -> Option<Fd> {
-        if self.0 == FdOptional::NONE.0 {
-            None
-        } else {
-            Some(Fd(self.0))
-        }
-    }
-}
-
 /// Best-effort fd → path. Returns bytes written (>0), 0 on misc failure,
 /// -1 on EBADF/ENOENT (caller may render `[BADF]`). Body is libc-only
 /// (`readlink("/proc/self/fd/N")` on Linux, `fcntl(F_GETPATH)` on macOS,
@@ -2214,20 +2197,23 @@ impl StackCheck {
     pub fn update(&mut self) {
         self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
     }
+    /// Stack reserved for the work a frame does before the next check. One
+    /// `WTF::StringBuilder` growth reallocates through libpas, a ~35 frame
+    /// path that measures ~160 KB under a sanitizer and a few KB without one.
+    const THRESHOLD: usize = if cfg!(windows) {
+        256 * 1024
+    } else {
+        128 * 1024
+    } + if cfg!(bun_asan) { 384 * 1024 } else { 0 };
+
     /// Is there enough stack space to safely recurse?
-    /// Threshold: `> 256K` on Windows, `> 128K` elsewhere.
     #[inline]
     pub fn is_safe_to_recurse(self) -> bool {
         // Saturating sub: if probe < end (already past limit),
         // result saturates to 0 → "not safe". wrapping_sub would yield a huge
         // positive and incorrectly return true.
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) {
-            256 * 1024
-        } else {
-            128 * 1024
-        };
-        remaining > threshold
+        remaining > Self::THRESHOLD
     }
 
     /// Like [`is_safe_to_recurse`] but reserves `extra` bytes of additional
@@ -2238,12 +2224,7 @@ impl StackCheck {
     #[inline]
     pub fn is_safe_to_recurse_with_extra(self, extra: usize) -> bool {
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) {
-            256 * 1024
-        } else {
-            128 * 1024
-        };
-        remaining > threshold.saturating_add(extra)
+        remaining > Self::THRESHOLD.saturating_add(extra)
     }
 
     /// Approximate the current stack position. Reads the stack-pointer
@@ -3383,7 +3364,6 @@ pub trait Integer: Copy + Default {
     fn from_f64(v: f64) -> Self;
     fn from_i64(v: i64) -> Self;
     fn from_u64(v: u64) -> Self;
-    fn to_f64(self) -> f64;
 }
 macro_rules! impl_integer {
     ($($t:ty: $signed:expr),* $(,)?) => { $(
@@ -3396,7 +3376,6 @@ macro_rules! impl_integer {
             #[inline] fn from_f64(v: f64) -> Self { v as Self }
             #[inline] fn from_i64(v: i64) -> Self { v as Self }
             #[inline] fn from_u64(v: u64) -> Self { v as Self }
-            #[inline] fn to_f64(self) -> f64 { self as f64 }
         }
     )* };
 }
@@ -3413,8 +3392,6 @@ pub trait NativeEndianInt: Copy + 'static {
     const SIZE: usize;
     /// Reinterpret `b[..SIZE]` as `Self` (native endian).
     fn from_ne_slice(b: &[u8]) -> Self;
-    /// Write `self.to_ne_bytes()` into `out[..SIZE]`.
-    fn encode_ne(self, out: &mut [u8]);
 }
 
 macro_rules! impl_native_endian_int {
@@ -3426,10 +3403,6 @@ macro_rules! impl_native_endian_int {
                 let mut a = [0u8; core::mem::size_of::<$t>()];
                 a.copy_from_slice(&b[..core::mem::size_of::<$t>()]);
                 <$t>::from_ne_bytes(a)
-            }
-            #[inline]
-            fn encode_ne(self, out: &mut [u8]) {
-                out[..core::mem::size_of::<$t>()].copy_from_slice(&self.to_ne_bytes());
             }
         }
     )*};

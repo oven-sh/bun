@@ -185,11 +185,6 @@ export default [
         fn: "writeHeadAndEnd",
         length: 8,
       },
-      dumpRequestBody: {
-        fn: "dumpRequestBody",
-        length: 0,
-        passThis: true,
-      },
       resume: {
         fn: "doResume",
         length: 0,

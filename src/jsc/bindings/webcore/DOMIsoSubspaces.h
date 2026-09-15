@@ -103,8 +103,8 @@ public:
     IsoSubspace* m_subspaceForCrossRealmTransformState { nullptr };
     IsoSubspace* m_subspaceForStreamFromIterableContext { nullptr };
     IsoSubspace* m_subspaceForDirectStreamController { nullptr };
+    IsoSubspace* m_subspaceForDirectStreamSource { nullptr };
     IsoSubspace* m_subspaceForNativeStreamSourceAdapter { nullptr };
-    IsoSubspace* m_subspaceForDirectSinkCloseState { nullptr };
     IsoSubspace* m_subspaceForAsyncIteratorSourceOperation { nullptr };
     IsoSubspace* m_subspaceForReadStreamIntoSinkOperation { nullptr };
     IsoSubspace* m_subspaceForBunStandaloneTextSink { nullptr };

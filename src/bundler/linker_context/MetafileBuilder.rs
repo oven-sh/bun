@@ -237,6 +237,15 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
     }
 
+    // A split `import()` / `require()` record names its target's chunk
+    // (`compute_cross_chunk_dependencies`); "entryPoint" adds the input.
+    let mut entry_of_chunk: StringHashMap<u32> = StringHashMap::default();
+    for chunk in chunks.iter() {
+        if chunk.entry_point.is_entry_point() && !chunk.unique_key.is_empty() {
+            entry_of_chunk.put(chunk.unique_key, chunk.entry_point.source_index())?;
+        }
+    }
+
     // Write inputs
     let mut source_index: u32 = 0;
     while (source_index as usize) < sources.len() {
@@ -340,6 +349,17 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                         "{}",
                         bfmt::format_json_string_utf8(record.original_path, Default::default())
                     )?;
+                    j.push_owned(buf.into_boxed_slice());
+                }
+
+                if record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
+                    && let Some(&entry_point) = entry_of_chunk.get(record.path.text)
+                    && let Some(entry_source) = sources.get(entry_point as usize)
+                    && !entry_source.path.pretty.is_empty()
+                {
+                    j.push_static(b",\n          \"entryPoint\": ");
+                    let mut buf: Vec<u8> = Vec::new();
+                    write_json_string(&mut buf, entry_source.path.pretty)?;
                     j.push_owned(buf.into_boxed_slice());
                 }
 
@@ -761,6 +781,19 @@ struct PathOnly<'a> {
     path: &'a [u8],
 }
 
+/// The target of an `inputs[..].imports[..]` edge and whether the edge is external.
+/// A split `import()` / `require()` has the output chunk in "path" and `"external": true`;
+/// its "entryPoint" is the bundled input it loads, so it is reported as that input.
+fn import_target(imp: &JsonObject) -> (Option<&JsonValue>, bool) {
+    match imp.get(b"entryPoint") {
+        Some(entry_point) => (Some(entry_point), false),
+        None => (
+            imp.get(b"path"),
+            matches!(imp.get(b"external"), Some(JsonValue::Bool(true))),
+        ),
+    }
+}
+
 /// Generates a markdown visualization of the module graph from metafile JSON.
 /// This is a post-processing step that parses the JSON and produces LLM-friendly output.
 /// Designed to help diagnose bundle bloat, dependency chains, and entry point analysis.
@@ -895,13 +928,12 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                 info.import_count = u32::try_from(imps_arr.len()).expect("int cast");
                 for imp in imps_arr.iter() {
                     if let JsonValue::Object(imp_obj) = imp {
-                        if let Some(ext) = imp_obj.get(b"external") {
-                            if let JsonValue::Bool(true) = ext {
-                                external_count += 1;
-                                continue;
-                            }
+                        let (imp_path, is_external) = import_target(imp_obj);
+                        if is_external {
+                            external_count += 1;
+                            continue;
                         }
-                        if let Some(imp_path) = imp_obj.get(b"path") {
+                        if let Some(imp_path) = imp_path {
                             if let JsonValue::String(target) = imp_path {
                                 // Try to find the matching input key for this import
                                 // The import path may be absolute while input keys are relative
@@ -1353,7 +1385,8 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                     md.extend_from_slice(b"- **Imports**:\n");
                     for imp in imps_arr.iter() {
                         if let JsonValue::Object(imp_obj) = imp {
-                            let Some(path) = imp_obj.get(b"path") else {
+                            let (path, is_external) = import_target(imp_obj);
+                            let Some(path) = path else {
                                 continue;
                             };
                             let Some(kind) = imp_obj.get(b"kind") else {
@@ -1363,15 +1396,6 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                                 (path, kind)
                             else {
                                 continue;
-                            };
-
-                            let is_external = 'blk: {
-                                if let Some(ext) = imp_obj.get(b"external") {
-                                    if let JsonValue::Bool(b) = ext {
-                                        break 'blk *b;
-                                    }
-                                }
-                                false
                             };
 
                             let original: Option<&[u8]> = 'blk: {
@@ -1537,16 +1561,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
             if let JsonValue::Array(imps_arr) = imps {
                 for imp in imps_arr.iter() {
                     if let JsonValue::Object(imp_obj) = imp {
-                        let is_ext = 'blk: {
-                            if let Some(ext) = imp_obj.get(b"external") {
-                                if let JsonValue::Bool(b) = ext {
-                                    break 'blk *b;
-                                }
-                            }
-                            false
-                        };
+                        let (imp_path, is_ext) = import_target(imp_obj);
 
-                        if let Some(imp_path) = imp_obj.get(b"path") {
+                        if let Some(imp_path) = imp_path {
                             if let JsonValue::String(imp_path_str) = imp_path {
                                 if is_ext {
                                     writeln!(

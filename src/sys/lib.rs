@@ -2871,11 +2871,7 @@ mod posix_impl {
     }
     /// Never errors; any non-zero rc → `Ok(false)`.
     pub fn faccessat(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
-        let dir = dir.as_fd();
-        // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-        // valid NUL-terminated C string.
-        let rc = unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) };
-        Ok(rc == 0)
+        Ok(exists_at(dir, sub))
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
@@ -2923,9 +2919,16 @@ mod posix_impl {
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
-        // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-        // valid NUL-terminated C string.
-        unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            super::linux_syscall::faccessat(dir, sub, libc::F_OK).is_ok()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
+            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+        }
     }
     /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
@@ -4805,20 +4808,28 @@ pub use bun_core::Timespec;
 /// `bun_sys::time::timestamp()` resolve without an extra dep.
 pub use bun_core::time;
 
-/// `bun.sys.selfProcessMemoryUsage()` — returns the resident set size of the
-/// current process in bytes, or `None` on failure. Thin wrapper around the
-/// C++ `getRSS` shim (lives in `src/jsc/bindings/memory.cpp`).
+unsafe extern "C" {
+    // safe: the out-param is a valid `&mut usize`; C++ only writes it and returns a status code.
+    safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
+    safe fn getPeakRSS(peak: &mut usize) -> ::core::ffi::c_int;
+}
+
+/// What `process.memoryUsage().rss` reports, in bytes (C++ `getRSS` in `BunProcess.cpp`), or `None` on failure.
 pub fn self_process_memory_usage() -> Option<usize> {
-    unsafe extern "C" {
-        // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
-        // only writes the slot and returns a status code — no other preconditions.
-        safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
-    }
     let mut rss: usize = 0;
     if getRSS(&mut rss) != 0 {
         return None;
     }
     Some(rss)
+}
+
+/// High-water mark of [`self_process_memory_usage`], in bytes.
+pub fn self_process_peak_memory_usage() -> Option<usize> {
+    let mut peak: usize = 0;
+    if getPeakRSS(&mut peak) != 0 {
+        return None;
+    }
+    Some(peak)
 }
 
 /// `bun.sys.PosixStat` — uv-shaped stat struct.

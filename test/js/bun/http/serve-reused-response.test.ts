@@ -61,6 +61,63 @@ describe("returning a Response with an already-used body", () => {
     },
   );
 
+  // Several Responses can adopt one stream while nothing has read it. Sending the first Response
+  // uses the stream up, so the next Response around it has no body left to send.
+  const sharedStreams = {
+    "a ReadableStream": () =>
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("cached-route-body"));
+          controller.close();
+        },
+      }),
+    'a type: "direct" ReadableStream': () =>
+      new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("cached-route-body");
+          controller.close();
+        },
+      }),
+  };
+
+  it.each(Object.keys(sharedStreams) as (keyof typeof sharedStreams)[])(
+    "returning another Response around %s that was already sent calls the error handler",
+    async kind => {
+      const stream = sharedStreams[kind]();
+      const responses = [new Response(stream), new Response(stream), new Response(stream)];
+      const errors: unknown[] = [];
+      await using server = serve({
+        port: 0,
+        fetch() {
+          return responses.shift()!;
+        },
+        error(err: any) {
+          errors.push({ code: err.code, name: err.constructor.name, message: err.message });
+          return new Response("handled", { status: 500 });
+        },
+      });
+
+      const first = await fetch(server.url);
+      expect(await first.text()).toBe("cached-route-body");
+      expect(first.status).toBe(200);
+
+      const second = await fetch(server.url);
+      expect(await second.text()).toBe("handled");
+      expect(second.status).toBe(500);
+      const third = await fetch(server.url);
+      expect(await third.text()).toBe("handled");
+      expect(third.status).toBe(500);
+
+      const streamUsedError = {
+        code: "ERR_STREAM_CANNOT_PIPE",
+        name: "Error",
+        message: "Stream already used, please create a new one",
+      };
+      expect(errors).toEqual([streamUsedError, streamUsedError]);
+    },
+  );
+
   it("returning a Response whose body was consumed before returning calls the error handler", async () => {
     const errors: unknown[] = [];
     await using server = serve({

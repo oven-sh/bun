@@ -173,9 +173,11 @@ declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
      * @param strategy Bun extension. Its `highWaterMark` (bytes, default 64 KiB) bounds how much
      * output one input chunk produces per step: the largest piece a reader receives per `read()`,
      * and how far decoding runs ahead of a slow reader. A chunk larger than that may produce up to
-     * its own size per step.
+     * its own size per step. Its `level` selects the compression level: 0-9 for the zlib formats,
+     * 0-11 for brotli (quality), 1-22 for zstd. Omitted means the format's default
+     * (zlib default, brotli 11, zstd 3).
      */
-    new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number }): CompressionStream;
+    new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number; level?: number }): CompressionStream;
   }
 >;
 
@@ -317,7 +319,7 @@ interface TextEncoder extends Bun.__internal.LibEmptyOrNodeUtilTextEncoder {
    * @param src The text to encode.
    * @param dest The array that receives the encoded bytes.
    */
-  encodeInto(src?: string, dest?: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
+  encodeInto(src: string, dest: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
 }
 declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoder",

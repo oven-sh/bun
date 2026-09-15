@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { closeSync, fsyncSync, openSync, readFileSync, realpathSync, statfsSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -204,8 +204,8 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
 // before the first and between the others. A tick is loud when the program allocated faster than 1/64 per second of what
 // the collector lets it allocate before it collects by itself (128 KB a second in these small programs), whether or not
 // its heap grows, or when it came seconds late. The first tick sees what starting up allocated and is loud. An app parked
-// at a prompt still fires timers and runs the odd background job and is not. The second rung is followed by the page-out
-// further down.
+// at a prompt still fires timers and runs the odd background job and is not. The second rung and the last are followed
+// by the page-outs further down.
 // These measure seconds of idleness: each takes between 2 and 7 s, and they run side by side.
 describe.concurrent("idle release", () => {
   // The child makes a little garbage in a timer, as a parked program does (a collection that was requested starts when
@@ -489,15 +489,110 @@ describe("idle release lets FTL code age out", () => {
   );
 });
 
-// The second rung (or the only one) also has the kernel reclaim the file-backed pages of a standalone executable's
-// embedded module graph, which the program is not using; they are read back from the file when touched. The executable's
-// own code stays. MADV_PAGEOUT skips pages another process maps and dirty ones, and tmpfs pages are not file-backed, so
-// the tests run one standalone executable, one at a time, from a disk-backed temp dir and written back (not a copy each,
-// side by side: on a slow disk a child does not get to run while the next copy is being written). Debug and ASAN
-// executables are too big.
+// Before the last idle collection the controller asks JSC to let go of the code it can get back cheaply
+// (VM::shrinkFootprintNow): for a --compile --bytecode executable, the unlinked bytecode of functions that have no linked
+// code any more (an earlier rung's collection unlinked it), which is decoded again from the executable when such a
+// function is next called.
+// Debug and ASAN builds are skipped: the sequence below has a second or so of slack at release speed, and their
+// executables are too big to compile a copy of per run.
+describe.skipIf(isDebug || isASAN)("the last idle collection drops code that can be decoded again", () => {
+  const app = `
+    import { heapStats } from "bun:jsc";
+    ${Array.from({ length: 60 }, (_, i) => `function f${i}(a) { let s = a + ${i}; for (let k = 0; k < 3; k++) s += k * ${i + 1}; return [s, "f${i}"].join(":"); }`).join("\n    ")}
+    const all = [${Array.from({ length: 60 }, (_, i) => `f${i}`).join(", ")}];
+    const run = () => all.map((f, i) => f(i)).join("|");
+    const count = () => heapStats().objectTypeCounts.UnlinkedFunctionCodeBlock ?? 0;
+    const expected = run();
+    Bun.gc(true);
+    const before = count();
+    const deadline = performance.now() + Number(process.env.WAIT_MS);
+    // Once a second: looking allocates 8 KB.
+    const timer = setInterval(() => {
+      const now = count();
+      if (now < before - 40 || performance.now() > deadline) {
+        clearInterval(timer);
+        console.log(JSON.stringify({ before, after: now, same: run() === expected }));
+      }
+    }, 1000);
+  `;
+
+  let dir: ReturnType<typeof tempDir>;
+  beforeAll(async () => {
+    dir = tempDir("idle-drop-code", { "app.js": app });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "--outfile", "app", "app.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildExit, buildOut + buildErr).toBe(0);
+  }, 60_000); // It writes an executable of 100 MB and more.
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  async function run(env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), "app" + (isWindows ? ".exe" : ""))],
+      env: {
+        ...bunEnv,
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+        // Code ages in milliseconds instead of the seconds it normally takes, so that an idle collection finds the
+        // functions' CodeBlocks old as it would a minute into a real idle period.
+        BUN_JSC_useEagerCodeBlockJettisonTiming: "1",
+        ...env,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const result = (stdout.trim().startsWith("{") ? JSON.parse(stdout.trim()) : {}) as {
+      before?: number;
+      after?: number;
+      same?: boolean;
+    };
+    return { ...result, stdout, exitCode };
+  }
+
+  // The child reports as soon as the count has dropped; WAIT_MS only bounds a run in which it does not. With a timeout:
+  // the last rung comes 3 s in, which with the start-up is more than a test gets by default.
+  test.concurrent(
+    "drops re-decodable unlinked code, and it comes back",
+    async () => {
+      const { before, after, same, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "1,1", WAIT_MS: "9000" });
+      expect(before, stdout).toBeGreaterThan(60);
+      expect(after, stdout).toBeLessThan(before! - 40);
+      expect(same, stdout).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+    12_000,
+  );
+
+  // The first of two is a collection like any other.
+  test.concurrent(
+    "not with an earlier idle collection",
+    async () => {
+      const { before, after, same, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "1,30", WAIT_MS: "4500" });
+      expect(before, stdout).toBeGreaterThan(60);
+      expect(after, stdout).toBeGreaterThan(before! - 40);
+      expect(same, stdout).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+    12_000,
+  );
+});
+
+// The last rung also has the kernel reclaim the file-backed pages the program is not using: a standalone executable's
+// embedded module graph (which already goes with the second rung of three) and the executable's own code and constants.
+// They are read back from the file when touched. MADV_PAGEOUT skips pages another process maps and dirty ones, and tmpfs
+// pages are not file-backed, so the tests run one standalone executable, one at a time, from a disk-backed temp dir and
+// written back (not a copy each, side by side: on a slow disk a child does not get to run while the next copy is being
+// written). Debug and ASAN executables are too big.
 const TMPFS_MAGIC = 0x01021994;
 const cannotObservePageOut = !isLinux || isDebug || isASAN || statfsSync(tmpdir()).type === TMPFS_MAGIC;
-describe.skipIf(cannotObservePageOut)("idle release pages out the module graph", () => {
+describe.skipIf(cannotObservePageOut)("idle release pages out the executable", () => {
   // The program reads a 3 MB embedded file once it is running (Bun releases the module graph's pages itself after the
   // entry point has loaded), so that the module graph is resident, says so, and then sits there until its stdin says
   // otherwise (DEADLINE_MS is for a test that has gone away). It is the test that looks, at /proc/<pid>/smaps: reading
@@ -528,6 +623,11 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
     dir = tempDir("idle-page-out", {
       "app.js": app,
       "embedded.bin": Buffer.alloc(3 * 1024 * 1024, "x"),
+      "plain.js": `
+        setTimeout(() => console.log(Math.round(performance.now())), 300);
+        setTimeout(() => process.exit(0), Number(process.env.DEADLINE_MS));
+        process.stdin.once("data", () => process.exit(0));
+      `,
     });
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--outfile", "app", "app.js"],
@@ -572,8 +672,11 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
   }
   async function once(seconds: string, watch: "text" | "graph", deadlineMs: number, env: Record<string, string>) {
     const exe = realpathSync(join(String(dir), "app"));
+    // BUN_BE_BUN=1 makes the executable the `bun` it was built from: a process without a module graph whose
+    // executable nobody else maps (the one running this test is mapped by this test).
     await using proc = Bun.spawn({
-      cmd: [exe],
+      cmd: env.BUN_BE_BUN ? [exe, "plain.js"] : [exe],
+      cwd: String(dir),
       env: {
         ...bunEnv,
         BUN_IDLE_GC_SECONDS: seconds,
@@ -606,31 +709,20 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
     const [log, exitCode] = await Promise.all([stderr, proc.exited]);
     expect({ exitCode, signalCode: proc.signalCode }, log).toEqual({ exitCode: 0, signalCode: null });
     expect(had.text).toBeGreaterThan(8 * 1024);
-    expect(had.graph).toBeGreaterThan(3 * 1024);
+    if (!env.BUN_BE_BUN) expect(had.graph).toBeGreaterThan(3 * 1024);
     const still = (name: "text" | "graph") => (has[name] * 4 > had[name] ? "resident" : "gone");
     return { text: still("text"), graph: still("graph"), at, log };
   }
 
   // One at a time and with a timeout: a run takes up to 4 s and may be repeated (see `run`).
-  test("the module graph goes with the second rung of three", async () => {
+  test("the module graph goes with the second rung of three, the executable does not", async () => {
     const { at, ...mappings } = await run("1,1,30", "graph", 4000);
     expect(mappings).toEqual({ text: "resident", graph: "gone" });
     expect(at).toBeGreaterThan(2800);
   }, 15_000);
 
-  test("and of two", async () => {
-    const { at, ...mappings } = await run("1,1", "graph", 4000);
-    expect(mappings).toEqual({ text: "resident", graph: "gone" });
-    expect(at).toBeGreaterThan(2800);
-  }, 15_000);
-
-  test("with the only rung of a list of one", async () => {
-    const { at, ...mappings } = await run("1", "graph", 3000);
-    expect(mappings).toEqual({ text: "resident", graph: "gone" });
-  }, 15_000);
-
   test("an entry too large to read is an hour, not the end of the list", async () => {
-    const { at, ...mappings } = await run("1,99999999999", "graph", 2800);
+    const { at, ...mappings } = await run("1,99999999999", "text", 2800);
     expect(mappings).toEqual({ text: "resident", graph: "resident" });
   }, 15_000);
 
@@ -672,14 +764,33 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
   }, 15_000);
 
   test("nothing is paged out while a Worker is alive, and it is once the Worker is gone", async () => {
-    const { at, ...mappings } = await run("1", "graph", 6000, { WORKER: "1", WORKER_MS: "3000" });
-    expect(mappings).toEqual({ text: "resident", graph: "gone" });
+    const { at, ...mappings } = await run("1", "text", 6000, { WORKER: "1", WORKER_MS: "3000" });
+    expect(mappings).toEqual({ text: "gone", graph: "gone" });
     expect(at).toBeGreaterThan(3000);
   }, 15_000);
 
-  test("not with BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1", async () => {
-    const { at, ...mappings } = await run("1", "graph", 2800, { BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: "1" });
+  test("BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1 keeps both resident", async () => {
+    const { at, ...mappings } = await run("1", "text", 2800, { BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: "1" });
     expect(mappings).toEqual({ text: "resident", graph: "resident" });
+  }, 15_000);
+
+  // The last rung's eviction is for standalone executables: `bun file.js` gets the collection and keeps its code.
+  test("a process that is not a standalone executable keeps its code", async () => {
+    const { at, ...mappings } = await run("1", "text", 2800, { BUN_BE_BUN: "1" });
+    expect(mappings.text).toBe("resident");
+  }, 15_000);
+
+  // Last: what these page out is read back from the disk by the next child, and pages that have just been read are the
+  // first the kernel takes back when memory is short.
+  test("the executable goes with the last rung, not the first", async () => {
+    const { at, ...mappings } = await run("1,1", "text", 4000);
+    expect(mappings).toEqual({ text: "gone", graph: "gone" });
+    expect(at).toBeGreaterThan(2800);
+  }, 15_000);
+
+  test("a list of one is the last rung", async () => {
+    const { at, ...mappings } = await run("1", "text", 3000);
+    expect(mappings).toEqual({ text: "gone", graph: "gone" });
   }, 15_000);
 });
 

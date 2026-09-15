@@ -8393,6 +8393,22 @@ pub mod net {
     }
 }
 
+/// `madvise(MADV_PAGEOUT)` over the whole pages inside `[ptr, ptr + len)`: clean file-backed pages are dropped and read
+/// back from the file on the next access; dirtied ones go to swap if there is any and otherwise stay.
+///
+/// # Safety
+/// The range must be mapped for the duration of the call.
+#[cfg(target_os = "linux")]
+pub unsafe fn page_out_range(ptr: *const u8, len: usize) {
+    let page = bun_alloc::page_size();
+    let lo = (ptr as usize + page - 1) & !(page - 1);
+    let hi = (ptr as usize).wrapping_add(len) & !(page - 1);
+    if hi > lo {
+        // SAFETY: caller guarantees the range is mapped; MADV_PAGEOUT neither reads nor writes through it.
+        unsafe { libc::madvise(lo as *mut core::ffi::c_void, hi - lo, libc::MADV_PAGEOUT) };
+    }
+}
+
 /// `std.elf` constants (just what `bun_exe_format`/`bun_crash` need).
 pub mod elf {
     pub const PT_LOAD: u32 = 1;
@@ -8408,6 +8424,9 @@ pub mod elf {
         /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
         /// as Android does for the main program).
         pub name: Box<[u8]>,
+        /// `dlpi_phdr`/`dlpi_phnum`: the object's program headers, mapped for as long as the object is loaded.
+        pub phdr: *const libc::Elf64_Phdr,
+        pub phnum: usize,
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
@@ -8468,6 +8487,8 @@ pub mod elf {
                     context.result = Some(LoadedModule {
                         base_address: info.dlpi_addr as usize,
                         name,
+                        phdr: info.dlpi_phdr,
+                        phnum: info.dlpi_phnum as usize,
                     });
                     return 1; // error.Found → stop iteration
                 }
@@ -8478,6 +8499,26 @@ pub mod elf {
         // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
         unsafe { libc::dl_iterate_phdr(Some(callback), (&raw mut ctx).cast::<c_void>()) };
         ctx.result
+    }
+
+    /// Reclaims the resident pages of this executable's read-only segments (code, constants). Clean file-backed pages:
+    /// read back from the file when next touched, so only for an idle process. May block; call off the JS thread. The
+    /// kernel leaves alone pages that another process maps too (a second instance of the same executable), and all of
+    /// them if the caller neither owns the file nor may write it.
+    #[cfg(target_os = "linux")]
+    pub fn page_out_program_image() {
+        const PF_W: u32 = 2;
+        let Some(image) = find_loaded_module(page_out_program_image as *const () as usize) else {
+            return;
+        };
+        // SAFETY: the main program's header table stays mapped for the life of the process.
+        for phdr in unsafe { core::slice::from_raw_parts(image.phdr, image.phnum) } {
+            if phdr.p_type == PT_LOAD && phdr.p_flags & PF_W == 0 {
+                let start = image.base_address.wrapping_add(phdr.p_vaddr as usize);
+                // SAFETY: a mapped read-only segment of this image, which is never unmapped.
+                unsafe { super::page_out_range(start as *const u8, phdr.p_memsz as usize) };
+            }
+        }
     }
 }
 

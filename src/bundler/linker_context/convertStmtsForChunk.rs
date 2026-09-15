@@ -57,6 +57,14 @@ pub(crate) fn convert_stmts_for_chunk(
 ) -> Result<(), crate::Error> {
     let _ = bump;
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
+    // Mirrors `select_local_kind` in the parser for the binding the linker makes out of `export default <expr>`.
+    let default_export_local_kind = if c.options.top_level_var {
+        bun_ast::s::Kind::KVar
+    } else if c.options.minify_syntax {
+        bun_ast::s::Kind::KLet
+    } else {
+        bun_ast::s::Kind::KConst
+    };
     let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough
         || c.graph.files.items_entry_point_kind()[source_index as usize] != EntryPoint::Kind::None;
 
@@ -551,6 +559,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                         // "export default foo;" => "var default = foo;"
                                         stmt = Stmt::alloc(
                                             S::Local {
+                                                kind: default_export_local_kind,
                                                 decls: G::DeclList::from_slice(&[G::Decl {
                                                     binding: Binding::alloc(
                                                         bump,
@@ -626,6 +635,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             bun_ast::StmtOrExpr::Expr(e) => {
                                 stmt = Stmt::alloc(
                                     S::Local {
+                                        kind: default_export_local_kind,
                                         decls: G::DeclList::from_slice(&[G::Decl {
                                             binding: Binding::alloc(
                                                 bump,

@@ -216,6 +216,7 @@ impl BuildCommand {
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_transpiler.options.deprecated_namespace_object_setters =
             ctx.bundler_options.deprecated_namespace_object_setters;
+        this_transpiler.options.top_level_var = ctx.bundler_options.top_level_var;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
         this_transpiler.options.banner =

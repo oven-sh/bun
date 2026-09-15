@@ -1,6 +1,7 @@
 import type { Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const {
   Query,
   SQLQueryFlags,
@@ -2125,6 +2126,18 @@ function parseOptions(
     } else if (tls) {
       tls = true;
     }
+  }
+
+  // A verify-* sslmode beats NODE_TLS_REJECT_UNAUTHORIZED=0; only an own `rejectUnauthorized: false` opts out.
+  if (
+    sslMode >= SSLMode.verify_ca &&
+    !(
+      $isObject(tls) &&
+      ObjectPrototypeHasOwnProperty.$call(tls, "rejectUnauthorized") &&
+      tls.rejectUnauthorized === false
+    )
+  ) {
+    tls = { ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
   }
 
   // Explicit tls/ssl options request an encrypted connection: if the server

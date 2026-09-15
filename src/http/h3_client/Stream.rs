@@ -19,7 +19,7 @@ pub struct Stream {
     pub(crate) session: bun_ptr::BackRef<ClientSession, bun_ptr::Mut>,
     // BACKREF: lifetime-erased — cleared on detach; never reads borrowed fields.
     pub(crate) client: Option<NonNull<HttpClient<'static>>>,
-    // FFI handle into lsquic; bound from `callbacks.onStreamOpen`, closed via `abort`.
+    // FFI handle into lsquic; bound in `callbacks.onStreamOpen`, reset in `ClientSession::detach`.
     pub(crate) qstream: Option<NonNull<quic::Stream>>,
 
     /// Slices into the lsquic-owned hset buffer; valid only for the duration

@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -552,6 +552,199 @@ it("test timeouts when expected", () => {
   const err = stderr!.toString();
   expect(err).toHaveTestTimedOutAfter(10);
   expect(err).not.toContain("unreachable code");
+});
+
+describe("a test that completes after its timeout has passed is reported as timed out", () => {
+  // Each body blocks synchronously for longer than its timeout, so the timeout timer cannot fire until the
+  // callback has already completed, and the verdict has to come from the completion itself.
+  async function runFixture(name: string, code: string) {
+    using dir = tempDir("late-timeout-" + name, {
+      "blocks.test.js": code,
+      "package.json": "{}",
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "blocks.test.js"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: normalizeBunSnapshot(stdout), stderr: normalizeBunSnapshot(stderr), exitCode };
+  }
+
+  test.concurrent("sequential test, Bun.sleepSync after an await", async () => {
+    const result = await runFixture(
+      "sequential",
+      /*js*/ `
+        import { test } from "bun:test";
+        test("sleeps synchronously after an await", async () => {
+          await Bun.sleep(1);
+          Bun.sleepSync(300);
+        }, 100);
+        test("next test still runs", async () => {
+          await Bun.sleep(1);
+        });
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) sleeps synchronously after an await
+        ^ this test timed out after 100ms.
+      (pass) next test still runs
+
+       1 pass
+       1 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("concurrent test with a sibling still pending, busy loop after an await", async () => {
+    const result = await runFixture(
+      "concurrent-busy-loop",
+      /*js*/ `
+        import { test } from "bun:test";
+        test.concurrent("busy loops after an await", async () => {
+          await Bun.sleep(1);
+          const start = Date.now();
+          while (Date.now() - start < 300) {}
+        }, 100);
+        test.concurrent("sibling", async () => {
+          await Bun.sleep(10);
+        }, 30_000);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) busy loops after an await
+        ^ this test timed out after 100ms.
+      (pass) sibling
+
+       1 pass
+       1 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("concurrent test with a sibling still pending, Bun.spawnSync after an await", async () => {
+    // With a sibling running, spawnSync's wait loop cannot tell whose child it is waiting on and uses
+    // the sibling's later deadline, so this test's own deadline is only checked once the callback
+    // completes.
+    const result = await runFixture(
+      "concurrent-spawnSync",
+      /*js*/ `
+        import { test } from "bun:test";
+        test.concurrent("spawnSync outlives the timeout", async () => {
+          await Bun.sleep(1);
+          Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(300)"] });
+        }, 100);
+        test.concurrent("sibling", async () => {
+          await Bun.sleep(10);
+        }, 30_000);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) spawnSync outlives the timeout
+        ^ this test timed out after 100ms.
+      (pass) sibling
+
+       1 pass
+       1 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("done() called after the timeout has passed", async () => {
+    // done() was called, so the hint about a missing done() call does not apply to either test.
+    const result = await runFixture(
+      "done-callback",
+      /*js*/ `
+        import { test } from "bun:test";
+        test("done() from a timer callback", done => {
+          setTimeout(() => {
+            Bun.sleepSync(300);
+            done();
+          }, 1);
+        }, 100);
+        test("done() synchronously", done => {
+          Bun.sleepSync(300);
+          done();
+        }, 100);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) done() from a timer callback
+        ^ this test timed out after 100ms.
+      (fail) done() synchronously
+        ^ this test timed out after 100ms.
+
+       0 pass
+       2 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("a test that finished in time is not blamed for a sibling blocking afterwards", async () => {
+    // The first test's completion is queued as soon as it returns, but the runner only processes the queue
+    // once the sibling, resumed by the microtask the first test queues on its way out, has finished
+    // blocking. The verdict has to be based on when the completion arrived, not on when it was processed.
+    const result = await runFixture(
+      "sibling-blocks-after-completion",
+      /*js*/ `
+        import { test } from "bun:test";
+        const { promise: firstReturned, resolve: markFirstReturned } = Promise.withResolvers();
+        test.concurrent("finishes within its timeout", async () => {
+          await Bun.sleep(1);
+          queueMicrotask(markFirstReturned);
+        }, 100);
+        test.concurrent("blocks once the first test has returned", async () => {
+          await firstReturned;
+          Bun.sleepSync(300);
+        }, 30_000);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": 
+      "blocks.test.js:
+      (pass) finishes within its timeout
+      (pass) blocks once the first test has returned
+
+       2 pass
+       0 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
 });
 
 test("jest.setTimeout will change default timeout", () => {

@@ -488,6 +488,7 @@ impl ExtractTarball {
                         name,
                         self.resolution.npm().version,
                         None,
+                        self.url.slice(),
                     )
                     .as_bytes()
                 }

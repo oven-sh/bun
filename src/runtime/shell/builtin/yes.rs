@@ -23,8 +23,7 @@ pub struct Yes {
     /// out to ~BUFSIZ.
     pub(crate) buffer: Vec<u8>,
     pub(crate) buffer_used: usize,
-    /// Chunks in a row that `enqueue` wrote itself (`Yield::OnIoWriterChunk`:
-    /// the fd is not pollable), so the event loop has not run in between.
+    /// Chunks in a row that completed inside `enqueue` (the fd is not pollable).
     sync_chunks: usize,
     /// Populated in `start()`.
     pub task: Option<YesTask>,
@@ -98,8 +97,7 @@ impl Yes {
         }
     }
 
-    /// Write `CHUNKS_PER_TURN` chunks then bounce to the event loop so we
-    /// don't hog the main thread.
+    /// Write `CHUNKS_PER_TURN` chunks, then bounce to the event loop so we don't hog the thread.
     fn write_no_io_loop(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Split-borrow the Cmd so the tiled buffer (in `impl_`) and `stdout`
         // are accessible simultaneously — the buffer is written zero-copy,
@@ -215,8 +213,7 @@ impl Yes {
 // `buffer: Vec<u8>` drops with the owning `Box<Yes>`; no explicit `Drop` impl
 // needed (PORTING.md §Allocators).
 
-/// Re-queues `yes` onto the event loop after a burst of synchronous writes so
-/// we don't block the main thread forever.
+/// Re-queues `yes` onto the event loop after a burst of writes so we don't block the main thread.
 #[repr(C)]
 pub struct YesTask {
     /// Back-ref to the owning [`Interpreter`].

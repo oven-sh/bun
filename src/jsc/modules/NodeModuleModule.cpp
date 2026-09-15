@@ -975,6 +975,7 @@ prototype               getModulePrototypeObject          DontEnum|DontDelete|Pr
 register                jsFunctionRegister                Function 1
 runMain                 moduleRunMain                        CustomAccessor
 SourceMap               getSourceMapFunction              PropertyCallback
+stripTypeScriptTypes    JSBuiltin                         Function|Builtin 1
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1
 wrapper                 nodeModuleWrapper                 CustomAccessor

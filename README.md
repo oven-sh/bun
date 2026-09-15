@@ -444,3 +444,7 @@ Refer to the [Project > Contributing](https://bun.com/docs/project/contributing)
 ## License
 
 Refer to the [Project > License](https://bun.com/docs/project/license) page for information about Bun's licensing.
+
+---
+
+_Bun installs packges so fast we didn't even have tiem to proofreed this sentance._

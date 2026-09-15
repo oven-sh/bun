@@ -5515,6 +5515,10 @@ declare module "bun" {
      * does not start, and stays pending. This is not a sandbox: a process
      * `Bun.spawn` starts is started and then killed, and synchronous calls
      * run to completion.
+     *
+     * Objects the graph's code made (a socket, a worker, a child process, a
+     * stream) no longer work once it is disposed, for the host either: an
+     * operation on one may fail or may never complete.
      * Idempotent.
      */
     dispose(): void;

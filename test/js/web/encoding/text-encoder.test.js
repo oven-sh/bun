@@ -683,3 +683,140 @@ describe("TextEncoder UTF-16 exact-size path", () => {
     }
   });
 });
+
+describe("TextEncoder latin1 non-ASCII runs", () => {
+  const encoder = new TextEncoder();
+  const N = 1 << 20;
+
+  // The same text, held by JSC as 8-bit (Latin-1) and as 16-bit.
+  const latin1Dense8 = Buffer.alloc(N, 0xe9).toString("latin1");
+  const latin1Dense16 = (() => {
+    const w = Buffer.alloc(N * 2);
+    for (let i = 0; i < N; i++) w.writeUInt16LE(0xe9, 2 * i);
+    return w.toString("utf16le");
+  })();
+
+  it("8-bit and 16-bit backings of the same text encode to the same bytes", () => {
+    expect(latin1Dense8).toBe(latin1Dense16);
+    expect(encoder.encode(latin1Dense8)).toEqual(encoder.encode(latin1Dense16));
+    expect(Buffer.from(latin1Dense8)).toEqual(Buffer.from(latin1Dense16));
+    const dest8 = new Uint8Array(N * 2);
+    const dest16 = new Uint8Array(N * 2);
+    expect(encoder.encodeInto(latin1Dense8, dest8)).toEqual({ read: N, written: N * 2 });
+    expect(encoder.encodeInto(latin1Dense16, dest16)).toEqual({ read: N, written: N * 2 });
+    expect(dest8).toEqual(dest16);
+  });
+
+  it("encodeInto stops at the right byte for every destination size around a non-ASCII run", () => {
+    const mixed = Buffer.from([0x61, 0x62, 0xe9, 0xfc, 0xff, 0xa0, 0x63, 0xe9, 0x64, 0xe9, 0xe9]);
+    const text = mixed.toString("latin1");
+    const expected = utf8Reference(text);
+    for (let size = 0; size <= expected.length + 1; size++) {
+      const dest = new Uint8Array(size).fill(0xaa);
+      const { read, written } = encoder.encodeInto(text, dest);
+      expect({ size, bytes: Array.from(dest.subarray(0, written)) }).toEqual({
+        size,
+        bytes: Array.from(expected.subarray(0, written)),
+      });
+      expect({ size, written, read }).toEqual({
+        size,
+        written: utf8Reference(text.slice(0, read)).length,
+        read,
+      });
+      // The next character did not fit.
+      if (read < text.length) {
+        expect(written + (text.charCodeAt(read) >= 0x80 ? 2 : 1)).toBeGreaterThan(size);
+      }
+      expect(Array.from(dest.subarray(written))).toEqual(new Array(size - written).fill(0xaa));
+    }
+  });
+
+  it("encodeInto handles a long mixed latin1 string for destination sizes across the simd rounds", () => {
+    const bytes = Buffer.alloc(4096);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i % 3 === 0 ? 0xe9 : 0x61 + (i % 7);
+    const text = bytes.toString("latin1");
+    const expected = utf8Reference(text);
+    for (const size of [
+      15,
+      16,
+      17,
+      31,
+      32,
+      33,
+      63,
+      64,
+      65,
+      100,
+      1000,
+      2047,
+      2048,
+      2049,
+      expected.length - 1,
+      expected.length,
+    ]) {
+      const dest = new Uint8Array(size);
+      const { read, written } = encoder.encodeInto(text, dest);
+      expect({
+        size,
+        read,
+        written,
+        ok: Buffer.compare(dest.subarray(0, written), expected.subarray(0, written)),
+      }).toEqual({
+        size,
+        read,
+        written: utf8Reference(text.slice(0, read)).length,
+        ok: 0,
+      });
+      expect(size - written).toBeLessThan(2);
+    }
+  });
+
+  it("encodeInto with an ASCII first half and a non-ASCII second half around the exact output size", () => {
+    const bytes = Buffer.concat([Buffer.alloc(2048, 0x61), Buffer.alloc(2048, 0xe9)]);
+    const text = bytes.toString("latin1");
+    const expected = utf8Reference(text);
+    for (const size of [expected.length - 1, expected.length, expected.length + 1]) {
+      const dest = new Uint8Array(size);
+      const result = encoder.encodeInto(text, dest);
+      const fits = size >= expected.length;
+      expect({
+        size,
+        ...result,
+        ok: Buffer.compare(dest.subarray(0, result.written), expected.subarray(0, result.written)),
+      }).toEqual({
+        size,
+        read: fits ? text.length : text.length - 1,
+        written: fits ? expected.length : expected.length - 2,
+        ok: 0,
+      });
+    }
+  });
+
+  it("8-bit backed non-ASCII text encodes about as fast as 16-bit backed text", () => {
+    const dest = new Uint8Array(N * 2);
+    const ops = {
+      encode: s => encoder.encode(s),
+      encodeInto: s => encoder.encodeInto(s, dest),
+      "Buffer.from": s => Buffer.from(s),
+    };
+    const time = f => {
+      let best = Infinity;
+      for (let trial = 0; trial < 5; trial++) {
+        const t = performance.now();
+        for (let k = 0; k < 4; k++) f();
+        best = Math.min(best, performance.now() - t);
+      }
+      return best;
+    };
+    const ratios = {};
+    for (const [name, f] of Object.entries(ops)) {
+      const ms16 = time(() => f(latin1Dense16));
+      const ms8 = time(() => f(latin1Dense8));
+      ratios[name] = ms8 / ms16;
+    }
+    // Before the simdutf path, 8-bit dense Latin-1 was 20x to 40x slower than 16-bit.
+    for (const [name, ratio] of Object.entries(ratios)) {
+      expect({ name, ratio, ok: ratio < 8 }).toEqual({ name, ratio, ok: true });
+    }
+  });
+});

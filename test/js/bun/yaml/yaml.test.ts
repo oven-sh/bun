@@ -3080,6 +3080,330 @@ config:
       });
     });
 
+    // Every case: stringify (snapshot), parse (snapshot, equals the input),
+    // stringify again (equals the first output), parse again (equals the first parse).
+    describe("round-trip coverage", () => {
+      type Case = { name: string; value: unknown; parsed?: unknown };
+      const shared = { x: 1, y: [2] };
+      const sharedArr = [1, { z: 2 }];
+      const sharedEmptyObj = {};
+      const sharedEmptyArr: unknown[] = [];
+      const selfRef: Record<string, unknown> = { name: "root" };
+      selfRef.self = selfRef;
+      const cyclicArr: unknown[] = [1];
+      cyclicArr.push(cyclicArr);
+      const mutualA: Record<string, unknown> = { id: "a" };
+      const mutualB: Record<string, unknown> = { id: "b", a: mutualA };
+      mutualA.b = mutualB;
+      const deepShared = { leaf: shared };
+      const sparse = [1, , 3]; // eslint-disable-line no-sparse-arrays
+      const nullProto = Object.create(null);
+      nullProto.a = 1;
+      nullProto.b = [];
+      class Point {
+        constructor(
+          public x: number,
+          public y: number,
+        ) {}
+      }
+      const longPlain = Buffer.alloc(300, "abc ").toString();
+      const longNoSpace = Buffer.alloc(300, "x").toString();
+
+      const cases: Case[] = [
+        // strings: plain
+        { name: "empty string", value: "" },
+        { name: "plain word", value: "hello" },
+        { name: "words with spaces", value: "hello world" },
+        { name: "leading space", value: " lead" },
+        { name: "trailing space", value: "trail " },
+        { name: "only spaces", value: "   " },
+        { name: "long plain string", value: longPlain },
+        { name: "long string without spaces", value: longNoSpace },
+        // strings that look like other scalars
+        { name: "string true", value: "true" },
+        { name: "string False", value: "False" },
+        { name: "string TRUE", value: "TRUE" },
+        { name: "string yes", value: "yes" },
+        { name: "string no", value: "no" },
+        { name: "string on", value: "on" },
+        { name: "string off", value: "off" },
+        { name: "string y", value: "y" },
+        { name: "string n", value: "n" },
+        { name: "string null", value: "null" },
+        { name: "string Null", value: "Null" },
+        { name: "string tilde", value: "~" },
+        { name: "string int", value: "123" },
+        { name: "string negative int", value: "-1" },
+        { name: "string plus int", value: "+7" },
+        { name: "string float", value: "3.14" },
+        { name: "string leading dot float", value: ".5" },
+        { name: "string trailing dot", value: "5." },
+        { name: "string exponent", value: "1e3" },
+        { name: "string hex", value: "0x1F" },
+        { name: "string octal", value: "0o17" },
+        { name: "string binary", value: "0b101" },
+        { name: "string underscore number", value: "1_000" },
+        { name: "string inf", value: ".inf" },
+        { name: "string negative inf", value: "-.inf" },
+        { name: "string nan", value: ".NaN" },
+        { name: "string zero", value: "0" },
+        { name: "string negative zero", value: "-0" },
+        { name: "string date", value: "2024-01-15" },
+        { name: "string timestamp", value: "2024-01-15T10:30:00Z" },
+        { name: "string time", value: "12:30" },
+        { name: "string sexagesimal", value: "1:30:00" },
+        { name: "string version", value: "1.2.3" },
+        { name: "string ip", value: "10.0.0.1" },
+        // strings with indicators
+        { name: "colon space inside", value: "key: value" },
+        { name: "colon at end", value: "ends:" },
+        { name: "colon no space", value: "a:b" },
+        { name: "hash after space", value: "a #comment" },
+        { name: "hash no space", value: "a#b" },
+        { name: "leading hash", value: "#hash" },
+        { name: "leading dash space", value: "- item" },
+        { name: "leading dash", value: "-dash" },
+        { name: "leading question", value: "? q" },
+        { name: "leading ampersand", value: "&anchor" },
+        { name: "leading asterisk", value: "*alias" },
+        { name: "leading bang", value: "!tag" },
+        { name: "pipe", value: "|" },
+        { name: "greater than", value: ">" },
+        { name: "leading percent", value: "%YAML 1.2" },
+        { name: "leading at", value: "@at" },
+        { name: "leading backtick", value: "`bt" },
+        { name: "flow sequence text", value: "[a, b]" },
+        { name: "flow mapping text", value: "{a: b}" },
+        { name: "comma", value: "a, b" },
+        { name: "single quote inside", value: "it's" },
+        { name: "double quote inside", value: 'say "hi"' },
+        { name: "both quotes", value: `'"` },
+        { name: "only single quote", value: "'" },
+        { name: "only double quote", value: '"' },
+        { name: "backslash", value: "C:\\path\\to" },
+        { name: "trailing backslash", value: "end\\" },
+        { name: "document start", value: "---" },
+        { name: "document start with text", value: "--- text" },
+        { name: "document end", value: "..." },
+        { name: "merge key text", value: "<<" },
+        { name: "equals", value: "=" },
+        // strings with whitespace and control characters
+        { name: "newline inside", value: "line1\nline2" },
+        { name: "trailing newline", value: "text\n" },
+        { name: "leading newline", value: "\ntext" },
+        { name: "only newline", value: "\n" },
+        { name: "blank lines inside", value: "a\n\n\nb" },
+        { name: "crlf", value: "a\r\nb" },
+        { name: "lone cr", value: "a\rb" },
+        { name: "tab inside", value: "a\tb" },
+        { name: "leading tab", value: "\tx" },
+        { name: "trailing tab", value: "x\t" },
+        { name: "null byte", value: "a\0b" },
+        { name: "control characters", value: "\x01\x02\x1f\x7f" },
+        { name: "bell backspace formfeed vtab", value: "\x07\x08\x0c\x0b" },
+        { name: "ansi escape", value: "\x1b[0m" },
+        // strings with non-ASCII
+        { name: "latin1", value: "héllo wörld" },
+        { name: "cjk", value: "日本語" },
+        { name: "emoji", value: "😀🎉" },
+        { name: "surrogate pair", value: "\ud83d\ude00" },
+        { name: "zero width space", value: "a\u200bb" },
+        { name: "bom", value: "\ufeffx" },
+        { name: "nbsp", value: "a\u00a0b" },
+        { name: "nel", value: "a\u0085b" },
+        { name: "line separator", value: "a\u2028b" },
+        { name: "paragraph separator", value: "a\u2029b" },
+        { name: "rtl override", value: "a\u202eb" },
+        { name: "combining mark", value: "e\u0301" },
+        // numbers
+        { name: "zero", value: 0 },
+        { name: "negative zero", value: -0 },
+        { name: "one", value: 1 },
+        { name: "negative one", value: -1 },
+        { name: "int", value: 42 },
+        { name: "float", value: 3.14 },
+        { name: "negative float", value: -2.5 },
+        { name: "half", value: 0.5 },
+        { name: "float sum", value: 0.1 + 0.2 },
+        { name: "thousand", value: 1000 },
+        { name: "large exponent", value: 1e21 },
+        { name: "small exponent", value: 1e-7 },
+        { name: "max safe integer", value: Number.MAX_SAFE_INTEGER },
+        { name: "min safe integer", value: Number.MIN_SAFE_INTEGER },
+        { name: "two to the 53", value: 2 ** 53 },
+        { name: "int32 max", value: 2 ** 31 - 1 },
+        { name: "int32 min", value: -(2 ** 31) },
+        { name: "uint32 max", value: 2 ** 32 - 1 },
+        { name: "max value", value: Number.MAX_VALUE },
+        { name: "min value", value: Number.MIN_VALUE },
+        { name: "epsilon", value: Number.EPSILON },
+        { name: "nan", value: NaN },
+        { name: "infinity", value: Infinity },
+        { name: "negative infinity", value: -Infinity },
+        { name: "precise float", value: 123456789.123456789 },
+        // booleans and null
+        { name: "true", value: true },
+        { name: "false", value: false },
+        { name: "null", value: null },
+        // empty and flat collections
+        { name: "empty array", value: [] },
+        { name: "empty object", value: {} },
+        { name: "array of ints", value: [1, 2, 3] },
+        { name: "array of strings", value: ["a", "b c", ""] },
+        { name: "array of quoted strings", value: ["true", "null", "1", "- x", "a: b", "#c"] },
+        { name: "array of nulls", value: [null, null] },
+        { name: "array of booleans", value: [true, false] },
+        { name: "array of mixed scalars", value: [1, "two", true, null, 4.5] },
+        { name: "array of empty arrays", value: [[], []] },
+        { name: "array of empty objects", value: [{}, {}] },
+        { name: "array of empty mixed", value: [[], {}, [], {}] },
+        { name: "object of scalars", value: { n: 1, s: "str", b: true, z: null, f: 1.5 } },
+        { name: "object of empty collections", value: { arr: [], obj: {} } },
+        { name: "object with quoted values", value: { a: "true", b: "null", c: "123", d: "", e: "- x", f: "a: b" } },
+        // keys
+        { name: "empty key", value: { "": 1 } },
+        { name: "key with space", value: { "a b": 1 } },
+        { name: "key with colon", value: { "a: b": 1 } },
+        { name: "key with hash", value: { "a #b": 1, "#c": 2 } },
+        { name: "numeric key", value: { "123": "x" } },
+        { name: "float key", value: { "1.5": "x" } },
+        { name: "negative key", value: { "-1": "x" } },
+        { name: "boolean key", value: { true: "x", false: "y" } },
+        { name: "null key", value: { null: "x", "~": "y" } },
+        { name: "dash key", value: { "-": "x", "- y": "z" } },
+        { name: "question key", value: { "?": "x", "? y": "z" } },
+        { name: "key with newline", value: { "a\nb": 1 } },
+        { name: "key with tab", value: { "a\tb": 1 } },
+        { name: "key with quotes", value: { "it's": 1, 'say "hi"': 2 } },
+        { name: "unicode key", value: { ключ: 1, 日本: 2, "😀": 3 } },
+        { name: "key with indicator chars", value: { "[a]": 1, "{b}": 2, "&c": 3, "*d": 4, "!e": 5, "|f": 6, ">g": 7, "%h": 8, "@i": 9, "`j": 10 } },
+        { name: "merge key", value: { "<<": 1 } },
+        { name: "integer keys order first", value: { b: 1, "2": 2, a: 3, "1": 4 } },
+        { name: "long key", value: { [longNoSpace]: 1 } },
+        { name: "key with dots", value: { "a.b.c": 1 } },
+        { name: "key with slash", value: { "a/b": 1, "/": 2 } },
+        { name: "key with equals", value: { "a=b": 1 } },
+        { name: "key with comma", value: { "a,b": 1 } },
+        { name: "key with leading space", value: { " a": 1, "b ": 2 } },
+        // nesting
+        { name: "nested object", value: { a: { b: { c: { d: 1 } } } } },
+        { name: "nested arrays", value: [[[[1]]]] },
+        { name: "array of objects", value: [{ a: 1 }, { b: 2 }] },
+        { name: "array of objects with nested empties", value: [{ a: [] }, { b: {} }, { c: [{}] }] },
+        { name: "array of arrays of objects", value: [[{ a: 1 }], [{ b: [2] }]] },
+        { name: "object with array of arrays", value: { m: [[1, 2], [3, 4]] } },
+        { name: "object with nested empty object chain", value: { a: { b: { c: {} } } } },
+        { name: "object with nested empty array chain", value: { a: { b: { c: [] } } } },
+        { name: "first key is collection", value: { a: { b: 1 }, c: 2 } },
+        { name: "last key is collection", value: { a: 1, b: { c: 2 } } },
+        { name: "multi-line string in object", value: { text: "line1\nline2\n", other: 1 } },
+        { name: "multi-line strings in array", value: ["a\nb", "c\n", "\nd"] },
+        { name: "quoted strings in nested array", value: { list: [": x", "- y", "# z", "[w]"] } },
+        { name: "alternating nesting", value: { a: [{ b: [{ c: [1] }] }] } },
+        { name: "empty collections at every depth", value: { a: {}, b: [], c: { d: {}, e: [] }, f: [{}, [], { g: {} }] } },
+        { name: "wide object", value: Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`k${i}`, i])) },
+        { name: "long array", value: Array.from({ length: 30 }, (_, i) => i) },
+        {
+          name: "config document",
+          value: {
+            version: "1.0",
+            services: {
+              web: { image: "nginx:latest", ports: ["80:80", "443:443"], env: { NODE_ENV: "production", DEBUG: false } },
+              db: { image: "postgres:13", volumes: ["./data:/var/lib/postgresql/data"], replicas: 0 },
+            },
+            networks: { default: { driver: "bridge" } },
+            tags: [],
+            meta: {},
+          },
+        },
+        // skipped values
+        { name: "undefined in object", value: { a: undefined, b: 1 }, parsed: { b: 1 } },
+        { name: "only undefined in object", value: { a: undefined }, parsed: {} },
+        { name: "function in object", value: { f() {}, b: 1 }, parsed: { b: 1 } },
+        { name: "symbol in object", value: { s: Symbol("s"), b: 1 }, parsed: { b: 1 } },
+        { name: "symbol key", value: { [Symbol("k")]: 1, b: 2 }, parsed: { b: 2 } },
+        { name: "undefined in array", value: [1, undefined, 2], parsed: [1, 2] },
+        { name: "only undefined in array", value: [undefined, undefined], parsed: [] },
+        { name: "sparse array", value: sparse, parsed: [1, 3] },
+        { name: "function in array", value: [() => {}, 1], parsed: [1] },
+        { name: "nested all skipped", value: { a: { b: undefined }, c: [undefined] }, parsed: { a: {}, c: [] } },
+        // anchors and aliases
+        { name: "shared object", value: { p: shared, q: shared } },
+        { name: "shared array", value: { p: sharedArr, q: sharedArr } },
+        { name: "shared empty object", value: { p: sharedEmptyObj, q: sharedEmptyObj } },
+        { name: "shared empty array", value: { p: sharedEmptyArr, q: sharedEmptyArr } },
+        { name: "shared three times", value: { a: shared, b: shared, c: shared } },
+        { name: "shared in array items", value: [shared, shared] },
+        { name: "shared nested inside shared", value: { a: deepShared, b: deepShared, c: shared } },
+        { name: "shared under unsafe key", value: { "a b": shared, "": shared } },
+        { name: "shared under numeric key", value: { "1": shared, "2": shared } },
+        { name: "shared object and array together", value: { o: shared, a: sharedArr, o2: shared, a2: sharedArr } },
+        { name: "self reference", value: selfRef },
+        { name: "cyclic array", value: cyclicArr },
+        { name: "mutual cycle", value: mutualA },
+        { name: "shared with same name as root", value: { root: shared, root2: shared } },
+        // boxed primitives and exotic objects
+        { name: "boxed number", value: new Number(1), parsed: 1 },
+        { name: "boxed string", value: new String("s"), parsed: "s" },
+        { name: "boxed boolean", value: new Boolean(false), parsed: false },
+        { name: "boxed in object", value: { n: new Number(2.5), s: new String("x y"), b: new Boolean(true) }, parsed: { n: 2.5, s: "x y", b: true } },
+        { name: "boxed in array", value: [new Number(0), new String(""), new Boolean(false)], parsed: [0, "", false] },
+        { name: "date in object", value: { d: new Date(0) }, parsed: { d: {} } },
+        { name: "regexp in object", value: { r: /a+/g }, parsed: { r: {} } },
+        { name: "map in object", value: { m: new Map([["a", 1]]) }, parsed: { m: {} } },
+        { name: "set in object", value: { s: new Set([1]) }, parsed: { s: {} } },
+        { name: "class instance", value: new Point(1, 2), parsed: { x: 1, y: 2 } },
+        { name: "null prototype object", value: nullProto, parsed: { a: 1, b: [] } },
+        { name: "array-like object", value: { 0: "a", 1: "b", length: 2 } },
+        { name: "object with toJSON", value: { toJSON: () => "json", a: 1 }, parsed: { a: 1 } },
+        { name: "typed array", value: new Uint8Array([1, 2]), parsed: { "0": 1, "1": 2 } },
+        { name: "error object", value: new Error("boom"), parsed: {} },
+      ];
+
+      const spaces: [string, number | string | undefined][] = [
+        ["flow", undefined],
+        ["indent 2", 2],
+        ["indent 4", 4],
+      ];
+
+      for (const c of cases) {
+        test(c.name, () => {
+          for (const [label, space] of spaces) {
+            const first = YAML.stringify(c.value, null, space);
+            expect(first).toMatchSnapshot(`${label} stringify`);
+            const parsed = YAML.parse(first);
+            expect(parsed).toMatchSnapshot(`${label} parse`);
+            expect(parsed).toEqual("parsed" in c ? c.parsed : c.value);
+            const second = YAML.stringify(parsed, null, space);
+            expect(second).toBe(first);
+            expect(YAML.parse(second)).toEqual(parsed);
+            for (const line of first.split("\n")) {
+              expect(line).toBe(line.trimEnd());
+            }
+          }
+        });
+      }
+
+      test("space variants produce the same document", () => {
+        const value = { a: { b: [1, { c: "d: e", f: [] }], g: {} }, h: "x" };
+        const variants = [1, 3, 10, 11, 100, " ", "   ", Buffer.alloc(12, " ").toString()];
+        for (const space of variants) {
+          const first = YAML.stringify(value, null, space);
+          expect(first).toMatchSnapshot(`space ${JSON.stringify(space)} stringify`);
+          const parsed = YAML.parse(first);
+          expect(parsed).toEqual(value);
+          expect(YAML.stringify(parsed, null, space)).toBe(first);
+          for (const line of first.split("\n")) {
+            expect(line).toBe(line.trimEnd());
+          }
+        }
+        // A space below 1, NaN, or an empty string means flow style.
+        for (const space of [0, -1, NaN, ""]) {
+          expect(YAML.stringify(value, null, space)).toBe(YAML.stringify(value));
+        }
+      });
+    });
+
     const indicatorQuotingTests = [
       "-",
       "?",

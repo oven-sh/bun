@@ -1668,6 +1668,19 @@ impl FrameworkRouter {
                             }
                         };
 
+                        // The pattern comes from the path below the router root. The
+                        // file id comes from the path the resolver reports, which has
+                        // symlinks resolved: the bundler stores the module under it.
+                        // SAFETY: as for the `kind` call above, which did the stat.
+                        let symlink = unsafe { (*file_ptr).symlink(&raw mut *fs_impl, false) };
+                        let abs_path: &[u8] = if !symlink.is_empty() {
+                            symlink
+                        } else if !dir_info.abs_real_path.is_empty() {
+                            fs_ref.abs(&[dir_info.abs_real_path, base])
+                        } else {
+                            fs_ref.abs(&[file.dir, base])
+                        };
+
                         let result = if param_count > 0 {
                             let pattern = EncodedPattern::init_from_parts(
                                 parsed.parts,
@@ -1677,7 +1690,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Dynamic(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -1708,7 +1721,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Static(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )

@@ -231,6 +231,11 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     }
     // .route_lookup
     other_bytes += memory_cost_array_hash_map(&dev.route_lookup);
+    for routes in dev.route_lookup.values() {
+        if routes.spilled() {
+            other_bytes += memory_cost_slice(routes);
+        }
+    }
     // .testing_batch_events
     match &dev.testing_batch_events {
         TestingBatchEvents::Disabled => {}

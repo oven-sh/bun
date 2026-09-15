@@ -17,6 +17,7 @@ use std::time::Instant;
 use bun_alloc::{AllocError, Arena};
 use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
+use bun_collections::smallvec::SmallVec;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as str, String as BunString, ZStr, strings};
 use bun_core::{Environment, Output};
@@ -308,11 +309,12 @@ pub struct DevServer {
     pub(crate) barrel_needed_exports: bun_collections::StringArrayHashMap<StringHashMap<()>>,
     /// State populated during bundling and hot updates. Often cleared
     pub(crate) incremental_result: IncrementalResult,
-    /// Quickly retrieve a framework route's index from its entry point file. These
-    /// are populated as the routes are discovered. The route may not be bundled OR
-    /// navigatable, such as the case where a layout's index is looked up.
-    pub(crate) route_lookup:
-        ArrayHashMap<incremental_graph::ServerFileIndex, RouteIndexAndRecurseFlag>,
+    /// Quickly retrieve the framework routes of an entry point file. These are
+    /// populated as the routes are discovered. A file has more than one route when
+    /// a symlink gives it a second path in a routes directory, or when router types
+    /// share a server entry point. The route may not be bundled OR navigatable,
+    /// such as the case where a layout's index is looked up.
+    pub(crate) route_lookup: ArrayHashMap<incremental_graph::ServerFileIndex, RoutesOfFile>,
     /// This acts as a duplicate of the lookup table in uws, but only for HTML routes
     /// Used to identify what route a connected WebSocket is on, so that only
     /// the active pages are notified of a hot updates.
@@ -964,8 +966,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 server_file_string: jsc::StrongOptional::empty(),
             });
 
-            // SAFETY: `route_lookup` is disjoint from `framework`.
-            unsafe { &mut (*dev_ptr).route_lookup }.put(
+            add_route_of_file(
+                // SAFETY: `route_lookup` is disjoint from `framework`.
+                unsafe { &mut (*dev_ptr).route_lookup },
                 server_file,
                 RouteIndexAndRecurseFlag::new(
                     framework_router::RouteIndex::init(u32::try_from(i).expect("int cast")),
@@ -5903,7 +5906,8 @@ impl DevServer {
                 incremental_graph::RouteKind::Route,
             )
             .map_err(crate::Error::from)?;
-        self.route_lookup.put(
+        add_route_of_file(
+            &mut self.route_lookup,
             index,
             RouteIndexAndRecurseFlag::new(
                 associated_route,
@@ -6043,7 +6047,7 @@ impl DevServer {
 }
 
 #[repr(transparent)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct RouteIndexAndRecurseFlag(pub u32);
 impl RouteIndexAndRecurseFlag {
     pub(crate) fn new(
@@ -6061,6 +6065,22 @@ impl RouteIndexAndRecurseFlag {
         (self.0 >> 31) != 0
     }
 }
+
+/// Value of `DevServer::route_lookup`. Nearly every file has exactly one route.
+pub(crate) type RoutesOfFile = SmallVec<[RouteIndexAndRecurseFlag; 1]>;
+
+fn add_route_of_file(
+    route_lookup: &mut ArrayHashMap<incremental_graph::ServerFileIndex, RoutesOfFile>,
+    file: incremental_graph::ServerFileIndex,
+    route: RouteIndexAndRecurseFlag,
+) -> Result<(), AllocError> {
+    let routes = route_lookup.get_or_put(file)?.value_ptr;
+    if !routes.contains(&route) {
+        routes.push(route);
+    }
+    Ok(())
+}
+
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
 #[derive(Default)]
 pub struct EntryPointList {

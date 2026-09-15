@@ -234,11 +234,15 @@ impl Entry {
         self.cache().kind
     }
 
+    /// The cached real path of this entry, or empty when none is known. The
+    /// stat fills it in when the entry itself is a symlink. An entry that is
+    /// only below a symlinked directory stays empty until the resolver caches
+    /// `DirInfo::abs_real_path` + base here, so callers check that too.
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
     /// `RealFS` singleton in practice). See [`Entry::kind`].
-    pub(crate) unsafe fn symlink<R: EntryKindResolver>(
+    pub unsafe fn symlink<R: EntryKindResolver>(
         &self,
         fs: *mut R,
         store_fd: bool,

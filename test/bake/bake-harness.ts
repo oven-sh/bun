@@ -1560,9 +1560,14 @@ async function withAnnotatedStack<T>(stackLine: string, cb: () => Promise<T>): P
   }
 }
 
+// The real path, as `tmpdirSync` in harness.ts. The OS spells the target of a symlink with the
+// real names (`C:\Windows\TEMP` is `Temp` on disk, `/tmp` is `/private/tmp` on macOS), so a test
+// with a symlink needs the same spelling for the files around it.
 const tempDir =
   process.env.BUN_DEV_SERVER_TEST_TEMP ||
-  fs.mkdtempSync(path.join(process.platform === "darwin" && !process.env.CI ? "/tmp" : os.tmpdir(), "bun-dev-test-"));
+  fs.realpathSync.native(
+    fs.mkdtempSync(path.join(process.platform === "darwin" && !process.env.CI ? "/tmp" : os.tmpdir(), "bun-dev-test-")),
+  );
 
 // Ensure temp directory exists
 if (!fs.existsSync(tempDir)) {

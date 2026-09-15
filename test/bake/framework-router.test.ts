@@ -1,6 +1,7 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { symlinkSync } from "node:fs";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -132,4 +133,28 @@ test("discovers from filesystem paths", () => {
       },
     ],
   });
+});
+
+test("a route reached through a symlink has the real path of its file", () => {
+  using dir = tempDir("fsr-symlink", {
+    "pages/one.tsx": "1",
+    "pages/real/a.tsx": "1",
+  });
+  symlinkSync("one.tsx", path.join(dir, "pages/alias.tsx"));
+  symlinkSync(path.join(dir, "pages/real"), path.join(dir, "pages/linked"), "junction");
+  symlinkSync(path.join(dir, "pages"), path.join(dir, "root-link"), "junction");
+
+  // The route pattern comes from the path below the router root. The file is
+  // the one the resolver reports, because the bundler stores the module there.
+  const pages = {
+    "/one": path.join(dir, "pages/one.tsx"),
+    "/alias": path.join(dir, "pages/one.tsx"),
+    "/real/a": path.join(dir, "pages/real/a.tsx"),
+    "/linked/a": path.join(dir, "pages/real/a.tsx"),
+  };
+  for (const root of ["pages", "root-link"]) {
+    const router = new FrameworkRouter({ root: path.join(dir, root), style: "nextjs-pages" });
+    const found = Object.fromEntries(Object.keys(pages).map(url => [url, router.match(url)?.route.page]));
+    expect(found).toEqual(pages);
+  }
 });

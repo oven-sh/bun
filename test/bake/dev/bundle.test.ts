@@ -919,3 +919,113 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+
+// The router names a route after its path below the router root. The bundler
+// stores the module under the path the resolver reports, which has symlinks
+// resolved. The route has to ask the server runtime for that second path.
+const symlinkedRoutesFramework = {
+  ...minimalFramework,
+  fileSystemRouterTypes: [
+    minimalFramework.fileSystemRouterTypes![0],
+    // "app/pages" is a symlink to "src/pages".
+    { ...minimalFramework.fileSystemRouterTypes![0], root: "app/pages" },
+  ],
+};
+const symlinkedRoutesFiles = {
+  "bun.app.ts": `
+    import { mkdirSync, symlinkSync } from "node:fs";
+    import { join } from "node:path";
+    const root = import.meta.dir;
+    // The router scans once, when the server starts. Make the links before that,
+    // in directories that the resolver did not list yet.
+    symlinkSync("one.ts", join(root, "routes/alias.ts"));
+    symlinkSync(join(root, "routes/real"), join(root, "routes/linked"), "junction");
+    mkdirSync(join(root, "app"));
+    symlinkSync(join(root, "src/pages"), join(root, "app/pages"), "junction");
+    export default { app: { framework: ${JSON.stringify(symlinkedRoutesFramework)} } };
+  `,
+  "routes/one.ts": `export default () => new Response("one v1");`,
+  "routes/real/a.ts": `export default () => new Response("a v1");`,
+  "src/pages/about.ts": `export default () => new Response("about v1");`,
+};
+devTest("route files reached through a file, directory, or router root symlink", {
+  files: symlinkedRoutesFiles,
+  async test(dev) {
+    async function pages() {
+      const result: Record<string, string | number> = {};
+      for (const url of ["/one", "/alias", "/real/a", "/linked/a", "/about"]) {
+        const res = await dev.fetch(url);
+        result[url] = res.ok ? await res.text() : res.status;
+      }
+      return result;
+    }
+    expect(await pages()).toEqual({
+      "/one": "one v1",
+      "/alias": "one v1",
+      "/real/a": "a v1",
+      "/linked/a": "a v1",
+      "/about": "about v1",
+    });
+
+    // A save of the real file reaches every route that uses it.
+    await dev.write("routes/one.ts", `export default () => new Response("one v2");`);
+    await dev.write("routes/real/a.ts", `export default () => new Response("a v2");`);
+    await dev.write("src/pages/about.ts", `export default () => new Response("about v2");`);
+    expect(await pages()).toEqual({
+      "/one": "one v2",
+      "/alias": "one v2",
+      "/real/a": "a v2",
+      "/linked/a": "a v2",
+      "/about": "about v2",
+    });
+  },
+});
+devTest("a save reloads the viewers of every route that shares a symlinked file", {
+  files: symlinkedRoutesFiles,
+  async test(dev) {
+    await dev.fetch("/one").equals("one v1");
+    await dev.fetch("/alias").equals("one v1");
+
+    // Does what the HMR client of a browser tab on `pathname` does: subscribe
+    // to hot updates and tell the server which route the tab shows.
+    async function openTab(pathname: string) {
+      const ws = new WebSocket(dev.baseUrl + "/_bun/hmr");
+      ws.binaryType = "arraybuffer";
+      const routeBundle = Promise.withResolvers<number>();
+      const reloaded = Promise.withResolvers<number[]>();
+      ws.onmessage = event => {
+        const view = new DataView(event.data);
+        switch (String.fromCharCode(view.getUint8(0))) {
+          case "V": // The server sends its version first.
+            ws.send("sh");
+            ws.send("n" + pathname);
+            break;
+          case "n": // The answer to "n": the route bundle of this tab.
+            routeBundle.resolve(view.getUint32(1, true));
+            break;
+          case "u": {
+            // A hot update starts with the route bundles that have to reload. -1 ends the list.
+            const routeBundles: number[] = [];
+            for (let i = 1; view.getInt32(i, true) !== -1; i += 4) routeBundles.push(view.getInt32(i, true));
+            reloaded.resolve(routeBundles);
+            break;
+          }
+        }
+      };
+      return { ws, routeBundle: await routeBundle.promise, reloaded: reloaded.promise };
+    }
+
+    const one = await openTab("/one");
+    const alias = await openTab("/alias");
+    try {
+      expect(one.routeBundle).not.toBe(alias.routeBundle);
+      await dev.write("routes/one.ts", `export default () => new Response("one v2");`);
+      const expected = [one.routeBundle, alias.routeBundle].sort((a, b) => a - b);
+      expect((await one.reloaded).sort((a, b) => a - b)).toEqual(expected);
+      expect((await alias.reloaded).sort((a, b) => a - b)).toEqual(expected);
+    } finally {
+      one.ws.close();
+      alias.ws.close();
+    }
+  },
+});

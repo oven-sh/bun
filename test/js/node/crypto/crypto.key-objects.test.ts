@@ -24,6 +24,7 @@ import {
 } from "crypto";
 import fs from "fs";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { totalmem } from "node:os";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
 
@@ -648,6 +649,81 @@ describe("crypto.KeyObjects", () => {
     expect(privateKey.type).toBe("private");
     expect(privateKey.asymmetricKeyType).toBe("rsa");
     expect(privateKey.symmetricKeySize).toBe(undefined);
+  });
+
+  // BoringSSL takes the passphrase length as an `int`, so 2 ** 31 bytes became a
+  // negative length. The PKCS#8 writers then read out of bounds and crashed the
+  // process. The PKCS#1 and SEC1 writers returned a key that the passphrase does
+  // not decrypt. Node rejects the passphrase after it looks up the cipher, for
+  // keys it writes and for keys it reads:
+  // https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/crypto/crypto_keys.cc#L517-L539
+  //
+  // The child never writes to the 2 GiB buffer, so its pages are not committed.
+  // A build without the check copies the buffer twice before it crashes, which
+  // is what the memory gate is for. Each case prints its line as soon as it
+  // finishes, so the diff shows which one took the child down.
+  test.skipIf(totalmem() < 10 * 1024 ** 3)("a passphrase of 2 ** 31 bytes throws ERR_OUT_OF_RANGE", async () => {
+    const fixture = `
+      import crypto from "node:crypto";
+
+      const passphrase = Buffer.alloc(2 ** 31);
+      const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
+      const rsa = crypto.createPrivateKey(${JSON.stringify(privatePem)});
+      const encrypted = ${JSON.stringify(privateEncryptedPem)};
+      const pkcs8 = { type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase };
+
+      const cases = {
+        "generateKeyPairSync": () => crypto.generateKeyPairSync("ec", { namedCurve: "P-256", privateKeyEncoding: pkcs8 }),
+        "generateKeyPair": () => crypto.generateKeyPair("ec", { namedCurve: "P-256", privateKeyEncoding: pkcs8 }, () => {}),
+        "export pkcs8 pem": () => ec.export(pkcs8),
+        "export pkcs8 der": () => ec.export({ ...pkcs8, format: "der" }),
+        "export sec1 pem": () => ec.export({ ...pkcs8, type: "sec1" }),
+        "export pkcs1 pem": () => rsa.export({ ...pkcs8, type: "pkcs1" }),
+        "createPrivateKey": () => crypto.createPrivateKey({ key: encrypted, passphrase }),
+        "createPublicKey": () => crypto.createPublicKey({ key: encrypted, passphrase }),
+        "sign": () => crypto.sign("sha256", Buffer.from("data"), { key: encrypted, passphrase }),
+        // The cipher lookup comes first, so an unknown cipher wins.
+        "export unknown cipher": () => ec.export({ ...pkcs8, cipher: "nope" }),
+      };
+      for (const [name, run] of Object.entries(cases)) {
+        try {
+          run();
+          console.log(name + ": did not throw");
+        } catch (e) {
+          console.log(name + ": " + e.name + " [" + e.code + "]: " + e.message);
+        }
+      }
+
+      // A passphrase of a normal size still works in the same process.
+      const small = passphrase.subarray(0, 8);
+      const pem = ec.export({ ...pkcs8, passphrase: small });
+      console.log("round trip: " + crypto.createPrivateKey({ key: pem, passphrase: small }).equals(ec));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "generateKeyPairSync: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "generateKeyPair: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "export pkcs8 pem: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "export pkcs8 der: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "export sec1 pem: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "export pkcs1 pem: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "createPrivateKey: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "createPublicKey: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "sign: RangeError [ERR_OUT_OF_RANGE]: passphrase is too big",
+        "export unknown cipher: Error [ERR_CRYPTO_UNKNOWN_CIPHER]: Unknown cipher",
+        "round trip: true",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   [2048, 4096].forEach(suffix => {

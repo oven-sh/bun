@@ -45,8 +45,9 @@ pub mod argon2 {
     const DEFAULT_SALT_LEN: usize = 32;
     const DEFAULT_HASH_LEN: u32 = 32;
 
-    const MAX_VERIFY_TIME_COST: u32 = 1 << 16;
-    const MAX_VERIFY_MEMORY_COST: u32 = 1 << 22;
+    // Upper bounds shared by `str_verify` and `Bun.password.hash` option parsing.
+    pub(crate) const MAX_VERIFY_TIME_COST: u32 = 1 << 16;
+    pub(crate) const MAX_VERIFY_MEMORY_COST: u32 = 1 << 22;
     const MAX_VERIFY_PARALLELISM: u32 = 64;
 
     /// Argon2 variant.

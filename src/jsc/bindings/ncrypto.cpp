@@ -1633,8 +1633,7 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         }
     }
 
-    // `utf8()` asserts that the conversion worked. It fails when the UTF-8 form can pass 2^31 - 1 bytes
-    // (2^30 Latin-1 characters or more). A name that long is not a digest.
+    // `utf8()` asserts that the conversion worked. A name too long to convert is not a digest.
     auto nameUtf8 = name.tryGetUTF8();
     if (!nameUtf8) [[unlikely]]
         return nullptr;

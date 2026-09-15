@@ -622,12 +622,12 @@ void evaluateCommonJSCustomExtension(
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!extension) {
-        throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
+        throwTypeError(globalObject, scope, "require.extension is not a function"_s);
         return;
     }
-    JSC::CallData callData = JSC::getCallData(extension.asCell());
+    JSC::CallData callData = JSC::getCallData(extension);
     if (callData.type == JSC::CallData::Type::None) {
-        throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
+        throwTypeError(globalObject, scope, "require.extension is not a function"_s);
         return;
     }
     MarkedArgumentBuffer arguments;

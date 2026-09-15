@@ -12,7 +12,8 @@ use bun_event_loop::{Task, task_tag};
 
 #[derive(Default)]
 pub struct DeferredBatchTask {
-    /// Intrusive node for the trip back to the bundle thread's Mini loop.
+    /// Mini-loop queue node for `crate::post` (see `post::Event::NODE`): the trip back to the
+    /// bundle thread (`DeferredBatchReturned`).
     returned: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
 }
 
@@ -29,13 +30,14 @@ impl bun_event_loop::Taskable for DeferredBatchTask {
 impl DeferredBatchTask {
     pub(crate) fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {
         // SAFETY: self points to the `drain_defer_task` field embedded in a BundleV2.
-        unsafe {
-            &mut *bun_core::from_field_ptr!(
-                BundleV2<'static>,
-                drain_defer_task,
-                std::ptr::from_mut::<Self>(self)
-            )
-        }
+        unsafe { &mut *Self::bundle_v2_ptr(self) }
+    }
+
+    /// # Safety
+    /// `this` points at the `drain_defer_task` field of a live `BundleV2`.
+    unsafe fn bundle_v2_ptr(this: *mut Self) -> *mut BundleV2<'static> {
+        // SAFETY: caller contract; `from_field_ptr!` only offsets the pointer.
+        unsafe { bun_core::from_field_ptr!(BundleV2<'static>, drain_defer_task, this) }
     }
 
     /// Bundle thread. The caller has counted the hop as a pending item (`Graph::drain_deferred_tasks`).
@@ -58,22 +60,33 @@ impl DeferredBatchTask {
 
     /// Plugins' (JS) thread → bundle thread: the hop's pending item is consumed there.
     fn come_back(&mut self) {
-        let this: *mut Self = self;
-        let bv2 = self.get_bundle_v2();
-        match bv2.any_loop_mut() {
-            // bake: the plugins run on the loop that runs the bundle; already there.
-            bun_event_loop::AnyEventLoop::Js { .. } => bv2.decrement_scan_counter(),
-            bun_event_loop::AnyEventLoop::Mini(mini) => {
-                // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
-                // the bundle thread runs this.
-                unsafe {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
-                        this,
-                        |_, bv2| (*bv2).decrement_scan_counter(),
-                        core::mem::offset_of!(Self, returned),
-                    );
-                }
-            }
-        }
+        // SAFETY: `self` is a field of its `BundleV2`, which is alive until the bundle thread has
+        // consumed this (the hop is one of the pass's pending items).
+        unsafe { crate::post::post::<DeferredBatchReturned>(self) };
+    }
+}
+
+/// The `.defer()` hop is back from the plugins' thread: the pass's pending item for it is consumed.
+pub(crate) struct DeferredBatchReturned;
+
+impl crate::post::Event for DeferredBatchReturned {
+    type Item = DeferredBatchTask;
+    const NODE: usize = core::mem::offset_of!(DeferredBatchTask, returned);
+
+    unsafe fn bundle(task: *mut DeferredBatchTask) -> *mut BundleV2<'static> {
+        // SAFETY: caller contract.
+        unsafe { DeferredBatchTask::bundle_v2_ptr(task) }
+    }
+
+    unsafe fn run(_: *mut DeferredBatchTask, bv2: &mut BundleV2<'static>) {
+        bv2.decrement_scan_counter();
+    }
+
+    /// Only on a bundle that runs on the plugins' own loop (bake), whose VM has closed its queue: the
+    /// hop is already on the bundle thread, so the pass's bookkeeping happens here.
+    unsafe fn refused(task: *mut DeferredBatchTask) {
+        // SAFETY: the posting thread is the bundle thread (see above), and it holds no other
+        // `&mut BundleV2` while a task is running.
+        unsafe { (*Self::bundle(task)).decrement_scan_counter() };
     }
 }

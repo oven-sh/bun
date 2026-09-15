@@ -1297,8 +1297,13 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
 const GC_STRAGGLERS = 3;
 
 /**
- * Collects until every one of `refs` is gone, giving up after 50 passes or once the count has not
- * moved for 10 passes, and resolves to how many survived.
+ * Collects until no more than GC_STRAGGLERS of `refs` are left, giving up after 50 passes, or after
+ * 10 that collected nothing at all (the leak itself), and resolves to how many survived.
+ *
+ * A count that holds steady above GC_STRAGGLERS is no reason to stop. A concurrent JIT compile roots
+ * the arguments of the call that started it (a stream, as `this`) until the main thread installs the
+ * result, which it only does at its next tier-up check. On a debug build, where a compile takes
+ * seconds, 4 to 9 streams stay rooted that way for a dozen passes before they go.
  */
 async function liveCount(refs: WeakRef<object>[]): Promise<number> {
   const live = () => refs.filter(ref => ref.deref() !== undefined).length;
@@ -1306,12 +1311,11 @@ async function liveCount(refs: WeakRef<object>[]): Promise<number> {
   // destroy), and a WeakRef target survives the job that dereferenced it, so every pass gets a
   // fresh turn before collecting.
   let last = live();
-  for (let pass = 0, stuck = 0; pass < 50 && last > 0 && stuck < 10; pass++) {
+  for (let pass = 0; pass < 50 && last > GC_STRAGGLERS; pass++) {
+    if (pass === 10 && last === refs.length) break;
     await new Promise(resolve => setImmediate(resolve));
     await gcTick();
-    const now = live();
-    stuck = now === last ? stuck + 1 : 0;
-    last = now;
+    last = live();
   }
   return last;
 }

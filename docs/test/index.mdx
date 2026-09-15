@@ -385,14 +385,16 @@ For a suite with thousands of test files, `bun test` has several knobs that stac
 ```yaml title=".github/workflows/test.yml" icon="github"
 jobs:
   test:
+    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      # last successful run's per-shard timings (nothing on the very first run)
+      # previous run's per-shard timings (nothing on the very first run)
       - uses: actions/cache/restore@v4
         with:
           path: .bun-test-timings
@@ -403,11 +405,13 @@ jobs:
             --timings=.bun-test-timings/next/${{ matrix.shard }}.json \
             $(ls .bun-test-timings/*.json 2>/dev/null | sed 's/^/--timings=/')
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: timings-${{ matrix.shard }}
           path: .bun-test-timings/next/${{ matrix.shard }}.json
   save-timings:
     needs: test
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

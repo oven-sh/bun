@@ -4614,6 +4614,38 @@ refs:
         expect(YAML.parse(yaml)).toEqual(nested);
       });
 
+      test("a getter that changes between the anchor pass and printing still yields valid YAML", () => {
+        // The stringifier walks the value twice. A getter can return a different
+        // value on each walk. The layout must follow what is actually printed.
+        let calls = 0;
+        const growing = {
+          get x() {
+            return calls++ === 0 ? undefined : 1;
+          },
+        };
+        expect(YAML.stringify({ child: growing }, null, 2)).toBe("child:\n  x: 1");
+
+        calls = 0;
+        const shrinking = {
+          get x() {
+            return calls++ === 0 ? 1 : undefined;
+          },
+        };
+        expect(YAML.stringify({ child: shrinking }, null, 2)).toBe("child: {}");
+
+        calls = 0;
+        const items = [];
+        Object.defineProperty(items, 0, {
+          get() {
+            return calls++ === 0 ? undefined : "a";
+          },
+          enumerable: true,
+        });
+        const out = YAML.stringify({ items }, null, 2);
+        expect(out).toBe("items:\n  - a");
+        expect(YAML.parse(out)).toEqual({ items: ["a"] });
+      });
+
       test("a collection whose items are all skipped prints as empty", () => {
         const obj = {
           arr: [undefined, () => {}, Symbol("s")],

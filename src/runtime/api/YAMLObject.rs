@@ -97,8 +97,6 @@ impl Space {
 pub(crate) struct AnchorAlias {
     anchored: bool,
     used: bool,
-    /// Nothing inside it is printed, so it is written as `[]` or `{}`.
-    empty: bool,
     name: AnchorAliasName,
 }
 
@@ -110,7 +108,6 @@ impl Default for AnchorAlias {
         AnchorAlias {
             anchored: false,
             used: false,
-            empty: false,
             name: AnchorAliasName::Root,
         }
     }
@@ -121,7 +118,6 @@ impl AnchorAlias {
         AnchorAlias {
             anchored: false,
             used: false,
-            empty: false,
             name: match origin {
                 ValueOrigin::Root => AnchorAliasName::Root,
                 ValueOrigin::ArrayItem => AnchorAliasName::ArrayItem(0),
@@ -283,8 +279,6 @@ impl Stringifier {
 
         *object_entry.value_ptr = AnchorAlias::init(origin);
 
-        let mut empty = true;
-
         if unwrapped.is_array() {
             let mut iter = unwrapped.array_iterator(global)?;
             while let Some(item) = iter.next()? {
@@ -292,34 +286,27 @@ impl Stringifier {
                     continue;
                 }
 
-                empty = false;
                 self.find_anchors_and_aliases(global, item, ValueOrigin::ArrayItem)?;
             }
-        } else {
-            // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-            let iter = JSPropertyIterator::init(
-                global,
-                unwrapped.to_object(global)?,
-                JSPropertyIteratorOptions {
-                    skip_empty_name: false,
-                    include_value: true,
-                    ..Default::default()
-                },
-            )?;
-
-            while let Some((prop_name, value)) = iter.next()? {
-                if value.is_undefined() || value.is_symbol() || value.is_function() {
-                    continue;
-                }
-
-                empty = false;
-                self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
-            }
+            return Ok(());
         }
 
-        // The recursion above can insert into the map, so look the entry up again.
-        if let Some(entry) = self.known_collections.get_mut(&unwrapped) {
-            entry.empty = empty;
+        // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
+        let iter = JSPropertyIterator::init(
+            global,
+            unwrapped.to_object(global)?,
+            JSPropertyIteratorOptions {
+                skip_empty_name: false,
+                include_value: true,
+                ..Default::default()
+            },
+        )?;
+
+        while let Some((prop_name, value)) = iter.next()? {
+            if value.is_undefined() || value.is_symbol() || value.is_function() {
+                continue;
+            }
+            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
         }
 
         Ok(())
@@ -327,17 +314,28 @@ impl Stringifier {
 
     fn stringify(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), StringifyError> {
         let unwrapped = value.unwrap_boxed_primitive(global)?;
-        self.stringify_unwrapped(global, unwrapped)
+        self.stringify_unwrapped(global, unwrapped, false)
     }
 
     /// `unwrapped` has been through `unwrap_boxed_primitive`.
+    ///
+    /// `after_key` is set when the value follows a block-style mapping key and its `:`.
+    /// The value then writes its own separator: a space before inline content
+    /// (a scalar, `[]`, `{}`), a newline before block content. Deciding here,
+    /// from what is actually printed, keeps the output valid when a getter
+    /// returns something different on each access.
     fn stringify_unwrapped(
         &mut self,
         global: &JSGlobalObject,
         unwrapped: JSValue,
+        mut after_key: bool,
     ) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
+        }
+
+        if after_key && !unwrapped.is_object() {
+            self.builder.append_lchar(b' ');
         }
 
         if unwrapped.is_null() {
@@ -393,16 +391,21 @@ impl Stringifier {
 
         debug_assert!(unwrapped.is_object());
 
-        let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {
-            let Some(anchor) = self.known_collections.get_mut(&unwrapped) else {
-                break 'has_anchor None;
-            };
+        let has_anchor = self
+            .known_collections
+            .get(&unwrapped)
+            .is_some_and(|anchor| anchor.used);
 
-            if !anchor.used {
-                break 'has_anchor None;
-            }
+        // An anchor or alias starts on the line after the key.
+        if has_anchor && after_key {
+            after_key = false;
+            self.newline();
+        }
 
-            Some(anchor)
+        let has_anchor: Option<&mut AnchorAlias> = if has_anchor {
+            self.known_collections.get_mut(&unwrapped)
+        } else {
+            None
         };
 
         if let Some(anchor) = has_anchor {
@@ -451,6 +454,9 @@ impl Stringifier {
             let mut iter = unwrapped.array_iterator(global)?;
 
             if iter.len == 0 {
+                if after_key {
+                    self.builder.append_lchar(b' ');
+                }
                 self.builder.append_latin1(b"[]");
                 return Ok(());
             }
@@ -482,7 +488,7 @@ impl Stringifier {
                             continue;
                         }
 
-                        if !first {
+                        if !first || after_key {
                             self.newline();
                         }
                         first = false;
@@ -496,6 +502,9 @@ impl Stringifier {
                         self.indent -= 1;
                     }
                     if first {
+                        if after_key {
+                            self.builder.append_lchar(b' ');
+                        }
                         self.builder.append_latin1(b"[]");
                     }
                 }
@@ -516,6 +525,9 @@ impl Stringifier {
         )?;
 
         if iter.len == 0 {
+            if after_key {
+                self.builder.append_lchar(b' ');
+            }
             self.builder.append_latin1(b"{}");
             return Ok(());
         }
@@ -550,44 +562,29 @@ impl Stringifier {
                         continue;
                     }
 
-                    if !first {
+                    if !first || after_key {
                         self.newline();
                     }
                     first = false;
 
                     self.append_string(&prop_name);
+                    self.builder.append_lchar(b':');
 
                     self.indent += 1;
-
                     let prop_value = value.unwrap_boxed_primitive(global)?;
-                    if self.prop_value_needs_newline(prop_value) {
-                        self.builder.append_lchar(b':');
-                        self.newline();
-                    } else {
-                        self.builder.append_latin1(b": ");
-                    }
-
-                    self.stringify_unwrapped(global, prop_value)?;
+                    self.stringify_unwrapped(global, prop_value, true)?;
                     self.indent -= 1;
                 }
                 if first {
+                    if after_key {
+                        self.builder.append_lchar(b' ');
+                    }
                     self.builder.append_latin1(b"{}");
                 }
             }
         }
 
         Ok(())
-    }
-
-    /// A scalar, or an empty collection without an anchor, stays on the key line.
-    fn prop_value_needs_newline(&self, value: JSValue) -> bool {
-        if value.is_number() || value.is_boolean() || value.is_null() || value.is_string() {
-            return false;
-        }
-        match self.known_collections.get(&value) {
-            Some(entry) => !entry.empty || entry.used,
-            None => true,
-        }
     }
 
     fn newline(&mut self) {

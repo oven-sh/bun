@@ -64,7 +64,7 @@ impl Stream {
     /// Mutable access to the bound lsquic stream handle.
     ///
     /// INVARIANT: `qstream` is set in `callbacks::on_stream_open` and remains
-    /// valid until `callbacks::on_stream_close` / `abort` / `ClientSession::detach`
+    /// valid until `callbacks::on_stream_close` / `ClientSession::detach`
     /// nulls it. The `quic::Stream` is an FFI-owned allocation distinct from
     /// `self`, so the returned `&mut` does not alias `self`. HTTP-thread-only.
     #[inline]
@@ -88,17 +88,6 @@ impl Stream {
         // Route through the shared `client_session::session_mut` accessor
         // (one centralised unsafe); see INVARIANT above.
         super::client_session::session_mut(self.session.as_ptr())
-    }
-
-    /// `reset()`, not `close()`: `close()` ends an unfinished request body with
-    /// FIN, which the server reads as a complete body. The caller must `detach()`
-    /// next: `on_stream_open` binds a new stream to any unbound `pending` entry.
-    pub(crate) fn abort(&mut self) {
-        if let Some(qs) = self.qstream_mut() {
-            *qs.ext::<Stream>() = None;
-            qs.reset();
-        }
-        self.qstream = None;
     }
 }
 

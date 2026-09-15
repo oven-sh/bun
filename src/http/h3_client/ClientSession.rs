@@ -172,6 +172,12 @@ impl ClientSession {
     /// receiver; the release still goes through the pending entry's own
     /// backref rather than the receiver, like every other holder's does.
     pub(super) fn detach(&mut self, stream: *mut Stream) {
+        self.detach_with(stream, false);
+    }
+
+    /// With `abort` the lsquic stream is reset even when the request body is
+    /// done. Never `close()`: its FIN would present a cut-off body as complete.
+    fn detach_with(&mut self, stream: *mut Stream, abort: bool) {
         let st = stream_mut(stream);
         let session = st.session.as_ptr();
         debug_assert!(core::ptr::eq(session, self));
@@ -187,7 +193,7 @@ impl ClientSession {
             // content-length violation; RESET_STREAM(H3_REQUEST_CANCELLED)
             // is the correct "I'm abandoning this send half" so lsquic reaps
             // the stream instead of leaking it on the pooled session.
-            if !request_body_done {
+            if abort || !request_body_done {
                 qs.reset();
             }
         }
@@ -206,8 +212,7 @@ impl ClientSession {
     pub(crate) fn fail(&mut self, stream: *mut Stream, err: crate::Error) {
         // Capture the client ptr before detach() invalidates `stream`.
         let client = stream_mut(stream).client;
-        stream_mut(stream).abort();
-        self.detach(stream);
+        self.detach_with(stream, true);
         if let Some(cl) = client {
             // detach() nulled cl.h3 but the HTTPClient itself is alive.
             client_mut(cl).fail_from_h2(err);
@@ -252,8 +257,7 @@ impl ClientSession {
             port,
             bstr::BStr::new(err.name()),
         );
-        st.abort();
-        self.detach(stream);
+        self.detach_with(stream, true);
         // Formed only after detach() so its Unique tag is not invalidated by
         // detach()'s aliasing write to `client.h3`.
         let client = client_mut(client_ptr);
@@ -440,7 +444,7 @@ pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket
 ///
 /// Same INVARIANT as [`quic_socket_mut`] — lsquic-owned, live for the
 /// borrow's duration (callback argument, or `Stream.qstream` set in
-/// `on_stream_open` and nulled in `on_stream_close` / `abort` / `detach`), FFI
+/// `on_stream_open` and nulled in `on_stream_close` / `detach`), FFI
 /// allocation distinct from any Rust holder, HTTP-thread-only.
 #[inline(always)]
 pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {

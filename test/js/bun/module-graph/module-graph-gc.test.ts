@@ -166,8 +166,24 @@ class Lifetimes {
       await collect();
     }
     if (!remaining().length) return [];
+    const survivors = remaining();
+    // Before anything else runs (the snapshot below is a lot of other code): the same collection
+    // from a timer callback, after that callback recursed and returned, which writes over the
+    // stack its collection is about to run on. If that alone gets the survivor, it was held from
+    // there. For the failure message only: the result is a failure whatever this finds.
+    for (let i = 0; i < 3 && remaining().length; i++) {
+      await new Promise<void>(resolve =>
+        setTimeout(() => {
+          const recurse = (depth: number): number => (depth ? recurse(depth - 1) + 1 : 0);
+          recurse(256);
+          Bun.gc(true);
+          setTimeout(resolve, 0);
+        }, 0),
+      );
+    }
+    const afterRecursing = `after 100 collections from timer callbacks, 3 more from a timer callback that first recursed 256 frames and returned: ${survivors.length - remaining().length} of ${survivors.length} collected`;
     // Say what keeps them, not just that something does.
-    const report = [...remaining(), ...whatRetainsGraphs()];
+    const report = [...survivors, afterRecursing, ...whatRetainsGraphs()];
     // When no root reaches a survivor, say from where a collection does get it: only for the
     // failure message (the result is a failure whatever these find).
     const turn = () => new Promise<void>(resolve => setTimeout(resolve, 0));

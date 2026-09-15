@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { connect } from "node:net";
 
 // `req.url` and `req.headers` are read lazily from the `uWS::HttpRequest`,
@@ -171,4 +171,107 @@ test("server.upgrade after the handler runs the event loop still reads its own h
     ws.close();
     second.destroy();
   }
+});
+
+// The other nested run: in a directory with no `node_modules`, the resolver
+// auto-installs, and `require()` of a package that is not installed waits for
+// the registry with this thread's event loop
+// (`PackageManager::sleep_until` -> `AnyEventLoop::tick_raw`). That reaches
+// the same `Loop` entry points as `Bun.build` above. The fixture runs in its
+// own process because the test runner's own directory has `node_modules`.
+const autoInstallFixture = `
+import { createRequire } from "node:module";
+import { connect } from "node:net";
+
+const require = createRequire(import.meta.url);
+const head = token =>
+  \`GET /u-\${token} HTTP/1.1\\r\\nHost: h-\${token}.example\\r\\n\` +
+  \`Authorization: Bearer au-\${token}\\r\\nCookie: c=ck-\${token}\\r\\n\\r\\n\`;
+
+const secondDispatched = Promise.withResolvers();
+
+// Answers only once the second connection's head is in the receive buffer, so
+// the nested run cannot end before the bytes that used to clobber it arrive.
+await using registry = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  async fetch() {
+    await secondDispatched.promise;
+    return new Response("not found", { status: 404 });
+  },
+});
+process.env.BUN_CONFIG_REGISTRY = \`http://127.0.0.1:\${registry.port}/\`;
+
+let second;
+let requests = 0;
+const recorded = Promise.withResolvers();
+
+await using server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch(req) {
+    if (++requests > 1) {
+      secondDispatched.resolve();
+      return new Response("second");
+    }
+
+    second.write(head("${SECOND}"));
+    try {
+      require("a-package-that-is-not-installed-f4f0b1");
+    } catch {}
+
+    recorded.resolve({
+      url: req.url,
+      authorization: req.headers.get("authorization"),
+      cookie: req.headers.get("cookie"),
+    });
+    return new Response("first");
+  },
+});
+
+async function connectTo(port) {
+  const socket = connect(port, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  socket.on("error", () => {});
+  socket.on("data", () => {});
+  return socket;
+}
+
+const first = await connectTo(server.port);
+second = await connectTo(server.port);
+first.write(head("${FIRST}"));
+console.log(JSON.stringify(await recorded.promise));
+first.destroy();
+second.destroy();
+process.exit(0);
+`;
+
+test("a handler that auto-installs reads its own url and headers", async () => {
+  using dir = tempDir("serve-nested-auto-install", {
+    "fixture.mjs": autoInstallFixture,
+    // The resolver walks up from here, so it must find no `node_modules`.
+    "cache/.keep": "",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/cache` },
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stderr, head: JSON.parse(stdout.trim() || "null") }).toEqual({
+    stderr: "",
+    head: {
+      url: `http://h-${FIRST}.example/u-${FIRST}`,
+      authorization: `Bearer au-${FIRST}`,
+      cookie: `c=ck-${FIRST}`,
+    },
+  });
+  expect(exitCode).toBe(0);
 });

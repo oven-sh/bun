@@ -735,14 +735,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         }
     }
 
-    // No up-front isOnline() gate: a worker can post to its parent (e.g. from
-    // a microtask the entry module scheduled while it was still loading) while
-    // m_state is still Pending. postTaskToWorkerGlobalScope queues into
-    // m_pendingTasks for Pending and returns false only for Closing/Closed,
-    // which the !accepted reject below handles. If the worker never reaches
-    // Running (entry threw or failed to load), workerGlobalScopeDestroyedInternal
-    // clears m_pendingTasks on the parent thread and rejectAllCrossVMRequests()
-    // rejects + frees the Strong<>.
+    // No up-front isOnline() gate: a request while Pending is kept. A worker that never
+    // reaches Running rejects it from workerGlobalScopeDestroyedInternal.
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
 
     // The promise is registered in a parent-side map keyed by reqId; only the id
@@ -752,8 +746,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
-        auto& vm = workerCtx.vm();
+    bool accepted = worker.contextProxy().postInterruptToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](JSC::VM& vm) mutable {
         vm.ensureHeapProfiler();
         auto& heapProfiler = *vm.heapProfiler();
         heapProfiler.clearSnapshots();
@@ -766,7 +759,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
             });
     });
     if (!accepted) {
-        // postTaskToWorkerGlobalScope returns false only for Closing/Closed.
+        // postInterruptToWorkerGlobalScope returns false only for Closing/Closed.
         worker.contextProxy().takeCrossVMRequest(reqId);
         rejectWorkerNotRunning(vm, globalObject, promise);
     }
@@ -828,9 +821,9 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+    bool accepted = worker.contextProxy().postInterruptToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](JSC::VM& vm) mutable {
         if (!Bun::isCPUProfilerRunning())
-            Bun::startCPUProfiler(workerCtx.vm());
+            Bun::startCPUProfiler(vm);
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy)](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [](VM&, JSGlobalObject*) -> JSValue { return jsUndefined(); });
         });
@@ -853,10 +846,10 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+    bool accepted = worker.contextProxy().postInterruptToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](JSC::VM& vm) mutable {
         WTF::String result;
         if (Bun::isCPUProfilerRunning())
-            Bun::stopCPUProfiler(workerCtx.vm(), &result, nullptr);
+            Bun::stopCPUProfiler(vm, &result, nullptr);
         if (result.isEmpty())
             result = kEmptyCpuProfileJSON;
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), result = result.isolatedCopy()](ScriptExecutionContext& parentCtx) {

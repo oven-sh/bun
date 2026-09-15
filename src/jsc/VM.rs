@@ -33,6 +33,7 @@ unsafe extern "C" {
     safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
+    safe fn JSC__VM__notifyNeedShellTimeoutCheck(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
     safe fn JSC__VM__terminationException(vm: &VM) -> JSValue;
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
@@ -121,6 +122,12 @@ impl VM {
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub(crate) fn notify_need_termination(&self) {
         JSC__VM__notifyNeedTermination(self)
+    }
+
+    /// Fires the NeedShellTimeoutCheck trap, serviced by `Bun::VMInterrupts::serviceTrap`
+    /// on the VM's thread at its next safepoint. Thread safe.
+    pub(crate) fn notify_need_interrupt(&self) {
+        JSC__VM__notifyNeedShellTimeoutCheck(self)
     }
 
     /// A script frame is on this VM's stack (JSC::VM::isEntered — a VMEntryScope is live).

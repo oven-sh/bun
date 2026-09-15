@@ -370,6 +370,29 @@ describe.concurrent("bun info", () => {
       `);
     });
   });
+
+  // A scheme that is not http or https (a typo such as `htps://`) must not fall back to plaintext HTTP with the
+  // token attached. The mock is a plain HTTP listener, so a downgraded request shows up in `requests`.
+  it.each(["info", "pm view"])("bun %s rejects a registry url scheme that is not http or https", async cmd => {
+    const requests: string[] = [];
+    using mock = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(`${req.method} ${new URL(req.url).pathname} ${req.headers.get("authorization")}`);
+        return Response.json({});
+      },
+    });
+    const testDir = tempDirWithFiles("view-bad-scheme", {
+      "package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      "bunfig.toml": `[install]\nregistry = { url = "htps://localhost:${mock.port}/", token = "secret-token" }\n`,
+    });
+
+    const { output, error, code } = await runCommand([bunExe(), ...cmd.split(" "), "is-number"], testDir);
+    expect(error).toBe(`error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`);
+    expect(output).toBe("");
+    expect(requests).toEqual([]);
+    expect(code).toBe(1);
+  });
 });
 
 // LSan's default conservative scan only flags the `send_sync` response-metadata

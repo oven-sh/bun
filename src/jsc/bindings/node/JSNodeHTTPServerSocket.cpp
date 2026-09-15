@@ -245,7 +245,7 @@ bool JSNodeHTTPServerSocket::isClosed() const
 template<bool SSL>
 static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
 {
-    if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
+    if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained()) {
         return false;
     }
     /* HttpContext<SSL>::onWritable shuts the socket down once the buffered

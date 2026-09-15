@@ -49,6 +49,10 @@ impl CurrentFile {
             self.has_printed_filename = true;
             return;
         }
+        if crate::cli::test_command::is_node_test_child() {
+            self.has_printed_filename = true;
+            return;
+        }
         if reporter.reporters.dots || reporter.reporters.only_failures {
             // Assigning into the Box<[u8]> fields below drops the previous values.
             self.title = Box::<[u8]>::from(title);
@@ -532,6 +536,19 @@ pub(crate) fn js_file_generation(
         (*p.as_ptr()).bun_test_root.file_generation
     });
     Ok(JSValue::from(generation))
+}
+
+/// The flag reroutes the main VM's uncaught handling to node:test's process
+/// listeners, which only the main thread's `node:test` instance installs; a
+/// Worker loading the module (it inherits the env var) must not flip it.
+pub(crate) fn js_node_test_register_child(
+    global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    if global.bun_vm().worker_ref().is_none() {
+        jsc::virtual_machine::IS_NODE_TEST_RUN_CHILD.store(true, core::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides

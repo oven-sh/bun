@@ -2210,7 +2210,7 @@ struct SerializedScriptValueExternal {
     handle: *mut c_void,
 }
 
-/// Callback signature for [`JSValue::for_each`] / [`JSValue::for_each_with_context`].
+/// Callback signature for [`JSValue::for_each`].
 pub type ForEachCallback =
     extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
 
@@ -2442,17 +2442,6 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__forEach(self, global, ctx, callback)
         })
-    }
-    /// `JSValue.forEachWithContext` — typed-ctx wrapper (callers pass
-    /// `*mut c_void` directly).
-    #[inline]
-    pub(crate) fn for_each_with_context(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachCallback,
-    ) -> JsResult<()> {
-        self.for_each(global, ctx, callback)
     }
     /// `JSValue.forEachProperty` — enumerate own props,
     /// invoking `callback` per (key, value, is_symbol, is_private_symbol).

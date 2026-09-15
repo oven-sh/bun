@@ -282,11 +282,11 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, unsigned defaultStackTraceLimit)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, defaultStackTraceLimit, envp, envc, onCrash]() {
         Bun__ensureICUDefaultLocale();
         JSC::Config::enableRestrictedOptions();
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
@@ -325,6 +325,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
+            // Initial Error.stackTraceLimit of every new JSGlobalObject, node:vm contexts included.
+            JSC::Options::defaultErrorStackTraceLimit() = defaultStackTraceLimit;
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
@@ -2072,10 +2074,6 @@ void initLazyClassStructures(GlobalObject* globalObject)
 
 void GlobalObject::finishCreation(VM& vm)
 {
-    // Node.js defaults to 10. Must run before Base::finishCreation() materializes
-    // errorConstructor(), which snapshots this value into Error.stackTraceLimit.
-    setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
-
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 

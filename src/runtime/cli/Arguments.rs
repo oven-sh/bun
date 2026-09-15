@@ -1229,6 +1229,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             bun_jsc::module_loader::set_is_allowed_to_use_internal_testing_apis(true);
             bun_resolve_builtins::set_expose_internals_enabled(true);
         }
+        if let Some(limit) = args
+            .option(b"--stack-trace-limit")
+            .and_then(bun_core::fmt::parse_f64)
+            .filter(|limit| limit.is_finite())
+        {
+            // Same clamp as `Error.stackTraceLimit = limit` (JSC ErrorConstructor::put).
+            bun_jsc::set_default_stack_trace_limit(limit.clamp(0.0, u32::MAX as f64) as u32);
+        }
 
         if let Some(depth_str) = args.option(b"--console-depth") {
             let depth = match strings::parse_int::<u16>(depth_str, 10) {

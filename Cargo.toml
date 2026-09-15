@@ -467,3 +467,20 @@ bun_transpiler = { path = "src/transpiler" }
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
+
+# WebGPU (src/webgpu). Everything these crates do on the CPU (validation,
+# resource tracking, translating WGSL) sits next to GPU work that takes far
+# longer, so they are built for size: about a quarter smaller than at the
+# default level.
+[profile.release.package.wgpu-core]
+opt-level = "s"
+[profile.release.package.wgpu-hal]
+opt-level = "s"
+[profile.release.package.wgpu-types]
+opt-level = "s"
+[profile.release.package.naga]
+opt-level = "s"
+[profile.release.package.ash]
+opt-level = "s"
+[profile.release.package.gpu-allocator]
+opt-level = "s"

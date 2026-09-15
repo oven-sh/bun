@@ -44,9 +44,6 @@ pub enum WriteFileResultType {
 pub type WriteFileOnWriteFileCallback =
     fn(ctx: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()>;
 
-/// Frees a completion context whose write is dropped without being reported (its context stopped).
-pub type WriteFileOnAbandon = fn(ctx: *mut c_void);
-
 /// The completion token a `WriteFile` keeps across its async I/O.
 pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
@@ -58,15 +55,20 @@ unsafe impl Send for WriteFile {}
 impl bun_jsc::JobContext for WriteFile {
     const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
-    /// The completion is delivered through `on_complete_callback(ctx, ..)`.
-    type Js = ();
+    /// Whom the write is reported to. (Dropped with the job when that is released unrun: the
+    /// promise then stays pending.)
+    type Js = Box<WriteFilePromise>;
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);
         None
     }
-    fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
-        WriteFile::then(this, cx.global())
+    fn then(
+        this: Self,
+        promise: Box<WriteFilePromise>,
+        _: &bun_jsc::JsThread<'_>,
+    ) -> jsc::JsResult<()> {
+        WriteFile::then(this, promise)
     }
     /// As `ReadFile`: a write parked on a full pipe nobody drains is the one
     /// state this job can be stuck in.
@@ -81,24 +83,16 @@ impl bun_jsc::JobContext for WriteFile {
     }
 }
 
-/// A write released without `then` (its context stopped, or the VM is going).
-impl Drop for WriteFile {
-    fn drop(&mut self) {
-        if !self.on_complete_ctx.is_null() {
-            (self.on_abandon)(self.on_complete_ctx);
-        }
-    }
-}
-
 impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
     pub fn schedule(
         this: WriteFile,
+        promise: Box<WriteFilePromise>,
         global: &JSGlobalObject,
         context: &bun_jsc::ScriptExecutionContext,
     ) {
-        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(context), this, ());
+        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(context), this, promise);
     }
 }
 
@@ -119,10 +113,6 @@ pub struct WriteFile {
     pub(crate) io_parking: super::IoParking,
     pub(crate) state: AtomicU8, // ClosingState
 
-    /// Null once handed to `on_complete_callback`.
-    pub(crate) on_complete_ctx: *mut c_void,
-    pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
-    pub(crate) on_abandon: WriteFileOnAbandon,
     pub(crate) total_written: usize,
 
     #[cfg(not(windows))]
@@ -294,12 +284,9 @@ impl WriteFile {
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn create_with_ctx(
+    pub(crate) fn create(
         file_blob: Blob,
         bytes_blob: Blob,
-        on_write_file_context: *mut c_void,
-        on_complete_callback: WriteFileOnWriteFileCallback,
-        on_abandon: WriteFileOnAbandon,
         mkdirp_if_not_exists: bool,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
@@ -318,37 +305,12 @@ impl WriteFile {
             #[cfg(not(windows))]
             io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
-            on_complete_ctx: on_write_file_context,
-            on_complete_callback,
-            on_abandon,
             total_written: 0,
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
         };
         Ok(write_file)
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn create<C>(
-        file_blob: Blob,
-        bytes_blob: Blob,
-        context: *mut C,
-        callback: WriteFileOnWriteFileCallback,
-        on_abandon: WriteFileOnAbandon,
-        mkdirp_if_not_exists: bool,
-    ) -> Result<WriteFile, Error> {
-        // The caller supplies a
-        // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`),
-        // so this is just a `.cast()` on `context`.
-        WriteFile::create_with_ctx(
-            file_blob,
-            bytes_blob,
-            context.cast::<c_void>(),
-            callback,
-            on_abandon,
-            mkdirp_if_not_exists,
-        )
     }
 
     // reshaped for borrowck — take (off, len) here and re-derive the slice
@@ -382,9 +344,9 @@ impl WriteFile {
         }
     }
 
-    pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> jsc::JsResult<()> {
-        let cb = this.on_complete_callback;
-        let cb_ctx = core::mem::replace(&mut this.on_complete_ctx, core::ptr::null_mut());
+    pub(crate) fn then(mut this: WriteFile, promise: Box<WriteFilePromise>) -> jsc::JsResult<()> {
+        let cb: WriteFileOnWriteFileCallback = WriteFilePromise::run;
+        let cb_ctx = bun_core::heap::into_raw(promise).cast::<c_void>();
         let system_error = this.system_error.take();
         let total_written = this.total_written;
         drop(this);
@@ -1233,15 +1195,11 @@ pub struct WriteFilePromise {
     pub global_this: *const JSGlobalObject,
 }
 
-impl WriteFilePromise {
-    /// The job was released without `then` (its context stopped, or the VM is going): the promise
-    /// stays pending.
-    #[cfg(not(windows))]
-    pub(crate) fn abandon(handler: *mut c_void) {
-        // SAFETY: as `run`; consumed here.
-        drop(unsafe { bun_core::heap::take(handler.cast::<Self>()) });
-    }
+// SAFETY: a promise handle and the global it was made in: used and dropped on that global's
+// JS thread only (a job's `Js` half).
+unsafe impl bun_jsc::job::JsAffine for WriteFilePromise {}
 
+impl WriteFilePromise {
     pub(crate) fn run(handler: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()> {
         let handler = handler.cast::<Self>();
         // SAFETY: handler is the Box-allocated WriteFilePromise created in

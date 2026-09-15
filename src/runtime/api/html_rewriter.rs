@@ -400,7 +400,7 @@ impl HTMLRewriter {
     pub(crate) fn begin_transform(
         &self,
         global: &JSGlobalObject,
-        script_context: bun_jsc::ContextId,
+        script_context: &bun_jsc::ScriptExecutionContext,
         response: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
@@ -417,7 +417,7 @@ impl HTMLRewriter {
     pub(crate) fn transform_(
         &self,
         global: &JSGlobalObject,
-        script_context: bun_jsc::ContextId,
+        script_context: &bun_jsc::ScriptExecutionContext,
         response_value: JSValue,
     ) -> JsResult<JSValue> {
         // `js_Response::from_js` returns the `m_ctx` as `NonNull<Response>`;
@@ -506,13 +506,12 @@ impl HTMLRewriter {
             // SAFETY: releases the wrapper's ref that `detach_ptr` orphaned.
             unsafe { Response::deref(out_response.as_const_ptr().cast_mut()) };
 
-            let context = global.bun_vm().context_of(script_context);
             return match kind {
                 ResponseKind::String => {
-                    blob.to_string(global, context, webcore::Lifetime::Transfer)
+                    blob.to_string(global, script_context, webcore::Lifetime::Transfer)
                 }
                 ResponseKind::ArrayBuffer => {
-                    blob.to_array_buffer(global, context, webcore::Lifetime::Transfer)
+                    blob.to_array_buffer(global, script_context, webcore::Lifetime::Transfer)
                 }
                 ResponseKind::Other => unreachable!(),
             };
@@ -550,7 +549,7 @@ impl HTMLRewriter {
         let response_value = eat_js_value(&mut iter, global)?;
         self.transform_(
             global,
-            global.bun_vm().context_of_caller(call_frame).id(),
+            global.bun_vm().context_of_caller(call_frame),
             response_value,
         )
     }
@@ -988,7 +987,7 @@ impl RewriterPipe {
     fn init(
         context: Rc<RefCell<LOLHTMLContext>>,
         global: &JSGlobalObject,
-        script_context: bun_jsc::ContextId,
+        script_context: &bun_jsc::ScriptExecutionContext,
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
@@ -997,7 +996,7 @@ impl RewriterPipe {
             cell: Cell::new(JSValue::ZERO),
             rewriter: JsCell::new(None),
             context,
-            script_context,
+            script_context: script_context.id(),
             input_source: Cell::new(SourceHandle::None),
             input_ended: Cell::new(false),
             js_pump_reaction_pending: Cell::new(false),
@@ -1105,7 +1104,7 @@ impl RewriterPipe {
         let value = original.get_body_value();
         let owned_readable_stream = original.get_body_readable_stream();
 
-        Self::wire_input(this, global, value, owned_readable_stream);
+        Self::wire_input(this, global, script_context, value, owned_readable_stream);
 
         // A handler that failed synchronously (the input was materialized, so
         // the whole rewrite ran inline above) surfaces as a synchronous throw
@@ -1126,6 +1125,7 @@ impl RewriterPipe {
     fn wire_input(
         pipe: bun_ptr::BackRef<Self>,
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         value: &mut webcore::body::Value,
         stream: Option<ReadableStream>,
     ) {
@@ -1145,7 +1145,6 @@ impl RewriterPipe {
                 _ => false,
             };
             if needs_stream {
-                let context = global.bun_vm().context_of(pipe.script_context);
                 match value
                     .to_readable_stream(global, context)
                     .and_then(|v| ReadableStream::from_js(v, global))

@@ -4556,19 +4556,16 @@ pub(crate) fn write_file_with_source_destination(
             let file_copier = write_file_mod::WriteFile::create(
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
-                write_file_promise,
-                WriteFilePromise::run,
-                WriteFilePromise::abandon,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
+            // SAFETY: `write_file_promise` was just produced by heap::alloc above; sole owner.
+            let mut write_file_promise = unsafe { bun_core::heap::take(write_file_promise) };
             // Defer promise creation until we're just about to schedule the task.
-            // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe { (*write_file_promise).promise = jsc::JSPromiseStrong::init(ctx) };
-            // SAFETY: same `write_file_promise` as above; still solely owned here.
-            let promise_value = unsafe { (*write_file_promise).promise.value() };
+            write_file_promise.promise = jsc::JSPromiseStrong::init(ctx);
+            let promise_value = write_file_promise.promise.value();
             promise_value.ensure_still_alive();
-            write_file_mod::WriteFile::schedule(file_copier, ctx, context);
+            write_file_mod::WriteFile::schedule(file_copier, write_file_promise, ctx, context);
             return Ok(promise_value);
         }
     }

@@ -4818,11 +4818,6 @@ bool JSC__JSValue__stringIncludes(JSC::EncodedJSValue value, JSC::JSGlobalObject
     return stringToSearchIn.find(searchString, 0) != WTF::notFound;
 }
 
-extern "C" JSC::EncodedJSValue JSC__Exception__asJSValue(JSC::Exception* exception)
-{
-    return JSC::JSValue::encode(exception);
-}
-
 void JSC__VM__releaseWeakRefs(JSC::VM* arg0)
 {
     arg0->finalizeSynchronousJSExecution();

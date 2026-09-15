@@ -114,10 +114,9 @@ void ClipboardItem::getType(const String& type, Ref<DeferredPromise>&& promise)
         }
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         RefPtr blob = blobFromSettledValue(globalObject, result, type);
-        if (auto* exception = catchScope.exception()) [[unlikely]] {
-            JSC::JSValue error = exception->value();
-            if (catchScope.clearExceptionExceptTermination())
-                promise->reject(error);
+        if (catchScope.exception()) [[unlikely]] {
+            if (auto* jsPromise = dynamicDowncast<JSC::JSPromise>(promise->promise()))
+                rejectPromiseWithExceptionIfAny(*globalObject, *globalObject, *jsPromise, catchScope);
             return;
         }
         promise->resolveWithCallback([&](JSDOMGlobalObject& promiseGlobalObject) {
@@ -329,17 +328,12 @@ void ClipboardItem::didSettle(JSC::JSGlobalObject& globalObject, size_t index, b
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject.vm());
     auto generation = m_collectGeneration;
     RefPtr blob = blobFromSettledValue(&globalObject, result, m_promises[index].key);
-    JSC::JSValue error;
-    if (auto* exception = catchScope.exception()) [[unlikely]] {
-        error = exception->value();
-        if (!catchScope.clearExceptionExceptTermination())
-            return;
-    }
     // The coercion ran user JS, which may have started another write of this item.
     if (generation != m_collectGeneration)
         return;
-    if (!blob) {
-        finishCollect(std::nullopt, error);
+    // The writer rejects with the pending exception.
+    if (catchScope.exception()) [[unlikely]] {
+        finishCollect(std::nullopt);
         return;
     }
 

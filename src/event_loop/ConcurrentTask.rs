@@ -144,6 +144,11 @@ impl ContextId {
     pub const fn from_raw(raw: u32) -> ContextId {
         ContextId(raw)
     }
+
+    #[inline]
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
 }
 
 /// Whose script a queued task continues: what the event loop checks before it runs one.

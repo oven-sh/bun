@@ -103,6 +103,7 @@ void ScriptExecutionContext::stop()
     ASSERT(isContextThread());
     bool alreadyStopped = std::exchange(m_isStopped, true);
     Bun__ScriptExecutionContext__stop(m_bunVM, m_bunContext);
+    closeSQLiteDatabases();
     // (Stopping one runs its close handlers, which can create another.)
     for (auto& owned : copyToVectorOf<Ref<ScriptExecutionContext>>(m_ownedGraphContexts))
         owned->stop();
@@ -111,6 +112,26 @@ void ScriptExecutionContext::stop()
     // Its objects are stopped (its workers terminated) from the queue, not under whatever script
     // is disposing; nothing reaches their listeners from here on either way (isJSExecutionForbidden).
     Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stopActiveDOMObjects(); }));
+}
+
+extern "C" void Bun__closeSQLiteDatabasesOfGraphContext(ScriptExecutionContextIdentifier);
+extern "C" void Bun__closeNodeSqliteDatabasesOfGraphContext(ScriptExecutionContextIdentifier);
+
+void ScriptExecutionContext::closeSQLiteDatabases()
+{
+    Bun__closeSQLiteDatabasesOfGraphContext(m_identifier);
+    Bun__closeNodeSqliteDatabasesOfGraphContext(m_identifier);
+}
+
+ScriptExecutionContextIdentifier ScriptExecutionContext::ownerOfSQLiteDatabase(JSC::JSGlobalObject* globalObject)
+{
+    auto* context = defaultGlobalObject(globalObject)->currentScriptExecutionContext();
+    if (!context->isForModuleGraph())
+        return 0;
+    // Opened by what a disposed graph had queued: closed from the queue, not under its caller.
+    if (context->isStopped())
+        Bun__VM__queueTask(context->m_bunVM, new EventLoopTask([protectedThis = Ref { *context }](ScriptExecutionContext&) { protectedThis->closeSQLiteDatabases(); }));
+    return context->identifier();
 }
 
 void ScriptExecutionContext::ownGraphContext(ScriptExecutionContext& made)

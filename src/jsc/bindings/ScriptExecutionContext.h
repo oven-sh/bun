@@ -141,6 +141,12 @@ public:
     void checkConsistency() const;
 
     void regenerateIdentifier();
+
+    // bun:sqlite and node:sqlite databases are closed with the Bun.ModuleGraph whose script opened
+    // them, as they are with the VM that did. `ownerOfSQLiteDatabase`: the context to record for
+    // one that is being opened (0: the running script is not a graph's).
+    static ScriptExecutionContextIdentifier ownerOfSQLiteDatabase(JSC::JSGlobalObject*);
+    void closeSQLiteDatabases();
     void addToContextsMap();
     void removeFromContextsMap();
 

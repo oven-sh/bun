@@ -66,6 +66,8 @@ pub struct FileSink {
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
     pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
+    /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open.
+    abort_handle: bun_jsc::AbortHandle,
 }
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
@@ -498,6 +500,7 @@ impl FileSink {
         bun_core::scoped_log!(FileSink, "onClose()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
+            (*this).abort_handle.leave();
             if (*this).js_global().is_some() {
                 if let Some(stream) = (*this).pipe.get().stream() {
                     stream.done();
@@ -719,6 +722,17 @@ impl FileSink {
             }
             sys::Result::Ok(fd) => fd,
         };
+
+        // A file script of a `Bun.ModuleGraph` opened by path is closed with that graph. (The
+        // host's sinks are left to flush at exit as they always have.)
+        if matches!(options.input_path, PathOrFileDescriptor::Path(_)) {
+            if let Some(context) = self.js_vm().and_then(|vm| vm.current_graph_context()) {
+                // SAFETY: a started sink is heap-allocated; it leaves its context in `on_close`.
+                unsafe {
+                    bun_jsc::AbortHandle::arm_owner(core::ptr::from_ref(self).cast_mut(), context);
+                }
+            }
+        }
 
         #[cfg(windows)]
         {
@@ -1552,9 +1566,18 @@ impl FileSink {
             stream_js_error: Cell::new(false),
             stream_bytes: Cell::new(None),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
         }
     }
 }
+
+bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
+    // What is buffered is dropped with the graph; `on_close` follows and may free `this`.
+    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run).
+    let this = unsafe { &*this };
+    this.done.set(true);
+    this.end_writer();
+});
 
 #[derive(Default)]
 pub struct FlushPendingTask {

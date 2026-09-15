@@ -868,19 +868,24 @@ static WTF::Lock openDatabasesLock;
 // Keyed by the owning VM, captured while the cell is provably alive: the exit
 // walk filters on the stored pointer instead of dereferencing cells that
 // another thread's heap may be sweeping. Entries are not GC roots.
-static WTF::HashMap<JSDatabaseSync*, JSC::VM*>& openDatabases()
+struct OpenDatabaseOwner {
+    JSC::VM* vm;
+    // The Bun.ModuleGraph context whose script opened it (0: none): closed when that graph is disposed.
+    WebCore::ScriptExecutionContextIdentifier graphContext;
+};
+static WTF::HashMap<JSDatabaseSync*, OpenDatabaseOwner>& openDatabases()
 {
-    static WTF::NeverDestroyed<WTF::HashMap<JSDatabaseSync*, JSC::VM*>> map;
+    static WTF::NeverDestroyed<WTF::HashMap<JSDatabaseSync*, OpenDatabaseOwner>> map;
     return map;
 }
 
-static void registerOpenDatabase(JSDatabaseSync* db, JSC::VM& vm)
+static void registerOpenDatabase(JSDatabaseSync* db, JSC::JSGlobalObject* globalObject)
 {
     // The destructor is what removes the raw pointer again (via
     // closeInternal), so it must run before the cell's memory is reused.
     static_assert(JSDatabaseSync::needsDestruction == JSC::NeedsDestruction);
     WTF::Locker locker { openDatabasesLock };
-    openDatabases().set(db, &vm);
+    openDatabases().set(db, OpenDatabaseOwner { &globalObject->vm(), WebCore::ScriptExecutionContext::ownerOfSQLiteDatabase(globalObject) });
 }
 
 static void unregisterOpenDatabase(JSDatabaseSync* db)
@@ -971,7 +976,7 @@ extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObje
     {
         WTF::Locker locker { openDatabasesLock };
         for (auto& entry : openDatabases()) {
-            if (entry.value == exitingVM)
+            if (entry.value.vm == exitingVM)
                 toClose.append(entry.key);
         }
     }
@@ -987,6 +992,24 @@ extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObje
         // snapshot lock above must already be dropped; it also nulls m_db,
         // making a later GC destructor a no-op rather than a double close.
         db->closeInternal();
+    }
+}
+
+// The databases script of a Bun.ModuleGraph opened, when that graph is disposed.
+extern "C" void Bun__closeNodeSqliteDatabasesOfGraphContext(WebCore::ScriptExecutionContextIdentifier graphContext)
+{
+    WTF::Vector<JSDatabaseSync*> toClose;
+    {
+        WTF::Locker locker { openDatabasesLock };
+        for (auto& entry : openDatabases()) {
+            if (entry.value.graphContext == graphContext)
+                toClose.append(entry.key);
+        }
+    }
+    for (auto* db : toClose) {
+        // dispose() from inside a UDF/authorizer: sqlite3_step() is on the C stack (see above).
+        if (!db->isBusy())
+            db->closeInternal();
     }
 }
 
@@ -1076,7 +1099,7 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     ++m_openGeneration;
     // Register before the fallible configuration calls below: each of their
     // failure paths goes through closeInternal(), which unregisters.
-    registerOpenDatabase(this, globalObject->vm());
+    registerOpenDatabase(this, globalObject);
 
 #if LAZY_LOAD_SQLITE
     // Apple's system libsqlite3 defaults SQLITE_FCNTL_PERSIST_WAL on;

@@ -338,32 +338,53 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     Binding::to_js_boxed(module, global)
 }
 
-/// `(fd)`: a node:fs stream opened `fd` for itself. If the script that is running is a
-/// `Bun.ModuleGraph`'s, the descriptor is closed when that graph is disposed: nothing is reported to
-/// a disposed graph, so the stream never gets to close it.
+/// `(fd)` → its owner: a node:fs stream or `FileHandle` opened `fd` for itself. If the script that is
+/// running is a `Bun.ModuleGraph`'s, that graph's context closes the descriptor when the graph is
+/// disposed (nothing is reported to a disposed graph, so the object never gets to close it), and
+/// the owner is that context's id. 0: nobody but the object closes it.
 #[bun_jsc::host_fn]
-pub(crate) fn own_stream_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn own_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_sys_jsc::FdJsc as _;
     if let (Some(context), Some(fd)) = (
         global.bun_vm().current_graph_context(),
         bun_sys::Fd::from_js(frame.argument(0)),
     ) {
         context.own_fd(fd);
+        return Ok(JSValue::js_number(f64::from(context.id().raw())));
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(JSValue::js_number(0.0))
 }
 
-/// `(fd)`: the stream is closing `fd` itself.
+/// `(owner)` → whether a descriptor [`own_fd`] gave to `owner` is still open: not once that context
+/// stopped. (The number may be another file's by then.)
 #[bun_jsc::host_fn]
-pub(crate) fn disown_stream_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn is_owned_fd_open(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let owner = frame.argument(0).coerce_to_i32(global)?;
+    Ok(JSValue::from(
+        owner == 0
+            || global
+                .bun_vm()
+                .is_context_live(bun_jsc::ContextId::from_raw(owner as u32)),
+    ))
+}
+
+/// `(fd, owner)` → whether the caller is to close `fd`, which is its own again: not if the context
+/// that owned it has stopped, and closed it.
+#[bun_jsc::host_fn]
+pub(crate) fn release_owned_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_sys_jsc::FdJsc as _;
-    if let (Some(context), Some(fd)) = (
-        global.bun_vm().current_graph_context(),
-        bun_sys::Fd::from_js(frame.argument(0)),
-    ) {
+    let owner = frame.argument(1).coerce_to_i32(global)?;
+    if owner == 0 {
+        return Ok(JSValue::TRUE);
+    }
+    let context = global
+        .bun_vm()
+        .graph_context(bun_jsc::ContextId::from_raw(owner as u32))
+        .filter(|context| !context.is_stopped());
+    if let (Some(context), Some(fd)) = (context, bun_sys::Fd::from_js(frame.argument(0))) {
         context.disown_fd(fd);
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(JSValue::from(context.is_some()))
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the

@@ -79,10 +79,26 @@ const dir = String(
     `,
     // What a disposed graph left in something of the realm's. Each in a process of its own: they count objects.
     "left-behind-tenant.mjs": `
+      import { Database } from "bun:sqlite";
       import fs from "node:fs";
       import { PerformanceObserver } from "node:perf_hooks";
+      import { DatabaseSync } from "node:sqlite";
+      // (No node:sqlite statement: its close() leaves the file open until they are collected, dispose() or not.)
+      // Files held open inside \`dir\`, each by an object that would have to be closed or collected to let go.
+      export const keepsFilesOpen = async dir => {
+        const db = new Database(dir + "/bun.sqlite");
+        db.run("create table t (a)");
+        const nodeDb = new DatabaseSync(dir + "/node.sqlite");
+        nodeDb.exec("create table t (a)");
+        const writer = Bun.file(dir + "/written.txt").writer();
+        writer.write("x");
+        await writer.flush();
+        const handle = await fs.promises.open(dir + "/handle.txt", "w");
+        const stream = fs.createWriteStream(dir + "/stream.txt");
+        await new Promise(resolve => stream.once("open", resolve));
+        return { db, statement: db.prepare("select a from t"), nodeDb, writer, handle, stream };
+      };
       export const observeHttp = () => new PerformanceObserver(() => {}).observe({ entryTypes: ["http"] });
-      // Each promise's reaction holds a FormData: alive for as long as the promise is kept.
       // Streams in the middle of their work: each holds a descriptor only it would close.
       export const streams = async (path, count) => {
         const opened = [];
@@ -95,6 +111,10 @@ const dir = String(
         }
         await Promise.all(opened);
       };
+      // FileHandles nobody closes and nobody keeps.
+      export const forgetsFileHandles = async (path, count) => { for (let i = 0; i < count; i++) await fs.promises.open(path, "r"); };
+      // One the host is handed, with a stream over another.
+      export const fileHandleAndStream = async path => ({ handle: await fs.promises.open(path, "r"), stream: await new Promise(resolve => { const stream = fs.createReadStream(path, { highWaterMark: 1 }); stream.once("open", () => resolve(stream)); }) });
       export const opens = (path, count) => { for (let i = 0; i < count; i++) fs.promises.open(path, "r").then(handle => handle.close(), () => {}); };
       // unwrapKey("jwk") of bytes that are not a JWK rejects from its first step.
       export async function failingUnwraps(count) {
@@ -142,6 +162,35 @@ const dir = String(
       await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ leftOpen: descriptors() - before }));
     `,
+    "open-files-of-a-disposed-graph.mjs": `
+      import fs from "node:fs";
+      const descriptors = () => (process.platform === "win32" ? 0 : fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length);
+      const dir = fs.mkdtempSync(import.meta.dir + "/open-files-");
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      const before = descriptors();
+      // Kept by the host, so no collection lets go of them.
+      const kept = await graph.run(() => app.keepsFilesOpen(dir));
+      const open = descriptors() - before;
+      graph.dispose();
+      const leftOpen = descriptors() - before;
+      // On Windows an open file pins its directory: the rename works once every one of them is closed.
+      for (;;) {
+        try {
+          fs.renameSync(dir, dir + "-moved");
+          break;
+        } catch (error) {
+          if (!["EPERM", "EBUSY", "EACCES"].includes(error.code)) throw error;
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+      const message = fn => { try { fn(); return "returned"; } catch (error) { return error.message; } };
+      console.log(JSON.stringify({
+        open: process.platform === "win32" ? 5 : open,
+        leftOpen,
+        hostUses: [message(() => kept.db.run("select 1")), message(() => kept.statement.get()), message(() => kept.nodeDb.exec("select 1"))],
+      }));
+    `,
     "streams-of-a-disposed-graph.mjs": `
       import fs from "node:fs";
       const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
@@ -152,6 +201,47 @@ const dir = String(
       const open = descriptors() - before;
       graph.dispose();
       console.log(JSON.stringify({ open, leftOpen: descriptors() - before }));
+    `,
+    "forgotten-file-handles.mjs": `
+      import fs from "node:fs";
+      const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      const heard = { host: [], graph: [] };
+      process.on("uncaughtException", error => heard.host.push(error.code));
+      const graph = new Bun.ModuleGraph({ isolateIO: true, onError: error => heard.graph.push(error.code) });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      const before = descriptors();
+      await graph.run(() => app.forgetsFileHandles(import.meta.path, 8));
+      const open = descriptors() - before;
+      if (process.argv[2] === "disposed") graph.dispose();
+      const leftOpenByDispose = descriptors() - before;
+      // The host forgets one as well: node:fs reporting it says the collection that took the graph's has run.
+      await (async () => void (await fs.promises.open(import.meta.path, "r")))();
+      const expected = process.argv[2] === "disposed" ? 0 : 8;
+      while (heard.host.length < 1 || heard.graph.length < expected) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ open, leftOpenByDispose, leftOpen: descriptors() - before, ...heard }));
+    `,
+    "file-handle-the-host-holds.mjs": `
+      import fs from "node:fs";
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      const { handle, stream } = await graph.run(() => app.fileHandleAndStream(import.meta.path));
+      graph.dispose();
+      // The numbers are given to the next files opened: what the graph's objects do now must not reach them.
+      const mine = [fs.openSync(import.meta.path, "r"), fs.openSync(import.meta.path, "r")];
+      const read = await handle.read(Buffer.alloc(1), 0, 1, 0).then(() => "read", error => error.code);
+      const streamed = await new Promise(resolve => {
+        let saw = "nothing";
+        stream.on("error", error => { saw = error.code; });
+        stream.on("data", () => { saw = "data"; stream.destroy(); });
+        stream.on("close", () => resolve(saw));
+      });
+      await handle.close();
+      const stillMine = mine.map(fd => { try { return fs.readSync(fd, Buffer.alloc(1), 0, 1, 0); } catch (error) { return error.code; } });
+      console.log(JSON.stringify({ fd: handle.fd, read, streamed, stillMine }));
     `,
     "subtle-after-a-disposed-graph.mjs": `
       const graph = new Bun.ModuleGraph({ isolateIO: true });
@@ -2314,9 +2404,49 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test.skipIf(isWindows)("the files its fs.promises.open() calls in flight opened are closed", async () => {
     expect(await runs("files-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"leftOpen":0}`, exitCode: 0 });
   });
+  test("the files it held open are closed: a writer, bun:sqlite and node:sqlite databases, a FileHandle, a stream", async () => {
+    expect(await runs("open-files-of-a-disposed-graph.mjs")).toEqual({
+      stdout: JSON.stringify({
+        open: 5,
+        leftOpen: 0,
+        hostUses: ["Database has closed", "Database has closed", "database is not open"],
+      }),
+      exitCode: 0,
+    });
+  });
   // (A disposed graph is told nothing, so its streams never get to close what they opened.)
   test.skipIf(isWindows)("the files its node:fs streams had open are closed", async () => {
     expect(await runs("streams-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"open":32,"leftOpen":0}`, exitCode: 0 });
+  });
+  test.skipIf(isWindows)(
+    "a FileHandle it forgot is closed by dispose(), and node:fs reports it to nobody",
+    async () => {
+      expect(await runs("forgotten-file-handles.mjs", "disposed")).toEqual({
+        stdout: `{"open":8,"leftOpenByDispose":0,"leftOpen":0,"host":["ERR_INVALID_STATE"],"graph":[]}`,
+        exitCode: 0,
+      });
+    },
+  );
+  test.skipIf(isWindows)(
+    "a FileHandle a live graph forgot is reported to that graph's onError, not to the host",
+    async () => {
+      expect(await runs("forgotten-file-handles.mjs", "live")).toEqual({
+        stdout: JSON.stringify({
+          open: 8,
+          leftOpenByDispose: 8,
+          leftOpen: 0,
+          host: ["ERR_INVALID_STATE"],
+          graph: Array(8).fill("ERR_INVALID_STATE"),
+        }),
+        exitCode: 0,
+      });
+    },
+  );
+  test("a FileHandle and a stream of a disposed graph that the host still holds are closed, and never touch the descriptor's next owner", async () => {
+    expect(await runs("file-handle-the-host-holds.mjs")).toEqual({
+      stdout: `{"fd":-1,"read":"EBADF","streamed":"EBADF","stillMine":[1,1]}`,
+      exitCode: 0,
+    });
   });
   test("crypto.subtle operations it had rejected early do not stop the host's later ones from settling", async () => {
     // (If they do, the host's await never finishes and the process exits with nothing printed.)

@@ -401,9 +401,9 @@ pub struct PackageManager {
     /// Bumped by every `wake_raw`. `sleep_until` parks on it when the install
     /// thread is the JS thread, so that wait never runs the JS event loop.
     pub(crate) wake_count: AtomicU32,
-    /// `sleep_until` is parked on `wake_count`; lets `wake_raw` skip the
-    /// futex syscall when nothing waits (every `bun install` task).
-    pub(crate) parked_on_wake_count: AtomicBool,
+    /// Threads parked on `wake_count`; lets `wake_raw` skip the futex syscall
+    /// when there is none (every `bun install` task).
+    pub(crate) wake_waiters: AtomicU32,
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -952,13 +952,13 @@ impl PackageManager {
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
 
-            // SeqCst pairs with `park_until`: it sets the flag before it reads
-            // the count, this bumps the count before it reads the flag, so one
-            // of the two sees the other and no wake is lost.
+            // SeqCst pairs with `park_until`: it registers as a waiter before it
+            // reads the count, this bumps the count before it reads the waiters,
+            // so one of the two sees the other and no wake is lost.
             let wake_count = &*core::ptr::addr_of!((*this).wake_count);
             wake_count.fetch_add(1, Ordering::SeqCst);
-            if (*core::ptr::addr_of!((*this).parked_on_wake_count)).load(Ordering::SeqCst) {
-                Futex::wake(wake_count, 1);
+            if (*core::ptr::addr_of!((*this).wake_waiters)).load(Ordering::SeqCst) > 0 {
+                Futex::wake(wake_count, u32::MAX);
             }
         }
     }
@@ -982,7 +982,7 @@ impl PackageManager {
     /// The exception is a `git` child. Nothing can finish one while this
     /// thread is blocked, so the wait ends once only those are left and the
     /// caller reports the dependency as not resolved. The clone carries on
-    /// when the event loop runs again, and fills the cache.
+    /// when the event loop runs again.
     ///
     /// # Safety
     /// Same contract as `sleep_until`.
@@ -995,9 +995,9 @@ impl PackageManager {
         // `PackageManager`, so no reference may live across a call to it.
         // SAFETY: `this` is valid per fn contract; both fields are atomics.
         let wake_count = || unsafe { &*core::ptr::addr_of!((*this).wake_count) };
-        let parked = || unsafe { &*core::ptr::addr_of!((*this).parked_on_wake_count) };
+        let waiters = || unsafe { &*core::ptr::addr_of!((*this).wake_waiters) };
 
-        parked().store(true, Ordering::SeqCst);
+        waiters().fetch_add(1, Ordering::SeqCst);
         loop {
             // Read before `is_done` drains the queues: a task that finishes
             // after the drain bumps the count, and the wait below returns at once.
@@ -1011,7 +1011,7 @@ impl PackageManager {
             }
             Futex::wait_forever(wake_count(), seen);
         }
-        parked().store(false, Ordering::SeqCst);
+        waiters().fetch_sub(1, Ordering::SeqCst);
     }
 
     /// Associated fn taking `*mut PackageManager` (NOT `&mut self`): every
@@ -2207,7 +2207,7 @@ pub fn init(
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, WakeHandler::default());
         wr!(wake_count, AtomicU32::new(0));
-        wr!(parked_on_wake_count, AtomicBool::new(false));
+        wr!(wake_waiters, AtomicU32::new(0));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
@@ -2671,7 +2671,7 @@ fn init_with_runtime_once(
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, WakeHandler::default());
         wr!(wake_count, AtomicU32::new(0));
-        wr!(parked_on_wake_count, AtomicBool::new(false));
+        wr!(wake_waiters, AtomicU32::new(0));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()

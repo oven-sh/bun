@@ -16,8 +16,9 @@ use crate::encode;
 /// What Go (`runtime.MemProfileRate`), tcmalloc and V8 (`--heap-prof-interval`) use.
 pub const DEFAULT_SAMPLE_INTERVAL: usize = 512 * 1024;
 
-/// Below this, mimalloc's coarse countdown (it counts the blocks of a page when the page is
-/// refilled) misattributes small allocations.
+/// The smallest mean interval (single intervals are drawn around it and can be shorter). mimalloc
+/// counts small allocations when their page is refilled, up to 64 KiB of blocks at a time: a
+/// mean below that samples them no finer and costs more.
 pub const MIN_SAMPLE_INTERVAL: usize = 64 * 1024;
 
 /// Frames read from the frame-pointer chain of one sample.
@@ -261,7 +262,7 @@ impl Strings {
 
 const _: () = assert!(
     core::mem::align_of::<SampleData>() <= core::mem::align_of::<*mut c_void>()
-        && core::mem::size_of::<SampleData>() <= 1024
+        && core::mem::size_of::<SampleData>() <= mimalloc::MI_PROFILE_SAMPLE_DATA_MAX_SIZE
 );
 
 /// What [`on_alloc`] leaves in the sampled block for [`on_free`].
@@ -474,6 +475,7 @@ impl Session {
         // (0, 1]
         let uniform = (bits as f64 + 1.0) / (1u64 << 53) as f64;
         let interval = -uniform.ln() * self.sample_interval as f64;
+        // What is allocated after a thread's last sample is in no sample: at most this much.
         (interval as usize).clamp(1, self.sample_interval.saturating_mul(16))
     }
 }
@@ -881,10 +883,11 @@ unsafe extern "C" fn on_alloc(
         // SAFETY: see `sample_data`.
         unsafe { sample.write(recorded) };
     }
-    next.unwrap_or(bytes_sample_rate)
+    // The rate of a thread that has not had a sample yet is 1, and a drawn one can be as short.
+    next.unwrap_or_else(|| bytes_sample_rate.max(MIN_SAMPLE_INTERVAL))
 }
 
-/// The interval until the next sample, `None` to leave it as it is.
+/// The interval until the next sample, `None` when nothing was recorded.
 #[inline(never)]
 fn record_allocation(
     requested_size: usize,
@@ -1015,8 +1018,9 @@ unsafe extern "C" fn on_free(
         return;
     }
     if let Some(b) = session.buckets.get_mut(sample.bucket as usize) {
-        b.free_bytes += sample.bytes;
-        b.free_objects += sample.objects;
+        // The amounts were read from in front of the freed block, where the program can have written.
+        b.free_bytes = b.free_bytes.saturating_add(sample.bytes);
+        b.free_objects = b.free_objects.saturating_add(sample.objects);
     }
 }
 

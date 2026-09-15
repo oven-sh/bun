@@ -2,6 +2,8 @@
 import { decode, totalsWhere } from "./pprof-decode";
 
 const MiB = 1024 * 1024;
+// A short interval: the tail after the last sample, which no sample has, is an interval long.
+const options = { sampleInterval: 128 * 1024 };
 let first: ArrayBuffer[] | null = [];
 const second: ArrayBuffer[] = [];
 
@@ -12,11 +14,11 @@ function secondSession() {
   for (let i = 0; i < 32; i++) second.push(new ArrayBuffer(MiB));
 }
 
-Bun.pprof.heap.start();
+Bun.pprof.heap.start(options);
 firstSession();
 const firstProfile = decode(Bun.pprof.heap.stop());
 
-Bun.pprof.heap.start();
+Bun.pprof.heap.start(options);
 secondSession();
 const arrayBuffersBefore = process.memoryUsage().arrayBuffers;
 first = null;

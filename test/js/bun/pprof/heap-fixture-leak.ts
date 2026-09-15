@@ -1,5 +1,5 @@
 // Run by heap.test.ts: a session gives back everything when it is stopped.
-// Each session samples about 300 distinct stacks: a quarter MiB of tables.
+// Each session samples about 230 distinct stacks (three of four blocks): a fifth of a MiB of tables.
 const sink: ArrayBuffer[] = [];
 function a(depth: number): number {
   // not a tail call: each depth is a stack of its own

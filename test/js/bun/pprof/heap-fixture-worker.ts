@@ -2,7 +2,8 @@
 import { Worker } from "node:worker_threads";
 import { decode } from "./pprof-decode";
 
-Bun.pprof.heap.start();
+// A short interval: the tail after the last sample, which no sample has, is an interval long.
+Bun.pprof.heap.start({ sampleInterval: 128 * 1024 });
 
 function summarize(bytes: Uint8Array, threadId: number) {
   const profile = decode(bytes);

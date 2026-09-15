@@ -7,7 +7,7 @@ import { decode } from "../../js/bun/pprof/pprof-decode";
 const script = `
   const kept = [];
   function allocate() {
-    for (let i = 0; i < 16; i++) kept.push(new ArrayBuffer(1024 * 1024));
+    for (let i = 0; i < 64; i++) kept.push(new ArrayBuffer(1024 * 1024));
   }
   allocate();
   console.log(Bun.pprof.heap.isRunning);
@@ -40,9 +40,11 @@ function expectHeapProfile(path: string, period: number) {
   // TODO: samples have no JavaScript frames on x64 Windows (see heap.test.ts).
   if (!isASAN && !(isWindows && process.arch === "x64")) {
     const allocate = profile.samples.filter(s => s.stack.some(f => f.function === "allocate"));
-    // 16 MiB in blocks twice the interval: nearly every block is a sample.
+    // 64 MiB in blocks twice the mean interval: most blocks are samples, and a sample weighs
+    // what was allocated since the one before. What follows the last sample is in no sample:
+    // that tail is as long as an interval, which is drawn from an exponential distribution.
     const inuse = allocate.reduce((sum, s) => sum + s.values.inuse_space, 0);
-    expect(Math.abs(inuse - 16 * 1024 * 1024)).toBeLessThan(3 * 1024 * 1024);
+    expect(Math.abs(inuse - 64 * 1024 * 1024)).toBeLessThan(8 * 1024 * 1024);
     return allocate;
   }
   return [];

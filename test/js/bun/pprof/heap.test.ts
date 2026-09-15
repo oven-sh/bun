@@ -155,9 +155,11 @@ describe.concurrent("Bun.pprof.heap", () => {
       expect(result.stillRunning).toBe(true);
       expect(result.keptBuffers).toBe(64);
 
-      // 64 MiB each, in blocks twice the interval: nearly every block is a sample, and the
+      // 64 MiB each, in blocks twice the mean interval: most blocks are samples, and the
       // weight of a sample carries what was allocated since the one before. (The object count
       // is weight / size, which is large when a sample lands on a small allocation in between.)
+      // What follows the last sample is in no sample; that tail is an interval long, and
+      // intervals are drawn from an exponential distribution.
       const within = (value: number, expected: number) => Math.abs(value - expected) <= expected * 0.15;
       expect(result.keep.alloc_objects).toBeGreaterThan(48);
       expect(within(result.keep.alloc_space, 64 * MiB)).toBe(true);
@@ -338,7 +340,7 @@ describe.concurrent("Bun.pprof.heap", () => {
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const { growthMiB, profileBytes } = JSON.parse(stdout);
     if (quantitative) expect(profileBytes).toBeGreaterThan(200 * 1500);
-    // 200 sessions of about a quarter MiB of tables each: 50 MiB if they were kept. Not
+    // 200 sessions of about a fifth of a MiB of tables each: 40 MiB if they were kept. Not
     // under ASAN: the fixture's freed buffers sit in its quarantine, which moves RSS by more.
     if (!isASAN) expect(growthMiB).toBeLessThan(isDebug ? 32 : 16);
   });

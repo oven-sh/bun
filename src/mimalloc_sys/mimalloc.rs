@@ -90,6 +90,9 @@ pub struct struct_mi_heap_area_s {
     pub full_block_size: usize,
     pub reserved1: *mut core::ffi::c_void,
 }
+/// `MI_PROFILE_SAMPLE_DATA_MAX_SIZE` (mimalloc-profile.h): the most `sample_data_size` can ask for.
+pub const MI_PROFILE_SAMPLE_DATA_MAX_SIZE: usize = 1024;
+
 /// `mi_profiler_sample_data_t` (mimalloc-profile.h): stored in front of each sampled block
 /// when the profiler has an `on_free`. `user_data` is `sample_data_size` bytes long.
 #[repr(C)]

@@ -3276,7 +3276,10 @@ config:
         { name: "key with tab", value: { "a\tb": 1 } },
         { name: "key with quotes", value: { "it's": 1, 'say "hi"': 2 } },
         { name: "unicode key", value: { ключ: 1, 日本: 2, "😀": 3 } },
-        { name: "key with indicator chars", value: { "[a]": 1, "{b}": 2, "&c": 3, "*d": 4, "!e": 5, "|f": 6, ">g": 7, "%h": 8, "@i": 9, "`j": 10 } },
+        {
+          name: "key with indicator chars",
+          value: { "[a]": 1, "{b}": 2, "&c": 3, "*d": 4, "!e": 5, "|f": 6, ">g": 7, "%h": 8, "@i": 9, "`j": 10 },
+        },
         { name: "merge key", value: { "<<": 1 } },
         { name: "integer keys order first", value: { b: 1, "2": 2, a: 3, "1": 4 } },
         { name: "long key", value: { [longNoSpace]: 1 } },
@@ -3291,7 +3294,15 @@ config:
         { name: "array of objects", value: [{ a: 1 }, { b: 2 }] },
         { name: "array of objects with nested empties", value: [{ a: [] }, { b: {} }, { c: [{}] }] },
         { name: "array of arrays of objects", value: [[{ a: 1 }], [{ b: [2] }]] },
-        { name: "object with array of arrays", value: { m: [[1, 2], [3, 4]] } },
+        {
+          name: "object with array of arrays",
+          value: {
+            m: [
+              [1, 2],
+              [3, 4],
+            ],
+          },
+        },
         { name: "object with nested empty object chain", value: { a: { b: { c: {} } } } },
         { name: "object with nested empty array chain", value: { a: { b: { c: [] } } } },
         { name: "first key is collection", value: { a: { b: 1 }, c: 2 } },
@@ -3300,7 +3311,10 @@ config:
         { name: "multi-line strings in array", value: ["a\nb", "c\n", "\nd"] },
         { name: "quoted strings in nested array", value: { list: [": x", "- y", "# z", "[w]"] } },
         { name: "alternating nesting", value: { a: [{ b: [{ c: [1] }] }] } },
-        { name: "empty collections at every depth", value: { a: {}, b: [], c: { d: {}, e: [] }, f: [{}, [], { g: {} }] } },
+        {
+          name: "empty collections at every depth",
+          value: { a: {}, b: [], c: { d: {}, e: [] }, f: [{}, [], { g: {} }] },
+        },
         { name: "wide object", value: Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`k${i}`, i])) },
         { name: "long array", value: Array.from({ length: 30 }, (_, i) => i) },
         {
@@ -3308,7 +3322,11 @@ config:
           value: {
             version: "1.0",
             services: {
-              web: { image: "nginx:latest", ports: ["80:80", "443:443"], env: { NODE_ENV: "production", DEBUG: false } },
+              web: {
+                image: "nginx:latest",
+                ports: ["80:80", "443:443"],
+                env: { NODE_ENV: "production", DEBUG: false },
+              },
               db: { image: "postgres:13", volumes: ["./data:/var/lib/postgresql/data"], replicas: 0 },
             },
             networks: { default: { driver: "bridge" } },
@@ -3346,7 +3364,11 @@ config:
         { name: "boxed number", value: new Number(1), parsed: 1 },
         { name: "boxed string", value: new String("s"), parsed: "s" },
         { name: "boxed boolean", value: new Boolean(false), parsed: false },
-        { name: "boxed in object", value: { n: new Number(2.5), s: new String("x y"), b: new Boolean(true) }, parsed: { n: 2.5, s: "x y", b: true } },
+        {
+          name: "boxed in object",
+          value: { n: new Number(2.5), s: new String("x y"), b: new Boolean(true) },
+          parsed: { n: 2.5, s: "x y", b: true },
+        },
         { name: "boxed in array", value: [new Number(0), new String(""), new Boolean(false)], parsed: [0, "", false] },
         { name: "date in object", value: { d: new Date(0) }, parsed: { d: {} } },
         { name: "regexp in object", value: { r: /a+/g }, parsed: { r: {} } },

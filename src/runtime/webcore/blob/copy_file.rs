@@ -113,7 +113,7 @@ impl CopyFile {
             system_error: None,
             read_len: 0,
         };
-        let cx = global_this.js_thread();
+        let cx = global_this.js_thread(global_this.bun_vm().current_context());
         let promise = jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
         jsc::Job::<CopyFile>::schedule(&cx, copy, promise);

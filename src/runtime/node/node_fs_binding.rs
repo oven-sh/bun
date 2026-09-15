@@ -62,14 +62,26 @@ fn run_async<A: FsArgument>(
     this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, &Binding, ThreadIsolated<A>, &mut VirtualMachine) -> JSValue,
+    create_task: fn(
+        &JSGlobalObject,
+        &Binding,
+        ThreadIsolated<A>,
+        &mut VirtualMachine,
+        &bun_jsc::ScriptExecutionContext,
+    ) -> JSValue,
 ) -> JsResult<JSValue> {
     let args = match parse_async_args::<A>(global, frame) {
         Ok(args) => args,
         Err(result) => return result,
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(global, this, args, vm))
+    Ok(create_task(
+        global,
+        this,
+        args,
+        vm,
+        global.bun_vm().context_of_caller(frame),
+    ))
 }
 
 /// Parses a promise-returning binding's arguments; `Err` is what the binding returns instead.
@@ -163,7 +175,13 @@ impl Binding {
             Err(result) => return result,
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(AsyncCpTask::create(global, this, cp_args, vm))
+        Ok(AsyncCpTask::create(
+            global,
+            this,
+            cp_args,
+            vm,
+            global.bun_vm().context_of_caller(frame),
+        ))
     }
 
     /// `callSync(.cp)`.
@@ -202,9 +220,20 @@ impl Binding {
         let is_bunfs = bun_standalone_graph::Graph::get_ref().is_some()
             && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
         if rd_args.recursive && !is_bunfs {
-            return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
+            return Ok(AsyncReaddirRecursiveTask::create(
+                global,
+                rd_args,
+                vm,
+                global.bun_vm().context_of_caller(frame),
+            ));
         }
-        Ok(async_::Readdir::create(global, this, rd_args, vm))
+        Ok(async_::Readdir::create(
+            global,
+            this,
+            rd_args,
+            vm,
+            global.bun_vm().context_of_caller(frame),
+        ))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -346,8 +375,9 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
 #[bun_jsc::host_fn]
 pub(crate) fn own_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_sys_jsc::FdJsc as _;
+    let vm = global.bun_vm();
     if let (Some(context), Some(fd)) = (
-        global.bun_vm().current_graph_context(),
+        vm.as_graph_context(vm.context_of_caller(frame)),
         bun_sys::Fd::from_js(frame.argument(0)),
     ) {
         context.own_fd(fd);

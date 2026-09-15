@@ -926,6 +926,8 @@ impl Image {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        // What this starts is the calling script's.
+        let context = global.bun_vm().context_of_caller(callframe);
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
@@ -962,6 +964,7 @@ impl Image {
         }
         self.schedule(
             global,
+            context,
             callframe.this(),
             Kind::Metadata,
             Deliver::Uint8Array,
@@ -970,8 +973,11 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_bytes(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        // What this starts is the calling script's.
+        let context = global.bun_vm().context_of_caller(cf);
         self.schedule(
             global,
+            context,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Uint8Array,
@@ -980,8 +986,11 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_buffer(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        // What this starts is the calling script's.
+        let context = global.bun_vm().context_of_caller(cf);
         self.schedule(
             global,
+            context,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Buffer,
@@ -990,8 +999,11 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_blob(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        // What this starts is the calling script's.
+        let context = global.bun_vm().context_of_caller(cf);
         self.schedule(
             global,
+            context,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Blob,
@@ -1004,8 +1016,11 @@ impl Image {
         global: &JSGlobalObject,
         cf: &CallFrame,
     ) -> JsResult<JSValue> {
+        // What this starts is the calling script's.
+        let context = global.bun_vm().context_of_caller(cf);
         self.schedule(
             global,
+            context,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Base64,
@@ -1016,8 +1031,11 @@ impl Image {
     /// MIME prefix, so it drops straight into `<img src>`.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_data_url(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        // What this starts is the calling script's.
+        let context = global.bun_vm().context_of_caller(cf);
         self.schedule(
             global,
+            context,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::DataUrl,
@@ -1035,6 +1053,8 @@ impl Image {
         global: &JSGlobalObject,
         cf: &CallFrame,
     ) -> JsResult<JSValue> {
+        // What this starts is the calling script's.
+        let context = global.bun_vm().context_of_caller(cf);
         let args = cf.arguments();
         // Single positional `"dataurl"` for now — leaves room for `"hash"` /
         // `"color"` without growing methods. Anything else throws so the
@@ -1047,7 +1067,13 @@ impl Image {
                 )));
             }
         }
-        self.schedule(global, cf.this(), Kind::Placeholder, Deliver::DataUrl)
+        self.schedule(
+            global,
+            context,
+            cf.this(),
+            Kind::Placeholder,
+            Deliver::DataUrl,
+        )
     }
 
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -1058,6 +1084,8 @@ impl Image {
     /// the source format — so `img.resize(100).write("thumb.webp")` Just Works.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_write(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        // What this starts is the calling script's.
+        let context = global.bun_vm().context_of_caller(cf);
         let args = cf.arguments();
         if args.len() < 1 || args[0].is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1092,6 +1120,7 @@ impl Image {
         }
         self.schedule(
             global,
+            context,
             cf.this(),
             Kind::Encode(output),
             Deliver::WriteDest(Strong::create(args[0], global)),
@@ -1103,12 +1132,13 @@ impl Image {
     fn schedule(
         &self,
         global: &JSGlobalObject,
+        context: &jsc::ScriptExecutionContext,
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
         if matches!(self.source.get(), Source::Blob(_)) {
-            return BlobReadChain::start(self, global, this_value, kind, deliver);
+            return BlobReadChain::start(self, global, context, this_value, kind, deliver);
         }
         let (input, pin) = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
@@ -1133,7 +1163,7 @@ impl Image {
             auto_orient: self.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
-        let cx = global.js_thread();
+        let cx = global.js_thread(context);
         let promise = jsc::JSPromiseStrong::init(global);
         let promise_value = promise.value();
         jsc::Job::<PipelineTask>::schedule(
@@ -1242,6 +1272,8 @@ impl Image {
 struct BlobReadChain<'a> {
     image: *const Image,
     global: &'a JSGlobalObject,
+    /// The context of the script that asked: the task the read is followed by is that script's.
+    context: jsc::ContextId,
     kind: Kind,
     deliver: Deliver,
     outer: jsc::JSPromiseStrong,
@@ -1251,6 +1283,7 @@ impl<'a> BlobReadChain<'a> {
     fn start(
         image: &Image,
         global: &'a JSGlobalObject,
+        context: &jsc::ScriptExecutionContext,
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
@@ -1281,6 +1314,7 @@ impl<'a> BlobReadChain<'a> {
         let chain = Box::new(BlobReadChain {
             image: std::ptr::from_ref::<Image>(image),
             global,
+            context: context.id(),
             kind,
             deliver,
             outer: jsc::JSPromiseStrong::init(global),
@@ -1343,7 +1377,13 @@ impl<'a> BlobReadChain<'a> {
                 };
                 // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
                 // `deliver` was already dropped there and the pending exception is the rejection.
-                let inner = image.schedule(global, this_value, kind, deliver);
+                let inner = image.schedule(
+                    global,
+                    global.bun_vm().context_of(self.context),
+                    this_value,
+                    kind,
+                    deliver,
+                );
                 outer.settle(global, inner)
             }
             ReadBytesResult::Err(e) => {

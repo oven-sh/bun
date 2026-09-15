@@ -434,7 +434,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         );
 
         this.write_context()
-            .set(global_this.bun_vm().current_context().id());
+            .set(global_this.bun_vm().context_of_caller(callframe).id());
         this.write_in_progress().set(true);
         this.ref_();
 

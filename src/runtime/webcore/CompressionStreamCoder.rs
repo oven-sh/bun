@@ -296,9 +296,11 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
-            context: bun_jsc::virtual_machine::VirtualMachine::get()
-                .current_context()
-                .id(),
+            // SAFETY: `new` is exported for the C++ CompressionStream constructor, a host function.
+            context: unsafe {
+                bun_jsc::virtual_machine::VirtualMachine::get().context_of_cpp_caller()
+            }
+            .id(),
         }))
     }
 
@@ -1043,15 +1045,20 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     let (input, pin) = AsyncInput::new(global, chunk, fallback);
-    let cx = global.js_thread();
     // Called by script, the step is that script's; asked for by a native sink, it is the
     // stream's maker's.
-    let _context = if cx.vm().jsc_vm().is_entered() {
+    let vm = global.bun_vm();
+    let entered = if vm.jsc_vm().is_entered() {
         None
     } else {
         // SAFETY: `this` is the live coder owned by the calling JS cell.
-        Some(cx.vm().enter_context(unsafe { (*this).context }))
+        Some(vm.enter_context(unsafe { (*this).context }))
     };
+    let cx = global.js_thread(match &entered {
+        Some(scope) => scope.context(),
+        // SAFETY: exported for the C++ CompressionStream transform, which script is calling.
+        None => unsafe { vm.context_of_cpp_caller() },
+    });
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
         CompressionAsyncCtx {

@@ -400,16 +400,24 @@ impl HTMLRewriter {
     pub(crate) fn begin_transform(
         &self,
         global: &JSGlobalObject,
+        script_context: bun_jsc::ContextId,
         response: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
         let new_context = Rc::clone(&self.context);
-        RewriterPipe::init(new_context, global, response, sync_only_noun)
+        RewriterPipe::init(
+            new_context,
+            global,
+            script_context,
+            response,
+            sync_only_noun,
+        )
     }
 
     pub(crate) fn transform_(
         &self,
         global: &JSGlobalObject,
+        script_context: bun_jsc::ContextId,
         response_value: JSValue,
     ) -> JsResult<JSValue> {
         // `js_Response::from_js` returns the `m_ctx` as `NonNull<Response>`;
@@ -431,7 +439,7 @@ impl HTMLRewriter {
                     global.throw_invalid_arguments(format_args!("Response body already used"))
                 );
             }
-            let out = self.begin_transform(global, &response, None)?;
+            let out = self.begin_transform(global, script_context, &response, None)?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out.to_error() {
                 return Err(global.throw_value(err));
@@ -471,7 +479,8 @@ impl HTMLRewriter {
             } else {
                 "an ArrayBuffer"
             };
-            let out_response_value = self.begin_transform(global, &resp, Some(noun))?;
+            let out_response_value =
+                self.begin_transform(global, script_context, &resp, Some(noun))?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out_response_value.to_error() {
                 return Err(global.throw_value(err));
@@ -536,7 +545,11 @@ impl HTMLRewriter {
     ) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let response_value = eat_js_value(&mut iter, global)?;
-        self.transform_(global, response_value)
+        self.transform_(
+            global,
+            global.bun_vm().context_of_caller(call_frame).id(),
+            response_value,
+        )
     }
 }
 
@@ -972,6 +985,7 @@ impl RewriterPipe {
     fn init(
         context: Rc<RefCell<LOLHTMLContext>>,
         global: &JSGlobalObject,
+        script_context: bun_jsc::ContextId,
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
@@ -980,7 +994,7 @@ impl RewriterPipe {
             cell: Cell::new(JSValue::ZERO),
             rewriter: JsCell::new(None),
             context,
-            script_context: global.bun_vm().current_context().id(),
+            script_context,
             input_source: Cell::new(SourceHandle::None),
             input_ended: Cell::new(false),
             js_pump_reaction_pending: Cell::new(false),

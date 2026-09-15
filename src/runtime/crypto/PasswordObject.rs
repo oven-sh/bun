@@ -590,6 +590,7 @@ impl JSPasswordObject {
     /// `PasswordJob<Op>`, refs the loop, and schedules it.
     fn run<Op: PasswordOp, const SYNC: bool>(
         global_object: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         password: Box<[u8]>,
         op: Op,
     ) -> JsResult<JSValue> {
@@ -608,7 +609,7 @@ impl JSPasswordObject {
         let promise = JSPromiseStrong::init(global_object);
         let promise_value = promise.value();
         bun_jsc::Job::<PasswordJob<Op>>::schedule(
-            &global_object.js_thread(),
+            &global_object.js_thread(context),
             PasswordJob {
                 op,
                 password,
@@ -621,20 +622,23 @@ impl JSPasswordObject {
 
     pub(crate) fn hash<const SYNC: bool>(
         global_object: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         password: Box<[u8]>,
         algorithm: AlgorithmValue,
     ) -> JsResult<JSValue> {
-        Self::run::<HashOp, SYNC>(global_object, password, HashOp { algorithm })
+        Self::run::<HashOp, SYNC>(global_object, context, password, HashOp { algorithm })
     }
 
     pub(crate) fn verify<const SYNC: bool>(
         global_object: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         password: Box<[u8]>,
         prev_hash: Box<[u8]>,
         algorithm: Option<Algorithm>,
     ) -> JsResult<JSValue> {
         Self::run::<VerifyOp, SYNC>(
             global_object,
+            context,
             password,
             VerifyOp {
                 prev_hash,
@@ -680,6 +684,7 @@ fn js_password_object_hash(
 
     JSPasswordObject::hash::<false>(
         global_object,
+        global_object.bun_vm().context_of_caller(callframe),
         password_to_hash.into_boxed_slice(),
         algorithm,
     )
@@ -721,6 +726,7 @@ fn js_password_object_hash_sync(
     // signature.
     JSPasswordObject::hash::<true>(
         global_object,
+        global_object.bun_vm().context_of_caller(callframe),
         Box::<[u8]>::from(string_or_buffer.slice()),
         algorithm,
     )
@@ -797,6 +803,7 @@ fn js_password_object_verify(
 
     JSPasswordObject::verify::<false>(
         global_object,
+        global_object.bun_vm().context_of_caller(callframe),
         owned_password.into_boxed_slice(),
         owned_hash.into_boxed_slice(),
         algorithm,
@@ -867,6 +874,7 @@ fn js_password_object_verify_sync(
     // signature.
     JSPasswordObject::verify::<true>(
         global_object,
+        global_object.bun_vm().context_of_caller(callframe),
         Box::<[u8]>::from(password.slice()),
         Box::<[u8]>::from(hash_.slice()),
         algorithm,

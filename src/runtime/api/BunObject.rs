@@ -105,29 +105,33 @@ mod static_adapters {
 
     pub(super) fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::connect(g, opts)
+        crate::socket::Listener::connect(g, g.bun_vm().context_of_caller(cf), opts)
     }
 
     pub(super) fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::listen(g, opts)
+        crate::socket::Listener::listen(g, g.bun_vm().context_of_caller(cf), opts)
     }
 
     pub(super) fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::udp_socket_draft::UDPSocket::udp_socket(g, opts)
+        crate::socket::udp_socket_draft::UDPSocket::udp_socket(
+            g,
+            g.bun_vm().context_of_caller(cf),
+            opts,
+        )
     }
 
     pub(super) fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [a0] = cf.arguments_as_array::<1>();
         let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn(g, a0, a1)
+        crate::api::js_bun_spawn_bindings::spawn(g, g.bun_vm().context_of_caller(cf), a0, a1)
     }
 
     pub(super) fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [a0] = cf.arguments_as_array::<1>();
         let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn_sync(g, a0, a1)
+        crate::api::js_bun_spawn_bindings::spawn_sync(g, g.bun_vm().context_of_caller(cf), a0, a1)
     }
 
     pub(super) fn js_bundler_build(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
@@ -1347,6 +1351,8 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
 #[bun_jsc::host_fn]
 fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    // The server is the calling script's.
+    let context = global_object.bun_vm().context_of_caller(callframe);
     let arguments = callframe.arguments();
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global_object.bun_vm().as_mut();
@@ -1480,10 +1486,8 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // SAFETY: `server` is heap-allocated and leaves its context in
             // `stop_listening` / `deinit`.
             unsafe {
-                (*server)
-                    .context
-                    .set(global_object.bun_vm().current_context().id());
-                bun_jsc::AbortHandle::arm_owner(server, global_object.bun_vm().current_context())
+                (*server).context.set(context.id());
+                bun_jsc::AbortHandle::arm_owner(server, context)
             };
 
             // `init` moved `config` into the server (`mem::take`), so the
@@ -2767,11 +2771,12 @@ pub mod JSZstd {
 
     fn create_job(
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         is_compress: bool,
         level: i32,
     ) -> JSValue {
-        let cx = global_this.js_thread();
+        let cx = global_this.js_thread(context);
         let promise = jsc::JSPromiseStrong::init(global_this);
         let promise_value = promise.value();
         jsc::Job::<ZstdJob>::schedule(
@@ -2792,8 +2797,10 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        // What this starts is the calling script's.
+        let context = global_this.bun_vm().context_of_caller(callframe);
         let (buffer, _, level) = get_options_async(global_this, callframe)?;
-        Ok(create_job(global_this, buffer, true, level))
+        Ok(create_job(global_this, context, buffer, true, level))
     }
 
     #[bun_jsc::host_fn]
@@ -2801,8 +2808,10 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        // What this starts is the calling script's.
+        let context = global_this.bun_vm().context_of_caller(callframe);
         let (buffer, _, _) = get_options_async(global_this, callframe)?;
-        Ok(create_job(global_this, buffer, false, 0)) // level is ignored for decompression
+        Ok(create_job(global_this, context, buffer, false, 0)) // level is ignored for decompression
     }
 }
 

@@ -579,7 +579,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Connect to `self.connection` (must be `Some`). Reads the field directly
     /// rather than taking it by-ref so the single caller in `connect_finish`
     /// doesn't need a disjoint borrow.
-    pub(crate) fn do_connect(&self) -> crate::Result<()> {
+    pub(crate) fn do_connect(
+        &self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> crate::Result<()> {
         // Keep `self` alive across the re-entrant connect path.
         // SAFETY: `self` is live for this call and outlives the sockets below.
         let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
@@ -590,7 +593,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // on Handlers (that's `invalid_reference_casting`).
         let vm = VirtualMachine::get().as_mut();
         let loop_ = vm.uws_loop();
-        let group = vm.client_socket_groups().bun_connect_group::<SSL>(loop_);
+        let group = vm
+            .client_socket_groups_in(context)
+            .bun_connect_group::<SSL>(loop_);
         let kind: uws::SocketKind = if SSL {
             uws::SocketKind::BunSocketTls
         } else {
@@ -3569,10 +3574,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 .get()
                 .as_ref()
                 .and_then(|handlers| handlers.listener().map(|listener| listener.context));
-            let vm = VirtualMachine::get().as_mut();
-            listener_context
-                .and_then(|id| vm.client_socket_groups_of(id).map(core::ptr::from_mut))
-                .unwrap_or_else(|| core::ptr::from_mut(vm.client_socket_groups()))
+            let vm = VirtualMachine::get();
+            let context = listener_context.map_or_else(|| vm.root_context(), |id| vm.context_of(id));
+            core::ptr::from_mut(vm.as_mut().client_socket_groups_in(context))
         } else {
             // SAFETY: `raw_socket` is live (below) and client sockets only join a `SocketGroups` group.
             unsafe { bun_jsc::rare_data::SocketGroups::of((*raw_socket).group()) }
@@ -4573,6 +4577,8 @@ pub fn js_upgrade_duplex_to_tls(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     jsc::mark_binding!();
+    // The upgraded socket is the calling script's.
+    let context = global.bun_vm().context_of_caller(callframe);
 
     let [duplex, opts] = callframe.arguments_as_array::<2>();
     if callframe.arguments_count() < 2 {
@@ -4752,7 +4758,7 @@ pub fn js_upgrade_duplex_to_tls(
         ptr::addr_of_mut!((*duplex_context).server_verify).write(server_verify);
         ptr::addr_of_mut!((*duplex_context).abort_handle)
             .write(bun_jsc::AbortHandle::for_owner::<DuplexUpgradeContext>());
-        ptr::addr_of_mut!((*duplex_context).context).write(global.bun_vm().current_context().id());
+        ptr::addr_of_mut!((*duplex_context).context).write(context.id());
         ptr::addr_of_mut!((*duplex_context).mode).write(if is_server {
             SocketMode::DuplexServer
         } else {
@@ -4828,7 +4834,7 @@ pub fn js_upgrade_duplex_to_tls(
     // socket's own handle keeps the loop alive.
 
     // SAFETY: non-null, fully initialised, heap-pinned; leaves its context in `deinit`.
-    unsafe { bun_jsc::AbortHandle::arm_owner(duplex_context, global.bun_vm().current_context()) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(duplex_context, context) };
     DuplexUpgradeContext::start_tls(duplex_context_ref);
 
     let array = JSValue::create_empty_array(global, 2)?;

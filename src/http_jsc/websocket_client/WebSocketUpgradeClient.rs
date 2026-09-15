@@ -318,7 +318,7 @@ where
         let group = global
             .bun_vm()
             .as_mut()
-            .client_socket_groups()
+            .client_socket_groups_in(websocket.context(global.bun_vm()))
             .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
             SocketKind::WsClientUpgradeTls

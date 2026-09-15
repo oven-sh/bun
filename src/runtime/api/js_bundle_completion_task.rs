@@ -147,13 +147,14 @@ impl JSBundleCompletionTask {
         config: JSBundlerConfig,
         plugins: Option<NonNull<Plugin>>,
         global_this: &JSGlobalObject,
+        context: jsc::ContextId,
     ) -> JSBundleCompletionTask {
         JSBundleCompletionTask {
             ref_count: RefCount::init(),
             config,
             bundle_ticket: Some(global_this.bun_vm().ticket()),
             global_this: BackRef::new(global_this),
-            context: global_this.bun_vm().current_context().id(),
+            context,
             promise: jsc::JSPromiseStrong::default(),
             poll_ref: KeepAlive::init(),
             env: global_this.bun_vm().transpiler.env,

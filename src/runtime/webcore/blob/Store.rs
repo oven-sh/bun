@@ -86,7 +86,11 @@ pub trait S3Ext {
 }
 
 pub trait FileExt {
-    fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
+    fn unlink(
+        &self,
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> JsResult<JSValue>;
 }
 
 pub trait BytesExt {
@@ -219,7 +223,11 @@ impl StoreExt for Store {
 }
 
 impl FileExt for File {
-    fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn unlink(
+        &self,
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
                 // The `*Binding` arg is unused in `AsyncFSTask::create`.
@@ -231,6 +239,7 @@ impl FileExt for File {
                     &binding,
                     node_fs::args::Unlink::owned(path_like.slice().to_vec()),
                     global_this.bun_vm().as_mut(),
+                    context,
                 ))
             }
             PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(

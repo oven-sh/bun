@@ -423,6 +423,8 @@ impl JSMySQLConnection {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
         // no other live borrow in this scope.
         let vm = global_object.bun_vm().as_mut();
+        // The connection is the calling script's.
+        let context = global_object.bun_vm().context_of_caller(callframe);
         let arguments = callframe.arguments();
         let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
         else {
@@ -499,7 +501,7 @@ impl JSMySQLConnection {
 
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
-            let group = vm.mysql_socket_group::<false>();
+            let group = vm.mysql_socket_group::<false>(context);
             let result = if !path.is_empty() {
                 SocketTCP::connect_unix_group(
                     group,

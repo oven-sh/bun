@@ -3932,6 +3932,12 @@ impl AnyServer {
         any_server_dispatch!(self, |s| s.vm())
     }
 
+    /// The context of the script that made the server.
+    #[inline]
+    pub(crate) fn context_id(&self) -> jsc::ContextId {
+        any_server_dispatch!(self, |s| s.context.get())
+    }
+
     /// Shared borrow of the per-process `JSGlobalObject`. Routes through
     /// [`NewServer::global_this`] (same SAFETY contract: never-null backref,
     /// never moved or freed while any `NewServer` exists).

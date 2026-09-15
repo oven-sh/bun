@@ -673,6 +673,7 @@ mod _async_tasks {
             binding: &Binding,
             task_args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
+            context: &bun_jsc::ScriptExecutionContext,
         ) -> JSValue {
             let fd_job = vm.owned_fd_job(task_args.target_fd());
             disown_fd_being_closed(vm, &*task_args);
@@ -688,7 +689,7 @@ mod _async_tasks {
                 req: bun_core::ffi::zeroed(),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
-                context: vm.current_context().id(),
+                context: context.id(),
                 _fd_job: fd_job,
             });
             vm.graph_job_started(task.context);
@@ -1410,6 +1411,7 @@ mod _async_tasks {
             _binding: &Binding,
             args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
+            context: &bun_jsc::ScriptExecutionContext,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(global_object);
@@ -1418,7 +1420,7 @@ mod _async_tasks {
             let fd_job = vm.owned_fd_job(args.target_fd());
             disown_fd_being_closed(vm, &*args);
             bun_jsc::Job::<Self>::schedule(
-                &global_object.js_thread(),
+                &global_object.js_thread(context),
                 Self {
                     args,
                     // Sentinel — overwritten by `run` before any read. `Maybe<R>`
@@ -1638,6 +1640,7 @@ mod _async_tasks {
             _binding: &Binding,
             cp_args: ThreadIsolated<args::Cp<'static>>,
             vm: &mut VirtualMachine,
+            context: &bun_jsc::ScriptExecutionContext,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(global_object);
@@ -1647,7 +1650,7 @@ mod _async_tasks {
                 EventLoopHandle::init(vm.event_loop.cast()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
-                bun_event_loop::TaskContext::Of(vm.current_context().id()),
+                bun_event_loop::TaskContext::Of(context.id()),
                 core::ptr::null_mut(),
             );
             // SAFETY: `schedule_new` returns a Box::leak'd pointer; valid until destroy()
@@ -2447,6 +2450,7 @@ mod _async_tasks {
             global_object: &JSGlobalObject,
             args: ThreadIsolated<args::Readdir<'static>>,
             vm: &mut VirtualMachine,
+            context: &bun_jsc::ScriptExecutionContext,
         ) -> JSValue {
             let tag = args.tag();
             let encoding = args.encoding;
@@ -2469,7 +2473,7 @@ mod _async_tasks {
             let promise = JSPromiseStrong::init(global_object);
             let value = promise.value();
             bun_jsc::Job::<Self>::schedule(
-                &global_object.js_thread(),
+                &global_object.js_thread(context),
                 AsyncReaddirRecursiveTask {
                     args,
                     tag,

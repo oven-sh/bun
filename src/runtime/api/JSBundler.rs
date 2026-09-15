@@ -1407,7 +1407,11 @@ pub mod js_bundler {
         pub(crate) keep_names: bool,
     }
 
-    fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
+    fn build(
+        global_this: &JSGlobalObject,
+        context: jsc::ContextId,
+        arguments: &[JSValue],
+    ) -> JsResult<JSValue> {
         if arguments.is_empty() || !arguments[0].is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected a config object to be passed to Bun.build"
@@ -1441,6 +1445,7 @@ pub mod js_bundler {
             config,
             plugins.and_then(core::ptr::NonNull::new),
             global_this,
+            context,
         );
         completion.promise = jsc::JSPromiseStrong::init(global_this);
         let promise = completion.promise.value();
@@ -1454,7 +1459,11 @@ pub mod js_bundler {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        build(global_this, callframe.arguments())
+        build(
+            global_this,
+            global_this.bun_vm().context_of_caller(callframe).id(),
+            callframe.arguments(),
+        )
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by

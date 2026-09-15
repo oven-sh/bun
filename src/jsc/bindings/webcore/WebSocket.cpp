@@ -1792,6 +1792,13 @@ extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
     return webSocket->rejectUnauthorized();
 }
 
+// The Rust half of the context of the script that made the WebSocket (null: the realm's own).
+extern "C" void* WebSocket__bunContext(WebCore::WebSocket* webSocket)
+{
+    auto* context = webSocket->scriptExecutionContext();
+    return context ? context->bunContext() : nullptr;
+}
+
 // The native client keeps this object (and its wrapper) alive across work it has queued that will
 // call back into it; one such claim at a time.
 extern "C" void WebSocket__holdPendingActivityForClient(WebCore::WebSocket* webSocket)

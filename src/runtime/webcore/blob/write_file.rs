@@ -94,7 +94,11 @@ impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
     pub fn schedule(this: WriteFile, global: &JSGlobalObject) {
-        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(), this, ());
+        bun_jsc::Job::<WriteFile>::schedule(
+            &global.js_thread(global.bun_vm().current_context()),
+            this,
+            (),
+        );
     }
 }
 

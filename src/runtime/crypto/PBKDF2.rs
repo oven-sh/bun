@@ -323,10 +323,11 @@ impl JobContext for Pbkdf2Job {
 /// Schedule the derivation on the work pool; `callback` was validated by `from_js_async`.
 pub(crate) fn create_job(
     global_this: &JSGlobalObject,
+    context: &bun_jsc::ScriptExecutionContext,
     data: ThreadIsolated<PBKDF2>,
     callback: JSValue,
 ) {
-    let cx = global_this.js_thread();
+    let cx = global_this.js_thread(context);
     Job::<Pbkdf2Job>::schedule(
         &cx,
         Pbkdf2Job {

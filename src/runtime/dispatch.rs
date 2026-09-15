@@ -206,7 +206,7 @@ pub(crate) fn run_task(
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
             // its `Completion`; the erased entry runs `then` and frees it.
-            unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) }?;
+            unsafe { bun_jsc::job::complete_erased(task.ptr, global) }?;
         }
         task_tag::SendQueueDeferred => {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and

@@ -180,7 +180,11 @@ impl Listener {
 
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
-    pub(crate) fn listen(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn listen(
+        global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+        opts: JSValue,
+    ) -> JsResult<JSValue> {
         log!("listen");
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
@@ -259,7 +263,7 @@ impl Listener {
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
                     abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
-                    context: vm.current_context().id(),
+                    context: context.id(),
                 }));
                 // SAFETY: just allocated, non-null; every field touched below
                 // is `Cell`/`JsCell` or `&self`, so a shared borrow suffices.
@@ -347,7 +351,7 @@ impl Listener {
                     .with_mut(|r| r.set_strong(this_value, global));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                 // SAFETY: heap-allocated above; owned by the JS wrapper from here.
-                unsafe { bun_jsc::AbortHandle::arm_owner(this, vm.current_context()) };
+                unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
                 return Ok(this_value);
             }
         }
@@ -386,7 +390,7 @@ impl Listener {
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
-            context: vm.current_context().id(),
+            context: context.id(),
         }));
         // SAFETY: just allocated, non-null; every field touched through this
         // borrow is `Cell`/`JsCell` or `&self`. The one plain-field write
@@ -615,7 +619,7 @@ impl Listener {
             .with_mut(|r| r.set_strong(this_value, global));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         // SAFETY: heap-allocated above; owned by the JS wrapper from here.
-        unsafe { bun_jsc::AbortHandle::arm_owner(this, vm.current_context()) };
+        unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
 
         Ok(this_value)
     }
@@ -1057,18 +1061,23 @@ impl Listener {
 
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
-    pub(crate) fn connect(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn connect(
+        global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+        opts: JSValue,
+    ) -> JsResult<JSValue> {
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
         // Dialing would report: a port that refuses (a listener the same script just made is one,
         // closed at birth) rejects inside the call, and a loop that retries would never yield.
-        if global.bun_vm().current_context().is_stopped() {
+        if context.is_stopped() {
             return Ok(jsc::JSPromise::create(global).to_js());
         }
-        Self::connect_inner(global, None, None, opts)
+        Self::connect_inner(global, context, None, None, opts)
     }
 
     pub(crate) fn connect_inner(
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         prev_maybe_tcp: Option<*mut TCPSocket>,
         prev_maybe_tls: Option<*mut TLSSocket>,
         opts: JSValue,
@@ -1442,6 +1451,7 @@ impl Listener {
         if ssl_enabled {
             connect_finish::<true>(
                 global,
+                context,
                 prev_maybe_tls,
                 handlers,
                 connection,
@@ -1457,6 +1467,7 @@ impl Listener {
         } else {
             connect_finish::<false>(
                 global,
+                context,
                 prev_maybe_tcp,
                 handlers,
                 connection,
@@ -1539,6 +1550,7 @@ impl Listener {
 // Note: hoisted from the body of connect_inner; dispatched via const generic.
 fn connect_finish<const IS_SSL: bool>(
     global: &JSGlobalObject,
+    context: &bun_jsc::ScriptExecutionContext,
     maybe_previous: Option<*mut NewSocket<IS_SSL>>,
     handlers: Rc<Handlers>,
     connection: UnixOrHost,
@@ -1633,7 +1645,7 @@ fn connect_finish<const IS_SSL: bool>(
     // borrow is needed here.
     // An already-open fd socket runs `on_open` synchronously; what settling
     // the connect promise there left pending is not a connect failure.
-    let opened_err = match socket_ref.do_connect() {
+    let opened_err = match socket_ref.do_connect(context) {
         Ok(()) => None,
         Err(crate::Error::Js(err)) => Some(err),
         Err(_) => {

@@ -1347,7 +1347,10 @@ impl BlobExt for Blob {
         let store = self.store().expect("infallible: store present");
         match &store.data {
             store::Data::S3(s3) => s3.unlink(store, global_this, args.next_eat()),
-            store::Data::File(file) => file.unlink(global_this),
+            store::Data::File(file) => file.unlink(
+                global_this,
+                global_this.bun_vm().context_of_caller(callframe),
+            ),
             store::Data::Bytes(_) => unreachable!(), // validate_writable_blob should have caught this
         }
     }
@@ -2059,6 +2062,7 @@ impl BlobExt for Blob {
                             binding,
                             crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
                             vm,
+                            global_this.bun_vm().context_of_caller(callback),
                         ))
                     }
                     PathOrFileDescriptor::Fd(fd) => {
@@ -2073,6 +2077,7 @@ impl BlobExt for Blob {
                             binding,
                             crate::node::fs::args::Fstat::for_fd(*fd),
                             vm,
+                            global_this.bun_vm().context_of_caller(callback),
                         ))
                     }
                 }

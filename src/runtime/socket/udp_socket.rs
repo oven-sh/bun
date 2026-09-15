@@ -576,12 +576,16 @@ impl UDPSocket {
         unsafe { &*user.cast::<UDPSocket>() }
     }
 
-    pub(crate) fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn udp_socket(
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+        options: JSValue,
+    ) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
         // A socket that is closed from the queue can send before that: it is not bound at all.
-        if global_this.bun_vm().current_context().is_stopped() {
+        if context.is_stopped() {
             return Ok(bun_jsc::JSPromise::create(global_this).to_js());
         }
 
@@ -724,9 +728,7 @@ impl UDPSocket {
         } else {
             // Open: its context closes it when it stops if script never does.
             // SAFETY: heap-allocated above; leaves its context in `on_close`.
-            unsafe {
-                bun_jsc::AbortHandle::arm_owner(this_ptr, global_this.bun_vm().current_context())
-            };
+            unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, context) };
             Some(created)
         });
 

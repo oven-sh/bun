@@ -265,15 +265,24 @@ fn get_argv(
 /// Bun.spawn() calls this.
 pub(crate) fn spawn(
     global_this: &JSGlobalObject,
+    context: &bun_jsc::ScriptExecutionContext,
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync(false, global_this, args, secondary_args_value, &mut None)
+    spawn_maybe_sync(
+        false,
+        global_this,
+        context,
+        args,
+        secondary_args_value,
+        &mut None,
+    )
 }
 
 /// Bun.spawnSync() calls this.
 pub(crate) fn spawn_sync(
     global_this: &JSGlobalObject,
+    context: &bun_jsc::ScriptExecutionContext,
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
@@ -281,6 +290,7 @@ pub(crate) fn spawn_sync(
     let result = spawn_maybe_sync(
         true,
         global_this,
+        context,
         args,
         secondary_args_value,
         &mut bun_test_deadline,
@@ -309,6 +319,7 @@ pub(crate) fn spawn_sync(
 fn spawn_maybe_sync(
     is_sync: bool,
     global_this: &JSGlobalObject,
+    context: &bun_jsc::ScriptExecutionContext,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
     bun_test_deadline: &mut Option<Timespec>,
@@ -1786,7 +1797,7 @@ fn spawn_maybe_sync(
             unsafe {
                 (*jsc_vm_ptr)
                     .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()));
-                if let Some(context) = (*jsc_vm_ptr).current_graph_context() {
+                if let Some(context) = (*jsc_vm_ptr).as_graph_context(context) {
                     bun_jsc::AbortHandle::arm_owner(subprocess_ptr, context);
                 }
             };

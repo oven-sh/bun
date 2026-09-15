@@ -474,7 +474,9 @@ impl Route {
             bundler_options::SourceMapOption::None
         };
 
-        let mut completion_task = JSBundleCompletionTask::new(config, plugins, global);
+        // The build is the server's: it continues the script that made the server.
+        let mut completion_task =
+            JSBundleCompletionTask::new(config, plugins, global, server.context_id());
         completion_task.started_at_ns = bun_core::util::Timespec::now_allow_mocked_time().ns();
         // While we're building, ensure this doesn't get freed.
         completion_task.html_build_task = Some(RefPtr::from_this(this));

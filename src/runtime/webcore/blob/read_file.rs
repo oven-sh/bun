@@ -269,7 +269,11 @@ impl ReadFile {
         completion: ReadFileCompletionFns,
         global: &JSGlobalObject,
     ) {
-        bun_jsc::Job::<ReadFile>::schedule(&global.js_thread(), this, completion);
+        bun_jsc::Job::<ReadFile>::schedule(
+            &global.js_thread(global.bun_vm().current_context()),
+            this,
+            completion,
+        );
     }
 }
 

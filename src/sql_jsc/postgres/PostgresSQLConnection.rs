@@ -1074,6 +1074,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // is the canonical safe escape hatch (one audited unsafe in bun_jsc) for
     // `&mut self` helpers like `ssl_ctx_cache()` / `postgres_socket_group()`.
     let vm = global_object.bun_vm().as_mut();
+    // The connection is the calling script's.
+    let context = global_object.bun_vm().context_of_caller(callframe);
     let arguments = callframe.arguments();
     let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
     else {
@@ -1228,7 +1230,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
         // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
         // adopts into `postgres_tls_group` after the server's `S`.
-        let group = vm.postgres_socket_group::<false>();
+        let group = vm.postgres_socket_group::<false>(context);
         let path_slice = this.path.slice();
         let result = if !path_slice.is_empty() {
             uws::SocketTCP::connect_unix_group(

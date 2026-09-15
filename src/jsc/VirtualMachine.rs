@@ -392,9 +392,6 @@ pub struct VirtualMachine {
     pub(crate) dead_context: crate::ScriptExecutionContext,
     /// Live [`ContextScope`]s of gone contexts.
     pub(crate) gone_scopes: Cell<u32>,
-    /// Live [`ContextScope`]s, for `current_context()`'s assertion.
-    #[cfg(debug_assertions)]
-    pub(crate) context_scopes: Cell<u32>,
     pub(crate) context_ids: crate::script_execution_context::ContextIdAllocator,
     /// The contexts made for `Bun.ModuleGraph`s, by id, stopped or not. Empty:
     /// every context question has the root context for an answer.
@@ -1105,6 +1102,37 @@ impl VirtualMachine {
         self.handle.script_allowed()
     }
 
+    /// The context of the script that called a host function. `frame` is that call: script is
+    /// running, so its async context says whose it is. Helpers below the host function take the
+    /// context as a parameter; native code the event loop calls has no frame and uses the
+    /// [`ContextScope`] it entered ([`ContextScope::context`]).
+    #[inline]
+    pub fn context_of_caller(&self, _frame: &crate::CallFrame) -> &crate::ScriptExecutionContext {
+        self.current_context_or_root()
+    }
+
+    /// [`context_of_caller`](Self::context_of_caller) for a function exported to C++, which has no
+    /// `CallFrame` to show.
+    ///
+    /// # Safety
+    /// Called synchronously under a C++ host function (script is running), or by native code
+    /// inside a [`ContextScope`].
+    #[inline]
+    pub unsafe fn context_of_cpp_caller(&self) -> &crate::ScriptExecutionContext {
+        self.current_context_or_root()
+    }
+
+    /// `context` when it is a `Bun.ModuleGraph`'s (stopped or not), for an owner that only a graph's
+    /// context stops.
+    #[inline]
+    pub fn as_graph_context<'a>(
+        &self,
+        context: &'a crate::ScriptExecutionContext,
+    ) -> Option<&'a crate::ScriptExecutionContext> {
+        (context.id() != self.root_context.id() && context.id() != self.vm_context.id())
+            .then_some(context)
+    }
+
     /// The context the running script belongs to: what it opens from here is
     /// stopped with that context.
     #[inline]
@@ -1129,20 +1157,6 @@ impl VirtualMachine {
         if self.graph_contexts.count() == 0 {
             return None;
         }
-        // "Current" only means something while script is running: the context rides the async
-        // context of the script that called in. Native code reached from the event loop (an I/O
-        // or process-exit callback) has no current context; it uses the one its owner captured
-        // when script created it.
-        debug_assert!(
-            self.jsc_vm().is_entered() || {
-                #[cfg(debug_assertions)]
-                let scoped = self.context_scopes.get() != 0;
-                #[cfg(not(debug_assertions))]
-                let scoped = true;
-                scoped
-            },
-            "current_context() with no script on the stack: enter_context() the one captured when script created the owner"
-        );
         // SAFETY: a graph's context outlives every async context frame that names it.
         unsafe { Bun__currentGraphContext(self.global()).as_ref() }
     }
@@ -1313,10 +1327,9 @@ impl VirtualMachine {
     /// context that is always stopped: what is armed inside is closed at once, as for
     /// anything a disposed graph opens.
     pub fn enter_context(&self, context: crate::ContextId) -> ContextScope<'_> {
-        #[cfg(debug_assertions)]
-        self.context_scopes.set(self.context_scopes.get() + 1);
         let mut scope = ContextScope {
             vm: self,
+            context,
             previous: JSValue::ZERO,
             entered: self.global.cast_const(),
             previous_scope: self.innermost_scope.replace(Some(context)),
@@ -1382,10 +1395,11 @@ impl VirtualMachine {
         let context = core::ptr::from_ref(self.current_context());
         // SAFETY: the realm's, the dead one or a registered graph's: none is freed under a call
         // made from its own script (JS thread).
-        self.socket_groups_of(unsafe { &*context })
+        self.client_socket_groups_in(unsafe { &*context })
     }
 
-    fn socket_groups_of(
+    /// The groups a client socket opened by `context`'s script joins.
+    pub fn client_socket_groups_in(
         &mut self,
         context: &crate::ScriptExecutionContext,
     ) -> &mut crate::rare_data::SocketGroups {
@@ -1417,7 +1431,7 @@ impl VirtualMachine {
             core::ptr::from_ref(self.graph_context(id)?)
         };
         // SAFETY: the VM's own, or registered ⇒ not freed; JS thread.
-        Some(self.socket_groups_of(unsafe { &*context }))
+        Some(self.client_socket_groups_in(unsafe { &*context }))
     }
 
     /// Script of a disposed graph is still opening things in the graph's
@@ -3328,8 +3342,6 @@ impl VirtualMachine {
                 (*vm).context_ids.next(),
             ));
             addr_of_mut!((*vm).vm_context).write(Default::default());
-            #[cfg(debug_assertions)]
-            addr_of_mut!((*vm).context_scopes).write(Cell::new(0));
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
             addr_of_mut!((*vm).innermost_scope).write(Cell::new(None));
             addr_of_mut!((*vm).innermost_scope_gone).write(Cell::new(false));
@@ -7766,6 +7778,8 @@ pub struct ContextScope<'a> {
     vm: &'a VirtualMachine,
     /// The async context to restore; empty when entering changed nothing. (On the stack: kept
     /// alive by the conservative scan.)
+    /// The context entered.
+    context: crate::ContextId,
     previous: JSValue,
     /// The realm `previous` is restored in: the one that was entered. (On the stack, as `previous`.)
     entered: *const JSGlobalObject,
@@ -7774,12 +7788,18 @@ pub struct ContextScope<'a> {
     gone: bool,
 }
 
+impl<'a> ContextScope<'a> {
+    /// The context this scope entered (the dead one, once that graph's is freed): what native code
+    /// that has no `CallFrame` passes to whatever it creates.
+    pub fn context(&self) -> &'a crate::ScriptExecutionContext {
+        self.vm.context_of(self.context)
+    }
+}
+
 impl Drop for ContextScope<'_> {
     fn drop(&mut self) {
         self.vm.innermost_scope.set(self.previous_scope);
         self.vm.innermost_scope_gone.set(self.previous_scope_gone);
-        #[cfg(debug_assertions)]
-        self.vm.context_scopes.set(self.vm.context_scopes.get() - 1);
         if self.gone {
             self.vm.gone_scopes.set(self.vm.gone_scopes.get() - 1);
         }

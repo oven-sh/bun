@@ -535,11 +535,14 @@ it.skipIf(isWindows)(
       "src/a.js": `export const a = 1;`,
       "src/lazy.js": `export const lazy = "lazy";`,
       "src/entry.js": `import { a } from "./a.js";
-import { readFileSync, writeFileSync } from "node:fs";
-const pidFile = "app." + crypto.randomUUID() + ".pid";
-writeFileSync(pidFile, String(process.pid));
+import { statSync, writeFileSync } from "node:fs";
+const trace = process.env.BUN_WATCHER_TRACE;
+const traceSize = statSync(trace).size;
+// A new name on every run: kqueue reports a directory only when its entries change.
+writeFileSync("app." + crypto.randomUUID() + ".pid", String(process.pid));
 // The watcher thread logs the directory event for the write, then busts the cache.
-while (!readFileSync(process.env.BUN_WATCHER_TRACE, "utf8").includes(pidFile)) await Bun.sleep(1);
+// kqueue does not log the changed name, so wait for the log to grow.
+while (statSync(trace).size === traceSize) await Bun.sleep(1);
 const { lazy } = await import("./lazy.js");
 console.log("EVAL a =", a, lazy);
 setInterval(() => {}, 1e6);

@@ -15,6 +15,26 @@ const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPO
 // without it the fallback printer has no Rust symbol names to assert on.
 const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-21"));
 
+// The binding exists for tests and release tooling only. Every helper below has
+// a consumer in test/, scripts/features.mjs or packages/bun-release. A helper
+// with no consumer is dead native code that nothing can flag, so add the
+// consumer in the same change that adds the helper.
+test("crash_handler exposes only helpers that have a consumer", () => {
+  expect(Object.keys(crash_handler).sort()).toEqual([
+    "abort",
+    "fastfail",
+    "getFeatureData",
+    "getMachOImageZeroOffset",
+    "outOfMemory",
+    "panic",
+    "raiseIgnoringPanicHandler",
+    "rootError",
+    "segfault",
+    "segfaultInDll",
+    "trap",
+  ]);
+});
+
 test.if(isDebug && isLinux && hasSymbolizer)(
   "crash trace starts at the crash site, not inside the crash handler",
   async () => {

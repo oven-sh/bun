@@ -7,7 +7,16 @@ import { bunExe, bunEnv as env, isPosix, tempDir, tmpdirSync } from "harness";
 import path, { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
-const bunEnv = { ...env, NODE_ENV: "development" };
+// InspectorConsoleAgent::enable()'s replay loop trips validateExceptionChecks
+// (a pre-existing JSC-side getOwnNonIndexPropertyNames/unchecked-get pair);
+// plain --inspect now buffers the "Server listening" log before Console.enable,
+// so strip the validator from the spawned inspectee only.
+const bunEnv = {
+  ...env,
+  NODE_ENV: "development",
+  BUN_JSC_validateExceptionChecks: undefined,
+  BUN_JSC_dumpSimulatedThrows: undefined,
+};
 class BunFrontendDevServerSession extends InspectorSession {
   constructor() {
     super();

@@ -1,7 +1,7 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, readlinkSync, realpathSync, statSync } from "fs";
-import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
+import { access, cp, exists, lstat, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
@@ -10334,6 +10334,236 @@ it("does not install transitive file: dependencies with overlong folder targets"
   expect(exitCode).toBe(1);
 });
 
+it("reinstalls a file: dependency pointing at an ancestor directory", async () => {
+  // "sample" depends on its own parent package via `file:../`, so the copy
+  // source contains the destination node_modules. The walk must skip
+  // node_modules directories: descending into them copied every installed
+  // package into node_modules/poto itself, and on reinstall raced the
+  // asynchronous deletion of the renamed previous install (ENOENT).
+  using dir = tempDir("file-dep-ancestor", {
+    "package.json": JSON.stringify({ name: "poto", version: "1.0.0" }),
+    "index.js": "module.exports = 'poto';",
+    "sample/package.json": JSON.stringify({
+      name: "sample",
+      version: "1.0.0",
+      dependencies: { poto: "file:../" },
+    }),
+  });
+  const projectDir = join(String(dir), "sample");
+
+  for (let i = 0; i < 3; i++) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).not.toContain("ENOENT");
+    expect(err).not.toContain("Failed to install");
+    expect(out).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+
+    // The copy contains the package's files but never a snapshot of the
+    // project's own node_modules.
+    expect(await exists(join(projectDir, "node_modules", "poto", "package.json"))).toBe(true);
+    expect(await exists(join(projectDir, "node_modules", "poto", "index.js"))).toBe(true);
+    expect(await exists(join(projectDir, "node_modules", "poto", "sample", "node_modules"))).toBe(false);
+  }
+
+  // The installed copy resolves at runtime.
+  await using runProc = spawn({
+    cmd: [bunExe(), "-e", "console.log(require('poto'))"],
+    cwd: projectDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
+  expect(runErr).toBe("");
+  expect(runOut).toBe("poto\n");
+  expect(runExit).toBe(0);
+});
+
+it("reinstalls a file: dependency on an ancestor directory resolved to an absolute path", async () => {
+  // Folder paths parsed from package.json are normalized relative to the
+  // project (`file:../` becomes `..`), but resolutions parsed from a lockfile
+  // are verbatim. Both walks must skip the project's node_modules when the
+  // source contains the destination.
+  using dir = tempDir("file-dep-ancestor-abs", {
+    "package.json": JSON.stringify({ name: "poto", version: "1.0.0" }),
+    "index.js": "module.exports = 'poto';",
+    "sample/package.json": "",
+  });
+  // On case-insensitive filesystems, containment must be detected even when
+  // the lockfile spells the ancestor path with different casing. Flip only the
+  // ASCII basename and keep the real spelling where the flipped path does not
+  // resolve (case-sensitive filesystems).
+  const realRoot = String(dir).replaceAll("\\", "/");
+  const basenameStart = realRoot.lastIndexOf("/") + 1;
+  const flipped = realRoot.slice(0, basenameStart) + realRoot.slice(basenameStart).toUpperCase();
+  const root = (await exists(flipped)) ? flipped : realRoot;
+  const projectDir = join(String(dir), "sample");
+  await write(
+    join(projectDir, "package.json"),
+    JSON.stringify({
+      name: "sample",
+      version: "1.0.0",
+      dependencies: { poto: "file:" + root },
+    }),
+  );
+  await write(
+    join(projectDir, "bun.lock"),
+    JSON.stringify({
+      lockfileVersion: 2,
+      configVersion: 1,
+      workspaces: { "": { name: "sample", dependencies: { poto: "file:" + root } } },
+      packages: { poto: ["poto@file:" + root, {}] },
+    }),
+  );
+
+  for (let i = 0; i < 3; i++) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).not.toContain("ENOENT");
+    expect(err).not.toContain("Failed to install");
+    expect(out).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+
+    expect(await exists(join(projectDir, "node_modules", "poto", "package.json"))).toBe(true);
+    expect(await exists(join(projectDir, "node_modules", "poto", "index.js"))).toBe(true);
+    expect(await exists(join(projectDir, "node_modules", "poto", "sample", "node_modules"))).toBe(false);
+  }
+});
+
+for (const backend of [null, "hardlink", "copyfile"]) {
+  it(`installs a workspace member's file: dependency on an ancestor behind the workspace symlink${backend ? ` (--backend ${backend})` : ""}`, async () => {
+    // packages/ is itself a package ("x") and member packages/a depends on it
+    // via `file:../`, while the root depends on a different "x", so the
+    // member's copy cannot hoist and installs at node_modules/a/node_modules/x.
+    // node_modules/a is a symlink to packages/a, so the destination physically
+    // lives inside the copy source; containment must be detected through the
+    // symlink or the install self-copies and fails.
+    using dir = tempDir("file-dep-ws-ancestor", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { x: "file:./other-x" },
+      }),
+      "other-x/package.json": JSON.stringify({ name: "x", version: "2.0.0" }),
+      "other-x/index.js": "module.exports = 'other-x';",
+      "packages/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "packages/index.js": "module.exports = 'packages-x';",
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { x: "file:../" },
+      }),
+    });
+
+    for (let i = 0; i < 2; i++) {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--linker", "hoisted", ...(backend ? ["--backend", backend] : [])],
+        cwd: String(dir),
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+      expect(err).not.toContain("ENOENT");
+      expect(err).not.toContain("Failed to install");
+      expect(out).toContain("installed");
+      expect(exitCode).toBe(0);
+
+      const nested = join(String(dir), "node_modules", "a", "node_modules", "x");
+      expect(await Bun.file(join(nested, "package.json")).json()).toMatchObject({ name: "x", version: "1.0.0" });
+      // Never a self-copy of the member's own node_modules.
+      expect(await exists(join(nested, "a", "node_modules"))).toBe(false);
+    }
+  });
+}
+
+it("preserves a vendored node_modules inside a file: folder dependency", async () => {
+  // The node_modules skip only engages when the source contains the
+  // destination: an ordinary folder dependency that ships its own
+  // node_modules keeps it, through the copy walk (absolute lockfile path).
+  using dir = tempDir("file-dep-vendored", {
+    "sibling/package.json": JSON.stringify({ name: "sibling", version: "1.0.0" }),
+    "sibling/index.js": "module.exports = require('vendored-pkg');",
+    "sibling/node_modules/vendored-pkg/package.json": JSON.stringify({
+      name: "vendored-pkg",
+      version: "1.0.0",
+    }),
+    "sibling/node_modules/vendored-pkg/index.js": "module.exports = 'vendored';",
+    "app/package.json": "",
+  });
+  const sibAbs = String(dir).replaceAll("\\", "/") + "/sibling";
+  const projectDir = join(String(dir), "app");
+  await write(
+    join(projectDir, "package.json"),
+    JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { sibling: "file:" + sibAbs },
+    }),
+  );
+  await write(
+    join(projectDir, "bun.lock"),
+    JSON.stringify({
+      lockfileVersion: 2,
+      configVersion: 1,
+      workspaces: { "": { name: "app", dependencies: { sibling: "file:" + sibAbs } } },
+      packages: { sibling: ["sibling@file:" + sibAbs, {}] },
+    }),
+  );
+
+  for (let i = 0; i < 2; i++) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).not.toContain("Failed to install");
+    expect(out).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+
+    expect(
+      await exists(join(projectDir, "node_modules", "sibling", "node_modules", "vendored-pkg", "package.json")),
+    ).toBe(true);
+  }
+
+  await using runProc = spawn({
+    cmd: [bunExe(), "-e", "console.log(require('sibling'))"],
+    cwd: projectDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
+  expect(runErr).toBe("");
+  expect(runOut).toBe("vendored\n");
+  expect(runExit).toBe(0);
+});
+
 for (const field of ["resolutions", "overrides"]) {
   it(`installs a file: dependency pointing outside the project when it came from root package.json "${field}"`, async () => {
     // `overrides` / `resolutions` can only be declared in the root package.json,
@@ -10715,6 +10945,59 @@ it("installs the transitive file: dependency of a file: dependency", async () =>
   }
 });
 
+it("a transitive file: dependency resolves the other transitive file: dependencies next to it", async () => {
+  // `b` and `c` are installed nested under node_modules/a/node_modules. A
+  // module resolves `require()` from the realpath of its file: had `b` been a
+  // symlink into packages/b, the walk up from there would miss `c`.
+  using dir = tempDir("transitive-file-dep-siblings", {
+    "package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: { a: "file:./packages/a" },
+    }),
+    "packages/a/package.json": JSON.stringify({
+      name: "a",
+      version: "1.0.0",
+      dependencies: { b: "file:../b", c: "file:../c" },
+    }),
+    "packages/a/index.js": `module.exports = "a->" + require("b");`,
+    "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+    "packages/b/index.js": `module.exports = "b->" + require("c");`,
+    "packages/c/package.json": JSON.stringify({ name: "c", version: "1.0.0" }),
+    "packages/c/index.js": `module.exports = "c";`,
+  });
+
+  for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+
+    await using proc = spawn({
+      cmd: [bunExe(), ...args, "--linker=hoisted"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("3 packages installed");
+    expect(exitCode).toBe(0);
+
+    expect(await readdirSorted(join(String(dir), "node_modules", "a", "node_modules"))).toEqual(["b", "c"]);
+
+    await using runProc = spawn({
+      cmd: [bunExe(), "--no-install", "-e", `console.log(require("a"))`],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
+    expect(runErr).toBe("");
+    expect(runOut).toBe("a->b->c\n");
+    expect(runExit).toBe(0);
+  }
+});
+
 const fileDepCycleFixture = {
   "package.json": JSON.stringify({
     name: "my-app",
@@ -10998,6 +11281,152 @@ describe.concurrent("file: tarball declared by a file: folder dependency", () =>
     expect(installed).toEqual(["bar@0.0.2", "bar@0.0.2"]);
     expect(lockfile).toContain('"lib": ["lib@file:vendor/lib", { "dependencies": { "tool": "^1.0.0" } }]');
     expect(lockfile).toContain('"tool": ["bar@./tool.tgz", {}, "sha512-');
+  });
+});
+
+describe.concurrent("file: folder dependency outside the project (hoisted linker)", () => {
+  // A module resolves `require()` from the realpath of its file. When a folder
+  // dependency is installed as one symlink per file into a folder outside the
+  // project, that realpath is outside the project too, and the walk up from it
+  // never reaches the project's node_modules. The files have to be linked or
+  // copied instead, like a folder dependency inside the project.
+  const tarball = readFileSync(join(import.meta.dir, "bar-0.0.2.tgz"));
+
+  // The cache lives next to the project, never inside a folder that gets installed.
+  async function install(projectDir: string, cacheDir: string, args: string[] = []) {
+    await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted", ...args],
+      cwd: projectDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+    });
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return out;
+  }
+
+  // `--no-install`: a module that fails to resolve must not be fetched from the registry.
+  async function run(projectDir: string, code: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "--no-install", "-e", code],
+      cwd: projectDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    return out.trim();
+  }
+
+  it("resolves its dependencies from the project's node_modules", async () => {
+    using dir = tempDir("folder-dep-outside", {
+      "plugin/package.json": JSON.stringify({
+        name: "plugin",
+        version: "1.0.0",
+        main: "index.js",
+        // `tool` is hoisted to the project's node_modules. `helper` is a folder
+        // dependency, so it is nested under node_modules/plugin/node_modules.
+        dependencies: { tool: "file:./tool.tgz", helper: "file:../project/vendor/helper" },
+      }),
+      "plugin/index.js": `
+        const tool = require("tool/package.json");
+        module.exports = tool.name + "@" + tool.version + " " + require("helper");
+      `,
+      "plugin/tool.tgz": tarball,
+      "project/package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { plugin: "file:../plugin" },
+      }),
+      "project/vendor/helper/package.json": JSON.stringify({ name: "helper", version: "1.0.0", main: "index.js" }),
+      "project/vendor/helper/index.js": `module.exports = "helper";`,
+    });
+    const projectDir = join(String(dir), "project");
+
+    for (const args of [[], ["--frozen-lockfile"]]) {
+      const out = await install(projectDir, join(String(dir), ".bun-cache"), args);
+      expect(out).toContain("3 packages installed");
+
+      expect(await run(projectDir, `console.log(require("plugin"))`)).toBe("bar@0.0.2 helper");
+
+      const pluginDir = join(projectDir, "node_modules", "plugin");
+      expect((await lstat(join(pluginDir, "index.js"))).isSymbolicLink()).toBe(false);
+      expect(await readdirSorted(pluginDir)).toEqual(["index.js", "node_modules", "package.json", "tool.tgz"]);
+      expect(await readdirSorted(join(pluginDir, "node_modules"))).toEqual(["helper"]);
+      expect(await exists(join(projectDir, "node_modules", "tool", "package.json"))).toBe(true);
+      // Nothing is written into the folder the dependency was installed from.
+      expect(await readdirSorted(join(String(dir), "plugin"))).toEqual(["index.js", "package.json", "tool.tgz"]);
+    }
+  });
+
+  it("keeps the node_modules the folder ships", async () => {
+    // A folder that has its own installed dependencies resolves them from its
+    // own node_modules, which the install copies along with the rest.
+    using dir = tempDir("folder-dep-outside-vendored", {
+      "sibling/package.json": JSON.stringify({ name: "sibling", version: "1.0.0", main: "index.js" }),
+      "sibling/index.js": `module.exports = require("vendored-pkg");`,
+      "sibling/node_modules/vendored-pkg/package.json": JSON.stringify({ name: "vendored-pkg", version: "1.0.0" }),
+      "sibling/node_modules/vendored-pkg/index.js": `module.exports = "vendored";`,
+      "project/package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { sibling: "file:../sibling" },
+      }),
+    });
+    const projectDir = join(String(dir), "project");
+
+    for (const args of [[], ["--frozen-lockfile"]]) {
+      const out = await install(projectDir, join(String(dir), ".bun-cache"), args);
+      expect(out).toContain("1 package installed");
+
+      expect(await run(projectDir, `console.log(require("sibling"))`)).toBe("vendored");
+      expect(await readdirSorted(join(projectDir, "node_modules", "sibling", "node_modules", "vendored-pkg"))).toEqual([
+        "index.js",
+        "package.json",
+      ]);
+    }
+  });
+
+  it("links a transitive folder dependency outside the project, supplied by a root override, the same way", async () => {
+    // `shared` is nested under node_modules/pkg-a/node_modules. It requires
+    // `dep`, which only the project's node_modules has.
+    using dir = tempDir("folder-dep-outside-nested", {
+      "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0", main: "index.js" }),
+      "shared/index.js": `module.exports = "shared->" + require("dep");`,
+      "project/package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { "pkg-a": "file:./pkg-a", dep: "file:./vendor/dep" },
+        overrides: { shared: "file:../shared" },
+      }),
+      "project/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        main: "index.js",
+        dependencies: { shared: "1.0.0" },
+      }),
+      "project/pkg-a/index.js": `module.exports = "pkg-a->" + require("shared");`,
+      "project/vendor/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", main: "index.js" }),
+      "project/vendor/dep/index.js": `module.exports = "dep";`,
+    });
+    const projectDir = join(String(dir), "project");
+
+    for (const args of [[], ["--frozen-lockfile"]]) {
+      const out = await install(projectDir, join(String(dir), ".bun-cache"), args);
+      expect(out).toContain("3 packages installed");
+
+      expect(await run(projectDir, `console.log(require("pkg-a"))`)).toBe("pkg-a->shared->dep");
+
+      const sharedDir = join(projectDir, "node_modules", "pkg-a", "node_modules", "shared");
+      expect(await readdirSorted(sharedDir)).toEqual(["index.js", "package.json"]);
+      expect((await lstat(join(sharedDir, "index.js"))).isSymbolicLink()).toBe(false);
+      expect(await readdirSorted(join(String(dir), "shared"))).toEqual(["index.js", "package.json"]);
+    }
   });
 });
 

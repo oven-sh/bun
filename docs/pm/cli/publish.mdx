@@ -5,7 +5,7 @@ description: Use `bun publish` to publish a package to the npm registry
 
 import Publish from "/snippets/cli/publish.mdx";
 
-`bun publish` packs your package into a tarball and strips catalog and workspace protocols from the `package.json`, resolving versions if necessary. It then publishes to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
+`bun publish` packs your package into a tarball and strips catalog and workspace protocols from the `package.json`, resolving versions if necessary. It then publishes to the registry specified in your configuration files or in the package's `publishConfig`. Both `bunfig.toml` and `.npmrc` files are supported.
 
 ```sh terminal icon="terminal"
 ## Publishing the package from the current working directory
@@ -80,6 +80,32 @@ You can also set `--tag` in the `publishConfig` field of your `package.json`.
   }
 }
 ```
+
+### `publishConfig.registry`
+
+A package can pin the registry it is published to in the `publishConfig` field of its `package.json`, regardless of the registry configured for installs. `--registry` on the command line still overrides it.
+
+```json package.json icon="file-json"
+{
+  "name": "internal-package",
+  "publishConfig": {
+    "registry": "https://registry.myorg.example/"
+  }
+}
+```
+
+As in npm, `publishConfig.registry` replaces the default registry only. A registry configured for the package's scope (`@myorg:registry` in `.npmrc`, or `[install.scopes]` in `bunfig.toml`) still takes precedence over it; to replace that one, set the scope's key in `publishConfig` instead:
+
+```json package.json icon="file-json"
+{
+  "name": "@myorg/package",
+  "publishConfig": {
+    "@myorg:registry": "https://registry.myorg.example/"
+  }
+}
+```
+
+Credentials are the ones configured for that registry, the same as when it is the default registry: a `//registry.myorg.example/:_authToken=...` line in `.npmrc`, or a registry with the same URL in `bunfig.toml` or `.npmrc`. When there are none, the credentials of the registry the package would otherwise have been published to are used only if the pinned registry has the same origin; otherwise `bun publish` fails with a missing authentication error instead of sending them to a different registry.
 
 ### `--dry-run`
 

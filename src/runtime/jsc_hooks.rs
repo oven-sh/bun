@@ -2679,6 +2679,10 @@ fn transpile_source_code_inner(
                     replace_exports: Default::default(),
                 };
 
+                if !disable_transpilying && virtual_source.is_none() {
+                    maybe_watch_file_before_read(jsc_vm, is_node_override, path);
+                }
+
                 // Both the file-only and transpiled arms hit the same
                 // `parse_maybe_return_file_only_allow_shared_buffer` body, so
                 // dispatch at runtime via the const-generic bool.
@@ -3504,6 +3508,29 @@ fn transpile_source_code_inner(
             })
         }
     }
+}
+
+/// [`maybe_watch_file`]'s filter, before the parse reads `path`. See `Watcher::add_file_before_read`.
+#[inline]
+fn maybe_watch_file_before_read(
+    jsc_vm: *mut VirtualMachine,
+    is_node_override: bool,
+    path: &Fs::Path,
+) {
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    if !unsafe { &*jsc_vm }.is_watcher_enabled() {
+        return;
+    }
+    if is_node_override
+        || !bun_paths::is_absolute(path.text)
+        || bun_core::strings::contains(path.text, b"node_modules")
+    {
+        return;
+    }
+    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
+    // `is_watcher_enabled()`; cast recovers the concrete type.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    let _ = watcher.add_file_before_read(path.text);
 }
 
 /// Register the just-opened file

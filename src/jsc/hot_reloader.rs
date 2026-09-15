@@ -62,6 +62,15 @@ impl ImportWatcher {
         }
     }
 
+    /// See [`Watcher::add_file_before_read`].
+    #[inline]
+    pub fn add_file_before_read(&mut self, file_path: &[u8]) -> bool {
+        match self {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.add_file_before_read(file_path),
+            ImportWatcher::None => false,
+        }
+    }
+
     #[inline]
     pub fn add_file<const COPY_FILE_PATH: bool>(
         &mut self,

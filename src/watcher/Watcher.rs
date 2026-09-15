@@ -36,9 +36,9 @@ pub const REQUIRES_FILE_DESCRIPTORS: bool = false;
 /// Darwin has O_EVTONLY (no read/write access requested); FreeBSD has no
 /// equivalent, so the watch fd is a plain O_RDONLY.
 #[cfg(target_os = "macos")]
-pub const WATCH_OPEN_FLAGS: i32 = libc::O_EVTONLY;
+pub const WATCH_OPEN_FLAGS: i32 = libc::O_EVTONLY | bun_sys::O::CLOEXEC;
 #[cfg(not(target_os = "macos"))]
-pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
+pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 
 pub type Event = WatchEvent;
 pub type WatchList = MultiArrayList<WatchItem>;
@@ -299,7 +299,9 @@ impl Watcher {
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
-                        let _ = bun_sys::close(fd);
+                        if fd.is_valid() {
+                            let _ = bun_sys::close(fd);
+                        }
                     }
                 }
                 true
@@ -370,7 +372,9 @@ impl Watcher {
         if self.close_descriptors.load() {
             let fds = self.watchlist.items_fd();
             for &fd in fds {
-                let _ = bun_sys::close(fd);
+                if fd.is_valid() {
+                    let _ = bun_sys::close(fd);
+                }
             }
         }
         owner_still_alive
@@ -862,6 +866,22 @@ impl Watcher {
         }
     }
 
+    /// Watch `file_path` before its caller reads it. The `add_file` after the parse then only settles who owns the read fd.
+    pub fn add_file_before_read(&mut self, file_path: &[u8]) -> bool {
+        // No open has checked the length yet.
+        if file_path.len() >= bun_paths::MAX_PATH_BYTES {
+            return false;
+        }
+        // The `add_file` after the read prints the out-of-root warning, once.
+        #[cfg(windows)]
+        if bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path)
+            == bun_paths::resolve_path::ParentEqual::Unrelated
+        {
+            return false;
+        }
+        self.add_file_by_path_slow(file_path)
+    }
+
     pub fn add_file<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
@@ -881,8 +901,9 @@ impl Watcher {
                 // directory-event recovery sees a valid fd. A valid stored fd
                 // is never replaced: the watchlist owns it until eviction,
                 // and the old overwrite leaked it.
+                // An fd to a file that a rename has since replaced would pin the inode inotify waits on.
                 let fds = self.watchlist.items_fd_mut();
-                if !fds[index as usize].is_valid() {
+                if !fds[index as usize].is_valid() && Self::is_file_at_path(fd, file_path) {
                     fds[index as usize] = fd;
                     ownership = FdOwnership::Watcher;
                 }
@@ -900,6 +921,30 @@ impl Watcher {
         );
         self.mutex.unlock();
         r
+    }
+
+    /// Whether `fd` is still the file that `file_path` names.
+    #[cfg(not(windows))]
+    fn is_file_at_path(fd: Fd, file_path: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if file_path.len() >= buf.len() {
+            return false;
+        }
+        buf[..file_path.len()].copy_from_slice(file_path);
+        buf[file_path.len()] = 0;
+        let path = ZStr::from_buf(&buf[..], file_path.len());
+        match (sys::fstat(fd), sys::stat(path)) {
+            (Ok(opened), Ok(named)) => {
+                opened.st_ino == named.st_ino && opened.st_dev == named.st_dev
+            }
+            _ => false,
+        }
+    }
+
+    /// Windows never stores the descriptor of an existing entry.
+    #[cfg(windows)]
+    fn is_file_at_path(_: Fd, _: &[u8]) -> bool {
+        true
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {

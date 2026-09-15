@@ -761,10 +761,11 @@ The renamed symbols are then used during final code generation to produce output
 
 **Key functions**:
 
-- Orders files by distance from entry point
-- Handles part dependencies within chunks
-- Records the other chunks in the order the walk reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
-- Ensures proper evaluation order
+- Walks the import graph in evaluation order (`EvaluationWalk`): depth first along every `import` statement, also through files that tree shaking dropped, so a file prints after the files it imports. A walk places the files that its entry point loads (`entry_bits`)
+- With code splitting, one pass walks from every entry point in load order and gives each chunk its files in that order. The first walk whose entry point loads a file places it. Without code splitting, each chunk walks from its own entry point
+- Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
+- Collects the live parts of each run into part ranges
+- Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
 
 #### `findImportedCSSFilesInJSOrder.rs`
 

@@ -14,7 +14,7 @@ bun_core::define_scoped_log!(debug_merge, MergeChunks, hidden);
 /// that do nothing at the top level but must survive for other reasons:
 /// `export * from` / `export {} from` (the re-exports are tracked separately),
 /// the linker's empty entry-point part, and a text loader's `export default "…"`.
-fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
+pub(crate) fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
     use bun_ast::StmtData;
     part.can_be_removed_if_unused
         || part.stmts.slice().iter().all(|stmt| match &stmt.data {

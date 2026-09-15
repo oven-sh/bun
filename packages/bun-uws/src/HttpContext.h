@@ -34,6 +34,7 @@
 #include <span>
 #include <array>
 #include <mutex>
+#include <utility>
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
@@ -299,8 +300,79 @@ private:
         return us_socket_close(s, 0, nullptr);
     }
 
+    /* Dispatch one read. A parse of this connection that is already on the
+     * stack owns the connection's parse state, so this read waits for it. */
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
+        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+
+        /* The request handler ran the event loop (a synchronous wait that ticks
+         * it) and this read was dispatched inside it. The parse it is nested in
+         * holds the parser's fallback buffer and the live HttpRequest's views
+         * into that buffer, and parsing here reallocates it. Park the bytes
+         * instead; the parse replays them when it unwinds. */
+        if (httpContextData->isParsingSocket(s)) [[unlikely]] {
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
+            httpResponseData->parkedReads.append(std::span<const char>(data, (size_t) length));
+            /* Stop reading while the bytes sit in memory: the peer must not be
+             * able to grow that buffer for as long as the handler runs. */
+            if (!us_socket_is_paused(s)) {
+                us_socket_pause(s);
+                httpResponseData->parkedReadsPausedSocket = true;
+            }
+            return s;
+        }
+
+        us_socket_t *returned = parseData<IsNodeHttp>(s, data, length);
+
+        /* Feed back what the parse parked. A socket that closed, or that
+         * another kind adopted (a WebSocket upgrade, an HTTP/2 handover), no
+         * longer has the ext those bytes live in. */
+        if (returned && !us_socket_is_closed(returned) && us_socket_kind(returned) == socketKind()) {
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(returned);
+            if (httpResponseData->hasParkedReads()) [[unlikely]] {
+                return drainParkedReads<IsNodeHttp>(returned);
+            }
+        }
+        return returned;
+    }
+
+    /* Hand the reads parked by onData back to the parser, now that the parse
+     * that parked them has finished with the connection's parse state. */
+    template <bool IsNodeHttp>
+    static us_socket_t *drainParkedReads(us_socket_t *s) {
+        HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
+
+        if constexpr (IsNodeHttp) {
+            /* node:http flood prevention holds this connection: queue the
+             * parked bytes behind the requests the parser itself parked and
+             * let its resume path replay both, in order. */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
+                httpResponseData->nodeHttpPausedSpill.appendVector(httpResponseData->parkedReads);
+                httpResponseData->parkedReads.clear();
+                httpResponseData->parkedReadsPausedSocket = false;
+                return s;
+            }
+        }
+
+        WTF::Vector<char> parked = std::exchange(httpResponseData->parkedReads, {});
+        if (std::exchange(httpResponseData->parkedReadsPausedSocket, false)) {
+            /* Reads belong to the connection again: a handler called below can
+             * pause it for its own reasons. */
+            us_socket_resume(s);
+        }
+        /* A connection in shutdown takes no more requests (see parseData). */
+        if (parked.isEmpty() || us_socket_is_shut_down(s)) {
+            return s;
+        }
+        size_t length = parked.size();
+        /* The parser's post-padded fence writes two bytes past the logical end. */
+        parked.grow(length + LIBUS_RECV_BUFFER_PADDING);
+        return onData<IsNodeHttp>(s, parked.mutableSpan().data(), (int) length);
+    }
+
+    template <bool IsNodeHttp>
+    static us_socket_t *parseData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
         us_socket_ref(s);
 
@@ -384,12 +456,12 @@ private:
         /* Cork this socket */
         ((AsyncSocket<SSL> *) s)->cork();
 
-        /* Mark that we are inside the parser now. Save/restore the parsed
-         * socket: node:http's read replay can nest a parse inside another
-         * socket's dispatch. */
-        httpContextData->flags.isParsingHttp = true;
-        struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
-        httpContextData->parsingSocket = s;
+        /* Mark that we are inside the parser now. The frame is pushed, not
+         * assigned: a request handler can run the event loop, so another
+         * socket's parse (node:http's read replay, a dispatched read) can nest
+         * inside this one. */
+        typename HttpContextData<SSL>::ParseFrame parseFrame{s, httpContextData->parseFrames};
+        httpContextData->parseFrames = &parseFrame;
         httpResponseData->isIdle = false;
 
         /* node:http compat: maintain the headers/request timeout window (see
@@ -649,8 +721,7 @@ private:
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
         /* Mark that we are no longer parsing Http */
-        httpContextData->flags.isParsingHttp = false;
-        httpContextData->parsingSocket = prevParsingSocket;
+        httpContextData->parseFrames = parseFrame.next;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             /* node:http compat: parse errors surface as the server's 'clientError'

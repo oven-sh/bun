@@ -125,7 +125,7 @@ public:
      * no later uncork or gate: true. */
     bool uncorkCompletedResponse() {
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
-        if (httpContext->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
+        if (!httpContext->getSocketContextData()->isParsingSocket((us_socket_t *) this)) {
             this->uncork();
             return true;
         }
@@ -423,6 +423,10 @@ public:
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
 
+        /* Same reason: the parse that has to learn about the new socket is the
+         * one parsing THIS socket, and the adopt below makes `this` stale. */
+        const bool parsedSocket = httpContextData->isParsingSocket((us_socket_t *) this);
+
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         /* The old ext size is only used as an upper bound to keep the block in
          * place (and as the copy length when it cannot be). The base size is
@@ -447,7 +451,7 @@ public:
         }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (httpContextData->flags.isParsingHttp) {
+        if (parsedSocket) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
         }

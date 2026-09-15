@@ -600,6 +600,19 @@ struct HttpResponseData;
         bool nodeHttpParkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
         WTF::Vector<char> nodeHttpPausedSpill;
+
+        /* Reads dispatched to this connection while a parse of it was already on
+         * the stack (HttpContext::onData). They are newer than anything in
+         * nodeHttpPausedSpill, which only ever holds bytes of the read being
+         * parsed, so the two queues concatenate in that order. */
+        WTF::Vector<char> parkedReads;
+        /* The park paused the connection and owes it a resume. False when the
+         * socket was already paused, so the pause stays with its owner. */
+        bool parkedReadsPausedSocket = false;
+
+        bool hasParkedReads() const {
+            return !parkedReads.isEmpty() || parkedReadsPausedSocket;
+        }
     private:
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;

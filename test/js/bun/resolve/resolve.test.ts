@@ -1942,3 +1942,108 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(exitCode).toBe(0);
   });
 });
+
+// A symlink created in node_modules after the resolver cached that directory's
+// listing must still resolve to its real path. The linked package's own
+// dependencies live next to the real directory (isolated install layout), so
+// resolving to the link path makes them unreachable.
+// https://github.com/oven-sh/bun/issues/42776
+describe("#42776 - symlink created after node_modules was cached", () => {
+  const storeFixture = {
+    "store/pkg-a@1.0.0/node_modules/pkg-a/package.json": JSON.stringify({
+      name: "pkg-a",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "store/pkg-a@1.0.0/node_modules/pkg-a/index.js": `module.exports = require("dep-a");`,
+    "store/pkg-a@1.0.0/node_modules/dep-a/package.json": JSON.stringify({
+      name: "dep-a",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "store/pkg-a@1.0.0/node_modules/dep-a/index.js": `module.exports = "dep-a loaded";`,
+    "project/node_modules/warm/index.js": "module.exports = 1;",
+  };
+
+  const linkScript = `
+    require("warm");
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const target = path.join(__dirname, "..", "store", "pkg-a@1.0.0", "node_modules", "pkg-a");
+    fs.symlinkSync(target, path.join(__dirname, "node_modules", "pkg-a"), ${JSON.stringify(isWindows ? "junction" : "dir")});
+  `;
+
+  it("require resolves to the real path and loads the linked package's dependencies", async () => {
+    using dir = tempDir("resolve-late-symlink-cjs", {
+      ...storeFixture,
+      "project/main.cjs": `${linkScript}
+        console.log(require.resolve("pkg-a"));
+        console.log(require("pkg-a"));
+      `,
+    });
+    const root = realpathSync(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: join(root, "project"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${join(root, "store", "pkg-a@1.0.0", "node_modules", "pkg-a", "index.js")}\ndep-a loaded\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  it("import() resolves to the real path and loads the linked package's dependencies", async () => {
+    using dir = tempDir("resolve-late-symlink-esm", {
+      ...storeFixture,
+      "project/main.cjs": `${linkScript}
+        import("pkg-a").then(m => {
+          console.log(import.meta.resolve("pkg-a"));
+          console.log(m.default);
+        });
+      `,
+    });
+    const root = realpathSync(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: join(root, "project"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      `${pathToFileURL(join(root, "store", "pkg-a@1.0.0", "node_modules", "pkg-a", "index.js")).href}\ndep-a loaded\n`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  it("--preserve-symlinks keeps the link path", async () => {
+    using dir = tempDir("resolve-late-symlink-preserve", {
+      ...storeFixture,
+      "project/main.cjs": `${linkScript}
+        console.log(require.resolve("pkg-a"));
+      `,
+    });
+    const root = realpathSync(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preserve-symlinks", "main.cjs"],
+      env: bunEnv,
+      cwd: join(root, "project"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${join(root, "project", "node_modules", "pkg-a", "index.js")}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // A lookup that fails before the link exists is cached as not found, so the
+  // link is still invisible after it is created. That is a separate bug.
+  // https://github.com/oven-sh/bun/issues/25370
+  it.todo("a package first looked up before its symlink was created resolves after the link appears");
+});

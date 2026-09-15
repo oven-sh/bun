@@ -6241,68 +6241,89 @@ impl<'a> Resolver<'a> {
                 // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
                 // mutex is non-recursive, so go through the `_locked` accessor.
                 if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
-                    if let Some(lookup) = parent_entries.get(base) {
-                        let entries_fd = entries!().fd;
-                        if entries_fd.is_valid()
-                            && !lookup.entry().cache().fd.is_valid()
-                            && self.store_fd
-                        {
-                            // Every cached-`Entry` rewrite takes the per-entry mutex.
-                            let _entry_guard = lookup.entry().mutex.lock_guard();
-                            lookup.entry().set_cache_fd(entries_fd);
-                        }
-                        // SAFETY: EntryStore-owned slot — read-only borrow,
-                        // dies (NLL) before any later `&mut` to this slot.
-                        let entry = lookup.entry();
-
-                        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
-                        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
-                        if !symlink.is_empty() {
-                            if let Some(logs) = self.debug_logs.as_mut() {
-                                let mut buf = Vec::new();
-                                let _ = write!(
-                                    &mut buf,
-                                    "Resolved symlink \"{}\" to \"{}\"",
-                                    bstr::BStr::new(path),
-                                    bstr::BStr::new(symlink)
-                                );
-                                logs.add_note(buf);
-                            }
-                            info.abs_real_path = symlink;
-                        } else if !parent_.abs_real_path.is_empty() {
-                            // this might leak a little i'm not sure
-                            let parts = [parent_.abs_real_path, base];
-                            // NOTE: split into two statements so the two `&mut FileSystem`
-                            // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
-                            let joined = self
-                                .fs_ref()
-                                .abs_buf(&parts, bufs!(dir_info_uncached_filename));
-                            symlink = self
-                                .fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
-                                .expect("unreachable");
-
-                            if let Some(logs) = self.debug_logs.as_mut() {
-                                let mut buf = Vec::new();
-                                let _ = write!(
-                                    &mut buf,
-                                    "Resolved symlink \"{}\" to \"{}\"",
-                                    bstr::BStr::new(path),
-                                    bstr::BStr::new(symlink)
-                                );
-                                logs.add_note(buf);
-                            }
+                    let lookup = parent_entries.get(base);
+                    let entries_fd = entries!().fd;
+                    let mut symlink: &'static [u8] = match &lookup {
+                        Some(lookup) => {
+                            if entries_fd.is_valid()
+                                && !lookup.entry().cache().fd.is_valid()
+                                && self.store_fd
                             {
                                 // Every cached-`Entry` rewrite takes the per-entry mutex.
                                 let _entry_guard = lookup.entry().mutex.lock_guard();
-                                lookup
-                                    .entry()
-                                    .set_cache_symlink(Interned::from_static(symlink));
+                                lookup.entry().set_cache_fd(entries_fd);
                             }
-                            info.abs_real_path = symlink;
+                            // SAFETY: EntryStore-owned slot — read-only borrow,
+                            // dies (NLL) before any later `&mut` to this slot.
+                            let entry = lookup.entry();
+
+                            // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
+                            // rewrite inside `symlink()` is serialized on `Entry.mutex`.
+                            unsafe { entry.symlink(rfs_ptr, self.store_fd) }
                         }
+                        // The directory was opened above, so it exists, but the
+                        // parent's cached listing predates it (for example a
+                        // symlink created in `node_modules` after the first
+                        // resolution through it). Stat it directly so a symlink
+                        // still resolves to its real path.
+                        None => {
+                            // SAFETY: `rfs_ptr` points at the process-global RealFS;
+                            // `kind` only does syscalls and string interning.
+                            match unsafe { &mut *rfs_ptr }.kind(
+                                parent_.abs_path,
+                                base,
+                                entries_fd,
+                                self.store_fd && entries_fd.is_valid(),
+                            ) {
+                                Ok(cache) => cache.symlink.as_bytes(),
+                                Err(_) => b"",
+                            }
+                        }
+                    };
+                    if !symlink.is_empty() {
+                        if let Some(logs) = self.debug_logs.as_mut() {
+                            let mut buf = Vec::new();
+                            let _ = write!(
+                                &mut buf,
+                                "Resolved symlink \"{}\" to \"{}\"",
+                                bstr::BStr::new(path),
+                                bstr::BStr::new(symlink)
+                            );
+                            logs.add_note(buf);
+                        }
+                        info.abs_real_path = symlink;
+                    } else if !parent_.abs_real_path.is_empty() {
+                        // this might leak a little i'm not sure
+                        let parts = [parent_.abs_real_path, base];
+                        // NOTE: split into two statements so the two `&mut FileSystem`
+                        // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
+                        let joined = self
+                            .fs_ref()
+                            .abs_buf(&parts, bufs!(dir_info_uncached_filename));
+                        symlink = self
+                            .fs_ref()
+                            .dirname_store
+                            .append_slice(joined)
+                            .expect("unreachable");
+
+                        if let Some(logs) = self.debug_logs.as_mut() {
+                            let mut buf = Vec::new();
+                            let _ = write!(
+                                &mut buf,
+                                "Resolved symlink \"{}\" to \"{}\"",
+                                bstr::BStr::new(path),
+                                bstr::BStr::new(symlink)
+                            );
+                            logs.add_note(buf);
+                        }
+                        if let Some(lookup) = &lookup {
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = lookup.entry().mutex.lock_guard();
+                            lookup
+                                .entry()
+                                .set_cache_symlink(Interned::from_static(symlink));
+                        }
+                        info.abs_real_path = symlink;
                     }
                 }
             }

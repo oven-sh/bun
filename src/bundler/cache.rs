@@ -68,8 +68,6 @@ impl JavaScript {
 impl JavaScript {
     // For now, we're not going to cache JavaScript ASTs.
     // It's probably only relevant when bundling for production.
-    //
-    /// A source that is not UTF-8 is parsed as its decoded copy, which replaces `*source`.
     pub(crate) fn parse<'a>(
         &self,
         bump: &'a Bump,
@@ -92,6 +90,7 @@ impl JavaScript {
         source: &mut &'a bun_ast::Source,
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
         let decoded = strings::replace_invalid_utf8(source.contents(), bump);
+        // The caller prints and maps with `*source`, so it has to be the text the AST was parsed from.
         *source = bump.alloc(bun_ast::Source {
             contents: std::borrow::Cow::Borrowed(bun_ast::StoreStr::new(decoded).slice()),
             ..(**source).clone()

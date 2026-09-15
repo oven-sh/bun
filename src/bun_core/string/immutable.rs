@@ -207,8 +207,6 @@ pub mod lexer_step {
     /// inline into `next()` (perf showed it as a separate ~2.6% symbol with
     /// the multibyte decode folded in). `cold` parks this in `.text.unlikely`
     /// and survives LTO's IPO inliner.
-    ///
-    /// Sets `*ill_formed` when these bytes are not UTF-8; every lexer bulk skip stops at non-ASCII.
     #[cold]
     #[inline(never)]
     pub fn next_codepoint_multibyte(
@@ -226,6 +224,7 @@ pub mod lexer_step {
         // raw byte, NOT the EOF sentinel, so the main lex loop falls through to its syntax-error
         // arm instead of silently emitting TEndOfFile mid-stream.
         if cp_len == 1 {
+            // The lexer learns this nowhere else: each bulk skip it does stops at a non-ASCII byte.
             *ill_formed = true;
             *current += 1;
             return first as CodePoint;

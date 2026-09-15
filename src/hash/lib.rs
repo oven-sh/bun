@@ -13,6 +13,7 @@
 //! | `xxHash32`     | [`XxHash32::hash`]                            | u32 → u32     |
 //! | `xxHash64`     | [`XxHash64::hash`]                            | u64 → u64     |
 //! | `xxHash3`      | `bun_highway::xxhash3_64`                     | u64 → u64     |
+//! | `xxHash128`    | `bun_highway::xxhash3_128`                    | u64 → u128    |
 //! | `murmur32v2`   | [`Murmur2_32::hash_with_seed`]                | u32 → u32     |
 //! | `murmur32v3`   | [`Murmur3_32::hash_with_seed`]                | u32 → u32     |
 //! | `murmur64v2`   | [`Murmur2_64::hash_with_seed`]                | u64 → u64     |

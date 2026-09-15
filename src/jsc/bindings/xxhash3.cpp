@@ -1,4 +1,4 @@
-// Runtime-dispatched SIMD xxHash3 (XXH3_64bits) via Google Highway.
+// Runtime-dispatched SIMD xxHash3 (XXH3_64bits and XXH3_128bits) via Google Highway.
 //
 // Bun.hash.xxHash3 used the twox-hash Rust crate, which selects its SIMD
 // backend at compile time. On a nehalem (SSE2) target that meant the
@@ -7,7 +7,7 @@
 // mechanism as highway_strings.cpp), so a single binary picks the widest ISA
 // the CPU actually supports.
 //
-// Output is bit-identical to the reference XXH3_64bits for every input: only
+// Output is bit-identical to the reference XXH3_64bits and XXH3_128bits for every input: only
 // the long-keys stripe loop (accumulate_512 + scrambleAcc) is vectorized, and
 // that math is per-64-bit-lane, so scalar / SSE2 / AVX2 / AVX-512 all produce
 // the same accumulators. The 0..240 byte branches, the merge/avalanche
@@ -63,10 +63,15 @@ static constexpr u64 PRIME_MX1 = 0x165667919E3779F9ull;
 static constexpr u64 PRIME_MX2 = 0x9FB21C651E98DF25ull;
 
 static constexpr size_t kSecretLen = 192;
+static constexpr size_t kSecretSizeMin = 136; // XXH3_SECRET_SIZE_MIN
 static constexpr size_t kStripeLen = 64; // XXH_STRIPE_LEN
 static constexpr size_t kAccNb = kStripeLen / sizeof(u64); // 8
 static constexpr size_t kSecretConsumeRate = 8; // XXH_SECRET_CONSUME_RATE
+static constexpr size_t kLastAccStart = 7; // XXH_SECRET_LASTACC_START
+static constexpr size_t kMergeAccsStart = 11; // XXH_SECRET_MERGEACCS_START
 static constexpr size_t kMidsizeMax = 240; // XXH3_MIDSIZE_MAX
+static constexpr size_t kMidsizeStartOffset = 3; // XXH3_MIDSIZE_STARTOFFSET
+static constexpr size_t kMidsizeLastOffset = 17; // XXH3_MIDSIZE_LASTOFFSET
 
 // XXH3_kSecret — byte-for-byte the xxHash reference default secret.
 // clang-format off
@@ -102,15 +107,29 @@ static inline u64 ReadLE64(const u8* p)
 
 static inline u32 Swap32(u32 x) { return __builtin_bswap32(x); }
 static inline u64 Swap64(u64 x) { return __builtin_bswap64(x); }
+static inline u32 Rotl32(u32 x, int r) { return (x << r) | (x >> (32 - r)); }
 static inline u64 Rotl64(u64 x, int r) { return (x << r) | (x >> (64 - r)); }
 static inline u64 Xorshift64(u64 v, int shift) { return v ^ (v >> shift); }
 
-// 64x64 -> 128, fold halves. Uses the compiler's 128-bit integer.
-static inline u64 Mul128Fold64(u64 lhs, u64 rhs)
+// XXH128_hash_t: the two halves of a 128-bit value.
+struct XXH128Hash {
+    u64 low64;
+    u64 high64;
+};
+
+// 64x64 -> 128. Uses the compiler's 128-bit integer.
+static inline XXH128Hash Mul64to128(u64 lhs, u64 rhs)
 {
     __extension__ using u128 = unsigned __int128;
     u128 const product = static_cast<u128>(lhs) * static_cast<u128>(rhs);
-    return static_cast<u64>(product) ^ static_cast<u64>(product >> 64);
+    return { static_cast<u64>(product), static_cast<u64>(product >> 64) };
+}
+
+// 64x64 -> 128, fold halves.
+static inline u64 Mul128Fold64(u64 lhs, u64 rhs)
+{
+    XXH128Hash const product = Mul64to128(lhs, rhs);
+    return product.low64 ^ product.high64;
 }
 
 static inline u64 XXH64_avalanche(u64 h)
@@ -214,22 +233,136 @@ static inline u64 Len17to128(const u8* input, size_t len, const u8* secret, u64 
 
 static inline u64 Len129to240(const u8* input, size_t len, const u8* secret, u64 seed)
 {
-    static constexpr size_t kStartOffset = 3;
-    static constexpr size_t kLastOffset = 17;
-    static constexpr size_t kSecretSizeMin = 136; // XXH3_SECRET_SIZE_MIN
-
     u64 acc = static_cast<u64>(len) * PRIME64_1;
     u64 acc_end;
     unsigned int const nbRounds = static_cast<unsigned int>(len) / 16;
     for (unsigned int i = 0; i < 8; i++) {
         acc += Mix16B(input + (16 * i), secret + (16 * i), seed);
     }
-    acc_end = Mix16B(input + len - 16, secret + kSecretSizeMin - kLastOffset, seed);
+    acc_end = Mix16B(input + len - 16, secret + kSecretSizeMin - kMidsizeLastOffset, seed);
     acc = Avalanche(acc);
     for (unsigned int i = 8; i < nbRounds; i++) {
-        acc_end += Mix16B(input + (16 * i), secret + (16 * (i - 8)) + kStartOffset, seed);
+        acc_end += Mix16B(input + (16 * i), secret + (16 * (i - 8)) + kMidsizeStartOffset, seed);
     }
     return Avalanche(acc + acc_end);
+}
+
+// --- XXH3_128bits short-key branches (0..240 bytes). Scalar, width-independent. ---
+
+static inline XXH128Hash Len1to3_128(const u8* input, size_t len, const u8* secret, u64 seed)
+{
+    u8 const c1 = input[0];
+    u8 const c2 = input[len >> 1];
+    u8 const c3 = input[len - 1];
+    u32 const combinedl = (static_cast<u32>(c1) << 16) | (static_cast<u32>(c2) << 24)
+        | (static_cast<u32>(c3) << 0) | (static_cast<u32>(len) << 8);
+    u32 const combinedh = Rotl32(Swap32(combinedl), 13);
+    u64 const bitflipl = (ReadLE32(secret) ^ ReadLE32(secret + 4)) + seed;
+    u64 const bitfliph = (ReadLE32(secret + 8) ^ ReadLE32(secret + 12)) - seed;
+    u64 const keyed_lo = static_cast<u64>(combinedl) ^ bitflipl;
+    u64 const keyed_hi = static_cast<u64>(combinedh) ^ bitfliph;
+    return { XXH64_avalanche(keyed_lo), XXH64_avalanche(keyed_hi) };
+}
+
+static inline XXH128Hash Len4to8_128(const u8* input, size_t len, const u8* secret, u64 seed)
+{
+    seed ^= static_cast<u64>(Swap32(static_cast<u32>(seed))) << 32;
+    u32 const input_lo = ReadLE32(input);
+    u32 const input_hi = ReadLE32(input + len - 4);
+    u64 const input_64 = input_lo + (static_cast<u64>(input_hi) << 32);
+    u64 const bitflip = (ReadLE64(secret + 16) ^ ReadLE64(secret + 24)) + seed;
+    u64 const keyed = input_64 ^ bitflip;
+
+    XXH128Hash m128 = Mul64to128(keyed, PRIME64_1 + (static_cast<u64>(len) << 2));
+    m128.high64 += (m128.low64 << 1);
+    m128.low64 ^= (m128.high64 >> 3);
+
+    m128.low64 = Xorshift64(m128.low64, 35);
+    m128.low64 *= PRIME_MX2;
+    m128.low64 = Xorshift64(m128.low64, 28);
+    m128.high64 = Avalanche(m128.high64);
+    return m128;
+}
+
+static inline XXH128Hash Len9to16_128(const u8* input, size_t len, const u8* secret, u64 seed)
+{
+    u64 const bitflipl = (ReadLE64(secret + 32) ^ ReadLE64(secret + 40)) - seed;
+    u64 const bitfliph = (ReadLE64(secret + 48) ^ ReadLE64(secret + 56)) + seed;
+    u64 const input_lo = ReadLE64(input);
+    u64 input_hi = ReadLE64(input + len - 8);
+    XXH128Hash m128 = Mul64to128(input_lo ^ input_hi ^ bitflipl, PRIME64_1);
+    m128.low64 += static_cast<u64>(len - 1) << 54;
+    input_hi ^= bitfliph;
+    m128.high64 += (input_hi & 0xFFFFFFFF00000000ull) + static_cast<u64>(static_cast<u32>(input_hi)) * PRIME32_2;
+    m128.low64 ^= Swap64(m128.high64);
+
+    // 128x64 multiply: h128 = m128 * PRIME64_2.
+    XXH128Hash h128 = Mul64to128(m128.low64, PRIME64_2);
+    h128.high64 += m128.high64 * PRIME64_2;
+    h128.low64 = Avalanche(h128.low64);
+    h128.high64 = Avalanche(h128.high64);
+    return h128;
+}
+
+static inline XXH128Hash Len0to16_128(const u8* input, size_t len, const u8* secret, u64 seed)
+{
+    if (len > 8) return Len9to16_128(input, len, secret, seed);
+    if (len >= 4) return Len4to8_128(input, len, secret, seed);
+    if (len) return Len1to3_128(input, len, secret, seed);
+    u64 const bitflipl = ReadLE64(secret + 64) ^ ReadLE64(secret + 72);
+    u64 const bitfliph = ReadLE64(secret + 80) ^ ReadLE64(secret + 88);
+    return { XXH64_avalanche(seed ^ bitflipl), XXH64_avalanche(seed ^ bitfliph) };
+}
+
+static inline XXH128Hash Mix32B(XXH128Hash acc, const u8* input_1, const u8* input_2, const u8* secret, u64 seed)
+{
+    acc.low64 += Mix16B(input_1, secret + 0, seed);
+    acc.low64 ^= ReadLE64(input_2) + ReadLE64(input_2 + 8);
+    acc.high64 += Mix16B(input_2, secret + 16, seed);
+    acc.high64 ^= ReadLE64(input_1) + ReadLE64(input_1 + 8);
+    return acc;
+}
+
+// The finisher shared by the 17..128 and the 129..240 byte branches.
+static inline XXH128Hash MidsizeAvalanche128(XXH128Hash acc, size_t len, u64 seed)
+{
+    u64 const low64 = acc.low64 + acc.high64;
+    u64 const high64 = (acc.low64 * PRIME64_1) + (acc.high64 * PRIME64_4)
+        + ((static_cast<u64>(len) - seed) * PRIME64_2);
+    return { Avalanche(low64), 0 - Avalanche(high64) };
+}
+
+static inline XXH128Hash Len17to128_128(const u8* input, size_t len, const u8* secret, u64 seed)
+{
+    XXH128Hash acc = { static_cast<u64>(len) * PRIME64_1, 0 };
+    if (len > 32) {
+        if (len > 64) {
+            if (len > 96) {
+                acc = Mix32B(acc, input + 48, input + len - 64, secret + 96, seed);
+            }
+            acc = Mix32B(acc, input + 32, input + len - 48, secret + 64, seed);
+        }
+        acc = Mix32B(acc, input + 16, input + len - 32, secret + 32, seed);
+    }
+    acc = Mix32B(acc, input, input + len - 16, secret, seed);
+    return MidsizeAvalanche128(acc, len, seed);
+}
+
+static inline XXH128Hash Len129to240_128(const u8* input, size_t len, const u8* secret, u64 seed)
+{
+    XXH128Hash acc = { static_cast<u64>(len) * PRIME64_1, 0 };
+    for (size_t i = 32; i < 160; i += 32) {
+        acc = Mix32B(acc, input + i - 32, input + i - 16, secret + i - 32, seed);
+    }
+    acc.low64 = Avalanche(acc.low64);
+    acc.high64 = Avalanche(acc.high64);
+    // `<=` matches the reference, which mixes the last 32 bytes twice when len % 32 == 0.
+    for (size_t i = 160; i <= len; i += 32) {
+        acc = Mix32B(acc, input + i - 32, input + i - 16, secret + kMidsizeStartOffset + i - 160, seed);
+    }
+    acc = Mix32B(acc, input + len - 16, input + len - 32,
+        secret + kSecretSizeMin - kMidsizeLastOffset - 16, 0 - seed);
+    return MidsizeAvalanche128(acc, len, seed);
 }
 
 // --- Long-key finisher (scalar) ---
@@ -278,8 +411,6 @@ static inline void InitCustomSecret(u8* customSecret, u64 seed64)
 // verified against the reference vectors and SMHasher constants in
 // test/js/bun/util/hash.test.js.
 // ---------------------------------------------------------------------------
-
-static inline u32 Rotl32(u32 x, int r) { return (x << r) | (x >> (32 - r)); }
 
 static inline u32 XXH32_round(u32 acc, u32 input)
 {
@@ -573,9 +704,8 @@ static HWY_INLINE void ScrambleAcc(u64* HWY_RESTRICT acc, const u8* HWY_RESTRICT
     }
 }
 
-// Full long-input hash (len > 240): the stripe loop + finisher. Dispatched
-// once per call so the ISA is resolved a single time, not per stripe.
-u64 HashLong(const u8* HWY_RESTRICT input, size_t len, const u8* HWY_RESTRICT secret)
+// XXH3_hashLong_internal_loop (len > 240). Both hash widths merge `out` in scalar code.
+void HashLongLoop(u64* HWY_RESTRICT out, const u8* HWY_RESTRICT input, size_t len, const u8* HWY_RESTRICT secret)
 {
     HWY_ALIGN u64 acc[kAccNb];
     std::memcpy(acc, kInitAcc, sizeof(acc));
@@ -600,11 +730,9 @@ u64 HashLong(const u8* HWY_RESTRICT input, size_t len, const u8* HWY_RESTRICT se
     }
 
     // Last stripe (always the final 64 bytes).
-    static constexpr size_t kLastAccStart = 7; // XXH_SECRET_LASTACC_START
     Accumulate512(acc, input + len - kStripeLen, secret + kSecretLen - kStripeLen - kLastAccStart);
 
-    static constexpr size_t kMergeAccsStart = 11; // XXH_SECRET_MERGEACCS_START
-    return MergeAccs(acc, secret + kMergeAccsStart, static_cast<u64>(len) * PRIME64_1);
+    std::memcpy(out, acc, sizeof(acc));
 }
 
 } // namespace HWY_NAMESPACE
@@ -626,7 +754,19 @@ HWY_AFTER_NAMESPACE();
 namespace bun {
 namespace xxh3 {
 
-HWY_EXPORT(HashLong);
+HWY_EXPORT(HashLongLoop);
+
+// Returns the secret the loop used: kSecret for seed 0, else one derived into `customSecret`.
+static const u8* HashLongWithSeed(u64* acc, u8* customSecret, const u8* input, size_t len, u64 seed)
+{
+    const u8* secret = kSecret;
+    if (seed != 0) {
+        InitCustomSecret(customSecret, seed);
+        secret = customSecret;
+    }
+    BUN_HWY_DISPATCH(HashLongLoop)(acc, input, len, secret);
+    return secret;
+}
 
 // XXH3_64bits_withSeed. `seed` is the full 64-bit seed; callers that need the
 // JS `@truncate(seed)` semantics truncate before calling (HashObject does).
@@ -641,14 +781,31 @@ static u64 Hash64(const u8* input, size_t len, u64 seed)
     if (len <= kMidsizeMax) {
         return Len129to240(input, len, kSecret, seed);
     }
-    // Long input: seed == 0 uses the default secret directly; otherwise derive
-    // a per-seed secret (matches XXH3_hashLong_64b_withSeed_internal).
-    if (seed == 0) {
-        return BUN_HWY_DISPATCH(HashLong)(input, len, kSecret);
+    alignas(64) u8 customSecret[kSecretLen];
+    u64 acc[kAccNb];
+    const u8* const secret = HashLongWithSeed(acc, customSecret, input, len, seed);
+    return MergeAccs(acc, secret + kMergeAccsStart, static_cast<u64>(len) * PRIME64_1);
+}
+
+// XXH3_128bits_withSeed. `seed` is the full 64-bit seed.
+static XXH128Hash Hash128(const u8* input, size_t len, u64 seed)
+{
+    if (len <= 16) {
+        return Len0to16_128(input, len, kSecret, seed);
+    }
+    if (len <= 128) {
+        return Len17to128_128(input, len, kSecret, seed);
+    }
+    if (len <= kMidsizeMax) {
+        return Len129to240_128(input, len, kSecret, seed);
     }
     alignas(64) u8 customSecret[kSecretLen];
-    InitCustomSecret(customSecret, seed);
-    return BUN_HWY_DISPATCH(HashLong)(input, len, customSecret);
+    u64 acc[kAccNb];
+    const u8* const secret = HashLongWithSeed(acc, customSecret, input, len, seed);
+    return {
+        MergeAccs(acc, secret + kMergeAccsStart, static_cast<u64>(len) * PRIME64_1),
+        MergeAccs(acc, secret + kSecretLen - sizeof(acc) - kMergeAccsStart, ~(static_cast<u64>(len) * PRIME64_2)),
+    };
 }
 
 } // namespace xxh3
@@ -666,6 +823,14 @@ extern "C" {
 uint64_t highway_xxhash3_64(const uint8_t* input, size_t len, uint64_t seed)
 {
     return bun::xxh3::Hash64(input, len, seed);
+}
+
+// Runtime-dispatched XXH3_128bits_withSeed. out[0] is the low half, out[1] the high half.
+void highway_xxhash3_128(const uint8_t* input, size_t len, uint64_t seed, uint64_t* out)
+{
+    bun::xxh3::XXH128Hash const hash = bun::xxh3::Hash128(input, len, seed);
+    out[0] = hash.low64;
+    out[1] = hash.high64;
 }
 
 // XXH32 one-shot. Scalar; bit-identical to the reference.

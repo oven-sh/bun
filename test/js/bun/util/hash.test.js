@@ -70,6 +70,14 @@ it(`Bun.hash.xxHash3()`, () => {
   expect(Bun.hash.xxHash3(new TextEncoder().encode("hello world"))).toBe(0xd447b1ea40e6988bn);
   gcTick();
 });
+it(`Bun.hash.xxHash128()`, () => {
+  expect(Bun.hash.xxHash128("hello world")).toBe(0xdf8d09e93f874900a99b8775cc15b6c7n);
+  gcTick();
+  expect(Bun.hash.xxHash128(new TextEncoder().encode("hello world"))).toBe(0xdf8d09e93f874900a99b8775cc15b6c7n);
+  gcTick();
+  // The canonical digest (XXH128_canonicalFromHash) is the big-endian hex of the bigint.
+  expect(Bun.hash.xxHash128("hello world").toString(16).padStart(32, "0")).toBe("df8d09e93f874900a99b8775cc15b6c7");
+});
 it(`Bun.hash.murmur32v3()`, () => {
   expect(Bun.hash.murmur32v3("hello world")).toBe(0x5e928f0f);
   gcTick();
@@ -179,6 +187,106 @@ describe("xxHash3 SIMD kernel", () => {
     expect(xxHash3ForTesting(bytes, undefined)).toBe(xxHash3ForTesting(bytes));
     // a wrong-type seed is a mistaken call
     expect(() => xxHash3ForTesting(bytes, "nope")).toThrow("seed must be a number or bigint");
+  });
+});
+
+// Bun.hash.xxHash128 is XXH3_128bits_withSeed. Its short-input branches are
+// separate from the 64-bit ones, and its long-input path shares the dispatched
+// stripe loop with xxHash3. Expected values come from the xxHash reference
+// (v0.8.2), as (high64 << 64n) | low64. Input byte i = (i * 191 + 17) & 0xff.
+describe("xxHash128 reference vectors", () => {
+  const makeInput = n => {
+    const b = new Uint8Array(n);
+    for (let i = 0; i < n; i++) b[i] = (i * 191 + 17) & 0xff;
+    return b;
+  };
+
+  // 0xfedcba9876543210 does not fit in u32, so it checks that the full u64 seed is used.
+  const BIG_SEED = 18364758544493064720n;
+
+  // [length, seed, expected], from the reference XXH3_128bits_withSeed.
+  const REFERENCE = [
+    [0, 0n, 0x99aa06d3014798d86001c324468d497fn],
+    [0, 2882400001n, 0xafe8d3f6b2a21e14b232f4f01dfba019n],
+    [1, 0n, 0xf46d8182f5a4994af319fe2bdfcdfebdn],
+    [1, 42n, 0x7b1882fc7bae7d7a46d8bd2c8a4b5d7cn],
+    [1, BIG_SEED, 0xb4c5848cfa18159e6e391427ebfab897n],
+    [3, 0n, 0x8f3da70e554cba4c5f0e655f038cc17fn],
+    [3, 2882400001n, 0x597eb4168b63d9e76d433d112876736an],
+    [4, 0n, 0xebf55fd7f190de905a66c2cd13b4e76an],
+    [4, 42n, 0xe421e49b45ee4b1a997f6fefb58a9b7an],
+    [4, BIG_SEED, 0x86753af4d40598b38a2b87097619f9dfn],
+    [8, 0n, 0x12a88caa499625caf3c783fa5a1b4688n],
+    [8, 2882400001n, 0x33e662492d3e67e94a68849b238054d6n],
+    [9, 0n, 0x7c5803582b2f059ef4e29ec04b0e1e63n],
+    [9, 42n, 0xe09f93dbc753fe7ca7f7ff77e65afe49n],
+    [9, BIG_SEED, 0xffedb895b0717dd7eef194b789bcbd38n],
+    [16, 0n, 0xd5a006a6c295b0ed4fc686383b65d5aan],
+    [16, 2882400001n, 0xfd5c8ccc2b96214ec9797fba53656857n],
+    [17, 0n, 0x7269f7707a5633ce34fdba88610c84f0n],
+    [17, 42n, 0x555cee2202f0eb819d516a87ea893f55n],
+    [17, BIG_SEED, 0x22860a317c761d25942cc22202328f77n],
+    // 32, 64, and 96 are the cutoffs of the 17..128 branch.
+    [32, 0n, 0xb460d4dc6be0adcb6aa1b5185c4a1bf9n],
+    [33, 42n, 0xb5bc1de50fbcfd373e3d21799fac02b8n],
+    [64, 2882400001n, 0xcf9bfad8b3365432de19134db8892d66n],
+    [65, 0n, 0xdbb73c102b1d241fc065002853df8e7cn],
+    [96, 42n, 0x5fa3b9d4dad7646c82c57ae93f82b0c1n],
+    [97, BIG_SEED, 0xf5848ceac1e49ec83c1a9fa888f554ccn],
+    [128, 0n, 0xa50923197dc0dc531198ac4ec9cfd6efn],
+    [128, 2882400001n, 0x7ed5bb4719b1d4ce6569b846a8c6cbafn],
+    [129, 0n, 0x7ad3d310e226eae751c73585a2dbe083n],
+    [129, 42n, 0xa9cc7ecec36484a6a347abdffb1b594en],
+    [129, BIG_SEED, 0xe2c3e2425bf9ad647c03504f9e24492cn],
+    // The 129..240 branch mixes one more 32-byte block at 160, 192, and 224.
+    [160, 0n, 0x66dc257dd0a336a347ff8069f9d0faf9n],
+    [192, 42n, 0xc197ea3ba8c4a096477c04659dc59d93n],
+    [224, 2882400001n, 0xa837590456378ff1fced13eed398176an],
+    [240, 0n, 0xf260e5c85b249b91791c37dcce4acc6bn],
+    [240, 2882400001n, 0xa88c287e75d2c554d53dcf0cc73098fcn],
+    // Long-input path (> 240): the Highway-dispatched stripe loop.
+    [241, 0n, 0x1c2d14c78686163fdc3fc1135592d6e6n],
+    [241, 42n, 0x4755c37801bfb6688ad5972b519634e3n],
+    [241, BIG_SEED, 0x89b142e94b6ef433261f3da474ce402an],
+    [1024, 0n, 0x1b66ab1db0e725f2a9e2eee0215aa4e9n],
+    [1024, 2882400001n, 0x25a0c04ced7e12898863ca2656d5ca77n],
+    // Multi-block.
+    [131072, 0n, 0x51b9b08e713dd1196afc5e23ce3c83a5n],
+    [131072, 42n, 0x6f7e25a68e46bbc4e5e44b2bed110652n],
+    [131072, BIG_SEED, 0xb8bf146fcaeaffe124fd0d52bbc1bc0en],
+  ];
+
+  it("matches the xxHash reference across every length branch and seed", () => {
+    const actual = REFERENCE.map(([len, seed]) => [len, seed, Bun.hash.xxHash128(makeInput(len), seed)]);
+    expect(actual).toEqual(REFERENCE);
+  });
+
+  it("has the 64-bit hash as its low half for long inputs", () => {
+    // XXH3_hashLong_128b merges the same accumulators as the 64-bit hash. The
+    // seeds fit in u32, so xxHash3 does not truncate them.
+    for (const len of [241, 256, 513, 1024, 65536, 131072]) {
+      for (const seed of [0, 1, 0xabcdef01]) {
+        const input = makeInput(len);
+        expect(Bun.hash.xxHash128(input, seed) & 0xffffffffffffffffn).toBe(Bun.hash.xxHash3(input, seed));
+      }
+    }
+    gcTick();
+  });
+
+  it("reads a number seed and a bigint seed the same way", () => {
+    const input = makeInput(100);
+    const seeds = [0, 1, 0xabcdef01, 2 ** 32, 2 ** 53 - 1];
+    expect(seeds.map(seed => Bun.hash.xxHash128(input, seed))).toEqual(
+      seeds.map(seed => Bun.hash.xxHash128(input, BigInt(seed))),
+    );
+    expect(Bun.hash.xxHash128(input, 2 ** 32)).not.toBe(Bun.hash.xxHash128(input, 0));
+  });
+
+  it("hashes a string and its UTF-8 bytes identically for a large input", () => {
+    const str = Buffer.alloc(100 * 1024, "xABcDpQrStUvWxYz=-1]23]12312312][3123][123][").toString();
+    const bytes = new TextEncoder().encode(str);
+    expect(Bun.hash.xxHash128(str)).toBe(Bun.hash.xxHash128(bytes));
+    expect(Bun.hash.xxHash128(bytes.buffer)).toBe(Bun.hash.xxHash128(bytes));
   });
 });
 

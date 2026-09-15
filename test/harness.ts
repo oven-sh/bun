@@ -1659,7 +1659,8 @@ export function rejectUnauthorizedScope(value: boolean) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = value ? "1" : "0";
   return {
     [Symbol.dispose]() {
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = original_rejectUnauthorized;
+      if (original_rejectUnauthorized === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+      else process.env.NODE_TLS_REJECT_UNAUTHORIZED = original_rejectUnauthorized;
     },
   };
 }

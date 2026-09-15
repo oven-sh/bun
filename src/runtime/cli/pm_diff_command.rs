@@ -15,7 +15,7 @@ use bun_install::dependency;
 use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::npm::{self, PackageManifest};
-use bun_install::{PackageManager, resolution};
+use bun_install::{Lockfile, PackageManager, resolution};
 use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_semver as Semver;
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
@@ -101,13 +101,15 @@ pub(crate) fn exec(
         .collect();
 
     let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
+    // Two folders compare as written: the patch between them has to apply to the files on disk.
+    let as_published = !matches!((&left_spec, &right_spec), (Spec::Dir(_), Spec::Dir(_)));
     // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
     let mut left_early: Option<Tree> = None;
     if let (Spec::Dir(_) | Spec::Tarball(_), Spec::Registry { name, .. }) =
         (&left_spec, &mut right_spec)
     {
         if name.is_empty() {
-            let local = materialize(pm, &left_spec)?;
+            let local = materialize(pm, &left_spec, as_published)?;
             *name = package_name_in(&local).unwrap_or_else(|| {
                 Status::clear();
                 Output::err_generic(
@@ -119,7 +121,7 @@ pub(crate) fn exec(
             left_early = Some(local);
         }
     }
-    let mut right = materialize(pm, &right_spec)?;
+    let mut right = materialize(pm, &right_spec, as_published)?;
     if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
             *name = package_name_in(&right).unwrap_or_else(|| {
@@ -134,7 +136,7 @@ pub(crate) fn exec(
     }
     let mut left = match left_early {
         Some(tree) => tree,
-        None => materialize(pm, &left_spec)?,
+        None => materialize(pm, &left_spec, as_published)?,
     };
     // Show local paths the way they were typed, not as resolved against the invoking folder.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
@@ -454,7 +456,11 @@ impl Drop for Status {
     }
 }
 
-fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Error> {
+fn materialize(
+    pm: &mut PackageManager,
+    spec: &Spec,
+    as_published: bool,
+) -> Result<Tree, crate::Error> {
     let _status = match spec {
         Spec::Registry { name, version } => {
             Status::show("fetching", &[&name[..], b"@", &version[..]].concat())
@@ -480,7 +486,7 @@ fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Erro
             read_tarball_into(&bytes, &mut tree)?;
             Ok(tree)
         }
-        Spec::Dir(path) => read_dir_tree(path),
+        Spec::Dir(path) => read_dir_tree(path, as_published),
     }
 }
 
@@ -541,7 +547,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
     Ok(())
 }
 
-fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
+fn read_dir_tree(root: &[u8], as_published: bool) -> Result<Tree, crate::Error> {
     let mut tree = Tree {
         label: root.to_vec(),
         files: BTreeMap::new(),
@@ -569,6 +575,13 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
         if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
+            // Before the parse below: loading a lockfile resets the AST store that parse allocates from.
+            let mut lockfile = Lockfile::default();
+            let lockfile = if as_published {
+                lockfile_for(&mut lockfile, root, &pkg)
+            } else {
+                None
+            };
             let bump = Bump::new();
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
             if let Ok(json) = bun_parsers::json::parse_utf8(
@@ -613,6 +626,11 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                         Err(err) => fail(err, rel),
                     }
                 }
+                let pkg = if as_published {
+                    with_published_versions(pkg, &json, lockfile)
+                } else {
+                    pkg
+                };
                 tree.files.insert(b"package.json".to_vec(), pkg);
                 root_fd.close();
                 return Ok(tree);
@@ -692,6 +710,140 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
         dir.close();
     }
     Ok(tree)
+}
+
+/// The lockfile `bun pm pack` reads in `dir`: the nearest one above it that lists `dir` as a workspace, else `dir`'s own.
+fn lockfile_for<'a>(
+    lockfile: &'a mut Lockfile,
+    dir: &[u8],
+    manifest: &[u8],
+) -> Option<&'a Lockfile> {
+    use bun_paths::resolve_path::{join_abs_string_buf, platform};
+    // A JSON escape can spell either protocol, so a manifest with a backslash in it loads the lockfile too.
+    if !strings::contains(manifest, b"workspace:")
+        && !strings::contains(manifest, b"catalog:")
+        && !strings::contains_char(manifest, b'\\')
+    {
+        return None;
+    }
+    // `Some(true)`: loaded. `Some(false)`: there is one, and it does not load. `None`: there is none.
+    fn load(lockfile: &mut Lockfile, dir: &[u8]) -> Option<bool> {
+        let fd = bun_sys::open_dir_at(Fd::cwd(), dir).ok()?;
+        let loaded = match lockfile.load_from_dir::<false>(fd, None, &mut bun_ast::Log::init()) {
+            LoadResult::Ok(_) => Some(true),
+            LoadResult::NotFound => None,
+            LoadResult::Err(_) => Some(false),
+        };
+        fd.close();
+        loaded
+    }
+    let (mut dir_buf, mut buf) = (
+        bun_paths::path_buffer_pool::get(),
+        bun_paths::path_buffer_pool::get(),
+    );
+    // Every path compared goes through the same join, so `./packages/a/` and `packages/a` are one folder.
+    let dir = strings::without_trailing_slash(join_abs_string_buf::<platform::Auto>(
+        dir,
+        &mut dir_buf[..],
+        &[b"."],
+    ));
+    // A workspace is packed from its project's root, so only a lockfile above `dir` that lists it counts here.
+    let mut root = dir;
+    let mut is_workspace = false;
+    while let Some(parent) = bun_paths::dirname(root)
+        .map(strings::without_trailing_slash)
+        .filter(|parent| parent.len() < root.len())
+    {
+        root = parent;
+        if load(lockfile, root) != Some(true) {
+            continue;
+        }
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        is_workspace = lockfile.packages.items_resolution().iter().any(|res| {
+            res.tag == resolution::Tag::Workspace
+                && strings::without_trailing_slash(join_abs_string_buf::<platform::Auto>(
+                    root,
+                    &mut buf[..],
+                    &[res.workspace().slice(string_buf)],
+                )) == dir
+        });
+        if is_workspace {
+            break;
+        }
+    }
+    (is_workspace || load(lockfile, dir) == Some(true)).then_some(&*lockfile)
+}
+
+/// Whether `token`, a JSON string with its quotes, decodes to `value`. `"workspace:\u005e"` reads as `workspace:^`.
+fn json_string_reads_as(token: &[u8], value: &[u8]) -> bool {
+    let bump = Bump::new();
+    bun_parsers::json::parse_utf8(
+        &bun_ast::Source::init_path_string(b"package.json", token),
+        &mut bun_ast::Log::init(),
+        &bump,
+    )
+    .is_ok_and(|string| string.as_utf8_string_literal() == Some(value))
+}
+
+/// `manifest` (a package.json, parsed as `json`) with its `workspace:` and `catalog:` versions as `bun pm pack` publishes them.
+fn with_published_versions(
+    manifest: Vec<u8>,
+    json: &bun_js_parser::Expr,
+    lockfile: Option<&Lockfile>,
+) -> Vec<u8> {
+    // The string token of each version to replace (its start and end in `manifest`), and what replaces it.
+    let mut edits: Vec<(usize, usize, Vec<u8>)> = Vec::new();
+    for section in bun_install_types::DependencyGroup::FOUR {
+        let Some(dependencies) = json.get_object(section.prop) else {
+            continue;
+        };
+        let Some(dependencies) = dependencies.data.e_object() else {
+            continue;
+        };
+        for dependency in dependencies.properties.slice() {
+            let (Some(name), Some(version)) = (&dependency.key, &dependency.value) else {
+                continue;
+            };
+            let (Some(name), Some(spec)) = (
+                name.as_utf8_string_literal(),
+                version.as_utf8_string_literal(),
+            ) else {
+                continue;
+            };
+            // A version that does not resolve stays as written: pack refuses to publish it.
+            let Some(Ok(published)) =
+                crate::cli::pack_command::published_version(lockfile, name, spec)
+            else {
+                continue;
+            };
+            // Only a token that reads as the value the parser gave is replaced.
+            let token = usize::try_from(version.loc.start).ok().and_then(|at| {
+                let end = bun_parsers::json::skip_string_token(&manifest, at)?;
+                json_string_reads_as(&manifest[at..end], spec).then_some((at, end))
+            });
+            if let Some((at, end)) = token {
+                edits.push((at, end, published));
+            }
+        }
+    }
+    if edits.is_empty() {
+        return manifest;
+    }
+    edits.sort_unstable_by_key(|&(at, ..)| at);
+    edits.dedup_by_key(|&mut (at, ..)| at);
+    let mut out: Vec<u8> = Vec::with_capacity(manifest.len());
+    let mut copied = 0usize;
+    for (at, end, published) in &edits {
+        out.extend_from_slice(&manifest[copied..*at]);
+        let _ = write!(
+            out,
+            "{}",
+            bun_core::fmt::format_json_string_utf8(published, Default::default())
+        );
+        copied = *end;
+    }
+    out.extend_from_slice(&manifest[copied..]);
+    out
 }
 
 /// Fetches `name`'s manifest, resolves `version` (exact, range, or dist-tag), downloads that tarball and unpacks it in memory.

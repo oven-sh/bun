@@ -640,12 +640,12 @@ impl JSBundleCompletionTask {
             {
                 (*this).poll_ref.disable();
                 (*this).caller.handle.leave();
+                (*this).abandon_html_route();
                 if let Some(plugin) = (*this).plugins.take() {
                     Plugin::destroy(plugin.as_ptr());
                 }
                 (*this).promise = jsc::JSPromiseStrong::default();
                 (*this).bundle_ticket = None;
-                (*this).html_build_task = None;
                 // Publish only now: from here the bundle thread may free `this`.
                 (*this)
                     .stage
@@ -663,6 +663,16 @@ impl JSBundleCompletionTask {
         }
     }
 
+    /// For an HTML route's build that will not deliver its result: the plugins are the route's
+    /// server's (not this build's to destroy), and the route releases the request it holds on
+    /// that server.
+    fn abandon_html_route(&mut self) {
+        if let Some(route) = self.html_build_task.take() {
+            self.plugins = None;
+            route.on_build_abandoned();
+        }
+    }
+
     fn on_complete(&mut self) -> bun_event_loop::JsResult<()> {
         let this = self;
         let vm = this.global_this.bun_vm_ptr();
@@ -670,6 +680,7 @@ impl JSBundleCompletionTask {
         this.poll_ref
             .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
         if this.cancelled.load(core::sync::atomic::Ordering::Acquire) {
+            this.abandon_html_route();
             return Ok(());
         }
 

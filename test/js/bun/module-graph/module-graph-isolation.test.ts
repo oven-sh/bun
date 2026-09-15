@@ -445,6 +445,54 @@ const dir = String(
       console.log("collected");
       process.exit(0);
     `,
+    // Six pages that share a script, so that the builds queue behind one another.
+    ...Object.fromEntries(
+      Array.from({ length: 6 }, (_, i) => [
+        "page-" + i + ".html",
+        "<!doctype html><title>page " + i + '</title><script type="module" src="./page-script.ts"></script>',
+      ]),
+    ),
+    "page-script.ts":
+      Array.from(
+        { length: 400 },
+        (_, i) => "export function f" + i + "(a: number): number { return a * " + i + "; }",
+      ).join("\n") + "\nconsole.log(f1(2));",
+    "serves-html-routes.mjs": `
+      import page0 from "./page-0.html";
+      import page1 from "./page-1.html";
+      import page2 from "./page-2.html";
+      import page3 from "./page-3.html";
+      import page4 from "./page-4.html";
+      import page5 from "./page-5.html";
+      const pages = [page0, page1, page2, page3, page4, page5];
+      export const paths = pages.map((_, i) => "/" + i);
+      export const serve = () => Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, routes: Object.fromEntries(pages.map((page, i) => ["/" + i, page])) });
+    `,
+    "disposed-while-building-pages.mjs": `
+      import { heapStats } from "bun:jsc";
+      const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+      const servers = () => { Bun.gc(true); const counts = heapStats().objectTypeCounts; return (counts.HTTPServer ?? 0) + (counts.DebugHTTPServer ?? 0); };
+      const use = async () => {
+        const graph = new Bun.ModuleGraph();
+        const app = await graph.import(import.meta.dir + "/serves-html-routes.mjs");
+        const server = graph.run(() => app.serve());
+        // One request per page: each starts a build, which holds a pending request on the server.
+        for (const path of app.paths)
+          await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open: socket => void socket.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"), data() {}, close() {}, error() {} } });
+        await until(() => server.pendingRequests >= app.paths.length);
+        graph.dispose();
+      };
+      // (One first, so the class's own cells are there before counting.)
+      await use();
+      let none;
+      await until(() => { const before = none; return (none = servers()) === before; });
+      for (let i = 0; i < 3; i++) await use();
+      // (No more than before, not as many: the first one may have outlived that reading.)
+      let turns = 0;
+      await until(() => servers() <= none || ++turns === 2000);
+      console.log(servers() <= none ? "collected" : "kept " + (servers() - none));
+      process.exit(0);
+    `,
     "makes-modules.cjs": `
       const Module = require("node:module");
       const made = name => Object.assign(new Module(__dirname + "/" + name), { filename: __dirname + "/" + name, paths: [] });
@@ -3210,6 +3258,9 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       stdout: "collected",
       exitCode: 0,
     });
+  });
+  test("a server whose HTML routes were still being built is released with it", async () => {
+    expect(await runsFixture("disposed-while-building-pages.mjs")).toEqual({ stdout: "collected", exitCode: 0 });
   });
   test.skipIf(isWindows)("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
     expect(await runsFixture("disposed-with-things-half-done.mjs")).toEqual({

@@ -350,6 +350,13 @@ impl Route {
     /// took on the server. The release comes last because it runs the server's
     /// idle pass (`deinit_if_we_can`), which schedules the server's deinit when
     /// this build was the only thing still keeping a stopped server alive.
+    /// The build task will not deliver (the context that started it stopped, or the VM is going):
+    /// what waits for the page is answered as for a failed build, and the server is released.
+    pub(crate) fn on_build_abandoned(&self) {
+        self.state.set(State::Err(Log::init()));
+        self.finish_building();
+    }
+
     fn finish_building(&self) {
         debug_assert!(matches!(self.state.get(), State::Err(_) | State::Html(_)));
         self.resume_pending_responses();

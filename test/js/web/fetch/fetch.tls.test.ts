@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tmpdirSync } from "harness";
 import { readFileSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -425,6 +426,55 @@ describe.concurrent("fetch-tls", () => {
     // The fixture's stalled handshakes wait for the padded 1s idle timer,
     // which the 4s sweep fires at ~4-8s, so this outlives the 5s default.
   }, 30_000);
+
+  // A handshake that ends before any certificate verdict exists (the peer
+  // hangs up, or speaks something other than TLS) is a transport failure.
+  // It used to be reported as UNKNOWN_CERTIFICATE_VERIFICATION_ERROR, the
+  // fallback for an X509 code the client does not know, because uSockets'
+  // ECONNRESET/EPROTO pseudo-codes were fed into the X509 table.
+  async function plainTcpServer(onClientHello: (socket: net.Socket) => void) {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => onClientHello(socket));
+    });
+    const { promise, resolve } = Promise.withResolvers<void>();
+    server.listen(0, "127.0.0.1", () => resolve());
+    await promise;
+    return {
+      port: (server.address() as net.AddressInfo).port,
+      [Symbol.dispose]: () => void server.close(),
+    };
+  }
+
+  for (const rejectUnauthorized of [true, false]) {
+    it(`a peer that closes during the handshake rejects with ECONNRESET (rejectUnauthorized: ${rejectUnauthorized})`, async () => {
+      using server = await plainTcpServer(socket => socket.end());
+      const err = await fetch(`https://127.0.0.1:${server.port}/`, {
+        keepalive: false,
+        tls: { rejectUnauthorized },
+      }).then(
+        () => expect.unreachable(),
+        e => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(err.code).toBe("ECONNRESET");
+    });
+
+    it(`a peer that does not speak TLS rejects with ERR_SSL_WRONG_VERSION_NUMBER (rejectUnauthorized: ${rejectUnauthorized})`, async () => {
+      using server = await plainTcpServer(socket => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
+      const err = await fetch(`https://127.0.0.1:${server.port}/`, {
+        keepalive: false,
+        tls: { rejectUnauthorized },
+      }).then(
+        () => expect.unreachable(),
+        e => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      // The same code and message node:tls gives for this handshake failure.
+      expect(err.code).toBe("ERR_SSL_WRONG_VERSION_NUMBER");
+      expect(err.message).toMatch(/^error:[0-9a-f]+:SSL routines:[^:]*:WRONG_VERSION_NUMBER$/);
+    });
+  }
 
   // When checkServerIdentity is provided, the HTTP thread sends an intermediate
   // progress update carrying the server certificate before response headers

@@ -74,3 +74,57 @@ test("bun install times out when the registry accepts TCP but never completes th
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 }, 60_000);
+
+// https://github.com/oven-sh/bun/issues/31949
+//
+// A registry connection that closes during the TLS handshake involves no
+// certificate, so the error must not be UNKNOWN_CERTIFICATE_VERIFICATION_ERROR
+// (the X509 table's fallback, which sent users hunting through CA stores). A
+// FIN after the ClientHello reaches the SSL close path and reports
+// ConnectionClosed; a RST raw-closes the socket and reports the same.
+test("bun install reports a connection error when the registry closes the connection during the TLS handshake", async () => {
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer(socket => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => {});
+    socket.once("data", () => socket.end());
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as net.AddressInfo).port;
+
+  try {
+    using dir = tempDir("install-handshake-close", {
+      "package.json": JSON.stringify({
+        name: "close-repro",
+        version: "1.0.0",
+        dependencies: { lodash: "4.17.21" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          registry: `https://127.0.0.1:${port}/`,
+        },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const combined = stdout + stderr;
+    expect(combined).toMatch(/error: ConnectionClosed downloading package manifest lodash/);
+    expect(exitCode).not.toBe(0);
+  } finally {
+    for (const s of sockets) s.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

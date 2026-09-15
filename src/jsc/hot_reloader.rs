@@ -7,6 +7,8 @@ use bun_collections::StringSet;
 use bun_core::Output;
 use bun_core::ZStr;
 #[cfg(not(windows))]
+use bun_paths::PathBuffer;
+#[cfg(not(windows))]
 use bun_paths::SEP;
 use bun_paths::strings;
 #[cfg(not(windows))]
@@ -115,6 +117,10 @@ impl HotReloaderCtx for VirtualMachine {
         VirtualMachine::bust_dir_cache(self, path)
     }
 
+    fn bust_dir_cache_tree(&mut self, path: &[u8]) -> bool {
+        self.transpiler.resolver.bust_dir_cache_tree(path)
+    }
+
     fn get_loaders(&self) -> &bun_ast::LoaderHashTable {
         &self.transpiler.options.loaders
     }
@@ -205,6 +211,9 @@ pub trait HotReloaderCtx {
 
     /// Returns whether anything was busted.
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
+
+    /// `bust_dir_cache` for `path` and every cached directory below it.
+    fn bust_dir_cache_tree(&mut self, path: &[u8]) -> bool;
 
     /// `&transpiler.options.loaders`.
     fn get_loaders(&self) -> &bun_ast::LoaderHashTable;
@@ -760,6 +769,83 @@ where
         self.tombstones.get(key).copied()
     }
 
+    /// Writes `dir/name` into `buf`, NUL-terminated. `None` when it does not
+    /// fit.
+    #[cfg(not(windows))]
+    fn join_entry_path<'b>(buf: &'b mut PathBuffer, dir: &[u8], name: &[u8]) -> Option<&'b ZStr> {
+        let dir = strings::trim_right(dir, &[SEP]);
+        let len = dir.len() + 1 + name.len();
+        if len >= buf.len() {
+            return None;
+        }
+        buf[..dir.len()].copy_from_slice(dir);
+        buf[dir.len()] = SEP;
+        buf[dir.len() + 1..len].copy_from_slice(name);
+        buf[len] = 0;
+        // SAFETY: buf[len] == 0 written above.
+        Some(ZStr::from_buf(&buf[..], len))
+    }
+
+    /// Drops what the resolver cached under `dir/name` and below. Returns
+    /// true when there was something to drop, which means a resolution went
+    /// through `dir/name` as a directory.
+    #[cfg(not(windows))]
+    fn bust_changed_entry(
+        &mut self,
+        rfs: &mut Fs::file_system::RealFS,
+        dir: &[u8],
+        name: &[u8],
+    ) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(child) = Self::join_entry_path(&mut buf, dir, name) else {
+            return false;
+        };
+        self.tombstone_entries(rfs, child.as_bytes());
+        self.ctx_mut().bust_dir_cache_tree(child.as_bytes())
+    }
+
+    /// Whether the symlink `entry` inside `dir` now resolves somewhere else
+    /// than where the resolver followed it. Drops the resolver cache for the
+    /// link when it does.
+    #[cfg(not(windows))]
+    fn symlink_entry_changed(
+        &mut self,
+        rfs: &mut Fs::file_system::RealFS,
+        dir: &[u8],
+        entry: &Fs::Entry,
+    ) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(child) = Self::join_entry_path(&mut buf, dir, entry.base()) else {
+            return false;
+        };
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        if bun_sys::realpath(child, &mut real_buf)
+            .is_ok_and(|real| real == entry.followed_symlink())
+        {
+            return false;
+        }
+        self.tombstone_entries(rfs, child.as_bytes());
+        self.ctx_mut().bust_dir_cache_tree(child.as_bytes());
+        true
+    }
+
+    /// Keeps the listing of `dir` reachable for later events on it after
+    /// the resolver cache is busted.
+    #[cfg(not(windows))]
+    fn tombstone_entries(&mut self, rfs: &mut Fs::file_system::RealFS, dir: &[u8]) {
+        let Some(existing) = rfs.entries.get(dir) else {
+            return;
+        };
+        let existing: *mut Fs::EntriesOption = existing;
+        let mut key = bun_paths::path_buffer_pool::get();
+        if dir.len() + 1 >= key.len() {
+            return;
+        }
+        key[..dir.len()].copy_from_slice(dir);
+        key[dir.len()] = SEP;
+        self.put_tombstone(&key[..dir.len() + 1], existing);
+    }
+
     pub(crate) fn on_error(_: &mut Self, err: &bun_sys::Error) {
         // `bun_sys::Error::name()` does the errno→tag-name lookup.
         Output::err(err.name(), "Watcher crashed", ());
@@ -1092,6 +1178,74 @@ where
                             }
                         }
 
+                        // A changed entry the module graph resolved through
+                        // (a retargeted symlink, a replaced directory) has a
+                        // stale real path in the resolver cache.
+                        if IS_KQUEUE {
+                            // kqueue names no entry: check every followed symlink.
+                            if let Some(dir_ent) = entries_option {
+                                // SAFETY: dir_ent points into rfs.entries (or a
+                                // tombstoned copy); both outlive this loop
+                                // iteration. Shared access only.
+                                let dir_ent = unsafe { &*dir_ent };
+                                // `bust_dir_cache` takes `entries_mutex` too.
+                                let mut followed: Vec<&'static Fs::Entry> = Vec::new();
+                                {
+                                    let _entries_lock = rfs.entries_mutex.lock_guard();
+                                    if let Fs::EntriesOption::Entries(listing) = dir_ent {
+                                        for &entry_ptr in listing.data.values() {
+                                            // SAFETY: EntryStore-owned slot, never freed.
+                                            let entry: &'static Fs::Entry = unsafe { &*entry_ptr };
+                                            if !entry.followed_symlink().is_empty() {
+                                                bun_core::handle_oom(followed.try_reserve(1));
+                                                followed.push(entry);
+                                            }
+                                        }
+                                    }
+                                }
+                                for entry in followed {
+                                    if self.symlink_entry_changed(rfs, file_path, entry) {
+                                        current_task.append(current_hash);
+                                    }
+                                }
+                            }
+                        } else {
+                            for changed_name_ in affected_inotify {
+                                let changed_name: &[u8] = match changed_name_ {
+                                    Some(z) => z.as_bytes(),
+                                    None => continue,
+                                };
+                                if changed_name.is_empty()
+                                    || changed_name[0] == b'~'
+                                    || changed_name[0] == b'.'
+                                {
+                                    continue;
+                                }
+                                let followed_symlink = match entries_option {
+                                    Some(dir_ent) => {
+                                        let _entries_lock = rfs.entries_mutex.lock_guard();
+                                        // SAFETY: dir_ent points into rfs.entries
+                                        // (or a tombstoned copy); both outlive
+                                        // this loop iteration. Shared access only.
+                                        match unsafe { &*dir_ent } {
+                                            Fs::EntriesOption::Entries(listing) => {
+                                                listing.get(changed_name).is_some_and(|e| {
+                                                    !e.entry().followed_symlink().is_empty()
+                                                })
+                                            }
+                                            Fs::EntriesOption::Err(_) => false,
+                                        }
+                                    }
+                                    None => false,
+                                };
+                                if self.bust_changed_entry(rfs, file_path, changed_name)
+                                    || followed_symlink
+                                {
+                                    current_task.append(current_hash);
+                                }
+                            }
+                        }
+
                         if let Some(dir_ent) = entries_option {
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
                             // both outlive this loop iteration. Shared access only —
@@ -1314,6 +1468,10 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
 
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         bun_bundler::BundleV2::bust_dir_cache(self, path)
+    }
+
+    fn bust_dir_cache_tree(&mut self, path: &[u8]) -> bool {
+        self.transpiler.resolver.bust_dir_cache_tree(path)
     }
 
     fn get_loaders(&self) -> &bun_ast::LoaderHashTable {

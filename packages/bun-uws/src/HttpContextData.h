@@ -77,6 +77,13 @@ private:
      * checks the parsed socket. */
     struct us_socket_t *parsingSocket = nullptr;
 
+    /* Where onClose parks the fallback buffer of parsingSocket's parser, owned
+     * by that parse frame in onData from then on. A close inside the dispatch
+     * (server.stop(true) in a request handler) destructs the parser while the
+     * HttpRequest being dispatched still holds string_views into the buffer.
+     * nullptr outside a parse. */
+    std::string *parsedFallbackHolder = nullptr;
+
     /* This is the default router for default SNI or non-SSL */
     HttpRouter<RouterData> router;
     void *upgradedWebSocket = nullptr;

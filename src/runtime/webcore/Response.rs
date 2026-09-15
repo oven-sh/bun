@@ -604,11 +604,45 @@ impl Response {
                         &BunString::ascii(content_type),
                         global_this,
                     )?;
+                    init.headers_own_content_type = true;
                 }
             }
         }
 
         Ok(init.headers.as_mut().unwrap())
+    }
+
+    /// `put_default` a Content-Type, after which the header list owns the Content-Type.
+    pub(crate) fn put_default_content_type(
+        &self,
+        global_this: &JSGlobalObject,
+        content_type: &[u8],
+    ) -> JsResult<()> {
+        self.get_or_create_headers(global_this)?.put_default(
+            HTTPHeaderName::ContentType,
+            &BunString::ascii(content_type),
+            global_this,
+        )?;
+        self.init_mut().headers_own_content_type = true;
+        Ok(())
+    }
+
+    /// See [`Init::headers_own_content_type`]: when `true`, a missing Content-Type header was deleted by the user.
+    #[inline]
+    pub(crate) fn headers_own_content_type(&self) -> bool {
+        self.init.get().headers_own_content_type
+    }
+
+    /// `body_content_type` (the body may already be moved out) unless the header list owns the Content-Type.
+    #[inline]
+    pub(crate) fn body_content_type<'b>(
+        &self,
+        body_content_type: Option<&'b [u8]>,
+    ) -> Option<&'b [u8]> {
+        if self.headers_own_content_type() {
+            return None;
+        }
+        body_content_type.filter(|content_type| !content_type.is_empty())
     }
 
     pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -624,14 +658,11 @@ impl Response {
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body.get().value.get() {
-            let content_type = blob.content_type_slice();
-            if !content_type.is_empty() {
-                return Ok(Some(Utf8Bytes::Borrowed(content_type)));
-            }
-        }
-
-        Ok(None)
+        let from_body = match self.body.get().value.get() {
+            BodyValue::Blob(blob) => Some(blob.content_type_slice()),
+            _ => None,
+        };
+        Ok(self.body_content_type(from_body).map(Utf8Bytes::Borrowed))
     }
 }
 
@@ -927,13 +958,8 @@ impl Response {
             }
         }
 
-        let headers_ref = response.get_or_create_headers(global_this)?;
-        let json_mime = bun_http_types::MimeType::JSON;
-        headers_ref.put_default(
-            HTTPHeaderName::ContentType,
-            &BunString::ascii(json_mime.value.as_ref()),
-            global_this,
-        )?;
+        response
+            .put_default_content_type(global_this, bun_http_types::MimeType::JSON.value.as_ref())?;
         // Disarm the body-reset guard: all fallible ops have succeeded.
         let response = scopeguard::ScopeGuard::into_inner(response);
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
@@ -1154,17 +1180,20 @@ impl Response {
         // Perform the only remaining fallible op BEFORE heap-allocating:
         // doing it on stack locals lets `?` trigger the scopeguard and
         // `init`'s drop glue and avoids leaking the heap allocation entirely.
-        if let BodyValue::Blob(blob) = body.value.get() {
-            if let Some(headers) = init.headers.as_deref_mut() {
+        if let Some(headers) = init.headers.as_deref_mut() {
+            let mut owns_content_type = headers.fast_has(HTTPHeaderName::ContentType);
+            if !owns_content_type && let BodyValue::Blob(blob) = body.value.get() {
                 let content_type = blob.content_type_slice();
-                if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
+                if !content_type.is_empty() {
                     headers.put(
                         HTTPHeaderName::ContentType,
                         &BunString::ascii(content_type),
                         global_this,
                     )?;
+                    owns_content_type = true;
                 }
             }
+            init.headers_own_content_type = owns_content_type;
         }
 
         // Disarm: all fallible ops have succeeded.
@@ -1197,6 +1226,8 @@ pub struct Init {
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
     pub method: Method,
+    /// `headers` has held a Content-Type (init, typed body, `Response.json`): never derive one from the body again.
+    pub(crate) headers_own_content_type: bool,
 }
 
 impl Default for Init {
@@ -1206,6 +1237,7 @@ impl Default for Init {
             status_code: 0,
             status_text: BunString::EMPTY,
             method: Method::GET,
+            headers_own_content_type: false,
         }
     }
 }
@@ -1224,6 +1256,7 @@ impl Init {
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,
+            headers_own_content_type: self.headers_own_content_type,
         })
     }
 
@@ -1267,7 +1300,10 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
+                let mut init = resp.init.get().clone(global_this)?;
+                // The donor's flag describes the donor's body; the constructor recomputes it.
+                init.headers_own_content_type = false;
+                return Ok(Some(init));
             }
         }
 

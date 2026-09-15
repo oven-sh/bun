@@ -3770,7 +3770,7 @@ where
         };
 
         let (content_type, needs_content_type, content_type_needs_free) =
-            get_content_type(response.get_init_headers_mut(), blob);
+            get_content_type(response, blob);
         // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
         // Hold the value past all reads below, then let it drop at scope end.
         let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
@@ -4766,12 +4766,13 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {
+/// `needs_content_type` is false when the headers carry one or the handler deleted it; the `MimeType` always describes `blob`.
+fn get_content_type(response: &Response, blob: &AnyBlob) -> (MimeType, bool, bool) {
     let mut needs_content_type = true;
     let mut content_type_needs_free = false;
 
     let content_type: MimeType = 'brk: {
-        if let Some(headers_) = headers {
+        if let Some(headers_) = response.get_init_headers_mut() {
             if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
@@ -4785,6 +4786,9 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
                 );
                 drop(content_slice);
                 break 'brk mt;
+            }
+            if response.headers_own_content_type() {
+                needs_content_type = false;
             }
         }
 

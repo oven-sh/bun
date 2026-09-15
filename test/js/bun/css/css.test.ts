@@ -7729,6 +7729,44 @@ describe("css tests", () => {
       );
     });
 
+    // After a delimited parse (`parse_until_before` / `parse_until_after`) the
+    // parser skips whatever is left before the delimiter, treating nested
+    // blocks as single units. Two places make that skipping visible without
+    // error recovery: the leading `@charset` rule, whose body is skipped up to
+    // the `;`, and forgiving selector lists, where an invalid selector is
+    // dropped and the rest of it is skipped up to the next top-level comma or
+    // the closing paren of the enclosing block.
+    describe("skipping to a delimiter", () => {
+      describe("@charset", () => {
+        minify_test('@charset "utf-8"; .a { color: red }', ".a{color:red}");
+        // Semicolons inside blocks do not end the skip.
+        minify_test('@charset "utf-8" (a; b); .a { color: red }', ".a{color:red}");
+        minify_test('@charset "utf-8" [a; b] (c; d); .a { color: red }', ".a{color:red}");
+        minify_test('@charset "utf-8" {a; b}; .a { color: red }', ".a{color:red}");
+        minify_test('@charset "utf-8" foo(a; .z { color: green }); .a { color: red }', ".a{color:red}");
+        // `}` is the other delimiter of the @charset skip.
+        minify_test('@charset "utf-8" } .a { color: red }', ".a{color:red}");
+        // End of input, with and without an unclosed block.
+        minify_test('@charset "utf-8"', "");
+        minify_test('@charset "utf-8" (a; b', "");
+      });
+
+      describe("forgiving selector lists", () => {
+        minify_test(".a:is(.b %, .c) { color: red }", ".a.c{color:red}");
+        // Commas inside blocks do not end the skip, even when the block
+        // contains something that would parse as a selector on its own.
+        minify_test(".a:is(.b % (x, .z), .c) { color: red }", ".a.c{color:red}");
+        minify_test(".a:is(.b % foo(x, .z), .c) { color: red }", ".a.c{color:red}");
+        minify_test(".a:is(.b % (x, .z { color: green }), .c) { color: red }", ".a.c{color:red}");
+        minify_test(".a:where(.b % (x, .z), .c) { color: red }", ".a:where(.c){color:red}");
+        // The invalid selector is last: the skip stops at the `)` that closes
+        // the enclosing block, which is a delimiter inherited from it.
+        minify_test(".a:is(.c, .b % (x, .z)) { color: red }", ".a.c{color:red}");
+        minify_test(".a:where(.c, .b % (x, .z)) { color: red }", ".a:where(.c){color:red}");
+        minify_test(".a:is(.b % (x, .z)) { color: red }", ".a:is(){color:red}");
+      });
+    });
+
     describe("unparsed oklab color fallbacks", () => {
       minify_test(".foo { color: var(--x, oklab(40% 0.1 0.1)) }", ".foo{color:var(--x,oklab(40% .1 .1))}");
       minify_test(".foo { color: var(--x, oklch(40% 0.1 30)) }", ".foo{color:var(--x,oklch(40% .1 30))}");

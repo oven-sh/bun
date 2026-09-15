@@ -248,9 +248,9 @@ async function* glob(pattern, options) {
 
 const exports = {
   access: asyncWrap(fs.access, "access"),
-  appendFile: async function (fileHandleOrFdOrPath, ...args) {
+  appendFile: async function (fileHandleOrFdOrPath, data, options) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
-    return _appendFile(fileHandleOrFdOrPath, ...args);
+    return _appendFile(fileHandleOrFdOrPath, data, options);
   },
   close: asyncWrap(fs.close, "close"),
   copyFile: asyncWrap(fs.copyFile, "copyFile"),
@@ -304,23 +304,22 @@ const exports = {
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
   readdir: asyncWrap(fs.readdir, "readdir"),
-  readFile: async function (fileHandleOrFdOrPath, ...args) {
+  readFile: async function (fileHandleOrFdOrPath, options) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
-    return _readFile(fileHandleOrFdOrPath, ...args);
+    return _readFile(fileHandleOrFdOrPath, options);
   },
-  writeFile: async function (fileHandleOrFdOrPath, ...args: any[]) {
+  writeFile: async function (fileHandleOrFdOrPath, data, options) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     if (
-      !$isTypedArrayView(args[0]) &&
-      typeof args[0] !== "string" &&
-      ($isCallable(args[0]?.[Symbol.iterator]) || $isCallable(args[0]?.[Symbol.asyncIterator]))
+      !$isTypedArrayView(data) &&
+      typeof data !== "string" &&
+      ($isCallable(data?.[Symbol.iterator]) || $isCallable(data?.[Symbol.asyncIterator]))
     ) {
       $debug("fs.promises.writeFile async iterator slow path!");
       // Node accepts an arbitrary async iterator here
-      // @ts-expect-error
-      return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
+      return writeFileAsyncIterator(fileHandleOrFdOrPath, data, options);
     }
-    return _writeFile(fileHandleOrFdOrPath, ...args);
+    return _writeFile(fileHandleOrFdOrPath, data, options);
   },
   readlink: asyncWrap(fs.readlink, "readlink"),
   realpath: asyncWrap(fs.realpath, "realpath"),
@@ -1603,7 +1602,7 @@ function flagTruncates(flag): boolean {
   return flag === "w" || flag === "w+" || flag === "wx" || flag === "wx+" || flag === "xw" || flag === "xw+";
 }
 
-async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
+async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag?, mode?) {
   let encoding;
   let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {

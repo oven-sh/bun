@@ -21,6 +21,19 @@ describe.if(isPosix)("IOWriter epipe", () => {
       expect(result).toBe("y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n");
     }
   });
+
+  // `ls -R` writes the listing of each directory to the pipe separately. Once
+  // the reader is gone, every write that is still queued fails, and ls only
+  // finishes after it has seen all of them fail.
+  test("ls -R finishes when the pipe reader exits without reading", async () => {
+    using dir = tempDir(
+      "shell-epipe-ls-recursive",
+      Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`dir${i}`, {}])),
+    );
+    const { stdout, exitCode } = await Bun.$`ls -R . | true`.cwd(String(dir)).quiet().nothrow();
+    expect(stdout.toString()).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The shell echoes command output to the process's stdout. Once nothing reads

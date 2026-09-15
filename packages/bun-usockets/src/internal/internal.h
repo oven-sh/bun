@@ -248,7 +248,8 @@ unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
 const char *us_internal_ssl_sni_servername(us_socket_r s);
-/* SSL_CTX_free(ls->ssl_ctx) + sni_free(ls->sni). Called from us_listen_socket_close. */
+/* Drops the listen socket's references to ls->ssl_ctx and ls->server_names.
+ * Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
 /* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
@@ -451,12 +452,10 @@ struct us_listen_socket_t {
   /* SSL_CTX for accepted sockets. Borrowed; up_ref'd on listen, freed on
    * close. NULL → plain TCP. */
   struct ssl_ctx_st *ssl_ctx;
-  /* SNI hostname → {SSL_CTX*, user*} tree. Owned. */
-  void *sni;
-  /* Dynamic SNI resolver: returns the SSL_CTX to serve for `hostname` on the
-   * in-flight handshake only (the caller does not cache it), or NULL to fall
-   * through to the default context. */
-  struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
+  /* Static SNI tree + dynamic resolver, shared with every SSL this listener
+   * accepted. Defined in crypto/openssl.c. NULL until the first name, resolver
+   * or TLS accept. */
+  struct us_server_names_t *server_names;
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
   unsigned char accept_kind;

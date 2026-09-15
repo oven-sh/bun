@@ -2069,39 +2069,41 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
 /// `handle.resumeSNI(...)` -> `us_socket_sni_resolve()`.
 ///
 /// # Safety
-/// `ls` is a live listen socket whose accept-group ext holds a `*mut Listener`
-/// and `hostname` is a NUL-terminated string valid for the call. JS-thread
-/// only.
+/// `socket` is live and `hostname` NUL-terminated for the call. JS-thread only.
 extern "C" fn us_dispatch_server_name(
-    ls: *mut uws_sys::ListenSocket,
+    _ls: *mut uws_sys::ListenSocket,
     hostname: *const core::ffi::c_char,
     abort_handshake: *mut core::ffi::c_int,
     socket: *mut c_void,
 ) -> *mut c_void {
     jsc::mark_binding!();
-    if ls.is_null() || hostname.is_null() {
+    if socket.is_null() || hostname.is_null() {
         return core::ptr::null_mut();
     }
-    // The accept group's ext holds the owning `*mut Listener` for the lifetime
-    // of the listen socket. S008: `ListenSocket` is an `opaque_ffi!` ZST.
-    let listener_ptr: *mut Listener = bun_opaque::opaque_deref_mut(ls).group().owner::<Listener>();
-    if listener_ptr.is_null() {
+    let s_ref = uws_sys::us_socket_t::opaque_mut(socket.cast());
+    if s_ref.kind() != uws_sys::SocketKind::BunSocketTls {
         return core::ptr::null_mut();
     }
-    // SAFETY: see above — the listen socket keeps the `Listener` alive for the
-    // duration of this synchronous handshake dispatch.
-    let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
-    let handlers = &listener.handlers;
+    let tls = match *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() {
+        Some(tls) => tls,
+        None => return core::ptr::null_mut(),
+    };
+    if !tls.has_handlers() {
+        return core::ptr::null_mut();
+    }
+    let handlers = tls.get_handlers();
     let callback = handlers.on_server_name();
     if callback.is_empty() {
         return core::ptr::null_mut();
     }
+    // Cleared only by `Listener::deinit`, not by `stop()`.
+    let Some(listener) = handlers.listener() else {
+        return core::ptr::null_mut();
+    };
     // No `Handlers::enter`/`exit` scope here: that protocol tracks the
     // accepted-socket callback lifecycle, and running it against the listener's
     // own handlers from inside the handshake corrupts `active_connections` for
-    // every subsequent accept. The listener and its handlers are structurally
-    // alive for this synchronous dispatch - the listen socket cannot be freed
-    // mid-handshake.
+    // every subsequent accept.
     let global = handlers.global_object;
     // Pass the listener's `data` (the owning net.Server) rather than minting a
     // JS wrapper for the Listener itself - `to_js` here would create a second
@@ -2119,22 +2121,7 @@ extern "C" fn us_dispatch_server_name(
     // resume handle an asynchronous SNICallback uses (`handle.resumeSNI(...)`)
     // to complete the suspended handshake. The wrapper's lifecycle is
     // GC-managed, so a resume after the socket died is a safe no-op.
-    let socket_handle: JSValue = if socket.is_null() {
-        JSValue::UNDEFINED
-    } else {
-        // SAFETY: the C caller passes the live us_socket_t processing this
-        // ClientHello; for BunSocketTls sockets the ext slot holds the
-        // TLSSocket wrapper.
-        let s_ref = uws_sys::us_socket_t::opaque_mut(socket.cast());
-        if s_ref.kind() == uws_sys::SocketKind::BunSocketTls {
-            match *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() {
-                Some(tls) => tls.get_this_value(&global),
-                None => JSValue::UNDEFINED,
-            }
-        } else {
-            JSValue::UNDEFINED
-        }
-    };
+    let socket_handle = tls.get_this_value(&global);
     let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
         Ok(v) => v,
         Err(err) => global.take_exception(err),

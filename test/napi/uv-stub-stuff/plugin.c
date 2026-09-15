@@ -4,7 +4,6 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include <uv.h>
 
 napi_value call_uv_func(napi_env env, napi_callback_info info) {

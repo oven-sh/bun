@@ -9,7 +9,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //
 // The shape asserts exclusive access to the object for the rest of the
 // function, but the functions that receive these pointers are callbacks
-// (uSockets/libuv handlers, task-queue arms, vtable dispatch) whose bodies run
+// (uSockets/IOCP handlers, task-queue arms, vtable dispatch) whose bodies run
 // JS or dispatch events that can re-enter the same object through its own
 // accessors. Under Stacked/Tree Borrows the re-entrant access pops the
 // fn-long tag, making every later use of the binding UB; before that it's an

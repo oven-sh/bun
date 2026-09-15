@@ -168,6 +168,119 @@ describe("fs.watch", () => {
     });
   });
 
+  test.each([
+    ["non-recursive first", false],
+    ["recursive first", true],
+  ])(
+    "a recursive and a non-recursive watcher on the same directory are independent (%s)",
+    async (_, recursiveFirst) => {
+      using dir = tempDir("watch-same-dir-twice", { sub: { "file.txt": "hello" } });
+      const root = String(dir);
+      const nested = path.join("sub", "file.txt");
+      const order = recursiveFirst ? [true, false] : [false, true];
+      const watchers = order.map(recursive => fs.watch(root, { recursive }));
+      const deep = watchers[order.indexOf(true)];
+      const flat = watchers[order.indexOf(false)];
+      let interval: ReturnType<typeof repeat> | undefined;
+      try {
+        const sawNested = Promise.withResolvers<void>();
+        const sawTop = Promise.withResolvers<void>();
+        const flatNames = new Set<string>();
+        for (const watcher of watchers) watcher.on("error", sawNested.reject);
+        deep.on("change", (_, filename) => {
+          if (filename === nested) sawNested.resolve();
+        });
+        flat.on("change", (_, filename) => {
+          flatNames.add(String(filename));
+          if (filename === "top.txt") sawTop.resolve();
+        });
+        // The nested write comes first, so by the time the non-recursive watcher reports top.txt it
+        // has already reported everything it is going to say about that write.
+        interval = repeat(() => {
+          fs.writeFileSync(path.join(root, nested), "changed");
+          fs.writeFileSync(path.join(root, "top.txt"), "changed");
+        });
+        await Promise.all([sawNested.promise, sawTop.promise]);
+        // Windows also reports "sub" itself: its last-write time changed.
+        expect([...flatNames].filter(name => name !== "top.txt" && name !== "sub")).toEqual([]);
+      } finally {
+        clearInterval(interval);
+        for (const watcher of watchers) watcher.close();
+      }
+    },
+  );
+
+  test("a burst of new files is reported without losing events", async () => {
+    using dir = tempDir("watch-burst", {});
+    const root = String(dir);
+    const names = Array.from({ length: 300 }, (_, i) => `f${String(i).padStart(3, "0")}.txt`);
+    const watcher = fs.watch(root);
+    let interval: ReturnType<typeof repeat> | undefined;
+    try {
+      const failed = new Promise<never>((_, reject) => watcher.on("error", reject));
+      const ready = Promise.withResolvers<void>();
+      const sawLast = Promise.withResolvers<void>();
+      const seen = new Set<string | null>();
+      watcher.on("change", (_, filename) => {
+        seen.add(filename as string | null);
+        if (filename === "ready.txt") ready.resolve();
+        if (filename === names.at(-1)) sawLast.resolve();
+      });
+      interval = repeat(() => fs.writeFileSync(path.join(root, "ready.txt"), "x"));
+      await Promise.race([ready.promise, failed]);
+      clearInterval(interval);
+
+      // No event loop turn in between: nothing drains the events on this thread meanwhile.
+      for (const name of names) fs.writeFileSync(path.join(root, name), "x");
+      await Promise.race([sawLast.promise, failed]);
+
+      // A null filename is how a watcher reports that events were lost.
+      expect(seen.has(null)).toBe(false);
+      // FSEvents may report kFSEventStreamEventFlagMustScanSubDirs instead of every file.
+      if (!isMacOS) expect(names.filter(name => !seen.has(name))).toEqual([]);
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+  });
+
+  // Elsewhere the sequence differs (Linux: two "rename" events and the watcher stays open).
+  test.skipIf(!isWindows).each([false, true])(
+    "deleting the watched directory reports one rename, then EPERM, and closes (recursive: %p)",
+    async recursive => {
+      using dir = tempDir("watch-deleted-dir", { watched: {} });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const fs = require("fs");
+            const path = require("path");
+            const target = path.join(process.argv[1], "watched");
+            const log = [];
+            const watcher = fs.watch(target, { recursive: ${recursive} });
+            watcher.on("change", (event, filename) => log.push(event + ":" + path.basename(String(filename))));
+            watcher.on("error", error => log.push("error:" + error.code));
+            watcher.on("close", () => log.push("close"));
+            process.on("exit", () => console.log(JSON.stringify(log)));
+            fs.rmdirSync(target);
+          `,
+          String(dir),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // The child exits once the watcher has closed itself; a watcher that keeps re-arming never does.
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify(["rename:watched", "error:EPERM", "close"]),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {
       "deleted.txt": "hello",
@@ -1368,8 +1481,8 @@ test.skipIf(!isWindows)(
   async () => {
     using dir = tempDir("fswatch-overflow-win", {});
     const watchDir = String(dir);
-    // ~100-char names make ~210-byte FILE_NOTIFY_INFORMATION entries, so ~19
-    // fill libuv's 4KB buffer; 100 blocked-loop writes overflow it ~5x over.
+    // ~100-char names make ~210-byte FILE_NOTIFY_INFORMATION entries, so ~310
+    // fill the watch's 64KB ReadDirectoryChangesW buffer.
     const N = 100;
 
     const fixture = /* js */ `
@@ -1409,9 +1522,9 @@ test.skipIf(!isWindows)(
         w.on("close", () => settle(() => reject(new Error("watcher closed before overflow or full delivery"))));
       }
 
-      // The watch is armed synchronously, so sync-writing N files now blocks
-      // the event loop while libuv's 4KB ReadDirectoryChangesW buffer fills
-      // and overflows, forcing the lost-events notification.
+      // The watch is armed synchronously, so it covers every one of the N
+      // sync writes below; a ReadDirectoryChangesW buffer overflow on the way
+      // is reported as the lost-events notification.
       const pad = Buffer.alloc(90, "x").toString();
       for (let i = 0; i < N; i++) {
         fs.writeFileSync(path.join(dir, "f" + pad + String(i).padStart(3, "0") + ".txt"), "");
@@ -1547,8 +1660,8 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
 // PathWatcherManager bound to the first caller's VM/uv_loop. A Worker thread
 // calling fs.watch() reused that manager: it mutated the watcher map and drove
 // the main thread's uv_loop from a foreign thread (debug builds tripped a
-// debug_assert and aborted; release builds raced). The manager is now
-// re-allocated per VM, so a Worker's watcher never aliases the main thread's.
+// debug_assert and aborted; release builds raced). The manager has its
+// own reader thread and a mutex over the watcher map; any thread can use it.
 //
 // Must run in a subprocess: on an unpatched debug build the Worker's
 // fs.watch() call aborts the whole runtime.
@@ -1792,14 +1905,14 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
   expect(exitCode).toBe(0);
 }, 30_000);
 
-// Watching a file symlink makes bun hand libuv the readlink() result, which for
-// a relative link target is a bare file name. libuv's uv__split_path() used to
-// _wcsdup() that name from the CRT heap while everything else it owns comes
-// from uv__malloc(), i.e. from mimalloc (uv_replace_allocator in main), so
-// closing the watcher handed a CRT pointer to mi_free. Debug builds report that
-// on stderr every time ("mimalloc: error: mi_free: invalid pointer"); release
-// builds segfault in roughly half of all processes, depending on where ASLR put
-// the CRT heap relative to mimalloc's page map, hence several children.
+// Closes a watcher on a file symlink whose readlink() result is relative, i.e.
+// a bare file name. libuv's uv__split_path() used to _wcsdup() that name from
+// the CRT heap while everything else it owned came from uv__malloc(), i.e.
+// from mimalloc (uv_replace_allocator in main), so closing the watcher handed
+// a CRT pointer to mi_free. Debug builds reported it on stderr every time
+// ("mimalloc: error: mi_free: invalid pointer"); release builds segfaulted in
+// about half of all processes, depending on where ASLR put the CRT heap
+// relative to mimalloc's page map, hence several children.
 // Fixed in oven-sh/libuv#14.
 test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target does not crash (windows)", async () => {
   using dir = tempDir("fswatch-relative-symlink", { "target.txt": "hello" });
@@ -1820,9 +1933,8 @@ test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target d
     Array.from({ length: 6 }, async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
-        // libuv resolves the bare target name against the cwd, so the watch
-        // only reaches the affected code path when started from the link's
-        // directory.
+        // The fixture watches the bare name "link.txt", so it has to be
+        // started from the link's directory.
         cwd: base,
         env: bunEnv,
         stdout: "pipe",

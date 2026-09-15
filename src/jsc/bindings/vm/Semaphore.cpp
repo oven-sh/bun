@@ -1,11 +1,16 @@
 #include "Semaphore.h"
 
+#if OS(WINDOWS)
+#include <windows.h>
+#endif
+
 namespace Bun {
 
 Semaphore::Semaphore(unsigned int value)
 {
 #if OS(WINDOWS)
-    uv_sem_init(&m_semaphore, value);
+    m_semaphore = CreateSemaphoreW(nullptr, static_cast<LONG>(value), LONG_MAX, nullptr);
+    RELEASE_ASSERT(m_semaphore);
 #elif OS(DARWIN)
     semaphore_create(mach_task_self(), &m_semaphore, SYNC_POLICY_FIFO, value);
 #else
@@ -16,7 +21,7 @@ Semaphore::Semaphore(unsigned int value)
 Semaphore::~Semaphore()
 {
 #if OS(WINDOWS)
-    uv_sem_destroy(&m_semaphore);
+    CloseHandle(m_semaphore);
 #elif OS(DARWIN)
     semaphore_destroy(mach_task_self(), m_semaphore);
 #else
@@ -27,8 +32,7 @@ Semaphore::~Semaphore()
 bool Semaphore::signal()
 {
 #if OS(WINDOWS)
-    uv_sem_post(&m_semaphore);
-    return true;
+    return ReleaseSemaphore(m_semaphore, 1, nullptr);
 #elif OS(DARWIN)
     return semaphore_signal(m_semaphore) == KERN_SUCCESS;
 #else
@@ -39,8 +43,7 @@ bool Semaphore::signal()
 bool Semaphore::wait()
 {
 #if OS(WINDOWS)
-    uv_sem_wait(&m_semaphore);
-    return true;
+    return WaitForSingleObject(m_semaphore, INFINITE) == WAIT_OBJECT_0;
 #elif OS(DARWIN)
     return semaphore_wait(m_semaphore) == KERN_SUCCESS;
 #else

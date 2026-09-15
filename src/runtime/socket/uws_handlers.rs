@@ -146,15 +146,11 @@ where
         fold(T::on_end(this, wrap::<SSL>(s)));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close FIRST, then notify — same order `main`'s `configure()`
-        // trampoline used. The handler may re-enter `connectInner`
+        // Close FIRST, then notify. The handler may re-enter `connectInner`
         // synchronously (node:net `autoSelectFamily` falls back to the
-        // next address from inside the JS `connectError` callback); on
-        // Windows/libuv, starting the next attempt's `uv_poll_t` while
-        // this half-open one is still active and then closing it
-        // *afterwards* leaves the second poll never delivering
-        // writable/error → process hang (Win11-aarch64
-        // double-connect.test, test-net-server-close).
+        // next address from inside the JS `connectError` callback), and
+        // the next attempt must not start while this half-open socket is
+        // still open (double-connect.test, test-net-server-close).
         //
         // Safe for TLS too: `us_internal_ssl_close` short-circuits
         // SEMI_SOCKET straight to `close_raw`, and `close_raw` skips

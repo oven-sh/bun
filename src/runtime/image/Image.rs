@@ -1233,7 +1233,7 @@ impl Image {
 // ───────────────────────────── worker task ──────────────────────────────────
 
 /// `.blob` source: ask the Blob for its bytes via the store-agnostic
-/// `Blob.readBytesToHandler` (file → ReadFile/ReadFileUV, S3 → S3.download,
+/// `Blob.readBytesToHandler` (file → ReadFile, S3 → S3.download,
 /// memory → dupe), receive the owned `[]u8` directly — never wrapped in a
 /// JSValue — swap it into `image.source = .owned`, and re-enter `schedule()`.
 /// Promise-of-promise flattens, so the caller sees one `await` for
@@ -1545,15 +1545,8 @@ impl PipelineTask {
             //   • st_size cap → file-based decompression-bomb fails up
             //     front with a clear error instead of materialising a
             //     multi-GB encoded buffer before `maxPixels` even runs.
-            // O_NONBLOCK so the open itself can't block on a FIFO. POSIX-only:
-            // on Windows it omits FILE_SYNCHRONOUS_IO_NONALERT (overlapped
-            // handle) and the subsequent sync read fails EINVAL. Windows has
-            // no open-blocking FIFOs in the same sense; the !S_ISREG check
-            // below still rejects pipes/devices.
-            #[cfg(unix)]
+            // O_NONBLOCK so the open itself can't block on a FIFO.
             let oflags = sys::O::RDONLY | sys::O::NONBLOCK;
-            #[cfg(not(unix))]
-            let oflags = sys::O::RDONLY;
             let file = match sys::File::openat(sys::Fd::cwd(), p, oflags, 0) {
                 sys::Result::Ok(f) => f,
                 sys::Result::Err(e) => {

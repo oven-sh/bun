@@ -33,7 +33,6 @@ use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
 
-#[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
     self as spawn, Process, ProcessHandle, Rusage, SpawnOptions, Status,
@@ -169,10 +168,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     }
 
     fn loop_(&self) -> *mut AsyncLoop {
-        // `VirtualMachine::uv_loop` already returns the native loop on both
-        // targets (jsc/VirtualMachine.rs:2975); the prior POSIX arm's
-        // `bun_uws::Loop::get()` named the same per-thread singleton.
-        vm_mut().uv_loop()
+        vm_mut().uws_loop()
     }
 
     fn note_reader_done(&self) {
@@ -2044,57 +2040,22 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         }
     };
 
-    // Ownership note: BOTH
-    // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
-    // and `spawn_process_windows` `heap::take`s the raw `Stdio::Buffer`
-    // pointer into `WindowsStdioResult::Buffer` on success. Pre-stashing the
-    // Box in `stderr_reader.source` here (the original transliteration) would
-    // create TWO `Box<uv::Pipe>` over one allocation — UB under Stacked
-    // Borrows even with a `mem::forget` of the duplicate, because moving the
-    // first Box into `Source::Pipe` reasserts its `Unique` tag and kills the
-    // raw pointer's provenance before `spawn_process_windows` ever
-    // dereferences it. Instead hand the raw heap pointer to `Stdio::Buffer`
-    // alone (sole owner), let `spawn_process_windows` round-trip it through
-    // `heap::take`, and stash the returned Box in `stderr_reader.source`
-    // AFTER spawn — see the `#[cfg(windows)]` block below and
-    // `lifecycle_script_runner.rs` / `filter_run.rs` for the canonical
-    // pattern. On spawn error, `WindowsStdio` has no `Drop`; reclaim
-    // explicitly via `spawn_options.stderr.deinit()`.
-    #[cfg(windows)]
-    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe =
-        bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-            bun_sys::windows::libuv::Pipe,
-        >()));
     let cwd = FileSystem::get().top_level_dir;
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
         #[cfg(windows)]
-        stderr: spawn::Stdio::Buffer(stderr_pipe_ptr),
+        stderr: spawn::Stdio::Buffer,
         #[cfg(not(windows))]
         stderr: spawn::Stdio::Ignore,
         cwd: cwd.into(),
         argv0: resolved_argv0,
-        #[cfg(windows)]
-        windows: spawn::WindowsOptions {
-            loop_: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
-            ..Default::default()
-        },
         ..SpawnOptions::default()
     };
-    // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
-    #[cfg(windows)]
-    let mut spawn_options = spawn_options;
 
     let spawned = match spawn::spawn_process_cstr(&spawn_options, argv, env) {
         Ok(Ok(sp)) => sp,
         Ok(Err(err)) => {
-            // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-            // raw `*mut uv::Pipe` on the SUCCESS path; on every error return
-            // ownership stays with the caller and `WindowsStdio` has no
-            // `Drop`. Reclaim it (uv_close + free if init'd) here.
-            #[cfg(windows)]
-            spawn_options.stderr.deinit();
             this.set_err(format_args!(
                 "Failed to spawn process: {}",
                 bstr::BStr::new(err.name())
@@ -2102,14 +2063,11 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             return Err(());
         }
         Err(e) => {
-            #[cfg(windows)]
-            spawn_options.stderr.deinit();
             this.set_err(format_args!("Failed to spawn process: {}", e.name()));
             return Err(());
         }
     };
-    #[cfg(windows)]
-    let mut spawned = spawned;
+    let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
 
     #[cfg(unix)]
     {
@@ -2146,34 +2104,24 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         }
     }
     #[cfg(windows)]
-    {
-        // `spawn_process_windows` has `heap::take`n `stderr_pipe_ptr` out of
-        // `Stdio::Buffer` into `spawned.stderr` as
-        // `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box out
-        // *here* (sole owner — single `into_raw` → `from_raw` round-trip, no
-        // aliasing Box) and stash it in `stderr_reader.source` BEFORE
-        // `start_with_current_pipe` (which reads `source.?.pipe`) and BEFORE
-        // `spawned` drops — otherwise `WindowsSpawnResult::Drop` would
-        // `uv_close`+free the live, libuv-registered handle (UAF in the read
-        // callback + double-free on reader close).
-        if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-            debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
-            this.stderr_reader().with_mut(|r| {
-                r.set_source(bun_io::Source::Pipe(pipe));
-                r.set_parent(this_ptr);
-            });
-            this.remaining_fds().set(this.remaining_fds().get() + 1);
-            let started = this
-                .stderr_reader()
-                .with_mut(|r| r.start_with_current_pipe());
-            if started.is_err() {
-                this.set_err(format_args!("Failed to start reading stderr"));
-                return Err(());
-            }
+    if let Some(stderr) = spawned.stderr {
+        this.stderr_reader().with_mut(|r| r.set_parent(this_ptr));
+        this.remaining_fds().set(this.remaining_fds().get() + 1);
+        if this
+            .stderr_reader()
+            .with_mut(|r| r.start(stderr, true))
+            .is_err()
+        {
+            // The reader did not take the pipe, and nothing will watch the
+            // process: the `Process` closes its handle when it drops.
+            use bun_sys::FdExt as _;
+            stderr.close();
+            drop(spawned.to_process_handle(ev_handle));
+            this.set_err(format_args!("Failed to start reading stderr"));
+            return Err(());
         }
     }
 
-    let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
     Ok(spawned.to_process_handle(ev_handle))
 }
 

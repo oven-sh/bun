@@ -3,9 +3,8 @@
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-// `bun.sys.PosixStat` — uv-shaped stat struct. Re-exported from `bun_sys` now
-// that the crate declares it; `PosixStat::init(&bun_sys::Stat)` handles the
-// libc-stat → uv_stat_t field copy on both POSIX and Windows there.
+// `PosixStat::init(&bun_sys::Stat)` normalises the platform stat struct into
+// one shape with 64-bit fields and `Timespec` times.
 pub use bun_sys::PosixStat;
 
 /// Stats and BigIntStats classes from node:fs. `BIG` selects BigIntStats vs Stats.
@@ -24,15 +23,8 @@ impl<const BIG: bool> StatType<BIG> {
         Self { value: *stat_ }
     }
 
-    /// Matches Node's `static_cast<unsigned long>` of stat times: 32-bit wrap on win32, signed-preserving elsewhere.
     #[inline]
     fn timespec_parts(ts: StatTimespec) -> (i64, i64) {
-        #[cfg(windows)]
-        return (
-            ((ts.sec as i32) as u32) as i64,
-            ((ts.nsec as i32) as u32) as i64,
-        );
-        #[cfg(not(windows))]
         (ts.sec, ts.nsec)
     }
 

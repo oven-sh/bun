@@ -8,7 +8,9 @@
 // "SAME" tests assert identical behaviour and exist to lock that in.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 /** Spawn a child attached to a fresh terminal, collect all PTY output until
  *  `done()` returns true or the child exits, then close the terminal. */
@@ -18,7 +20,11 @@ async function runInTerminal(
     cols?: number;
     rows?: number;
     done: (output: string) => boolean;
-    afterReady?: (terminal: Bun.Terminal, output: () => string) => void | Promise<void>;
+    afterReady?: (
+      terminal: Bun.Terminal,
+      output: () => string,
+      waitFor: (marker: string) => Promise<void>,
+    ) => void | Promise<void>;
     readyMarker?: string;
   },
 ): Promise<{ output: string; exitCode: number | null }> {
@@ -28,6 +34,14 @@ async function runInTerminal(
   const eof = Promise.withResolvers<void>();
   const readyMarker = opts.readyMarker ?? "READY";
   const decoder = new TextDecoder();
+  const waiters: { marker: string; resolve: () => void }[] = [];
+  // Settles once `marker` has been printed, or at EOF so a dead child cannot hang the caller.
+  const waitFor = (marker: string) => {
+    const waiter = Promise.withResolvers<void>();
+    if (output.includes(marker)) waiter.resolve();
+    else waiters.push({ marker, resolve: waiter.resolve });
+    return Promise.race([waiter.promise, eof.promise]);
+  };
 
   // Use an inline terminal so the child becomes the session leader on POSIX
   // (setsid + TIOCSCTTY), which is required for SIGINT/SIGWINCH delivery.
@@ -40,6 +54,7 @@ async function runInTerminal(
       data(_t, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
         if (output.includes(readyMarker)) ready.resolve();
+        for (const waiter of waiters) if (output.includes(waiter.marker)) waiter.resolve();
         if (opts.done(output)) finished.resolve();
       },
       exit() {
@@ -50,7 +65,7 @@ async function runInTerminal(
 
   if (opts.afterReady) {
     await Promise.race([ready.promise, eof.promise]);
-    if (!proc.terminal!.closed) await opts.afterReady(proc.terminal!, () => output);
+    if (!proc.terminal!.closed) await opts.afterReady(proc.terminal!, () => output, waitFor);
   }
 
   // Wait for the data condition or for the terminal to receive EOF (which
@@ -181,6 +196,99 @@ describe("Bun.Terminal platform behaviour", () => {
     }
   });
 
+  test("SAME: a parent that pauses stdin with a line read pending leaves the next line to its child", async () => {
+    // pause() runs two loop turns after the first line was delivered, so the read for the next
+    // line is already pending in the parent when the child that inherits the terminal starts.
+    const child = `
+      process.stdout.write("CHILD-READY\\n");
+      let lines = 0;
+      process.stdin.on("data", d => {
+        process.stdout.write("CHILD-GOT#" + ++lines + ":" + JSON.stringify(d.toString()) + "\\n");
+        process.exit(0);
+      });`;
+    const { output } = await runInTerminal(
+      `let spawned = false;
+       let lines = 0;
+       process.stdin.on("data", d => {
+         process.stdout.write("PARENT-GOT#" + ++lines + ":" + JSON.stringify(d.toString()) + "\\n");
+         if (spawned) return;
+         spawned = true;
+         setImmediate(() => setImmediate(() => {
+           process.stdin.pause();
+           const child = Bun.spawn({
+             cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+             stdin: "inherit",
+             stdout: "inherit",
+             stderr: "inherit",
+           });
+           child.exited.then(code => process.exit(code));
+         }));
+       });
+       process.stdout.write("READY\\n");`,
+      {
+        done: o => /-GOT#\d+:"second/.test(o),
+        afterReady: async (t, _output, waitFor) => {
+          t.write("first\r");
+          await waitFor("CHILD-READY");
+          t.write("second\r");
+        },
+      },
+    );
+    // The line ends in CRLF under ConPTY and in LF on POSIX (ICRNL), so only its start is matched.
+    // conhost 17763 (Server 2019) repaints the whole screen when a process puts the console mode
+    // back on exit (#38054), so a row can come through twice. Each delivery has its own number:
+    // a row painted again is the same text, a line delivered again is not.
+    const deliveries = Bun.stripANSI(output).match(/(?:PARENT|CHILD)-GOT#\d+:"(?:first|second)/g) ?? [];
+    expect([...new Set(deliveries)]).toEqual(['PARENT-GOT#1:"first', 'CHILD-GOT#1:"second']);
+  });
+
+  // The console's line editor has a cursor; a POSIX terminal in canonical mode has none, so the
+  // arrow keys would be part of the line there.
+  for (const [where, typed, echoed] of [
+    ["at the end of", "wx", "wx"],
+    ["inside", "wxyz\x1b[D\x1b[D", "wxyz"],
+  ] as const) {
+    test.skipIf(!isWindows)(
+      `GAP: text typed before pause() is carried into the next line read (cursor ${where} the text)`,
+      async () => {
+        using dir = tempDir("terminal-stdin-carry", {});
+        const flag = join(String(dir), "pause-now");
+        const { output } = await runInTerminal(
+          `import { existsSync } from "node:fs";
+           let lines = 0;
+           process.stdin.on("data", d => {
+             process.stdout.write("GOT#" + ++lines + ":" + JSON.stringify(d.toString()) + "\\n");
+           });
+           const poll = setInterval(() => {
+             if (!existsSync(${JSON.stringify(flag)})) return;
+             clearInterval(poll);
+             process.stdin.pause();
+             setImmediate(() => setImmediate(() => {
+               process.stdin.resume();
+               process.stdout.write("RESUMED\\n");
+             }));
+           }, 5);
+           process.stdout.write("READY\\n");`,
+          {
+            done: o => /GOT#\d+:"(?:[^"\\]|\\.)*"/.test(o),
+            afterReady: async (t, _output, waitFor) => {
+              t.write(typed);
+              // The line editor echoes: the pending read has taken all of it.
+              await waitFor(echoed);
+              writeFileSync(flag, "");
+              await waitFor("RESUMED");
+              t.write("q!\r");
+            },
+          },
+        );
+        // What was left of the cursor is the line so far; nothing else reaches the program, least
+        // of all the key that ended the read.
+        const deliveries = Bun.stripANSI(output).match(/GOT#\d+:"(?:[^"\\]|\\.)*"/g) ?? [];
+        expect([...new Set(deliveries)]).toEqual(['GOT#1:"wxq!\\r\\n"']);
+      },
+    );
+  }
+
   // System conhost's ConPTY does not translate \x03 input to CTRL_C_EVENT.
   test.todoIf(isWindows)("SAME: Ctrl+C input interrupts the child", async () => {
     const { output } = await runInTerminal(
@@ -225,6 +333,26 @@ describe("Bun.Terminal platform behaviour", () => {
     if (!isWindows) expect(output).toContain("READY\r\nLINE2");
   });
 
+  test("SAME: output LF is translated to CRLF in a string with non-Latin-1 characters", async () => {
+    const { output } = await runInTerminal(`process.stdout.write('READY \u4e16\\nLINE2')`, {
+      done: o => o.includes("LINE2"),
+    });
+    // ConPTY may pad after a wide character.
+    expect(Bun.stripANSI(output)).toMatch(/READY \u4e16 *\r\nLINE2/);
+    if (!isWindows) expect(output).toContain("READY \u4e16\r\nLINE2");
+  });
+
+  test("SAME: a UTF-8 sequence split between two byte writes is joined, and one cut short by a string is replaced", async () => {
+    const { output } = await runInTerminal(
+      `process.stdout.write(Buffer.from([0xe4, 0xb8]));
+       process.stdout.write(Buffer.from([0x96]));
+       process.stdout.write(Buffer.from([0xe4, 0xb8]));
+       process.stdout.write("\u754c READY");`,
+      { done: o => o.includes("READY") },
+    );
+    expect(Bun.stripANSI(output)).toMatch(/\u4e16 *\ufffd *\u754c/);
+  });
+
   test("GAP: ANSI escape sequences", async () => {
     const { output } = await runInTerminal(`process.stdout.write('READY \\x1b[31mRED\\x1b[0m')`, {
       done: o => o.includes("RED"),
@@ -254,8 +382,7 @@ describe("Bun.Terminal platform behaviour", () => {
   // resize
   // ──────────────────────────────────────────────────────────────────────────
 
-  // libuv's SIGWINCH detection on Windows requires a conhost window; ConPTY has none.
-  test.todoIf(isWindows)("SAME: resize while child is running fires SIGWINCH in child", async () => {
+  test("SAME: resize while child is running fires SIGWINCH in child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGWINCH', () => setImmediate(() => {
          process.stdout.write('WINCH cols=' + process.stdout.columns + ' rows=' + process.stdout.rows);
@@ -275,7 +402,7 @@ describe("Bun.Terminal platform behaviour", () => {
   });
 
   test("SAME: child can observe resize by re-querying window size", async () => {
-    // SIGWINCH does not fire under ConPTY (see above), so the cached
+    // Until SIGWINCH fires, the cached
     // process.stdout.columns is stale. But the underlying syscall
     // (TIOCGWINSZ / GetConsoleScreenBufferInfo) returns the new size, so an
     // explicit refresh works on both platforms.

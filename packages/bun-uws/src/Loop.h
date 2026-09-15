@@ -95,12 +95,9 @@ private:
         return loop->init();
     }
 
-    /* What to do with loops created with existingNativeLoop? */
     struct LoopCleaner {
         ~LoopCleaner() {
             // There's no need to call this destructor if Bun is in the process of exiting.
-            // This is both a performance thing, and also to prevent freeing some things which are not meant to be freed
-            // such as uv_tty_t
             if(loop && cleanMe && !bun_is_exiting()) {
                 cleanMe = false;
                 loop->free();
@@ -118,25 +115,16 @@ private:
 public:
     /* Lazily initializes a per-thread loop and returns it.
      * Will automatically free all initialized loops at exit. */
-    static Loop *get(void *existingNativeLoop = nullptr) {
+    static Loop *get() {
         if (!getLazyLoop().loop) {
-            /* If we are given a native loop pointer we pass that to uSockets and let it deal with it */
-            if (existingNativeLoop) {
-                /* Todo: here we want to pass the pointer, not a boolean */
-                getLazyLoop().loop = create(existingNativeLoop);
-                /* We cannot register automatic free here, must be manually done */
-            } else {
-                getLazyLoop().loop = create(nullptr);
-                getLazyLoop().cleanMe = true;
-            }
+            getLazyLoop().loop = create(nullptr);
+            getLazyLoop().cleanMe = true;
         }
 
         return getLazyLoop().loop;
     }
 
-    /* A thread that ran a loop is exiting: free this thread's loop whether uSockets created the
-     * native loop (cleanMe) or was handed one (Windows: the thread's libuv loop, which the caller
-     * closes afterwards; us_loop_free leaves a borrowed native loop alone). */
+    /* A thread that ran a loop is exiting: free this thread's loop. */
     static void freeLoopAtThreadExit() {
         if (getLazyLoop().loop) {
             getLazyLoop().loop->free();

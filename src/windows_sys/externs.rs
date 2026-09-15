@@ -1,6 +1,6 @@
 //! Raw Win32 extern fn declarations + tier-0 Win32 typedefs.
-//! `bun_sys::windows` re-exports FROM here (see the layering doc). This crate is a tier-0 leaf: it depends on nothing above
-//! `libuv_sys`.
+//! `bun_sys::windows` re-exports FROM here (see the layering doc). This crate is a tier-0 leaf with no workspace
+//! dependencies.
 //!
 //! `#[link(name = "...")]` on every `extern` block is wrapped in
 //! `#[cfg_attr(windows, ...)]`. This crate is depended on unconditionally (not
@@ -78,11 +78,7 @@ pub struct FILETIME {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Win32 POD structs shared by `bun_libuv_sys` (uv/win.h embeds) and
-// `bun_sys::windows`. Single source of truth.
-// All derive Clone+Copy: libuv embeds them in `uv_req_s`/`uv_tty_s`/
-// `uv_fs_s` which themselves derive Copy, so non-Copy here would break
-// the derive chain.
+// Win32 POD structs. Single source of truth.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `OVERLAPPED` (`minwinbase.h`) — 32 bytes / align 8 on x64.
@@ -97,7 +93,6 @@ pub struct OVERLAPPED {
 }
 
 /// `RTL_CRITICAL_SECTION` (`winnt.h`) — 40 bytes / align 8 on x64.
-/// libuv aliases this as `uv_mutex_t`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct CRITICAL_SECTION {
@@ -182,8 +177,8 @@ pub struct INPUT_RECORD {
     pub Event: INPUT_RECORD_Event,
 }
 
-// Layout pins: a typo in any of the above is a silent ABI break across the
-// libuv embed boundary; assert the authoritative Windows-x64 sizes. Gated on
+// Layout pins: a typo in any of the above is a silent ABI break; assert the
+// authoritative Windows-x64 sizes. Gated on
 // `windows` (not just pointer width) because `DWORD = c_ulong` is 4 bytes
 // under LLP64 but 8 under LP64, so the sizes differ on a Linux cross-check.
 #[cfg(all(windows, target_pointer_width = "64"))]
@@ -283,6 +278,7 @@ pub const FILE_SHARE_DELETE: ULONG = 0x0000_0004;
 pub const FILE_ATTRIBUTE_READONLY: DWORD = 0x0000_0001;
 pub const FILE_ATTRIBUTE_HIDDEN: DWORD = 0x0000_0002;
 pub const FILE_ATTRIBUTE_DIRECTORY: DWORD = 0x0000_0010;
+pub const FILE_ATTRIBUTE_ARCHIVE: DWORD = 0x0000_0020;
 pub const FILE_ATTRIBUTE_NORMAL: DWORD = 0x0000_0080;
 pub const FILE_ATTRIBUTE_TEMPORARY: DWORD = 0x0000_0100;
 pub const FILE_ATTRIBUTE_REPARSE_POINT: DWORD = 0x0000_0400;
@@ -311,17 +307,54 @@ pub const GENERIC_WRITE: ACCESS_MASK = 0x4000_0000;
 // File-specific access rights (`winnt.h`).
 pub const FILE_READ_DATA: ACCESS_MASK = 0x0001;
 pub const FILE_LIST_DIRECTORY: ACCESS_MASK = 0x0001;
+pub const FILE_WRITE_DATA: ACCESS_MASK = 0x0002;
 pub const FILE_APPEND_DATA: ACCESS_MASK = 0x0004;
 pub const FILE_READ_EA: ACCESS_MASK = 0x0008;
+pub const FILE_WRITE_EA: ACCESS_MASK = 0x0010;
 pub const FILE_TRAVERSE: ACCESS_MASK = 0x0020;
 pub const FILE_READ_ATTRIBUTES: ACCESS_MASK = 0x0080;
+pub const FILE_WRITE_ATTRIBUTES: ACCESS_MASK = 0x0100;
+pub const WRITE_DAC: ACCESS_MASK = 0x0004_0000;
+pub const FILE_GENERIC_READ: ACCESS_MASK =
+    READ_CONTROL | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE;
+pub const FILE_GENERIC_WRITE: ACCESS_MASK = READ_CONTROL
+    | FILE_WRITE_DATA
+    | FILE_WRITE_ATTRIBUTES
+    | FILE_WRITE_EA
+    | FILE_APPEND_DATA
+    | SYNCHRONIZE;
 
 // `CreateFileW` dwCreationDisposition (`winbase.h`).
+pub const CREATE_NEW: DWORD = 1;
+pub const CREATE_ALWAYS: DWORD = 2;
 pub const OPEN_EXISTING: DWORD = 3;
+pub const OPEN_ALWAYS: DWORD = 4;
+pub const TRUNCATE_EXISTING: DWORD = 5;
 
 // `CreateFileW` dwFlagsAndAttributes (`winbase.h`).
+pub const FILE_FLAG_FIRST_PIPE_INSTANCE: DWORD = 0x0008_0000;
+pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
 pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
+pub const FILE_FLAG_DELETE_ON_CLOSE: DWORD = 0x0400_0000;
+pub const FILE_FLAG_SEQUENTIAL_SCAN: DWORD = 0x0800_0000;
+pub const FILE_FLAG_RANDOM_ACCESS: DWORD = 0x1000_0000;
+pub const FILE_FLAG_NO_BUFFERING: DWORD = 0x2000_0000;
 pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
+pub const FILE_FLAG_WRITE_THROUGH: DWORD = 0x8000_0000;
+
+// `SetFilePointerEx` dwMoveMethod.
+pub const FILE_CURRENT: DWORD = 1;
+
+// `SetHandleInformation` dwMask.
+pub const HANDLE_FLAG_INHERIT: DWORD = 0x0000_0001;
+
+// Reparse tags and FSCTLs (`winnt.h` / `winioctl.h`).
+pub const IO_REPARSE_TAG_MOUNT_POINT: DWORD = 0xA000_0003;
+pub const IO_REPARSE_TAG_SYMLINK: DWORD = 0xA000_000C;
+pub const IO_REPARSE_TAG_APPEXECLINK: DWORD = 0x8000_001B;
+pub const FSCTL_SET_REPARSE_POINT: DWORD = 0x0009_00A4;
+pub const FSCTL_GET_REPARSE_POINT: DWORD = 0x0009_00A8;
+pub const MAXIMUM_REPARSE_DATA_BUFFER_SIZE: usize = 16 * 1024;
 
 // Reparse tags (`winnt.h`). `IsReparseTagNameSurrogate` == bit 29: the reparse
 // point names another filesystem entity (symlink, mount point). Non-surrogate
@@ -337,6 +370,7 @@ pub const PIPE_ACCESS_OUTBOUND: DWORD = 0x0000_0002;
 pub const PIPE_TYPE_BYTE: DWORD = 0x0000_0000;
 pub const PIPE_READMODE_BYTE: DWORD = 0x0000_0000;
 pub const PIPE_WAIT: DWORD = 0x0000_0000;
+pub const PIPE_REJECT_REMOTE_CLIENTS: DWORD = 0x0000_0008;
 
 /// `CreateSymbolicLinkW` dwFlags (`winbase.h`).
 pub const SYMBOLIC_LINK_FLAG_DIRECTORY: DWORD = 0x1;
@@ -370,6 +404,63 @@ pub struct FILE_DIRECTORY_INFORMATION {
     pub FileName: [WCHAR; 1],
 }
 
+/// `FILE_ID_FULL_DIR_INFORMATION` (`ntifs.h`) — `NtQueryDirectoryFile` record
+/// carrying the 64-bit file id. `FileName` is a flexible array.
+#[repr(C)]
+pub struct FILE_ID_FULL_DIR_INFORMATION {
+    pub NextEntryOffset: ULONG,
+    pub FileIndex: ULONG,
+    pub CreationTime: LARGE_INTEGER,
+    pub LastAccessTime: LARGE_INTEGER,
+    pub LastWriteTime: LARGE_INTEGER,
+    pub ChangeTime: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub AllocationSize: LARGE_INTEGER,
+    pub FileAttributes: ULONG,
+    pub FileNameLength: ULONG,
+    pub EaSize: ULONG,
+    pub FileId: LARGE_INTEGER,
+    pub FileName: [WCHAR; 1],
+}
+
+/// `FILE_STAT_BASIC_INFORMATION` (`winbase.h`, Windows 11 24H2 SDK) — output
+/// of `GetFileInformationByName(.., FileStatBasicByNameInfo)`.
+#[repr(C)]
+pub struct FILE_STAT_BASIC_INFORMATION {
+    pub FileId: LARGE_INTEGER,
+    pub CreationTime: LARGE_INTEGER,
+    pub LastAccessTime: LARGE_INTEGER,
+    pub LastWriteTime: LARGE_INTEGER,
+    pub ChangeTime: LARGE_INTEGER,
+    pub AllocationSize: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub FileAttributes: ULONG,
+    pub ReparseTag: ULONG,
+    pub NumberOfLinks: ULONG,
+    pub DeviceType: ULONG,
+    pub DeviceCharacteristics: ULONG,
+    pub Reserved: ULONG,
+    pub VolumeSerialNumber: LARGE_INTEGER,
+    pub FileId128: [u8; 16],
+}
+/// `FILE_INFO_BY_NAME_CLASS::FileStatBasicByNameInfo`.
+pub const FileStatBasicByNameInfo: c_int = 3;
+/// `GetFileInformationByName` (Windows 11 24H2+; resolve with `GetProcAddress`).
+pub type GetFileInformationByNameFn = unsafe extern "system" fn(
+    FileName: LPCWSTR,
+    FileInformationClass: c_int,
+    FileInfoBuffer: *mut c_void,
+    FileInfoBufferSize: ULONG,
+) -> BOOL;
+
+#[cfg(windows)]
+const _: () = {
+    assert!(core::mem::size_of::<FILE_STAT_BASIC_INFORMATION>() == 104);
+    assert!(core::mem::offset_of!(FILE_STAT_BASIC_INFORMATION, VolumeSerialNumber) == 80);
+    assert!(core::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileId) == 72);
+    assert!(core::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileName) == 80);
+};
+
 /// `FILE_INFORMATION_CLASS` (`wdm.h`) — selector for `NtQuery*` /
 /// `NtSetInformationFile`. Newtype-over-u32 so unmapped values round-trip.
 #[repr(transparent)]
@@ -381,6 +472,7 @@ impl FILE_INFORMATION_CLASS {
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
+    pub const FileIdFullDirectoryInformation: Self = Self(38);
     pub const FileDispositionInformationEx: Self = Self(64);
 }
 
@@ -502,6 +594,9 @@ pub struct FILE_RENAME_INFORMATION_EX {
 }
 
 // `FILE_DISPOSITION_INFORMATION_EX.Flags` bits (winnt.h).
+pub const FILE_DISPOSITION_DELETE: ULONG = 0x0000_0001;
+pub const FILE_DISPOSITION_POSIX_SEMANTICS: ULONG = 0x0000_0002;
+pub const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x0000_0010;
 
 // `FILE_RENAME_INFORMATION_EX.Flags` bits (winnt.h).
 pub const FILE_RENAME_REPLACE_IF_EXISTS: ULONG = 0x0000_0001;
@@ -800,10 +895,6 @@ pub mod user32 {}
 /// `advapi32` namespace (subset placeholder; fill in as needed).
 pub mod advapi32 {}
 
-// `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
-// module, NOT here — `bun_windows_sys` is the leaf Win32 externs crate and
-// must not depend on `bun_libuv_sys` (would invert the tier ordering).
-
 // ──────────────────────────────────────────────────────────────────────────
 // kernel32 namespace (subset).
 // ──────────────────────────────────────────────────────────────────────────
@@ -1008,6 +1099,7 @@ impl NTSTATUS {
     /// `NtSetInformationFile(FileDispositionInformation)`.
     pub const CANNOT_DELETE: NTSTATUS = NTSTATUS(0xC000_0121);
     pub const NOT_IMPLEMENTED: NTSTATUS = NTSTATUS(0xC000_0002);
+    pub const BUFFER_OVERFLOW: NTSTATUS = NTSTATUS(0x8000_0005);
     pub const NO_MORE_FILES: NTSTATUS = NTSTATUS(0x8000_0006);
     pub const NO_SUCH_FILE: NTSTATUS = NTSTATUS(0xC000_000F);
     /// `STATUS_TIMEOUT` — returned by `NtWaitForSingleObject` /
@@ -1180,7 +1272,9 @@ impl Win32Error {
     pub const LOCK_VIOLATION: Win32Error = Win32Error(33);
     pub const HANDLE_EOF: Win32Error = Win32Error(38);
     pub const HANDLE_DISK_FULL: Win32Error = Win32Error(39);
+    pub const NOT_READY: Win32Error = Win32Error(21);
     pub const NOT_SUPPORTED: Win32Error = Win32Error(50);
+    pub const BAD_NET_NAME: Win32Error = Win32Error(67);
     pub const NETNAME_DELETED: Win32Error = Win32Error(64);
     pub const FILE_EXISTS: Win32Error = Win32Error(80);
     pub const CANNOT_MAKE: Win32Error = Win32Error(82);
@@ -1206,6 +1300,7 @@ impl Win32Error {
     pub const PIPE_BUSY: Win32Error = Win32Error(231);
     pub const NO_DATA: Win32Error = Win32Error(232);
     pub const PIPE_NOT_CONNECTED: Win32Error = Win32Error(233);
+    pub const PIPE_CONNECTED: Win32Error = Win32Error(535);
     pub const DIRECTORY: Win32Error = Win32Error(267);
     pub const EA_TABLE_FULL: Win32Error = Win32Error(277);
     pub const DELETE_PENDING: Win32Error = Win32Error(303);
@@ -1240,6 +1335,7 @@ impl Win32Error {
     pub const CANT_RESOLVE_FILENAME: Win32Error = Win32Error(1921);
     pub const NOT_CONNECTED: Win32Error = Win32Error(2250);
     pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
+    pub const NOT_A_REPARSE_POINT: Win32Error = Win32Error(4390);
     pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
 
     // — WSA pseudo-variants —
@@ -1426,9 +1522,9 @@ unsafe extern "system" {
         lpBuffer: LPCWSTR,    // [out]
     ) -> DWORD;
 
-    pub fn CreateJobObjectA(
+    pub fn CreateJobObjectW(
         lpJobAttributes: *mut c_void, // [in, optional]
-        lpName: LPCSTR,               // [in, optional]
+        lpName: LPCWSTR,              // [in, optional]
     ) -> HANDLE;
 
     pub fn AssignProcessToJobObject(
@@ -1849,6 +1945,63 @@ unsafe extern "system" {
         fInfoLevelId: GET_FILEEX_INFO_LEVELS,
         lpFileInformation: LPVOID,
     ) -> BOOL;
+
+    pub fn SetFileAttributesW(lpFileName: LPCWSTR, dwFileAttributes: DWORD) -> BOOL;
+
+    pub fn RemoveDirectoryW(lpPathName: LPCWSTR) -> BOOL;
+
+    /// Returns the required size (including the NUL) when `lpBuffer` is too
+    /// small, else the length written (excluding the NUL); 0 on failure.
+    pub fn GetFullPathNameW(
+        lpFileName: LPCWSTR,
+        nBufferLength: DWORD,
+        lpBuffer: LPWSTR,
+        lpFilePart: *mut LPWSTR,
+    ) -> DWORD;
+
+    pub fn GetDiskFreeSpaceW(
+        lpRootPathName: LPCWSTR,
+        lpSectorsPerCluster: *mut DWORD,
+        lpBytesPerSector: *mut DWORD,
+        lpNumberOfFreeClusters: *mut DWORD,
+        lpTotalNumberOfClusters: *mut DWORD,
+    ) -> BOOL;
+
+    pub fn SetFileTime(
+        hFile: HANDLE,
+        lpCreationTime: *const FILETIME,
+        lpLastAccessTime: *const FILETIME,
+        lpLastWriteTime: *const FILETIME,
+    ) -> BOOL;
+
+    pub fn GetSystemTimeAsFileTime(lpSystemTimeAsFileTime: *mut FILETIME);
+
+    /// A new handle to the file `hOriginalFile` has open, with its own access,
+    /// share mode and flags; `INVALID_HANDLE_VALUE` on failure.
+    pub fn ReOpenFile(
+        hOriginalFile: HANDLE,
+        dwDesiredAccess: DWORD,
+        dwShareMode: DWORD,
+        dwFlagsAndAttributes: DWORD,
+    ) -> HANDLE;
+
+    pub fn DeviceIoControl(
+        hDevice: HANDLE,
+        dwIoControlCode: DWORD,
+        lpInBuffer: LPVOID,
+        nInBufferSize: DWORD,
+        lpOutBuffer: LPVOID,
+        nOutBufferSize: DWORD,
+        lpBytesReturned: *mut DWORD,
+        lpOverlapped: *mut OVERLAPPED,
+    ) -> BOOL;
+
+    pub fn ConnectNamedPipe(hNamedPipe: HANDLE, lpOverlapped: *mut OVERLAPPED) -> BOOL;
+
+    /// No pointer arguments; a bad handle fails with `ERROR_INVALID_HANDLE`.
+    pub safe fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
+
+    pub fn GetStartupInfoW(lpStartupInfo: *mut STARTUPINFOW);
 }
 
 unsafe extern "C" {

@@ -7,8 +7,6 @@ pub enum Error {
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
-    MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
-    #[error(transparent)]
     Paths(#[from] bun_paths::Error),
 }
 
@@ -19,7 +17,6 @@ impl Error {
             Self::Fail => "Fail",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
-            Self::MakeLibUvOwned(e) => <&'static str>::from(e),
             Self::Paths(e) => e.name(),
         }
     }

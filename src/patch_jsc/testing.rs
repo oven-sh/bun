@@ -29,11 +29,7 @@ impl TestingAPIs {
         let old_folder = old_folder_bunstr.to_utf8();
         let new_folder = new_folder_bunstr.to_utf8();
 
-        // `git_diff_internal` routes through `bun_spawn::sync`, which on
-        // Windows derefs `WindowsOptions.loop_` — supply the JS event loop.
-        // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
-        let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
-        let diff = match git_diff_internal(old_folder.slice(), new_folder.slice(), &mut loop_) {
+        let diff = match git_diff_internal(old_folder.slice(), new_folder.slice()) {
             Ok(d) => d,
             Err(e) => return Err(global.throw_error(e, "failed to make diff")),
         };

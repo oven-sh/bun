@@ -92,7 +92,7 @@ impl Readable {
         max_size: Option<NonNull<MaxBuf>>,
         _is_sync: bool,
     ) -> Readable {
-        super::assert_stdio_result!(result);
+        super::assert_stdio_result(result);
 
         let mut stdio = stdio;
         #[cfg(unix)]
@@ -105,17 +105,7 @@ impl Readable {
         match &stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
-            Stdio::Fd(fd) => {
-                #[cfg(unix)]
-                {
-                    let _ = fd;
-                    Readable::Fd(result.unwrap())
-                }
-                #[cfg(not(unix))]
-                {
-                    Readable::Fd(*fd)
-                }
-            }
+            Stdio::Fd(fd) => Readable::Fd(*fd),
             Stdio::Memfd(_) => {
                 // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
                 let memfd = stdio.take_memfd().unwrap();
@@ -129,17 +119,7 @@ impl Readable {
                     Readable::Ignore
                 }
             }
-            Stdio::Dup2(dup2) => {
-                #[cfg(unix)]
-                {
-                    let _ = dup2;
-                    panic!("TODO: implement dup2 support in Stdio readable");
-                }
-                #[cfg(not(unix))]
-                {
-                    Readable::Fd(dup2.out.to_fd())
-                }
-            }
+            Stdio::Dup2(_) => panic!("TODO: implement dup2 support in Stdio readable"),
             Stdio::Pipe => {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
@@ -183,24 +163,21 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                #[cfg(unix)]
-                {
-                    let release_start_ref = {
-                        let reader = Self::pipe_reader_mut(&pipe);
-                        if reader.process.is_some()
-                            && matches!(reader.state, super::subprocess_pipe_reader::State::Pending)
-                            && reader.ref_count.get() > 1
-                        {
-                            reader.reader.deinit();
-                            true
-                        } else {
-                            false
-                        }
-                    };
-                    if release_start_ref {
-                        // SAFETY: guard above proved a second ref exists; this deref cannot reach zero.
-                        unsafe { PipeReader::deref(pipe.as_ptr()) };
+                let release_start_ref = {
+                    let reader = Self::pipe_reader_mut(&pipe);
+                    if reader.process.is_some()
+                        && matches!(reader.state, super::subprocess_pipe_reader::State::Pending)
+                        && reader.ref_count.get() > 1
+                    {
+                        reader.reader.deinit();
+                        true
+                    } else {
+                        false
                     }
+                };
+                if release_start_ref {
+                    // SAFETY: guard above proved a second ref exists; this deref cannot reach zero.
+                    unsafe { PipeReader::deref(pipe.as_ptr()) };
                 }
                 Self::pipe_reader_mut(&pipe).process = None;
             }

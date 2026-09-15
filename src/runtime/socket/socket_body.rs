@@ -1221,8 +1221,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 BunString::static_("ECONNREFUSED")
             };
             #[cfg(windows)]
-            let errno_ = -sys::windows::libuv::e_discriminant_to_uv(errno_ as u16)
-                .unwrap_or(sys::windows::libuv::UV_ECONNREFUSED);
+            let errno_ = -bun_errno::uv_codes::e_discriminant_to_uv(errno_ as u16)
+                .unwrap_or(bun_errno::uv_codes::UV_ECONNREFUSED);
             SystemError {
                 errno: -errno_,
                 message: BunString::static_("Failed to connect"),
@@ -3325,10 +3325,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // On Windows the fd is a system-kind SOCKET handle; routing it through
-        // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
-        // kind (system→u64, uv→i32, posix→i32).
+        // `.crt()` panics for anything but stdio. The sys_jsc helper branches on
+        // kind (system→u64, crt→i32, posix→i32).
         use bun_sys_jsc::FdJsc as _;
-        this.socket.get().fd().to_js_without_making_lib_uv_owned()
+        this.socket.get().fd().to_js_without_making_crt_owned()
     }
 
     #[bun_jsc::host_fn(getter)]

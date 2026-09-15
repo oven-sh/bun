@@ -5,11 +5,12 @@
 //! `on_channel_frame(kind, &mut Frame::Reader)` and `on_channel_done()`.
 //!
 //! POSIX backend: `uws::NewSocketHandler` adopted from a socketpair fd.
-//! Windows backend: `uv::Pipe` over the inherited duplex named-pipe end (same
-//! mechanism as `Bun.spawn({ipc})` / `process.send()`).
+//! Windows backend: a `bun_io::windows::Pipe` over an end of the duplex pipe
+//! spawn makes for fd 3. Both ends are this binary, so the bytes on the pipe
+//! are the frames themselves.
 //!
 //! Lifetime: a `Channel` is embedded as a field in an owner that outlives all
-//! uv/usockets callbacks (the coordinator's `Worker[]`, or the worker's
+//! pipe/usockets callbacks (the coordinator's `Worker[]`, or the worker's
 //! `WorkerLoop` which lives for the process). The owner is recovered via
 //! `container_of` (field offset) so the channel default-inits without a
 //! self-pointer. `Drop` assumes no write is in flight — true for both call
@@ -27,20 +28,14 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 
 use bun_collections::VecExt;
+#[cfg(windows)]
+use bun_io::windows::{Pipe, ReadEvent};
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::Fd;
-#[cfg(not(windows))]
 use bun_sys::FdExt as _;
 #[cfg(not(windows))]
 use bun_uws as uws;
-
-#[cfg(windows)]
-use bun_libuv_sys::UvStream as _;
-#[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 
 use super::frame;
 
@@ -63,8 +58,7 @@ pub struct Channel<Owner> {
     pub out: JsCell<Vec<u8>>,
     pub(crate) done: Cell<bool>,
     /// The peer's byte stream stopped decoding as frames, i.e. something in
-    /// the peer wrote straight to fd 3: a length `ingest` rejected, or on
-    /// Windows a read error from libuv's own IPC framing underneath ours. Set
+    /// the peer wrote straight to fd 3: a length `ingest` rejected. Set
     /// together with `done`, transport still attached. The coordinator kills
     /// such a worker and reports this rather than the exit status it caused.
     pub(crate) corrupt_frame: Cell<bool>,
@@ -155,43 +149,23 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     }
 }
 
-// -- Windows (uv.Pipe) -------------------------------------------------------
+// -- Windows (pipe) ----------------------------------------------------------
 
 #[cfg(windows)]
+#[derive(Default)]
 pub struct WindowsBackend {
-    pub(crate) pipe: Cell<*mut uv::Pipe>,
-    /// Read scratch — libuv asks us to allocate before each read.
-    /// Wrapped so every byte is interior-mutable: libuv forms
-    /// `&mut Channel` from the stored root on each read; a plain array here
-    /// would be the one field where that retag pops the shared views held
-    /// during frame decoding.
-    pub(crate) read_chunk: JsCell<[u8; 16 * 1024]>,
-    /// Payload owned by the in-flight uv_write; must stay stable until the
-    /// callback. New writes go to `out` until this completes, then the buffers
-    /// swap.
-    pub(crate) inflight: JsCell<Vec<u8>>,
-    pub(crate) write_req: JsCell<uv::uv_write_t>,
-    pub(crate) write_buf: JsCell<uv::uv_buf_t>,
-}
-
-#[cfg(windows)]
-impl Default for WindowsBackend {
-    fn default() -> Self {
-        Self {
-            pipe: Cell::new(core::ptr::null_mut()),
-            read_chunk: JsCell::new([0u8; 16 * 1024]),
-            inflight: JsCell::new(Vec::new()),
-            write_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_write_t>()),
-            write_buf: JsCell::new(uv::uv_buf_t::init(b"")),
-        }
-    }
+    pub(crate) pipe: JsCell<Option<Pipe>>,
+    /// A write is with the pipe; `out` collects what follows it.
+    writing: Cell<bool>,
 }
 
 // -- adopt -------------------------------------------------------------------
 
 impl<Owner: ChannelOwner> Channel<Owner> {
     /// Adopt a duplex fd into the channel and start reading. POSIX: the
-    /// socketpair end. Windows: the inherited named-pipe end (worker side).
+    /// socketpair end. Windows: an end of the pipe spawn made for fd 3;
+    /// `inherited` says it is the worker's (this process did not create it),
+    /// which decides how a pipe may be driven there. Takes `fd` either way.
     // callers (`runner.rs`, `Worker.rs`) only hold `&VirtualMachine`;
     // the upstream `rare_data()` / `test_parallel_ipc_group()` accessors require
     // `&mut`. Take a raw `*const` and cast
@@ -200,57 +174,61 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     // promotion; the raw-pointer route sidesteps that lint while keeping both
     // call sites (which pass `&`/`&mut` and coerce) unchanged.
     /// `this` is the channel's address derived from the owner's `&mut`.
-    pub(crate) fn adopt(this: *mut Self, vm: *const VirtualMachine, fd: Fd) -> bool {
+    pub(crate) fn adopt(
+        this: *mut Self,
+        vm: *const VirtualMachine,
+        fd: Fd,
+        inherited: bool,
+    ) -> bool {
         // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
         let self_ = unsafe { &*this };
         self_.root.set(this);
-        Self::adopt_impl(self_, this, vm, fd)
+        Self::adopt_impl(self_, this, vm, fd, inherited)
     }
 
-    fn adopt_impl(&self, this: *mut Self, _vm: *const VirtualMachine, fd: Fd) -> bool {
+    fn adopt_impl(
+        &self,
+        this: *mut Self,
+        _vm: *const VirtualMachine,
+        fd: Fd,
+        inherited: bool,
+    ) -> bool {
         #[cfg(windows)]
         {
-            let _ = this; // registered via `adopt_pipe_impl` from `self.root`
-            // With ipc=true
-            // libuv wraps reads/writes in its own framing; both ends use it so
-            // the wrapping is transparent and our payload bytes pass through
-            // unchanged. With ipc=false the parent end (created by uv_spawn for
-            // the .ipc stdio container, which always inits with ipc=true) and
-            // child end disagree on framing and the channel never delivers a
-            // frame.
-            let mut pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
-            if let Some(e) = pipe
-                .init(uv::Loop::get(), true)
-                .to_error(bun_sys::Tag::pipe)
-            {
-                bun_core::debug_warn!(
-                    "Channel.adopt: uv_pipe_init failed: {}",
-                    e.name().escape_ascii(),
-                );
-                drop(pipe);
-                return false;
-            }
-            if let Some(e) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
-                bun_core::debug_warn!(
-                    "Channel.adopt: uv_pipe_open({}) failed: {}",
-                    fd.uv(),
-                    e.name().escape_ascii(),
-                );
-                // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-                unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(pipe)) };
-                return false;
-            }
-            let pipe = bun_core::heap::into_raw(pipe);
-            if !self.adopt_pipe_impl(pipe) {
-                // Caller still owns `pipe` on adopt_pipe failure.
-                // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-                unsafe { uv::Pipe::close_and_destroy(pipe) };
-                return false;
-            }
-            return true;
+            let loop_ = VirtualMachine::get().as_mut().uws_loop();
+            let opened = if inherited {
+                Pipe::open_foreign(loop_, fd, true)
+            } else {
+                Pipe::open_owned(loop_, fd, true)
+            };
+            // The pipe stays ref'd so the loop blocks for the peer's first frame.
+            let started =
+                opened.and_then(|mut pipe| match pipe.read_start(this, Self::on_pipe_read) {
+                    Ok(()) => Ok(pipe),
+                    Err(e) => {
+                        pipe.disown();
+                        Err(e)
+                    }
+                });
+            return match started {
+                Ok(pipe) => {
+                    self.backend.pipe.set(Some(pipe));
+                    true
+                }
+                Err(e) => {
+                    bun_core::debug_warn!(
+                        "Channel.adopt: opening the pipe failed: {}",
+                        e.name().escape_ascii(),
+                    );
+                    // Leaving the endpoint open keeps the peer process alive.
+                    fd.close();
+                    false
+                }
+            };
         }
         #[cfg(not(windows))]
         {
+            let _ = inherited;
             // VM is process-singleton and accessed only from the main
             // thread here; route through the safe singleton accessor.
             let vm: &mut VirtualMachine = VirtualMachine::get().as_mut();
@@ -265,43 +243,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             sock.set_timeout(0);
             true
         }
-    }
-
-    /// Windows-only: adopt a `uv::Pipe` already initialized by spawn (the
-    /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
-    /// reading. On failure the caller still owns `pipe`. The pipe stays ref'd
-    /// so the loop blocks for the peer's first frame; `Drop` closes it.
-    #[cfg(windows)]
-    pub(crate) fn adopt_pipe(
-        this: *mut Self,
-        _vm: *const VirtualMachine,
-        pipe: *mut uv::Pipe,
-    ) -> bool {
-        // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
-        let self_ = unsafe { &*this };
-        self_.root.set(this);
-        self_.adopt_pipe_impl(pipe)
-    }
-
-    #[cfg(windows)]
-    fn adopt_pipe_impl(&self, pipe: *mut uv::Pipe) -> bool {
-        // The read callbacks are expressed via the `StreamReader` trait impl
-        // below and routed through `read_start_ctx`, which stashes `self` in
-        // `handle.data`.
-        // SAFETY: `pipe` is a live, init'ed `Box<Pipe>` allocation owned by the
-        // caller; we only borrow it to start reading.
-        let rc = unsafe { (*pipe).read_start_ctx::<Self>(self.root.get()) };
-        if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
-            bun_core::debug_warn!(
-                "Channel.adoptPipe: readStart failed: {}",
-                e.name().escape_ascii(),
-            );
-            // Caller still owns `pipe` on failure and is responsible
-            // for `close_and_destroy`.
-            return false;
-        }
-        self.backend.pipe.set(pipe);
-        true
     }
 
     // -- write ---------------------------------------------------------------
@@ -336,80 +277,65 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
     }
 
+    /// A pipe takes a write whole and reports when it is through, so frames
+    /// queue in `out` while one is in flight and go out together after it.
     #[cfg(windows)]
     fn send_windows(&self, frame_bytes: &[u8]) {
-        // A uv_write is in flight — queue behind it.
-        if !self.backend.inflight.get().is_empty() {
-            self.out.with_mut(|out| out.extend_from_slice(frame_bytes));
-            return;
-        }
-        let pipe = self.backend.pipe.get();
-        if pipe.is_null() {
-            return;
-        }
-        // Try a synchronous write first. uv_try_write on a Windows
-        // UV_NAMED_PIPE always returns EAGAIN (vendor/libuv/src/win/stream.c),
-        // so this currently always falls through to submit_windows_write —
-        // kept because EBADF/EPIPE here mean the pipe is dead and must not
-        // silently drop the frame.
-        let buf = uv::uv_buf_t::init(frame_bytes);
-        // SAFETY: `pipe` is the live Box-allocated uv_pipe_t owned by this channel.
-        let rc = unsafe { (*pipe).try_write(core::slice::from_ref(&buf)) };
-        let w: usize = match rc.to_error(bun_sys::Tag::try_write) {
-            None => rc.int() as usize,
-            Some(e) => {
-                if e.get_errno() == bun_sys::E::AGAIN {
-                    0
-                } else {
-                    self.mark_done();
-                    return;
-                }
-            }
-        };
-        if w >= frame_bytes.len() {
-            return;
-        }
-        self.out
-            .with_mut(|out| out.extend_from_slice(&frame_bytes[w..]));
+        self.out.with_mut(|out| out.extend_from_slice(frame_bytes));
         self.submit_windows_write();
     }
 
     #[cfg(windows)]
     fn submit_windows_write(&self) {
-        if self.out.get().is_empty() || !self.backend.inflight.get().is_empty() || self.done.get() {
+        if self.backend.writing.get() || self.out.get().is_empty() || self.done.get() {
             return;
         }
-        let pipe = self.backend.pipe.get();
-        if pipe.is_null() {
-            return;
-        }
-        // Swap: out → inflight (stable for uv_write), out becomes empty.
-        let out = self.out.replace(Vec::new());
-        let prev_inflight = self.backend.inflight.replace(out);
-        self.out.set(prev_inflight);
-        self.backend
-            .write_buf
-            .set(uv::uv_buf_t::init(self.backend.inflight.get().as_slice()));
-        let this: *mut Self = self.root.get();
-        // SAFETY: `p` is the `this` handed to `write` below — the live Channel
-        // stashed for the callback; every Channel method is `&self`.
-        let on_write: fn(*mut Self, uv::ReturnCode) =
-            |p, s| unsafe { WindowsHandlers::<Owner>::on_write(&*p, s) };
-        // SAFETY: `pipe` is the live Box-allocated uv_pipe_t owned by this
-        // channel; `write_req`/`write_buf`/`inflight` live in `self`, which is
-        // address-stable and outlives the write, so libuv may hold them until
-        // `on_write` fires.
-        let rc = unsafe {
-            (*self.backend.write_req.as_ptr()).write(
-                (*pipe).as_stream(),
-                &*self.backend.write_buf.as_ptr(),
-                this,
-                on_write,
-            )
-        };
-        if rc.is_err() {
-            self.backend.inflight.with_mut(|inflight| inflight.clear());
+        let bytes = self.out.replace(Vec::new());
+        let submitted = self.backend.pipe.with_mut(|pipe| match pipe {
+            Some(pipe) => pipe
+                .write_owned(bytes, self.root.get(), Some(Self::on_pipe_write))
+                .is_ok(),
+            None => false,
+        });
+        if submitted {
+            self.backend.writing.set(true);
+        } else {
             self.mark_done();
+        }
+    }
+
+    /// # Safety
+    /// `this` is the channel's root pointer; a pipe only reports while the
+    /// channel has it open.
+    #[cfg(windows)]
+    unsafe fn on_pipe_write(this: *mut Self, result: bun_sys::Result<usize>) {
+        // SAFETY: caller contract.
+        let self_ = unsafe { &*this };
+        self_.backend.writing.set(false);
+        if self_.done.get() {
+            return;
+        }
+        if result.is_err() {
+            self_.mark_done();
+            return;
+        }
+        self_.submit_windows_write();
+    }
+
+    /// # Safety
+    /// As [`on_pipe_write`](Self::on_pipe_write).
+    #[cfg(windows)]
+    unsafe fn on_pipe_read(this: *mut Self, event: ReadEvent<'_>) {
+        // SAFETY: caller contract.
+        let self_ = unsafe { &*this };
+        match event {
+            ReadEvent::Data(bytes) => self_.ingest(bytes.as_slice()),
+            // The peer closed its end (or the pipe broke): detach first so it
+            // reads as a close, like the POSIX on_close path.
+            ReadEvent::Eof | ReadEvent::Err(_) => {
+                self_.backend.pipe.set(None);
+                self_.mark_done();
+            }
         }
     }
 
@@ -419,7 +345,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     pub(crate) fn is_attached(&self) -> bool {
         #[cfg(windows)]
         {
-            return !self.backend.pipe.get().is_null();
+            return self.backend.pipe.get().is_some();
         }
         #[cfg(not(windows))]
         {
@@ -434,7 +360,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
         #[cfg(windows)]
         {
-            return !self.backend.inflight.get().is_empty();
+            return self.backend.writing.get();
         }
         #[cfg(not(windows))]
         {
@@ -546,15 +472,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 impl<Owner> Drop for Channel<Owner> {
     fn drop(&mut self) {
         self.done.set(true);
-        #[cfg(windows)]
-        {
-            let p = self.backend.pipe.replace(core::ptr::null_mut());
-            if !p.is_null() {
-                // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-                unsafe { uv::Pipe::close_and_destroy(p) };
-            }
-            // `inflight` Vec drops automatically.
-        }
+        // Windows: the pipe closes as the backend drops.
         #[cfg(not(windows))]
         {
             let sock = self.backend.socket.replace(Socket::DETACHED);
@@ -646,70 +564,5 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         // SAFETY: `s` is a live us_socket_t passed by usockets.
         unsafe { (*s).close(bun_uws_sys::CloseCode::normal) };
         s
-    }
-}
-
-#[cfg(windows)]
-struct WindowsHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
-
-#[cfg(windows)]
-impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
-    fn on_alloc(self_: &mut Channel<Owner>, suggested: usize) -> &mut [u8] {
-        let _ = suggested;
-        // SAFETY: hands libuv the cell payload; the buffer is only written by
-        // libuv until `on_read` consumes it, all on this thread.
-        let buf: &mut [u8; 16 * 1024] = unsafe { &mut *self_.backend.read_chunk.as_ptr() };
-        &mut buf[..]
-    }
-    fn on_error(self_: &Channel<Owner>, err: bun_sys::E) {
-        // libuv frames this pipe itself (ipc=1), so bytes the peer writes
-        // straight to fd 3 fail its frame-header check and surface here as a
-        // read error instead of reaching `ingest`; report it the way `ingest`
-        // reports a bad frame, before detaching. EOF is the peer closing its
-        // end: mirror the POSIX on_close path and detach first so it reads as
-        // a clean close.
-        if err != bun_sys::E::EOF {
-            self_.mark_corrupt();
-        }
-        let p = self_.backend.pipe.replace(core::ptr::null_mut());
-        if !p.is_null() {
-            // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-            unsafe { uv::Pipe::close_and_destroy(p) };
-        }
-        self_.mark_done();
-    }
-    fn on_write(self_: &Channel<Owner>, status: uv::ReturnCode) {
-        self_.backend.inflight.with_mut(|inflight| inflight.clear());
-        if self_.done.get() {
-            return;
-        }
-        if status.is_err() {
-            self_.mark_done();
-            return;
-        }
-        self_.submit_windows_write();
-    }
-}
-
-/// Adapter from `UvStream::read_start_ctx` to `WindowsHandlers`; expressed as
-/// a trait impl so the `extern "C"` trampoline stays zero-alloc.
-#[cfg(windows)]
-impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
-    #[inline]
-    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
-        WindowsHandlers::<Owner>::on_alloc(this, suggested_size)
-    }
-    #[inline]
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
-        let e = bun_sys::windows::translate_uv_error_to_e(err);
-        WindowsHandlers::<Owner>::on_error(this, e);
-    }
-    #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // SAFETY: `this` is the live `Channel` stashed in `handle.data` by
-        // `read_start_ctx`; `data` points into its `read_chunk` and is only
-        // read (copied by `ingest`).
-        let this = unsafe { &*this };
-        this.ingest(data);
     }
 }

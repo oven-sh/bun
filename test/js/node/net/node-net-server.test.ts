@@ -731,7 +731,7 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
 // uv_pipe_t (uv_listen marks the handle active+ref'd), so server.unref()
 // dropped the Listener's KeepAlive but the uv handle still pinned
 // uv_loop_alive and the process never exited. TCP and unix-socket listeners go
-// through usockets, which unrefs its uv handles up front.
+// through usockets, whose polls do not keep the loop alive.
 it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
   // The child exits without close() (natural exit is the observable), so the
   // unix socket file must live in a tempDir the parent disposes.

@@ -879,7 +879,7 @@ mod draft {
                                 .unwrap_or(b"<unknown>");
                             if write!(
                                 writer,
-                                bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
+                                bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions, please see\nthis issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
                                 bstr::BStr::new(name)
                             )
                             .is_err()
@@ -1109,7 +1109,7 @@ mod draft {
                                     .unwrap_or(b"<unknown>");
                                 if write!(
                                     writer,
-                                    bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
+                                    bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions, please see\nthis issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
                                     bstr::BStr::new(name)
                                 )
                                 .is_err()
@@ -2424,10 +2424,19 @@ mod draft {
 
                 let base_address = module as usize;
 
-                let mut temp: [u16; 512] = [0; 512];
-                let name = bun_sys::windows::get_module_name_w(module, &mut temp)?;
-
-                let image_path = bun_sys::windows::exe_path_w();
+                let object = if base_address == bun_sys::windows::exe_image_range().start {
+                    None
+                } else {
+                    let mut temp: [u16; 512] = [0; 512];
+                    let name = bun_sys::windows::get_module_name_w(module, &mut temp)?;
+                    // GetModuleFileNameW output never has a trailing separator
+                    // or bare drive prefix, so `basename_windows`'s
+                    // stripping is a no-op on this domain.
+                    let basename = bun_paths::basename_windows(name);
+                    Some(Box::<[u8]>::from(
+                        &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
+                    ))
+                };
 
                 return Some(StackLine {
                     // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
@@ -2436,18 +2445,7 @@ mod draft {
                     // handler (which would escalate to a double-panic and lose the
                     // entire report).
                     address: addr.wrapping_sub(base_address) as i32,
-
-                    object: if name != image_path.as_slice() {
-                        // GetModuleFileNameW output never has a trailing separator
-                        // or bare drive prefix, so `basename_windows`'s
-                        // stripping is a no-op on this domain.
-                        let basename = bun_paths::basename_windows(name);
-                        Some(Box::<[u8]>::from(
-                            &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
-                        ))
-                    } else {
-                        None
-                    },
+                    object,
                 });
             }
             #[cfg(target_os = "macos")]

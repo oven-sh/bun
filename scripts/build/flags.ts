@@ -440,7 +440,6 @@ export const globalFlags: Flag[] = [
   {
     // libuv stubs use C23 anonymous parameters
     flag: "-Wno-c23-extensions",
-    when: c => c.unix,
     desc: "Allow C23 extensions (libuv stubs use anonymous parameters)",
   },
 
@@ -1684,10 +1683,9 @@ export function bunIncludes(cfg: Config): string[] {
 
   if (cfg.windows) {
     includes.push(join(cwd, "src/jsc/bindings/windows"));
-  } else {
-    // libuv stubs for unix (real libuv used on windows)
-    includes.push(join(cwd, "src/jsc/bindings/libuv"));
   }
+  // libuv's headers: the UV_E* numbers, and the types of the uv_* stubs and polyfills.
+  includes.push(join(cwd, "src/jsc/bindings/libuv"));
 
   // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
   // a compat copy for this case.

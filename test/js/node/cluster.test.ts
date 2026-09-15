@@ -1371,3 +1371,64 @@ if (cluster.isPrimary) {
   });
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// Every worker is told about a connection and one of them gets it. The others have to find nothing
+// to accept, not wait for the next connection with their event loop stopped: a worker stuck like
+// that serves nothing more and never sees the disconnect.
+test("SCHED_NONE: workers sharing a listening socket keep running when another worker takes the connection", async () => {
+  using dir = tempDir("cluster-shared-listener", {
+    "main.js": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+const connections = 300;
+if (cluster.isPrimary) {
+  const workers = Array.from({ length: 4 }, () => cluster.fork());
+  let listening = 0;
+  let started = 0;
+  let served = 0;
+  let exited = 0;
+  let port;
+  for (const worker of workers) {
+    worker.on("listening", address => {
+      port = address.port;
+      if (++listening === workers.length) for (let i = 0; i < 8; i++) connect();
+    });
+  }
+  function connect() {
+    if (started === connections) {
+      if (served === connections) for (const worker of workers) worker.disconnect();
+      return;
+    }
+    started++;
+    const client = net.connect(port, "127.0.0.1");
+    client.on("data", () => {});
+    client.on("error", err => {
+      console.log("client error " + err.code);
+      process.exit(1);
+    });
+    client.on("close", () => {
+      served++;
+      connect();
+    });
+  }
+  cluster.on("exit", (worker, code) => {
+    if (code !== 0) process.exit(1);
+    if (++exited === workers.length) console.log(JSON.stringify({ served }));
+  });
+} else {
+  net.createServer(socket => socket.end("hello")).listen(0, "127.0.0.1");
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe(JSON.stringify({ served: 300 }));
+  expect(exitCode).toBe(0);
+}, 30_000);

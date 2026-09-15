@@ -1,5 +1,5 @@
-// On Windows, libuv fs calls (uv_fs_read etc.) can surface negative error codes
-// that are not explicitly listed in translateUVErrorToE's switch. The fallback
+// On Windows, translateUVErrorToE maps a negative code that libuv does not
+// define (no `UV_E*` constant has that value) to E::UNKNOWN. The fallback
 // arm used @enumFromInt(-code) on the exhaustive `bun.sys.E` enum, which panics
 // with "invalid enum value" in safe builds for any code that isn't a named tag.
 // Windows release builds are ReleaseSafe, so this panicked in the wild via

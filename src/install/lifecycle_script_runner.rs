@@ -14,18 +14,13 @@ use bun_io::heap as io_heap;
 use bun_io::{FilePollFlag, PosixFlags};
 
 use bun_core::ZStr;
-#[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
     Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, Status,
 };
 #[cfg(unix)]
 use bun_sys::Fd;
-// `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
-// (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
-// `BufferedReaderParent::loop_` expects.
+use bun_sys::FdExt as _;
 
 bun_output::declare_scope!(Script, visible);
 
@@ -346,9 +341,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 }
 
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-
 pub type OutputReader = BufferedReader;
 
 impl<'a> LifecycleScriptSubprocess<'a> {
@@ -404,9 +396,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.handle_exit(status);
     }
 
-    /// Posix-only: re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
-    /// Only called from the `#[cfg(unix)]` branch of [`spawn_next_script_inner`]; on Windows
-    /// the `OutputReader` is a `WindowsBufferedReader` (libuv-pipe-backed) and this fn is dead.
+    /// Re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
     #[cfg(unix)]
     fn reset_output_flags(output: &mut OutputReader, fd: Fd) {
         output
@@ -585,17 +575,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>()
             );
 
-            // OWNERSHIP:
-            // `bun_io::Source::Pipe` owns a `Box<uv::Pipe>` AND
-            // `spawn_process_windows` does `heap::take(ptr)` on the
-            // `Stdio::Buffer` pointer to produce a SECOND `Box<uv::Pipe>` in
-            // `WindowsStdioResult::Buffer` — pre-stashing here would create two
-            // `Box`es over one allocation (UAF + double-free when `spawned`
-            // drops). Instead allocate the raw heap pipe inline in the
-            // `Stdio::Buffer` arm below (so it is only allocated when actually
-            // passed to libuv) and take SOLE ownership from
-            // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
-            // block below and `filter_run.rs` for the canonical pattern.
             let spawn_options = SpawnOptions {
                 stdin: if (*this).foreground {
                     bun_spawn::Stdio::Inherit
@@ -608,47 +587,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
                     bun_spawn::Stdio::Inherit
                 } else {
-                    #[cfg(unix)]
-                    {
-                        bun_spawn::Stdio::Buffer
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        // Ownership of this raw heap allocation transfers to
-                        // `spawn_process_windows`, which `heap::take`s it into
-                        // `spawned.stdout`.
-                        bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                            bun_core::ffi::zeroed::<uv::Pipe>(),
-                        ))
-                            as bun_spawn::windows::UvPipePtr)
-                    }
+                    bun_spawn::Stdio::Buffer
                 },
                 stderr: if (*manager).options.log_level == crate::LogLevel::Silent {
                     bun_spawn::Stdio::Ignore
                 } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
                     bun_spawn::Stdio::Inherit
                 } else {
-                    #[cfg(unix)]
-                    {
-                        bun_spawn::Stdio::Buffer
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        // Ownership transfers to `spawned.stderr`.
-                        bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                            bun_core::ffi::zeroed::<uv::Pipe>(),
-                        ))
-                            as bun_spawn::windows::UvPipePtr)
-                    }
+                    bun_spawn::Stdio::Buffer
                 },
                 cwd: Box::<[u8]>::from(cwd),
-
-                #[cfg(windows)]
-                windows: bun_spawn::WindowsOptions {
-                    loop_: bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop),
-                    ..Default::default()
-                },
-
                 stream: false,
                 ..Default::default()
             };
@@ -661,93 +609,47 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            let spawned = match bun_spawn::spawn_process(
+            let spawned = bun_spawn::spawn_process(
                 &spawn_options,
                 // argv is `[*const c_char; 4]` with trailing null — exactly the
                 // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
                 argv.as_mut_ptr().cast(),
                 (*this).envp.as_ptr().cast::<*const c_char>(),
-            ) {
-                Ok(Ok(s)) => s,
-                res => {
-                    #[cfg(windows)]
-                    {
-                        // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-                        // raw `*mut uv::Pipe` allocations on the SUCCESS path; on every
-                        // error return (uv_pipe_init failure, uv_spawn failure) ownership
-                        // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
-                        // and `uv_close`+free them explicitly here — otherwise the heap
-                        // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
-                        // linked in the libuv loop's handle queue forever). Allocation
-                        // happens inline (see OWNERSHIP note above), so the error
-                        // path must be handled explicitly.
-                        let mut spawn_options = spawn_options;
-                        spawn_options.stdout.deinit();
-                        spawn_options.stderr.deinit();
-                    }
-                    res??;
-                    unreachable!();
-                }
-            };
-            #[cfg(windows)]
-            let mut spawned = spawned;
+            )??;
 
-            #[cfg(unix)]
-            {
-                if let Some(stdout) = spawned.stdout {
-                    if !spawned.memfds[1] {
-                        (*this).stdout.set_parent(this.cast::<c_void>());
-                        let _ = bun_sys::set_nonblocking(stdout);
-                        (*this).remaining_fds += 1;
-
-                        Self::reset_output_flags(&mut (*this).stdout, stdout);
-                        (*this).stdout.start(stdout, true)?;
-                        if let Some(poll) = (*this).stdout.handle.get_poll() {
-                            poll.set_flag(FilePollFlag::Socket);
-                        }
-                    } else {
-                        (*this).stdout.set_parent(this.cast::<c_void>());
-                        (*this).stdout.start_memfd(stdout);
-                    }
+            for (is_stderr, fd, is_memfd) in [
+                (false, spawned.stdout, spawned.memfds[1]),
+                (true, spawned.stderr, spawned.memfds[2]),
+            ] {
+                let Some(fd) = fd else { continue };
+                let output: *mut OutputReader = if is_stderr {
+                    &raw mut (*this).stderr
+                } else {
+                    &raw mut (*this).stdout
+                };
+                (*output).set_parent(this.cast::<c_void>());
+                if is_memfd {
+                    #[cfg(unix)]
+                    (*output).start_memfd(fd);
+                    continue;
                 }
-                if let Some(stderr) = spawned.stderr {
-                    if !spawned.memfds[2] {
-                        (*this).stderr.set_parent(this.cast::<c_void>());
-                        let _ = bun_sys::set_nonblocking(stderr);
-                        (*this).remaining_fds += 1;
-
-                        Self::reset_output_flags(&mut (*this).stderr, stderr);
-                        (*this).stderr.start(stderr, true)?;
-                        if let Some(poll) = (*this).stderr.handle.get_poll() {
-                            poll.set_flag(FilePollFlag::Socket);
-                        }
-                    } else {
-                        (*this).stderr.set_parent(this.cast::<c_void>());
-                        (*this).stderr.start_memfd(stderr);
-                    }
+                (*this).remaining_fds += 1;
+                // POSIX: the parent end is a socketpair half.
+                #[cfg(unix)]
+                {
+                    let _ = bun_sys::set_nonblocking(fd);
+                    Self::reset_output_flags(&mut *output, fd);
                 }
-            }
-            #[cfg(windows)]
-            {
-                // `spawn_process_windows` has already `heap::take`n the raw pipe
-                // pointers out of `Stdio::Buffer` into `spawned.{stdout,stderr}`
-                // as `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box
-                // out *here* (sole owner) and stash it in `source` BEFORE
-                // `start_with_current_pipe` (which reads `source.?.pipe`) and
-                // BEFORE `spawned` drops — otherwise the `Box<uv::Pipe>` is freed
-                // while libuv still has the handle queued (UAF) and the later
-                // `close_impl`→`on_pipe_close`→`heap::take` double-frees.
-                if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
-                    (*this).stdout.set_source(bun_io::Source::Pipe(pipe));
-                    (*this).stdout.set_parent(this.cast::<c_void>());
-                    (*this).remaining_fds += 1;
-                    (*this).stdout.start_with_current_pipe()?;
+                if let Err(err) = (*output).start(fd, true) {
+                    // Windows only: POSIX reports a failed start through
+                    // `on_reader_error` itself. The reader did not take `fd`.
+                    fd.close();
+                    (*this).on_reader_error(&err);
+                    continue;
                 }
-                if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
-                    (*this).stderr.set_source(bun_io::Source::Pipe(pipe));
-                    (*this).stderr.set_parent(this.cast::<c_void>());
-                    (*this).remaining_fds += 1;
-                    (*this).stderr.start_with_current_pipe()?;
+                #[cfg(unix)]
+                if let Some(poll) = (*output).handle.get_poll() {
+                    poll.set_flag(FilePollFlag::Socket);
                 }
             }
 
@@ -1183,7 +1085,7 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
-    loop_           = |this| (*(*this).manager.as_ptr()).event_loop.native_loop();
+    loop_           = |this| (*(*this).manager.as_ptr()).event_loop.loop_();
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
         &mut (*(*this).manager.as_ptr()).event_loop,
     ).as_event_loop_ctx();

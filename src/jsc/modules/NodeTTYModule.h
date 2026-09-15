@@ -3,10 +3,6 @@
 #include "JSBuffer.h"
 #include "_NativeModule.h"
 
-#if OS(WINDOWS)
-#include <uv.h>
-#endif
-
 namespace Zig {
 using namespace WebCore;
 

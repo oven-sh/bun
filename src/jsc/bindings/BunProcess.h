@@ -6,6 +6,11 @@
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
 
+// process.versions.uv: the libuv that Node.js REPORTED_NODEJS_VERSION bundles
+// (include/node/uv/version.h in that release's headers tarball). Changes with
+// NODEJS_VERSION in scripts/build/deps/nodejs-headers.ts.
+#define BUN_REPORTED_LIBUV_VERSION "1.52.1"
+
 namespace Zig {
 class GlobalObject;
 }

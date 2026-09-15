@@ -31,9 +31,7 @@ use bun_core::{ZStr, strings};
 use bun_paths::resolve_path;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
-use bun_sys::{
-    self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
-};
+use bun_sys::{self, CloseOnDrop, Dir, Fd, FdDirExt as _, File, dir_iterator as DirIterator};
 
 // ───────────────────────────────────────────────────────────────────────────
 // local shims for upstream-stub gaps
@@ -2620,7 +2618,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         }
 
         while let Some(item) = pack_queue.remove_or_null() {
-            let file = match bun_sys::openat(
+            let fd = match bun_sys::openat(
                 Fd::from_std_dir(&root_dir),
                 &item.path,
                 bun_sys::O::RDONLY,
@@ -2646,23 +2644,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
-            let fd: Fd = match file
-                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
-            {
-                Ok(fd) => fd,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to open file: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-
             let _close_fd = CloseOnDrop::new(fd);
 
-            let stat = match bun_sys::sys_uv::fstat(fd) {
+            let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
                 Err(err) => {
                     Output::err(

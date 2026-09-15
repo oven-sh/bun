@@ -1,22 +1,22 @@
 // Windows console-control → signal mapping.
 //
-// libuv's uv__signal_control_handler (src/win/signal.c) maps:
+// Node.js (libuv's uv__signal_control_handler, src/win/signal.c) maps:
 //   CTRL_C_EVENT     → SIGINT
 //   CTRL_BREAK_EVENT → SIGBREAK
 //   CTRL_CLOSE_EVENT → SIGHUP
 //
-// process.on('SIGHUP'/'SIGBREAK') must therefore create a uv_signal_t on
-// Windows so those console events reach JS, matching Node.js. Both names
-// were missing from the Windows branch of signalNameToNumberMap, so they
-// were treated as plain emitter events and never reached libuv.
+// process.on('SIGHUP'/'SIGBREAK') must therefore watch the console control
+// event on Windows so it reaches JS. A name missing from the Windows branch
+// of signalNameToNumberMap is treated as a plain emitter event and never
+// reaches the console control handler.
 //
 // We can't reliably synthesise CTRL_CLOSE_EVENT in CI (it requires the user
 // or UI automation to actually close a console window), so this test
 // verifies the fix at the layer that changed: process.kill(pid, name)
 // resolves `name` through the same signalNameToNumberMap that
-// process.on(name, fn) uses to decide whether to create a uv_signal_t.
+// process.on(name, fn) uses to decide whether to watch the console.
 // Before the fix it threw ERR_UNKNOWN_SIGNAL for SIGHUP/SIGBREAK on Windows;
-// after the fix the names resolve and uv_kill returns ENOSYS, which matches
+// after the fix the names resolve and kill() returns ENOSYS, which matches
 // Node.js.
 
 import { expect, test } from "bun:test";
@@ -39,7 +39,7 @@ test.skipIf(!isWindows)("SIGHUP and SIGBREAK are recognised as signal names on W
         process.off(sig, fn);
 
         // Resolving the name in process.kill must not throw ERR_UNKNOWN_SIGNAL.
-        // (uv_kill returns ENOSYS for these on Windows, which matches Node.js.)
+        // (kill() returns ENOSYS for these on Windows, which matches Node.js.)
         try {
           process.kill(process.pid, sig);
           console.log(sig, "no error");

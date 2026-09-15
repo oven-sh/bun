@@ -257,25 +257,7 @@ impl FileRoute {
 
         let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 
-        let fd_result: bun_sys::Result<Fd> = {
-            #[cfg(windows)]
-            {
-                let mut path_buffer = bun_paths::path_buffer_pool::get();
-                path_buffer[..path.len()].copy_from_slice(path);
-                path_buffer[path.len()] = 0;
-                bun_sys::open(
-                    bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
-                    open_flags,
-                    0,
-                )
-            }
-            #[cfg(not(windows))]
-            {
-                bun_sys::open_a(path, open_flags, 0)
-            }
-        };
-
-        let Ok(fd) = fd_result else {
+        let Ok(fd) = bun_sys::open_a(path, open_flags, 0) else {
             req.set_yield(true);
             route.on_response_complete(resp);
             return;
@@ -288,9 +270,6 @@ impl FileRoute {
         // which branch ran.
         match route.serve(fd, path, &mut req, resp, method) {
             Serve::Done => {
-                #[cfg(windows)]
-                Closer::close(fd, bun_sys::windows::libuv::Loop::get());
-                #[cfg(not(windows))]
                 Closer::close(fd, ());
                 route.on_response_complete(resp);
             }

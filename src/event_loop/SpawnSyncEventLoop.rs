@@ -7,33 +7,22 @@
 //! - We don't recursively run the main event loop
 //!
 //! Implementation approach:
-//! - Creates a separate uws.Loop instance with its own kqueue/epoll fd (POSIX) or libuv loop (Windows)
+//! - Creates a separate uws.Loop instance with its own kqueue/epoll fd (POSIX) or completion port (Windows)
 //! - Wraps it in a full jsc.EventLoop instance whose `uws_loop` is the isolated loop
 //! - Temporarily overrides vm.event_loop_handle to point to the isolated loop
 //! - Minimal handler callbacks (wakeup/pre/post are no-ops)
 //!
 //! Similar to Node.js's approach in vendor/node/src/spawn_sync.cc but adapted for Bun's architecture.
 
-use core::cell::Cell;
 use core::ptr::NonNull;
 
 use bun_core::{Timespec, TimespecMockMode};
-#[cfg(windows)]
-use bun_sys::windows::libuv;
-#[cfg(windows)]
-// `ref_`/`unref`/`close` are `UvHandle` default trait methods; bring it into
-// scope so method resolution finds them on `Timer`.
-use bun_sys::windows::libuv::UvHandle as _;
 use bun_uws as uws;
 
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
 
-// On POSIX this is `?*uws.Loop`, on Windows `?*libuv.Loop`.
-#[cfg(unix)]
 pub type VmEventLoopHandle = Option<NonNull<uws::Loop>>;
-#[cfg(windows)]
-pub type VmEventLoopHandle = Option<NonNull<libuv::Loop>>;
 
 // LAYERING: `bun_event_loop` sits below `bun_jsc`, so it cannot name
 // `jsc::EventLoop` / `jsc::VirtualMachine`. The bodies live in `bun_jsc` as
@@ -100,14 +89,6 @@ pub struct SpawnSyncEventLoop {
     /// `prepare` overrides the VM's event_loop_handle; the original, restored
     /// by `cleanup`.
     original_event_loop_handle: VmEventLoopHandle,
-
-    #[cfg(windows)]
-    uv_timer: Option<NonNull<libuv::Timer>>,
-    // ALIASING: `Cell` because on Windows the libuv timer callback (`on_uv_timer`) writes this
-    // field re-entrantly from inside `tick_with_timeout`'s uws tick while that frame still holds
-    // `&mut self` (LLVM `noalias`). The field must be
-    // interior-mutable so the re-entrant write is sound under Stacked Borrows.
-    did_timeout: Cell<bool>,
 }
 
 /// Minimal handler for the isolated loop
@@ -158,9 +139,6 @@ impl SpawnSyncEventLoop {
         this.write(Self {
             uws_loop: loop_,
             original_event_loop_handle: None, // overwritten in `prepare`
-            #[cfg(windows)]
-            uv_timer: None,
-            did_timeout: Cell::new(false),
             event_loop,
             vm,
         });
@@ -208,15 +186,6 @@ impl SpawnSyncEventLoop {
     }
 
     /// Unique borrow of the isolated `uws::Loop`.
-    ///
-    /// Re-entrancy hazard: do **NOT** call this between the Windows
-    /// `timer.data = self as *mut Self` store and the uws tick in
-    /// `tick_with_timeout`. The `&mut self` receiver reborrow here is a Unique
-    /// retag over all of `*self` under Stacked Borrows, which pops the raw
-    /// pointer's tag at `did_timeout`'s bytes and makes the re-entrant
-    /// `on_uv_timer` write UB. `tick_with_timeout` therefore copies
-    /// `self.uws_loop` out *before* that store and ticks via the raw pointer
-    /// directly. This accessor is for non-re-entrant call sites (e.g. `init`).
     #[inline]
     pub(crate) fn uws_loop_mut(&mut self) -> &mut uws::Loop {
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` for its
@@ -224,57 +193,14 @@ impl SpawnSyncEventLoop {
         // guarantees no other safe borrow of the loop is live.
         unsafe { self.uws_loop.as_mut() }
     }
-
-    /// Unique borrow of the heap-owned libuv timeout timer (Windows only).
-    ///
-    /// Single deref site for the `uv_timer: Option<NonNull<_>>` field —
-    /// collapses the per-site `(*t.as_ptr()).method()` raw derefs in
-    /// `prepare_timer_on_windows` / `cleanup` / `tick_with_timeout`. The
-    /// pointee is `Box`-allocated in [`prepare_timer_on_windows`] (via
-    /// `heap::into_raw_nn`) and freed only by the `on_close_uv_timer` callback
-    /// scheduled in `Drop`, so it is valid for all of `self`'s lifetime
-    /// whenever the field is `Some`. `&mut self` ensures the returned
-    /// `&mut Timer` is the sole live Rust reference.
-    ///
-    /// Same re-entrancy hazard as [`uws_loop_mut`](Self::uws_loop_mut): do
-    /// **NOT** call between the `timer.data = self as *mut Self` store and the
-    /// uws tick in `tick_with_timeout` — the `&mut self` receiver reborrow is
-    /// a Unique retag over `*self` and would pop the raw `*mut Self`'s
-    /// Stacked-Borrows tag at `did_timeout`'s bytes.
-    #[cfg(windows)]
-    #[inline]
-    fn uv_timer_mut(&mut self) -> Option<&mut libuv::Timer> {
-        // SAFETY: see doc — heap-owned, valid while `Some`, `&mut self` ⇒
-        // exclusive Rust access (libuv only touches the handle from inside
-        // `uv_run`, never concurrently with a caller of this accessor).
-        self.uv_timer.as_mut().map(|p| unsafe { p.as_mut() })
-    }
-}
-
-#[cfg(windows)]
-extern "C" fn on_close_uv_timer(timer: *mut libuv::Timer) {
-    // SAFETY: `timer` was allocated via `heap::alloc` in `prepare_timer_on_windows`.
-    drop(unsafe { bun_core::heap::take(timer) });
 }
 
 impl Drop for SpawnSyncEventLoop {
     fn drop(&mut self) {
-        #[cfg(windows)]
-        {
-            if let Some(timer) = self.uv_timer.take() {
-                // SAFETY: timer is a live libuv handle owned by this struct.
-                unsafe {
-                    (*timer.as_ptr()).stop();
-                    (*timer.as_ptr()).unref();
-                    // `UvHandle::close` already does the `*mut Timer` →
-                    // `*mut uv_handle_t` cb cast internally.
-                    (*timer.as_ptr()).close(on_close_uv_timer);
-                }
-            }
-        }
-
         // Destroy the event loop before the uws loop.
         __bun_spawn_sync_destroy_event_loop(self.event_loop);
+        #[cfg(windows)]
+        bun_io::windows::close_all_for_loop(self.uws_loop.as_ptr());
         // SAFETY: uws_loop was returned by `us_create_loop` in `init` and not yet freed.
         unsafe { uws::Loop::destroy(self.uws_loop.as_ptr()) };
     }
@@ -284,52 +210,15 @@ impl SpawnSyncEventLoop {
     /// Configure the event loop for a specific VM context
     pub fn prepare(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
         __bun_spawn_sync_event_loop_set_vm(self.event_loop, vm);
-        self.did_timeout.set(false);
         self.vm = vm;
 
         self.original_event_loop_handle = __bun_spawn_sync_vm_get_event_loop_handle(vm);
-        #[cfg(unix)]
-        let new_handle: VmEventLoopHandle = Some(self.uws_loop);
-        #[cfg(windows)]
-        let new_handle: VmEventLoopHandle = Some(
-            NonNull::new(self.uws_loop().uv_loop)
-                .expect("uv_loop is set by us_create_loop for the loop's lifetime"),
-        );
-        __bun_spawn_sync_vm_set_event_loop_handle(vm, new_handle);
+        __bun_spawn_sync_vm_set_event_loop_handle(vm, Some(self.uws_loop));
     }
 
     /// Restore the original event loop handle after spawnSync completes
     pub fn cleanup(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
         __bun_spawn_sync_vm_set_event_loop_handle(vm, self.original_event_loop_handle);
-
-        #[cfg(windows)]
-        {
-            if let Some(timer) = self.uv_timer_mut() {
-                timer.stop();
-                timer.unref();
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-extern "C" fn on_uv_timer(timer_: *mut libuv::Timer) {
-    // SAFETY: `data` was set to `self` in `tick_with_timeout` immediately before the uws tick;
-    // the SpawnSyncEventLoop outlives the timer (timer is stopped/closed in `cleanup`/`Drop`).
-    //
-    // ALIASING: this callback fires re-entrantly from inside `tick_with_timeout`'s uws tick
-    // (uv_run) while that frame still holds `&mut self` (LLVM `noalias`) AND a live
-    // `&mut uws::Loop` (Loop::tick_with_timeout takes `&mut self`). We must not:
-    //   (a) materialize a second `&mut SpawnSyncEventLoop` here, nor
-    //   (b) read `(*this).uws_loop` — the outer frame's `&mut self` access to `uws_loop` at the
-    //       tick call popped the raw `*mut Self`'s Stacked-Borrows tag at those bytes, and the
-    //       `&mut uws::Loop` it produced is still live around us.
-    // So: touch only `(*this).did_timeout` (a `Cell`, interior-mutable), and obtain the uv loop
-    // from the timer handle itself rather than routing through `*this`.
-    unsafe {
-        let this: *mut SpawnSyncEventLoop = (*timer_).data.cast::<SpawnSyncEventLoop>();
-        (*this).did_timeout.set(true);
-        (*libuv::uv_handle_get_loop(timer_.cast())).stop();
     }
 }
 
@@ -340,34 +229,6 @@ pub enum TickState {
 }
 
 impl SpawnSyncEventLoop {
-    #[cfg(windows)]
-    fn prepare_timer_on_windows(&mut self, ts: &Timespec) {
-        if self.uv_timer.is_none() {
-            let uv_timer: Box<libuv::Timer> = Box::new(bun_core::ffi::zeroed());
-            // Leak to raw *before* `uv_timer_init` so libuv's stored handle
-            // pointer derives from the post-`into_raw` provenance (not a
-            // `Box`-`noalias` reborrow that `into_raw` would later pop).
-            self.uv_timer = Some(bun_core::heap::into_raw_nn(uv_timer));
-            // `uv_loop` is set by C `us_create_loop`. Read it (a `*mut`, Copy)
-            // before borrowing `self` mutably via the timer accessor.
-            let uv_loop = self.uws_loop().uv_loop;
-            self.uv_timer_mut().expect("just set").init(uv_loop);
-        }
-
-        // Refresh the loop's cached clock: this loop only runs while a spawnSync call is in
-        // flight, so `loop->time` (which `uv_timer_start` computes the due time from) can be
-        // staler than the timeout, which would make the timer fire immediately.
-        // SAFETY: `uv_loop` is the live initialized loop owned by `self.uws_loop`.
-        unsafe { libuv::uv_update_time(self.uws_loop().uv_loop) };
-
-        // NOTE: `timer.data` is assigned later in `tick_with_timeout`, immediately before the
-        // uws tick, so the stored `*mut Self` derives directly from that frame's live `&mut self`
-        // (not from this function's reborrow, which would be invalidated on return).
-        let timer = self.uv_timer_mut().expect("set above");
-        timer.start(ts.ms_unsigned(), 0, Some(on_uv_timer));
-        timer.ref_();
-    }
-
     /// Tick the isolated event loop with an optional timeout
     /// This is similar to the main event loop's tick but completely isolated
     ///
@@ -376,85 +237,35 @@ impl SpawnSyncEventLoop {
         let duration_storage: Option<Timespec>;
         let duration: Option<&Timespec> = match timeout {
             Some(ts) => {
-                duration_storage =
-                    Some(ts.duration(&Timespec::now(TimespecMockMode::ForceRealTime)));
+                let now = Timespec::now(TimespecMockMode::ForceRealTime);
+                // A deadline that has passed is a non-blocking tick.
+                duration_storage = Some(if now.order(ts) == core::cmp::Ordering::Less {
+                    ts.duration(&now)
+                } else {
+                    Timespec::EPOCH
+                });
                 duration_storage.as_ref()
             }
             None => None,
         };
 
-        #[cfg(windows)]
-        {
-            if let Some(ts) = duration {
-                self.prepare_timer_on_windows(ts);
-            }
-        }
-
         // Suppress microtask drain for the entire tick, including the uws loop tick.
-        // On Windows, uv_run() fires callbacks inline (e.g. uv_process exit, pipe I/O)
-        // which call onProcessExit → onExit. If any code path in those callbacks
-        // reaches drainMicrotasksWithGlobal, we must already have the flag set.
-        // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
-        // via the task queue, but we set the flag here uniformly for safety.
+        // Callbacks dispatched from it (process exit, pipe I/O) call onProcessExit →
+        // onExit; if any code path in those callbacks reaches
+        // drainMicrotasksWithGlobal, we must already have the flag set.
         let _suppress = SuppressMicrotaskDrain::new(self.vm);
 
         // Tick the isolated uws loop with the specified timeout
         // This will only process I/O related to this subprocess
         // and will NOT interfere with the main event loop
-        //
-        // ALIASING: hoist the `uws_loop` pointer *before* storing `*mut Self` into `timer.data`
-        // below, so that between that store and the re-entrant `on_uv_timer` callback we touch
-        // *no* bytes of `*self` at all. Do NOT route the tick through `self.uws_loop_mut()` here:
-        // its `&mut self` receiver reborrow is a Unique retag over the full extent of `*self`
-        // under Stacked Borrows, which would pop the SharedReadWrite tag of the raw pointer just
-        // stored into `timer.data` at `did_timeout`'s bytes — making the callback's
-        // `(*this).did_timeout.set(true)` UB. The `uws::Loop` lives in a separate allocation, so
-        // forming `&mut uws::Loop` from the copied `NonNull` does not touch `*self`'s borrow
-        // stacks.
-        let loop_ = self.uws_loop;
-        #[cfg(windows)]
-        if let Some(t) = self.uv_timer {
-            // ALIASING: store `*mut Self` here (not in `prepare_timer_on_windows`) so its
-            // provenance is a direct child of *this* frame's `&mut self`. Between this store and
-            // the re-entrant `on_uv_timer` callback, no field of `*self` is accessed (`loop_` was
-            // copied out above), so the raw tag at `did_timeout`'s bytes survives under Stacked
-            // Borrows.
-            // SAFETY: `t` is a valid initialized libuv timer handle owned by `self`.
-            unsafe { (*t.as_ptr()).data = (core::ptr::from_mut(self)).cast() };
-        }
-        // SAFETY: `uws_loop` is non-null and exclusively owned by `self` (created in `init`,
-        // freed in `Drop`); `&mut self` guarantees no other safe borrow of the loop is live.
-        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration, uws::NOW_NS_UNKNOWN) };
+        self.uws_loop_mut()
+            .tick_with_timeout(duration, uws::NOW_NS_UNKNOWN);
 
-        if let Some(ts) = timeout {
-            #[cfg(windows)]
-            let _ = ts;
-            #[cfg(windows)]
-            {
-                // `uv_timer` is `Some` when `timeout` is `Some` (set in
-                // `prepare_timer_on_windows`). The re-entrant `on_uv_timer`
-                // callback can only fire from inside the uws tick above; once
-                // that returns no callback runs until the next `uv_run`, so the
-                // `&mut self` receiver reborrow in `uv_timer_mut` is sound here
-                // (the raw `*mut Self` in `timer.data` is dead until restarted).
-                let t = self
-                    .uv_timer_mut()
-                    .expect("set in prepare_timer_on_windows");
-                t.unref();
-                t.stop();
-            }
-            #[cfg(not(windows))]
-            {
-                self.did_timeout.set(
-                    Timespec::now(TimespecMockMode::ForceRealTime).order(ts)
-                        != core::cmp::Ordering::Less,
-                );
-            }
-        }
+        let did_timeout = timeout.is_some_and(|ts| {
+            Timespec::now(TimespecMockMode::ForceRealTime).order(ts) != core::cmp::Ordering::Less
+        });
 
         __bun_spawn_sync_event_loop_tick_tasks_only(self.event_loop);
-
-        let did_timeout = self.did_timeout.replace(false);
 
         if did_timeout {
             return TickState::Timeout;

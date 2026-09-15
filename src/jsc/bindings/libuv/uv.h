@@ -66,8 +66,11 @@ struct uv__queue {
     struct uv__queue* prev;
 };
 
-/* This directory is only on the include path for non-Windows builds; Windows links the real libuv. */
+#if defined(_WIN32)
+#include "uv/win.h"
+#else
 #include "uv/unix.h"
+#endif
 
 /* Expand this list if necessary. */
 #define UV_ERRNO_MAP(XX)                                           \

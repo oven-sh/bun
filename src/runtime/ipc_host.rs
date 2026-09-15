@@ -21,6 +21,9 @@ bun_core::define_scoped_log!(log, IPC, visible);
 // `node_cluster_binding.rs`.
 unsafe extern "C" {
     safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
+    /// `BunWindowsProcess.cpp`; negative when the parent cannot be determined.
+    #[cfg(windows)]
+    safe fn Bun__getParentProcessId() -> i32;
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -189,6 +192,7 @@ pub(crate) fn do_send(
                         zig_handle = Some(Handle::init(fd, handle));
                     }
                 }
+                #[cfg(windows)]
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
                 crate::socket::listener::ListenerType::None => {}
             }
@@ -373,8 +377,7 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         if from_pipe != 0 {
             from_pipe
         } else {
-            // SAFETY: trivial libuv accessor, no preconditions.
-            unsafe { bun_libuv_sys::uv_os_getppid() as u32 }
+            u32::try_from(Bun__getParentProcessId()).unwrap_or(0)
         }
     };
     #[cfg(not(windows))]
@@ -553,11 +556,10 @@ pub fn get_ipc_instance(
         // SAFETY: `instance` was just boxed above and is non-null.
         CHANNEL.set(Some(unsafe { core::ptr::NonNull::new_unchecked(instance) }));
 
-        // `windows_configure_client` STORES the `*mut SendQueue` in
-        // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
-        // allocation's root raw pointer.
-        // SAFETY: `send_queue` is the live SendQueue owned by `instance`.
-        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
+        // The inherited end is whatever the parent made it.
+        // SAFETY: `send_queue` is the root pointer of the live SendQueue
+        // owned by `instance`.
+        if unsafe { SendQueue::open_pipe(send_queue, vm.uws_loop(), fd, false) }.is_err() {
             // SAFETY: `instance` was produced by `IPCInstance::new`
             // (heap::alloc) above and is not yet aliased.
             unsafe { IPCInstance::deinit(instance) };

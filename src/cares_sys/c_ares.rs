@@ -757,12 +757,15 @@ impl Channel {
         let optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
-        // SAFETY: idempotent Winsock init (uv_once); c-ares creates its sockets with
-        // ws2_32 directly and libuv otherwise initializes Winsock lazily.
+        // c-ares creates its sockets with ws2_32 directly, and Winsock is
+        // otherwise initialized on first use by uSockets.
         #[cfg(windows)]
-        unsafe {
-            bun_libuv_sys::uv__winsock_ensure()
-        };
+        {
+            unsafe extern "C" {
+                safe fn us_internal_winsock_ensure();
+            }
+            us_internal_winsock_ensure();
+        }
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
         if let Some(err) = Error::get(rc) {
@@ -1664,28 +1667,28 @@ impl Error {
     pub fn init_eai(rc: i32) -> Option<Error> {
         #[cfg(windows)]
         {
-            use bun_libuv_sys as libuv;
+            use bun_errno::uv_codes as uv;
             // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-            if rc == libuv::UV_EAI_NODATA || rc == libuv::UV_EAI_NONAME {
+            if rc == uv::UV_EAI_NODATA || rc == uv::UV_EAI_NONAME {
                 return Some(Error::ENOTFOUND);
             }
             // TODO: revisit this
             return match rc {
                 0 => None,
-                libuv::UV_EAI_AGAIN => Some(Error::EAI_AGAIN),
-                libuv::UV_EAI_ADDRFAMILY => Some(Error::EBADFAMILY),
-                libuv::UV_EAI_BADFLAGS => Some(Error::EBADFLAGS),
-                libuv::UV_EAI_BADHINTS => Some(Error::EBADHINTS),
-                libuv::UV_EAI_CANCELED => Some(Error::ECANCELLED),
-                libuv::UV_EAI_FAIL => Some(Error::ENOTFOUND),
-                libuv::UV_EAI_FAMILY => Some(Error::EBADFAMILY),
-                libuv::UV_EAI_MEMORY => Some(Error::ENOMEM),
-                libuv::UV_EAI_NODATA => Some(Error::ENODATA),
-                libuv::UV_EAI_NONAME => Some(Error::ENONAME),
-                libuv::UV_EAI_OVERFLOW => Some(Error::ENOMEM),
-                libuv::UV_EAI_PROTOCOL => Some(Error::EBADQUERY),
-                libuv::UV_EAI_SERVICE => Some(Error::ESERVICE),
-                libuv::UV_EAI_SOCKTYPE => Some(Error::ECONNREFUSED),
+                uv::UV_EAI_AGAIN => Some(Error::EAI_AGAIN),
+                uv::UV_EAI_ADDRFAMILY => Some(Error::EBADFAMILY),
+                uv::UV_EAI_BADFLAGS => Some(Error::EBADFLAGS),
+                uv::UV_EAI_BADHINTS => Some(Error::EBADHINTS),
+                uv::UV_EAI_CANCELED => Some(Error::ECANCELLED),
+                uv::UV_EAI_FAIL => Some(Error::ENOTFOUND),
+                uv::UV_EAI_FAMILY => Some(Error::EBADFAMILY),
+                uv::UV_EAI_MEMORY => Some(Error::ENOMEM),
+                uv::UV_EAI_NODATA => Some(Error::ENODATA),
+                uv::UV_EAI_NONAME => Some(Error::ENONAME),
+                uv::UV_EAI_OVERFLOW => Some(Error::ENOMEM),
+                uv::UV_EAI_PROTOCOL => Some(Error::EBADQUERY),
+                uv::UV_EAI_SERVICE => Some(Error::ESERVICE),
+                uv::UV_EAI_SOCKTYPE => Some(Error::ECONNREFUSED),
                 _ => Some(Error::ENOTFOUND), // UV_ENOENT and non documented errors
             };
         }
@@ -1738,11 +1741,11 @@ impl Error {
     pub fn eai_raw_by_name(name: &[u8]) -> Option<i32> {
         #[cfg(windows)]
         {
-            use bun_libuv_sys as libuv;
+            use bun_errno::uv_codes as uv;
             match name {
-                b"EAI_AGAIN" => Some(libuv::UV_EAI_AGAIN),
-                b"EAI_FAIL" => Some(libuv::UV_EAI_FAIL),
-                b"EAI_NONAME" => Some(libuv::UV_EAI_NONAME),
+                b"EAI_AGAIN" => Some(uv::UV_EAI_AGAIN),
+                b"EAI_FAIL" => Some(uv::UV_EAI_FAIL),
+                b"EAI_NONAME" => Some(uv::UV_EAI_NONAME),
                 _ => None,
             }
         }

@@ -1,6 +1,5 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
-#[cfg(unix)]
 use crate::VirtualMachineRef as VirtualMachine;
 use crate::event_loop::EventLoop;
 use crate::{JSGlobalObject, Task};
@@ -12,26 +11,22 @@ const BUFFER_SIZE: usize = 8192;
 /// Signal numbers queued by signal handlers on any thread for the main loop.
 #[derive(Default)]
 pub struct PosixSignalHandle {
-    #[allow(dead_code)]
     ring: SignalRing<BUFFER_SIZE>,
 }
 
 impl PosixSignalHandle {
     // `pub const new = bun.TrivialNew(@This());`
-    #[allow(dead_code)]
     pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
 
     /// Returns `false` if the ring is full. The caller wakes the loop on `true`.
-    #[allow(dead_code)]
     pub(crate) fn enqueue(&self, signal: u8) -> bool {
         self.ring.enqueue(signal)
     }
 
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.
     /// Called by the main thread, the ring's single consumer.
-    #[allow(dead_code)]
     pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
         while let Some(signal) = self.ring.dequeue() {
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
@@ -47,44 +42,43 @@ impl PosixSignalHandle {
 
 /// This is the signal handler entry point. Calls enqueue on the ring buffer.
 /// Note: Must be minimal logic here. Only do atomics & signal-safe calls.
+/// On Windows there is no signal context: the callers are the console control
+/// handler's thread and whichever thread notices a console resize.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__onPosixSignal(number: i32) {
+pub extern "C" fn Bun__onPosixSignal(number: i32) {
+    // Watch-mode SIGINT with no JS listener: node's watcher (its own
+    // process, idle loop) exits 0 immediately even when the script is
+    // busy; `_exit` is async-signal-safe, the queued path would not run.
     #[cfg(unix)]
+    if number == i32::from(SIGINT_NUMBER)
+        && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0
+        && WATCH_SIGINT_LISTENERS.load(Ordering::Acquire) == 0
     {
-        // Watch-mode SIGINT with no JS listener: node's watcher (its own
-        // process, idle loop) exits 0 immediately even when the script is
-        // busy; `_exit` is async-signal-safe, the queued path would not run.
-        if number == i32::from(SIGINT_NUMBER)
-            && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0
-            && WATCH_SIGINT_LISTENERS.load(Ordering::Acquire) == 0
-        {
-            // SAFETY: `_exit(2)` is async-signal-safe and takes no pointers.
-            unsafe { libc::_exit(0) };
-        }
-        let Some(vm) = VirtualMachine::get_main_thread_vm() else {
+        // SAFETY: `_exit(2)` is async-signal-safe and takes no pointers.
+        unsafe { libc::_exit(0) };
+    }
+    let Some(vm) = VirtualMachine::get_main_thread_vm() else {
+        return;
+    };
+    // SAFETY: `vm` and its event loop are process-lifetime; raw place
+    // projection reads only the `signal_handler` slot (no `&EventLoop`
+    // formed — the main thread may hold `&mut EventLoop` concurrently).
+    let handler = unsafe { (*(*vm).event_loop()).signal_handler };
+    if let Some(handler) = handler {
+        // `BackRef::deref` is the centralised set-once-NonNull proof; the
+        // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
+        // async-signal context is sound.
+        // No panic path in a signal handler: drop a number outside 1..=255.
+        let Some(signal) = u8::try_from(number).ok().filter(|&s| s != 0) else {
             return;
         };
-        // SAFETY: `vm` and its event loop are process-lifetime; raw place
-        // projection reads only the `signal_handler` slot (no `&EventLoop`
-        // formed — the main thread may hold `&mut EventLoop` concurrently).
-        let handler = unsafe { (*(*vm).event_loop()).signal_handler };
-        if let Some(handler) = handler {
-            // `BackRef::deref` is the centralised set-once-NonNull proof; the
-            // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
-            // async-signal context is sound.
-            // No panic path in a signal handler: drop a number outside 1..=255.
-            let Some(signal) = u8::try_from(number).ok().filter(|&s| s != 0) else {
-                return;
-            };
-            if handler.enqueue(signal) {
-                // SAFETY: same process-lifetime event loop as above; `wakeup`
-                // is one async-signal-safe write to the loop's wakeup fd.
-                unsafe { (*(*vm).event_loop()).wakeup() };
-            }
+        if handler.enqueue(signal) {
+            // SAFETY: same process-lifetime event loop as above; `wakeup`
+            // is one async-signal-safe write to the loop's wakeup fd (one
+            // completion packet posted to its port on Windows).
+            unsafe { (*(*vm).event_loop()).wakeup() };
         }
     }
-    #[cfg(not(unix))]
-    let _ = number;
 }
 
 pub struct PosixSignalTask;
@@ -213,16 +207,12 @@ impl PosixSignalTask {
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__ensureSignalHandler() {
-    #[cfg(unix)]
-    {
-        if let Some(vm) = VirtualMachine::get_main_thread_vm() {
-            // SAFETY: `vm` and its event loop are process-lifetime.
-            let this = unsafe { &mut *(*vm).event_loop() };
-            if this.signal_handler.is_none() {
-                let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
-                this.signal_handler =
-                    Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(boxed)));
-            }
+    if let Some(vm) = VirtualMachine::get_main_thread_vm() {
+        // SAFETY: `vm` and its event loop are process-lifetime.
+        let this = unsafe { &mut *(*vm).event_loop() };
+        if this.signal_handler.is_none() {
+            let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
+            this.signal_handler = Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(boxed)));
         }
     }
 }

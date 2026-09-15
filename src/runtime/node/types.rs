@@ -877,6 +877,27 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
+/// `normal` as a wide path in `buf`, in the form a Win32 call takes it past
+/// `MAX_PATH` when it (or, for a relative path, it and the current directory)
+/// is that long.
+#[cfg(windows)]
+fn kernel32_path_past_max_path<'a>(
+    buf: &'a mut PathBuffer,
+    normal: &[u8],
+) -> Result<&'a OSPathSliceZ, NameTooLong> {
+    // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte alignment
+    // is runtime-asserted inside `bytes_as_slice_mut`.
+    let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+    let len = strings::to_kernel32_path(buf_u16, normal).len();
+    let len = match bun_sys::windows::fs::lengthen_path_in_place(buf_u16, len) {
+        Ok(len) => len,
+        Err(bun_sys::windows::Win32Error::FILENAME_EXCED_RANGE) => return Err(NameTooLong),
+        // `GetFullPathNameW` rejected the path; the call it goes to does too.
+        Err(_) => len,
+    };
+    Ok(WStr::from_buf(buf_u16, len))
+}
+
 impl PathLikeExt for PathLike<'_> {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
@@ -1059,15 +1080,11 @@ impl PathLikeExt for PathLike<'_> {
                     return Err(NameTooLong);
                 }
                 // `resolve`'s borrow of `buf` ended at the line above (NLL).
-                // SAFETY: same alignment note as above.
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return Ok(strings::to_kernel32_path(buf_u16, normal));
+                return kernel32_path_past_max_path(buf, normal);
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
-                // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return Ok(strings::to_kernel32_path(buf_u16, b"."));
+                return kernel32_path_past_max_path(buf, b".");
             }
             let normal = bun_paths::resolve_path::normalize_string_buf::<
                 true,
@@ -1077,9 +1094,7 @@ impl PathLikeExt for PathLike<'_> {
             if !strings::fits_in_wide_path_buffer(normal) {
                 return Err(NameTooLong);
             }
-            // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-            let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-            return Ok(strings::to_kernel32_path(buf_u16, normal));
+            return kernel32_path_past_max_path(buf, normal);
         }
 
         #[cfg(not(windows))]
@@ -1538,12 +1553,12 @@ impl FileSystemFlags {
             let number = validators::validate_int32(ctx, val, "flags", None, None)?;
             let flags = number.max(0);
             // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
-            // use the platform's native MSVC/libuv values which differ from the
+            // use the platform's native MSVC values which differ from the
             // internal bun.O representation. Convert them here so downstream
             // code that operates on bun.O flags works correctly.
             #[cfg(windows)]
             {
-                return Ok(Some(FileSystemFlags(bun_libuv_sys::O::to_bun_o(flags))));
+                return Ok(Some(FileSystemFlags(bun_sys::windows::O::to_bun_o(flags))));
             }
             #[cfg(not(windows))]
             {
@@ -1711,10 +1726,16 @@ impl Dirent {
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
-        use bun_libuv_sys::{
-            UV_DIRENT_BLOCK, UV_DIRENT_CHAR, UV_DIRENT_DIR, UV_DIRENT_FIFO, UV_DIRENT_FILE,
-            UV_DIRENT_LINK, UV_DIRENT_SOCKET, UV_DIRENT_UNKNOWN,
-        };
+        // `uv_dirent_type_t`, shared with `Bun__Dirent__toJS` and
+        // `process.binding('constants').fs.UV_DIRENT_*`.
+        const UV_DIRENT_UNKNOWN: i32 = 0;
+        const UV_DIRENT_FILE: i32 = 1;
+        const UV_DIRENT_DIR: i32 = 2;
+        const UV_DIRENT_LINK: i32 = 3;
+        const UV_DIRENT_FIFO: i32 = 4;
+        const UV_DIRENT_SOCKET: i32 = 5;
+        const UV_DIRENT_CHAR: i32 = 6;
+        const UV_DIRENT_BLOCK: i32 = 7;
         let kind_int: i32 = match self.kind {
             DirentKind::File => UV_DIRENT_FILE,
             DirentKind::BlockDevice => UV_DIRENT_BLOCK,

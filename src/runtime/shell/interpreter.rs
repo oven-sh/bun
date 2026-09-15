@@ -291,6 +291,11 @@ pub struct Interpreter {
     pub(crate) root_shell: JsCell<ShellExecEnv>,
     pub(crate) root_io: JsCell<IO>,
 
+    /// Every live `IOWriter` made for this interpreter; each points back at it.
+    /// A Windows write in flight keeps its writer alive on its own, so `Drop`
+    /// orphans the ones still listed.
+    io_writers: JsCell<Vec<*const IOWriter>>,
+
     pub(crate) has_pending_activity: AtomicU32,
     pub(crate) keep_alive: JsCell<bun_io::KeepAlive>,
 
@@ -313,6 +318,16 @@ pub struct Interpreter {
     /// `bun run` CLI context for `$N` expansion on the mini event loop.
     /// Null when constructed from JS (no `ContextData` is reachable).
     pub(crate) command_ctx: *mut bun_options_types::context::ContextData,
+}
+
+impl Drop for Interpreter {
+    fn drop(&mut self) {
+        for writer in self.io_writers.take() {
+            // SAFETY: a listed writer is live: it takes itself off the list
+            // when it drops.
+            unsafe { (*writer).orphan() };
+        }
+    }
 }
 
 #[repr(transparent)]
@@ -523,20 +538,9 @@ impl Interpreter {
         // ── stdin ──────────────────────────────────────────────────────────
         log!("Duping stdin");
         let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
-            #[cfg(unix)]
-            {
-                bun_sys::open(
-                    bun_core::ZStr::from_static(b"/dev/null\0"),
-                    bun_sys::O::RDONLY,
-                    0,
-                )
-            }
-            #[cfg(windows)]
-            {
-                bun_sys::open(bun_core::ZStr::from_static(b"NUL\0"), bun_sys::O::RDONLY, 0)
-            }
+            open_null_device()
         } else {
-            shell_dup(Fd::stdin())
+            bun_sys::dup(Fd::stdin())
         };
         let stdin_fd = match stdin_fd_res {
             Ok(fd) => fd,
@@ -545,8 +549,6 @@ impl Interpreter {
                 return Err(ShellErr::new_sys(&e));
             }
         };
-
-        let stdin_reader = IOReader::init(stdin_fd, event_loop);
 
         // ── assemble ───────────────────────────────────────────────────────
         let interpreter = Box::new(Interpreter {
@@ -566,7 +568,8 @@ impl Interpreter {
                 cwd_fd,
             }),
             root_io: JsCell::new(IO {
-                stdin: crate::shell::io::InKind::Fd(stdin_reader),
+                // Filled in below: the reader points back at the interpreter.
+                stdin: crate::shell::io::InKind::Ignore,
                 // By default stdout/stderr should be IOWriters on dup'd
                 // stdout/stderr, but if the user later calls `.setQuiet(true)`
                 // that work is wasted. So they start as `.pipe` and `run()`
@@ -574,6 +577,7 @@ impl Interpreter {
                 stdout: crate::shell::io::OutKind::Pipe,
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
+            io_writers: JsCell::new(Vec::new()),
             has_pending_activity: AtomicU32::new(0),
             keep_alive: JsCell::new(bun_io::KeepAlive::default()),
             async_commands_executing: Cell::new(0),
@@ -588,13 +592,10 @@ impl Interpreter {
             vm_args_utf8: JsCell::new(Vec::new()),
             command_ctx: ctx,
         });
-        // Wire the interpreter backref into root stdin so async poll
-        // callbacks can drive `Yield::run`.
-        let interp_ptr: *mut Interpreter = Interpreter::as_ctx_ptr(&interpreter);
-        if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.get().stdin {
-            // SAFETY: `interp_ptr` is the live `Interpreter` just constructed.
-            r.set_interp(interp_ptr);
-        }
+        let stdin_reader = IOReader::init(stdin_fd, &interpreter);
+        interpreter
+            .root_io
+            .with_mut(|io| io.stdin = crate::shell::io::InKind::Fd(stdin_reader));
 
         // ── optional cwd override ───────────────────────────────────────────
         if let Some(c) = cwd_ {
@@ -615,8 +616,10 @@ impl Interpreter {
     }
 
     /// Full teardown for the standalone (`MiniEventLoop`) path. Drops root IO
-    /// refcounts, frees the root shell env, and consumes the box.
-    fn deinit_from_exec(self) {
+    /// refcounts, frees the root shell env, and consumes the box. Through the
+    /// box: readers and writers point back at the interpreter where it is.
+    #[allow(clippy::boxed_local)]
+    fn deinit_from_exec(self: Box<Self>) {
         log!("deinit interpreter");
         self.this_jsvalue.set(crate::jsc::JSValue::ZERO);
         // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
@@ -834,6 +837,20 @@ impl Interpreter {
     #[inline]
     pub(crate) fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
+    }
+
+    /// `IOWriter::init`: `writer` points back at this interpreter from here on.
+    pub(crate) fn register_io_writer(&self, writer: *const IOWriter) {
+        self.io_writers.with_mut(|writers| writers.push(writer));
+    }
+
+    /// `IOWriter::drop`.
+    pub(crate) fn forget_io_writer(&self, writer: *const IOWriter) {
+        self.io_writers.with_mut(|writers| {
+            if let Some(idx) = writers.iter().position(|w| core::ptr::eq(*w, writer)) {
+                writers.swap_remove(idx);
+            }
+        });
     }
 
     /// Read-modify-write the packed `Cell<InterpreterFlags>` through `&self`.
@@ -1167,7 +1184,7 @@ impl Interpreter {
         let stdout_fd = if bun_core::output::stdio::is_stdout_null() {
             open_null_device()?
         } else {
-            shell_dup(Fd::stdout())?
+            bun_sys::dup(Fd::stdout())?
         };
 
         // ── dup stderr (errdefer closes stdout on failure) ────────────────
@@ -1175,7 +1192,7 @@ impl Interpreter {
         let stderr_fd_res = if bun_core::output::stdio::is_stderr_null() {
             open_null_device()
         } else {
-            shell_dup(Fd::stderr())
+            bun_sys::dup(Fd::stderr())
         };
         let stderr_fd = match stderr_fd_res {
             Ok(fd) => fd,
@@ -1185,27 +1202,24 @@ impl Interpreter {
             }
         };
 
-        let interp_ptr: *mut Interpreter = self.as_ctx_ptr();
         let stdout_writer = IOWriter::init(
             stdout_fd,
             crate::shell::io_writer::Flags {
+                #[cfg(not(windows))]
                 pollable: is_pollable(stdout_fd),
                 ..Default::default()
             },
-            event_loop,
+            self,
         );
-        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        stdout_writer.set_interp(interp_ptr);
         let stderr_writer = IOWriter::init(
             stderr_fd,
             crate::shell::io_writer::Flags {
+                #[cfg(not(windows))]
                 pollable: is_pollable(stderr_fd),
                 ..Default::default()
             },
-            event_loop,
+            self,
         );
-        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        stderr_writer.set_interp(interp_ptr);
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
@@ -1532,9 +1546,7 @@ impl Interpreter {
                 // resources: deinit every live `Cmd` (kills the child, frees
                 // the `ShellSubprocess`, readers, redirection fd). Slots stay
                 // occupied so the env walk below still sees pipeline-duped
-                // Cmd envs. Windows: leak-over-UAF, see
-                // `ShellSubprocess::abort_after_failed_start`.
-                #[cfg(not(windows))]
+                // Cmd envs.
                 {
                     let node_count = this.nodes.get().len();
                     for i in 0..node_count {
@@ -2243,30 +2255,23 @@ fn open_null_device() -> bun_sys::Result<Fd> {
 /// Note: takes a pre-cached `mode` from `event_loop.stdout().data
 /// .file.mode`; `EventLoopHandle` is still a shim, so we `fstat` the (already
 /// dup'd) fd here instead. On `fstat` failure we conservatively return `false`
-/// (non-pollable → synchronous write path), matching Windows behavior.
+/// (non-pollable → synchronous write path).
+#[cfg(not(windows))]
 fn is_pollable(fd: Fd) -> bool {
-    #[cfg(windows)]
+    let mode = match bun_sys::fstat(fd) {
+        Ok(st) => st.st_mode,
+        Err(_) => return false,
+    };
+    let fmt = mode & libc::S_IFMT;
+    #[cfg(target_os = "macos")]
     {
-        let _ = fd;
-        false
-    }
-    #[cfg(unix)]
-    {
-        let mode = match bun_sys::fstat(fd) {
-            Ok(st) => st.st_mode,
-            Err(_) => return false,
-        };
-        let fmt = mode & libc::S_IFMT;
-        #[cfg(target_os = "macos")]
-        {
-            // macOS allows polling regular files, but our IOWriter has a
-            // better dedicated path for them — exclude S_ISREG explicitly.
-            if fmt == libc::S_IFREG {
-                return false;
-            }
+        // macOS allows polling regular files, but our IOWriter has a
+        // better dedicated path for them — exclude S_ISREG explicitly.
+        if fmt == libc::S_IFREG {
+            return false;
         }
-        fmt == libc::S_IFIFO || fmt == libc::S_IFSOCK || bun_sys::isatty(fd)
     }
+    fmt == libc::S_IFIFO || fmt == libc::S_IFSOCK || bun_sys::isatty(fd)
 }
 
 /// Same test as [`is_pollable`] minus the `isatty()` check — used when the
@@ -2300,23 +2305,6 @@ pub(crate) fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
 pub(crate) fn closefd(fd: Fd) {
     use bun_sys::FdExt;
     let _ = fd.close_allowing_bad_file_descriptor(None);
-}
-
-/// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
-/// to a libuv-owned fd via `makeLibUVOwnedForSyscall(.dup, .close_on_fail)` so
-/// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
-/// instead of a raw NT handle.
-pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
-    #[cfg(windows)]
-    {
-        use bun_sys::FdExt;
-        bun_sys::dup(fd)?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup, bun_sys::ErrorCase::CloseOnFail)
-    }
-    #[cfg(not(windows))]
-    {
-        bun_sys::dup(fd)
-    }
 }
 
 /// Windows-only: rewrite shell paths so POSIX-absolute `/foo` resolves onto
@@ -2394,9 +2382,8 @@ pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<
 
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
 /// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
-/// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)` +
-/// `makeLibUVOwnedForSyscall`; for file opens, resolve via `shell_get_path`
-/// then `bun_sys::open`.
+/// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)`; for file
+/// opens, resolve via `shell_get_path` then `bun_sys::open`.
 pub(crate) fn shell_openat(
     dir: Fd,
     path: &bun_core::ZStr,
@@ -2405,7 +2392,6 @@ pub(crate) fn shell_openat(
 ) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
-        use bun_sys::FdExt;
         if flags & bun_sys::O::DIRECTORY != 0 {
             if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
                 let mut buf = bun_paths::path_buffer_pool::get();
@@ -2419,11 +2405,7 @@ pub(crate) fn shell_openat(
                         ..Default::default()
                     },
                 )
-                .map_err(|e| e.with_path(path.as_bytes()))?
-                .make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                );
+                .map_err(|e| e.with_path(path.as_bytes()));
             }
             return bun_sys::open_dir_at_windows_a(
                 dir,
@@ -2434,13 +2416,10 @@ pub(crate) fn shell_openat(
                     ..Default::default()
                 },
             )
-            .map_err(|e| e.with_path(path.as_bytes()))?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
+            .map_err(|e| e.with_path(path.as_bytes()));
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf)?;
-        // No `makeLibUVOwnedForSyscall` here: `bun_sys::open` on Windows
-        // routes through `sys_uv` and already yields a uv-owned fd.
         return bun_sys::open(p, flags, perm);
     }
     #[cfg(not(windows))]

@@ -11,7 +11,7 @@
 //!     workspace dep is `bun_windows_sys` (leaf Win32 externs — no native C,
 //!     no `#[no_mangle]` exports). Depending on the real crates would make
 //!     their `#[no_mangle]` C-ABI surface (`Bun__*`, `__bun_dispatch__*`) a
-//!     link root referencing libuv/simdutf/highway/ICU; the shim can't
+//!     link root referencing simdutf/highway/ICU; the shim can't
 //!     satisfy those and shouldn't carry them.
 //!
 //! `BinLinkingShim.rs` is path-included for `Flags`/`VersionFlag` only; its

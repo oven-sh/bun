@@ -461,9 +461,9 @@ pub mod vec {
         unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len()) }
     }
 
-    /// `reserve(n)` then [`spare_bytes_mut`] — the libuv `uv_alloc_cb` shape
-    /// (and the dominant call pattern at every C-ABI fill site that wants "at
-    /// least `n` bytes of headroom"). Prefer this over `fill_spare` when the
+    /// `reserve(n)` then [`spare_bytes_mut`] — the dominant call pattern at
+    /// every C-ABI fill site that wants "at least `n` bytes of headroom".
+    /// Prefer this over `fill_spare` when the
     /// commit must happen on a separate control-flow arm from the obtain
     /// (e.g. across an `await`, or after an error-early-return).
     ///
@@ -695,7 +695,7 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
 ///
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
-/// a C library (libarchive, c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
+/// a C library (libarchive, c-ares, uWS, lol-html, BoringSSL, …) round-
 /// trips a Rust object through a `void *user_data` slot and hands it back to
 /// an `extern "C" fn` thunk. Earlier ports open-coded this as
 /// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
@@ -2502,7 +2502,7 @@ pub mod ffi {
 
     /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
     ///
-    /// Single audited wrapper over `core::mem::zeroed()` so libc/uv/c-ares
+    /// Single audited wrapper over `core::mem::zeroed()` so libc/c-ares
     /// out-param init sites (`let mut x: libc::sigaction = zeroed();`) don't
     /// each open-code an `unsafe` block.
     ///
@@ -2537,7 +2537,7 @@ pub mod ffi {
     pub unsafe trait Zeroable: Sized {}
 
     /// Unchecked all-bits-zero — escape hatch for types not yet proven
-    /// [`Zeroable`] (libuv handles, bindgen structs in `_sys` crates that
+    /// [`Zeroable`] (bindgen structs in `_sys` crates that
     /// don't depend on `bun_core`, generic `T` where the bound can't be
     /// threaded). Prefer [`zeroed`] + an `unsafe impl Zeroable` whenever the
     /// type is reachable.
@@ -2693,6 +2693,10 @@ pub mod ffi {
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_DEVICE_INFORMATION {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_VOLUME_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_STAT_BASIC_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_ID_FULL_DIR_INFORMATION {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
     #[cfg(windows)]

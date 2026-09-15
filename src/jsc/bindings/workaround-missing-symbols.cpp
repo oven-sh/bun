@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <algorithm>
 #include <sys/stat.h>
-#include <uv.h>
 #include <fcntl.h>
 #include <windows.h>
 #include <string.h>
@@ -36,9 +35,11 @@ extern "C" int stat64(
     return _stat64(_FileName, _Stat);
 }
 
+extern "C" int Bun__Process__kill(int pid, int signum);
+
 extern "C" int kill(int pid, int sig)
 {
-    return uv_kill(pid, sig);
+    return Bun__Process__kill(pid, sig);
 }
 
 #endif
@@ -498,6 +499,7 @@ extern "C" int __wrap___libc_start_main(int (*main)(int, char**, char**), int ar
 
 #include <version>
 #include <dlfcn.h>
+#include <algorithm>
 #include <cstdint>
 #include <cstdarg>
 #include <cstdio>
@@ -528,10 +530,11 @@ void std::__libcpp_verbose_abort(char const* format, ...) BUN_VERBOSE_ABORT_NOEX
     va_list list;
     va_start(list, format);
     char buffer[1024];
-    size_t len = vsnprintf(buffer, sizeof(buffer), format, list);
+    // The return value is the length of the whole message, also when only part of it fit.
+    int formatted = vsnprintf(buffer, sizeof(buffer), format, list);
     va_end(list);
 
-    Bun__panic(buffer, len);
+    Bun__panic(buffer, formatted < 0 ? 0 : std::min<size_t>(formatted, sizeof(buffer) - 1));
 }
 
 #undef BUN_VERBOSE_ABORT_NOEXCEPT

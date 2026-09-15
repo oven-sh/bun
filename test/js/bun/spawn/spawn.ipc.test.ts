@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { createServer } from "node:net";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -322,6 +323,138 @@ describe("ipc mode advanced", () => {
       expect(exitCode).toBe(0);
     },
   );
+});
+
+// The child in these tests drives fd 3 by hand instead of through process.send():
+// it never reads what the parent sends, so a large parent message stays in flight
+// for as long as the child lives, and it can put any bytes on the channel.
+describe("a channel this side is done with", () => {
+  const rawChannelChild = (body: string) => /* js */ `
+    const net = require("node:net");
+    const channel = net.connect({ fd: 3, pauseOnConnect: true });
+    // The parent may have closed its end already.
+    channel.on("error", () => process.exit(0));
+    // One JSON-mode message. On Windows the channel carries libuv's IPC frames:
+    // u32 flags (1: has data), u32 reserved, u32 payload length, u32 reserved.
+    function frame(json) {
+      const payload = Buffer.from(json + "\\n");
+      if (process.platform !== "win32") return payload;
+      const header = Buffer.alloc(16);
+      header.writeUInt32LE(1, 0);
+      header.writeUInt32LE(payload.length, 8);
+      return Buffer.concat([header, payload]);
+    }
+    const go = new Promise(resolve => process.stdin.once("data", resolve));
+    ${body}
+  `;
+  // More than the channel's kernel buffer holds.
+  const big = Buffer.alloc(1024 * 1024, "x").toString();
+
+  it("disconnect() behind a send in flight delivers nothing the child sends afterwards", async () => {
+    const received: unknown[] = [];
+    const disconnected = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        rawChannelChild(`
+          go.then(() => {
+            channel.write(Buffer.concat([frame('"late 1"'), frame('"late 2"')]), () => process.exit(0));
+          });
+        `),
+      ],
+      env: bunEnv,
+      stdio: ["pipe", "inherit", "inherit"],
+      serialization: "json",
+      ipc: message => void received.push(message),
+      onDisconnect: () => disconnected.resolve(),
+    });
+    child.send(big);
+    child.disconnect();
+    expect(child.connected).toBe(false);
+    child.stdin.write("go\n");
+    child.stdin.flush();
+    const [exitCode] = await Promise.all([child.exited, disconnected.promise]);
+    expect(received).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("disconnect() that waits for a handle's ack delivers nothing but that ack", async () => {
+    const received: unknown[] = [];
+    const disconnected = Promise.withResolvers<void>();
+    const server = createServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      await using child = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          rawChannelChild(`
+            go.then(() => {
+              channel.write(
+                Buffer.concat([frame('"late"'), frame('{"cmd":"NODE_HANDLE_ACK"}'), frame('"later"')]),
+                () => process.exit(0),
+              );
+            });
+          `),
+        ],
+        env: bunEnv,
+        stdio: ["pipe", "inherit", "inherit"],
+        serialization: "json",
+        ipc: message => void received.push(message),
+        onDisconnect: () => disconnected.resolve(),
+      });
+      child.send({ hello: "handle" }, server);
+      // The handle is not acknowledged yet, so the channel stays open for the ack.
+      child.disconnect();
+      expect(child.connected).toBe(false);
+      child.stdin.write("go\n");
+      child.stdin.flush();
+      const [exitCode] = await Promise.all([child.exited, disconnected.promise]);
+      expect(received).toEqual([]);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  // The framing is the Windows channel's; elsewhere a message is a line and the
+  // tests above for undecodable lines cover it.
+  it.skipIf(!isWindows)("a frame that breaks the framing ends delivery, also behind a send in flight", async () => {
+    const received: unknown[] = [];
+    const disconnected = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        rawChannelChild(`
+          const unknownFlag = Buffer.alloc(16);
+          unknownFlag.writeUInt32LE(8, 0);
+          channel.write(Buffer.concat([frame('"first"'), unknownFlag]));
+          go.then(() => channel.write(frame('"second"'), () => process.exit(0)));
+        `),
+      ],
+      env: bunEnv,
+      stdio: ["pipe", "inherit", "inherit"],
+      serialization: "json",
+      ipc(message) {
+        received.push(message);
+        if (message === "first") {
+          child.stdin.write("go\n");
+          child.stdin.flush();
+        }
+      },
+      onDisconnect: () => disconnected.resolve(),
+    });
+    // The close the bad frame causes has to wait for this write.
+    child.send(big);
+    const [exitCode] = await Promise.all([child.exited, disconnected.promise]);
+    expect(received).toEqual(["first"]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // getIPCInstance error path: on Windows, windowsConfigureClient can open the

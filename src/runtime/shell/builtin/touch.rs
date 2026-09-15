@@ -215,7 +215,7 @@ impl OutputTaskVTable for Touch {
             return Some(
                 Builtin::of_mut(interp, cmd)
                     .stdout
-                    .enqueue(childptr, &buf, safeguard),
+                    .enqueue_owned(childptr, buf, safeguard),
             );
         }
         let buf = output.slice().to_vec();
@@ -280,8 +280,7 @@ impl ShellTouchTask {
             )
         };
 
-        // Call the bun_sys layer directly (uv_fs_utime on Windows) to avoid
-        // the heavyweight NodeFS state.
+        // Call the bun_sys layer directly to avoid the heavyweight NodeFS state.
         let milliseconds = bun_core::time::milli_timestamp();
         let atime = bun_sys::TimeLike {
             sec: milliseconds.div_euclid(1_000),

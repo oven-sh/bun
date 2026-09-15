@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -463,6 +463,74 @@ if (isWindows) {
   });
 }
 
+// `CreateFileW` has rules for names: `NUL` and `LPT1` are devices, in a directory too, and a trailing
+// dot or space is dropped. Which names those are differs between Windows versions, so the two ways of
+// writing a `Bun.file` are compared with each other.
+it.skipIf(!isWindows)(
+  "Bun.file(name).writer() writes where Bun.write(Bun.file(name)) does for names Win32 treats specially",
+  async () => {
+    const names = ["NUL", "nul", "sub/NUL", "lpt1", "conin$", "trail.", "sp "];
+    using dir = tempDir("filesink-win32-names", {
+      "fixture.mjs": String.raw`
+        import fs from "node:fs";
+        import path from "node:path";
+
+        const root = process.cwd();
+        const apis = {
+          write: name => Bun.write(Bun.file(name), "x"),
+          writer: async name => {
+            const writer = Bun.file(name).writer();
+            writer.write("x");
+            await writer.end();
+          },
+        };
+        const results = {};
+        let count = 0;
+        for (const name of JSON.parse(process.argv[2])) {
+          results[name] = {};
+          for (const [api, run] of Object.entries(apis)) {
+            const cwd = path.join(root, "d" + count++);
+            fs.mkdirSync(path.join(cwd, "sub"), { recursive: true });
+            process.chdir(cwd);
+            let ok = true;
+            try {
+              await run(name);
+            } catch {
+              ok = false;
+            }
+            process.chdir(root);
+            const created = fs.readdirSync(cwd, { recursive: true }).filter(entry => entry !== "sub");
+            results[name][api] = { ok, created: created.sort() };
+          }
+        }
+        console.log(JSON.stringify(results));
+        // Prefixed, so that whatever was created is removed under the name it has.
+        for (let i = 0; i < count; i++) {
+          fs.rmSync("\\\\?\\" + path.join(root, "d" + i), { recursive: true, force: true });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs", JSON.stringify(names)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const results = JSON.parse(stdout) as Record<
+      string,
+      Record<"write" | "writer", { ok: boolean; created: string[] }>
+    >;
+    expect(Object.fromEntries(names.map(name => [name, results[name].writer]))).toEqual(
+      Object.fromEntries(names.map(name => [name, results[name].write])),
+    );
+    // A bare `NUL` is the null device on every Windows version.
+    expect(results.NUL.write).toEqual({ ok: true, created: [] });
+    expect(exitCode).toBe(0);
+  },
+);
+
 // When a write to a pollable fd returns `.pending`, FileSink takes a
 // `must_be_kept_alive_until_eof` ref on itself so it survives until the
 // buffered data is drained. If the write later fails (e.g. EPIPE because the
@@ -628,7 +696,7 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   await 1;
 });
 
-// On Windows the libuv write completion path re-enters JS (promise resolution)
+// On Windows the write completion path re-enters JS (promise resolution)
 // while a `&mut WindowsStreamingWriter` is live, so without raw-ptr laundering
 // LLVM `noalias` lets release builds cache stale `is_done`/`parent` and
 // over-deref the FileSink. Spawn a subprocess so a crash there is observable
@@ -757,8 +825,8 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
   });
 });
 
-// Skipped on Windows: the Windows FileSink writer hands bytes to uv_fs_write on
-// the libuv threadpool and never registers an AutoFlusher synchronously, so the
+// Skipped on Windows: the Windows FileSink writer hands bytes to a write on
+// the work pool and never registers an AutoFlusher synchronously, so the
 // on_exit drain this suite exercises is a no-op there and every process.exit()
 // variant is a threadpool-vs-ExitProcess race rather than the POSIX buffered
 // flush being tested here.
@@ -983,7 +1051,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
     return { stdoutLength: stdout.length, stderr, exitCode };
   }
 
-  // On Windows uv_write takes the whole chunk at once and end() can return a
+  // On Windows a write takes the whole chunk at once and end() can return a
   // plain number, hence Promise.resolve().
   it.concurrent("end() without await", async () => {
     expect(

@@ -398,7 +398,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Write `data` and pass `file_descriptor` over the socket via SCM_RIGHTS.
-    /// POSIX-only — Windows IPC fd passing goes through libuv pipes instead.
+    /// POSIX-only — Windows IPC runs over a named pipe, not a socket.
     ///
     /// LAYERING: takes the raw POSIX fd (`c_int`) rather than `bun_sys::Fd` —
     /// `bun_uws_sys` sits below `bun_sys`; callers extract `.native()` at the

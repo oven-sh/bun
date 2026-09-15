@@ -171,7 +171,6 @@ enum {
 /* Library types publicly available */
 struct us_socket_t;
 struct us_connecting_socket_t;
-struct us_timer_t;
 struct us_socket_group_t;
 struct us_socket_vtable_t;
 struct us_listen_socket_t;
@@ -244,28 +243,6 @@ void *us_udp_socket_user(struct us_udp_socket_t *s);
 
 /* Binds the UDP socket to an interface and port */
 int us_udp_socket_bind(struct us_udp_socket_t *s, const char *hostname, unsigned int port);
-
-/* Public interfaces for timers. libuv (Windows) only — epoll/kqueue schedules
- * on bun.JSC.EventLoopTimer, no file descriptor or syscall. */
-#ifdef _WIN32
-
-/* Create a new high precision, low performance timer. May fail and return null */
-struct us_timer_t *us_create_timer(us_loop_r loop, int fallthrough, unsigned int ext_size);
-
-/* Returns user data extension for this timer */
-void *us_timer_ext(struct us_timer_t *timer);
-
-/* */
-void us_timer_close(struct us_timer_t *timer, int fallthrough);
-
-/* Arm a timer with a delay from now and eventually a repeat delay.
- * Specify 0 as repeat delay to disable repeating. Specify both 0 to disarm. */
-void us_timer_set(struct us_timer_t *timer, void (*cb)(struct us_timer_t *t), int ms, int repeat_ms);
-
-/* Returns the loop for this timer */
-struct us_loop_t *us_timer_loop(struct us_timer_t *t);
-
-#endif
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Socket groups & dispatch
@@ -595,9 +572,6 @@ void us_loop_run(us_loop_r loop) nonnull_fn_decl;
  * This is the only fully thread-safe function and serves as the basis for thread safety */
 void us_wakeup_loop(us_loop_r loop) nonnull_fn_decl;
 
-/* Hook up timers in existing loop */
-void us_loop_integrate(us_loop_r loop) nonnull_fn_decl;
-
 /* Public interfaces for polls */
 
 /* A fallthrough poll does not keep the loop running, it falls through */
@@ -729,14 +703,11 @@ int us_socket_get_error(us_socket_r s);
 /* A writable event's write made zero progress: does that prove the peer is
  * gone? On epoll/kqueue a writable event implies real send-buffer space, so
  * no progress means the send itself failed (EPIPE/ECONNRESET folded to 0) and
- * the answer is always yes. The libuv backend's completion model can deliver
- * a writable completion for space the same loop iteration already refilled,
- * making a stall there routine backpressure, so it asks the kernel
+ * the answer is always yes. On Windows a writable completion is dequeued
+ * after the fact and can describe space the same loop iteration already
+ * refilled, making a stall there routine backpressure, so it asks the kernel
  * (SO_ERROR, then a zero-byte send probe). */
 int us_socket_stalled_write_means_peer_gone(us_socket_r s);
-
-void us_socket_ref(us_socket_r s);
-void us_socket_unref(us_socket_r s);
 
 void us_socket_nodelay(us_socket_r s, int enabled);
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay);
@@ -752,9 +723,9 @@ void us_socket_pause(us_socket_r s);
 #endif
 
 /* Decide what eventing system to use by default */
-#if !defined(LIBUS_USE_EPOLL) && !defined(LIBUS_USE_LIBUV) && !defined(LIBUS_USE_GCD) && !defined(LIBUS_USE_KQUEUE) && !defined(LIBUS_USE_ASIO)
+#if !defined(LIBUS_USE_EPOLL) && !defined(LIBUS_USE_IOCP) && !defined(LIBUS_USE_KQUEUE)
 #if defined(_WIN32)
-#define LIBUS_USE_LIBUV
+#define LIBUS_USE_IOCP
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #define LIBUS_USE_KQUEUE
 #else

@@ -147,11 +147,11 @@ process.exit(0);
 
 // Cross-platform version that uses an internal-for-testing hook to inject a
 // synthetic EBADF directly into the reader, instead of relying on Linux epoll
-// semantics. On Windows, normal subprocess termination maps to UV_EOF (not an
-// error), and the uv.Pipe HANDLE isn't JS-accessible, so there's no way to
+// semantics. On Windows, normal subprocess termination reads as EOF (not an
+// error), and the pipe HANDLE isn't JS-accessible, so there's no way to
 // trigger a real read error from JS — hence the hook.
 //
-// Without the fix, the leaked poll keep-alive refs (Posix) / uv.Pipe handles
+// Without the fix, the leaked poll keep-alive refs (Posix) / pipe handles
 // (Windows) prevent the event loop from exiting after the loop completes, so
 // the fixture hangs and the spawn timeout kills it.
 test("PipeReader is freed when a subprocess stdout read fails (injected)", async () => {
@@ -174,7 +174,7 @@ for (let i = 0; i < 10; i++) {
     stderr: "ignore",
   });
 
-  // Inject EBADF into the stdout PipeReader as if read()/uv_read_cb had
+  // Inject EBADF into the stdout PipeReader as if read()/ReadFile had
   // failed. This tears down the PipeReader via onReaderError.
   if (subprocessInternals.injectStdioReadError(proc, "stdout")) injected++;
 
@@ -185,7 +185,7 @@ Bun.gc(true);
 console.log(JSON.stringify({ injected }));
 // No explicit process.exit(): if the fix works, the event loop exits on its
 // own once the script finishes. Without the fix, the leaked keep-alive refs
-// (Posix) / open uv.Pipe handles (Windows) keep it alive and the parent's
+// (Posix) / open pipe handles (Windows) keep it alive and the parent's
 // spawn timeout fires.
 `,
   });

@@ -372,7 +372,7 @@ impl OutputTaskVTable for Cp {
             return Some(
                 Builtin::of_mut(interp, cmd)
                     .stdout
-                    .enqueue(childptr, &buf, safeguard),
+                    .enqueue_owned(childptr, buf, safeguard),
             );
         }
         let buf = output.slice().to_vec();

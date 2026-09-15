@@ -150,12 +150,6 @@ struct us_quic_stream_s {
  * free the stream while a method is still touching it.
  */
 
-#ifdef LIBUS_USE_LIBUV
-static void us_quic_on_timer(struct us_timer_t *t) {
-    us_quic_loop_process(us_timer_loop(t));
-}
-#endif
-
 static void us_quic_after_engine_call(us_quic_socket_context_t *ctx);
 
 /* lsquic forbids entering the engine from a callback it made. Every engine
@@ -184,19 +178,10 @@ void us_quic_loop_process(struct us_loop_t *loop) {
             have_tick = 1;
         }
     }
-    /* Relative µs from now (≤0 means "tick due"). On epoll/kqueue,
-     * getTimeout() in src/runtime/timer/mod.rs folds this into the epoll_pwait2 timeout —
-     * no timerfd. On libuv there's no equivalent hook into the poll
-     * timeout, so arm a fallthrough uv_timer instead. */
+    /* Relative µs from now (≤0 means "tick due"). getTimeout() in
+     * src/runtime/timer/mod.rs folds this into the loop's wait timeout — no
+     * timer object. */
     loop->data.quic_next_tick_us = have_tick ? (min_diff < 0 ? 0 : min_diff) : -1;
-#ifdef LIBUS_USE_LIBUV
-    if (have_tick) {
-        if (!loop->data.quic_timer)
-            loop->data.quic_timer = us_create_timer(loop, 1, 0);
-        int ms = min_diff <= 0 ? 1 : (min_diff + 999) / 1000;
-        us_timer_set(loop->data.quic_timer, us_quic_on_timer, ms, 0);
-    }
-#endif
 }
 
 /* Called after the deferred-task queue drains. Only does work when a
@@ -607,13 +592,8 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     qs->ctx = ctx;
     /* QUIC connections share one UDP fd, so they aren't real polls. Count
      * each as a virtual poll so the loop stays alive while conns are open —
-     * the same invariant H1 gets from each TCP socket being a us_poll_t.
-     * libuv loop liveness is per-handle (uv_ref) rather than per-poll-count;
-     * the listen socket's uv_poll_t already keeps the loop alive until
-     * conn_count drops to 0 and we close it. */
-#ifndef LIBUS_USE_LIBUV
+     * the same invariant H1 gets from each TCP socket being a us_poll_t. */
     ctx->loop->num_polls++;
-#endif
     ctx->conn_count++;
     /* Arm the sweep-timer refcount so DateHeaderTimer runs for h3-only
      * servers; the TCP path does this per-socket in context.c. */
@@ -635,9 +615,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     }
     us_free(qs->hostname);
     us_free(qs);
-#ifndef LIBUS_USE_LIBUV
     ctx->loop->num_polls--;
-#endif
     ctx->conn_count--;
     us_internal_disable_sweep_timer(ctx->loop);
     /* During graceful drain the UDP fd is the only thing left holding the

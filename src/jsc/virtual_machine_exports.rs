@@ -11,9 +11,6 @@ use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::SourceProviderMap;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 
-// `Bun__ZigGlobalObject__uvLoop` is Windows-only: `#[cfg(windows)]` on the fn
-// definition itself.
-//
 // `#[unsafe(no_mangle)] extern "C"` thunks for everything below are emitted by
 // `src/codegen/generate-host-exports.ts` from the `// HOST_EXPORT(Sym, c)`
 // markers; the bodies here take safe `&VirtualMachine` / `&JSGlobalObject` /
@@ -185,12 +182,6 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
         global_object: bun_ptr::BackRef::new(global),
     });
     jsc_vm.transpiler.linker.plugin_runner = Some(std::ptr::from_mut::<dyn PluginResolver>(runner));
-}
-
-#[cfg(windows)]
-#[unsafe(no_mangle)]
-extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
-    jsc_vm.uv_loop().cast()
 }
 
 // HOST_EXPORT(Bun__setTLSRejectUnauthorizedValue, c)

@@ -12,11 +12,9 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_io::Closer;
-#[cfg(windows)]
-use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
-use bun_io::{BufferedReader, FileType, ReadState};
 #[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
+use bun_io::FilePollFlag;
+use bun_io::{BufferedReader, FileType, PosixFlags as ReaderFlags, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd};
@@ -223,10 +221,14 @@ impl FileResponseStream {
             return;
         }
 
+        // On Windows the reader's `is_pollable` means "an overlapped pipe end
+        // Bun created", which a served file's handle never is.
+        let pollable = cfg!(not(windows)) && opts.pollable;
+
         // BufferedReader path
         this_ref.reader.with_mut(|reader| {
             reader.flags.remove(ReaderFlags::CLOSE_HANDLE); // we own fd via auto_close
-            reader.flags.set(ReaderFlags::POLLABLE, opts.pollable);
+            reader.flags.set(ReaderFlags::POLLABLE, pollable);
             reader
                 .flags
                 .set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
@@ -243,9 +245,9 @@ impl FileResponseStream {
         // the parent pointer (`loop_`/`event_loop`), so no cell borrow spans them.
         let reader = this_ref.reader_mut();
         let start_result = if opts.offset > 0 {
-            reader.start_file_offset(opts.fd, opts.pollable, opts.offset as usize)
+            reader.start_file_offset(opts.fd, pollable, opts.offset as usize)
         } else {
-            reader.start(opts.fd, opts.pollable)
+            reader.start(opts.fd, pollable)
         };
         if let Err(err) = start_result {
             this_ref.fail_with(err);
@@ -602,22 +604,12 @@ impl FileResponseStream {
     }
 
     fn r#loop(&self) -> *mut bun_io::Loop {
-        #[cfg(windows)]
-        {
-            // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
-            // is set by C `us_create_loop` and valid for the loop's lifetime.
-            return unsafe { (*self.event_loop().r#loop()).uv_loop };
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop().r#loop()
-        }
+        self.event_loop().r#loop()
     }
 }
 
 // BufferedReader vtable parent.
-// `loop_` delegates to the inherent `r#loop()` which already does the
-// cfg(windows) `.uv_loop` projection. The read/done/error arms take a ref for
+// The read/done/error arms take a ref for
 // the duration of the handler since it can end in `finish()`.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
@@ -648,9 +640,6 @@ impl Drop for FileResponseStream {
         // field — closes the poll handle. `bun.destroy(this)` is owned by
         // `heap::take` in `deref`, not here.
         if self.auto_close.get() {
-            #[cfg(windows)]
-            Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
-            #[cfg(not(windows))]
             Closer::close(self.fd.get(), ());
         }
     }

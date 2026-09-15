@@ -102,7 +102,10 @@ impl Error {
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
         debug_assert!((0..=c_int::from(u16::MAX)).contains(&errno));
         Error {
-            errno: errno as Int,
+            // The kernel is not bound to the table (FUSE, drivers): what it
+            // does not declare is stored as EUNKNOWN, so the code and message
+            // lookups agree with `get_errno`.
+            errno: u16::try_from(errno).map_or(E::EUNKNOWN, E::from_raw) as Int,
             syscall: syscall_tag,
             ..Default::default()
         }
@@ -176,20 +179,6 @@ impl Error {
         }
     }
 
-    /// Unlike `with_path`/`with_path_dest` (which reset `fd`), this only
-    /// overlays `dest`.
-    #[cfg(windows)]
-    #[inline]
-    pub(crate) fn with_dest(&self, dest: &[u8]) -> Error {
-        Error {
-            errno: self.errno,
-            syscall: self.syscall,
-            fd: self.fd,
-            path: self.path.clone(),
-            dest: Box::from(dest),
-        }
-    }
-
     #[inline]
     pub fn with_path_dest(&self, path: &[u8], dest: &[u8]) -> Error {
         Error {
@@ -236,8 +225,7 @@ impl Error {
         self.resolve_system_errno().unwrap_or(SystemErrno::EIO)
     }
 
-    /// 1. Convert libuv errno values into libc ones.
-    /// 2. Get the tag name as a string for printing.
+    /// The errno and its name (e.g. `"ENOENT"`) for printing.
     pub fn get_error_code_tag_name(&self) -> Option<(&'static str, SystemErrno)> {
         let e = self.resolve_system_errno()?;
         // strum::IntoStaticStr — variant name (e.g., "ENOENT").
@@ -270,7 +258,7 @@ impl Error {
         // that is just the negated host errno; on Windows the discriminant maps
         // back to its `UV_E*` value.
         #[cfg(windows)]
-        let js_errno = crate::windows::libuv::e_discriminant_to_uv(self.errno)
+        let js_errno = bun_errno::uv_codes::e_discriminant_to_uv(self.errno)
             .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
         #[cfg(not(windows))]
         let js_errno = c_int::from(self.errno).wrapping_neg();
@@ -298,12 +286,12 @@ impl Error {
         if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
             #[cfg(windows)]
-            if valid.kind() == crate::FdKind::Uv {
-                err.fd = Some(valid.uv());
+            if valid.kind() == crate::FdKind::Crt {
+                err.fd = Some(valid.crt());
             }
             #[cfg(not(windows))]
             {
-                err.fd = Some(valid.uv());
+                err.fd = Some(valid.crt());
             }
         }
 
@@ -442,40 +430,5 @@ impl bun_core::output::ErrName for &Error {
     }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
         (**self).as_sys_err_info()
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `ReturnCodeExt` — `ReturnCode::to_error(tag) -> Option<Error>` lives here (not
-// in `bun_libuv_sys`) because `Error`/`Tag` are higher-tier types.
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(windows)]
-pub trait ReturnCodeExt: Sized {
-    /// `Some(errno)` when the return code is negative; `None` on success.
-    fn errno(self) -> Option<crate::E>;
-    #[inline]
-    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
-        self.errno().map(|e| Error::from_code(e, syscall_tag))
-    }
-    #[inline]
-    fn to_result(self, syscall_tag: Tag) -> crate::Result<()> {
-        match self.to_error(syscall_tag) {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
-    }
-}
-#[cfg(windows)]
-impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
-    #[inline]
-    fn errno(self) -> Option<crate::E> {
-        (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int()))
-    }
-}
-#[cfg(windows)]
-impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
-    #[inline]
-    fn errno(self) -> Option<crate::E> {
-        (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int() as c_int))
     }
 }

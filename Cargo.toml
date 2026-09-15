@@ -47,7 +47,6 @@ members = [
   "src/js_parser_jsc",
   "src/js_printer",
   "src/libdeflate_sys",
-  "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
   "src/picohttp",
@@ -411,7 +410,6 @@ bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
 bun_libdeflate_sys = { path = "src/libdeflate_sys" }
-bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
 bun_picohttp = { path = "src/picohttp" }

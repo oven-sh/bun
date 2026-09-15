@@ -1,11 +1,13 @@
 #include <node_api.h>
 
-#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include <uv.h>
+#ifndef _WIN32
+#include <pthread.h>
+#include <unistd.h>
+#endif
 
 // Test mutex initialization and destruction
 static napi_value test_mutex_init_destroy(napi_env env,
@@ -108,7 +110,11 @@ static napi_value test_hrtime(napi_env env, napi_callback_info info) {
   uint64_t time1 = uv_hrtime();
 
   // Sleep for a tiny bit to ensure time passes
+#ifdef _WIN32
+  Sleep(1);
+#else
   usleep(1000); // Sleep for 1ms
+#endif
 
   uint64_t time2 = uv_hrtime();
 
@@ -133,7 +139,7 @@ static napi_value test_hrtime(napi_env env, napi_callback_info info) {
 }
 
 // Test uv_tty_reset_mode, the one implemented uv_* function that lives in bun's
-// C++ (wtf-bindings.cpp) instead of uv-posix-polyfills.c, so the one that can
+// C++ (wtf-bindings.cpp) instead of uv-polyfills.c, so the one that can
 // end up missing from bun's export table. Referenced directly, like a real
 // addon would.
 static napi_value test_tty_reset_mode(napi_env env, napi_callback_info info) {
@@ -142,6 +148,7 @@ static napi_value test_tty_reset_mode(napi_env env, napi_callback_info info) {
   return ret;
 }
 
+#ifndef _WIN32
 // uv_tty_reset_mode() holds its lock across the tcsetattr() that restores the
 // snapshot, so two threads calling it back to back collide constantly once a
 // snapshot exists. Every result must be 0 or UV_EBUSY; "busy" says how many
@@ -186,6 +193,7 @@ static napi_value test_tty_reset_mode_concurrent(napi_env env,
   napi_set_named_property(env, obj, "unexpected", unexpected);
   return obj;
 }
+#endif
 
 napi_value Init(napi_env env, napi_value exports) {
   // Register all test functions
@@ -212,9 +220,11 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(env, NULL, 0, test_tty_reset_mode, NULL, &fn);
   napi_set_named_property(env, exports, "testTtyResetMode", fn);
 
+#ifndef _WIN32
   napi_create_function(env, NULL, 0, test_tty_reset_mode_concurrent, NULL,
                        &fn);
   napi_set_named_property(env, exports, "testTtyResetModeConcurrent", fn);
+#endif
 
   return exports;
 }

@@ -2273,9 +2273,6 @@ extern "C" fn napi_get_node_version(
     env.ok()
 }
 
-#[cfg(windows)]
-type napi_event_loop = *mut bun_sys::windows::libuv::Loop;
-#[cfg(not(windows))]
 type napi_event_loop = *mut EventLoop;
 
 #[unsafe(no_mangle)]
@@ -2283,20 +2280,8 @@ extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_loop
     bun_output::scoped_log!(napi, "napi_get_uv_event_loop");
     let env = get_env!(env_);
     let loop_out = get_out!(env, loop_);
-    #[cfg(windows)]
-    {
-        // A past alignment assertion here fired spuriously.
-        // TODO(@190n) investigate
-        *loop_out = VirtualMachine::get().uv_loop();
-    }
-    #[cfg(not(windows))]
-    {
-        // there is no uv event loop on posix, we use our event loop handle.
-        // SAFETY: `VirtualMachine::event_loop` already yields `*mut EventLoop`;
-        // no const→mut cast needed.
-        // SAFETY: bun_vm() never null for a Bun-owned global.
-        *loop_out = env.to_js().bun_vm().event_loop();
-    }
+    // There is no uv event loop; we use our event loop handle.
+    *loop_out = env.to_js().bun_vm().event_loop();
     env.ok()
 }
 

@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -574,6 +574,254 @@ describe("bunshell", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The builtin cat queues one stdout chunk per read, and the command is over
+  // only when the reader is done and every queued chunk has been written. Each
+  // scenario runs in a child so a crash of the shell fails the test.
+  describe("builtin cat writes every chunk it queued", () => {
+    const sha256 = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    const prelude = /* ts */ `
+      import { $ } from "bun";
+      import { readFileSync, statSync } from "node:fs";
+      import net from "node:net";
+      $.nothrow();
+      const report = (results, ...files) => {
+        for (const file of files) {
+          const bytes = readFileSync(file);
+          results[file] = { size: bytes.length, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
+        }
+        console.log(JSON.stringify(results));
+      };
+    `;
+    const runScript = async (cwd: string, script: string, env: Record<string, string> = {}) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", prelude + script],
+        env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1", ...env },
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
+    };
+
+    const pieceSize = 64 * 1024;
+    const pieceCount = 16;
+    const gatedPieces = 4;
+
+    // The first pieces go in one at a time, each after the output file holds
+    // everything sent so far, so cat's writes have caught up with its reads
+    // several times before the end. The rest arrives together with EOF, which
+    // cat then sees while chunks are still queued.
+    test.concurrent.skipIf(!isWindows)("named pipe into a redirect, fed as the output file grows", async () => {
+      using dir = tempDir("builtin-cat-pipe", {});
+      const expected = Buffer.concat(Array.from({ length: pieceCount }, (_, i) => Buffer.alloc(pieceSize, 97 + i)));
+      const script = /* ts */ `
+        const pipe = process.env.CAT_PIPE;
+        const pieces = Array.from({ length: ${pieceCount} }, (_, i) => Buffer.alloc(${pieceSize}, 97 + i));
+        const outSize = () => {
+          try {
+            return statSync("out.bin").size;
+          } catch {
+            return 0;
+          }
+        };
+        const server = net.createServer(sock => {
+          let sent = 0;
+          const feed = i => {
+            if (i === ${gatedPieces}) return sock.end(Buffer.concat(pieces.slice(i)));
+            sock.write(pieces[i]);
+            sent += pieces[i].length;
+            const waitForWrite = () => {
+              // Two more turns of the loop so the shell has seen that write complete.
+              if (outSize() >= sent) setImmediate(() => setImmediate(() => feed(i + 1)));
+              else setImmediate(waitForWrite);
+            };
+            waitForWrite();
+          };
+          feed(0);
+        });
+        await new Promise((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(pipe, resolve);
+        });
+        const r = await $\`cat \${pipe} > out.bin\`.quiet();
+        server.close();
+        report({ exitCode: r.exitCode, stderr: r.stderr.toString() }, "out.bin");
+      `;
+      const result = await runScript(String(dir), script, {
+        CAT_PIPE: `\\\\.\\pipe\\bun-shell-cat-${process.pid}-${Date.now()}`,
+      });
+      expect(result).toEqual({
+        stdout: { exitCode: 0, stderr: "", "out.bin": { size: expected.length, sha256: sha256(expected) } },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Windows only: the POSIX builtin cat cannot read a regular file (its reader polls the fd: EPERM from epoll, no event at EOF from kqueue).
+    test.concurrent.skipIf(!isWindows)("several file arguments into a redirect", async () => {
+      const files = {
+        "a.bin": Buffer.alloc(5 * pieceSize + 1, "a"),
+        "empty.bin": Buffer.alloc(0),
+        "b.bin": Buffer.alloc(pieceSize, "b"),
+        "c.bin": Buffer.alloc(1, "c"),
+        "d.bin": Buffer.alloc(3 * pieceSize - 1, "d"),
+      };
+      using dir = tempDir("builtin-cat-files", files);
+      const expected = Buffer.concat(Object.values(files));
+      const script = /* ts */ `
+        const r = await $\`cat a.bin empty.bin b.bin c.bin d.bin > out.bin\`.quiet();
+        report({ exitCode: r.exitCode, stderr: r.stderr.toString() }, "out.bin");
+      `;
+      expect(await runScript(String(dir), script)).toEqual({
+        stdout: { exitCode: 0, stderr: "", "out.bin": { size: expected.length, sha256: sha256(expected) } },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Windows only, for the same reason.
+    test.concurrent.skipIf(!isWindows)("a file through a pipeline of cats", async () => {
+      const big = Buffer.concat(Array.from({ length: pieceCount }, (_, i) => Buffer.alloc(pieceSize + 1, 97 + i)));
+      using dir = tempDir("builtin-cat-pipeline", { "big.bin": big });
+      const script = /* ts */ `
+        const redirected = await $\`cat big.bin | cat > out.bin\`.quiet();
+        const captured = await $\`cat big.bin | cat\`.quiet();
+        await Bun.write("captured.bin", captured.stdout);
+        report(
+          {
+            redirected: { exitCode: redirected.exitCode, stderr: redirected.stderr.toString() },
+            captured: { exitCode: captured.exitCode, stderr: captured.stderr.toString() },
+          },
+          "out.bin",
+          "captured.bin",
+        );
+      `;
+      const copy = { size: big.length, sha256: sha256(big) };
+      expect(await runScript(String(dir), script)).toEqual({
+        stdout: {
+          redirected: { exitCode: 0, stderr: "" },
+          captured: { exitCode: 0, stderr: "" },
+          "out.bin": copy,
+          "captured.bin": copy,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  describe("builtin cat", () => {
+    // Runs one command in a child with the builtin cat on, feeding `stdin` to the child's own
+    // stdin, which is what a cat without file arguments reads.
+    const script = /* ts */ `
+      import { $ } from "bun";
+      import { existsSync, readFileSync } from "node:fs";
+      const r = await $\`\${{ raw: process.env.COMMAND }}\`.nothrow().quiet();
+      const files = {};
+      for (const file of ["out.txt", "err.txt"]) if (existsSync(file)) files[file] = readFileSync(file, "utf8");
+      console.log(JSON.stringify({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode, ...files }));
+    `;
+    const run = async (command: string, stdin: string, files: Record<string, string> = {}) => {
+      using dir = tempDir("builtin-cat", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1", COMMAND: command },
+        cwd: String(dir),
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (stdin) proc.stdin.write(stdin);
+      await proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
+    };
+
+    // Every `$` has one stdin reader, which each cat without file arguments listens to in turn.
+    // Once the first has read it to its end, the later ones find it at its end too, wherever they
+    // sit in the script.
+    describe("after a cat that read the same stdin to its end", () => {
+      for (const [command, stdin] of [
+        ["cat; cat", "hi\n"],
+        ["cat; cat", ""],
+        ["cat; cat; cat", "hi\n"],
+        ["cat && cat", "hi\n"],
+        ["cat; true && cat", "hi\n"],
+        ["cat; echo between; cat", "hi\n"],
+        ["if cat; then cat; fi", "hi\n"],
+        ["cat | cat; cat", "hi\n"],
+      ] as const) {
+        test.concurrent(`${command}, stdin ${JSON.stringify(stdin)}`, async () => {
+          expect(await run(command, stdin)).toEqual({
+            stdout: { stdout: command.includes("echo") ? stdin + "between\n" : stdin, stderr: "", exitCode: 0 },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+      }
+    });
+
+    // Like cat: say which input failed, carry on with the next, exit 1 at the end.
+    describe("with an input it cannot read", () => {
+      // The message carries the absolute path on Windows and the argument as written on POSIX.
+      const missing = (name: string) => `cat: (.*[\\\\/])?${name}\\.txt: No such file or directory\\n`;
+
+      for (const [command, expected] of [
+        [
+          "cat missing1.txt missing2.txt",
+          { stdout: "", stderr: expect.stringMatching(new RegExp(`^${missing("missing1")}${missing("missing2")}$`)) },
+        ],
+        [
+          "cat missing1.txt missing2.txt 2> err.txt",
+          {
+            stdout: "",
+            stderr: "",
+            "err.txt": expect.stringMatching(new RegExp(`^${missing("missing1")}${missing("missing2")}$`)),
+          },
+        ],
+      ] as const) {
+        test.concurrent(command, async () => {
+          expect(await run(command, "")).toEqual({ stdout: { ...expected, exitCode: 1 }, stderr: "", exitCode: 0 });
+        });
+      }
+
+      // Windows only: the POSIX builtin cat cannot read a regular file (its reader polls the fd: EPERM from epoll, no event at EOF from kqueue).
+      for (const [command, expected] of [
+        [
+          "cat a.txt missing.txt b.txt",
+          { stdout: "a\nb\n", stderr: expect.stringMatching(new RegExp(`^${missing("missing")}$`)) },
+        ],
+        [
+          "cat missing.txt a.txt",
+          { stdout: "a\n", stderr: expect.stringMatching(new RegExp(`^${missing("missing")}$`)) },
+        ],
+        [
+          "cat a.txt missing.txt",
+          { stdout: "a\n", stderr: expect.stringMatching(new RegExp(`^${missing("missing")}$`)) },
+        ],
+        [
+          "cat a.txt missing.txt b.txt > out.txt",
+          { stdout: "", stderr: expect.stringMatching(new RegExp(`^${missing("missing")}$`)), "out.txt": "a\nb\n" },
+        ],
+        [
+          "cat a.txt missing.txt b.txt 2> err.txt",
+          { stdout: "a\nb\n", stderr: "", "err.txt": expect.stringMatching(new RegExp(`^${missing("missing")}$`)) },
+        ],
+        ["cat .", { stdout: "", stderr: "cat: .: Is a directory\n" }],
+        ["cat a.txt . b.txt", { stdout: "a\nb\n", stderr: "cat: .: Is a directory\n" }],
+      ] as const) {
+        test.concurrent.skipIf(!isWindows)(command, async () => {
+          expect(await run(command, "", { "a.txt": "a\n", "b.txt": "b\n" })).toEqual({
+            stdout: { ...expected, exitCode: 1 },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+      }
+    });
+  });
+
   // `ulimit -n` caps the fd table of the child so the pipeline cannot create
   // its pipes (EMFILE). The pipeline must print the error on its stderr and
   // finish with exit code 1 so the `$` promise settles and the script goes on,
@@ -679,6 +927,81 @@ describe("bunshell", () => {
       expect(results).toEqual([...Array(firstFailure).fill(ok), ...Array(results.length - firstFailure).fill(emfile)]);
       expect(exitCode).toBe(0);
     });
+  });
+
+  // A pipeline's pipes and a child's stdio pipes are created side by side in one process. Each
+  // script runs in a fresh process so that the two start from the same state no matter what ran
+  // earlier in this file.
+  describe("pipelines next to children with piped stdio", () => {
+    const script = /* ts */ `
+      import { $ } from "bun";
+      const spawnChild = () =>
+        Bun.spawn({
+          cmd: [process.execPath, "-e", 'process.stdin.on("data", () => {}).on("end", () => process.stdout.write("bye"))'],
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+      const finish = async child => {
+        child.stdin.end();
+        const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const pipeline = async i => {
+        const r = await $\`echo hi \${i} | cat | cat\`.nothrow().quiet();
+        return { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+      };
+      const pipelines = [];
+      const children = [];
+      switch (process.env.ORDER) {
+        case "child first": {
+          children.push(spawnChild());
+          for (let i = 0; i < 4; i++) pipelines.push(await pipeline(i));
+          break;
+        }
+        case "pipelines first": {
+          // A pipeline creates its pipes before its first await, so these are all open here.
+          for (let i = 0; i < 4; i++) pipelines.push(pipeline(i));
+          for (let i = 0; i < 2; i++) children.push(spawnChild());
+          break;
+        }
+        case "interleaved": {
+          for (let i = 0; i < 6; i++) {
+            children.push(spawnChild());
+            pipelines.push(pipeline(i));
+          }
+          break;
+        }
+      }
+      console.log(
+        JSON.stringify({
+          pipelines: await Promise.all(pipelines),
+          children: await Promise.all(children.map(finish)),
+        }),
+      );
+    `;
+
+    for (const [order, pipelines, children] of [
+      ["child first", 4, 1],
+      ["pipelines first", 4, 2],
+      ["interleaved", 6, 6],
+    ] as const) {
+      test.concurrent(order, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1", ORDER: order },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          pipelines: Array.from({ length: pipelines }, (_, i) => ({ stdout: `hi ${i}\n`, stderr: "", exitCode: 0 })),
+          children: Array(children).fill({ stdout: "bye", stderr: "", exitCode: 0 }),
+        });
+        expect(exitCode).toBe(0);
+      });
+    }
   });
 
   describe("operators no spaces", async () => {
@@ -1864,6 +2187,57 @@ describe("deno_task", () => {
       .stderr("Stdout\nStderr\n")
       .quiet()
       .runAsTest("redirect stdout to stderr quiet");
+
+    // `bun exec` hands its own stdout and stderr to the command, here two disk files. The
+    // duplicated stream has to be the target's very file: both streams in it, in the order they
+    // were written, and nothing in between the command and the file.
+    describe("2>&1 and 1>&2 when the shell writes to files", () => {
+      const child = `
+        const fs = require("fs");
+        const kind = fd => (fs.fstatSync(fd).isFile() ? "a file" : "not a file");
+        fs.writeSync(1, "stdout is " + kind(1) + "\\n");
+        fs.writeSync(2, "stderr is " + kind(2) + "\\n");
+        fs.writeSync(1, "stdout again\\n");`;
+      const all = "stdout is a file\nstderr is a file\nstdout again\n";
+      // %s stands for the command that runs child.js.
+      for (const [name, script, expected] of [
+        ["2>&1", "%s 2>&1", { stdout: all, stderr: "" }],
+        ["1>&2", "%s 1>&2", { stdout: "", stderr: all }],
+        ["no redirect", "%s", { stdout: "stdout is a file\nstdout again\n", stderr: "stderr is a file\n" }],
+        ["2>&1 after a builtin wrote to the same file", "echo first; %s 2>&1", { stdout: "first\n" + all, stderr: "" }],
+        [
+          "2>&1 at the head of a pipeline",
+          "%s 2>&1 | cat",
+          { stdout: all.replaceAll("a file", "not a file"), stderr: "" },
+        ],
+      ] as const) {
+        test.concurrent(name, async () => {
+          using dir = tempDir("shell-dup-redirect", { "child.js": child });
+          const stdoutPath = join(String(dir), "stdout.txt");
+          const stderrPath = join(String(dir), "stderr.txt");
+          const stdout = openSync(stdoutPath, "w");
+          const stderr = openSync(stderrPath, "w");
+          try {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), "exec", script.replace("%s", `"${BUN}" child.js`)],
+              env: bunEnv,
+              cwd: String(dir),
+              stdin: "ignore",
+              stdout,
+              stderr,
+            });
+            const exitCode = await proc.exited;
+            expect({ stdout: readFileSync(stdoutPath, "utf8"), stderr: readFileSync(stderrPath, "utf8") }).toEqual(
+              expected,
+            );
+            expect(exitCode).toBe(0);
+          } finally {
+            closeSync(stdout);
+            closeSync(stderr);
+          }
+        });
+      }
+    });
 
     TestBuilder.command`echo hi > /dev/null`.quiet().runAsTest("redirect /dev/null");
 

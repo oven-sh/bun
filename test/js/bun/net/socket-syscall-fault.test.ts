@@ -124,7 +124,7 @@ test.concurrent(
   60_000,
 );
 
-// us_poll_start_rc wraps uv_poll_init_socket on Windows and EPOLL_CTL_ADD /
+// us_poll_start_rc is FIONBIO + an AFD poll on Windows and EPOLL_CTL_ADD /
 // kevent on posix. On Windows the return value was ignored, so an ioctlsocket
 // FIONBIO failure left a never-initialized uv_poll_t that uv_unref/uv_poll_start
 // then operated on (assertion failure at libuv win/poll.c:508 in debug,
@@ -215,7 +215,7 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
 // A paused socket whose peer hung up is taken out of epoll by the dispatcher
 // (EPOLLHUP is level-triggered and cannot be masked) and registered again by
 // resume(), which is a fresh EPOLL_CTL_ADD and can fail the way the first one
-// can. epoll only: kqueue and libuv never park the fd, so their resume is a
+// can. epoll only: kqueue and IOCP never park the fd, so their resume is a
 // plain filter/poll change with nothing for the hook to fail. onread mode, because
 // like in node only that mode's pause() stops the handle (a plain pause() keeps
 // reading into the stream's buffer, which would deliver the reply as data here).

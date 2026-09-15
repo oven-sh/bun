@@ -571,7 +571,7 @@ pub struct CommandLineArguments {
     pub(crate) node_linker: Option<Options::NodeLinker>,
 
     pub(crate) minimum_release_age_ms: Option<f64>,
-    pub(crate) minimum_release_age_excludes: &'static [&'static [u8]],
+    pub(crate) minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
 
     // `bun pm version` options
     pub(crate) git_tag_version: bool,
@@ -676,7 +676,7 @@ impl Default for CommandLineArguments {
             node_linker: None,
 
             minimum_release_age_ms: None,
-            minimum_release_age_excludes: &[],
+            minimum_release_age_excludes: None,
 
             git_tag_version: true,
             allow_same_version: false,
@@ -1389,9 +1389,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             let excludes: Vec<&'static [u8]> = exclude_values
                 .iter()
                 .flat_map(|value| strings::split(*value, b","))
+                .map(|name| strings::trim(name, &strings::WHITESPACE_CHARS))
                 .filter(|name| !name.is_empty())
                 .collect();
-            cli.minimum_release_age_excludes = bun_core::heap::release(excludes.into_boxed_slice());
+            cli.minimum_release_age_excludes =
+                Some(bun_core::heap::release(excludes.into_boxed_slice()));
         }
 
         let omit_values = args.options(b"--omit");

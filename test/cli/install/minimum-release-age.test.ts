@@ -1338,7 +1338,8 @@ describe("minimum-release-age", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age-excludes", "excluded-package,regular-package"],
+        // Whitespace around the comma is ignored.
+        cmd: [bunExe(), "install", "--minimum-release-age-excludes", "excluded-package, regular-package"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1428,6 +1429,40 @@ describe("minimum-release-age", () => {
       expect(lockfile).toContain("excluded-package@1.0.1");
       expect(lockfile).toContain("regular-package@2.1.0");
       expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("an empty --minimum-release-age-excludes clears the bunfig.toml list", async () => {
+      using dir = tempDir("exclusions-cli-empty", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            "excluded-package": "*",
+          },
+        }),
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            minimumReleaseAgeExcludes: ["excluded-package"],
+            registry: mockRegistryUrl,
+          },
+        }),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age-excludes", ""],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // The bunfig exclusion no longer applies, so the age gate filters the package.
+      expect(lockfile).toContain("excluded-package@1.0.0");
+      expect(lockfile).not.toContain("excluded-package@1.0.1");
     });
   });
 

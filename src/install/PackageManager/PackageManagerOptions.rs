@@ -801,8 +801,8 @@ impl Options {
                 self.minimum_release_age_ms = Some(min_age_ms);
             }
 
-            if !cli.minimum_release_age_excludes.is_empty() {
-                self.minimum_release_age_excludes = Some(cli.minimum_release_age_excludes);
+            if let Some(excludes) = cli.minimum_release_age_excludes {
+                self.minimum_release_age_excludes = Some(excludes);
             }
 
             self.lockfile_only = cli.lockfile_only;

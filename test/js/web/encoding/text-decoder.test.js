@@ -383,6 +383,68 @@ describe("TextDecoder", () => {
   });
 });
 
+describe("TextDecoder windows-1252", () => {
+  // https://encoding.spec.whatwg.org/index-windows-1252.txt, bytes 0x80..0x9F.
+  // Every other byte maps to the code point with the same value.
+  const C1 = [
+    0x20ac, 0x0081, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008d,
+    0x017d, 0x008f, 0x0090, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a,
+    0x0153, 0x009d, 0x017e, 0x0178,
+  ];
+  const reference = bytes => {
+    let out = "";
+    for (const b of bytes) out += String.fromCharCode(b >= 0x80 && b < 0xa0 ? C1[b - 0x80] : b);
+    return out;
+  };
+
+  it("maps every byte across ASCII gaps of any length", () => {
+    const decoder = new TextDecoder("windows-1252");
+    const bytes = [];
+    // Non-ASCII runs separated by ASCII gaps of lengths around the 64-byte
+    // block the decoder classifies at a time.
+    for (const gap of [0, 1, 2, 15, 31, 32, 33, 63, 64, 65, 100, 200]) {
+      for (let b = 0x80; b <= 0xff; b++) bytes.push(b);
+      for (let i = 0; i < gap; i++) bytes.push(0x61 + (i % 26));
+      bytes.push(0xe9, 0x41, 0x80, 0x42, 0x9f, 0x43);
+      for (let i = 0; i < gap; i++) bytes.push(0x30 + (i % 10));
+    }
+    const input = new Uint8Array(bytes);
+    expect(decoder.decode(input)).toBe(reference(input));
+    for (const start of [0, 1, 31, 32, 33, 63, 64, 65, 255, 256, 257]) {
+      for (const length of [1, 63, 64, 65, 300]) {
+        const slice = input.subarray(start, start + length);
+        expect(decoder.decode(slice)).toBe(reference(slice));
+      }
+    }
+  });
+
+  it("decodes dense non-ASCII input at a bounded cost per byte", () => {
+    const decoder = new TextDecoder("windows-1252");
+    const N = 2 << 20;
+    const dense = Buffer.alloc(N, 0xe9);
+    // One non-ASCII byte, then ASCII: the same UTF-16 output path, with the
+    // ASCII tail widened in one pass.
+    const oneAccent = Buffer.alloc(N, 0x61);
+    oneAccent[0] = 0xe9;
+    const best = input => {
+      let b = Infinity;
+      for (let i = 0; i < 10; i++) {
+        const t0 = performance.now();
+        decoder.decode(input);
+        b = Math.min(b, performance.now() - t0);
+      }
+      return b;
+    };
+    withoutAggressiveGC(() => {
+      expect(decoder.decode(dense).charCodeAt(N - 1)).toBe(0xe9);
+      // With one dispatched SIMD scan per non-ASCII byte, the dense input cost
+      // 10x (debug) to 18x (release) the one-accent input.
+      const ratio = best(dense) / Math.max(best(oneAccent), 0.01);
+      expect(ratio).toBeLessThan(5);
+    });
+  });
+});
+
 describe("TextDecoder ignoreBOM", () => {
   it.each([
     {

@@ -1390,10 +1390,11 @@ impl FetchTasklet {
         }
 
         // some times we don't have metadata so we also check http.url
+        // Without the URL's userinfo: errors get logged.
         let path = if let Some(metadata) = &self.metadata {
-            BunString::clone_utf8(metadata.url.slice())
+            BunString::clone_utf8(&ZigURL::parse(metadata.url.slice()).href_without_userinfo())
         } else if let Some(http_) = &self.http {
-            BunString::clone_utf8(http_.url.href)
+            BunString::clone_utf8(&http_.url.href_without_userinfo())
         } else {
             BunString::EMPTY
         };

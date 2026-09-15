@@ -77,6 +77,10 @@ pub struct InternalStateFlags {
     /// redirect hop / failure, so each hop re-parks independently).
     pub(crate) is_waiting_for_cert_check: bool,
     pub(crate) receive_paused: bool,
+    /// `request_sent_len` is counting the CONNECT request, not the request
+    /// `ConnectionStats` reports. Cleared where the cursor restarts for the
+    /// tunneled request.
+    pub(crate) sending_connect: bool,
     /// Set once `HTTPClient::compress_body_for_send` has run for this attempt.
     /// Guards header-retry re-entries from compressing again. Cleared by
     /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
@@ -96,6 +100,7 @@ impl InternalStateFlags {
             resend_request_body_on_redirect: false,
             is_waiting_for_cert_check: false,
             receive_paused: false,
+            sending_connect: false,
             body_compressed: false,
         }
     }

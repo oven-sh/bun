@@ -8783,7 +8783,8 @@ declare module "bun" {
      * Request bytes handed to the socket: the request head plus
      * {@link requestBodyBytesSent}. Counted before TLS encryption. For an `https:`
      * request through a proxy this counts the tunneled request, not the `CONNECT`
-     * exchange. Over HTTP/3 the head is counted before header compression.
+     * exchange: when the proxy refuses the tunnel, nothing was sent. Over HTTP/3
+     * the head is counted before header compression.
      */
     bytesSent: number;
     /**

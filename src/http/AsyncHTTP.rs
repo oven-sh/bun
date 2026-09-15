@@ -492,7 +492,9 @@ impl<'a> AsyncHTTP<'a> {
         this.client.compress = options.compress;
         this.client.proxy_settings = options.proxy_settings;
         this.client.pool = options.pool;
-        this.client.flags.bypass_pool = options.bypass_pool;
+        if options.bypass_pool {
+            this.client.flags.pool_bypass = crate::PoolBypass::NotThisHop;
+        }
         this.client.flags.collect_stats = options.collect_stats;
 
         // `client.proxy_authorization` stays `None` on the JS-thread original;

@@ -495,7 +495,7 @@ describe.concurrent("bun-install", () => {
               no_proxy: undefined,
             },
           });
-          const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(err).toContain(`error: ProxyConnectFailed (${code}) downloading package manifest bar`);
           expect(seen).toEqual(Array(connects).fill("CONNECT registry.invalid:443 HTTP/1.1"));
           expect(exitCode).toBe(1);

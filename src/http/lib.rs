@@ -97,6 +97,21 @@ pub enum HTTPVerboseLevel {
     Curl,
 }
 
+/// A request whose `checkServerIdentity` is its own closure neither takes nor
+/// returns a pooled socket on its `https:` hops: a closure has no identity a
+/// pool key could compare. An `http:` hop, where the closure cannot run, pools
+/// as usual. Decided per hop in `start()`, because `url` already names the
+/// next hop by the time a redirect releases this hop's socket.
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum PoolBypass {
+    #[default]
+    Off,
+    /// Asked for, and the hop in progress is `http:`.
+    NotThisHop,
+    /// Asked for, and the hop in progress is `https:`.
+    ThisHop,
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum Protocol {
@@ -188,12 +203,8 @@ enum HTTPUpgradeState {
 pub struct Flags {
     pub(crate) disable_timeout: bool,
     pub(crate) disable_keepalive: bool,
-    /// The connection is neither taken from nor returned to the keep-alive
-    /// pool: what authenticates its peer (a per-request `checkServerIdentity`
-    /// closure) has no identity a pool key could compare.
-    pub(crate) bypass_pool: bool,
-    /// See `HTTPClient::bypasses_pool`.
-    pub(crate) hop_bypasses_pool: bool,
+    /// Whether this request stays out of the keep-alive pool. See `PoolBypass`.
+    pub(crate) pool_bypass: PoolBypass,
     /// The owner reads `HTTPClientResult::stats`, so look up the peer address.
     pub(crate) collect_stats: bool,
     pub(crate) disable_decompression: bool,
@@ -220,8 +231,7 @@ impl Default for Flags {
         Self {
             disable_timeout: false,
             disable_keepalive: false,
-            bypass_pool: false,
-            hop_bypasses_pool: false,
+            pool_bypass: PoolBypass::Off,
             collect_stats: false,
             disable_decompression: false,
             did_have_handshaking_error: false,
@@ -701,11 +711,10 @@ pub struct ProxySettings {
 
 impl ProxySettings {
     /// Returns `None` when neither proxy is set: no re-evaluation is needed.
-    /// `no_proxy` is the `no_proxy` and `NO_PROXY` values; either exempts a host.
     fn new(
         http_proxy: Option<&[u8]>,
         https_proxy: Option<&[u8]>,
-        no_proxy: [&[u8]; 2],
+        no_proxy: &[u8],
     ) -> Option<Box<Self>> {
         let http_proxy = http_proxy.unwrap_or(b"");
         let https_proxy = https_proxy.unwrap_or(b"");
@@ -715,7 +724,7 @@ impl ProxySettings {
         Some(Box::new(Self {
             http_proxy: http_proxy.into(),
             https_proxy: https_proxy.into(),
-            no_proxy: no_proxy.join(&b","[..]).into_boxed_slice(),
+            no_proxy: no_proxy.into(),
         }))
     }
 
@@ -725,7 +734,7 @@ impl ProxySettings {
         if http.is_none() && https.is_none() {
             return None;
         }
-        Self::new(http, https, env.no_proxy_lists())
+        Self::new(http, https, env.no_proxy_list())
     }
 
     /// Build from an explicit `proxy` option. The same proxy is used for both
@@ -735,10 +744,10 @@ impl ProxySettings {
         env: &bun_dotenv::Loader,
         respect_no_proxy: bool,
     ) -> Option<Box<Self>> {
-        let no_proxy: [&[u8]; 2] = if respect_no_proxy {
-            env.no_proxy_lists()
+        let no_proxy: &[u8] = if respect_no_proxy {
+            env.no_proxy_list()
         } else {
-            [b"", b""]
+            b""
         };
         Self::new(Some(proxy_href), Some(proxy_href), no_proxy)
     }
@@ -2122,6 +2131,8 @@ impl<'a> HTTPClient<'a> {
     /// Re-enter the connect path for a request that was coalesced onto an h2
     /// session but couldn't be attached (cap reached, or ALPN chose h1).
     pub(crate) fn retry_after_h2_coalesce(&mut self) {
+        // Nothing went out on the session it was matched to.
+        self.stats = ConnectionStats::default();
         self.start_::<true>();
     }
 
@@ -2264,14 +2275,18 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::DNSResolveFailed);
             return;
         }
-        // Windows: WSAENOTCONN is uSockets' recv() probe finding the socket
-        // unconnected after SO_ERROR was already consumed; it names no cause.
+        // Windows: only a WSA code names a cause. Below that range is the CRT's
+        // `ECONNREFUSED` uSockets stores when every address of a name failed,
+        // a different number in `SystemErrno`; and WSAENOTCONN is its recv()
+        // probe finding the socket unconnected after SO_ERROR was consumed.
+        const WSA_FIRST: i32 = 10000;
         const WSAENOTCONN: i32 = 10057;
-        self.state.connect_errno = if cfg!(windows) && connect_errno == WSAENOTCONN {
-            0
-        } else {
-            connect_errno
-        };
+        self.state.connect_errno =
+            if cfg!(windows) && (connect_errno < WSA_FIRST || connect_errno == WSAENOTCONN) {
+                0
+            } else {
+                connect_errno
+            };
         self.fail(crate::Error::ConnectionRefused);
     }
 
@@ -2310,12 +2325,8 @@ impl<'a> HTTPClient<'a> {
         false
     }
 
-    /// `bypass_pool` for the hop in progress: the closure only ever sees an
-    /// `https:` target's certificate, so an `http:` hop pools as usual. Decided
-    /// in `start()`, because `url` already names the next hop by the time a
-    /// redirect releases this hop's socket.
     fn bypasses_pool(&self) -> bool {
-        self.flags.hop_bypasses_pool
+        self.flags.pool_bypass == PoolBypass::ThisHop
     }
 
     /// Hash of the per-request tunnel discriminators beyond the (proxy, target
@@ -2763,7 +2774,13 @@ impl<'a> HTTPClient<'a> {
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
         self.state = InternalState::init(body);
         self.stats = ConnectionStats::default();
-        self.flags.hop_bypasses_pool = self.flags.bypass_pool && self.url.is_https();
+        if self.flags.pool_bypass != PoolBypass::Off {
+            self.flags.pool_bypass = if self.url.is_https() {
+                PoolBypass::ThisHop
+            } else {
+                PoolBypass::NotThisHop
+            };
+        }
 
         if self.is_https() {
             self.start_::<true>();
@@ -3042,6 +3059,7 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
                 // DO the tunneling!
                 self.flags.proxy_tunneling = true;
+                self.state.flags.sending_connect = true;
                 write_proxy_connect(writer, self)?;
             } else {
                 bun_core::scoped_log!(fetch, "start proxy request (http proxy)");
@@ -3768,9 +3786,12 @@ impl<'a> HTTPClient<'a> {
             to_read = &to_read[bytes_read..];
 
             if parsed.status_code == 101 {
-                if self.flags.upgrade_state == HTTPUpgradeState::None
-                    || self.is_reading_connect_reply()
-                {
+                // A proxy that answers CONNECT with 101 refused the tunnel like
+                // with any other non-2xx status.
+                if self.is_reading_connect_reply() {
+                    break parsed;
+                }
+                if self.flags.upgrade_state == HTTPUpgradeState::None {
                     // we cannot upgrade to websocket because the client did not request it!
                     self.close_and_fail::<IS_SSL>(crate::Error::UnrequestedUpgrade, socket);
                     return;
@@ -4487,7 +4508,11 @@ impl<'a> HTTPClient<'a> {
             return stats;
         }
         if self.flags.protocol == Protocol::Http1_1 {
-            let written = self.state.request_sent_len;
+            let written = if self.state.flags.sending_connect {
+                0
+            } else {
+                self.state.request_sent_len
+            };
             let head = self.state.request_headers_len;
             let sendfile_sent = match &self.state.original_request_body {
                 HTTPRequestBody::Sendfile(sendfile) => {

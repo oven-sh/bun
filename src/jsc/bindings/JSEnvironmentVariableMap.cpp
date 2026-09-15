@@ -174,6 +174,21 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // A write to an object that merely inherits from process.env is that
+    // object's: an ordinary set, with the value as given, that changes nothing
+    // about the process. The accessors process.env keeps for TZ and
+    // NODE_TLS_REJECT_UNAUTHORIZED act on the process, so past those the value
+    // is defined on the receiver directly.
+    if (slot.thisValue() != cell) [[unlikely]] {
+        unsigned attributes = 0;
+        bool isProcessAccessor = !parseIndex(propertyName)
+            && isValidOffset(cell->structure()->get(vm, propertyName, attributes))
+            && (attributes & PropertyAttribute::CustomAccessor);
+        if (isProcessAccessor)
+            RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    }
+
     auto* uid = propertyName.uid();
     if (uid && uid->isSymbol()) {
         throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
@@ -203,8 +218,7 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         return true;
     }
     // fetch() reads the proxy variables from the native env map.
-    // Only for a write to process.env itself, not to an object inheriting from it.
-    if (uid && slot.thisValue() == cell && isProxyEnvVarName(StringView(uid))) [[unlikely]] {
+    if (uid && isProxyEnvVarName(StringView(uid))) [[unlikely]] {
         setNativeEnvValue(globalObject, String(uid), string);
         RETURN_IF_EXCEPTION(scope, false);
         static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);

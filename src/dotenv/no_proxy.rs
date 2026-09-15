@@ -40,13 +40,21 @@ fn split_port(entry: &[u8]) -> (&[u8], Option<&[u8]>) {
     (entry, None)
 }
 
+/// A port or a prefix length: ASCII digits only (`parse_int` would take `+8` and `8_0`).
+fn parse_digits<T: core::str::FromStr>(text: &[u8]) -> Option<T> {
+    if text.is_empty() || !text.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    bun_core::fmt::parse_ascii::<T>(text)
+}
+
 fn cidr_contains(entry: &[u8], slash: usize, host: IpAddr) -> bool {
     let Some(written) =
         bun_core::fmt::parse_ascii::<IpAddr>(bun_url::strip_ipv6_brackets(&entry[..slash]))
     else {
         return false;
     };
-    let Ok(mut bits) = bun_core::fmt::parse_int::<u8>(&entry[slash + 1..], 10) else {
+    let Some(mut bits) = parse_digits::<u8>(&entry[slash + 1..]) else {
         return false;
     };
     // `::ffff:10.0.0.0/104` is `10.0.0.0/8`.
@@ -101,8 +109,8 @@ pub fn matches(list: &[u8], hostname: &[u8], port: u16) -> bool {
 
         let (entry_host, entry_port) = split_port(entry);
         if let Some(entry_port) = entry_port {
-            match bun_core::fmt::parse_int::<u16>(entry_port, 10) {
-                Ok(p) if p == port => {}
+            match parse_digits::<u16>(entry_port) {
+                Some(p) if p == port => {}
                 _ => continue,
             }
         }

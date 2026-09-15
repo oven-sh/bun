@@ -127,7 +127,7 @@ describe("CONNECT failure status", () => {
             tls: laxTls,
             headers: { Connection: "Upgrade", Upgrade: "websocket" },
           }),
-        ).rejects.toMatchObject({ code: "UnrequestedUpgrade" });
+        ).rejects.toMatchObject({ code: "ERR_PROXY_TUNNEL", status: 101 });
         expect(origin.requests.length).toBe(0);
       },
     );

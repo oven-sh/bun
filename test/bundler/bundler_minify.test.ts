@@ -1190,6 +1190,169 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/4692
+  itBundled("minify/DirectEvalPinsCjsModuleScope", {
+    files: {
+      "/entry.cjs": /* js */ `
+        var outerX = 41;
+        var outerY = "message";
+        console.log("via-eval", eval("outerX + 1"), eval("outerY"));
+        console.log("args", eval("typeof exports"), eval("typeof module"));
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    minifySyntax: true,
+    target: "node",
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      expect(text).toContain("var outerX=41");
+      expect(text).toContain('outerY="message"');
+      // The CJS wrapper parameters must also keep their original names so
+      // that eval("exports") / eval("module") resolve.
+      expect(text).toContain("(exports,module)");
+    },
+    run: {
+      stdout: "via-eval 42 message\nargs object object",
+    },
+  });
+  itBundled("minify/DirectEvalPinsCjsModuleScopeTargetBun", {
+    files: {
+      "/entry.cjs": /* js */ `
+        var outerX = 41;
+        console.log("via-eval", eval("outerX + 1"));
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var outerX=41");
+    },
+    run: {
+      stdout: "via-eval 42",
+    },
+  });
+  itBundled("minify/DirectEvalPinsCjsModuleScopeNoBundle", {
+    files: {
+      "/entry.js": /* js */ `
+        module.exports = 1;
+        var outerX = 41;
+        console.log("via-eval", eval("outerX + 1"));
+      `,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var outerX = 41");
+    },
+    run: {
+      stdout: "via-eval 42",
+    },
+  });
+  itBundled("minify/IndirectEvalDoesNotPinCjsModuleScope", {
+    files: {
+      "/entry.cjs": /* js */ `
+        var outerLongName = 41;
+        (0, eval)("1");
+        console.log(outerLongName);
+      `,
+    },
+    minifyIdentifiers: true,
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("outerLongName");
+    },
+    run: {
+      stdout: "41",
+    },
+  });
+  itBundled("minify/DirectEvalEsmModuleScopeStillRenamed", {
+    files: {
+      "/entry.js": /* js */ `
+        var outerLongName = 41;
+        eval("1");
+        console.log(outerLongName);
+        export {};
+      `,
+    },
+    minifyIdentifiers: true,
+    target: "node",
+    onAfterBundle(api) {
+      // ESM top-level symbols are exempt from pinning when bundling (scope
+      // hoisting cannot preserve them anyway), matching esbuild.
+      api.expectFile("/out.js").not.toContain("outerLongName");
+    },
+    run: {
+      stdout: "41",
+    },
+  });
+  itBundled("minify/DirectEvalPinsOuterCjsModuleScope", {
+    files: {
+      "/entry.cjs": /* js */ `
+        var outerX = 10;
+        function inner() {
+          var outerY = 5;
+          return eval("outerX + outerY");
+        }
+        console.log(inner());
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    target: "node",
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      expect(text).toContain("var outerX=10");
+      expect(text).toContain("var outerY=5");
+    },
+    run: {
+      stdout: "15",
+    },
+  });
+  itBundled("minify/DirectEvalPinsCjsModuleScopeWithImportMeta", {
+    files: {
+      "/entry.cjs": /* js */ `
+        module.exports = 1;
+        var outerX = 41;
+        console.log(typeof import.meta.url, eval("outerX + 1"));
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      // `import.meta` marks the file as having ES module syntax, but it is
+      // still CJS-wrapped because `module.exports` is used. Module-scope
+      // names must stay pinned for eval.
+      api.expectFile("/out.js").toContain("var outerX=41");
+    },
+    run: {
+      stdout: "string 42",
+    },
+  });
+  itBundled("minify/DirectEvalMjsModuleScopeStillRenamed", {
+    files: {
+      "/main.mjs": `import "./a.mjs"; import "./b.mjs";`,
+      "/a.mjs": `let outerLongName = 41; eval("1"); console.log("a", outerLongName);`,
+      "/b.mjs": `let outerLongName = 99; eval("1"); console.log("b", outerLongName);`,
+    },
+    minifyIdentifiers: true,
+    target: "node",
+    onAfterBundle(api) {
+      // a.mjs and b.mjs are scope-hoisted via `module_type == Esm` even
+      // though neither contains an import/export/TLA token. The ESM
+      // exemption must still apply so the two declarations are
+      // deconflicted in the shared chunk scope, matching esbuild.
+      api.expectFile("/out.js").not.toContain("outerLongName");
+    },
+    run: {
+      stdout: "a 41\nb 99",
+    },
+  });
+
   itBundled("minify/AdditionalGlobalConstructorOptimization", {
     files: {
       "/entry.js": /* js */ `

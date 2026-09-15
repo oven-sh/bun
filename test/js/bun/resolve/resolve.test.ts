@@ -677,17 +677,84 @@ describe("wildcard exports with @ in matched subpath", () => {
   });
 });
 
+const resolveError = (spec: string, root: string) => {
+  try {
+    return { resolved: Bun.resolveSync(spec, root) };
+  } catch (e: any) {
+    return { name: e.name, code: e.code };
+  }
+};
+
+// Node's PACKAGE_IMPORTS_EXPORTS_RESOLVE only treats an `exports` key as a
+// pattern when it contains exactly one "*", and only matches when the subpath
+// is at least as long as the key (so the "*" captures at least one character).
+// Both constraints are enforced for parity: a map that resolves under Bun but
+// throws ERR_PACKAGE_PATH_NOT_EXPORTED under Node is a portability hazard.
+describe("package.json exports pattern-key constraints", () => {
+  const notExported = { name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" };
+
+  it.concurrent("does not match a key that contains more than one '*'", () => {
+    using dir = tempDir("resolver-exports-two-star-key", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/pat/package.json": JSON.stringify({
+        name: "pat",
+        exports: { "./two/*/*": "./src/two/*/*.js", "./f/*.js": "./src/f/*.js" },
+      }),
+      "node_modules/pat/src/two/q/q.js": "module.exports = 1;",
+      "node_modules/pat/src/f/deep/y.js": "module.exports = 2;",
+    });
+    const root = String(dir);
+
+    expect(resolveError("pat/two/q/*", root)).toEqual(notExported);
+    expect(resolveError("pat/two/q/anything", root)).toEqual(notExported);
+    // single-"*" control: must still match, including across "/"
+    expect(Bun.resolveSync("pat/f/deep/y.js", root)).toBe(join(root, "node_modules/pat/src/f/deep/y.js"));
+  });
+
+  it.concurrent("does not match a key whose '*' would capture the empty string", () => {
+    using dir = tempDir("resolver-exports-empty-capture", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/pat/package.json": JSON.stringify({
+        name: "pat",
+        exports: { "./e/*": "./src/e/*.js", "./mid/*.js": "./src/mid/*.js" },
+      }),
+      "node_modules/pat/src/e/.js": "module.exports = 1;",
+      "node_modules/pat/src/e/x.js": "module.exports = 2;",
+      "node_modules/pat/src/mid/.js": "module.exports = 3;",
+      "node_modules/pat/src/mid/x.js": "module.exports = 4;",
+    });
+    const root = String(dir);
+
+    // subpath exactly equals the key's base: "*" would capture ""
+    expect(resolveError("pat/e/", root)).toEqual(notExported);
+    // trailer present, subpath length == key length - 1: "*" would capture ""
+    expect(resolveError("pat/mid/.js", root)).toEqual(notExported);
+    // one-character captures must still match
+    expect(Bun.resolveSync("pat/e/x", root)).toBe(join(root, "node_modules/pat/src/e/x.js"));
+    expect(Bun.resolveSync("pat/mid/x.js", root)).toBe(join(root, "node_modules/pat/src/mid/x.js"));
+  });
+
+  it.concurrent("applies the same constraints to the imports field", () => {
+    using dir = tempDir("resolver-imports-pattern-key", {
+      "package.json": JSON.stringify({
+        name: "host",
+        imports: { "#two/*/*": "./src/two/*/*.js", "#e/*": "./src/e/*.js" },
+      }),
+      "src/two/q/q.js": "module.exports = 1;",
+      "src/e/.js": "module.exports = 2;",
+      "src/e/x.js": "module.exports = 3;",
+    });
+    const root = String(dir);
+
+    expect(resolveError("#two/q/*", root)).toEqual(notExported);
+    expect(resolveError("#e/", root)).toEqual(notExported);
+    expect(Bun.resolveSync("#e/x", root)).toBe(join(root, "src/e/x.js"));
+  });
+});
+
 describe("package.json exports target percent-encoding", () => {
   // ESModule.finalize short-circuits when the resolved path contains no '%'.
   // These cases exercise both that branch and the decode branch to keep them in lockstep.
-  const resolveError = (spec: string, root: string) => {
-    try {
-      return { resolved: Bun.resolveSync(spec, root) };
-    } catch (e: any) {
-      return { name: e.name, code: e.code };
-    }
-  };
-
   it.concurrent("resolves a plain target and rejects a directory target", () => {
     using dir = tempDir("resolver-exports-finalize-plain", {
       "package.json": JSON.stringify({ name: "host" }),

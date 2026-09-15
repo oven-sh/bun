@@ -210,6 +210,8 @@ bun install --omit dev
 bun install --omit=dev --omit=peer --omit=optional
 ```
 
+If one `package.json` lists a package under both `devDependencies` and optional `peerDependencies`, `--omit dev` and `--production` leave it out, unless an installed package still depends on it. The same name under `devDependencies` and required `peerDependencies` stays installed, because Bun installs peer dependencies by default.
+
 ---
 
 ## Dry run

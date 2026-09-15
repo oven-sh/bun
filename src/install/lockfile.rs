@@ -1396,6 +1396,7 @@ impl Lockfile {
             late_bound_optional_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
+            reached: Default::default(),
         };
 
         Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;

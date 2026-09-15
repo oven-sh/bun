@@ -390,6 +390,27 @@ test("expect.extend with numeric index keys does not crash", () => {
   expect(typeof expect[1073741820]).toBe("function");
 });
 
+test("a custom matcher inherits from Function.prototype", () => {
+  expect.extend({
+    _toBeFoo(received) {
+      return { pass: received === "foo", message: () => "expected foo" };
+    },
+  });
+  for (const matcher of [expect._toBeFoo, expect("foo")._toBeFoo, expect("foo").not._toBeFoo]) {
+    expect(Object.getPrototypeOf(matcher)).toBe(Function.prototype);
+    expect(matcher).toBeInstanceOf(Function);
+    expect(typeof matcher.bind).toBe("function");
+    expect(typeof matcher.call).toBe("function");
+    expect(typeof matcher.apply).toBe("function");
+    if (isBun) {
+      expect(String(matcher)).toBe("function _toBeFoo() { [native code] }");
+    }
+  }
+  expect("foo")._toBeFoo.call(expect("foo"));
+  expect("foo")._toBeFoo.apply(expect("foo"), []);
+  expect("foo")._toBeFoo.call(expect("bar").not);
+});
+
 describe("MatcherContext", () => {
   describe("utils", () => {
     test("RECEIVED_COLOR is a function", () => {

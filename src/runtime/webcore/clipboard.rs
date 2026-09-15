@@ -183,15 +183,13 @@ enum Op {
     },
 }
 
-enum Outcome {
-    /// Empty means the clipboard held nothing this backend recognizes.
-    Representations(Vec<(Mime, Vec<u8>)>),
-    Failed(Unavailable),
-}
+/// `Ok` with no representations means the clipboard held nothing this backend
+/// recognizes, or that a write landed.
+type Outcome = Result<Vec<(Mime, Vec<u8>)>, Unavailable>;
 
 struct ClipboardOp {
     op: Op,
-    outcome: Option<Outcome>,
+    outcome: Outcome,
 }
 
 /// Held across a write's cancel check and platform transaction. A write()
@@ -205,13 +203,10 @@ static WRITE_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 fn write(items: &[(Mime, Vec<u8>)], probe: &CancelProbe) -> Outcome {
     let _serialized = WRITE_LOCK.lock_guard();
     if probe.is_cancelled() {
-        return Outcome::Representations(Vec::new());
+        return Ok(Vec::new());
     }
     let borrowed: Vec<(Mime, &[u8])> = items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
-    match platform::write_types(&borrowed) {
-        Ok(()) => Outcome::Representations(Vec::new()),
-        Err(unavailable) => Outcome::Failed(unavailable),
-    }
+    platform::write_types(&borrowed).map(|()| Vec::new())
 }
 
 struct ClipboardJob;
@@ -221,33 +216,28 @@ impl JobContext for ClipboardJob {
     type Js = RequestHandle;
 
     fn run(this: &mut ClipboardOp, done: Completion<Self>) -> Option<Completion<Self>> {
-        this.outcome = Some(match &this.op {
+        this.outcome = match &this.op {
             Op::Write { items, probe } => write(items, probe),
-            Op::ReadText => match platform::read_type(Mime::TextPlain) {
-                Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
-                Ok(None) => Outcome::Representations(Vec::new()),
-                Err(unavailable) => Outcome::Failed(unavailable),
-            },
-            Op::Read => match platform::read_all(SUPPORTED) {
-                Ok(present) => Outcome::Representations(present),
-                Err(unavailable) => Outcome::Failed(unavailable),
-            },
-        });
+            Op::ReadText => platform::read_type(Mime::TextPlain)
+                .map(|text| text.map_or_else(Vec::new, |bytes| vec![(Mime::TextPlain, bytes)])),
+            Op::Read => platform::read_all(SUPPORTED),
+        };
         Some(done)
     }
 
     fn then(this: ClipboardOp, request: RequestHandle, cx: &JsThread<'_>) -> bun_jsc::JsResult<()> {
         let global = cx.global();
-        match this.outcome.expect("run() filled the outcome") {
-            Outcome::Representations(items) => request.complete(global, &items),
-            Outcome::Failed(unavailable) => request.fail(global, unavailable),
+        match this.outcome {
+            Ok(items) => request.complete(global, &items),
+            Err(unavailable) => request.fail(global, unavailable),
         }
         Ok(())
     }
 }
 
 fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
-    let off = ClipboardOp { op, outcome: None };
+    // A job that never runs reports the clipboard as unavailable.
+    let off = ClipboardOp { op, outcome: Err(Unavailable::Platform) };
     Job::<ClipboardJob>::schedule(&global.js_thread(), off, request);
 }
 
@@ -444,7 +434,6 @@ mod platform {
             return Err(Unavailable::Platform);
         }
         if data.is_null() {
-            debug_assert_eq!(len, 0);
             return Ok(None);
         }
         let mut buf = vec![0u8; len];

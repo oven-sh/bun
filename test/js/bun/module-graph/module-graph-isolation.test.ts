@@ -1148,6 +1148,30 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
     }
   });
 
+  test("a Bun.SQL of the host's: the connection a graph's query made it dial is still the host's", async () => {
+    // (The host's server never answers the startup message, which names the user: the tag.)
+    const sql = new Bun.SQL(`postgres://tag%3Asql-of-the-host@127.0.0.1:${hostTcp.port}/db?sslmode=disable`, {
+      max: 1,
+      connectionTimeout: 60,
+    });
+    try {
+      using made = await newGraph();
+      made.graph.run(() => made.app.call(() => void sql`select 1`.catch(() => {})));
+      await until(() => connected.has("tcp:sql-of-the-host"));
+      made.graph.dispose();
+      await hostTimerTurns();
+      expect(connected.has("tcp:sql-of-the-host")).toBe(true);
+    } finally {
+      // close() does not drop a connection that is still in its handshake: the host's end does.
+      sql.close({ timeout: 0 }).catch(() => {});
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: hostTcp.port,
+        socket: { open: socket => void socket.write("drop:sql-of-the-host\n"), data() {} },
+      });
+    }
+  });
+
   test("node:http2's cached `date` header: the second still turns over after the graph that rendered it first is gone", async () => {
     const dateOf = (port: number) =>
       new Promise<string>((resolve, reject) => {

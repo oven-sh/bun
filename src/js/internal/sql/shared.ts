@@ -655,9 +655,12 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.connectStartedAt = Date.now();
       this.connectAttempts = 0;
     }
-    // A redial starts from a close event, which has no async context.
+    // The pool's connections are its owner's: the Bun.ModuleGraph the SQL instance was made in
+    // (a redial starts from a close event, which has no async context), or no graph's when the
+    // host made it, even if a graph's query is what makes it dial: that graph's dispose() would
+    // otherwise close the host's connections under its queries.
     const graphFrame = this.adapter.ownerGraphFrame;
-    await (graphFrame === undefined
+    await (graphFrame === undefined && AsyncContextFrame.current()?.graph === undefined
       ? this.startConnection()
       : AsyncContextFrame.run(graphFrame, this.startConnection, this));
     if (this.onFinish !== null) {

@@ -62,9 +62,11 @@ fn align_up(v: u64, a: u64) -> u64 {
     (v + a - 1) / a * a
 }
 
-/// True if the buffer looks like an ELF64 binary (magic + 64-bit class).
+/// True if the buffer looks like a little-endian ELF64 binary. All header
+/// reads and writes below assume little-endian fields, so big-endian input is
+/// rejected instead of being silently misread and corrupted.
 pub fn is_elf64(elf: &[u8]) -> bool {
-    elf.len() >= 64 && &elf[0..4] == b"\x7fELF" && elf[4] == 2
+    elf.len() >= 64 && &elf[0..4] == b"\x7fELF" && elf[4] == 2 && elf[5] == 1
 }
 
 /// Validate header and return (e_shoff, e_shnum, e_shstrndx, e_shentsize).
@@ -132,6 +134,20 @@ pub fn has_codesign_section(elf: &[u8]) -> bool {
         return false;
     };
     find_section_by_name(elf, e_shoff, e_shnum, e_shstrndx, e_shentsize, CODESIGN_NAME).is_some()
+}
+
+/// Return `(file offset, size)` of the `.codesign` section when it is present
+/// and in bounds; used to validate an existing self-signature.
+pub fn codesign_section_range(elf: &[u8]) -> Option<(usize, usize)> {
+    let (e_shoff, e_shnum, e_shstrndx, e_shentsize) = parse_header(elf).ok()?;
+    let cs_entry =
+        find_section_by_name(elf, e_shoff, e_shnum, e_shstrndx, e_shentsize, CODESIGN_NAME)?;
+    let off = read_u64(elf, cs_entry + 24) as usize;
+    let size = read_u64(elf, cs_entry + 32) as usize;
+    if off > elf.len() || size > elf.len() - off {
+        return None;
+    }
+    Some((off, size))
 }
 
 /// Strip .codesign section. Returns true if a section was removed.
@@ -253,6 +269,12 @@ fn inject_codesign_section(elf: &[u8]) -> Result<(Vec<u8>, u64), SignError> {
             cur_end = off + sz;
         }
     }
+    // Data may follow the last section / section header table without being
+    // covered by any section (Bun's standalone module graph is appended this
+    // way). Extend the covered range through the real end of file before
+    // rounding up, so the copy below preserves it; otherwise everything past
+    // the aligned section end is dropped and compiled executables break.
+    let cur_end = cur_end.max(elf.len() as u64);
     let cs_off = align_up(cur_end, PAGE as u64);
 
     // new shstrtab = old shstrtab + ".codesign\0"
@@ -301,7 +323,7 @@ fn inject_codesign_section(elf: &[u8]) -> Result<(Vec<u8>, u64), SignError> {
 
 /// Sign an ELF. If `force` is true, strip any existing .codesign first.
 pub fn sign(elf: &[u8], force: bool) -> Result<Vec<u8>, SignError> {
-    if elf.len() < 64 || &elf[0..4] != b"\x7fELF" || elf[4] != 2 {
+    if !is_elf64(elf) {
         return Err(SignError::NotElf64);
     }
     let mut buf: Vec<u8> = elf.to_vec();

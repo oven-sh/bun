@@ -2,6 +2,7 @@ import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bu
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   chmodSync,
+  chownSync,
   existsSync,
   promises as fs,
   mkdirSync,
@@ -1189,6 +1190,45 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
     expect(exitCode).toBe(0);
   });
 });
+
+// The owner of the temp dir could swap the staged headers for their own before
+// TinyCC reads them, so cc() refuses before it compiles anything (hence no ASan
+// skip). Making a directory another user owns takes root.
+it.skipIf(isWindows || process.getuid?.() !== 0)(
+  "cc() does not stage compiler runtime headers in a temp directory that another local user owns",
+  async () => {
+    const otherUser = 4242;
+    using dir = tempDir("bun-ffi-cc-rt-dir-foreign", {
+      "add.c": `int add(int a, int b) { return a + b; }\n`,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "add.c"),
+          symbols: { add: { args: ["int", "int"], returns: "int" } },
+        });
+        console.log(symbols.add(1, 2));
+      `,
+    });
+    chownSync(String(dir), otherUser, otherUser);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: { ...bunEnv, BUN_TMPDIR: String(dir) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(readdirSync(String(dir)).sort()).toEqual(["add.c", "fixture.js"]);
+    expect(stderr).toContain(
+      `refusing to use temp directory "${dir}": it is owned by uid ${otherUser}, not by the current user or root`,
+    );
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  },
+);
 
 // The gate runs before any option is read or any C is compiled, so these do
 // not need a working TinyCC and run under ASan too. Without the gate, the

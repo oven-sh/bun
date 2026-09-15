@@ -2249,6 +2249,12 @@ fn resolve_installed_native_binlink_target(
     None
 }
 
+pub enum PackageBinLink<'a> {
+    Linked(&'a ZStr),
+    MissingTarget,
+    Rejected,
+}
+
 pub fn link_package_bin<'a>(
     install_root: &[u8],
     package_name: &[u8],
@@ -2256,11 +2262,11 @@ pub fn link_package_bin<'a>(
     destination_scope: &[u8],
     destination_name: &[u8],
     executable_buf: &'a mut PathBuffer,
-) -> Result<Option<&'a ZStr>, crate::Error> {
+) -> Result<PackageBinLink<'a>, crate::Error> {
     if normalized_bin_name(destination_scope) != destination_scope
         || !crate::package_installer::alias_is_safe_install_target(package_name)
     {
-        return Ok(None);
+        return Ok(PackageBinLink::Rejected);
     }
 
     let mut node_modules_path = AbsPath::from(strings::without_trailing_slash(install_root))
@@ -2326,7 +2332,11 @@ pub fn link_package_bin<'a>(
         return Err(err);
     }
     if !linked {
-        return Ok(None);
+        return Ok(if linker.skipped_due_to_missing_bin {
+            PackageBinLink::MissingTarget
+        } else {
+            PackageBinLink::Rejected
+        });
     }
 
     let root = strings::without_trailing_slash(install_root);
@@ -2364,5 +2374,5 @@ pub fn link_package_bin<'a>(
     off += suffix.len();
     executable_buf[off] = 0;
 
-    Ok(Some(ZStr::from_buf(executable_buf, off)))
+    Ok(PackageBinLink::Linked(ZStr::from_buf(executable_buf, off)))
 }

@@ -15,6 +15,7 @@ use bun_bundler::Transpiler;
 use bun_collections::BoundedArray;
 use bun_core::{self, Global, Output};
 use bun_core::{ZStr, strings};
+use bun_install::bin::PackageBinLink;
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
@@ -221,6 +222,7 @@ struct ResolvedPackageBin {
 enum PackageBinLookup<'a> {
     PackageNotFound,
     BinNotFound,
+    MissingTarget,
     Found(&'a ZStr),
 }
 
@@ -534,8 +536,9 @@ impl BunxCommand {
             &resolved.name,
             executable_buf,
         )? {
-            Some(executable) => Ok(PackageBinLookup::Found(executable)),
-            None => Ok(PackageBinLookup::BinNotFound),
+            PackageBinLink::Linked(executable) => Ok(PackageBinLookup::Found(executable)),
+            PackageBinLink::MissingTarget => Ok(PackageBinLookup::MissingTarget),
+            PackageBinLink::Rejected => Ok(PackageBinLookup::BinNotFound),
         }
     }
 
@@ -1242,7 +1245,8 @@ impl BunxCommand {
                                     opts.binary_name,
                                 );
                             }
-                            PackageBinLookup::PackageNotFound => {}
+                            PackageBinLookup::PackageNotFound | PackageBinLookup::MissingTarget => {
+                            }
                         }
                     }
                     match Self::probe_bin_from_installed_package(
@@ -1259,7 +1263,7 @@ impl BunxCommand {
                         PackageBinLookup::BinNotFound => {
                             Self::exit_package_bin_not_found(result_package_name, opts.binary_name);
                         }
-                        PackageBinLookup::PackageNotFound => {}
+                        PackageBinLookup::PackageNotFound | PackageBinLookup::MissingTarget => {}
                     }
 
                     if opts.specified_package.is_some() {
@@ -1748,7 +1752,9 @@ impl BunxCommand {
                         );
                     }
                 }
-                PackageBinLookup::PackageNotFound | PackageBinLookup::BinNotFound => {
+                PackageBinLookup::PackageNotFound
+                | PackageBinLookup::BinNotFound
+                | PackageBinLookup::MissingTarget => {
                     Self::exit_package_bin_not_found(result_package_name, opts.binary_name);
                 }
             }
@@ -1781,7 +1787,7 @@ impl BunxCommand {
                         );
                     }
                 }
-                PackageBinLookup::BinNotFound => {
+                PackageBinLookup::BinNotFound | PackageBinLookup::MissingTarget => {
                     Self::exit_package_bin_not_found(result_package_name, None);
                 }
                 PackageBinLookup::PackageNotFound => {}

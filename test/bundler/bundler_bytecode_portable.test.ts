@@ -499,8 +499,8 @@ describe("bytecode cache portability", () => {
         "bun build --bytecode happy-dom/lib/index.js": {
           "js": "75d2ad2bc252c916f90f8ca85f53f0883ca46049c2700e3c1fe2337ec42d1142",
           "jsc": {
-            "bytes": 2337296,
-            "sha256": "28afc82679782e8effeb749b20556093facb376d7d1e92de50888230412ec0e2",
+            "bytes": 2337264,
+            "sha256": "49a83aca1ac5dcf9a7a20d64259fcb39aaec3a6c47afce6254cefb2bc89dde8e",
           },
         },
         "bun build --bytecode immutable/dist/immutable.es.js": {
@@ -513,8 +513,8 @@ describe("bytecode cache portability", () => {
         "bun build --bytecode libraries.js": {
           "js": "493bab674ff49b287f26be3f356a3ad6681afb0c7eeffaa590f10cdcd8b58724",
           "jsc": {
-            "bytes": 22009464,
-            "sha256": "3107a462fc955913d0c5b93633c450d3aa6b8cccf8e10ef763efdfee9da4cf6d",
+            "bytes": 22009472,
+            "sha256": "c5c3d5417c955434debefb6053e2a7abaa63dd0e1495686b805fd030d04c8f3b",
           },
         },
         "bun build --bytecode lodash/lodash.js": {
@@ -555,8 +555,8 @@ describe("bytecode cache portability", () => {
         "bun build --bytecode undici/index.js": {
           "js": "e1c4f1494711ecaae57a6d63dfb8ac6096629582f55cc42530ff5a156b70c9de",
           "jsc": {
-            "bytes": 874752,
-            "sha256": "80b3b63ecb885d41b285861b0a64e121f2586edb065ed170775bcf985df49db0",
+            "bytes": 874736,
+            "sha256": "20fc4d7f3f1deec97bbd18574f07e4c58426ba4a94596299640e2362b8fdfe66",
           },
         },
         "vm.Script big.js": {
@@ -588,12 +588,12 @@ describe("bytecode cache portability", () => {
           "sha256": "e5c42d10d1ecb91872abf9ce5b58b84f28de58cacf16bed19d528f90074f6641",
         },
         "vm.SourceTextModule acorn.mjs": {
-          "bytes": 257136,
-          "sha256": "6ea80770a81b15d47460df859791040f75425d713692c9dcdd5c6226447e364f",
+          "bytes": 257168,
+          "sha256": "a02fde5c6bbe50919370fe150cf487e1c01ea2f8b8bcacdf8419869f8b205303",
         },
         "vm.SourceTextModule module.js": {
-          "bytes": 9280,
-          "sha256": "f1e09d13f75e9ab052d0904b31f11df9893655f711a5c9fd2ab100f647681d7b",
+          "bytes": 9336,
+          "sha256": "c84ce82c137686f4972fb4a1a128fbeade717ed89f7d7d71045f0ceba5f9846c",
         },
       }
     `);

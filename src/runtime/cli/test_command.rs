@@ -943,6 +943,11 @@ pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
 }
 
+/// `ExitHandler::requested` at the end of a run, which does not wait for the event loop to run dry.
+pub(crate) fn exit_is_requested() -> bool {
+    !should_drain_event_loop()
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -2672,6 +2677,7 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        vm.exit_handler.requested = exit_is_requested();
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;
@@ -2879,10 +2885,15 @@ impl TestCommand {
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
-            // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
-            // raw-ptr escape so the closure does not hold a borrowck lock on
-            // it for the loop body.
-            scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
+            let global = vm.global();
+            scopeguard::defer! {
+                // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
+                // raw-ptr escape so the closure does not hold a borrowck lock on
+                // it for the loop body.
+                unsafe { (*bun_test_root_ptr).exit_file(); }
+                // A mock.module() patch still pending must not hold up the next file.
+                bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
+            }
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
@@ -2964,6 +2975,12 @@ impl TestCommand {
             }
 
             vm.event_loop_ref().tick();
+
+            // Tests start after top-level mock.module() calls with a pending factory have patched their module.
+            while bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
+                vm.event_loop_ref().auto_tick();
+                vm.event_loop_ref().tick();
+            }
 
             'blk: {
                 // Check if bun_test is available and has tests to run

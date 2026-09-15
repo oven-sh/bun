@@ -10,7 +10,7 @@ describe("MessagePortChannel closed port", () => {
         bunExe(),
         "-e",
         `
-          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           const { port1, port2 } = new MessageChannel();
           port2.close();
 
@@ -65,7 +65,7 @@ describe("MessagePortChannel closed port", () => {
           bunExe(),
           "-e",
           `
-            const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+            const rss = process.memoryUsage.rss;
             const closeBeforePost = ${closeBeforePost};
             const ITERATIONS = 1000;
             const PAYLOAD_SIZE = 128 * 1024;

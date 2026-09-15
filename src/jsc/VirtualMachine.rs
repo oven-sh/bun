@@ -5459,6 +5459,13 @@ impl VirtualMachine {
             // SAFETY: registered ⇒ live and owned here.
             drop(unsafe { Box::from_raw(context.as_ptr()) });
         }
+        // Jobs of a graph that teardown released without this count coming down (a worker
+        // terminated mid-read): what waited for them is closed with the VM.
+        for (_, jobs) in self.graph_jobs.replace(Default::default()).iter() {
+            for fd in &jobs.fds {
+                bun_sys::FdExt::close(*fd);
+            }
+        }
 
         drop_source_code_printer();
 

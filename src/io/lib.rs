@@ -1662,26 +1662,17 @@ impl Poll {
             return;
         }
         let poll = poll.as_ptr();
+        // EPOLLERR, like EPOLLHUP, is readiness: the errno comes out of the
+        // owner's next read()/write(). (`epoll_ctl` failures go through
+        // `FileAction::on_error` in `tick_epoll`.)
+        let events = event.events;
+        log!("ready(events = {:#x})", events);
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.
-        if event.events & linux::EPOLL_ERR != 0 {
-            let errno = sys::get_errno(event.events as isize);
-            log!("error() = {:?}", errno);
-            // SAFETY: poll is the `io_poll` field of a live owner; link-time
-            // extern body matches on `tag`.
-            unsafe {
-                __bun_io_pollable_on_io_error(
-                    tag,
-                    poll,
-                    &sys::Error::from_code(errno, sys::Tag::epoll_ctl),
-                )
-            };
-        } else {
-            log!("ready()");
-            // SAFETY: as above.
-            unsafe { __bun_io_pollable_on_ready(tag, poll) };
-        }
+        // SAFETY: poll is the `io_poll` field of a live owner; link-time
+        // extern body matches on `tag`.
+        unsafe { __bun_io_pollable_on_ready(tag, poll) };
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]

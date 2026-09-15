@@ -12,11 +12,22 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { availableParallelism, constants as osConstants } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { writeIfChanged } from "../fs.ts";
-import { type BuildScriptOutput, type RustcUnitManifest, type UnitManifest, envify } from "./units.ts";
+import { type BuildScriptOutput, envify } from "./cargo-env.ts";
+import type { RustcUnitManifest, UnitManifest } from "./units.ts";
 
 const [mode, manifestPath] = process.argv.slice(2);
 if (!mode || !manifestPath) usage("usage: run.ts rustc|build-script <unit.json>");
@@ -26,8 +37,27 @@ if (mode === "build-script" && manifest.kind === "build-script-run") runBuildScr
 else if (mode === "rustc" && manifest.kind !== "build-script-run") runRustc(manifest);
 else usage(`mode ${mode} does not apply to ${manifest.crateName} (${manifest.kind})`);
 
+/**
+ * Write to this process's stdout (1) or stderr (2) synchronously. ninja reads both through one pipe, and this
+ * process ends with process.exit(): a buffered stream (what process.stdout/stderr are for a pipe) can be cut off
+ * by the exit, and two of them onto one pipe can interleave mid-line — which would hide an early-output
+ * announcement from ninja. One blocking write per message keeps the order and loses nothing.
+ */
+function emit(fd: 1 | 2, text: string): void {
+  const bytes = Buffer.from(text);
+  for (let at = 0; at < bytes.length; ) {
+    try {
+      at += writeSync(fd, bytes, at);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EAGAIN") continue; // a pipe left non-blocking by someone else
+      if ((e as NodeJS.ErrnoException).code === "EPIPE") return; // nobody is reading any more
+      throw e;
+    }
+  }
+}
+
 function usage(msg: string): never {
-  process.stderr.write(`run.ts: ${msg}\n`);
+  emit(2, `run.ts: ${msg}\n`);
   process.exit(2);
 }
 
@@ -158,7 +188,7 @@ function runRustc(unit: RustcUnitManifest): void {
       // The .rmeta is complete: give it a current mtime (see stampOutput) and tell ninja, which starts the
       // dependents now instead of when this process exits.
       stampOutput(rmeta);
-      if (earlyOutputPrefix !== undefined) process.stdout.write(`${earlyOutputPrefix}${relative(buildDir, rmeta)}\n`);
+      if (earlyOutputPrefix !== undefined) emit(1, `${earlyOutputPrefix}${relative(buildDir, rmeta)}\n`);
     }
   });
   child.on("error", e => {
@@ -178,12 +208,12 @@ function renderRustcMessage(line: string): boolean {
   try {
     message = JSON.parse(line);
   } catch {
-    process.stderr.write(line + "\n"); // not JSON: an ICE banner, a `-Z time-passes` line, …
+    emit(2, line + "\n"); // not JSON: an ICE banner, a `-Z time-passes` line, …
     return false;
   }
   if (message.$message_type === "artifact") return message.emit === "metadata";
   if (message.$message_type === "future_incompat") return false;
-  process.stderr.write(typeof message.rendered === "string" ? message.rendered : line + "\n");
+  emit(2, typeof message.rendered === "string" ? message.rendered : line + "\n");
   return false;
 }
 
@@ -216,6 +246,7 @@ function writeDepfile(unit: RustcUnitManifest): void {
   if (!existsSync(unit.depInfo)) throw new Error(`rustc did not write ${unit.depInfo}`);
   const abs = (p: string) => (isAbsolute(p) ? p : resolve(unit.cwd, p.replace(/\\ /g, " ")).replace(/ /g, "\\ "));
   const lines: string[] = [];
+  let sawRule = false;
   for (const line of readFileSync(unit.depInfo, "utf8").split("\n")) {
     if (line.startsWith("#") || line.trim() === "") continue;
     // `target: dep dep…` or a bare `target:`; split on ": " so a Windows drive letter (`C:\…`) stays whole.
@@ -224,8 +255,13 @@ function writeDepfile(unit: RustcUnitManifest): void {
     const target = abs(m[1]!);
     const deps = (m[2] ?? "").match(/(?:\\ |[^ ])+/g) ?? [];
     if (deps.length === 0) lines.push(`${target}:`);
-    else if (target.replace(/\\ /g, " ") === unit.output) lines.push(`${target}: ${deps.map(abs).join(" ")}`);
+    else if (target.replace(/\\ /g, " ") === unit.output) {
+      lines.push(`${target}: ${deps.map(abs).join(" ")}`);
+      sawRule = true;
+    }
   }
+  // Without that rule ninja would record no dependencies at all and never rebuild the crate on a source edit.
+  if (!sawRule) throw new Error(`${unit.depInfo} has no rule for ${unit.output}`);
   writeFileSync(unit.depfile, lines.join("\n") + "\n");
 }
 
@@ -271,14 +307,13 @@ function runBuildScript(unit: Extract<UnitManifest, { kind: "build-script-run" }
   });
   if (r.error) throw r.error;
   const out = parseBuildScriptOutput(r.stdout);
-  if (script.local)
-    for (const w of out.warnings) process.stderr.write(`warning: ${unit.env.CARGO_PKG_NAME} build script: ${w}\n`);
-  for (const e of out.errors) process.stderr.write(`error: ${unit.env.CARGO_PKG_NAME} build script: ${e}\n`);
+  if (script.local) for (const w of out.warnings) emit(2, `warning: ${unit.env.CARGO_PKG_NAME} build script: ${w}\n`);
+  for (const e of out.errors) emit(2, `error: ${unit.env.CARGO_PKG_NAME} build script: ${e}\n`);
   if (r.status !== 0 || out.errors.length > 0) {
-    process.stderr.write(r.stdout);
-    process.stderr.write(r.stderr);
+    emit(2, r.stdout);
+    emit(2, r.stderr);
     if (r.status !== 0)
-      process.stderr.write(`error: build script for ${unit.env.CARGO_PKG_NAME} exited with ${r.status ?? r.signal}\n`);
+      emit(2, `error: build script for ${unit.env.CARGO_PKG_NAME} exited with ${r.status ?? r.signal}\n`);
     process.exit(1);
   }
   // Files the script regenerated with the same bytes keep their old mtime (crates `include!` them; a fresh mtime on

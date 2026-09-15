@@ -28,6 +28,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { resolveConfig } from "./build/config.ts";
 import { resolveToolchain } from "./build/configure.ts";
+import { ninjaIfFetched } from "./build/ninja-release.ts";
 import { getProfile } from "./build/profiles.ts";
 import { cargoBuildInvocation, cargoProfile } from "./build/rust.ts";
 
@@ -270,7 +271,7 @@ if (
     cwd: repo,
   });
   if (r.status !== 0) process.exit(1);
-  const nr = spawnSync("ninja", ["-C", cfg.buildDir, "codegen", "clone-lolhtml", "clone-rust-argon2"], {
+  const nr = spawnSync(ninjaIfFetched(cfg), ["-C", cfg.buildDir, "codegen", "clone-lolhtml", "clone-rust-argon2"], {
     stdio: "inherit",
     cwd: repo,
   });

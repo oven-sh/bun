@@ -233,14 +233,15 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     n.rule("rust_shim", {
       command: hostWin
         ? `cmd /c "${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
-          `( fc /b $shim_src $shim_dest >nul 2>&1 || copy /Y /B $shim_src $shim_dest >nul ) && type nul > $out"`
+          `( ( fc /b $shim_src $shim_dest >nul 2>&1 && if not exist $out type nul > $out ) || ` +
+          `( copy /Y /B $shim_src $shim_dest >nul && type nul > $out ) )"`
         : `${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
-          `( cmp -s $shim_src $shim_dest 2>/dev/null || cp $shim_src $shim_dest ) && touch $out`,
+          `if cmp -s $shim_src $shim_dest 2>/dev/null; then test -e $out || touch $out; else cp $shim_src $shim_dest && touch $out; fi`,
       description: "cargo bun_shim_impl → $shim_dest",
       pool: "console",
-      // No restat: the stamp ($out) is touched unconditionally, so there's
-      // nothing for ninja to prune on; the content-conditional copy above
-      // exists for cargo's dep-info on $shim_dest, not for restat.
+      // The edge reruns on any .rs change (cargo decides what that means for the shim); the stamp moves only when
+      // the exe was replaced, so with restat the crate that embeds it rebuilds only then.
+      restat: true,
     });
   }
 }
@@ -837,7 +838,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       cargo: existsSync(toolchainBin("cargo")) ? toolchainBin("cargo") : cfg.cargo,
       rustdoc: toolchainBin("rustdoc"),
     },
-    { codegenOrderOnly: inputs.codegenOrderOnly, implicitInputs: shimInputs, vendorStamps: inputs.vendorStamps },
+    {
+      codegenOrderOnly: inputs.codegenOrderOnly,
+      implicitInputs: { bun_install: shimInputs },
+      vendorStamps: inputs.vendorStamps,
+    },
   );
   n.blank();
   return [lib];

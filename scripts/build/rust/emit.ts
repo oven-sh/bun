@@ -22,14 +22,7 @@ import type { Ninja } from "../ninja.ts";
 import { quote } from "../shell.ts";
 import { streamPath } from "../stream.ts";
 import { type PlanInput, planInputPath, planPath } from "./plan.ts";
-import {
-  type ManifestContext,
-  type RustUnit,
-  externDeps,
-  externPath,
-  transitiveLinkInputs,
-  unitManifest,
-} from "./units.ts";
+import { type ManifestContext, externDeps, externPath, transitiveLinkInputs, unitManifest } from "./units.ts";
 
 const here = import.meta.dirname;
 const runScript = resolve(here, "run.ts");
@@ -108,11 +101,12 @@ export interface RustEdgeInputs {
    */
   codegenOrderOnly: string[];
   /**
-   * Stamps of edges whose real product reaches a crate as an undeclared side effect (the Windows shim: bun_install
-   * `include_bytes!` the copied .exe, of which only the stamp is a declared output). Implicit inputs of the workspace
-   * crates: ninja stats the .exe before that edge runs, so its dep-info entry alone would lag one build behind.
+   * Stamps of edges whose real product reaches a crate as an undeclared side effect, by the crate that reads it
+   * (the Windows shim: bun_install `include_bytes!` the copied .exe, of which only the stamp is a declared
+   * output). Implicit inputs of that crate: ninja stats the .exe before the edge producing it runs, so the
+   * crate's dep-info entry alone would lag one build behind.
    */
-  implicitInputs: string[];
+  implicitInputs: Record<string, string[]>;
   /** Fetch stamps of vendored crates: order-only for everything (the plan already required them). */
   vendorStamps: string[];
 }
@@ -145,7 +139,7 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
             ...(manifest.buildScriptOutput !== undefined ? [manifest.buildScriptOutput] : []),
             ...manifest.depBuildScriptOutputs,
           ];
-    const common = [...scriptOutputs, ...runScriptDeps, ...(unit.isLocal ? inputs.implicitInputs : [])];
+    const common = [...scriptOutputs, ...runScriptDeps, ...(inputs.implicitInputs[unit.crateName] ?? [])];
     const orderOnly = [...inputs.vendorStamps, ...(unit.isLocal ? ["rust-codegen-ready"] : [])];
 
     switch (manifest.kind) {
@@ -205,5 +199,3 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
   n.phony("bun-rust", [graph.root.output]);
   return graph.root.output;
 }
-
-export type { RustUnit };

@@ -23,11 +23,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.ts";
 import { assert } from "../error.ts";
-import { type BuildScriptOutput, dylibPathVar, envify } from "./cargo-env.ts";
+import { dylibPathVar, envify } from "./cargo-env.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
-
-export { envify };
-export type { BuildScriptOutput };
 
 export type UnitKind = "lib" | "proc-macro" | "staticlib" | "build-script" | "build-script-run";
 
@@ -185,12 +182,15 @@ export function buildRustGraph(cfg: Config, plan: RustPlan, targetRustflags: str
   // of one crate name can meet in a link — host vs target, sysroot std vs build-std std, feature sets — and must
   // *not* differ between builds meant to have identical symbols (PGO generate/use), so it excludes the rustflags.
   // `hash` (→ file names) additionally covers the rustflags. cargo: compute_metadata's c_metadata vs unit_id.
+  // A package from a registry is named by its id (source URL + name + version), also when it is one of std's
+  // dependencies: those live under $CARGO_HOME, and a path to them would put the machine's directory layout into
+  // every symbol name. Path packages are named by their manifest's path inside what contains them.
   const packageKey = (unit: RustUnit): string =>
-    unit.isStd
-      ? relative(plan.rustc.sysroot, unit.pkg.manifest_path)
-      : unit.pkg.source === null
-        ? relative(plan.workspaceRoot, unit.pkg.manifest_path)
-        : unit.pkg.id;
+    unit.pkg.source !== null
+      ? unit.pkg.id
+      : unit.isStd
+        ? relative(plan.rustc.sysroot, unit.pkg.manifest_path)
+        : relative(plan.workspaceRoot, unit.pkg.manifest_path);
   const digest = (parts: unknown[]): string =>
     createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
   const identity = (unit: RustUnit): unknown[] => {
@@ -298,13 +298,11 @@ export type UnitManifest = RustcUnitManifest | BuildScriptRunManifest;
 
 interface ManifestCommon {
   crateName: string;
-  /** The unit's file-name hash; also how run.ts recognizes a process working on this unit. */
-  hash: string;
   cwd: string;
   env: Record<string, string>;
   /** The file ninja knows this unit by: rlib (lib), dylib (proc-macro), archive (staticlib), executable (build-script), output.json (build-script-run). */
   output: string;
-  /** The ninja depfile run.ts writes for the unit's (first) edge. */
+  /** The ninja depfile run.ts writes for the unit's edge. */
   depfile: string;
   /**
    * The dynamic-library search path for the process (proc-macro dylibs, anything a build script loads): the variable
@@ -526,7 +524,6 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   return {
     kind: unit.kind,
     crateName: unit.crateName,
-    hash: unit.hash,
     rustc: plan.rustc.path,
     cwd,
     args,
@@ -618,7 +615,6 @@ function buildScriptRunManifest(ctx: ManifestContext, unit: RustUnit): BuildScri
   return {
     kind: "build-script-run",
     crateName: unit.crateName,
-    hash: unit.hash,
     cwd: dirname(unit.pkg.manifest_path),
     env,
     output: unit.output,

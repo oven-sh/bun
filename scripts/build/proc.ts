@@ -1,7 +1,7 @@
 /**
  * Questions about another process by pid, for the build directory lock in build.ts, which is a pid file.
- * A recorded pid says nothing by itself — the process may be gone and the number reused — so identity is
- * checked through the command line.
+ * A recorded pid says nothing by itself — the process may be gone and the number reused — so the lock also
+ * records when the process started.
  */
 
 import { spawnSync } from "node:child_process";
@@ -19,27 +19,29 @@ export function processAlive(pid: number): boolean {
 }
 
 /**
- * The command line of `pid`, or "" if it cannot be read (gone, not ours). Linux: /proc. Windows: CIM via
- * PowerShell (slow — hundreds of ms — so callers cache). Elsewhere: `ps -ww` (BSD ps clips the args column
- * to the terminal width without -ww).
+ * When `pid` started, as an opaque string that differs between two processes that had the same pid, or "" if it
+ * cannot be read (gone, not ours). Linux: field 22 of /proc/<pid>/stat (clock ticks since boot). Windows: CIM's
+ * CreationDate via PowerShell (slow — hundreds of ms — so callers ask once per contended lock, not per poll).
+ * Elsewhere: `ps -o lstart=`.
  */
-export function processCommandLine(pid: number): string {
+export function processStartTime(pid: number): string {
   if (!(pid > 0)) return "";
   try {
-    if (process.platform === "linux") return readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
+    if (process.platform === "linux") {
+      // "pid (comm) state ppid …": comm may contain spaces and parentheses, so count fields after the last ")".
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? "";
+    }
     if (process.platform === "win32") {
       return (
         spawnSync(
           "powershell",
-          ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`],
-          {
-            encoding: "utf8",
-            windowsHide: true,
-          },
+          ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CreationDate.Ticks`],
+          { encoding: "utf8", windowsHide: true },
         ).stdout ?? ""
-      );
+      ).trim();
     }
-    return spawnSync("ps", ["-ww", "-o", "args=", "-p", String(pid)], { encoding: "utf8" }).stdout ?? "";
+    return (spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" }).stdout ?? "").trim();
   } catch {
     return "";
   }

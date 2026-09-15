@@ -174,7 +174,8 @@ Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a)
 ### Phase 3 — Execute
 
 - **CI:** collapsible log groups, spawn ninja with `spawnWithAnnotations` (parses compiler errors into Buildkite annotations), upload/download artifacts.
-- **Which ninja:** `resolveNinja()` (`ninja-release.ts`) — the pinned oven-sh/ninja release for the host, fetched once into `cfg.cacheDir` and checked against its pinned sha256; `ninja` from PATH if there is no release for the host or it can't be fetched. Fetched by the driver because it is what runs the edges, and configure never fetches.
+- **Which ninja:** `resolveNinja()` (`ninja-release.ts`) — the pinned oven-sh/ninja release for the host, fetched once into `cfg.cacheDir` and checked against its pinned sha256; `ninja` from PATH if there is no release for the host or it can't be fetched. Fetched by the driver because it is what runs the edges, and configure never fetches. Configure's `-t restat` and the helper scripts use `ninjaIfFetched()` — the same binary, never a fetch: ninja versions disagree on the `.ninja_log` format and rewrite or delete a log they don't recognise, so everything that touches a build directory must be one ninja.
+- **One build per build directory:** `build.lock` (`<pid> <process start time>`), taken before configure writes anything and released when ninja returns — not held while the built binary runs. A second `bun bd` waits.
 - **Local:** spawn ninja with FD 3 dup'd to stderr — `stream.ts`-wrapped commands (dep builds, the cargo plan edge) write to FD 3, bypassing ninja's per-job output buffering so their progress streams live; rustc edges are plain ninja commands. If positionals given, exec the built binary with them.
 
 ## Module inventory

@@ -26,21 +26,28 @@ import { downloadWithRetry, extractZip } from "./download.ts";
  * archive's `sha256` from its bun-ninja.json.
  */
 export const ninjaRelease = {
-  tag: "bun-ninja-1c3c9adb",
+  // bun-ninja-1c3c9adb must not be used: the upstream master it was built from skips an edge's recorded deps
+  // when a restat input turns out unchanged, so an edited crate could stay stale for one build (fixed in the
+  // fork by 5ecd883). Until that build is published there is no release for any host, and the PATH ninja runs.
+  tag: "bun-ninja-5ecd8831",
   /** `<os>-<arch>` of the machine running the build → sha256 of `bun-ninja-<os>-<arch>.zip` */
-  sha256: {
-    "linux-x64": "4bf2b3be90c635066309176ce930b5ede7107aeb764d9885e7dbb21810f54644",
-    "linux-aarch64": "69fda78c1cd4f839ce9648a7ace0e9d32180dcf68b3e82487b2f2bf7eb40b8b1",
-    "darwin-x64": "b098a2dcb0d716d6802201663c4be7d0e9fcabd16b005da43e671a92d1971c3d",
-    "darwin-aarch64": "c90dc225e48760fc91cade8baf20892a53b7a0a9ac1bcc407f08acea1451e896",
-    "windows-x64": "1b38befdceaa279d54e1d8b09cc986a27dbd0325dd1f528101a0855c4135e74c",
-    "windows-aarch64": "3c6de27e4fe068955e7890f22f2847bb89b4a21b7dd58a36d333e0f194d37302",
-  } as Record<string, string>,
+  sha256: {} as Record<string, string>,
 };
 
 /** Where the pinned ninja lives once fetched: `<cacheDir>/ninja/<tag>/ninja[.exe]`. */
 export function pinnedNinjaPath(cfg: Config): string {
   return join(cfg.cacheDir, "ninja", ninjaRelease.tag, `ninja${cfg.host.exeSuffix}`);
+}
+
+/**
+ * The ninja for anything that operates on a build directory without being the build itself (configure's
+ * `-t restat`, helper scripts): the pinned one if it has been fetched, the PATH one otherwise — never a fetch.
+ * It has to be the same ninja the driver runs: ninja versions disagree on the `.ninja_log` format, and one
+ * that finds a log it considers too old or too new rewrites or deletes it, which makes the next build a full one.
+ */
+export function ninjaIfFetched(cfg: Config): string {
+  const path = pinnedNinjaPath(cfg);
+  return existsSync(path) ? path : "ninja";
 }
 
 /**
@@ -66,7 +73,10 @@ export async function resolveNinja(cfg: Config): Promise<string> {
     const zip = join(scratch, archive);
     // Two tries, not the dependency downloads' ten: failing here costs only the pipelining, and an offline
     // machine should not wait through a long backoff at the start of every build.
-    await downloadWithRetry(url, zip, "ninja", { attempts: 2, backoffMs: () => 1000 });
+    await Promise.race([
+      downloadWithRetry(url, zip, "ninja", { attempts: 2, backoffMs: () => 1000 }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("timed out after 30 s")), 30_000).unref()),
+    ]);
     const actual = createHash("sha256")
       .update(await readFile(zip))
       .digest("hex");

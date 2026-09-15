@@ -29,6 +29,7 @@ import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
+import { ninjaIfFetched } from "./ninja-release.ts";
 import { planPath } from "./rust/plan.ts";
 import { quote } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
@@ -275,7 +276,12 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * (build.ts --config-file), as opposed to build.ts configuring before it
  * spawns ninja.
  */
-export async function configure(input: ConfigureInput, fromNinja = false): Promise<ConfigureResult> {
+export async function configure(
+  input: ConfigureInput,
+  fromNinja = false,
+  /** Called with the build directory once it is known, before anything in it is touched (the driver's lock). */
+  beforeWriting: (buildDir: string) => void = () => {},
+): Promise<ConfigureResult> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
@@ -293,6 +299,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   const cfg = resolveConfig(partial, toolchain);
 
   validateBunConfig(cfg);
+  beforeWriting(cfg.buildDir);
 
   // Darwin cross-compile: the SDK must exist before ninja runs (every compile
   // edge passes -isysroot) and before checkWorkarounds() (the darwin-cross
@@ -384,7 +391,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
     const now = new Date();
     utimesSync(ninjaPath, now, now);
     if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
-      spawnSync("ninja", ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
+      spawnSync(ninjaIfFetched(cfg), ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
     }
   }
   mark("restat");

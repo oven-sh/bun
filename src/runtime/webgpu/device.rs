@@ -78,7 +78,7 @@ impl DeviceState {
     /// WebGPU's "dispatch error": the innermost matching error scope, else `uncapturederror`.
     pub(crate) fn report(&self, global: &JSGlobalObject, err: GpuError) -> JsResult<()> {
         if err.device_lost || self.lost.get() {
-            return Ok(());
+            return self.deliver_loss(global);
         }
         let uncaptured = self.scopes.with_mut(|scopes| {
             for scope in scopes.iter_mut().rev() {

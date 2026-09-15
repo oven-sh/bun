@@ -96,7 +96,7 @@ export default [
   gpu("GPUQueue", {
     ...label,
     submit: fn("submit", 1),
-    onSubmittedWorkDone: fn("onSubmittedWorkDone", 0),
+    onSubmittedWorkDone: { fn: "onSubmittedWorkDone", length: 0, passThis: true },
     writeBuffer: fn("writeBuffer", 3),
     writeTexture: fn("writeTexture", 4),
   }),

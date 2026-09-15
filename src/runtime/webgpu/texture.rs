@@ -120,7 +120,7 @@ impl GPUTexture {
         if let Some(format) = format {
             self.device.check_format(global, format, "createView")?;
         }
-        let desc = wgc::resource::TextureViewDescriptor {
+        let mut desc = wgc::resource::TextureViewDescriptor {
             label: super::wgpu_label(&label),
             format,
             dimension: d.enum_(
@@ -146,9 +146,22 @@ impl GPUTexture {
                 array_layer_count: d.u32("arrayLayerCount")?,
             },
         };
+        let unknown_usage = usage & !ALL_USAGES != 0;
+        if unknown_usage {
+            self.device.report(
+                global,
+                GpuError::validation(format!(
+                    "createView: usage 0x{usage:x} has bits that are not a GPUTextureUsage"
+                )),
+            )?;
+            // wgpu-core hands out an invalid view only from a failed creation: ask for a mip level no texture has.
+            desc.range.base_mip_level = u32::MAX;
+        }
         let (id, err) = instance().texture_create_view(self.raw.id(), &desc, None);
         let raw = bun_webgpu::TextureView::new(id);
-        self.device.check(global, err)?;
+        if !unknown_usage {
+            self.device.check(global, err)?;
+        }
         Ok(GPUTextureView {
             raw,
             label: JsCell::new(label),

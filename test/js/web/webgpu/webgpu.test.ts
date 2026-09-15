@@ -794,6 +794,14 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     });
     expect(error).toBeNull();
 
+    // A view usage with bits that are not a GPUTextureUsage is a validation error.
+    expect(
+      await validationError(device, () => {
+        const texture = device.createTexture({ size: [4, 4], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST });
+        expect(texture.createView({ usage: 0x8000 })).toBeInstanceOf(GPUTextureView);
+      }),
+    ).toBeInstanceOf(GPUValidationError);
+
     // A layout entry has to pick exactly one kind of binding.
     expect(
       await validationError(device, () => {
@@ -828,6 +836,19 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(() => device.queue.submit([{}])).toThrow(TypeError);
     // A generic iterable is a sequence too.
     device.queue.submit(new Set());
+    // Its conversion stops at the first element that fails, and closes the iterator.
+    let pulled = 0;
+    let closed = false;
+    const viewFormats = {
+      [Symbol.iterator]: () => ({
+        next: () => ({ done: false, value: ++pulled === 1 ? "bogus" : "rgba8unorm" }),
+        return: () => ((closed = true), {}),
+      }),
+    };
+    expect(() => device.createTexture({ size: [4, 4], format: "rgba8unorm", usage: 1, viewFormats })).toThrow(
+      TypeError,
+    );
+    expect({ pulled, closed }).toEqual({ pulled: 1, closed: true });
 
     // null is the empty dictionary, as an argument and as a member.
     expect(device.createSampler(null)).toBeInstanceOf(GPUSampler);

@@ -176,3 +176,5 @@ bun add -d @webgpu/types
 - No `GPUCanvasContext`, `GPUExternalTexture`, or `queue.copyExternalImageToTexture()`. They need a canvas, a video element, or an image element.
 - `navigator.gpu.wgslLanguageFeatures` is empty.
 - `createComputePipelineAsync()` and `createRenderPipelineAsync()` compile the pipeline before they return their promise.
+- If the driver cannot create a device, `adapter.requestDevice()` rejects with an `OperationError`. The specification resolves to a device that is already lost.
+- An explicit `size` of `0` in `setVertexBuffer()` and `setIndexBuffer()` binds the rest of the buffer, the same as no `size`.

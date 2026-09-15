@@ -156,6 +156,28 @@ impl NodeModulesFolder {
         bun_sys::directory_exists_at(&dir, file_path).unwrap_or(false)
     }
 
+    #[inline(never)]
+    pub(crate) fn has_scripts_pending_mark(
+        &self,
+        root_node_modules_dir: &Dir,
+        file_path: &ZStr,
+    ) -> bool {
+        if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
+            return lockfile::package::scripts::is_scripts_pending_mark(
+                root_node_modules_dir.fd(),
+                join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
+            );
+        }
+
+        let dir = match self.open_dir(root_node_modules_dir) {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+        lockfile::package::scripts::is_scripts_pending_mark(dir.fd(), file_path)
+    }
+
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
     #[inline(never)]
     fn open_file_without_opening_directories(
@@ -1570,11 +1592,33 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
+        let (is_trusted, is_trusted_through_update_request) = 'brk: {
+            if self
+                .trusted_dependencies_from_update_requests
+                .contains(&package_id)
+            {
+                break 'brk (true, true);
+            }
+            if self.lockfile().has_trusted_dependency(
+                alias.slice(string_buf!()),
+                pkg_name.slice(string_buf!()),
+                resolution,
+            ) {
+                break 'brk (true, false);
+            }
+            break 'brk (false, false);
+        };
+
         let needs_install = self.force_install
             || self.skip_verify_installed_version_number
             || !needs_verify
             || remove_patch
-            || !installer.verify(resolution, &self.root_node_modules_folder);
+            || !installer.verify(resolution, &self.root_node_modules_folder)
+            // only a trusted package has a mark; `--ignore-scripts` leaves it for a later install to honor
+            || (is_trusted
+                && resolution.tag.can_enqueue_install_task()
+                && self.manager().options.do_.run_scripts()
+                && installer.has_pending_scripts(&self.root_node_modules_folder));
 
         if needs_install {
             if resolution.tag.can_enqueue_install_task()
@@ -1935,22 +1979,6 @@ impl<'a> PackageInstaller<'a> {
                     let dep_behavior = dep.behavior;
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
-                    let (is_trusted, is_trusted_through_update_request) = 'brk: {
-                        if self
-                            .trusted_dependencies_from_update_requests
-                            .contains(&package_id)
-                        {
-                            break 'brk (true, true);
-                        }
-                        if self.lockfile().has_trusted_dependency(
-                            alias.slice(string_buf!()),
-                            pkg_name.slice(string_buf!()),
-                            resolution,
-                        ) {
-                            break 'brk (true, false);
-                        }
-                        break 'brk (false, false);
-                    };
 
                     if resolution.tag != resolution::Tag::Root
                         && (resolution.tag == resolution::Tag::Workspace || is_trusted)
@@ -1988,6 +2016,12 @@ impl<'a> PackageInstaller<'a> {
                                     bun_core::pretty_errorln!(
                                         "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
                                         bstr::BStr::new(pkg_name.slice(string_buf!())),
+                                    );
+                                }
+                                // nothing will run: drop a mark the package itself may have shipped
+                                if resolution.tag.can_enqueue_install_task() {
+                                    lockfile::package::scripts::clear_scripts_pending(
+                                        folder_path.slice(),
                                     );
                                 }
                                 break 'enqueue_lifecycle_scripts;
@@ -2414,6 +2448,11 @@ impl<'a> PackageInstaller<'a> {
                     }
                 }
 
+                // the scripts could not even be listed: leave the package marked so the next install retries it
+                if resolution.tag.can_enqueue_install_task() {
+                    lockfile::package::scripts::mark_scripts_pending(package_path.slice());
+                }
+
                 if self.manager().options.enable.fail_early() {
                     Global::exit(1);
                 }
@@ -2425,6 +2464,10 @@ impl<'a> PackageInstaller<'a> {
         };
 
         let Some(scripts_list) = scripts_list else {
+            // no scripts: drop a mark the package itself may have shipped under that name
+            if resolution.tag.can_enqueue_install_task() {
+                lockfile::package::scripts::clear_scripts_pending(package_path.slice());
+            }
             return false;
         };
 
@@ -2455,6 +2498,8 @@ impl<'a> PackageInstaller<'a> {
                         + scripts_list.total as usize,
                 );
             }
+            // now, not at spawn time: the scripts wait for the tree's dependencies to install
+            scripts_list.mark_scripts_pending();
             self.pending_lifecycle_scripts.push(PendingLifecycleScript {
                 list: scripts_list,
                 tree_id: self.current_tree_id,

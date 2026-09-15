@@ -889,6 +889,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     match self.current_script_index {
                         // preinstall
                         0 => {
+                            // later scripts run as a new subprocess after `Binaries`; none left means done
+                            if self.scripts.items[1..].iter().all(Option::is_none) {
+                                self.scripts.clear_scripts_pending();
+                            }
                             let installer = ctx.installer_mut();
                             let previous_step = installer.store.entries.items_step()
                                 [ctx.entry_id.get() as usize]
@@ -938,6 +942,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         bun_core::fmt::quote(&self.package_name),
                     );
                 }
+
+                self.scripts.clear_scripts_pending();
 
                 if let Some(ctx) = &self.ctx {
                     let installer = ctx.installer_mut();
@@ -1051,6 +1057,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub(crate) fn deinit_and_delete_package(&mut self) {
+        // a workspace or `link:` package's cwd is the user's own directory (on Windows the resolved link target)
+        if !self.scripts.cwd_is_created_by_bun() {
+            // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
+            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+            return;
+        }
         if self.manager().options.log_level.is_verbose() {
             bun_core::warn!(
                 "deleting optional dependency '{}' due to failed '{}' script",

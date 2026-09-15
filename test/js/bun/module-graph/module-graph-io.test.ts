@@ -79,14 +79,12 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       tenant = "t1";
     }
     using tenant = new Tenant();
-    const prototypes = [Bun.ModuleGraph.prototype, Tenant.prototype];
-    expect(
-      [graph, tenant].map((g, i) => [g instanceof Bun.ModuleGraph, Object.getPrototypeOf(g) === prototypes[i]]),
-    ).toEqual([
-      [true, true],
-      [true, true],
-    ]);
-    expect([tenant instanceof Tenant, tenant.tenant, tenant.run(() => "ran")]).toEqual([true, "t1", "ran"]);
+    expect([
+      tenant instanceof Bun.ModuleGraph,
+      tenant instanceof Tenant,
+      tenant.tenant,
+      tenant.run(() => "ran"),
+    ]).toEqual([true, true, "t1", "ran"]);
   });
 
   test("dispose() stops the graph's timers, not the host's", async () => {

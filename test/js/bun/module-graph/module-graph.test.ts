@@ -4,95 +4,38 @@
 // for the names the host passes as `globals`.
 import { heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { EventEmitter } from "events";
 import { renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { createRequire } from "node:module";
-import { join, resolve } from "path";
+import { join } from "path";
 
 type ModuleGraphOptions = Bun.ModuleGraphOptions;
-type ModuleGraphInstance = Bun.ModuleGraph & {
-  process: NodeJS.Process;
-  import(specifier: string): Promise<any>;
-};
+type ModuleGraphInstance = Bun.ModuleGraph & { import(specifier: string): Promise<any> };
 const ModuleGraphClass = Bun.ModuleGraph as { new (opts?: ModuleGraphOptions): ModuleGraphInstance };
 
 test("Bun.ModuleGraph is exposed", () => {
   expect(typeof Bun.ModuleGraph).toBe("function");
 });
 
-// What a host passes in `globals` to give each graph its own process state: a `process`
-// whose env, cwd, exit and event listeners are the graph's, forwarding everything else
-// to the real process. (ModuleGraph itself only provides the per-graph binding.)
-type HostOptions = ModuleGraphOptions & { env?: Record<string, string>; cwd?: string; onExit?: (code: number) => void };
-function graphProcess(opts: HostOptions, graph: () => ModuleGraphInstance): NodeJS.Process {
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(opts.env ?? process.env)) env[k] = String(v);
-  let cwd = opts.cwd ?? process.cwd();
-  let exited = false,
-    exitCode: number | undefined;
-  const events = new EventEmitter();
-  const exit = (code?: number) => {
-    if (exited) return;
-    exited = true;
-    const c = code ?? exitCode ?? 0;
-    try {
-      events.emit("exit", c);
-    } finally {
-      opts.onExit?.(c);
-      graph().dispose();
-    }
-  };
-  const own: Record<string, unknown> = {
-    env,
-    cwd: () => cwd,
-    chdir: (d: string) => {
-      cwd = resolve(cwd, d);
+// What a host passes in `globals` to give each graph its own `process.env`, and a `process.exit()`
+// that disposes the graph instead of ending the process. Everything else is the real process's.
+type HostOptions = ModuleGraphOptions & { env?: Record<string, string>; onExit?: (code: number) => void };
+const ModuleGraph = (opts: HostOptions = {}): ModuleGraphInstance => {
+  const own: Record<PropertyKey, unknown> = {
+    env: Object.fromEntries(Object.entries(opts.env ?? process.env).map(([k, v]) => [k, String(v)])),
+    exit: (code = 0) => {
+      opts.onExit?.(code);
+      graph.dispose();
     },
-    exit,
-    reallyExit: exit,
-    abort: () => exit(134),
   };
-  for (const m of [
-    "on",
-    "once",
-    "off",
-    "addListener",
-    "removeListener",
-    "prependListener",
-    "prependOnceListener",
-    "removeAllListeners",
-    "setMaxListeners",
-  ] as const)
-    own[m] = (...a: unknown[]) => {
-      (events as any)[m](...a);
-      return shim;
-    };
-  for (const m of ["emit", "listeners", "rawListeners", "listenerCount", "eventNames"] as const)
-    own[m] = (...a: unknown[]) => (events as any)[m](...a);
-  const shim: any = new Proxy(process, {
+  const proc = new Proxy(process, {
     get(target, key) {
-      if (key === "exitCode") return exitCode;
-      if (Object.prototype.hasOwnProperty.call(own, key)) return own[key as string];
+      if (Object.hasOwn(own, key)) return own[key];
       const v = Reflect.get(target, key, target);
       return typeof v === "function" ? v.bind(target) : v;
     },
-    set(_target, key, value) {
-      if (key === "exitCode") exitCode = value;
-      else own[key as string] = value;
-      return true;
-    },
-    has(target, key) {
-      return key in own || key in target;
-    },
   });
-  return shim;
-}
-const ModuleGraph = (opts: HostOptions = {}): ModuleGraphInstance => {
-  let graph!: ModuleGraphInstance;
-  const proc = graphProcess(opts, () => graph);
-  graph = new ModuleGraphClass({ onError: opts.onError, globals: { process: proc, ...opts.globals } });
-  graph.process = proc;
+  const graph = new ModuleGraphClass({ onError: opts.onError, globals: { process: proc, ...opts.globals } });
   return graph;
 };
 
@@ -192,7 +135,7 @@ describe("Bun.ModuleGraph", () => {
     expect(a.run()).toMatchObject({ local: 2, counter: 2 });
     expect(b.run()).toMatchObject({ local: 1, counter: 1 });
     expect(a.run().tagId).not.toBe(b.run().tagId);
-    // the host's own import of the same file is a separate (primary) instance
+    // the host's own import of the same file is a separate instance (the host's)
     const host = await import(join(dir, "main.mjs"));
     expect(host.run()).toMatchObject({ local: 1, counter: 1 });
     rmSync(dir, { recursive: true, force: true });
@@ -229,7 +172,7 @@ describe("Bun.ModuleGraph", () => {
     const after = heapStats().objectTypeCounts;
     const d = (n: string) => (after[n] ?? 0) - (before[n] ?? 0);
     // Orders of magnitude, not exact counts (unrelated allocations may happen in between): the
-    // executables and CodeBlocks are the template's, not K × N more; environments are per graph.
+    // executables and CodeBlocks are shared, not K × N more; environments are per graph.
     expect(d("FunctionExecutable")).toBeLessThan(N / 10); // not K × N
     expect(d("FunctionCodeBlock")).toBeLessThan(4 * N); // one per tier the shared functions reach, not K × N
     expect(d("JSModuleEnvironment")).toBeGreaterThanOrEqual(K - 1);
@@ -327,8 +270,8 @@ describe("Bun.ModuleGraph", () => {
     expect(await a.load()).toBe(1);
     expect(await a.load()).toBe(2);
     expect(await b.load()).toBe(1);
-    const primary = await import(join(dir, "dep.mjs"));
-    expect(primary.n).toBe(0);
+    const inHost = await import(join(dir, "dep.mjs"));
+    expect(inHost.n).toBe(0);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -388,8 +331,8 @@ describe("Bun.ModuleGraph", () => {
       "meta.mjs": `export const resolved = import.meta.resolve('./plain.mjs'); export const req = require('./plain.mjs').yes; export function cacheKeys() { return Object.keys(require.cache).map(k => k.split(/[\\\\/]/).pop()).sort() }`,
     });
     const cyc = await ModuleGraph().import(join(dir, "cyc-a.mjs"));
-    const primary = await import(join(dir, "cyc-a.mjs"));
-    expect({ a: cyc.a(), seesB: cyc.seesB() }).toEqual({ a: primary.a(), seesB: primary.seesB() });
+    const inHost = await import(join(dir, "cyc-a.mjs"));
+    expect({ a: cyc.a(), seesB: cyc.seesB() }).toEqual({ a: inHost.a(), seesB: inHost.seesB() });
 
     const ga = ModuleGraph({ env: { APP_ID: "a" } });
     const message = (p: Promise<unknown>) =>
@@ -420,7 +363,7 @@ describe("Bun.ModuleGraph", () => {
     ]);
     expect([x.callA(), y.callA(), x !== y]).toEqual(["ab", "ab", true]);
 
-    await import(join(dir, "plain.mjs")); // host evaluates the template first
+    await import(join(dir, "plain.mjs")); // the host evaluates it first
     const meta = await ModuleGraph().import(join(dir, "meta.mjs"));
     expect(meta.resolved).toBe(Bun.pathToFileURL(join(dir, "plain.mjs")).href);
     expect(meta.req).toBe(1);
@@ -438,10 +381,10 @@ describe("Bun.ModuleGraph", () => {
     });
     const order: string[] = [];
     const root = await ModuleGraph({ globals: { __order: order } }).import(join(dir, "root.mjs"));
-    const primaryOrder: string[] = ((globalThis as any).__order = []);
+    const hostOrder: string[] = ((globalThis as any).__order = []);
     await import(join(dir, "root.mjs"));
     expect(root.all).toBe("ABC");
-    expect(order).toEqual(primaryOrder); // same interleaving as the spec algorithm on the primary graph
+    expect(order).toEqual(hostOrder); // same interleaving as the spec algorithm gives the host
 
     const g2 = ModuleGraph({ globals: { __order: [] } });
     const [m1, m2, m3] = await Promise.all([
@@ -1025,20 +968,20 @@ describe("Bun.ModuleGraph — instance evaluation algorithm", () => {
     const a = await ModuleGraph().import(join(dir, "a.mjs"));
     const host = await import(join(dir, "a.mjs"));
     expect(a.v.slice(0, 2)).toEqual([1, 1]);
-    expect(a.v).toEqual(host.v); // same identity semantics as the primary graph
+    expect(a.v).toEqual(host.v); // same identity semantics as in the host
     const b = await ModuleGraph().import(join(dir, "a.mjs"));
     expect(b.v).toEqual(host.v);
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("host imports a module AFTER an instance already evaluated it: the primary evaluates normally (import slots filled, optimized code correct)", async () => {
+  test("host imports a module AFTER an instance already evaluated it: the host's evaluates normally (import slots filled, optimized code correct)", async () => {
     const dir = fixture({
       "lib.mjs": `export let n = 0; export function inc() { return ++n }`,
       "user.mjs": `import { inc, n } from "./lib.mjs"; export function run(k) { let last = 0; for (let i = 0; i < k; i++) last = inc(); return [last, n] }`,
     });
     const inst = await ModuleGraph().import(join(dir, "user.mjs"));
     expect(inst.run(50000)).toEqual([50000, 50000]);
-    const host = await import(join(dir, "user.mjs")); // primary evaluates now
+    const host = await import(join(dir, "user.mjs")); // the host's evaluates now
     expect(host.run(50000)).toEqual([50000, 50000]);
     expect(inst.run(1)).toEqual([50001, 50001]);
     rmSync(dir, { recursive: true, force: true });
@@ -1066,10 +1009,10 @@ describe("Bun.ModuleGraph — host stays correct while graphs exist", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("require(esm) from a graph's CommonJS after the graph was disposed throws instead of loading into the primary", async () => {
+  test("require(esm) from a graph's CommonJS after the graph was disposed throws instead of loading into the host's registry", async () => {
     const dir = fixture({
       "late.cjs": `module.exports = () => require("./e.mjs").v`,
-      "e.mjs": `export const v = process.env.T ?? "primary"`,
+      "e.mjs": `export const v = process.env.T ?? "the host"`,
     });
     const g = ModuleGraph({ env: { T: "graph" } });
     const late = (await g.import(join(dir, "late.cjs"))).default;
@@ -2449,7 +2392,7 @@ describe("Bun.ModuleGraph — error objects from graph code: messages, stacks, t
   });
 });
 
-describe("Bun.ModuleGraph — template sharing and file changes", () => {
+describe("Bun.ModuleGraph — shared code and file changes", () => {
   test("a file edited between two graphs: the later graph loads the file as it is now", async () => {
     const dir = fixture({ "v.mjs": `export const v = 1`, "w.mjs": `export const v = 1` });
     expect((await ModuleGraph().import(join(dir, "v.mjs"))).v).toBe(1);
@@ -2460,7 +2403,7 @@ describe("Bun.ModuleGraph — template sharing and file changes", () => {
       (await ModuleGraph().import(join(dir, "w.mjs"))).v,
     ]).toEqual([2, 3]);
   });
-  test("query strings make distinct module keys: ?v=1 and ?v=2 are separate templates and separate instances", async () => {
+  test("query strings make distinct module keys: ?v=1 and ?v=2 share no code and are separate instances", async () => {
     const dir = fixture({
       "q.mjs": `export const key = import.meta.url; export let n = 0; export const inc = () => ++n`,
     });
@@ -2483,7 +2426,7 @@ describe("Bun.ModuleGraph — template sharing and file changes", () => {
 });
 
 describe("Bun.ModuleGraph — scale", () => {
-  test("a graph of hundreds of modules instantiates into 5 graphs; each graph's cost is a small fraction of the template", async () => {
+  test("a graph of hundreds of modules instantiates into 5 graphs; each graph's cost is a small fraction of the first load's", async () => {
     const files: Record<string, string> = {};
     // Every load is tens of times slower on a debug or ASAN build.
     const N = stressMode ? 60 : 300;
@@ -2506,7 +2449,7 @@ describe("Bun.ModuleGraph — scale", () => {
     for (let i = 1; i < 5; i++) rest.push(await ModuleGraph({ env: { T: "g" + i } }).import(join(dir, "root.mjs")));
     const c5 = await settle();
     expect([first.v, first.who, rest.map(m => m.who)]).toEqual([N, "g0", ["g1", "g2", "g3", "g4"]]);
-    // Instances share the linked template (records, code blocks, executables): an extra instance
+    // Instances share what the first load made (code blocks, executables): an extra instance
     // allocates environments/functions/namespaces only — well under what the first load did.
     const templatePlusFirst = c1 - c0,
       perExtra = (c5 - c1) / 4;
@@ -2940,7 +2883,7 @@ describe("Bun.ModuleGraph — specifiers and paths", () => {
     expect([u.where, u.sub]).toEqual(["main:t", "sub"]);
     rmSync(dir, { recursive: true, force: true });
   });
-  test("symlinked module path: one template whether imported via the link or the target (realpath), per graph", async () => {
+  test("symlinked module path: one compiled copy whether imported via the link or the target (realpath), per graph", async () => {
     const dir = fixture({ "real/x.mjs": `export let n = 0; export const inc = () => ++n` });
     const { symlinkSync } = require("node:fs");
     symlinkSync(join(dir, "real"), join(dir, "link"), "junction");
@@ -3165,7 +3108,7 @@ describe("Bun.ModuleGraph — re-entrancy: graphs created/disposed from inside o
     const m = await ModuleGraph({ env: { T: "outer2" } }).import(join(dir, "sync-nested-import.mjs"));
     expect([m.viaRequireInInner, m.mine]).toEqual(["cjs-inner", "outer2"]);
   });
-  test("the loading-instance bracket is restored after nested loads: a module imported by the host right after nested graph activity is the host's", async () => {
+  test("after nested loads a module imported by the host right after nested graph activity is the host's", async () => {
     await ModuleGraph({ env: { T: "x" } }).import(join(dir, "spawner.mjs"));
     const d = fixture({ "fresh.mjs": `export const who = process.env.T ?? "host"` });
     expect((await import(join(d, "fresh.mjs"))).who).toBe(process.env.T ?? "host");
@@ -3238,21 +3181,8 @@ describe("Bun.ModuleGraph — process-global registries touched from a graph (do
   });
 });
 
-describe("Bun.ModuleGraph — a plain script is unaffected by the API existing", () => {
-  test("the constructor is always exposed, and a plain script's module semantics are unaffected by its existence", async () => {
-    const script = `const has = typeof Bun.ModuleGraph; let made = "n/a"; try { if (has === "function") { new Bun.ModuleGraph({}); made = "constructed" } } catch (e) { made = "threw:" + e.constructor.name }
-      const m = await import(${JSON.stringify(join(fixture({ "plain.mjs": `export const v = [typeof process.env.HOME, typeof setTimeout, import.meta.main]` }), "plain.mjs"))}); console.log(JSON.stringify({ has, made, v: m.v }))`;
-    const on = await runBun(["-e", script]);
-    expect(JSON.parse(on.stdout)).toEqual({
-      has: "function",
-      made: "constructed",
-      v: ["string", "function", false],
-    });
-  });
-});
-
 describe("Bun.ModuleGraph — memory per instance vs module count", () => {
-  test("per-instance heap cost grows with module count but stays far below the template cost", async () => {
+  test("per-instance heap cost grows with module count but stays far below the first load's cost", async () => {
     // Measured in a fresh process so other tests' garbage does not move the baseline.
     const results: Record<string, number[]> = {};
     // Every load is tens of times slower on a debug or ASAN build, where the ratios below are not asserted either.
@@ -3336,7 +3266,7 @@ describe("Bun.ModuleGraph — evaluator stress: large SCCs, TLA positions, star-
         ["A", "B", "C"].map(T => ModuleGraph({ env: { T } }).import(join(dir, "r0.mjs"))),
       );
       for (const [i, g] of graphs.entries()) {
-        expect(g.order.map((e: [number, string]) => e[0])).toEqual(hostOrder); // same evaluation order as the spec algorithm on the primary
+        expect(g.order.map((e: [number, string]) => e[0])).toEqual(hostOrder); // same evaluation order as the spec algorithm gives the host
         expect(new Set(g.order.map((e: [number, string]) => e[1]))).toEqual(new Set([["A", "B", "C"][i]])); // every module body ran with this instance's env
         expect(g.order.length).toBe(50); // each exactly once
         expect(g.seenNext()).toBe(1);
@@ -3625,16 +3555,16 @@ describe("Bun.ModuleGraph — imports racing edits, workers, deep re-export chai
     expect(r.exitCode).toBe(0);
     rmSync(dir, { recursive: true, force: true });
   });
-  test("a module whose PRIMARY evaluation threw can still be instantiated and evaluated by a graph (evaluation errors are per instance)", async () => {
+  test("a module whose evaluation by the host threw can still be instantiated and evaluated by a graph (evaluation errors are per instance)", async () => {
     const dir = fixture({
-      "cond.mjs": `if (!process.env.OK) throw new Error("primary-fail"); export const v = "fine:" + process.env.OK`,
+      "cond.mjs": `if (!process.env.OK) throw new Error("fails in the host"); export const v = "fine:" + process.env.OK`,
     });
     expect(
       await import(join(dir, "cond.mjs")).then(
         () => "ok",
         e => e.message,
       ),
-    ).toBe("primary-fail");
+    ).toBe("fails in the host");
     expect((await ModuleGraph({ env: { OK: "1" } }).import(join(dir, "cond.mjs"))).v).toBe("fine:1");
     const again = await ModuleGraph({ env: {} })
       .import(join(dir, "cond.mjs"))
@@ -3642,7 +3572,7 @@ describe("Bun.ModuleGraph — imports racing edits, workers, deep re-export chai
         () => "ok",
         (e: any) => e.message,
       );
-    expect(again).toBe("primary-fail"); // and an instance's own failure is its own
+    expect(again).toBe("fails in the host"); // and an instance's own failure is its own
     rmSync(dir, { recursive: true, force: true });
   });
   test("instantiation that fails part-way is rolled back: a retry in the same graph re-instantiates cleanly (functions/vars initialised, not TDZ)", async () => {
@@ -3673,7 +3603,7 @@ describe("Bun.ModuleGraph — imports racing edits, workers, deep re-export chai
     const m = await g.import(join(dir, "m.mjs"));
     g.dispose();
     expect(() => m.get()).toThrow(/disposed/);
-    expect((globalThis as any).__deferSide).toBe(0); // nothing evaluated in the primary either
+    expect((globalThis as any).__deferSide).toBe(0); // nothing evaluated in the host either
     rmSync(dir, { recursive: true, force: true });
   });
   test("a WebAssembly module imported from a graph behaves as in the host", async () => {

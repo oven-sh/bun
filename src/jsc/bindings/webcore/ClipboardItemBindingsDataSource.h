@@ -44,8 +44,8 @@ class DeferredPromise;
 class DOMPromise;
 
 // Ported from WebCore's ClipboardItemBindingsDataSource. Bun diff: no ClipboardItemTypeLoader
-// (Bun's in-memory Blob is already collected, so one Promise.all reaction converts everything)
-// and no markup/SVG/PNG sanitization (needs a Document/Page, which a runtime lacks).
+// (Bun's in-memory Blob is already collected, so the last representation to fulfill converts
+// them all) and no markup/SVG/PNG sanitization (needs a Document/Page, which a runtime lacks).
 class ClipboardItemBindingsDataSource final : public ClipboardItemDataSource {
     WTF_MAKE_TZONE_ALLOCATED(ClipboardItemBindingsDataSource);
 
@@ -59,18 +59,18 @@ private:
     void collectDataForWriting(Clipboard& destination, CollectCompletionHandler&&) final;
     void cancelCollect() final;
 
-    // Runs once, when every representation has settled.
-    void didSettleAllTypes();
+    void didSettleType(size_t index);
+    // Runs once per collect, when the last representation has fulfilled.
+    void didFulfillAllTypes();
     void invokeCompletionHandler(std::optional<ClipboardItemData>&&, JSC::JSValue failureReason = {});
 
     Vector<KeyValuePair<String, Ref<DOMPromise>>> m_itemPromises;
 
-    // The Promise.all covering m_itemPromises, held only while a write is in
-    // flight so the reaction has something to read its result from.
-    RefPtr<DOMPromise> m_allTypesSettled;
     CollectCompletionHandler m_completionHandler;
+    // Representations of the current collect that have not fulfilled yet.
+    size_t m_pendingTypeCount { 0 };
     // One ClipboardItem can be handed to two overlapping write()s. Each collect
-    // stamps its reaction, so a reaction left over from a superseded write
+    // stamps its reactions, so a reaction left over from a superseded write
     // cannot settle the current one.
     unsigned m_collectGeneration { 0 };
 };

@@ -597,30 +597,79 @@ describe("read / write", () => {
     }
   });
 
-  // collectDataForWriting() calls the realm's Promise.all, which user JS can
-  // tamper to synchronously re-enter write([sameItem]); the outer frame must
-  // not then touch the newer writer's armed state when it resumes.
-  test("a write re-entered from a tampered Promise.all does not clobber the inner one", async () => {
+  // write() registers one internal reaction per representation, as getType()
+  // does. No Promise method that a script can replace or observe runs.
+  test("write() and getType() ignore a replaced Promise.all, an own then, and a constructor getter", async () => {
     const realAll = Promise.all;
-    let inner: Promise<void> | null = null;
-    const item = new ClipboardItem({ "text/plain": "ok" });
+    let allCalls = 0;
     (Promise as any).all = function () {
-      Promise.all = realAll;
-      inner = navigator.clipboard.write([item]);
-      return undefined;
+      allCalls++;
+      return new Promise(() => {});
     };
+    try {
+      // The builtin Promise.all would call this `then` and never settle.
+      const ownThen = Promise.resolve("own then");
+      (ownThen as any).then = () => {};
+      // `then` reads `constructor` for its species lookup. The one permitted
+      // read is the record conversion in the ClipboardItem constructor.
+      let constructorReads = 0;
+      const ownConstructor = Promise.resolve("own constructor");
+      Object.defineProperty(ownConstructor, "constructor", {
+        get() {
+          if (constructorReads++ === 0) return Promise;
+          throw new Error("the constructor getter ran again");
+        },
+      });
+      const items = [
+        new ClipboardItem({ "text/plain": ownThen }),
+        new ClipboardItem({ "text/plain": ownConstructor }),
+      ];
+      const texts: string[] = [];
+      for (const item of items) texts.push(await (await item.getType("text/plain")).text());
+      expect(texts).toEqual(["own then", "own constructor"]);
+      for (const item of items) {
+        const outcome = await navigator.clipboard.write([item]).then(
+          () => "resolved",
+          (e: Error) => e.name,
+        );
+        expect(outcome).toBe(savedClipboard === null ? "NotAllowedError" : "resolved");
+      }
+      if (savedClipboard !== null) expect(await navigator.clipboard.readText()).toBe("own constructor");
+      expect({ allCalls, constructorReads }).toEqual({ allCalls: 0, constructorReads: 1 });
+    } finally {
+      Promise.all = realAll;
+    }
+  });
+
+  // Converting a representation runs its toString(), which can re-enter
+  // write([sameItem]). The outer frame must not then settle the newer collect.
+  test("a write re-entered from a representation's toString() does not clobber the inner one", async () => {
+    let inner: Promise<void> | null = null;
+    let item: ClipboardItem;
+    const representation = {
+      toString() {
+        inner ??= navigator.clipboard.write([item]);
+        return "re-entered";
+      },
+    };
+    item = new ClipboardItem({ "text/plain": representation as never });
     try {
       await expectDOMException(navigator.clipboard.write([item]), "AbortError");
       expect(inner).not.toBeNull();
       const outcome = await inner!.then(
-        () => "ok",
-        (e: Error) => e.message,
+        () => "resolved",
+        (e: Error) => `${e.name}: ${e.message}`,
       );
       // Without the generation guard the outer frame fires the inner writer's
-      // completion with nullopt, which rejects with this exact message.
-      expect(outcome).not.toContain("representation could not be read");
+      // completion with nullopt, which rejects with "could not be read".
+      if (savedClipboard === null) {
+        expect(outcome).toStartWith("NotAllowedError: ");
+        expect(outcome).not.toContain("could not be read");
+      } else {
+        expect(outcome).toBe("resolved");
+        expect(await navigator.clipboard.readText()).toBe("re-entered");
+      }
     } finally {
-      Promise.all = realAll;
       // Retire the tail write so nothing is in flight for the next test.
       await navigator.clipboard.write([]);
     }

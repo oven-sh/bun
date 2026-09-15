@@ -33,10 +33,7 @@
 #include "JSDOMPromise.h"
 #include "JSDOMPromiseDeferred.h"
 #include "blob.h"
-#include <JavaScriptCore/JSArray.h>
-#include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/text/MakeString.h>
 
 // clang-format off
@@ -73,14 +70,13 @@ static RefPtr<Blob> blobFromResolvedValue(JSC::JSGlobalObject& globalObject, JSC
     // Runs from a promise reaction, the top of its own call.
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     RefPtr blob = ClipboardItem::blobFromSettledValue(&globalObject, value, type);
-    if (catchScope.exception()) [[unlikely]] {
+    if (auto* exception = catchScope.exception()) [[unlikely]] {
+        JSC::JSValue thrown = exception->value();
         // A termination keeps unwinding rather than becoming a rejection.
-        if (vm.hasPendingTerminationException()) {
+        if (catchScope.clearExceptionExceptTermination())
+            outError = thrown;
+        else
             outTerminated = true;
-            return nullptr;
-        }
-        outError = catchScope.exception()->value();
-        catchScope.clearException();
         return nullptr;
     }
     return blob;
@@ -143,101 +139,41 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
     });
 }
 
-// `Promise.all(promises)` through the realm's own constructor; the values are
-// caller-supplied, so this grants nothing the caller does not have.
-static JSC::JSPromise* promiseAll(JSC::JSGlobalObject& globalObject, JSC::JSArray* promises)
-{
-    auto& vm = globalObject.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* promiseConstructor = globalObject.promiseConstructor();
-    JSC::JSValue allFunction = promiseConstructor->get(&globalObject, JSC::Identifier::fromString(vm, "all"_s));
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    auto callData = JSC::getCallData(allFunction);
-    if (callData.type == JSC::CallData::Type::None) [[unlikely]]
-        return nullptr;
-
-    JSC::MarkedArgumentBuffer arguments;
-    arguments.append(promises);
-    if (arguments.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(&globalObject, scope);
-        return nullptr;
-    }
-
-    JSC::JSValue result = JSC::call(&globalObject, allFunction, callData, promiseConstructor, arguments);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    return dynamicDowncast<JSC::JSPromise>(result);
-}
-
 void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectCompletionHandler&& completion)
 {
     // The same item can be written twice concurrently; retire the superseded
     // collect before taking this one.
     if (m_completionHandler)
         invokeCompletionHandler(std::nullopt);
-    m_allTypesSettled = nullptr;
-    ++m_collectGeneration;
+    auto generation = ++m_collectGeneration;
     m_completionHandler = WTF::move(completion);
+    m_pendingTypeCount = m_itemPromises.size();
 
-    if (m_itemPromises.isEmpty()) {
+    if (!m_pendingTypeCount) {
         invokeCompletionHandler(ClipboardItemData {});
         return;
     }
 
-    auto* globalObject = m_itemPromises[0].value->globalObject();
-    if (!globalObject) {
-        invokeCompletionHandler(std::nullopt);
-        return;
-    }
-
-    auto& vm = globalObject->vm();
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    JSC::JSArray* promises = JSC::constructEmptyArray(globalObject, nullptr, m_itemPromises.size());
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearException();
-        invokeCompletionHandler(std::nullopt);
-        return;
-    }
-    for (unsigned index = 0; index < m_itemPromises.size(); ++index) {
-        promises->putDirectIndex(globalObject, index, m_itemPromises[index].value->promise());
-        if (catchScope.exception()) [[unlikely]] {
-            catchScope.clearException();
+    for (size_t index = 0; index < m_itemPromises.size(); ++index) {
+        // One reaction per representation, registered through the private
+        // @then as getType() does, so no replaceable Promise method runs.
+        // WeakPtr back-edge: a strong Ref would close a native<->GC cycle (the
+        // guarded promise's reaction would own the item) that never-settling
+        // user data makes uncollectable.
+        auto registered = m_itemPromises[index].value->whenSettled([this, weakItem = WeakPtr { m_item.get() }, generation, index] {
+            RefPtr protectedItem = weakItem.get();
+            if (!protectedItem || generation != m_collectGeneration)
+                return;
+            didSettleType(index);
+        });
+        // Only a terminating VM refuses a reaction. The termination stays
+        // pending for the caller, and the bump retires the reactions already
+        // registered.
+        if (registered == DOMPromise::IsCallbackRegistered::No) {
+            ++m_collectGeneration;
             invokeCompletionHandler(std::nullopt);
             return;
         }
-    }
-
-    auto generation = m_collectGeneration;
-    auto* allPromise = promiseAll(*globalObject, promises);
-    if (catchScope.exception()) [[unlikely]]
-        catchScope.clearException();
-    // Promise.all can run user JS that re-enters this collect via
-    // write([sameItem]); that path already retired this generation's
-    // completion, so bail without touching the newer one's.
-    if (generation != m_collectGeneration)
-        return;
-    if (!allPromise) {
-        invokeCompletionHandler(std::nullopt);
-        return;
-    }
-
-    // WeakPtr back-edge: a strong Ref would close a native<->GC cycle
-    // (guardedObjects roots the aggregate, whose reaction would own the item)
-    // that never-settling user data makes uncollectable.
-    m_allTypesSettled = DOMPromise::create(*globalObject, *allPromise);
-    m_allTypesSettled->whenSettled([this, weakItem = WeakPtr { m_item.get() }, generation] {
-        RefPtr protectedItem = weakItem.get();
-        if (!protectedItem || generation != m_collectGeneration)
-            return;
-        didSettleAllTypes();
-    });
-    // whenSettled throws only for termination: no reaction was registered and
-    // nothing else will discharge the handler.
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearException();
-        invokeCompletionHandler(std::nullopt);
     }
 }
 
@@ -245,86 +181,56 @@ void ClipboardItemBindingsDataSource::cancelCollect()
 {
     // Bump first so an in-flight reaction sees itself superseded.
     ++m_collectGeneration;
-    m_allTypesSettled = nullptr;
     invokeCompletionHandler(std::nullopt);
 }
 
-void ClipboardItemBindingsDataSource::didSettleAllTypes()
+void ClipboardItemBindingsDataSource::didSettleType(size_t index)
+{
+    Ref promise = m_itemPromises[index].value;
+    if (promise->status() != DOMPromise::Status::Fulfilled) {
+        // As with Promise.all, the first rejection fails the collect with its
+        // own reason. The bump retires the reactions still to come.
+        ++m_collectGeneration;
+        invokeCompletionHandler(std::nullopt, promise->result());
+        return;
+    }
+    ASSERT(m_pendingTypeCount);
+    if (!--m_pendingTypeCount)
+        didFulfillAllTypes();
+}
+
+void ClipboardItemBindingsDataSource::didFulfillAllTypes()
 {
     // Take ownership up front: the conversions below run user JS that can
     // re-enter collectDataForWriting and swap m_completionHandler.
     auto completionHandler = std::exchange(m_completionHandler, {});
-    auto invoke = [&](std::optional<ClipboardItemData>&& data, JSC::JSValue reason = {}) {
-        if (completionHandler)
-            completionHandler(WTF::move(data), reason);
-    };
-
-    RefPtr allTypesSettled = std::exchange(m_allTypesSettled, nullptr);
-    if (!allTypesSettled) {
-        invoke(std::nullopt);
+    if (!completionHandler)
         return;
-    }
-    if (allTypesSettled->status() != DOMPromise::Status::Fulfilled) {
-        // The aggregate carries the rejecting representation's own reason.
-        invoke(std::nullopt, allTypesSettled->result());
-        return;
-    }
-
-    auto* globalObject = allTypesSettled->globalObject();
-    if (!globalObject) {
-        invoke(std::nullopt);
-        return;
-    }
-
-    auto& vm = globalObject->vm();
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    // Copy the resolved values into a MarkedArgumentBuffer so each stays
-    // rooted while it is converted.
-    JSC::MarkedArgumentBuffer resolvedValues;
-    resolvedValues.ensureCapacity(m_itemPromises.size());
-    JSC::JSValue resolved = allTypesSettled->result();
-    // Promise.all is a replaceable realm property; anything but an array of
-    // the expected length means the representations were not collected.
-    auto* resolvedArray = dynamicDowncast<JSC::JSArray>(resolved);
-    if (!resolvedArray || resolvedArray->length() < m_itemPromises.size()) {
-        invoke(std::nullopt);
-        return;
-    }
-    for (unsigned index = 0; index < m_itemPromises.size(); ++index) {
-        JSC::JSValue value = resolved.get(globalObject, index);
-        if (catchScope.exception()) [[unlikely]] {
-            catchScope.clearException();
-            invoke(std::nullopt);
-            return;
-        }
-        resolvedValues.append(value);
-    }
-    if (resolvedValues.hasOverflowed()) [[unlikely]] {
-        invoke(std::nullopt);
-        return;
-    }
 
     ClipboardItemData data;
     data.reserveInitialCapacity(m_itemPromises.size());
-    for (unsigned index = 0; index < m_itemPromises.size(); ++index) {
+    for (auto& typeAndPromise : m_itemPromises) {
+        // The guarded promise roots its result for the conversion.
+        Ref promise = typeAndPromise.value;
+        auto* globalObject = promise->globalObject();
+        if (!globalObject) {
+            completionHandler(std::nullopt, {});
+            return;
+        }
         JSC::JSValue error;
         bool terminated = false;
-        RefPtr blob = blobFromResolvedValue(*globalObject, resolvedValues.at(index), m_itemPromises[index].key, error, terminated);
-        if (terminated) {
-            invoke(std::nullopt);
-            return;
-        }
+        RefPtr blob = blobFromResolvedValue(*globalObject, promise->result(), typeAndPromise.key, error, terminated);
         // A representation that could not become a Blob fails the whole item,
-        // so a partial write never reaches the clipboard.
+        // so a partial write never reaches the clipboard. A termination leaves
+        // `error` empty.
         if (!blob) {
-            invoke(std::nullopt, error);
+            completionHandler(std::nullopt, error);
             return;
         }
-        data.append({ m_itemPromises[index].key, blob.releaseNonNull() });
+        data.append({ typeAndPromise.key, blob.releaseNonNull() });
     }
 
-    invoke(WTF::move(data));
+    completionHandler(WTF::move(data), {});
 }
 
 void ClipboardItemBindingsDataSource::invokeCompletionHandler(std::optional<ClipboardItemData>&& data, JSC::JSValue failureReason)

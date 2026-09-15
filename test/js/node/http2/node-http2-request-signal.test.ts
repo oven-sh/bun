@@ -48,6 +48,7 @@ function setting(id: number, value: number) {
  *   windowExhausted  settles once a full window of DATA arrived: the client is now blocked
  *   rstCode          settles with the error code of the first RST_STREAM frame, or with null if
  *                    the connection closes without one
+ * wireLength(n) and windowExhausted reject if the connection ends first.
  */
 async function clientAgainstRawServer(settings = Buffer.alloc(0)) {
   const wire: string[] = [];
@@ -55,9 +56,15 @@ async function clientAgainstRawServer(settings = Buffer.alloc(0)) {
   const windowExhausted = Promise.withResolvers<void>();
   const rstCode = Promise.withResolvers<number | null>();
   const sockets: net.Socket[] = [];
+  const rejecters: ((reason: Error) => void)[] = [windowExhausted.reject];
+  windowExhausted.promise.catch(() => {}); // Not every test awaits it.
   function record(entry: string) {
     wire.push(entry);
     for (const waiter of wireWaiters) if (wire.length >= waiter.n) waiter.resolve();
+  }
+  function connectionEnded(cause?: unknown) {
+    const err = new Error(`the connection ended first, wire: ${JSON.stringify(wire)}`, { cause });
+    for (const reject of rejecters) reject(err);
   }
   const server = net.createServer(socket => {
     sockets.push(socket);
@@ -65,7 +72,10 @@ async function clientAgainstRawServer(settings = Buffer.alloc(0)) {
     let prefaceSeen = false;
     let received = 0;
     socket.on("error", () => {});
-    socket.on("close", () => rstCode.resolve(null));
+    socket.on("close", () => {
+      rstCode.resolve(null);
+      connectionEnded();
+    });
     socket.on("data", chunk => {
       buf = Buffer.concat([buf, chunk]);
       if (!prefaceSeen) {
@@ -95,24 +105,34 @@ async function clientAgainstRawServer(settings = Buffer.alloc(0)) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const session = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
-  session.on("error", () => {});
-  await once(session, "remoteSettings");
+  session.on("error", connectionEnded);
+  session.on("close", () => connectionEnded());
+  function close() {
+    session.destroy();
+    for (const socket of sockets) socket.destroy();
+    if (server.listening) server.close();
+  }
+  try {
+    await once(session, "remoteSettings");
+  } catch (err) {
+    close();
+    throw err;
+  }
   return {
     session,
     wire,
     wireLength(n: number) {
-      const { promise, resolve } = Promise.withResolvers<void>();
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
       if (wire.length >= n) resolve();
-      else wireWaiters.push({ n, resolve });
+      else {
+        wireWaiters.push({ n, resolve });
+        rejecters.push(reject);
+      }
       return promise;
     },
     windowExhausted: windowExhausted.promise,
     rstCode: rstCode.promise,
-    close() {
-      session.destroy();
-      for (const socket of sockets) socket.destroy();
-      if (server.listening) server.close();
-    },
+    close,
   };
 }
 

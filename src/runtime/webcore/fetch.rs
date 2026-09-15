@@ -1954,12 +1954,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         unix_socket_path: core::mem::take(&mut unix_socket_path),
         pool,
         bypass_pool,
-        // Sockets parked in the session's pool outlive the request; the session
-        // closes them when it is collected, so it has to outlive the request too.
-        fetch_session: match session {
-            Some(session) => jsc::strong::Optional::create(session.wrapper(), global_this),
-            None => jsc::strong::Optional::empty(),
-        },
+        fetch_session: session.map(|session| session.hold(global_this)),
         on_stats: match on_stats {
             Some(callback) => jsc::strong::Optional::create(callback, global_this),
             None => jsc::strong::Optional::empty(),

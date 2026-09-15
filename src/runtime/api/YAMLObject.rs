@@ -97,8 +97,7 @@ impl Space {
 pub(crate) struct AnchorAlias {
     anchored: bool,
     used: bool,
-    /// The collection has no item or property that the stringifier prints,
-    /// so it is written as `[]` or `{}`.
+    /// Nothing inside it is printed, so it is written as `[]` or `{}`.
     empty: bool,
     name: AnchorAliasName,
 }
@@ -580,10 +579,7 @@ impl Stringifier {
         Ok(())
     }
 
-    /// Does this (unwrapped) object property value start on the line after its key?
-    /// Scalars and empty collections (`[]`, `{}`) stay on the key line.
-    /// A collection with an anchor or alias keeps the layout of `stringify_unwrapped`:
-    /// the `&name` or `*name` goes on its own line.
+    /// A scalar, or an empty collection without an anchor, stays on the key line.
     fn prop_value_needs_newline(&self, value: JSValue) -> bool {
         if value.is_number() || value.is_boolean() || value.is_null() || value.is_string() {
             return false;

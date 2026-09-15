@@ -138,6 +138,17 @@ public:
             return DROPPED;
         }
 
+        return sendFrame(message, opCode, compress, fin);
+    }
+
+private:
+    /* send() without the maxBackpressure check: the frame is always written or buffered.
+     * end() uses this for the close frame, which is at most 127 bytes and the last frame
+     * of the connection, so it queues behind the buffered data no matter how much there is.
+     * Returns BACKPRESSURE or SUCCESS, never DROPPED. */
+    SendStatus sendFrame(std::string_view message, OpCode opCode, bool compress, bool fin) {
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
+
         /* If we are subscribers and have messages to drain we need to drain them here to stay synced */
         WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
 
@@ -222,7 +233,8 @@ public:
         return SUCCESS;
     }
 
-    /* Send websocket close frame, emit close event, send FIN if successful.
+public:
+    /* Send websocket close frame, emit close event, send FIN once everything before it is written.
      * Will not append a close reason if code is 0 or 1005. */
     void end(int code = 0, std::string_view message = {}) {
         /* Check if we already called this one */
@@ -231,7 +243,7 @@ public:
             return;
         }
 
-        /* We postpone any FIN sending to either drainage or uncorking */
+        /* Makes onWritable send the FIN if we cannot do it below */
         webSocketData->isShuttingDown = true;
 
         /* Format and send the close frame */
@@ -239,15 +251,14 @@ public:
         size_t length = std::min<size_t>(MAX_CLOSE_PAYLOAD, message.length());
         char closePayload[MAX_CLOSE_PAYLOAD + 2];
         size_t closePayloadLength = protocol::formatClosePayload(closePayload, (uint16_t) code, message.data(), length);
-        bool ok = send(std::string_view(closePayload, closePayloadLength), OpCode::CLOSE);
+        sendFrame(std::string_view(closePayload, closePayloadLength), OpCode::CLOSE, false, true);
 
-        /* FIN if we are ok and not corked */
-        if (!this->isCorked()) {
-            if (ok) {
-                /* If we are not corked, and we just sent off everything, we need to FIN right here.
-                 * In all other cases, we need to fin either if uncork was successful, or when drainage is complete. */
-                this->shutdown();
-            }
+        /* The close frame is the last thing we send, so there is nothing left to batch: flush whatever the
+         * handler we may be running in has corked, then FIN right here unless some of it is still buffered.
+         * In that case onWritable FINs once the buffer has drained; shutdown() now would discard it. */
+        Super::uncork();
+        if (getBufferedAmount() == 0) {
+            this->shutdown();
         }
 
         WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();

@@ -193,9 +193,9 @@ void us_internal_loop_post(us_loop_r loop);
  * stack without the loop holding one. */
 struct us_read_scope {
     char *recv_buf;
-#ifndef LIBUS_NO_SSL
+    /* Always present, so the layout does not depend on LIBUS_NO_SSL. A
+     * no-SSL build leaves it NULL. */
     char *ssl_read_output;
-#endif
 };
 /* A nested tick reads into buffers of its own, so it cannot overwrite the
  * bytes an outer dispatch is still reading. Every tick entry point of every

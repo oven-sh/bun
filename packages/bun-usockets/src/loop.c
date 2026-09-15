@@ -171,12 +171,10 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
  * outermost scope keeps the loop's own buffer, which leaves the common case
  * with two stores and a branch per tick.
  *
- * Returns what us_internal_loop_exit_read_scope must restore. */
+ * `out` receives what us_internal_loop_exit_read_scope must restore. */
 void us_internal_loop_enter_read_scope(struct us_loop_t *loop, struct us_read_scope *out) {
     out->recv_buf = loop->data.recv_buf;
-#ifndef LIBUS_NO_SSL
     out->ssl_read_output = NULL;
-#endif
     if (loop->data.read_scope_depth++ == 0) {
         return;
     }
@@ -201,11 +199,11 @@ void us_internal_loop_enter_read_scope(struct us_loop_t *loop, struct us_read_sc
 
 void us_internal_loop_exit_read_scope(struct us_loop_t *loop, const struct us_read_scope *saved) {
     loop->data.read_scope_depth--;
-#ifndef LIBUS_NO_SSL
     if (saved->ssl_read_output) {
+#ifndef LIBUS_NO_SSL
         us_internal_ssl_exit_read_scope(loop, saved->ssl_read_output);
-    }
 #endif
+    }
     char *used = loop->data.recv_buf;
     if (used == saved->recv_buf) {
         return;

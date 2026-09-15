@@ -19,7 +19,8 @@ use bun_install::{
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{
-    Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList,
+    Command, PackageInstaller, PackageManager, ProcessOnlyEnv, ProgressStrings, Subcommand,
+    TaskCallbackList,
 };
 use super::{directories, enqueue};
 use crate::dependency::Behavior;
@@ -1926,6 +1927,7 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
     if core::mem::replace(has_network_error, true) {
         return;
     }
+    manager.note_dotenv_only_vars(ProcessOnlyEnv::Network);
     let min = manager.options.min_simultaneous_requests;
     let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
     if max > min {

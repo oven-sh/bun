@@ -22,6 +22,8 @@ registry = "https://registry.npmjs.org"
 
 Your `bunfig.toml` can reference environment variables. `bun install` automatically loads environment variables from `.env.production.local`, `.env.local`, `.env.production`, and `.env`, regardless of `NODE_ENV`. It does not read `.env.development` or `.env.test`. See [Environment variables](/runtime/environment-variables).
 
+`bun install` does not take proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`), `NODE_TLS_REJECT_UNAUTHORIZED`, or `GIT_*` variables from these files. Set those in the environment that runs `bun install`.
+
 ```toml bunfig.toml icon="settings"
 [install]
 registry = { url = "https://registry.npmjs.org", token = "$npm_token" }

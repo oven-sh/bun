@@ -121,6 +121,8 @@
     macro(jwkX, "x") \
     macro(jwkY, "y") \
     macro(ucs2, "ucs2") \
+    macro(underscoreDirname, "__dirname") \
+    macro(underscoreFilename, "__filename") \
     macro(unknown, "unknown") \
     macro(utf16le, "utf16le") \
     macro(utf8, "utf8") \

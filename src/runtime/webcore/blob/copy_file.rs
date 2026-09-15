@@ -1630,7 +1630,6 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     pub fn throw(&mut self, err: bun_sys::Error) {
-        // Reported to the script that asked (to nobody, once its context has stopped).
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
@@ -1717,7 +1716,6 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn resolve_promise(&mut self, written: usize) {
-        // Reported to the script that asked (to nobody, once its context has stopped).
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // see `throw` — re-type the GC cell via the ZST opaque deref so it

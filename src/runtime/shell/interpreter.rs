@@ -2747,6 +2747,9 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 ///
 /// `Taskable` is a supertrait so [`ShellTask::on_finish`] can build the
 /// JS-side `ConcurrentTask`.
+/// Its `Taskable::context` is `Always`: a step is what its interpreter is waiting for, and the
+/// interpreter checks its own context before anything reaches script (`Interpreter::interrupted`,
+/// `finish`, `fail`).
 pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// Byte offset of the embedded `task: ShellTask` field within `Self`.
     /// Implementors define this as `core::mem::offset_of!(Self, task)`.

@@ -5395,27 +5395,23 @@ declare module "bun" {
      */
     globals?: Record<string, unknown> | undefined;
     /**
-     * Called with uncaught exceptions and unhandled rejections raised by this
-     * graph's module code, instead of the process-wide `uncaughtException` /
-     * `unhandledRejection` handling. Without it, or for an error `onError`
-     * itself lets escape, they take that normal path.
+     * Called with uncaught exceptions and unhandled rejections of this graph's
+     * code instead of the process-wide `uncaughtException` /
+     * `unhandledRejection` handling. `kind` says which.
      *
-     * An error belongs to the graph whose module or CommonJS code threw it or
-     * rejected with it: the innermost such code on the stack at that moment
-     * (functions passed in through `globals` are the host's code); a promise
-     * the runtime rejects on that code's behalf (an async function, a
-     * reaction whose handler threw) counts as rejected by it. The error stays
-     * that graph's through the promises that carry it on: one derived through
-     * `.then()` without a rejection handler, and the promise
-     * {@link ModuleGraph.import} returned when a module of the graph threw
-     * while it was being evaluated (at its top level, after an `await`, or
-     * in a dependency). What the host caused takes the normal path: a
-     * specifier that does not resolve, an `import()` into a disposed graph,
-     * and what `onError` itself throws or rejects while it runs. `kind` is
-     * `"uncaughtException"` or `"unhandledRejection"`.
+     * An error is the graph's when the graph's code threw it or rejected with
+     * it, including the promise {@link ModuleGraph.import} returned when a
+     * module of the graph threw while it was being evaluated. What the host
+     * caused takes the process-wide path: a specifier that does not resolve,
+     * an `import()` into a disposed graph, a rejection that reaches an
+     * unhandled promise only through the host's own `.then()`, and what
+     * `onError` itself throws or rejects.
      *
-     * A graph made in another graph's context without an `onError` hands its
-     * errors to that graph's `onError`.
+     * Without an `onError`, errors go to the `onError` of the graph in whose
+     * context this graph was made, and to the process-wide path when the host
+     * made it.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#errors
      */
     onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
   }
@@ -5432,9 +5428,9 @@ declare module "bun" {
    * code load into it), its own `import.meta`, and its own values for the
    * names in `globals`. Everything else — `globalThis`, `process`,
    * intrinsics, builtin modules (so `require("node:module")._cache` is the
-   * host's cache, and `mock.module()` replaces the host's modules), native
+   * host's cache), native
    * addons, the event loop — is the global object's, shared: this runs
-   * cooperating instances of a program side by side, it is not a sandbox.
+   * instances of a program side by side, it is not a sandbox.
    *
    * A graph has a context of its own for timers and I/O. Everything its
    * code opens — timers, `Bun.serve` / `Bun.listen` servers, sockets,
@@ -5454,8 +5450,8 @@ declare module "bun" {
    *   onError: (err, kind) => console.error(kind, err),
    * });
    * const app = await graph.import("./app.mjs"); // app.mjs's exports, for this graph
-   * app.start();
-   * graph.dispose();
+   * graph.run(() => app.start()); // what start() opens is the graph's
+   * graph.dispose(); // and is closed here
    * ```
    */
   class ModuleGraph {
@@ -5492,28 +5488,22 @@ declare module "bun" {
      */
     run<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
     /**
-     * Drops the graph's module registry and require cache: later
-     * `graph.import()`s reject, as does one that is still waiting for a file;
-     * one whose module is suspended in a top-level `await` is left alone, and
-     * never settles if what the module awaits was the graph's.
-     * `import()` from the graph's own code rejects
-     * and its `require()` of anything throws, and modules of the graph that
-     * had not run yet never will. Code from the
-     * graph that is still referenced keeps working, and its errors still go
-     * to `onError`. Everything the graph's code opened
-     * is closed, along with any graph its code made, and the graph hears
-     * nothing of it, like a worker that was terminated: no `close` handler,
-     * `onExit` or `'error'` event is called, and its pending promises (a
-     * `fetch()`, a child's `exited`, a file read) never settle. What it
-     * had already queued as microtasks still runs once; whatever that starts
-     * does not start, and stays pending. This is not a sandbox: a process
-     * `Bun.spawn` starts is started and then killed, and synchronous calls
-     * run to completion.
+     * Closes everything the graph's code opened (and disposes any graph its
+     * code made), and drops the graph's modules: `graph.import()` and
+     * `graph.run()` fail from here on, the graph's `require()` throws, and
+     * modules that had not run yet never will.
      *
-     * Objects the graph's code made (a socket, a worker, a child process, a
-     * stream) no longer work once it is disposed, for the host either: an
-     * operation on one may fail or may never complete.
-     * Idempotent.
+     * The graph is told nothing, like a worker that was terminated: no
+     * `close` handler, `onExit` or `'error'` event is called, and no promise
+     * is settled — one waiting on the graph's work (a `fetch()`, a child's
+     * `exited`, an `import()` still loading) stays pending. Microtasks and
+     * `process.nextTick` callbacks it had already queued still run once; what
+     * they start reports nothing either. Objects the graph's code made (a
+     * socket, a worker, a stream) no longer work, for the host either.
+     *
+     * Not a sandbox: synchronous calls run to completion. Idempotent.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#disposing
      */
     dispose(): void;
     [Symbol.dispose](): void;

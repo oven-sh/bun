@@ -133,6 +133,15 @@ impl Default for InitOptions {
     }
 }
 
+/// What a `node:fs` operation does with a descriptor its script named by number.
+#[derive(Copy, Clone)]
+pub enum FdUse {
+    None,
+    Uses(bun_sys::Fd),
+    /// `fs.close(fd)`: the number is another file's as soon as it is closed.
+    Closes(bun_sys::Fd),
+}
+
 /// See [`VirtualMachine::owned_fd_job`].
 pub struct OwnedFdJob(Option<crate::ContextId>);
 
@@ -1202,7 +1211,8 @@ impl VirtualMachine {
         }
     }
 
-    /// No graph context closes `fd` when it stops: its script closes the number itself.
+    /// Script is closing `fd` by number (`fs.close(fd)`): a graph context that owns it (a stream it
+    /// opened with `autoClose: false`) stops owning it, and will not close the number when it stops.
     pub fn disown_fd(&self, fd: bun_sys::Fd) {
         for context in self.graph_contexts.values() {
             // SAFETY: registered ⇒ not freed.
@@ -1210,17 +1220,17 @@ impl VirtualMachine {
         }
     }
 
-    /// An off-thread job is about to use `fd`. If a graph context other than the running script's
-    /// owns it (the host writing through a `FileHandle` a graph made), the job counts for the
-    /// owner until the guard is dropped, on this thread: the owner's `dispose()` must not close
-    /// the descriptor under it either.
+    /// An off-thread job is about to use a descriptor. If a graph context other than the running
+    /// script's owns it (the host writing through a `FileHandle` a graph made), the job counts
+    /// for the owner until the guard is dropped, on this thread: the owner's `dispose()` must not
+    /// close the descriptor under it either. One that closes it also [disowns](Self::disown_fd) it.
     pub fn owned_fd_job(
         &self,
         context: &crate::ScriptExecutionContext,
-        fd: Option<bun_sys::Fd>,
+        fd_use: FdUse,
     ) -> OwnedFdJob {
-        let fd = match fd {
-            Some(fd) if self.graph_contexts.count() != 0 => fd,
+        let fd = match fd_use {
+            FdUse::Uses(fd) | FdUse::Closes(fd) if self.graph_contexts.count() != 0 => fd,
             _ => return OwnedFdJob(None),
         };
         let current = context.id();
@@ -1231,6 +1241,9 @@ impl VirtualMachine {
         });
         if let Some(owner) = owner {
             self.graph_job_started(owner);
+        }
+        if matches!(fd_use, FdUse::Closes(_)) {
+            self.disown_fd(fd);
         }
         OwnedFdJob(owner)
     }

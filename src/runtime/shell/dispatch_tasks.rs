@@ -83,8 +83,7 @@ impl bun_event_loop::Taskable for ShellGlobTask {
             drop(bun_core::heap::take(this));
         }
     }
-    /// A step of a shell script, which its interpreter is waiting for: the interpreter checks its
-    /// context before anything reaches script (`Interpreter::interrupted`, `finish`, `fail`).
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
     unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
         bun_event_loop::TaskContext::Always
     }

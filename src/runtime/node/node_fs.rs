@@ -485,6 +485,7 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 // `cp` builtin).
 mod _async_tasks {
     use super::*;
+    use bun_jsc::virtual_machine::FdUse;
 
     pub mod async_ {
         use super::*;
@@ -675,8 +676,7 @@ mod _async_tasks {
             vm: &mut VirtualMachine,
             context: &bun_jsc::ScriptExecutionContext,
         ) -> JSValue {
-            let fd_job = vm.owned_fd_job(context, task_args.target_fd());
-            disown_fd_being_closed(vm, &*task_args);
+            let fd_job = vm.owned_fd_job(context, task_args.fd_use());
             let task = Box::new(Self {
                 promise: JSPromiseStrong::init(global_object),
                 args: task_args,
@@ -1028,24 +1028,9 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
-        /// The descriptor the operation is on, if script named one (see `VirtualMachine::owned_fd_job`).
-        fn target_fd(&self) -> Option<FD> {
-            None
-        }
-        /// The operation closes [`target_fd`](Self::target_fd).
-        fn closes_target_fd(&self) -> bool {
-            false
-        }
-    }
-
-    /// Script is closing a descriptor by number (`fs.close(fd)`): if a graph context owns it (a
-    /// stream it opened with `autoClose: false`), it stops owning it, since the number is another
-    /// file's as soon as it is closed. After [`VirtualMachine::owned_fd_job`], which looks the owner up.
-    pub(crate) fn disown_fd_being_closed<A: FsArgument>(vm: &VirtualMachine, args: &A) {
-        if args.closes_target_fd()
-            && let Some(fd) = args.target_fd()
-        {
-            vm.disown_fd(fd);
+        /// What the operation does with a descriptor script named (see `VirtualMachine::owned_fd_job`).
+        fn fd_use(&self) -> FdUse {
+            FdUse::None
         }
     }
 
@@ -1058,7 +1043,7 @@ mod _async_tasks {
         unsafe impl ThreadIsolatedArg for $ty {}
         impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
-            #[inline] fn target_fd(&self) -> Option<FD> { Some(self.fd) }
+            #[inline] fn fd_use(&self) -> FdUse { FdUse::Uses(self.fd) }
         } )+
     };
     ( $( $ty:ty ),+ $(,)? ) => {
@@ -1115,12 +1100,8 @@ mod _async_tasks {
             args::Close::from_js(ctx, arguments)
         }
         #[inline]
-        fn target_fd(&self) -> Option<FD> {
-            Some(self.fd)
-        }
-        #[inline]
-        fn closes_target_fd(&self) -> bool {
-            true
+        fn fd_use(&self) -> FdUse {
+            FdUse::Closes(self.fd)
         }
     }
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
@@ -1143,10 +1124,10 @@ mod _async_tasks {
             self.signal.as_deref()
         }
         #[inline]
-        fn target_fd(&self) -> Option<FD> {
+        fn fd_use(&self) -> FdUse {
             match &self.path {
-                PathOrFileDescriptor::Fd(fd) => Some(*fd),
-                PathOrFileDescriptor::Path(_) => None,
+                PathOrFileDescriptor::Fd(fd) => FdUse::Uses(*fd),
+                PathOrFileDescriptor::Path(_) => FdUse::None,
             }
         }
     }
@@ -1161,10 +1142,10 @@ mod _async_tasks {
             self.signal.as_deref()
         }
         #[inline]
-        fn target_fd(&self) -> Option<FD> {
+        fn fd_use(&self) -> FdUse {
             match &self.file {
-                PathOrFileDescriptor::Fd(fd) => Some(*fd),
-                PathOrFileDescriptor::Path(_) => None,
+                PathOrFileDescriptor::Fd(fd) => FdUse::Uses(*fd),
+                PathOrFileDescriptor::Path(_) => FdUse::None,
             }
         }
     }
@@ -1180,8 +1161,8 @@ mod _async_tasks {
             self.0.signal.as_deref()
         }
         #[inline]
-        fn target_fd(&self) -> Option<FD> {
-            self.0.target_fd()
+        fn fd_use(&self) -> FdUse {
+            self.0.fd_use()
         }
     }
 
@@ -1417,8 +1398,7 @@ mod _async_tasks {
             tracker.did_schedule(global_object);
             let promise = JSPromiseStrong::init(global_object);
             let value = promise.value();
-            let fd_job = vm.owned_fd_job(context, args.target_fd());
-            disown_fd_being_closed(vm, &*args);
+            let fd_job = vm.owned_fd_job(context, args.fd_use());
             bun_jsc::Job::<Self>::schedule(
                 &global_object.js_thread(context),
                 Self {
@@ -2493,7 +2473,7 @@ mod _async_tasks {
                 AsyncFSJs {
                     promise,
                     tracker,
-                    _fd_job: vm.owned_fd_job(context, None),
+                    _fd_job: vm.owned_fd_job(context, FdUse::None),
                 },
             );
             value
@@ -2721,7 +2701,6 @@ mod _async_tasks {
         }
     }
 } // mod _async_tasks
-pub(crate) use _async_tasks::disown_fd_being_closed;
 pub use _async_tasks::{
     AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument, FsReturn,
     IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask,

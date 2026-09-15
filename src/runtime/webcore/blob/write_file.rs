@@ -1015,7 +1015,6 @@ mod windows_impl {
                     (*this).context,
                 )
             };
-            // Reported to the script that asked (to nobody, once its context has stopped).
             let _context = bun_jsc::virtual_machine::VirtualMachine::get().enter_context(context);
 
             // SAFETY: caller contract — `this` is live.

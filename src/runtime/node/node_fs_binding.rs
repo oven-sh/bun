@@ -37,7 +37,9 @@ where
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
-    crate::node::fs::disown_fd_being_closed(vm, &args);
+    if let bun_jsc::virtual_machine::FdUse::Closes(fd) = args.fd_use() {
+        vm.disown_fd(fd);
+    }
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned

@@ -1113,7 +1113,6 @@ impl<'a> ReadFileUV<'a> {
             .completion
             .take()
             .expect("a ReadFileUV completes once");
-        // Reported to the script that asked (to nobody, once its context has stopped).
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(this_box.context);
 
         let result = if let Some(err) = this_box.system_error.take() {

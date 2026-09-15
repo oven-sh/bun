@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("Response.bytes() with async iterable body does not crash with null deref", async () => {
@@ -202,4 +202,51 @@ test("cancel(reason) on an async generator body throws the reason into the gener
   ).body!.getReader();
   await reader.read();
   await expect(reader.cancel(reason)).rejects.toThrow("cleanup failed");
+});
+
+// The one-shot ArrayBufferSink behind bytes()/arrayBuffer() must settle its result before it
+// runs the source's close() hook. For an async iterable body that hook calls iterator.return(),
+// and a synchronous throw from it used to leave the promise pending forever.
+function iterableWithThrowingReturn(log: string[]) {
+  return {
+    [Symbol.asyncIterator]() {
+      let n = 0;
+      return {
+        async next() {
+          log.push(`next${n}`);
+          return n++ < 2 ? { value: new Uint8Array(3).fill(n), done: false } : { done: true, value: undefined };
+        },
+        return() {
+          log.push("return");
+          throw new RangeError("ret");
+        },
+      };
+    },
+  };
+}
+
+async function toByteArray(result: unknown): Promise<number[]> {
+  if (result instanceof Blob) return Array.from(new Uint8Array(await result.arrayBuffer()));
+  if (typeof result === "string") return Array.from(new TextEncoder().encode(result));
+  return Array.from(new Uint8Array(result as ArrayBuffer));
+}
+
+describe.each([
+  ["Response.bytes()", (body: any) => new Response(body).bytes()],
+  ["Response.arrayBuffer()", (body: any) => new Response(body).arrayBuffer()],
+  ["Response.text()", (body: any) => new Response(body).text()],
+  ["Response.blob()", (body: any) => new Response(body).blob()],
+  [
+    "Request.bytes()",
+    (body: any) => new Request("http://localhost/", { method: "POST", body, duplex: "half" } as any).bytes(),
+  ],
+  ["Bun.readableStreamToBytes(body)", (body: any) => Bun.readableStreamToBytes(new Response(body).body!)],
+  ["Bun.readableStreamToArrayBuffer(body)", (body: any) => Bun.readableStreamToArrayBuffer(new Response(body).body!)],
+] as const)("%s", (_label, consume) => {
+  test("settles when the async iterator's return() throws", async () => {
+    const log: string[] = [];
+    const result = await consume(iterableWithThrowingReturn(log));
+    expect(await toByteArray(result)).toEqual([1, 1, 1, 2, 2, 2]);
+    expect(log).toEqual(["next0", "next1", "next2", "return"]);
+  });
 });

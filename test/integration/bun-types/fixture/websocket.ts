@@ -231,7 +231,7 @@ import { expectType } from "./utilities";
   ws.close(1000);
 
   // Close with code and reason
-  ws.close(1001, "Going away");
+  ws.close(3001, "Going away");
 }
 
 // Bun-specific WebSocket extensions test

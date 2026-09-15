@@ -2206,3 +2206,186 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(1);
   });
 });
+
+// ─── SIGNALS ──────────────────────────────────────────────────────────────────
+
+// A script that reports the signal it receives and then exits 0. The sleep is
+// long enough that a run which only reacts once its children exit on their own
+// shows up as the wrong exit code, not as a slow pass. With a third argument it
+// prints "tick" every 20ms so a test can see that it is still alive.
+const TRAP_FIXTURE = `
+  const sig = process.argv[2];
+  process.on(sig, () => {
+    console.log("got " + sig);
+    process.exit(0);
+  });
+  console.log("ready");
+  if (process.argv[3] === "heartbeat") setInterval(() => console.log("tick"), 20);
+  else setTimeout(() => {}, 30_000);
+`;
+
+function count(text: string, needle: string) {
+  return text.split(needle).length - 1;
+}
+
+/** Reads `stream` to the end. `onChunk` sees the text read so far after each chunk. */
+async function collect(stream: ReadableStream<Uint8Array>, onChunk: (text: string) => void): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  for await (const chunk of stream) {
+    text += decoder.decode(chunk, { stream: true });
+    onChunk(text);
+  }
+  return text;
+}
+
+/**
+ * Starts `bun run <args>` in a package whose scripts each run the trap fixture
+ * with `signal`, waits until `readyCount` scripts printed "ready", then sends
+ * `signal` to the runner alone (not to the children).
+ */
+async function runAndSignal(
+  args: string[],
+  dir: string,
+  signal: "SIGINT" | "SIGTERM",
+  readyCount: number,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", ...args],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const ready = Promise.withResolvers<void>();
+  const stdoutPromise = collect(proc.stdout, text => {
+    if (count(text, "ready") >= readyCount) ready.resolve();
+  });
+  stdoutPromise.then(text => ready.reject(new Error(`stdout ended before ${readyCount} ready lines:\n${text}`)));
+  await ready.promise;
+  proc.kill(signal);
+  const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+function trapPackage(signal: string, extraArg = "") {
+  return {
+    "trap.js": TRAP_FIXTURE,
+    "package.json": JSON.stringify({
+      scripts: {
+        a: `${bunExe()} trap.js ${signal} ${extraArg}`,
+        b: `${bunExe()} trap.js ${signal} ${extraArg}`,
+      },
+    }),
+  };
+}
+
+// proc.kill() is TerminateProcess on Windows; it never reaches the console control handler.
+describe.concurrent.skipIf(isWindows)("signals", () => {
+  test("SIGINT to the runner is forwarded to every script at once and exits 130", async () => {
+    using dir = tempDir("mr-sig-int", trapPackage("SIGINT"));
+    const r = await runAndSignal(["--parallel", "a", "b"], String(dir), "SIGINT", 2);
+    expectPrefixed(r.stdout, "a", "got SIGINT");
+    expectPrefixed(r.stdout, "b", "got SIGINT");
+    expect(r.exitCode).toBe(130);
+  });
+
+  test("SIGTERM to the runner is forwarded to every script and exits 143", async () => {
+    using dir = tempDir("mr-sig-term", trapPackage("SIGTERM"));
+    const r = await runAndSignal(["--parallel", "a", "b"], String(dir), "SIGTERM", 2);
+    expectPrefixed(r.stdout, "a", "got SIGTERM");
+    expectPrefixed(r.stdout, "b", "got SIGTERM");
+    expect(r.exitCode).toBe(143);
+  });
+
+  test("a SIGHUP the runner inherited as ignored stays ignored", async () => {
+    using dir = tempDir("mr-sig-nohup", trapPackage("SIGINT", "heartbeat"));
+    // `trap "" HUP` makes the runner (and its scripts) start with SIGHUP ignored, like under nohup.
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'trap "" HUP; exec "$0" run --parallel a b', bunExe()],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const ready = Promise.withResolvers<void>();
+    const alive = Promise.withResolvers<void>();
+    let seen = "";
+    let ticksAtHangup = Infinity;
+    const stdoutPromise = collect(proc.stdout, text => {
+      seen = text;
+      if (count(text, "ready") >= 2) ready.resolve();
+      if (count(text, "a | tick") >= ticksAtHangup + 5 && count(text, "b | tick") >= ticksAtHangup + 5) alive.resolve();
+    });
+    stdoutPromise.then(text => {
+      const err = new Error(`stdout ended early:\n${text}`);
+      ready.reject(err);
+      alive.reject(err);
+    });
+    await ready.promise;
+    ticksAtHangup = Math.max(count(seen, "a | tick"), count(seen, "b | tick"));
+    proc.kill("SIGHUP");
+    // The hangup must not abort the run: both scripts keep ticking, and a SIGINT still reaches them.
+    await alive.promise;
+    proc.kill("SIGINT");
+    const [stdout, , exitCode] = await Promise.all([stdoutPromise, proc.stderr.text(), proc.exited]);
+    expectPrefixed(stdout, "a", "got SIGINT");
+    expectPrefixed(stdout, "b", "got SIGINT");
+    expect(exitCode).toBe(130);
+  });
+
+  test("SIGTERM after a failure cascade still reaches a script that survived the cascade's SIGINT", async () => {
+    using dir = tempDir("mr-sig-cascade", {
+      // Exits 3 once the test creates `go`, so the cascade starts only after `b` is ready.
+      "fail.js": `
+        const fs = require("fs");
+        setInterval(() => { if (fs.existsSync("go")) process.exit(3); }, 10);
+      `,
+      // Survives the cascade's SIGINT, exits 0 on SIGTERM.
+      "survive.js": `
+        process.on("SIGINT", () => console.log("ignored SIGINT"));
+        process.on("SIGTERM", () => { console.log("got SIGTERM"); process.exit(0); });
+        console.log("ready");
+        setTimeout(() => {}, 30_000);
+      `,
+      "package.json": JSON.stringify({
+        scripts: { a: `${bunExe()} fail.js`, b: `${bunExe()} survive.js` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--parallel", "a", "b"],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const ready = Promise.withResolvers<void>();
+    const cascaded = Promise.withResolvers<void>();
+    const stdoutPromise = collect(proc.stdout, text => {
+      if (count(text, "ready") >= 1) ready.resolve();
+      if (count(text, "ignored SIGINT") >= 1) cascaded.resolve();
+    });
+    stdoutPromise.then(text => {
+      const err = new Error(`stdout ended early:\n${text}`);
+      ready.reject(err);
+      cascaded.reject(err);
+    });
+    await ready.promise;
+    await Bun.write(path.join(String(dir), "go"), "");
+    await cascaded.promise;
+    proc.kill("SIGTERM");
+    const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, proc.stderr.text(), proc.exited]);
+    expectExited(stderr, "a", 3);
+    expectPrefixed(stdout, "b", "got SIGTERM");
+    expect(exitCode).toBe(143);
+  });
+
+  test("sequential: SIGINT stops the chain and exits 130 even though the script exited 0", async () => {
+    using dir = tempDir("mr-sig-seq", trapPackage("SIGINT"));
+    const r = await runAndSignal(["--sequential", "a", "b"], String(dir), "SIGINT", 1);
+    expectPrefixed(r.stdout, "a", "got SIGINT");
+    expectDone(r.stderr, "a");
+    expect(r.stdout).not.toMatch(/^b\s+\|/m);
+    expect(r.exitCode).toBe(130);
+  });
+});

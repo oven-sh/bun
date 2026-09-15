@@ -234,11 +234,12 @@ impl Entry {
         self.cache().kind
     }
 
+    /// Real path if this entry is a symlink. Else usually empty: check `DirInfo::abs_real_path`.
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
     /// `RealFS` singleton in practice). See [`Entry::kind`].
-    pub(crate) unsafe fn symlink<R: EntryKindResolver>(
+    pub unsafe fn symlink<R: EntryKindResolver>(
         &self,
         fs: *mut R,
         store_fd: bool,

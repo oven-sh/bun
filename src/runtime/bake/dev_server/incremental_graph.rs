@@ -1097,12 +1097,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 };
                 if is_route {
                     // SAFETY: sibling-field access.
-                    let route_index = unsafe {
+                    let routes = unsafe {
                         (*dev)
                             .route_lookup
                             .get(&ServerFileIndex::init(file_index.get()))
                     }
-                    .copied()
                     .unwrap_or_else(|| {
                         bun_core::Output::panic(format_args!(
                             "Route not in lookup index: {} {:?}",
@@ -1112,7 +1111,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     });
                     self.dev_incremental_result()
                         .framework_routes_affected
-                        .push(route_index);
+                        .extend_from_slice(routes);
                 }
                 if is_scb {
                     self.dev_incremental_result()

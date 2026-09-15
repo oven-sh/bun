@@ -1172,3 +1172,52 @@ it("terminate() on a wss:// socket whose peer never answers close_notify still f
     worker.terminate();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/31968
+it("received text frames arrive intact for ASCII and for non-ASCII payloads", async () => {
+  // ASCII text is copied as Latin-1; non-ASCII text is transcoded to an
+  // owned UTF-16 buffer that the JS string adopts and frees. Cover both
+  // paths, including a payload long enough to cross a frame length boundary.
+  const payloads = [
+    "plain ascii",
+    "héllo wörld",
+    "中文 😀 " + Buffer.alloc(200, "Ü").toString(),
+    Buffer.alloc(70000, "x").toString(),
+  ];
+  using server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("expected websocket", { status: 400 });
+    },
+    websocket: {
+      open(ws) {
+        for (const p of payloads) ws.send(p);
+      },
+      message() {},
+    },
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
+  const received = [];
+  const done = Promise.withResolvers();
+  const closed = Promise.withResolvers();
+  ws.onerror = e => done.reject(e.error ?? new Error(e.message));
+  ws.onclose = e => {
+    closed.resolve();
+    done.reject(new Error(`closed (${e.code}) after ${received.length}/${payloads.length} messages`));
+  };
+  ws.onmessage = e => {
+    received.push(e.data);
+    if (received.length === payloads.length) done.resolve();
+  };
+  await done.promise;
+  expect(received).toEqual(payloads);
+
+  // Drop every reference to the received strings, then force a GC so the
+  // adopted UTF-16 buffers go through the external-string free path.
+  received.length = 0;
+  ws.close();
+  await closed.promise;
+  gc(true);
+});

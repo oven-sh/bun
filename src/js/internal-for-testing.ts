@@ -709,9 +709,8 @@ export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction
 // null where there is no PSI backend (everything except Linux).
 export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
 
-// Runs the filter that drops false PSI events over PSI file contents:
-// `armed` as read when the trigger was armed, then one entry per POLLPRI.
-// Returns whether each poll emits. null where there is no PSI backend.
+// The PSI event filter over file contents: `armed` at arm time, then one
+// entry per POLLPRI. Returns whether each poll emits. null off Linux.
 export const memoryPressurePsiFilter: (armed: string, ...polls: string[]) => boolean[] | null = $newRustFunction(
   "memory_pressure.rs",
   "jsPsiFilter",

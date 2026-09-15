@@ -99,8 +99,7 @@ mod posix {
     /// reflects listener presence.
     struct MemoryPressureWatcher {
         poll: Option<NonNull<FilePoll>>,
-        /// `some total=` of the PSI file when the trigger was armed, then
-        /// at the last emitted event. See `psi_growth_reached_threshold`.
+        /// PSI `some total=` at arm time, then at the last emitted event.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         psi_some_total: u64,
     }
@@ -172,8 +171,7 @@ mod posix {
         core::str::from_utf8(&digits[..end]).ok()?.parse().ok()
     }
 
-    /// Reads the PSI file behind the trigger. `pread` at offset 0 rewinds
-    /// the seq_file, so the same fd can be read again and again.
+    /// `pread` at offset 0 rewinds the seq_file, so the trigger fd is reusable.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn read_psi_file(fd: Fd, buf: &mut [u8; 256]) -> Option<&[u8]> {
         let n = bun_sys::pread(fd, buf, 0).ok()?;
@@ -182,19 +180,11 @@ mod posix {
 
     /// Whether a `POLLPRI` on the trigger fd reports real pressure.
     ///
-    /// `psi_trigger_create()` in `kernel/sched/psi.c` seeds every trigger's
-    /// window from `total[PSI_POLL]`, but an unprivileged trigger is then
-    /// evaluated against `total[PSI_AVGS]`. `total[PSI_POLL]` only advances
-    /// while a privileged trigger exists, so on most hosts the first stall
-    /// after arming reports all stall since boot as "growth" and fires the
-    /// trigger. The inflated growth is carried in `prev_growth` for one more
-    /// window, so a second stall can fire it again. Both are false events.
-    ///
-    /// A real event needs `PSI_THRESHOLD_US` of growth inside one window.
-    /// Growth since the last accepted event (or since arming) is at least
-    /// that, so the check drops only the false events. `last_total` moves
-    /// to the current value on each accepted event. An unreadable file
-    /// keeps the kernel's verdict.
+    /// `psi_trigger_create()` seeds an unprivileged trigger's window from
+    /// `total[PSI_POLL]`, which only moves while a privileged trigger exists,
+    /// but evaluates it against `total[PSI_AVGS]`. So the first stall after
+    /// arming counts all stall since boot as growth and fires the trigger.
+    /// A real event has `PSI_THRESHOLD_US` of growth since the last one.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) fn psi_growth_reached_threshold(last_total: &mut u64, contents: &[u8]) -> bool {
         let Some(total) = parse_psi_some_total(contents) else {
@@ -208,9 +198,8 @@ mod posix {
     }
 
     /// Open a PSI memory file and write a trigger. Tries the system-wide
-    /// `/proc/pressure/memory` first, then the current cgroup's file. Also
-    /// returns `some total=` as read before the write, so that a stall
-    /// between the write and the read cannot hide behind the baseline.
+    /// `/proc/pressure/memory` first, then the current cgroup's file.
+    /// Returns `some total=` as read before the write.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn open_psi_fd() -> Option<(Fd, u64)> {
         use bun_sys::O;
@@ -236,8 +225,7 @@ mod posix {
         None
     }
 
-    /// Registers the OS source. The `u64` is the PSI `some total=` at arm
-    /// time on Linux and 0 elsewhere.
+    /// The `u64` is the PSI `some total=` at arm time, 0 off Linux.
     fn register_os_watch(global: &JSGlobalObject) -> Option<(NonNull<FilePoll>, u64)> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let (fd, psi_some_total) = open_psi_fd()?;
@@ -550,10 +538,8 @@ pub(crate) fn js_psi_trigger(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
     }
 }
 
-/// `memoryPressurePsiFilter(armed, ...polls)`: runs the PSI event filter
-/// over file contents. `armed` is the file as read when the trigger was
-/// armed, each of `polls` is the file as read on one `POLLPRI`. Returns
-/// whether each poll emits. `null` where there is no PSI backend.
+/// `memoryPressurePsiFilter(armed, ...polls)`: the PSI event filter over
+/// file contents, one `bool` per poll. `null` where there is no PSI backend.
 #[bun_jsc::host_fn]
 pub(crate) fn js_psi_filter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(any(target_os = "linux", target_os = "android"))]

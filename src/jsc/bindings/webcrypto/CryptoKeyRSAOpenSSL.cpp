@@ -189,7 +189,29 @@ static std::optional<uint32_t> exponentVectorToUInt32(const Vector<uint8_t>& exp
     return result;
 }
 
-void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgorithmIdentifier hash, bool hasHash, unsigned modulusLength, const Vector<uint8_t>& publicExponent, bool extractable, CryptoKeyUsageBitmap usages, KeyPairCallback&& callback, VoidCallback&& failureCallback, ScriptExecutionContext*)
+// Runs on the work pool. It makes no CryptoKey objects, only the platform keys.
+static std::optional<EvpKeyPair> generateRSAKeyPair(unsigned modulusLength, const BIGNUM* exponent)
+{
+    auto privateRSA = RSAPtr(RSA_new());
+    if (!privateRSA || RSA_generate_key_ex(privateRSA.get(), modulusLength, exponent, nullptr) <= 0)
+        return std::nullopt;
+
+    auto publicRSA = RSAPtr(RSAPublicKey_dup(privateRSA.get()));
+    if (!publicRSA)
+        return std::nullopt;
+
+    auto privatePKey = EvpPKeyPtr(EVP_PKEY_new());
+    if (!privatePKey || EVP_PKEY_set1_RSA(privatePKey.get(), privateRSA.get()) <= 0)
+        return std::nullopt;
+
+    auto publicPKey = EvpPKeyPtr(EVP_PKEY_new());
+    if (!publicPKey || EVP_PKEY_set1_RSA(publicPKey.get(), publicRSA.get()) <= 0)
+        return std::nullopt;
+
+    return EvpKeyPair { WTF::move(publicPKey), WTF::move(privatePKey) };
+}
+
+void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgorithmIdentifier hash, bool hasHash, unsigned modulusLength, const Vector<uint8_t>& publicExponent, bool extractable, CryptoKeyUsageBitmap usages, KeyPairCallback&& callback, VoidCallback&& failureCallback, ScriptExecutionContext* context)
 {
     // OpenSSL doesn't report an error if the exponent is smaller than three or even.
     auto e = exponentVectorToUInt32(publicExponent);
@@ -199,33 +221,20 @@ void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgor
     }
 
     auto exponent = convertToBigNumber(publicExponent);
-    auto privateRSA = RSAPtr(RSA_new());
-    if (!exponent || RSA_generate_key_ex(privateRSA.get(), modulusLength, exponent.get(), nullptr) <= 0) {
+    if (!exponent) {
         failureCallback();
         return;
     }
 
-    auto publicRSA = RSAPtr(RSAPublicKey_dup(privateRSA.get()));
-    if (!publicRSA) {
-        failureCallback();
-        return;
-    }
-
-    auto privatePKey = EvpPKeyPtr(EVP_PKEY_new());
-    if (EVP_PKEY_set1_RSA(privatePKey.get(), privateRSA.get()) <= 0) {
-        failureCallback();
-        return;
-    }
-
-    auto publicPKey = EvpPKeyPtr(EVP_PKEY_new());
-    if (EVP_PKEY_set1_RSA(publicPKey.get(), publicRSA.get()) <= 0) {
-        failureCallback();
-        return;
-    }
-
-    auto publicKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Public, WTF::move(publicPKey), true, usages);
-    auto privateKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Private, WTF::move(privatePKey), extractable, usages);
-    callback(CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) });
+    generateKeyPairInWorkQueue(
+        *context,
+        [modulusLength, exponent = WTF::move(exponent)] { return generateRSAKeyPair(modulusLength, exponent.get()); },
+        [algorithm, hash, hasHash, extractable, usages, callback = WTF::move(callback)](EvpKeyPair&& keys) {
+            auto publicKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Public, WTF::move(keys.publicKey), true, usages);
+            auto privateKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Private, WTF::move(keys.privateKey), extractable, usages);
+            callback(CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) });
+        },
+        WTF::move(failureCallback));
 }
 
 RefPtr<CryptoKeyRSA> CryptoKeyRSA::importSpki(CryptoAlgorithmIdentifier identifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)

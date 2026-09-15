@@ -671,6 +671,8 @@ pub struct RewriterPipe {
     /// `&self`.
     rewriter: JsCell<Option<Box<LolRewriter>>>,
     context: Rc<RefCell<LOLHTMLContext>>,
+    /// The context of the script that called `transform()`.
+    script_context: bun_jsc::ContextId,
 
     // ── input side ───────────────────────────────────────────────────────
     /// Upstream to resume (`ready()`) once output drains, or `close()` once
@@ -804,6 +806,9 @@ impl RewriterPipe {
     pub(crate) fn abandon_suspension(pipe: bun_ptr::BackRef<Self>) {
         let this = &*pipe;
         this.end_suspension();
+        // Reached from a collection, not from the script that is waiting: failed for that script
+        // (for nobody, if that was a `Bun.ModuleGraph` that has been disposed since).
+        let _context = VirtualMachine::get().enter_context(this.script_context);
         let vm_stopped = !VirtualMachine::get().script_allowed();
         if vm_stopped || !this.cell.get().is_cell() {
             this.input_source.set(SourceHandle::None);
@@ -975,6 +980,7 @@ impl RewriterPipe {
             cell: Cell::new(JSValue::ZERO),
             rewriter: JsCell::new(None),
             context,
+            script_context: global.bun_vm().current_context().id(),
             input_source: Cell::new(SourceHandle::None),
             input_ended: Cell::new(false),
             js_pump_reaction_pending: Cell::new(false),

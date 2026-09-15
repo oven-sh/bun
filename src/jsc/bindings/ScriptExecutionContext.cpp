@@ -11,6 +11,7 @@
 #include "EventLoopTask.h"
 #include "Performance.h"
 #include "ZigGlobalObject.h"
+#include "ModuleGraph.h"
 #include <wtf/SetForScope.h>
 #include <wtf/Threading.h>
 #include <JavaScriptCore/WeakInlines.h>
@@ -104,9 +105,10 @@ void ScriptExecutionContext::stop()
     bool alreadyStopped = std::exchange(m_isStopped, true);
     Bun__ScriptExecutionContext__stop(m_bunVM, m_bunContext);
     closeSQLiteDatabases();
-    // (Stopping one runs its close handlers, which can create another.)
+    // A graph its script made is disposed with it (its registry too, so a load it had in flight
+    // does not complete into it).
     for (auto& owned : copyToVectorOf<Ref<ScriptExecutionContext>>(m_ownedGraphContexts))
-        owned->stop();
+        Bun::disposeModuleGraphOfContext(owned.get());
     if (alreadyStopped)
         return;
     // Its objects are stopped (its workers terminated) from the queue, not under whatever script

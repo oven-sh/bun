@@ -159,6 +159,9 @@ JSC::JSMap* requireMapOf(Zig::GlobalObject*, JSModuleGraph*);
 // Throws ERR_INVALID_STATE (and returns null) once the graph is disposed.
 JSC::JSModuleLoader* moduleLoaderOf(JSC::JSGlobalObject*, JSC::ThrowScope&, JSModuleGraph*);
 JSC::JSObject* createModuleGraphDisposedError(JSC::JSGlobalObject*);
+// dispose() of the graph `context` was made for (its context is stopped with it); just the stop
+// if the graph has been collected.
+void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
 bool throwIfModuleGraphDisposed(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSModuleLoader*);
 
 // ── The graph's context ──────────────────────────────────────────────────────────────

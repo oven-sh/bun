@@ -121,6 +121,12 @@ const dir = String(
           fetch("http://127.0.0.1:" + port + "/", { method: "POST", body, duplex: "half" }).catch(() => {});
         }
       };
+      // An async element handler parked on a timer: dropped with the graph, its promise is collected
+      // unsettled, which is when HTMLRewriter gives the rewrite up.
+      export const rewrites = say => {
+        new HTMLRewriter().on("p", { async element(element) { await new Promise(resolve => setTimeout(resolve, 5)); element.remove(); } })
+          .transform(new Response("<p>a</p><p>b</p>")).text().then(() => say("fulfilled"), error => say("rejected: " + error.message));
+      };
       // More writes than the pool has threads, so most are still queued when this returns.
       export const queuesWrites = async (dir, count) => {
         const handles = await Promise.all(Array.from({ length: count }, (_, i) => fs.promises.open(dir + "/tenant-" + i, "w")));
@@ -225,6 +231,17 @@ const dir = String(
       while (protectedPromises() > before) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ streaming, released: true }));
       process.exit(0);
+    `,
+    "rewrite-given-up-at-exit.mjs": `
+      import { writeSync } from "node:fs";
+      const said = [];
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      graph.run(() => app.rewrites(what => said.push(what)));
+      await new Promise(resolve => setTimeout(resolve, 1));
+      graph.dispose();
+      // Nothing is left for the host to do: the process winds down, collecting on the way.
+      process.on("exit", () => writeSync(1, JSON.stringify({ said })));
     `,
     "queued-writes-of-a-disposed-graph.mjs": `
       import fs from "node:fs";
@@ -1563,6 +1580,36 @@ test("ModuleGraph isolation: a disposed graph hears nothing of what it had open"
   });
 });
 
+test("ModuleGraph isolation: a graph made by a graph's code is disposed with it, and a disposed graph's code loads nothing into a graph it makes", async () => {
+  using made = await newGraph();
+  const state = newState("nested") as State & { inner?: InstanceType<typeof ModuleGraph>; later?: () => void };
+  const dep = join(dir, "dep-of-nested.mjs");
+  await Bun.write(dep, "export default 1;");
+  await made.graph.run(() =>
+    made.app.call(async () => {
+      state.inner = new ModuleGraph({ isolateIO: true });
+      await state.inner.import(dep);
+      // What the disposed graph's leftover code does: a new graph, and a load into it.
+      state.later = () =>
+        void new ModuleGraph({ isolateIO: true }).import(dep + "?later").then(
+          () => state.heard.push("fulfilled"),
+          () => state.heard.push("rejected"),
+        );
+    }),
+  );
+  made.graph.run(() => made.app.call(() => queueMicrotask(state.later!)));
+  made.graph.dispose();
+  // The inner graph is disposed, not only stopped: the host is told so.
+  expect(
+    await state.inner!.import(dep).then(
+      () => "fulfilled",
+      (error: any) => error.code,
+    ),
+  ).toBe("ERR_INVALID_STATE");
+  await hostTimerTurns();
+  expect(state.heard).toEqual([]);
+});
+
 test("ModuleGraph isolation: a server a disposed graph was stopping says nothing: not stop()'s promise, not node:http's 'close'", async () => {
   using made = await newGraph();
   const state = newState("stopping");
@@ -2552,6 +2599,9 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       stdout: `{"streaming":true,"released":true}`,
       exitCode: 0,
     });
+  });
+  test("an HTMLRewriter rewrite it had under way is given up without a word when the process winds down", async () => {
+    expect(await runs("rewrite-given-up-at-exit.mjs")).toEqual({ stdout: `{"said":[]}`, exitCode: 0 });
   });
   test("writes it had queued on the thread pool never reach the files that are given its descriptors next", async () => {
     expect(await runs("queued-writes-of-a-disposed-graph.mjs")).toEqual({

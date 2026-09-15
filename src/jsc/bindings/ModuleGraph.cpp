@@ -591,6 +591,10 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Called by what a disposed graph had queued (on a graph it made, or still holds): like
+    // everything such code starts, it does not start. The host is told the graph is disposed.
+    if (auto* current = globalObject->currentScriptExecutionContext(); current->isForModuleGraph() && current->isStopped())
+        return JSPromise::create(vm, globalObject->promiseStructure());
     JSModuleLoader* loader = moduleLoaderOf(globalObject, scope, this);
     RETURN_IF_EXCEPTION(scope, nullptr);
     V::validateString(scope, globalObject, specifierValue, "specifier"_s);
@@ -647,6 +651,20 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
     if (m_mainImport && m_mainImport->status() == JSPromise::Status::Rejected)
         m_mainPath.clear();
     m_mainImport.clear();
+}
+
+void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext& context)
+{
+    auto* graph = dynamicDowncast<JSModuleGraph>(context.moduleGraph());
+    if (!graph) {
+        context.stop();
+        return;
+    }
+    auto* globalObject = defaultGlobalObject(graph->globalObject());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    graph->dispose(globalObject);
+    // (Emptying its require map can run a getter; the graph being disposed has nobody to tell.)
+    (void)scope.tryClearException();
 }
 
 // ─── JSIsolatedModuleGraph ───────────────────────────────────────────────────────────

@@ -76,15 +76,11 @@ impl HeadersRef {
         Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
     }
 
-    /// The `headers` member of a `RequestInit`/`ResponseInit` dictionary: a
-    /// `Headers` object is deep-copied without going through the iterator
-    /// protocol, anything else takes the `HeadersInit` conversion. Empty → `None`.
+    /// The `headers` member of a `RequestInit`/`ResponseInit`. Empty headers give `None`.
     pub(crate) fn from_init_value(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<Self>> {
-        // `JSValue::as_::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a
-        // hand-bound opaque, so use its dedicated `cast()`.
         if let Some(orig) = FetchHeaders::cast(value) {
             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
             let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());

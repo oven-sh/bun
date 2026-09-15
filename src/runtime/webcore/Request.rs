@@ -1079,11 +1079,9 @@ impl Request {
 
         for (i, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
-            // The last candidate is `input` (unless that was a URL); anything before it is the
-            // `RequestInit` dictionary, which only contributes members it actually has.
+            // `values_to_try` is `[init?, input?]`.
             let is_input = !is_first_argument_a_url && i == values_to_try.len() - 1;
-            // A pristine Request/Response has its headers and method copied from internal state
-            // below, so the `headers`/`method` getters are not consulted again for it.
+            // Set for a pristine Request/Response: no `headers`/`method` getter call for it.
             let mut copied_internal_fields = false;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {

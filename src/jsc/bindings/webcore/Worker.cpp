@@ -78,6 +78,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     }
 
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));
+    worker->m_madeInStoppedContext = context.isStopped();
     worker->suspendIfNeeded();
 
     auto started = worker->m_contextProxy->startWorkerGlobalScope(url);
@@ -138,6 +139,8 @@ void Worker::dispatchEvent(Event& event)
 
 void Worker::dispatchCloseEvent(Event& event)
 {
+    if (m_madeInStoppedContext)
+        return;
     EventTargetWithInlineData::dispatchEvent(event);
 }
 

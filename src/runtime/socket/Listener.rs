@@ -1049,6 +1049,12 @@ impl Listener {
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub(crate) fn connect(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
+        // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
+        // Dialing would report: a port that refuses (a listener the same script just made is one,
+        // closed at birth) rejects inside the call, and a loop that retries would never yield.
+        if global.bun_vm().current_context().is_stopped() {
+            return Ok(jsc::JSPromise::create(global).to_js());
+        }
         Self::connect_inner(global, None, None, opts)
     }
 

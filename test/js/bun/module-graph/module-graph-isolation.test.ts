@@ -40,6 +40,33 @@ const dir = String(
     "entry.js": "export const a = 1;",
     "ticker.mjs": `setInterval(() => state.ticks++, 1);`,
     // Opens one kind of thing in a graph, disposes the graph, and is done: the process has to be too.
+    // Runs one retry loop in a graph, disposes the graph, and says whether the loop went on. A loop
+    // that starves the host never gets that far: "armed" is then all there is, and the test's
+    // timeout on the process is what ends it.
+    "retries-then-is-disposed.mjs": `
+      import { writeSync } from "node:fs";
+      const [name, ports] = [process.argv[2], JSON.parse(process.argv[3])];
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/app.mjs");
+      const state = { ticks: 0 };
+      let hostTurns = 0;
+      setInterval(() => hostTurns++, 1);
+      const hostTurnsPass = async turns => { for (const from = hostTurns; hostTurns < from + turns; ) await new Promise(resolve => setImmediate(resolve)); };
+      graph.run(() => app.retryForever(name, state, ports));
+      await hostTurnsPass(10);
+      writeSync(1, "armed\\n");
+      graph.dispose();
+      // What was under way may still report once (however late), and its continuation starts one
+      // more step, which reports nothing. A loop that sustains itself never goes quiet.
+      let quiet = false;
+      for (let window = 0; window < 40 && !quiet; window++) {
+        const before = state.ticks;
+        await hostTurnsPass(50);
+        quiet = state.ticks === before;
+      }
+      writeSync(1, quiet ? "stops\\n" : "keeps running\\n");
+      process.exit(0);
+    `,
     "opens-then-disposes.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
       const graph = new Bun.ModuleGraph({ isolateIO: true });
@@ -64,6 +91,7 @@ const dir = String(
       import childProcess from "node:child_process";
       import timersPromises from "node:timers/promises";
       import { promisify } from "node:util";
+      import { Worker as ThreadWorker } from "node:worker_threads";
       import { pipeline } from "node:stream/promises";
       export const open = {
         interval(state) {
@@ -459,6 +487,12 @@ const dir = String(
         "MessageChannel": () => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(1); }),
         "Bun.udpSocket": () => Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data() {} } }).then(socket => new Promise(resolve => setTimeout(() => { socket.close(); resolve(); }, 1))),
         "child_process.exec": () => promisify(childProcess.exec)("exit 0"),
+        "a worker_threads Worker, until it exits": () => new Promise((resolve, reject) => { const worker = new ThreadWorker("", { eval: true }); worker.on("exit", resolve); worker.on("error", reject); }),
+        "Bun.listen and a Bun.connect to it, until the client has closed": () => new Promise((resolve, reject) => {
+          const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+          const done = () => { server.stop(true); resolve(); };
+          Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open(socket) { socket.end(); }, data() {}, close: done, error: done, connectError: done } }).catch(done);
+        }),
       };
       // Things of the host's, or of the realm's, that a graph's code only uses.
       export const getThrough = (agent, port, path) => new Promise((resolve, reject) => http.get({ host: "127.0.0.1", port, path, agent }, response => { response.resume(); response.on("end", resolve); }).on("error", reject));
@@ -1816,16 +1850,21 @@ describe.concurrent("ModuleGraph isolation: a disposed graph cannot keep itself 
   // ever inside a disposed graph (and a spawn loop would go on launching processes).
   for (const name of Object.keys(hostApp.steps)) {
     test(name, async () => {
-      using made = await newGraph();
-      const state = newState("retry");
-      made.graph.run(() => made.app.retryForever(name, state, { http: hostHttp.port, tcp: hostTcp.port }));
-      await hostTimerTurns(10);
-      made.graph.dispose();
-      // The step that was under way settles (or not), and its continuation starts one more.
-      await hostTimerTurns(30);
-      const settledDown = state.ticks;
-      await hostTimerTurns(60);
-      expect(state.ticks - settledDown).toBe(0);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          join(dir, "retries-then-is-disposed.mjs"),
+          name,
+          JSON.stringify({ http: hostHttp.port, tcp: hostTcp.port }),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        timeout: 4_000,
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("armed\nstops\n");
+      expect(exitCode).toBe(0);
     });
   }
 });

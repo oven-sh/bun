@@ -91,6 +91,9 @@ private:
 
     const String m_name;
     const Ref<WorkerMessagingProxy> m_contextProxy;
+    // Made by script of a Bun.ModuleGraph that had already been disposed: terminated at once, and
+    // its exit is not reported (a handler that starts the next one would keep that graph running).
+    bool m_madeInStoppedContext { false };
     bool m_wasTerminated { false };
 };
 

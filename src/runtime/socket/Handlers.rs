@@ -51,6 +51,10 @@ pub struct Handlers {
     /// Live sockets plus in-flight callback [`Scope`]s. Drives the listener's
     /// idle release; ownership itself is the `Rc`.
     pub(crate) active_connections: Cell<u32>,
+    /// Made by script of a `Bun.ModuleGraph` that had already been disposed: its sockets are
+    /// closed at once, and that is not reported (a `close` handler that opens the next one would
+    /// keep the disposed graph running).
+    pub(crate) opened_after_stop: bool,
     pub(crate) mode: SocketMode,
     /// The listener that accepted these sockets, for `mode == Server`.
     ///
@@ -323,6 +327,7 @@ impl Handlers {
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
             active_connections: Cell::new(0),
+            opened_after_stop: global_object.bun_vm().current_context().is_stopped(),
             mode,
             listener: Cell::new(None),
         }))

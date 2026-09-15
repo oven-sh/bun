@@ -577,35 +577,39 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     const dir = fixture({
       "late.mjs": `
         export let ticks = 0;
+        export let dialed = "pending";
         export const open = async () => {
           setInterval(() => { ticks++; }, 1);
           const udp = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
-          // Refused, or connected and then closed.
-          const client = await Bun.connect({ hostname: "127.0.0.1", port: globalThis.__moduleGraphIoLatePort, socket: { data() {} } }).catch(() => null);
-          return {
-            connected: client !== null, port: Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("late") }).port, udp: udp.port };
+          // Reports nothing, either way: a loop that redials on failure must not keep a disposed graph running.
+          Bun.connect({ hostname: "127.0.0.1", port: globalThis.__moduleGraphIoLatePort, socket: { data() {}, close() { dialed = "closed"; } } })
+            .then(() => { dialed = "connected"; }, () => { dialed = "refused"; });
+          return { port: Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("late") }).port, udp: udp.port };
         };
         export const tick = () => ticks;
       `,
     });
-    const lateClientClosed = Promise.withResolvers<void>();
+    let lateClients = 0;
     using listener = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
-      socket: { data() {}, close: () => lateClientClosed.resolve() },
+      socket: { data() {}, open: () => void lateClients++ },
     });
     (globalThis as any).__moduleGraphIoLatePort = listener.port;
     const graph = new Bun.ModuleGraph({ isolateIO: true });
     const app = await graph.import(join(dir, "late.mjs"));
     graph.dispose();
-    const { port, udp, connected } = await graph.run(() => app.open());
+    const { port, udp } = await graph.run(() => app.open());
     await until(async () => !(await accepts(port)));
     const rebound = await until(() => Bun.udpSocket({ hostname: "127.0.0.1", port: udp }).catch(() => undefined));
     rebound.close();
-    if (connected) await lateClientClosed.promise;
     delete (globalThis as any).__moduleGraphIoLatePort;
     await hostTimerTurns();
-    expect(app.tick()).toBe(0);
+    expect({ ticks: app.tick(), dialed: app.dialed, lateClients }).toEqual({
+      ticks: 0,
+      dialed: "pending",
+      lateClients: 0,
+    });
   });
 
   test("code of the graph the host calls directly runs in the host's context; run() enters the graph's", async () => {

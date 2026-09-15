@@ -284,6 +284,13 @@ pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
 pub(crate) type FailFn = fn(&mut PackageManager, &Dependency, PackageID, Error);
 
+/// A peer held back by `find_peer_provider`, with the name and range it resolves under (after aliases, overrides and catalogs).
+pub(crate) struct DeferredFolderPeer {
+    pub(crate) dependency_id: DependencyID,
+    pub(crate) name_hash: PackageNameHash,
+    pub(crate) version: crate::dependency::Version,
+}
+
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
 // https://github.com/npm/cli/issues/7072
@@ -400,6 +407,11 @@ pub struct PackageManager {
     pub(crate) on_wake: WakeHandler,
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
+
+    /// Peers a root `file:` folder or link could satisfy, held back until nothing else can join the dependency graph.
+    pub(crate) deferred_folder_peers: Vec<DeferredFolderPeer>,
+    /// Set while the deferred peers are decided: the graph is complete, so `find_peer_provider` may bind a root folder.
+    pub(crate) peer_graph_complete: bool,
 
     // name hash from alias package name -> aliased package dependency version info
     pub(crate) known_npm_aliases: NpmAliasMap,
@@ -2132,6 +2144,8 @@ pub fn init(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
         );
+        wr!(deferred_folder_peers, Vec::new());
+        wr!(peer_graph_complete, false);
         wr!(known_npm_aliases, NpmAliasMap::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
@@ -2594,6 +2608,8 @@ fn init_with_runtime_once(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
         );
+        wr!(deferred_folder_peers, Vec::new());
+        wr!(peer_graph_complete, false);
         wr!(known_npm_aliases, NpmAliasMap::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);

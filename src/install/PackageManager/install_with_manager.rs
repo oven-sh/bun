@@ -39,6 +39,7 @@ use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
+use crate::package_manager_real::enqueue::{PeerProvider, find_peer_provider};
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
     UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
@@ -2051,21 +2052,66 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
         wait_for_everything_except_peers(manager)?;
     }
 
-    // Resolving a peer dep can create a NEW package whose own peer deps
-    // get re-queued to `peer_dependencies` during `drainDependencyList`.
-    // When all manifests are cached (synchronous resolution), no I/O tasks
-    // are spawned, so `pendingTaskCount() == 0`. We must drain the peer
-    // queue iteratively here — entering the event loop (`waitForPeers`)
-    // with zero pending I/O would block forever.
-    while manager.peer_dependencies.readable_length() > 0 {
-        manager.process_peer_dependency_list()?;
-        manager.drain_dependency_list();
-    }
+    loop {
+        // A peer can add a package whose own peers land back in the queue; with every manifest cached nothing is pending, so drain here (the event loop would block on zero I/O).
+        while manager.peer_dependencies.readable_length() > 0 {
+            manager.process_peer_dependency_list()?;
+            manager.drain_dependency_list();
+        }
 
-    if manager.pending_task_count() > 0 {
-        wait_for_peers(manager)?;
+        if manager.pending_task_count() > 0 {
+            wait_for_peers(manager)?;
+        }
+
+        if !resolve_deferred_folder_peers(manager)? {
+            return Ok(());
+        }
     }
-    Ok(())
+}
+
+/// Decides the held-back peers now that nothing is in flight: those a root folder cannot serve go to the registry first (what they pull in can change the rest), and the caller settles the graph and calls again when that happened.
+fn resolve_deferred_folder_peers(manager: &mut PackageManager) -> crate::Result<bool> {
+    if manager.deferred_folder_peers.is_empty() {
+        return Ok(false);
+    }
+    let deferred = core::mem::take(&mut manager.deferred_folder_peers);
+    manager.peer_graph_complete = true;
+    let (bound, fallback): (Vec<_>, Vec<_>) = deferred.into_iter().partition(|peer| {
+        let lockfile = &manager.lockfile;
+        let candidates: &[PackageID] = match lockfile.package_index.get(&peer.name_hash) {
+            Some(lockfile::PackageIndexEntry::Id(id)) => core::slice::from_ref(id),
+            Some(lockfile::PackageIndexEntry::Ids(ids)) => ids.as_slice(),
+            None => &[],
+        };
+        let dependency = &lockfile.buffers.dependencies.as_slice()[peer.dependency_id as usize];
+        matches!(
+            find_peer_provider(
+                manager,
+                candidates,
+                dependency,
+                peer.dependency_id,
+                &peer.version
+            ),
+            PeerProvider::Package(_)
+        )
+    });
+    let fell_back = !fallback.is_empty();
+    let to_enqueue = if fell_back {
+        manager.deferred_folder_peers = bound;
+        fallback
+    } else {
+        bound
+    };
+    for peer in to_enqueue {
+        let dependency =
+            manager.lockfile.buffers.dependencies.as_slice()[peer.dependency_id as usize].clone();
+        let resolution =
+            manager.lockfile.buffers.resolutions.as_slice()[peer.dependency_id as usize];
+        enqueue_dependency_with_main(manager, peer.dependency_id, &dependency, resolution, true)?;
+    }
+    manager.peer_graph_complete = false;
+    manager.drain_dependency_list();
+    Ok(fell_back)
 }
 
 #[cold]

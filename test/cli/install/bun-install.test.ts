@@ -1659,6 +1659,751 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  /** Runs `bun install ...args` in the context dir with every pipe drained. */
+  async function installIn(ctx: TestContext, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  /** The lockfile bun just wrote has to load back: `--frozen-lockfile` passes and a reinstall is a no-op. */
+  async function expectLockfileRoundTrips(ctx: TestContext) {
+    const lockfile = await file(join(ctx.package_dir, "bun.lock")).text();
+    for (const args of [["--frozen-lockfile"], []]) {
+      const { err, exitCode } = await installIn(ctx, ...args);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+    }
+    expect(await file(join(ctx.package_dir, "bun.lock")).text()).toBe(lockfile);
+    return lockfile;
+  }
+
+  it("should bind a registry package's peerDependency to the root's file: dependency", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // `bar@0.0.2` (from the registry) has a peer on `zz-host`, which only exists
+      // as the root's `file:` dependency. The registry does not have `zz-host`.
+      const bar = dummyRegistryForContext(ctx, urls, { "0.0.2": { peerDependencies: { "zz-host": "*" } } });
+      setContextHandler(ctx, request => {
+        if (new URL(request.url).pathname.startsWith(`/${ctx.id}/bar`)) return bar(request);
+        urls.push(request.url);
+        return new Response("not found", { status: 404 });
+      });
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { bar: "0.0.2", "zz-host": "file:./vendor/zz-host" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "zz-host", "package.json"),
+          JSON.stringify({ name: "zz-host", version: "1.0.0" }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--save-text-lockfile");
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      // the root's folder satisfied the peer: it was never looked up, and it was
+      // not placed a second time under `bar` (where a root-relative folder path
+      // cannot be installed from).
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      const lockfile = await expectLockfileRoundTrips(ctx);
+      expect([...lockfile.matchAll(/^ {4}"([^"]+)": \["zz-host@([^"]+)"/gm)].map(m => [m[1], m[2]])).toEqual([
+        ["zz-host", "file:vendor/zz-host"],
+      ]);
+      expect(
+        await Promise.all([
+          file(join(ctx.package_dir, "node_modules", "zz-host", "package.json")).json(),
+          exists(join(ctx.package_dir, "node_modules", "bar", "node_modules")),
+        ]),
+      ).toEqual([{ name: "zz-host", version: "1.0.0" }, false]);
+    });
+  });
+
+  it("should not bind a peerDependency to a file: dependency that only a workspace member declares", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      // The workspace member's folder copy of `bar` is installed inside the
+      // member, which is not above `zz-plugin` in the tree, so it cannot satisfy
+      // the plugin's peer. The peer is resolved from the registry as before.
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            workspaces: ["packages/*"],
+            dependencies: { "zz-plugin": "file:./vendor/zz-plugin" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "packages", "zz-member", "package.json"),
+          JSON.stringify({
+            name: "zz-member",
+            version: "1.0.0",
+            dependencies: { bar: "file:../../vendor/bar" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "bar", "package.json"),
+          JSON.stringify({ name: "bar", version: "9.9.9" }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "zz-plugin", "package.json"),
+          JSON.stringify({
+            name: "zz-plugin",
+            version: "1.0.0",
+            peerDependencies: { bar: "*" },
+          }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--save-text-lockfile");
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(
+        await Promise.all([
+          file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json(),
+          file(join(ctx.package_dir, "packages", "zz-member", "node_modules", "bar", "package.json")).json(),
+          exists(join(ctx.package_dir, "node_modules", "zz-plugin", "node_modules")),
+        ]),
+      ).toMatchObject([{ name: "bar", version: "0.0.2" }, { name: "bar", version: "9.9.9" }, false]);
+
+      await expectLockfileRoundTrips(ctx);
+    });
+  });
+
+  it("should not bind a peerDependency to a root file: dependency installed under a different name", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      // The fork's manifest is named `bar`, but the root installs it as
+      // `zz-bar-fork`, so nothing is at node_modules/bar to satisfy the peer.
+      // The peer is resolved from the registry as before.
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: {
+              "zz-bar-fork": "file:./vendor/bar-fork",
+              "zz-plugin": "file:./vendor/zz-plugin",
+            },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "bar-fork", "package.json"),
+          JSON.stringify({ name: "bar", version: "9.9.9" }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "zz-plugin", "package.json"),
+          JSON.stringify({
+            name: "zz-plugin",
+            version: "1.0.0",
+            peerDependencies: { bar: "*" },
+          }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--save-text-lockfile");
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(
+        await Promise.all([
+          file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json(),
+          file(join(ctx.package_dir, "node_modules", "zz-bar-fork", "package.json")).json(),
+          exists(join(ctx.package_dir, "node_modules", "zz-plugin", "node_modules")),
+        ]),
+      ).toMatchObject([{ name: "bar", version: "0.0.2" }, { name: "bar", version: "9.9.9" }, false]);
+
+      await expectLockfileRoundTrips(ctx);
+    });
+  });
+
+  it("should only bind a peerDependency to a root file: devDependency when dev dependencies are installed", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // `bar@0.0.2` peers on `baz`. The root has `baz` as a `file:` devDependency;
+      // the registry also has baz@0.0.3.
+      const bar = dummyRegistryForContext(ctx, urls, { "0.0.2": { peerDependencies: { baz: "*" } } });
+      const rest = dummyRegistryForContext(ctx, urls, { "0.0.3": {} });
+      setContextHandler(ctx, request =>
+        (new URL(request.url).pathname.startsWith(`/${ctx.id}/bar`) ? bar : rest)(request),
+      );
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { bar: "0.0.2" },
+            devDependencies: { baz: "file:./vendor/baz" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "baz", "package.json"),
+          JSON.stringify({ name: "baz", version: "9.9.9" }),
+        ),
+      ]);
+
+      // dev dependencies installed: the root's folder is above `bar`, so it satisfies the peer.
+      {
+        const { err, exitCode } = await installIn(ctx, "--save-text-lockfile");
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+        expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+          name: "baz",
+          version: "9.9.9",
+        });
+      }
+
+      // dev dependencies omitted: the folder is not going to be installed anywhere
+      // `bar` can see it, so the peer is resolved from the registry instead.
+      await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
+      await rm(join(ctx.package_dir, "bun.lock"), { force: true });
+      urls.length = 0;
+      {
+        const { err, exitCode } = await installIn(ctx, "--omit=dev", "--save-text-lockfile");
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect(urls.sort()).toEqual([
+          `${ctx.registry_url}bar`,
+          `${ctx.registry_url}bar-0.0.2.tgz`,
+          `${ctx.registry_url}baz`,
+          `${ctx.registry_url}baz-0.0.3.tgz`,
+        ]);
+        expect(
+          await Promise.all([
+            file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json(),
+            exists(join(ctx.package_dir, "node_modules", "bar", "node_modules")),
+          ]),
+        ).toMatchObject([{ name: "baz", version: "0.0.3" }, false]);
+      }
+    });
+  });
+
+  it("should not bind the peerDependency of a package that also gets nested to the root's file: dependency", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // boba depends on baz@0.0.3 and on bar@0.0.2, which peers on baz >=0.0.5.
+      // The root has bar@0.0.9, so boba's bar@0.0.2 is nested under boba, where
+      // boba's baz@0.0.3 shadows the root's folder copy of baz. The root also
+      // installs bar@0.0.2 itself, but under an alias, which does not stop the
+      // nested copy from existing. The root's folder cannot satisfy the nested
+      // copy's peer, so it is resolved from the registry (baz@0.0.5) as before.
+      const manifests: Record<string, ReturnType<typeof dummyRegistryForContext>> = {
+        bar: dummyRegistryForContext(ctx, urls, {
+          "0.0.2": { peerDependencies: { baz: ">=0.0.5" } },
+          "0.0.9": { as: "0.0.2" },
+        }),
+        boba: dummyRegistryForContext(ctx, urls, { "0.0.2": { dependencies: { baz: "0.0.3", bar: "0.0.2" } } }),
+        baz: dummyRegistryForContext(ctx, urls, { "0.0.3": {}, "0.0.5": {} }),
+      };
+      setContextHandler(ctx, request => {
+        const name = new URL(request.url).pathname.slice(`/${ctx.id}/`.length).replace(/-\d.*$/, "");
+        return manifests[name](request);
+      });
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { bar: "0.0.9", "zz-bar-old": "npm:bar@0.0.2", boba: "0.0.2", baz: "file:./vendor/baz" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "baz", "package.json"),
+          JSON.stringify({ name: "baz", version: "9.9.9" }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--save-text-lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await expectLockfileRoundTrips(ctx);
+      expect([...lockfile.matchAll(/^ {4}"([^"]+)": \["baz@([^"]+)"/gm)].map(m => [m[1], m[2]]).sort()).toEqual([
+        ["baz", "file:vendor/baz"],
+        ["boba/bar/baz", "0.0.5"],
+        ["boba/baz", "0.0.3"],
+      ]);
+      expect(
+        await file(
+          join(ctx.package_dir, "node_modules", "boba", "node_modules", "bar", "node_modules", "baz", "package.json"),
+        ).json(),
+      ).toMatchObject({ version: "0.0.5" });
+    });
+  });
+
+  it("should not bind the peerDependency of a package to the root's file: dependency while another version of the package is installed somewhere", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // The root depends on bar@0.0.2 (which peers on baz >=0.0.5), on boba and on
+      // moo@0.2.0. boba depends on bar@0.0.9, moo@0.1.0 and baz@0.0.3, all of which
+      // end up nested under boba; moo@0.1.0 depends on bar@0.0.2, which cannot
+      // dedupe past boba's bar@0.0.9, so a second copy of bar@0.0.2 lands under
+      // boba/moo, where boba's baz@0.0.3 hides the root's folder from it. The
+      // peer is therefore resolved from the registry (baz@0.0.5) as before.
+      const manifests: Record<string, ReturnType<typeof dummyRegistryForContext>> = {
+        bar: dummyRegistryForContext(ctx, urls, {
+          "0.0.2": { peerDependencies: { baz: ">=0.0.5" } },
+          "0.0.9": { as: "0.0.2" },
+        }),
+        boba: dummyRegistryForContext(ctx, urls, {
+          "0.0.2": { dependencies: { bar: "0.0.9", moo: "0.1.0", baz: "0.0.3" } },
+        }),
+        moo: dummyRegistryForContext(ctx, urls, { "0.1.0": { dependencies: { bar: "0.0.2" } }, "0.2.0": {} }),
+        baz: dummyRegistryForContext(ctx, urls, { "0.0.3": {}, "0.0.5": {} }),
+      };
+      setContextHandler(ctx, request => {
+        const name = new URL(request.url).pathname.slice(`/${ctx.id}/`.length).replace(/-\d.*$/, "");
+        return manifests[name](request);
+      });
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { bar: "0.0.2", boba: "0.0.2", moo: "0.2.0", baz: "file:./vendor/baz" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "baz", "package.json"),
+          JSON.stringify({ name: "baz", version: "9.9.9" }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--save-text-lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await expectLockfileRoundTrips(ctx);
+      expect([...lockfile.matchAll(/^ {4}"([^"]+)": \["baz@([^"]+)"/gm)].map(m => [m[1], m[2]]).sort()).toEqual([
+        ["baz", "file:vendor/baz"],
+        ["boba/baz", "0.0.3"],
+        ["boba/moo/bar/baz", "0.0.5"],
+      ]);
+      expect(
+        await file(
+          join(
+            ctx.package_dir,
+            "node_modules",
+            "boba",
+            "node_modules",
+            "moo",
+            "node_modules",
+            "bar",
+            "node_modules",
+            "baz",
+            "package.json",
+          ),
+        ).json(),
+      ).toMatchObject({ version: "0.0.5" });
+    });
+  });
+
+  it("should not bind the peerDependency of a root devDependency to the root's file: dependency under --omit=dev", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // bar@0.0.2 (which peers on baz >=0.0.5) is a devDependency of the root, so
+      // with --omit=dev it is not installed at the root: boba's bar@0.0.9 takes
+      // that spot and qux's bar@0.0.2 is installed under qux, where qux's
+      // baz@0.0.3 hides the root's folder from it. The peer is resolved from the
+      // registry (baz@0.0.5) and installed next to that copy, as before.
+      const manifests: Record<string, ReturnType<typeof dummyRegistryForContext>> = {
+        bar: dummyRegistryForContext(ctx, urls, {
+          "0.0.2": { peerDependencies: { baz: ">=0.0.5" } },
+          "0.0.9": { as: "0.0.2" },
+        }),
+        boba: dummyRegistryForContext(ctx, urls, { "0.0.2": { dependencies: { bar: "0.0.9" } } }),
+        qux: dummyRegistryForContext(ctx, urls, { "0.0.2": { dependencies: { bar: "0.0.2", baz: "0.0.3" } } }),
+        baz: dummyRegistryForContext(ctx, urls, { "0.0.3": {}, "0.0.5": {} }),
+      };
+      setContextHandler(ctx, request => {
+        const name = new URL(request.url).pathname.slice(`/${ctx.id}/`.length).replace(/-\d.*$/, "");
+        return manifests[name](request);
+      });
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { boba: "0.0.2", qux: "0.0.2", baz: "file:./vendor/baz" },
+            devDependencies: { bar: "0.0.2" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "baz", "package.json"),
+          JSON.stringify({ name: "baz", version: "9.9.9" }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--omit=dev", "--save-text-lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(urls).toContain(`${ctx.registry_url}baz-0.0.5.tgz`);
+      expect(
+        await file(
+          join(ctx.package_dir, "node_modules", "qux", "node_modules", "bar", "node_modules", "baz", "package.json"),
+        ).json(),
+      ).toMatchObject({ version: "0.0.5" });
+
+      // The lockfile describes the tree with dev dependencies included, where the
+      // root's own bar@0.0.2 sits at the top and sees the folder, so nothing about
+      // the registry copy of baz is recorded and a full install leaves it alone.
+      const lockfile = await expectLockfileRoundTrips(ctx);
+      expect([...lockfile.matchAll(/^ {4}"([^"]+)": \["baz@([^"]+)"/gm)].map(m => [m[1], m[2]]).sort()).toEqual([
+        ["baz", "file:vendor/baz"],
+        ["qux/baz", "0.0.3"],
+      ]);
+    });
+  });
+
+  it("should not bind the peerDependency of a package a self-contained workspace depends on to the root's file: dependency", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // The self-contained workspace gets its own copy of bar, and nothing in its
+      // node_modules may come from the root's. The root's folder copy of baz cannot
+      // be placed there, so the peer is resolved from the registry, as before, and
+      // the registry copy lands inside the workspace.
+      const manifests: Record<string, ReturnType<typeof dummyRegistryForContext>> = {
+        bar: dummyRegistryForContext(ctx, urls, { "0.0.2": { peerDependencies: { baz: "*" } } }),
+        baz: dummyRegistryForContext(ctx, urls, { "0.0.3": {} }),
+      };
+      setContextHandler(ctx, request => {
+        const name = new URL(request.url).pathname.slice(`/${ctx.id}/`.length).replace(/-\d.*$/, "");
+        return manifests[name](request);
+      });
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            workspaces: ["apps/*"],
+            dependencies: { bar: "0.0.2", baz: "file:./vendor/baz" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "baz", "package.json"),
+          JSON.stringify({ name: "baz", version: "9.9.9" }),
+        ),
+        write(
+          join(ctx.package_dir, "apps", "desktop", "package.json"),
+          JSON.stringify({
+            name: "desktop",
+            version: "1.0.0",
+            installConfig: { hoistingLimits: "workspaces" },
+            dependencies: { bar: "0.0.2" },
+          }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--save-text-lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(urls).toContain(`${ctx.registry_url}baz-0.0.3.tgz`);
+      expect(
+        await Promise.all([
+          file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json(),
+          file(join(ctx.package_dir, "apps", "desktop", "node_modules", "baz", "package.json")).json(),
+        ]),
+      ).toMatchObject([{ version: "9.9.9" }, { version: "0.0.3" }]);
+
+      const lockfile = await expectLockfileRoundTrips(ctx);
+      expect([...lockfile.matchAll(/^ {4}"([^"]+)": \["baz@([^"]+)"/gm)].map(m => [m[1], m[2]]).sort()).toEqual([
+        ["baz", "file:vendor/baz"],
+        ["desktop/baz", "0.0.3"],
+      ]);
+    });
+  });
+
+  it("should not bind a peerDependency to the root's file: dependency when a package another peer pulls in installs a second version of its package", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // Nothing but boba's peer asks for moo, so moo and everything below it only
+      // join the dependency graph after the peers have started resolving. moo
+      // brings bar@0.0.9, a baz@0.0.3 and qux@0.0.2, whose bar@0.0.2 then gets a
+      // second copy under moo/qux where moo's baz hides the root's folder. The
+      // decision for bar's peer has to wait for that, and then goes to the
+      // registry (baz@0.0.5) as before.
+      const manifests: Record<string, ReturnType<typeof dummyRegistryForContext>> = {
+        bar: dummyRegistryForContext(ctx, urls, {
+          "0.0.2": { peerDependencies: { baz: ">=0.0.5" } },
+          "0.0.9": { as: "0.0.2" },
+        }),
+        boba: dummyRegistryForContext(ctx, urls, { "0.0.2": { peerDependencies: { moo: "*" } } }),
+        moo: dummyRegistryForContext(ctx, urls, {
+          "0.1.0": { dependencies: { bar: "0.0.9", baz: "0.0.3", qux: "0.0.2" } },
+        }),
+        qux: dummyRegistryForContext(ctx, urls, {
+          "0.0.2": { dependencies: { bar: "0.0.2" } },
+          "0.0.9": { as: "0.0.2" },
+        }),
+        baz: dummyRegistryForContext(ctx, urls, { "0.0.3": {}, "0.0.5": {} }),
+      };
+      setContextHandler(ctx, request => {
+        const name = new URL(request.url).pathname.slice(`/${ctx.id}/`.length).replace(/-\d.*$/, "");
+        return manifests[name](request);
+      });
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { bar: "0.0.2", boba: "0.0.2", qux: "0.0.9", baz: "file:./vendor/baz" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "baz", "package.json"),
+          JSON.stringify({ name: "baz", version: "9.9.9" }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--save-text-lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await expectLockfileRoundTrips(ctx);
+      expect([...lockfile.matchAll(/^ {4}"([^"]+)": \["baz@([^"]+)"/gm)].map(m => [m[1], m[2]]).sort()).toEqual([
+        ["baz", "file:vendor/baz"],
+        ["moo/baz", "0.0.3"],
+        ["moo/qux/bar/baz", "0.0.5"],
+      ]);
+      expect(
+        await file(
+          join(
+            ctx.package_dir,
+            "node_modules",
+            "moo",
+            "node_modules",
+            "qux",
+            "node_modules",
+            "bar",
+            "node_modules",
+            "baz",
+            "package.json",
+          ),
+        ).json(),
+      ).toMatchObject({ version: "0.0.5" });
+    });
+  });
+
+  it("should not bind a peerDependency to the root's file: dependency when --filter leaves the root's dependencies out", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // Only the workspace member is installed, so the root's folder copy of baz
+      // is not placed anywhere bar could see it; the peer comes from the registry.
+      const manifests: Record<string, ReturnType<typeof dummyRegistryForContext>> = {
+        bar: dummyRegistryForContext(ctx, urls, { "0.0.2": { peerDependencies: { baz: "*" } } }),
+        baz: dummyRegistryForContext(ctx, urls, { "0.0.3": {} }),
+      };
+      setContextHandler(ctx, request => {
+        const name = new URL(request.url).pathname.slice(`/${ctx.id}/`.length).replace(/-\d.*$/, "");
+        return manifests[name](request);
+      });
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            workspaces: ["packages/*"],
+            dependencies: { bar: "0.0.2", baz: "file:./vendor/baz" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "baz", "package.json"),
+          JSON.stringify({ name: "baz", version: "9.9.9" }),
+        ),
+        write(
+          join(ctx.package_dir, "packages", "zz-member", "package.json"),
+          JSON.stringify({ name: "zz-member", version: "1.0.0", dependencies: { bar: "0.0.2" } }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--filter=zz-member", "--save-text-lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(urls).toContain(`${ctx.registry_url}baz-0.0.3.tgz`);
+      expect(
+        await Promise.all([
+          file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json(),
+          file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json(),
+        ]),
+      ).toMatchObject([{ version: "0.0.2" }, { version: "0.0.3" }]);
+
+      // The lockfile describes the full tree, where the root's own bar sits next
+      // to the folder and sees it, so a full install leaves it alone.
+      const lockfile = await expectLockfileRoundTrips(ctx);
+      expect([...lockfile.matchAll(/^ {4}"([^"]+)": \["baz@([^"]+)"/gm)].map(m => [m[1], m[2]])).toEqual([
+        ["baz", "file:vendor/baz"],
+      ]);
+    });
+  });
+
+  it("should share one entry between an optional file: dependency and a file: peer on it under --omit=optional", async () => {
+    await withContext(defaultOpts, async ctx => {
+      setContextHandler(ctx, dummyRegistryForContext(ctx, []));
+      // The optional entry still exists in the lockfile when it is omitted from
+      // the install, so the peer has to reuse it rather than add a second one.
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { "zz-plugin": "file:./vendor/zz-plugin" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "zz-host", "package.json"),
+          JSON.stringify({ name: "zz-host", version: "1.0.0" }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "zz-plugin", "package.json"),
+          JSON.stringify({
+            name: "zz-plugin",
+            version: "1.0.0",
+            optionalDependencies: { "zz-host": "file:../zz-host" },
+            peerDependencies: { "zz-host": "file:../zz-host" },
+          }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--omit=optional", "--save-text-lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await expectLockfileRoundTrips(ctx);
+      expect([...lockfile.matchAll(/^ {4}"([^"]+)": \["zz-host@/gm)].map(m => m[1])).toEqual(["zz-plugin/zz-host"]);
+    });
+  });
+
+  it("should bind a peerDependency to its package's own optional file: dependency even under --omit=optional", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      // The plugin's optional copy is still recorded in the lockfile when the
+      // install omits it, so the peer binds to it there: not to the root's copy,
+      // and without asking the registry for the name.
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { "zz-plugin": "file:./vendor/zz-plugin", "zz-host": "file:./vendor/zz-host" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "zz-host", "package.json"),
+          JSON.stringify({ name: "zz-host", version: "2.0.0" }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "zz-host-vendored", "package.json"),
+          JSON.stringify({ name: "zz-host", version: "1.0.0" }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "zz-plugin", "package.json"),
+          JSON.stringify({
+            name: "zz-plugin",
+            version: "1.0.0",
+            optionalDependencies: { "zz-host": "file:../zz-host-vendored" },
+            peerDependencies: { "zz-host": "*" },
+          }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--omit=optional", "--save-text-lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(urls).toEqual([]);
+
+      const lockfile = await expectLockfileRoundTrips(ctx);
+      expect([...lockfile.matchAll(/^ {4}"([^"]+)": \["zz-host@([^"]+)"/gm)].map(m => [m[1], m[2]]).sort()).toEqual([
+        ["zz-host", "file:vendor/zz-host"],
+        ["zz-plugin/zz-host", "file:vendor/zz-host-vendored"],
+      ]);
+      expect(urls).toEqual([]);
+    });
+  });
+
+  it("should not bind a peerDependency to the root's file: dependency when its package installs another copy itself", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      // The registry only has baz@0.0.3, which the plugin depends on, so its peer
+      // on baz >=0.0.5 has no match. The root's folder copy of baz does not stand
+      // in for it: the plugin's own baz@0.0.3 is what gets installed under the
+      // plugin, so the peer is reported as unmet exactly as without the folder.
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { "zz-plugin": "file:./vendor/zz-plugin", baz: "file:./vendor/baz" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "baz", "package.json"),
+          JSON.stringify({ name: "baz", version: "9.9.9" }),
+        ),
+        write(
+          join(ctx.package_dir, "vendor", "zz-plugin", "package.json"),
+          JSON.stringify({
+            name: "zz-plugin",
+            version: "1.0.0",
+            dependencies: { baz: "0.0.3" },
+            peerDependencies: { baz: ">=0.0.5" },
+          }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installIn(ctx, "--save-text-lockfile");
+      expect(err).toContain('warn: No version matching ">=0.0.5" found for peer dependency "baz"');
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await expectLockfileRoundTrips(ctx);
+      expect([...lockfile.matchAll(/^ {4}"([^"]+)": \["baz@([^"]+)"/gm)].map(m => [m[1], m[2]]).sort()).toEqual([
+        ["baz", "file:vendor/baz"],
+        ["zz-plugin/baz", "0.0.3"],
+      ]);
+      expect(
+        await file(join(ctx.package_dir, "node_modules", "zz-plugin", "node_modules", "baz", "package.json")).json(),
+      ).toMatchObject({ version: "0.0.3" });
+    });
+  });
+
   it("should handle life-cycle scripts within workspaces", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(

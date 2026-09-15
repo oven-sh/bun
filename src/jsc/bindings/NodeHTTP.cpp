@@ -396,7 +396,26 @@ static bool connectionValueHasClose(const WTF::String& value)
     return false;
 }
 
-template<bool isSSL>
+// Written by HttpResponse::upgrade() itself (RFC 6455 §4.2.2), or not allowed in a 1xx (RFC 9110 §8.6).
+static bool isWebSocketHandshakeOwnedHeader(WebCore::HTTPHeaderName name)
+{
+    switch (name) {
+    case WebCore::HTTPHeaderName::Upgrade:
+    case WebCore::HTTPHeaderName::Connection:
+    case WebCore::HTTPHeaderName::SecWebSocketAccept:
+    case WebCore::HTTPHeaderName::SecWebSocketKey:
+    case WebCore::HTTPHeaderName::SecWebSocketVersion:
+    case WebCore::HTTPHeaderName::SecWebSocketProtocol:
+    case WebCore::HTTPHeaderName::SecWebSocketExtensions:
+    case WebCore::HTTPHeaderName::ContentLength:
+    case WebCore::HTTPHeaderName::TransferEncoding:
+        return true;
+    default:
+        return false;
+    }
+}
+
+template<bool isSSL, bool forWebSocketUpgrade = false>
 static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
 {
     auto& internalHeaders = headers.internalHeaders();
@@ -409,6 +428,10 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     auto* data = res->getHttpResponseData();
 
     for (const auto& header : internalHeaders.commonHeaders()) {
+        if constexpr (forWebSocketUpgrade) {
+            if (isWebSocketHandshakeOwnedHeader(header.key))
+                continue;
+        }
 
         const auto& name = WebCore::httpHeaderNameString(header.key);
         const auto& value = header.value;
@@ -887,6 +910,15 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
     case UWSResponseKind::H3:
         writeFetchHeadersToStreamResponse<uWS::Http3Response, uWS::Http3ResponseData>(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
         break;
+    }
+}
+
+extern "C" void WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(WebCore::FetchHeaders* arg0, bool isSSL, void* arg1)
+{
+    if (isSSL) {
+        writeFetchHeadersToUWSResponse<true, true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg1));
+    } else {
+        writeFetchHeadersToUWSResponse<false, true>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg1));
     }
 }
 

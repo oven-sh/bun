@@ -145,8 +145,6 @@ QueuingStrategyDict convertQueuingStrategyDict(JSC::JSGlobalObject*, JSC::JSValu
 // (undefined / true / ...) are exempt. Do NOT "optimize" a fulfillment site to skip
 // re-validation on the grounds that the resolution value is internally constructed.
 JSC::JSPromise* promiseFulfilledWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
-// [bound-convention] wrapper: target(contextCell, ...callArgs). userJS: no — WebStreamsMisc.cpp
-JSC::JSBoundFunction* createStreamsBoundHandler(JSC::JSGlobalObject*, JSC::JSFunction* target, JSC::JSCell* context);
 // obj.name(...args); returns the EMPTY value when `name` is not callable. userJS: yes — WebStreamsMisc.cpp
 JSC::JSValue invokeOptionalMethod(JSC::JSGlobalObject*, JSC::JSObject*, const JSC::Identifier& name, const JSC::MarkedArgumentBuffer&);
 // WebIDL "invoke a callback function" whose declared return type is Promise<T> (underlying

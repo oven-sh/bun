@@ -1312,7 +1312,6 @@ impl Run<'_> {
                 dir,
                 md_format: opts.md_format,
                 json_format: opts.json_format,
-                interval: opts.interval,
             });
             bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
             // SAFETY: `vm.jsc_vm` set in `init`.

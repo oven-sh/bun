@@ -58,6 +58,4 @@ pub mod thumbhash;
 
 #[path = "Image.rs"]
 pub mod image_body;
-pub use image_body::{
-    Deliver, Fit, Image, Input, Kind, Modulate, Pipeline, PipelineTask, Resize, Source, TaskResult,
-};
+pub use image_body::Image;

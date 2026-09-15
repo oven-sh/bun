@@ -579,25 +579,11 @@ function needsBaselineVerification(platform) {
   return false;
 }
 
-// Ubuntu 20.04's qemu 4.2 mis-emulates concurrent atomics in same-arch user mode; after #34009
-// (mimalloc per-thread heaps) the SIMD baseline test segfaults/deadlocks in `_mi_theap_init`
-// ~10-20% of x64 runs and ~5% of aarch64 runs. qemu 9.1 is 40/40 green. Static-pie binaries.
-const PINNED_QEMU = {
-  x64: {
-    url: "https://github.com/ziglang/qemu-static/releases/download/9.1.0/qemu-linux-x86_64-9.1.0.tar.xz",
-    sha256: "1ac92f632417d981810fda891e4a1b20f2d71f50f9ec705532afa8162b449c70",
-    binary: "qemu-linux-x86_64-9.1.0/bin/qemu-x86_64",
-  },
-  aarch64: {
-    url: "https://github.com/ziglang/qemu-static/releases/download/9.1.0/qemu-linux-aarch64-9.1.0.tar.xz",
-    sha256: "5a82a96ac74932a802fb5753673beff27359faea8736286477b0bf2c268fd06d",
-    binary: "qemu-linux-aarch64-9.1.0/bin/qemu-aarch64",
-  },
-};
-
 /**
- * Returns the emulator binary name for the given platform.
- * Linux uses QEMU user-mode; Windows uses Intel SDE.
+ * Returns the emulator for the given platform. Both emulators come baked into
+ * the image the step runs on (getVerifyBaselineHost); neither is downloaded at
+ * job time. The qemu tarball used to be fetched from github.com releases per
+ * job, which failed the step whenever github.com was unreachable.
  * @param {Platform} platform
  * @returns {string}
  */
@@ -607,8 +593,13 @@ function getEmulatorBinary(platform) {
   // (Install-IntelSde): downloadmirror.intel.com sits behind a bot challenge
   // that blocks non-browser clients, so it cannot be downloaded at job time.
   if (os === "windows") return "C:\\intel-sde\\sde.exe";
-  // Fetched into the checkout root by the setup command below (see PINNED_QEMU).
-  return `./${PINNED_QEMU[arch].binary}`;
+  // The distro's qemu-user, installed by scripts/bootstrap.sh
+  // install_build_essentials() (apt `qemu-user`, apk `qemu-x86_64` /
+  // `qemu-aarch64`) and resolved on PATH by scripts/verify-baseline.ts. Debian 13
+  // and Alpine 3.23 ship qemu 10.x; a host image's qemu must stay well past 4.2,
+  // whose same-arch user mode mis-emulated concurrent atomics and made the SIMD
+  // baseline test crash or hang on 10-20% of x64 runs (#34164).
+  return arch === "aarch64" ? "qemu-aarch64" : "qemu-x86_64";
 }
 
 /**
@@ -628,8 +619,10 @@ function hasWebKitChanges(options) {
 
 /**
  * Host platform the verify-baseline step runs on — per-TARGET-arch, not the
- * shared arm64 build host. Reuses test-fleet images (debian-13 / win-2019) so
- * no extra bake is needed; getPipeline() keys its build-image depends_on on this.
+ * shared arm64 build host. Reuses test-fleet images (debian-13 / alpine-3.23 /
+ * win-2019) so no extra bake is needed; getPipeline() keys its build-image
+ * depends_on on this. The image also supplies the emulator (getEmulatorBinary),
+ * so a different host here must have it installed too.
  * @param {Platform} platform
  * @returns {Platform}
  */
@@ -677,20 +670,12 @@ function getVerifyBaselineStep(platform, options) {
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
           `unzip -o '${profileDir}.zip'`,
           `chmod +x ${profileDir}/${profileExe}`,
-          // Linux lanes pin a known-good qemu (see PINNED_QEMU). sha256 check makes a
-          // truncated/hijacked download a hard failure before anything runs under it.
-          ...(abi === "android"
-            ? [] // --skip-emulation: no emulator needed
-            : [
-                `curl -fsSL --retry 5 --connect-timeout 15 --max-time 120 -o ./qemu.tar.xz '${PINNED_QEMU[platform.arch].url}'`,
-                `echo '${PINNED_QEMU[platform.arch].sha256}  ./qemu.tar.xz' | sha256sum -c -`,
-                `tar -xJf ./qemu.tar.xz '${PINNED_QEMU[platform.arch].binary}'`,
-              ]),
         ];
 
-  // verify-baseline is not a build lane: it stays on a host whose arch matches
-  // the TARGET so PINNED_QEMU's host-arch-specific static binaries keep working
-  // (the link agent is now always arm64 and can't run the x86_64-host qemu).
+  // verify-baseline is not a build lane: it runs on a host whose arch and libc
+  // match the TARGET, because verify-baseline.ts runs qemu-user without -L, so
+  // the emulated bun-profile resolves its dynamic loader and libc from the
+  // host's own / rather than from a sysroot.
   const host = getVerifyBaselineHost(platform);
   const agents =
     os === "windows"

@@ -1712,17 +1712,19 @@ describe("Bun.serve HTTP/3 production", () => {
         serve: { fetch: () => new Response(big) },
         expected: { status: 200, body: summarize(big) },
       },
-      "ReadableStream body": {
+      "ReadableStream body after reading the request body": {
         serve: {
-          fetch: () =>
-            new Response(
+          fetch: async (req: Request) => {
+            await req.bytes();
+            return new Response(
               new ReadableStream({
                 async pull(controller) {
                   controller.enqueue(new TextEncoder().encode("streamed"));
                   controller.close();
                 },
               }),
-            ),
+            );
+          },
         },
         expected: { status: 200, body: "streamed" },
       },

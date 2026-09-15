@@ -26,7 +26,7 @@ use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
 use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
-use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
+use bun_threading::{Futex, ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler as transpiler;
 use bun_url::URL;
 
@@ -398,6 +398,12 @@ pub struct PackageManager {
     pub(crate) global_link_dir_path: Box<[u8]>,
 
     pub(crate) on_wake: WakeHandler,
+    /// Bumped by every `wake_raw`. `sleep_until` parks on it when the install
+    /// thread is the JS thread, so that wait never runs the JS event loop.
+    pub(crate) wake_count: AtomicU32,
+    /// `sleep_until` is parked on `wake_count`; lets `wake_raw` skip the
+    /// futex syscall when nothing waits (every `bun install` task).
+    pub(crate) parked_on_wake_count: AtomicBool,
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -945,7 +951,67 @@ impl PackageManager {
                 (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+
+            // SeqCst pairs with `park_until`: it sets the flag before it reads
+            // the count, this bumps the count before it reads the flag, so one
+            // of the two sees the other and no wake is lost.
+            let wake_count = &*core::ptr::addr_of!((*this).wake_count);
+            wake_count.fetch_add(1, Ordering::SeqCst);
+            if (*core::ptr::addr_of!((*this).parked_on_wake_count)).load(Ordering::SeqCst) {
+                Futex::wake(wake_count, 1);
+            }
         }
+    }
+
+    /// Whether every pending task is a `git` child. `git_runner` runs those on
+    /// the install thread's event loop, so only that loop can finish them.
+    fn only_git_children_remain(&self) -> bool {
+        let git_children =
+            self.running_git_tasks.load(Ordering::Relaxed) + self.git_tasks.len() as u32;
+        git_children > 0 && self.pending_task_count() == git_children
+    }
+
+    /// `sleep_until` for a manager whose install thread is the JS thread, which
+    /// is runtime auto-install. The caller is a synchronous JS call (`require`,
+    /// `Bun.resolveSync`, the resolve step of `import()`), so the wait must not
+    /// run the JS event loop: a timer, an immediate or another socket's
+    /// callback would run inside that call. It blocks the thread instead.
+    /// Every task this manager starts finishes on the HTTP thread or on the
+    /// thread pool and ends in `wake_raw`, which is all `is_done` needs.
+    ///
+    /// The exception is a `git` child. Nothing can finish one while this
+    /// thread is blocked, so the wait ends once only those are left and the
+    /// caller reports the dependency as not resolved. The clone carries on
+    /// when the event loop runs again, and fills the cache.
+    ///
+    /// # Safety
+    /// Same contract as `sleep_until`.
+    unsafe fn park_until(
+        this: *mut PackageManager,
+        context: *mut c_void,
+        is_done: fn(*mut c_void) -> bool,
+    ) {
+        // Re-derived from `this` at every use: `is_done` reborrows the whole
+        // `PackageManager`, so no reference may live across a call to it.
+        // SAFETY: `this` is valid per fn contract; both fields are atomics.
+        let wake_count = || unsafe { &*core::ptr::addr_of!((*this).wake_count) };
+        let parked = || unsafe { &*core::ptr::addr_of!((*this).parked_on_wake_count) };
+
+        parked().store(true, Ordering::SeqCst);
+        loop {
+            // Read before `is_done` drains the queues: a task that finishes
+            // after the drain bumps the count, and the wait below returns at once.
+            let seen = wake_count().load(Ordering::SeqCst);
+            if is_done(context) {
+                break;
+            }
+            // SAFETY: `is_done` returned, so no `&mut PackageManager` is live.
+            if unsafe { &*this }.only_git_children_remain() {
+                break;
+            }
+            Futex::wait_forever(wake_count(), seen);
+        }
+        parked().store(false, Ordering::SeqCst);
     }
 
     /// Associated fn taking `*mut PackageManager` (NOT `&mut self`): every
@@ -993,6 +1059,18 @@ impl PackageManager {
         // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
         // reference, only a place projection.
         let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
+        // SAFETY: no `&mut PackageManager` is live before the first `is_done`.
+        if matches!(unsafe { &*event_loop }, AnyEventLoop::Js { .. }) {
+            // SAFETY: same contract as this fn.
+            unsafe {
+                Self::park_until(
+                    this,
+                    (&raw mut erased).cast::<c_void>(),
+                    trampoline::<C>,
+                )
+            };
+            return;
+        }
         // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
         // calls (never across them), so the callback's `&mut PackageManager`
         // never overlaps a live `&mut AnyEventLoop`.
@@ -2128,6 +2206,8 @@ pub fn init(
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, WakeHandler::default());
+        wr!(wake_count, AtomicU32::new(0));
+        wr!(parked_on_wake_count, AtomicBool::new(false));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
@@ -2590,6 +2670,8 @@ fn init_with_runtime_once(
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, WakeHandler::default());
+        wr!(wake_count, AtomicU32::new(0));
+        wr!(parked_on_wake_count, AtomicBool::new(false));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()

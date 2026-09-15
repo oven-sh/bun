@@ -1948,7 +1948,7 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
 // dependencies live next to the real directory (isolated install layout), so
 // resolving to the link path makes them unreachable.
 // https://github.com/oven-sh/bun/issues/42776
-describe.concurrent("#42776 - symlink created after node_modules was cached", () => {
+describe.concurrent("#42776 - symlink created after its parent directory was cached", () => {
   const storeFixture = {
     "store/pkg-a@1.0.0/node_modules/pkg-a/package.json": JSON.stringify({
       name: "pkg-a",
@@ -2039,6 +2039,65 @@ describe.concurrent("#42776 - symlink created after node_modules was cached", ()
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe(`${join(root, "project", "node_modules", "pkg-a", "index.js")}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // The same stale listing outside node_modules. Resolving to the link path
+  // gives the module behind the link a second identity, so it loads twice.
+  const linkType = JSON.stringify(isWindows ? "junction" : "dir");
+
+  it("require through a late directory symlink returns the module already loaded from the real path", async () => {
+    using dir = tempDir("resolve-late-dirlink-cjs", {
+      "src/real/c.cjs": `console.log("evaluated"); module.exports = {};`,
+      "main.cjs": `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const a = require("./src/real/c.cjs");
+        fs.symlinkSync(path.join(__dirname, "src", "real"), path.join(__dirname, "src", "ldir"), ${linkType});
+        const b = require("./src/ldir/c.cjs");
+        console.log(a === b);
+        console.log(require.resolve("./src/ldir/c.cjs"));
+        console.log(Object.keys(require.cache).filter(key => key.endsWith("c.cjs")).length);
+      `,
+    });
+    const root = realpathSync(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`evaluated\ntrue\n${join(root, "src", "real", "c.cjs")}\n1\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  it("import() through a late directory symlink returns the module already loaded from the real path", async () => {
+    using dir = tempDir("resolve-late-dirlink-esm", {
+      "src/real/m.mjs": `console.log("evaluated"); export const id = Symbol();`,
+      "main.mjs": `
+        import fs from "node:fs";
+        import path from "node:path";
+        const a = await import("./src/real/m.mjs");
+        fs.symlinkSync(path.join(import.meta.dirname, "src", "real"), path.join(import.meta.dirname, "src", "ldir"), ${linkType});
+        const b = await import("./src/ldir/m.mjs");
+        console.log(a === b);
+        console.log(Bun.resolveSync("./src/ldir/m.mjs", import.meta.dirname));
+      `,
+    });
+    const root = realpathSync(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`evaluated\ntrue\n${join(root, "src", "real", "m.mjs")}\n`);
     expect(exitCode).toBe(0);
   });
 

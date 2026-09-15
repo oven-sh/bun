@@ -7,7 +7,17 @@ use core::sync::atomic::Ordering;
 use bun_core::{EncodedSlice, StringPointer};
 use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
-use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{
+    CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult,
+};
+
+/// `Headers` addresses its buffer with `u32` `StringPointer`s, so it cannot hold a larger total.
+fn throw_headers_too_large(global: &JSGlobalObject) -> JsError {
+    global.throw_value(global.create_range_error_instance(format_args!(
+        "Headers exceed the maximum total size of {} bytes",
+        u32::MAX
+    )))
+}
 
 /// Moved up from `bun_http` so it can
 /// name `FetchHeaders` directly instead of dispatching through a vtable.
@@ -16,34 +26,35 @@ use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, 
 /// content-type (callers gate on `has_content_type_from_user()` before passing
 /// `content_type()`); `None` means no body or no user-set content-type.
 pub fn from_fetch_headers(
+    global: &JSGlobalObject,
     fetch_headers: Option<&FetchHeaders>,
     body_content_type: Option<&[u8]>,
-) -> Headers {
-    // `FetchHeaders::{count,fast_has_,copy_to}` take `&mut self` but
-    // are read-only FFI shims; cast through `*mut` (matching the prior
-    // `link_interface!` impl which did `from_ref(h).cast_mut()`).
-    let h_ptr: Option<*mut FetchHeaders> = fetch_headers.map(|h| core::ptr::from_ref(h).cast_mut());
-
-    let mut header_count: u32 = 0;
-    let mut buf_len: u32 = 0;
-    if let Some(h) = h_ptr {
-        // SAFETY: `h` is a valid `&FetchHeaders` for the call; FFI is read-only.
-        unsafe { (*h).count(&mut header_count, &mut buf_len) };
-    }
+) -> JsResult<Headers> {
+    let (fetch_header_count, buf_len_before_content_type) =
+        match fetch_headers.map(FetchHeaders::count) {
+            None => (0, 0),
+            Some(Some(counts)) => counts,
+            Some(None) => return Err(throw_headers_too_large(global)),
+        };
+    let (mut header_count, mut buf_len) = (fetch_header_count, buf_len_before_content_type);
     let mut headers = Headers {
         entries: EntryList::default(),
         buf: Vec::new(),
     };
-    let buf_len_before_content_type = buf_len;
     let needs_content_type = 'brk: {
         if let Some(body_ct) = body_content_type {
-            // SAFETY: see `count` above.
-            let has_ct_header = h_ptr
-                .map(|h| unsafe { (*h).fast_has_(HTTPHeaderName::ContentType as u8) })
-                .unwrap_or(false);
+            let has_ct_header =
+                fetch_headers.is_some_and(|h| h.fast_has_(HTTPHeaderName::ContentType as u8));
             if !has_ct_header {
-                header_count += 1;
-                buf_len += u32::try_from(body_ct.len() + b"Content-Type".len()).unwrap();
+                let Some((new_count, new_len)) = header_count.checked_add(1).zip(
+                    u32::try_from(b"Content-Type".len() + body_ct.len())
+                        .ok()
+                        .and_then(|ct_len| buf_len.checked_add(ct_len)),
+                ) else {
+                    return Err(throw_headers_too_large(global));
+                };
+                header_count = new_count;
+                buf_len = new_len;
                 break 'brk true;
             }
         }
@@ -78,9 +89,19 @@ pub fn from_fetch_headers(
         core::ptr::write_bytes(names_ptr, 0, header_count as usize);
         core::ptr::write_bytes(values_ptr, 0, header_count as usize);
     }
-    if let Some(h) = h_ptr {
-        // SAFETY: `h` is a valid `&FetchHeaders` for the call; columns sized by `count` above.
-        unsafe { (*h).copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr()) };
+    if let Some(h) = fetch_headers {
+        // SAFETY: each column holds `header_count >= fetch_header_count` zeroed, unborrowed slots.
+        let (names, values) = unsafe {
+            (
+                core::slice::from_raw_parts_mut(names_ptr, fetch_header_count as usize),
+                core::slice::from_raw_parts_mut(values_ptr, fetch_header_count as usize),
+            )
+        };
+        h.copy_to(
+            names,
+            values,
+            &mut headers.buf[..buf_len_before_content_type as usize],
+        );
     }
 
     // TODO: maybe we should send Content-Type header first instead of last?
@@ -108,7 +129,7 @@ pub fn from_fetch_headers(
         }
     }
 
-    headers
+    Ok(headers)
 }
 
 /// Build a `WebCore::FetchHeaders` from `bun.http.Headers` storage.

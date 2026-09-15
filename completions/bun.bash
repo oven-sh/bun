@@ -1,7 +1,5 @@
 #/usr/bin/env bash
 
-shopt -s extglob
-
 _compgen_reply() {
     local comp_out item
     comp_out=$(compgen "$@")
@@ -10,13 +8,27 @@ _compgen_reply() {
     done <<< "${comp_out}"
 }
 
+_compgen_file_reply() {
+    local comp_out item
+    comp_out=$(compgen -f "$@")
+    while IFS= read -r item || [[ -n "${item}" ]]; do
+        if [[ -n "${item}" && ! -d "${item}" ]]; then
+            COMPREPLY+=( "${item}" )
+        fi
+    done <<< "${comp_out}"
+}
+
 _file_arguments() {
     local extensions="${1}"
+    local reset
+    reset=$(shopt -p extglob)
+    shopt -s extglob
     if [[ -n "${extensions}" ]]; then
-        _compgen_reply -f -X "${extensions}" -- "${cur_word}"
+        _compgen_file_reply -X "${extensions}" -- "${cur_word}"
     else
-        _compgen_reply -f -- "${cur_word}"
+        _compgen_file_reply -- "${cur_word}"
     fi
+    eval "${reset}"
     _compgen_reply -d -S / -- "${cur_word}"
 }
 
@@ -30,10 +42,17 @@ _long_short_completion() {
 }
 
 _read_scripts_in_package_json() {
+    local scripts
+    scripts=$(bun getcompletes s 2>/dev/null)
+    if [[ -n "${scripts}" ]]; then
+        _compgen_reply -W "${scripts}" -- "${cur_word}"
+        return 0
+    fi
+
     local pkg_file="package.json"
     [[ -f "${pkg_file}" && -r "${pkg_file}" ]] || return 0
 
-    local in_scripts=0 line_content script_names=() rest key
+    local in_scripts=0 line_content script_names=() rest
     while IFS= read -r line_content || [[ -n "${line_content}" ]]; do
         if (( ! in_scripts )); then
             if [[ "${line_content}" =~ \"scripts\"[[:space:]]*:[[:space:]]*\{(.*) ]]; then
@@ -45,14 +64,14 @@ _read_scripts_in_package_json() {
         fi
 
         if (( in_scripts )); then
-            if [[ "${rest}" =~ ^([^}]*)\}(.*) ]]; then
-                rest="${BASH_REMATCH[1]}"
-                in_scripts=0
-            fi
             while [[ "${rest}" =~ [[:space:]]*\"([^\"\\]+)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"(.*) ]]; do
                 script_names+=( "${BASH_REMATCH[1]}" )
                 rest="${BASH_REMATCH[3]}"
             done
+            if [[ "${line_content}" =~ ^[[:space:]]*\}[[:space:]]*,? ]] || [[ "${rest}" =~ ^[[:space:]]*\}[[:space:]]*,? ]]; then
+                in_scripts=0
+                break
+            fi
         fi
     done < "${pkg_file}"
 

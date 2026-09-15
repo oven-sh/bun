@@ -1123,15 +1123,13 @@ _bun_run_param_script_completion() {
     if [[ -d "${target_cwd}" ]]; then
         builtin cd -q "${target_cwd}" 2>/dev/null
     fi
-    IFS=$'
-' scripts_list=($(SHELL=zsh bun getcompletes s 2>/dev/null))
-    IFS=$'
-' bins=($(SHELL=zsh bun getcompletes b 2>/dev/null))
+    scripts_list=(${(f)"$(SHELL=zsh bun getcompletes s 2>/dev/null)"})
+    bins=(${(f)"$(SHELL=zsh bun getcompletes b 2>/dev/null)"})
     builtin cd -q "${orig_pwd}" 2>/dev/null
 
     _alternative "scripts:scripts:compadd -a scripts_list"
     _alternative "bin:bin:compadd -a bins"
-    _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
+    _alternative "files:file:_files -W "${target_cwd}" -g '*.(js|ts|jsx|tsx|wasm)'"
 }
 
 _bun_link_param_package_completion() {
@@ -1180,14 +1178,13 @@ _bun_remove_param_package_completion() {
             fi
 
             if (( in_dep_block )); then
-                if [[ "${rest}" =~ ^([^}]*)\}(.*) ]]; then
-                    rest="${match[1]}"
-                    in_dep_block=0
-                fi
                 while [[ "${rest}" =~ [[:space:]]*\"([^\"\]+)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"(.*) ]]; do
                     deps+=( "${match[1]}" )
                     rest="${match[3]}"
                 done
+                if [[ "${line_content}" =~ ^[[:space:]]*\}[[:space:]]*,? ]] || [[ "${rest}" =~ ^[[:space:]]*\}[[:space:]]*,? ]]; then
+                    in_dep_block=0
+                fi
             fi
         done < "${pkg_file}"
 

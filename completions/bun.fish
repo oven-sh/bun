@@ -20,7 +20,8 @@ function __fish__bun_extract_cwd
         end
 
         if test -n "$val"
-            set val (string replace -r '^["'](.*)["']$' '$1' -- "$val")
+            set val (string trim -c '"' -- "$val")
+            set val (string trim -c "'" -- "$val")
             set val (string replace -r '^~' "$HOME" -- "$val")
             echo "$val"
             return
@@ -49,10 +50,19 @@ function __fish__get_bun_scripts
 end
 
 function __fish__get_bun_packages
-	if test (commandline -ct) != ""
-		set -lx SHELL fish
-		string split ' ' (bun getcompletes a (commandline -ct))
-	end
+    set -l target_cwd (__fish__bun_extract_cwd)
+    set -l pkg_file "$target_cwd/package.json"
+    if not test -f "$pkg_file"
+        return
+    end
+
+    if not command -qs jq
+        return
+    end
+
+    set -l dependencies (jq -r '.dependencies | keys[]' "$pkg_file" 2>/dev/null)
+    set -l dev_dependencies (jq -r '.devDependencies | keys[]' "$pkg_file" 2>/dev/null)
+    string split " " "$dependencies $dev_dependencies"
 end
 
 function __history_completions

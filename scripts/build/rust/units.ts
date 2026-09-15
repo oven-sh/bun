@@ -26,8 +26,8 @@ import { assert } from "../error.ts";
 import { type BuildScriptOutput, dylibPathVar, envify } from "./cargo-env.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
 
-export type { BuildScriptOutput };
 export { envify };
+export type { BuildScriptOutput };
 
 export type UnitKind = "lib" | "proc-macro" | "staticlib" | "build-script" | "build-script-run";
 

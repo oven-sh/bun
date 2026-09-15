@@ -21,8 +21,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { constants as osConstants } from "node:os";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import { join } from "node:path";
 import {
   canTraceOrderFile,

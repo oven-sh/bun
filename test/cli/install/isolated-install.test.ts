@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -2107,6 +2107,110 @@ test("runs lifecycle scripts correctly", async () => {
   expect(lifecyclePreinstallDir).toEqual(["lifecycle-preinstall"]);
   expect(lifecyclePostinstallDir).toEqual(["lifecycle-postinstall"]);
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
+});
+
+test("--concurrent-scripts limits how many lifecycle scripts run at once", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const logFile = join(packageDir, "scripts.log");
+  const deps = ["dep-a", "dep-b", "dep-c"];
+
+  // Each script appends a start line, sleeps, then appends an end line. With a
+  // limit of 1 no script may start before the previous one ends. POSIX uses
+  // `sh` builtins so the scripts stay cheap under a debug build. Windows runs
+  // scripts with bun's shell, which has no `sleep`, so it runs a bun script.
+  await Promise.all([
+    ...deps.map(name =>
+      Promise.all([
+        write(
+          join(packageDir, name, "package.json"),
+          JSON.stringify({
+            name,
+            version: "1.0.0",
+            scripts: {
+              postinstall: isWindows
+                ? `${bunExe()} postinstall.js`
+                : `echo "start ${name}" >> "$SCRIPT_LOG" && sleep 0.5 && echo "end ${name}" >> "$SCRIPT_LOG"`,
+            },
+          }),
+        ),
+        write(
+          join(packageDir, name, "postinstall.js"),
+          `
+            const { appendFileSync } = require("fs");
+            appendFileSync(process.env.SCRIPT_LOG, "start ${name}\\n");
+            Bun.sleepSync(500);
+            appendFileSync(process.env.SCRIPT_LOG, "end ${name}\\n");
+          `,
+        ),
+      ]),
+    ),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-concurrent-scripts",
+        dependencies: Object.fromEntries(deps.map(name => [name, `file:./${name}`])),
+        trustedDependencies: deps,
+      }),
+    ),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--concurrent-scripts=1"],
+    cwd: packageDir,
+    env: { ...bunEnv, SCRIPT_LOG: logFile },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("3 packages installed");
+  expect(exitCode).toBe(0);
+
+  const lines = (await file(logFile).text()).trim().split("\n");
+  const order = lines.filter(line => line.startsWith("start ")).map(line => line.slice("start ".length));
+  expect(order.toSorted()).toEqual(deps);
+  expect(lines).toEqual(order.flatMap(name => [`start ${name}`, `end ${name}`]));
+});
+
+test("--concurrent-scripts=0 still runs every lifecycle script", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const logFile = join(packageDir, "scripts.log");
+  const deps = ["dep-a", "dep-b", "dep-c"];
+
+  await Promise.all([
+    ...deps.map(name =>
+      write(
+        join(packageDir, name, "package.json"),
+        JSON.stringify({
+          name,
+          version: "1.0.0",
+          scripts: { postinstall: `echo "${name}" >> "$SCRIPT_LOG"` },
+        }),
+      ),
+    ),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-concurrent-scripts-zero",
+        dependencies: Object.fromEntries(deps.map(name => [name, `file:./${name}`])),
+        trustedDependencies: deps,
+      }),
+    ),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--concurrent-scripts=0"],
+    cwd: packageDir,
+    env: { ...bunEnv, SCRIPT_LOG: logFile },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("3 packages installed");
+  expect(exitCode).toBe(0);
+
+  expect((await file(logFile).text()).trim().split("\n").toSorted()).toEqual(deps);
 });
 
 // Self-contained HTTP server that serves package manifests & tarballs

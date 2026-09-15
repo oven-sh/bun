@@ -1,4 +1,5 @@
 use core::sync::atomic::{AtomicU8, Ordering};
+use std::collections::VecDeque;
 use std::io::Write as _;
 
 use bun_ast::Log;
@@ -117,6 +118,13 @@ pub struct Installer<'a> {
     /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
+
+    /// Main-thread only: entries that yielded `Result::RunScripts` and wait
+    /// for `LifecycleScriptSubprocess::alive_count()` to drop below
+    /// `options.max_concurrent_lifecycle_scripts`. `run_tasks` spawns them in
+    /// order as running scripts exit. The scripts list is re-read from
+    /// `store.entries.items_scripts()[entry_id]` at spawn time.
+    pub(crate) pending_lifecycle_scripts: VecDeque<StoreEntryId>,
 }
 
 impl<'a> Installer<'a> {

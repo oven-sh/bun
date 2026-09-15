@@ -664,9 +664,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 
     // If some of the selectors in this rule are not compatible with the targets,
     // we need to either wrap in :is() or split them into multiple rules.
-    let mut incompatible: SmallList<Selector, 1> = if sty.selectors.v.len() > 1
-        && context.targets.should_compile_selectors()
-        && !sty.is_compatible(context.targets)
+    let mut incompatible: SmallList<Selector, 1> = if sty
+        .should_compile_selector_list(context.targets)
     {
         // The :is() selector accepts a forgiving selector list, so use that if possible.
         // Note that :is() does not allow pseudo elements, so we need to check for that.
@@ -1191,6 +1190,10 @@ pub use crate::Location;
 pub struct StyleContext<'a> {
     pub(crate) selectors: &'a crate::selectors::SelectorList,
     pub(crate) parent: Option<&'a StyleContext<'a>>,
+    /// The printer's vendor prefix while `selectors` were printed, reused when `&` expands them.
+    pub(crate) vendor_prefix: crate::VendorPrefix,
+    /// `selectors` print their pseudos as written, whatever prefix pass a nested rule is in.
+    pub(crate) as_written: bool,
 }
 
 /// Upper bound on the number of selectors that compiling nested rules away for

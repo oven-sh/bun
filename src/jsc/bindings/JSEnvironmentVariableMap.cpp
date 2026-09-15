@@ -954,22 +954,9 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     auto* shared = createSharedEnvironmentVariablesMap(globalObject).getObject();
     globalObject->m_processEnvObject.set(vm, globalObject, shared);
 
-    auto envIdentifier = JSC::Identifier::fromString(vm, "env"_s);
-
-    // process.env may already be reified as an own property on the process object;
-    // overwrite it so it resolves to the shared variant.
-    if (globalObject->hasProcessObject()) {
-        JSObject* processObject = globalObject->processObject();
-        processObject->putDirect(vm, envIdentifier, shared, 0);
-    }
-
-    // Bun.env reifies to the same object at startup; repoint it too, or it keeps
-    // observing the orphaned pre-swap env and silently diverges from process.env.
-    if (globalObject->m_bunObject.isInitialized()) {
-        JSObject* bunObject = globalObject->bunObject();
-        if (bunObject->getDirect(vm, envIdentifier))
-            bunObject->putDirect(vm, envIdentifier, shared, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
-    }
+    // process.env, Bun.env and the node:process env export may still hold the orphaned pre-swap env.
+    repointProcessProperty(globalObject, JSC::Identifier::fromString(vm, "env"_s), shared);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     return store;
 }

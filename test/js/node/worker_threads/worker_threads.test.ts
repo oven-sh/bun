@@ -1959,6 +1959,46 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   expect(exitCode).toBe(0);
 });
 
+// The swap has to reach every copy of process.env that already exists: Bun.env and
+// the `env` export of node:process, both of which are bound on first read. An
+// `import { env } from "bun"` is not one: the transpiler turns it into a
+// destructure of globalThis.Bun, a snapshot like `const { env } = Bun`.
+test("Bun.env and the node:process env export follow the SHARE_ENV swap", async () => {
+  using dir = tempDir("share-env-copies", {
+    "main.mjs": /* js */ `
+      import { env } from "node:process";
+      import * as bunModule from "bun";
+      import { Worker, SHARE_ENV } from "node:worker_threads";
+      const before = { named: env, bun: Bun.env };
+      const worker = new Worker("process.env.FROM_WORKER = 'yes'", { eval: true, env: SHARE_ENV });
+      await new Promise((resolve, reject) => worker.on("exit", resolve).on("error", reject));
+      console.log(JSON.stringify({
+        swapped: process.env !== before.named,
+        named: env === process.env,
+        bun: Bun.env === process.env,
+        bunModule: bunModule.env === process.env,
+        fromWorker: [env.FROM_WORKER, Bun.env.FROM_WORKER],
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    swapped: true,
+    named: true,
+    bun: true,
+    bunModule: true,
+    fromWorker: ["yes", "yes"],
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("terminating a worker stops the workers it spawned", async () => {
   // The leaf heartbeats to the main thread over a MessagePort routed through the
   // middle worker. Terminating the middle worker must stop the leaf, which the main

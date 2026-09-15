@@ -143,6 +143,32 @@ declare module "bun:sqlite" {
     static MAX_QUERY_CACHE_SIZE: number;
 
     /**
+     * Soft cap on the total SQL text size the {@link Database.query} cache
+     * may pin across all entries, measured in UTF-16 code units
+     * (`String#length` — equal to UTF-8 bytes for ASCII SQL, up to 3× smaller
+     * for non-ASCII). Least-recently-used entries are evicted until a new
+     * entry fits.
+     *
+     * Writable at runtime; changes apply to subsequent `db.query()` calls.
+     *
+     * @default 2 * 1024 * 1024
+     */
+    static MAX_QUERY_CACHE_BYTES: number;
+
+    /**
+     * A single query whose SQL text exceeds this (measured in UTF-16 code
+     * units; see {@link Database.MAX_QUERY_CACHE_BYTES}) is never cached by
+     * `db.query()`. Large dynamic SQL (for example a multi-megabyte
+     * `IN (...)` list) gets little reuse value from caching, and one cached
+     * prepared statement can pin many MB.
+     *
+     * Writable at runtime; changes apply to subsequent `db.query()` calls.
+     *
+     * @default 64 * 1024
+     */
+    static MAX_QUERY_CACHE_ENTRY_BYTES: number;
+
+    /**
      * Execute a SQL query **without returning any results**.
      *
      * This does not cache the query. To run a query multiple times, use {@link prepare} instead.

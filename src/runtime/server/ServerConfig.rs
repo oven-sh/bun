@@ -44,7 +44,7 @@ pub struct ServerConfig {
     /// https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
     /// https://github.com/ChromeDevTools/vite-plugin-devtools-json/blob/76080b04422b36230d4b7a674b90d6df296cbff5/src/index.ts#L60-L77
     ///
-    /// If HMR is not enabled, then this field is ignored.
+    /// Honoured in development mode when the server has an HTML route.
     pub(crate) enable_chrome_devtools_automatic_workspace_folders: bool,
 
     /// Raw shadow of the wrapper's `onError`/`onRequest`/`onNodeHTTPRequest`

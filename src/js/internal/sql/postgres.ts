@@ -14,6 +14,7 @@ const {
   SQLQueryFlags,
   symbols: { _results, _handle },
 } = require("internal/sql/query");
+const AsyncContextFrame = require("internal/async_context_frame");
 function isTypedArray(value: any) {
   // Buffer should be treated as a normal object
   // Typed arrays should be treated like an array
@@ -784,6 +785,7 @@ class ListenConnection {
         this.#backoffMs = RECONNECT_MIN_MS;
         conn.onnotification = this.#onNotification;
         conn.ref();
+        this.#fireLifecycleCallback(adapter.connectionInfo.onconnect, null);
         resolve(conn);
         this.#clearSweep();
         this.#sweep();
@@ -793,10 +795,15 @@ class ListenConnection {
           this.#handshake = null;
           return reject(wrapPostgresError(err ?? adapter.connectionClosedError()));
         }
-        if (this.#conn !== live) return;
-        this.#conn = null;
-        for (const entry of this.#channels.values()) entry.ready = null;
-        this.#scheduleSweep();
+        if (this.#conn === live) {
+          this.#conn = null;
+          for (const entry of this.#channels.values()) entry.ready = null;
+          this.#scheduleSweep();
+        }
+        this.#fireLifecycleCallback(
+          adapter.connectionInfo.onclose,
+          wrapPostgresError(err ?? adapter.connectionClosedError()),
+        );
       },
     ).then(handle => {
       if (handle === null || live !== null) return;
@@ -805,6 +812,19 @@ class ListenConnection {
     });
 
     return promise;
+  }
+
+  // The user's onconnect/onclose report the LISTEN connection like a pool
+  // connection (shared.ts handleConnected/#finishClose): onconnect when the
+  // connection is adopted, onclose when an adopted connection closes. Failed
+  // reconnect attempts stay silent, like the pool's dial retries.
+  #fireLifecycleCallback(callback: ((err: Error | null) => void) | undefined, err: Error | null) {
+    if (!callback) return;
+    try {
+      AsyncContextFrame.run(this.#adapter.callbackAsyncContext, callback, this.#adapter.connectionInfo, err);
+    } catch (thrown) {
+      reportError(thrown);
+    }
   }
 
   #sweep() {

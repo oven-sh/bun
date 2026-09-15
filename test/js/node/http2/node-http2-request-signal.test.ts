@@ -11,6 +11,7 @@
  *   node --test test/js/node/http2/node-http2-request-signal.test.ts
  */
 import assert from "node:assert";
+import dc from "node:diagnostics_channel";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -293,5 +294,33 @@ describe("a request queued behind SETTINGS_MAX_CONCURRENT_STREAMS is sent after 
       "RST_STREAM 1",
       "HEADERS 3",
     ]);
+  });
+
+  test("when a diagnostics_channel subscriber destroys the request before request() returns", async () => {
+    const { session, wire, wireLength, close } = await clientAgainstRawServer(
+      setting(SETTINGS_MAX_CONCURRENT_STREAMS, 1),
+    );
+    let destroyNext = true;
+    function onStreamStart(message: unknown) {
+      if (!destroyNext) return;
+      destroyNext = false;
+      (message as { stream: http2.ClientHttp2Stream }).stream.destroy(new Error("stop"));
+    }
+    dc.subscribe("http2.client.stream.start", onStreamStart);
+    try {
+      const first = session.request({ ":path": "/first", ":method": "POST" });
+      first.on("error", () => {});
+      const second = session.request({ ":path": "/second", ":method": "POST" });
+      second.on("error", () => {});
+
+      await wireLength(3);
+      assert.deepStrictEqual(
+        { firstDestroyedInRequest: !destroyNext, wire },
+        { firstDestroyedInRequest: true, wire: ["HEADERS 1", "RST_STREAM 1", "HEADERS 3"] },
+      );
+    } finally {
+      dc.unsubscribe("http2.client.stream.start", onStreamStart);
+      close();
+    }
   });
 });

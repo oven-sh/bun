@@ -457,9 +457,11 @@ function asyncWrap(fn: any, name: string) {
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
         encoding = options;
+      } else if (typeof options === "object") {
+        encoding = options.encoding ?? encoding;
+        flush = options.flush ?? flush;
       } else {
-        encoding = options?.encoding ?? encoding;
-        flush = options?.flush ?? flush;
+        throw $ERR_INVALID_ARG_TYPE("options", ["string", "Object"], options);
       }
 
       try {
@@ -686,9 +688,11 @@ function asyncWrap(fn: any, name: string) {
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
         encoding = options;
+      } else if (typeof options === "object") {
+        encoding = options.encoding ?? encoding;
+        signal = options.signal ?? undefined;
       } else {
-        encoding = options?.encoding ?? encoding;
-        signal = options?.signal ?? undefined;
+        throw $ERR_INVALID_ARG_TYPE("options", ["string", "Object"], options);
       }
 
       try {
@@ -1614,10 +1618,16 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     if (signal?.aborted) {
       throw $makeAbortError(undefined, { cause: signal.reason });
     }
-  } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
-    encoding = optionsOrEncoding || "utf8";
+  } else if (
+    typeof optionsOrEncoding === "string" ||
+    optionsOrEncoding == null ||
+    typeof optionsOrEncoding === "function"
+  ) {
+    encoding = (typeof optionsOrEncoding === "string" && optionsOrEncoding) || "utf8";
     flag ??= "w";
     mode ??= 0o666;
+  } else {
+    throw $ERR_INVALID_ARG_TYPE("options", ["string", "Object"], optionsOrEncoding);
   }
 
   if (!Buffer.isEncoding(encoding)) {

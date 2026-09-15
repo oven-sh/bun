@@ -2122,27 +2122,25 @@ pub(crate) mod strings_impl {
         None
     }
 
-    /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
-    /// `(offset, len)` of the password segment, or None.
-    /// Only matches http:// and https:// schemes and rejects empty pw.
-    pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
-        // Case-sensitive prefix match; the search region is truncated at the
-        // first '\n' and at the end of the authority before scanning for '@'/':'.
-        let scheme_end = if s.starts_with(b"http://") {
-            7
-        } else if s.starts_with(b"https://") {
-            8
-        } else {
-            return None;
-        };
+    /// Returns `(offset, len)` of the userinfo password in
+    /// `scheme://user:PASSWORD@host...`, or None.
+    ///
+    /// Any `scheme://` prefix qualifies (`http`, `postgres`, `redis`, `ws`,
+    /// ...). The userinfo ends at the last `@` of the authority, as in the
+    /// WHATWG URL parser, so a password that contains `@` is found whole.
+    /// An empty password (`user:@host`) is not reported.
+    pub fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
+        let scheme_end = url_scheme_len(s)?;
         let mut rest = &s[scheme_end..];
+        // The search region is truncated at the first '\n' and at the end of
+        // the authority before scanning for '@'/':'.
         if let Some(nl) = crate::strings::index_of_char_usize(rest, b'\n') {
             rest = &rest[..nl];
         }
         if let Some(end) = crate::strings::index_of_any(rest, b"/?#") {
             rest = &rest[..end];
         }
-        let at = crate::strings::index_of_char_usize(rest, b'@')?;
+        let at = crate::strings::last_index_of_char(rest, b'@')?;
         let userinfo = &rest[..at];
         let colon = crate::strings::index_of_char_usize(userinfo, b':')?;
         // Reject empty password (`user:@host`).
@@ -2150,6 +2148,32 @@ pub(crate) mod strings_impl {
             return None;
         }
         Some((scheme_end + colon + 1, at - colon - 1))
+    }
+
+    /// Length of a leading `scheme://` (RFC 3986 scheme: an ASCII letter,
+    /// then letters, digits, `+`, `-`, `.`), or None if `s` does not start
+    /// with one.
+    fn url_scheme_len(s: &[u8]) -> Option<usize> {
+        let first = *s.first()?;
+        if !first.is_ascii_alphabetic() {
+            return None;
+        }
+        let mut i = 1;
+        while i < s.len() {
+            let b = s[i];
+            if b == b':' {
+                return if s[i..].starts_with(b"://") {
+                    Some(i + 3)
+                } else {
+                    None
+                };
+            }
+            if !(b.is_ascii_alphanumeric() || b == b'+' || b == b'-' || b == b'.') {
+                return None;
+            }
+            i += 1;
+        }
+        None
     }
 
     /// Returns the UTF-8/WTF-8 sequence length implied by a *leading* byte,

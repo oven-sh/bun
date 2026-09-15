@@ -1292,13 +1292,19 @@ impl FetchTasklet {
         }
 
         // some times we don't have metadata so we also check http.url
-        let path = if let Some(metadata) = &self.metadata {
-            BunString::clone_utf8(metadata.url.slice())
+        let url: &[u8] = if let Some(metadata) = &self.metadata {
+            metadata.url.slice()
         } else if let Some(http_) = &self.http {
-            BunString::clone_utf8(http_.url.href)
+            http_.url.href
         } else {
-            BunString::EMPTY
+            b""
         };
+        // `err.path` is an enumerable property, so it ends up in every log
+        // that serializes the error. Mask the userinfo password.
+        let path = BunString::create_format(format_args!(
+            "{}",
+            bun_core::fmt::redacted_url_password(url)
+        ));
 
         // The hostname never resolved: report the resolver error (`ENOTFOUND`,
         // ...) with `syscall`/`hostname`, the same shape `node:dns` produces,

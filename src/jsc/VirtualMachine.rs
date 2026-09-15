@@ -1162,7 +1162,7 @@ impl VirtualMachine {
         // (Asked from every native settle: from the event loop with no context entered the async
         // context names no graph, and the answer is no.)
         let context = self.current_context_or_root();
-        !core::ptr::eq(context, &self.root_context) && context.is_stopped()
+        context.id() != self.root_context.id() && context.is_stopped()
     }
 
     /// As [`reports_to_nobody`](Self::reports_to_nobody), for a call into script: the native

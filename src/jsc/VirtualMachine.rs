@@ -805,28 +805,12 @@ pub struct MacroModeGuard {
 }
 
 bun_opaque::opaque_ffi! {
-    /// A `JSC::VM::SynchronousModuleQueue` that a [`MacroModeGuard`] owns.
-    ///
-    /// `require()` of an ES module loads the whole graph without yielding:
-    /// while it runs, `VM::m_synchronousModuleQueue` is set and JSC diverts
-    /// every module loader reaction to that queue, which only the `require()`
-    /// drains. A dependency's macro runs inside that drain (the loader's fetch
-    /// hook transpiles the file). The macro loads its own module with the
-    /// asynchronous loader and waits in [`EventLoop::wait_for_promise`], so its
-    /// reactions would sit in a queue that cannot drain until the macro returns.
-    ///
-    /// The guard puts a queue of its own in front of the `require()`'s, and
-    /// `wait_for_promise` moves what lands there to the microtask queue. The
-    /// queue stays on the VM's chain so that the GC visits the `require()`'s
-    /// parked reactions and `hostLoadImportedModule` still forces a module the
-    /// `require()` has in flight through synchronously.
+    /// The `JSC::VM::SynchronousModuleQueue` a [`MacroModeGuard`] puts in front of the one a `require()` of an ES module drains, so the macro's own module load does not wait for that drain.
     pub(crate) struct MacroModuleQueue;
 }
 
 unsafe extern "C" {
-    // safe: `VM` is an opaque ZST handle; `innermost` is only compared, never
-    // dereferenced. Null when no synchronous load is in progress, or when
-    // `innermost` is already the VM's current queue.
+    // Null when no `require()` of an ES module is in progress, or when `innermost` (only compared) is already the VM's queue.
     safe fn Bun__MacroModuleQueue__push(
         vm: &VM,
         innermost: *mut MacroModuleQueue,
@@ -1580,8 +1564,7 @@ impl VirtualMachine {
         self.transpiler_store.enabled = true;
     }
 
-    /// Moves the module loader reactions parked in the innermost
-    /// [`MacroModuleQueue`] to the microtask queue. `true` when there were any.
+    /// Hands what is parked in the innermost [`MacroModuleQueue`] to the microtask queue. `true` when there was any.
     pub(crate) fn flush_macro_module_queue(&self) -> bool {
         let queue = self.macro_module_queue.get();
         !queue.is_null()

@@ -1235,17 +1235,14 @@ JSValue fetchESMSourceCodeAsync(
 
 using namespace Bun;
 
-// The queue a macro puts in front of the one a require() of an ES module is
-// draining; see `MacroModuleQueue` in VirtualMachine.rs. Null when no
-// synchronous load is in progress, or when the VM's queue is already
-// `innermost`, the macro queue the caller is nested in.
+// See `MacroModuleQueue` in VirtualMachine.rs. `innermost` is the macro queue the caller is nested in, or null.
 extern "C" JSC::VM::SynchronousModuleQueue* Bun__MacroModuleQueue__push(JSC::VM* vm, JSC::VM::SynchronousModuleQueue* innermost)
 {
     auto* current = vm->m_synchronousModuleQueue;
     if (!current || current == innermost)
         return nullptr;
     auto* queue = new JSC::VM::SynchronousModuleQueue;
-    queue->prev = current;
+    queue->prev = current; // VM::visitAggregateImpl marks what the require() parked through this link.
     vm->m_synchronousModuleQueue = queue;
     return queue;
 }

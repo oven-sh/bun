@@ -3318,6 +3318,191 @@ test.skipIf(isWindows)(
   },
 );
 
+test("a builtin output redirect clamps to the target buffer's live length after a resize", async () => {
+  // A pin stops a detach but not a resize: `ArrayBuffer.prototype.resize`
+  // unmaps the pages it trims. `yes` writes four chunks per event-loop turn,
+  // so the resize below lands between two batches, and the next batch must see
+  // the new length instead of the one captured when the command started.
+  const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
+  const buffer = new Uint8Array(ab);
+  const promise = $`yes > ${buffer}`.env(bunEnv).quiet().nothrow();
+  // Calling .then() starts the interpreter synchronously, so `yes` has already
+  // written its first batch and queued the next one.
+  const running = promise.then(o => o);
+  await Promise.resolve();
+  ab.resize(0);
+
+  const result = await running;
+  expect(ab.byteLength).toBe(0);
+  expect(result.stderr.toString()).toBe("yes: ENOSPC\n");
+  expect(result.exitCode).toBe(1);
+});
+
+test.skipIf(isWindows)(
+  "an external command output redirect clamps to the target buffer's live length after a resize",
+  async () => {
+    // Same hazard as the builtin case, on the subprocess pipe reader. The
+    // child writes, waits for the gated fetch below, then writes again, so the
+    // second chunk is guaranteed to arrive after the resize.
+    const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
+    const buffer = new Uint8Array(ab);
+    const gate = Promise.withResolvers<void>();
+    const childWaiting = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        childWaiting.resolve();
+        await gate.promise;
+        return new Response("ok");
+      },
+    });
+    const childCode = `
+      const chunk = Buffer.alloc(1 << 16, 0x41);
+      process.stdout.write(chunk);
+      await fetch(${JSON.stringify(String(server.url))});
+      process.stdout.write(chunk);
+    `;
+    const promise = $`${BUN} -e ${childCode} > ${buffer}`.env(bunEnv).quiet().nothrow();
+    const running = promise.then(o => o);
+
+    // If the child exits before it fetches, fail with its output instead of
+    // waiting on `childWaiting` until the test times out.
+    await Promise.race([
+      childWaiting.promise,
+      running.then(r => {
+        throw new Error(`command settled before the child connected (exit ${r.exitCode}): ${r.stderr}`);
+      }),
+    ]);
+    ab.resize(0);
+    gate.resolve();
+
+    const result = await running;
+    expect(ab.byteLength).toBe(0);
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+  },
+);
+
+test.skipIf(isWindows)("a `2>&1 ${buf}` redirect tees only the bytes written, at the live length", async () => {
+  // `2>&1 ${buf}` is the one spelling that sets DUPLICATE_OUT with a buffer
+  // target. That inverts `redirects_elsewhere()` for stderr, so the command's
+  // close path tees the target through `BufferedOutput::slice()`. That reader
+  // has to re-read the range too, and stop at the cursor: the rest of the
+  // target holds the caller's own bytes, not output.
+  const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
+  const buffer = new Uint8Array(ab);
+  const gate = Promise.withResolvers<void>();
+  const childWaiting = Promise.withResolvers<void>();
+  await using server = Bun.serve({
+    port: 0,
+    async fetch() {
+      childWaiting.resolve();
+      await gate.promise;
+      return new Response("ok");
+    },
+  });
+  const childCode = `
+    process.stdout.write("hi");
+    await fetch(${JSON.stringify(String(server.url))});
+  `;
+  const promise = $`${BUN} -e ${childCode} 2>&1 ${buffer}`.env(bunEnv).quiet().nothrow();
+  const running = promise.then(o => o);
+
+  await Promise.race([
+    childWaiting.promise,
+    running.then(r => {
+      throw new Error(`command settled before the child connected (exit ${r.exitCode}): ${r.stderr}`);
+    }),
+  ]);
+  ab.resize(0);
+  gate.resolve();
+
+  const result = await running;
+  expect(ab.byteLength).toBe(0);
+  expect(result.stderr.toString()).toBe("");
+  expect(result.exitCode).toBe(0);
+});
+
+test("a builtin output redirect fills a target buffer that shrank to a shorter length", async () => {
+  // A shrink to a length the command has not reached yet. The output must stop
+  // at the new end of the buffer, and every byte up to it must be written.
+  const SHRUNK = 1 << 16;
+  const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
+  const buffer = new Uint8Array(ab);
+  const promise = $`yes > ${buffer}`.env(bunEnv).quiet().nothrow();
+  const running = promise.then(o => o);
+  await Promise.resolve();
+  ab.resize(SHRUNK);
+
+  const result = await running;
+  expect(buffer.byteLength).toBe(SHRUNK);
+  // `yes` writes "y\n", so an untouched byte is still the zero it was created
+  // with.
+  expect(buffer.indexOf(0)).toBe(-1);
+  expect(result.stderr.toString()).toBe("yes: ENOSPC\n");
+  expect(result.exitCode).toBe(1);
+});
+
+test("a builtin output redirect fills the capacity a target buffer gained", async () => {
+  // The other direction: a grow commits pages past the length the command
+  // started with, and the output uses them.
+  const GROWN = 1 << 20;
+  const ab = new ArrayBuffer(1 << 16, { maxByteLength: GROWN });
+  const buffer = new Uint8Array(ab);
+  const promise = $`yes > ${buffer}`.env(bunEnv).quiet().nothrow();
+  const running = promise.then(o => o);
+  await Promise.resolve();
+  ab.resize(GROWN);
+
+  const result = await running;
+  expect(buffer.byteLength).toBe(GROWN);
+  expect(buffer.indexOf(0)).toBe(-1);
+  expect(result.stderr.toString()).toBe("yes: ENOSPC\n");
+  expect(result.exitCode).toBe(1);
+});
+
+test("an output redirect stops when the target's WebAssembly.Memory grows", async () => {
+  // `WebAssembly.Memory.prototype.grow` in BoundsChecking mode allocates a new
+  // block, copies into it, frees the old one, and then detaches the buffer the
+  // target view was made from. JSC allows that detach while the buffer is
+  // pinned, so the range the command captured points at freed pages.
+  //
+  // The child needs two settings for a stale write to fault instead of landing
+  // in memory that is still mapped: `BUN_JSC_useWasmFastMemory=0` picks
+  // BoundsChecking over the signaling mode, which grows in place, and
+  // `Malloc=1` turns off the Gigacage, which recycles the freed block. The
+  // target spans the whole memory so that a stale write sweeps the freed
+  // mapping instead of a part of it that something else may have taken.
+  //
+  // `wroteBeforeGrow` is the proof that the grow lands mid-command: `yes`
+  // writes its first batch while `.then()` starts the interpreter, the
+  // microtask below runs before the event loop picks up the next batch, and
+  // the `ENOSPC` therefore comes from a write after the grow.
+  const child = `
+    const mem = new WebAssembly.Memory({ initial: 128, maximum: 132 });
+    const target = new Uint8Array(mem.buffer);
+    const promise = Bun.$\`yes > \${target}\`.quiet().nothrow();
+    const running = promise.then(o => o);
+    await Promise.resolve();
+    const wroteBeforeGrow = target[0] === 0x79 && target[1] === 0x0a;
+    mem.grow(4);
+    const result = await running;
+    console.log(JSON.stringify({ wroteBeforeGrow, exitCode: result.exitCode, stderr: result.stderr.toString() }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [BUN, "-e", child],
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ wroteBeforeGrow: true, exitCode: 1, stderr: "yes: ENOSPC\n" }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("stdin redirect from a Uint8Array sends the bytes captured when the command starts", async () => {
   // `< ${buf}` snapshots the buffer's contents when the command starts and
   // streams them to the child's stdin across multiple event-loop turns.

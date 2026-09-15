@@ -1509,10 +1509,17 @@ impl BufferedOutput {
         }
     }
 
+    /// What the command wrote, for a reader that tees it elsewhere. `2>&1
+    /// ${buf}` reaches this with an `ArrayBuffer`, so it re-reads the target's
+    /// range (`live_slice`) and stops at the cursor: the rest of the target is
+    /// the caller's own data, not output.
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             BufferedOutput::Bytelist(b) => b.slice(),
-            BufferedOutput::ArrayBuffer { buf, .. } => buf.slice(),
+            BufferedOutput::ArrayBuffer { buf, i } => {
+                let live = buf.live_slice();
+                &live[..(*i as usize).min(live.len())]
+            }
         }
     }
 
@@ -1522,7 +1529,8 @@ impl BufferedOutput {
                 let _ = b.append_slice(bytes); // OOM/capacity: fire-and-forget
             }
             BufferedOutput::ArrayBuffer { buf, i } => {
-                let array_buf_slice = buf.slice_mut();
+                // `live_slice_mut`: JS between two chunks can resize the target.
+                let array_buf_slice = buf.live_slice_mut();
                 let idx = *i as usize;
                 // TODO: We should probably throw error here?
                 if idx >= array_buf_slice.len() {

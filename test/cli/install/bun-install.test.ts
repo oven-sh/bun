@@ -3113,6 +3113,59 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/39771
+  it("should resolve a bare npm: alias to the latest dist-tag even when it is a prerelease", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.1": { as: "0.0.3" },
+          "4.6.0-nightly.1": {
+            as: "0.0.3",
+            bin: {
+              "baz-run": "index.js",
+            },
+          },
+          latest: "4.6.0-nightly.1",
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "Foo",
+          version: "0.0.1",
+          dependencies: {
+            Bar: "npm:baz",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).toContain("Saved lockfile");
+      const out = await stdout.text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ Bar@4.6.0-nightly.1",
+        "",
+        "1 package installed",
+      ]);
+      expect(await exited).toBe(0);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
+      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
+      await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
   it("should handle dependency aliasing (versioned)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

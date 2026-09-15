@@ -279,32 +279,54 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    // These casts are jsDynamicCast because require.cache pollution + invalid
-    // this calls can put arbitrary values here instead of JSCommonJSModule*
+    // require.cache pollution and an invalid `this` can put any value in either argument.
     ASSERT(callframe->argumentCount() == 2);
-    JSCommonJSModule* moduleObject = dynamicDowncast<JSCommonJSModule>(callframe->uncheckedArgument(0));
-    JSCommonJSModule* referrer = dynamicDowncast<JSCommonJSModule>(callframe->uncheckedArgument(1));
-    if (!moduleObject) [[unlikely]] {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
-    }
+    JSValue child = callframe->uncheckedArgument(0);
+    JSValue referrer = callframe->uncheckedArgument(1);
 
+    // Node adds whatever object require.cache holds to `children`, module or not.
     JSValue returnValue = jsNull();
-    if (referrer) [[likely]] {
-        if (referrer->m_childrenValue) [[unlikely]] {
-            // It's too hard to append from native code:
-            // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
-            returnValue = referrer->m_childrenValue.get();
-        } else {
-            WTF::Locker locker { referrer->cellLock() };
-            referrer->m_children.append(WriteBarrier<Unknown>());
-            referrer->m_children.last().set(vm, referrer, moduleObject);
-        }
+    if (child.isObject()) [[likely]] {
+        // JS does the push: referrer.children.indexOf(child) === -1 && referrer.children.push(child)
+        JSValue children = JSCommonJSModule::updateChildren(globalObject, referrer, child);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (children) [[unlikely]]
+            returnValue = children;
     }
 
-    moduleObject->load(vm, globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(child)) [[likely]] {
+        moduleObject->load(vm, globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(returnValue));
+}
+
+JSValue JSCommonJSModule::updateChildren(JSGlobalObject* globalObject, JSValue parent, JSValue child)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(child.isObject());
+
+    JSValue children;
+    if (auto* parentModule = dynamicDowncast<JSCommonJSModule>(parent)) [[likely]] {
+        children = parentModule->m_childrenValue.get();
+        if (!children) [[likely]] {
+            WTF::Locker locker { parentModule->cellLock() };
+            parentModule->m_children.append(WriteBarrier<Unknown>());
+            parentModule->m_children.last().set(vm, parentModule, child);
+            return {};
+        }
+    } else if (JSObject* parentObject = parent.getObject()) {
+        // `Module.prototype.require.call({ children: [] }, id)` and `new Module(id, { children: [] })`
+        children = parentObject->get(globalObject, Identifier::fromString(vm, "children"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // `children` can be assigned any value. Only an array gets the child.
+    if (children && children.inherits<JSArray>())
+        return children;
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -585,10 +607,10 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         children.ensureCapacity(mod->m_children.size());
 
         // Deduplicate children while preserving insertion order.
-        JSCommonJSModule* last = nullptr;
+        JSCell* last = nullptr;
         int n = -1;
         for (WriteBarrier<Unknown> childBarrier : mod->m_children) {
-            JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(childBarrier.get());
+            JSCell* child = childBarrier.get().asCell();
             // Check the last module since duplicate imports, if any, will
             // probably be adjacent. Then just do a linear scan.
             if (last == child) [[unlikely]]

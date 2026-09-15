@@ -1,4 +1,3 @@
-import { jscInternals } from "bun:internal-for-testing";
 import {
   callerSourceOrigin,
   describeArray,
@@ -626,23 +625,28 @@ describe("conservative roots", () => {
     class Key {}
     // A Set allocates its storage on the first add. Consecutive allocations are neighbors in a MarkedBlock. Every
     // second Set is dropped at once, so that no array ever references a dropped Set.
+    //
+    // A WeakRef tracks each dropped key. A raw cell address cannot: when a collection runs during this loop, the heap
+    // sweeps the keys dropped so far and gives their cells to later keys, and half of those belong to a kept Set.
     const kept: Set<Key>[] = [];
-    const droppedKeys: bigint[] = [];
+    const droppedKeys: WeakRef<Key>[] = [];
     function allocate(keep: boolean) {
       const key = new Key();
       const set = new Set([key]);
       if (keep) kept.push(set);
-      else droppedKeys.push(jscInternals.rawCellAddress(key));
+      else droppedKeys.push(new WeakRef(key));
     }
     for (let i = 0; i < 200; i++) allocate(i % 2 === 1);
+    // A new WeakRef holds its target until the current job ends.
+    releaseWeakRefs();
 
     // forEach keeps the storage of the Set it iterates in a stack slot. At the deepest call the stack references
     // every kept storage. Nothing references a dropped storage.
     let stillLive = -1;
     (function iterateAll(i: number) {
       if (i === kept.length) {
-        jscInternals.collectSyncWithoutSweep();
-        stillLive = droppedKeys.filter(address => jscInternals.isLiveCellAtRawAddress(address)).length;
+        fullGC();
+        stillLive = droppedKeys.filter(ref => ref.deref() !== undefined).length;
         return;
       }
       kept[i].forEach(() => iterateAll(i + 1));

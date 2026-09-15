@@ -1079,7 +1079,7 @@ impl EventLoop {
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
     pub fn perform_gc(&mut self) {
-        self.vm_ref().as_mut().gc_controller.perform_gc(false);
+        self.vm_ref().as_mut().gc_controller.perform_gc();
     }
 
     /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,

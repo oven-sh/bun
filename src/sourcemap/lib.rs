@@ -898,15 +898,18 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         return Err(crate::Error::InvalidSourceMap);
     };
 
-    let sources_content = match json
-        .get(b"sourcesContent")
-        .ok_or(crate::Error::InvalidSourceMap)?
-        .data
-    {
-        bun_ast::ExprData::EArrayJSON(arr) => arr,
-        _ => return Err(crate::Error::InvalidSourceMap),
+    // `sourcesContent` is optional per the source-map v3 spec. Absent or `null`
+    // is treated as no-content-available; a present non-array/non-null is
+    // rejected. A present array may be shorter than `sources` (the per-index
+    // bounds check below covers that).
+    let sources_content = match json.get(b"sourcesContent") {
+        None => None,
+        Some(expr) => match expr.data {
+            bun_ast::ExprData::EArrayJSON(arr) => Some(arr),
+            bun_ast::ExprData::ENull(_) => None,
+            _ => return Err(crate::Error::InvalidSourceMap),
+        },
     };
-    let sources_content = sources_content.get();
 
     let sources_paths = match json
         .get(b"sources")
@@ -918,15 +921,11 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     };
     let sources_paths = sources_paths.get();
 
-    if sources_content.items().len() != sources_paths.items().len() {
-        return Err(crate::Error::InvalidSourceMap);
-    }
-
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
-        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items().len());
+        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_paths.items().len());
         for item in sources_paths.items() {
             let Some(s) = item.as_str() else {
                 return Err(crate::Error::InvalidSourceMap);
@@ -1017,12 +1016,12 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         ParseUrlResultHint::MappingsOnly => (None, None),
     };
 
-    let content_slice: Option<Box<[u8]>> = match source_index {
-        Some(idx)
+    let content_slice: Option<Box<[u8]>> = match (source_index, sources_content) {
+        (Some(idx), Some(sources_content))
             if !matches!(hint, ParseUrlResultHint::MappingsOnly)
-                && (idx as usize) < sources_content.items().len() =>
+                && (idx as usize) < sources_content.get().items().len() =>
         'content: {
-            let item = &sources_content.items()[idx as usize];
+            let item = &sources_content.get().items()[idx as usize];
             let Some(str) = item.as_str() else {
                 break 'content None;
             };

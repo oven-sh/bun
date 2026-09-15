@@ -1130,53 +1130,53 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
     }
   });
 
-  // The engine reads the transport with no backpressure, so a peer that ends
-  // cleanly leaves the whole payload decrypted inside the TLS socket while its
-  // transport is already closing. A consumer that is not flowing reads it
-  // after that close, so the close must not destroy the socket there.
+  // A peer that ends cleanly can leave decrypted data unread inside the TLS
+  // socket, because the reader is paused or slower than the transport. That
+  // data has to outlive the peer's close. Bun's engine reads the transport with
+  // no backpressure and ends it on the peer's close_notify, so in Bun the
+  // transport has already closed by then. Node keeps it open.
   describe.each(["paused", "for-await"] as const)("a clean peer close keeps unread data (%s reader)", reader => {
-    it("delivers the whole payload and 'end'", async () => {
-      const pair = () => {
-        const makeSide = (peer: () => Duplex) =>
-          new Duplex({
-            read() {},
-            write(chunk, _encoding, callback) {
-              peer().push(chunk);
-              callback();
-            },
-            final(callback) {
-              peer().push(null);
-              callback();
-            },
-          });
-        const clientSide: Duplex = makeSide(() => serverSide);
-        const serverSide: Duplex = makeSide(() => clientSide);
-        return { clientSide, serverSide };
-      };
-      const { clientSide, serverSide } = pair();
+    it("delivers every byte and 'end'", async () => {
+      const makeSide = (peer: () => Duplex) =>
+        new Duplex({
+          read() {},
+          write(chunk, _encoding, callback) {
+            peer().push(chunk);
+            callback();
+          },
+          final(callback) {
+            peer().push(null);
+            callback();
+          },
+        });
+      const clientSide: Duplex = makeSide(() => serverSide);
+      const serverSide: Duplex = makeSide(() => clientSide);
       const payload = Buffer.alloc(256 * 1024, "bun");
       const server = new TLSSocket(serverSide, serverContext());
       server.on("secure", () => server.end(payload));
       const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+      // Only a failure ahead of the last byte counts. What happens to the
+      // socket after 'end' differs between runtimes.
       const failed = Promise.withResolvers<never>();
       server.on("error", failed.reject);
       client.on("error", failed.reject);
 
       const read = (async () => {
+        let total = 0;
         if (reader === "for-await") {
-          let total = 0;
           for await (const chunk of client) {
             total += chunk.length;
-            // Yield, so the transport's close lands between two reads.
+            // Yield, so the peer's close lands between two reads.
             await new Promise<void>(resolve => setImmediate(resolve));
           }
           return total;
         }
         client.pause();
-        // Resume only once the transport is gone, which is the case this
-        // covers: the socket holds every decrypted byte at that point.
-        await once(clientSide, "close");
-        let total = 0;
+        // The server handed everything to the transport, its close_notify included.
+        await once(server, "finish");
+        // One turn for the transport's own teardown, where a runtime runs it this early.
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(client.destroyed).toBe(false);
         client.on("data", chunk => (total += chunk.length));
         const ended = once(client, "end");
         client.resume();
@@ -1184,12 +1184,8 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
         return total;
       })();
 
-      const closed = once(client, "close");
       expect(await Promise.race([read, failed.promise])).toBe(payload.length);
-      // The transport is gone, so once the data was read the socket closes on
-      // its own, even though a wrap over a Duplex is half-open.
-      await Promise.race([closed, failed.promise]);
-      expect(client.destroyed).toBe(true);
+      client.destroy();
       server.destroy();
     });
   });

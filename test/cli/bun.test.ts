@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -466,6 +466,42 @@ describe("bun", () => {
       } finally {
         fs.unlinkSync(path);
       }
+    });
+  });
+
+  // `bun discord` hands the URL to the platform opener (xdg-open on Linux,
+  // found through PATH) and prints the URL when that fails.
+  describe.skipIf(!isLinux)("discord", () => {
+    test.concurrent("passes the URL to xdg-open as its only argument", async () => {
+      using dir = tempDir("discord-opener", {
+        "xdg-open": `#!/bin/sh\nprintf 'argv:'; for a in "$@"; do printf ' [%s]' "$a"; done; echo\n`,
+      });
+      fs.chmodSync(join(String(dir), "xdg-open"), 0o755);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "discord"],
+        env: { ...bunEnv, PATH: String(dir) },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("argv: [https://bun.com/discord]\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("prints the URL when PATH has no opener", async () => {
+      using dir = tempDir("discord-no-opener", {});
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "discord"],
+        env: { ...bunEnv, PATH: String(dir) },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The pretty printer drops a bare `>`, so the "-> url" fallback prints as "- url".
+      expect(stdout).toBe("- https://bun.com/discord\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
     });
   });
 });

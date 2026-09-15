@@ -205,10 +205,13 @@ const SUPPORTED_ECDH_GROUPS = new Set([
 function validateSecureContextOptions(options) {
   const {
     ciphers,
+    key,
     passphrase,
     ecdhCurve,
     minVersion,
     maxVersion,
+    privateKeyIdentifier,
+    privateKeyEngine,
     sessionTimeout,
     sigalgs,
     ticketKeys,
@@ -222,6 +225,28 @@ function validateSecureContextOptions(options) {
   if (sigalgs !== undefined && sigalgs !== null) {
     validateString(sigalgs, "options.sigalgs");
     if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
+  }
+  // BoringSSL has no ENGINE support; same checks and order as node's no-engine build (lib/internal/tls/secure-context.js).
+  if (privateKeyIdentifier !== undefined && privateKeyIdentifier !== null) {
+    if (privateKeyEngine === undefined || privateKeyEngine === null) {
+      // Engine is required when privateKeyIdentifier is present
+      throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", privateKeyEngine);
+    }
+    if (key) {
+      // Both data key and engine key can't be set at the same time
+      throw $ERR_INVALID_ARG_VALUE("options.privateKeyIdentifier", privateKeyIdentifier);
+    }
+    if (typeof privateKeyIdentifier === "string" && typeof privateKeyEngine === "string") {
+      throw $ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by this OpenSSL");
+    } else if (typeof privateKeyIdentifier !== "string") {
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.privateKeyIdentifier",
+        ["string", "null", "undefined"],
+        privateKeyIdentifier,
+      );
+    } else {
+      throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], privateKeyEngine);
+    }
   }
   if (ecdhCurve !== undefined) {
     validateString(ecdhCurve, "options.ecdhCurve");
@@ -643,20 +668,6 @@ var InternalSecureContext = class SecureContext {
         throw new TypeError("servername argument must be an string");
       if (options.secureOptions != null && typeof options.secureOptions !== "number")
         throw new TypeError("secureOptions argument must be an number");
-      const privateKeyIdentifier = options.privateKeyIdentifier;
-      if (!$isUndefinedOrNull(privateKeyIdentifier)) {
-        const privateKeyEngine = options.privateKeyEngine;
-        if ($isUndefinedOrNull(privateKeyEngine))
-          throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", privateKeyEngine);
-        if (typeof privateKeyEngine !== "string")
-          throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], privateKeyEngine);
-        if (typeof privateKeyIdentifier !== "string")
-          throw $ERR_INVALID_ARG_TYPE(
-            "options.privateKeyIdentifier",
-            ["string", "null", "undefined"],
-            privateKeyIdentifier,
-          );
-      }
     }
     const requestedCiphers = options?.ciphers;
     if (requestedCiphers && StringPrototypeIncludes.$call(requestedCiphers, "TLS_")) {

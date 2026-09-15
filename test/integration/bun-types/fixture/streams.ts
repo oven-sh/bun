@@ -85,3 +85,17 @@ expectType(new Blob([]).bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
 expectType(new Blob([]).json()).is<Promise<any>>();
 expectType(new Blob([]).formData()).is<Promise<FormData>>();
 expectType(new Blob([]).stream()).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+
+{
+  expectType(new ReadableStreamBYOBReader(uint8stream)).is<ReadableStreamBYOBReader>();
+  new ReadableStreamBYOBReader(Bun.file("./foo.csv").stream());
+  // @ts-expect-error the stream is required
+  new ReadableStreamBYOBReader();
+}
+
+{
+  expectType(new TextDecoderStream()).is<TextDecoderStream>();
+  new TextDecoderStream("utf-16le", { fatal: true, ignoreBOM: true });
+  // @ts-expect-error the label is a string
+  new TextDecoderStream(1252);
+}

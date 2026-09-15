@@ -138,6 +138,38 @@ describe("url", () => {
     const hn = new URL("http://x/");
     hn.hostname = "\u04C0.com";
     expect(hn.hostname).toBe("xn--s5a.com");
+
+    // Capitals whose UTS #46 status went from disallowed to mapped, and format
+    // controls that became ignored. Expected values are Node's.
+    expect(
+      [
+        "\u10AC", // GEORGIAN CAPITAL LETTER NAR
+        "a\u10B5", // GEORGIAN CAPITAL LETTER KHAR
+        "\u2132", // TURNED CAPITAL F
+        "\u2183", // ROMAN NUMERAL REVERSED ONE HUNDRED
+        "\uA846\u3002\u2183\u0FB5\uB1AE-", // WPT IdnaTestV2; U+3002 is a label separator
+        "a\u2061b", // FUNCTION APPLICATION
+        "a\u3164b", // HANGUL FILLER
+      ].map(host => new URL(`https://${host}/`).hostname),
+    ).toEqual(["xn--3kj", "xn--a-hws", "xn--73g", "xn--r5g", "xn--fc9a.xn----qmg097k469k", "ab", "ab"]);
+  });
+
+  it("keeps valid xn-- labels, and hosts that only contain the letters xn--", () => {
+    const accepted = {
+      "http://xn--bcher-kva.de/": "xn--bcher-kva.de",
+      "http://XN--BCHER-KVA.DE/": "xn--bcher-kva.de",
+      "http://xn--fiqs8s/": "xn--fiqs8s",
+      "http://xn--e1afmkfd.xn--p1ai/": "xn--e1afmkfd.xn--p1ai",
+      // Not a punycode label: "xn--" is not at the start of it.
+      "http://axn--a-ecp.example/": "axn--a-ecp.example",
+      // xn-- outside the host is not looked at. ("xn--a-ecp" is not valid punycode.)
+      "http://xn--a-ecp@ok.example/": "ok.example",
+      "http://user:pw@xn--bcher-kva.de:8080/xn--a-ecp?xn--a-ecp#xn--a-ecp": "xn--bcher-kva.de",
+      // Hosts of non-special schemes are opaque: no IDNA, not even lowercasing.
+      "foo://xn--a-ecp.example/": "xn--a-ecp.example",
+      "foo://XN--A-ECP.example/": "XN--A-ECP.example",
+    };
+    expect(Object.fromEntries(Object.keys(accepted).map(input => [input, new URL(input).hostname]))).toEqual(accepted);
   });
 
   it("rejects invalid punycode labels however they are spelled in the input (like Node)", () => {

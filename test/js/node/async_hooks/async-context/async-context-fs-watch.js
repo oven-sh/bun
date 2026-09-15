@@ -26,17 +26,9 @@ asyncLocalStorage.run({ test: "fs.watch" }, () => {
     process.exit(0);
   });
 
-  // Trigger the watch event
-  setTimeout(() => {
-    fs.writeFileSync(testFile, "modified");
-  }, 100);
-
-  // Timeout safety
-  setTimeout(() => {
-    watcher.close();
-    try {
-      fs.unlinkSync(testFile);
-    } catch {}
-    process.exit(0);
-  }, 5000);
+  // Some backends (FSEvents) start delivering events a little after watch()
+  // returns, so a single write could be missed. Keep modifying the file until
+  // the listener fires (it exits the process).
+  let content = "initial";
+  setInterval(() => fs.writeFileSync(testFile, (content += "+")), 20);
 });

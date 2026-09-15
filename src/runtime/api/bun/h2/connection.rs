@@ -216,6 +216,11 @@ pub trait Sink {
     /// counter moves, while the connection is mutably borrowed — the embedder must only
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
+    /// Connection-level receive window update (node's session.state window fields): `size` is
+    /// what the peer has been told it may send, `consumed` what it has sent since the last
+    /// WINDOW_UPDATE. Called whenever either moves, while the connection is mutably borrowed —
+    /// the embedder must only store the values.
+    fn on_recv_window(&self, _size: i64, _consumed: i64) {}
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
     /// inbound frames for it are not treated as frames on an idle stream.
@@ -420,6 +425,17 @@ impl Connection {
         );
     }
 
+    fn note_recv_window(&self, sink: &impl Sink) {
+        sink.on_recv_window(self.recv_window.size, self.recv_window.consumed);
+    }
+
+    /// The embedder advertised `delta` more connection-level receive window (a WINDOW_UPDATE on
+    /// stream 0 it wrote itself): accept that much more DATA before the §6.9.1 overflow check.
+    pub fn grow_recv_window(&mut self, sink: &impl Sink, delta: i64) {
+        self.recv_window.grow(delta);
+        self.note_recv_window(sink);
+    }
+
     fn send_rst_stream(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
         self.write_frame(
             sink,
@@ -571,6 +587,7 @@ impl Connection {
             let inc = self.recv_window.take_update();
             if inc > 0 {
                 self.send_window_update(sink, 0, inc);
+                self.note_recv_window(sink);
             }
         }
         let mut buf = std::mem::take(&mut self.replenish_buf);
@@ -691,6 +708,14 @@ impl Connection {
                     .unwrap_or(PendingLocalSettings {
                         settings: self.local_settings,
                     });
+            // §6.9.2: the peer moved its stream send windows by this delta when it applied it.
+            let delta =
+                acked.settings.initial_window_size as i64 - self.acked_local_initial_window as i64;
+            if delta != 0 {
+                for s in self.streams.values_mut() {
+                    s.recv_window.grow(delta);
+                }
+            }
             self.acked_local_initial_window = acked.settings.initial_window_size;
             // The peer has acknowledged this submission: header-list enforcement may now use the
             // limit it carried.
@@ -931,10 +956,9 @@ impl Connection {
         let end_stream = wire::flags::has(hdr.flags, wire::flags::END_STREAM);
 
         // §5.1.1: a server's inbound HEADERS opens (or continues) a client-initiated odd stream.
-        // Our receive window is sized by OUR advertised SETTINGS_INITIAL_WINDOW_SIZE; our send
-        // window by the PEER's (§6.9.2).
+        // Receive window from the INITIAL_WINDOW_SIZE the peer ACKed, send window from the peer's.
         let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
+        let recv_init = self.acked_local_initial_window;
         let is_new = !self.streams.contains_key(&hdr.stream_id);
         // RFC 9113 5.1.1: client-initiated streams use odd ids - a server receiving HEADERS that
         // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is not
@@ -1368,6 +1392,7 @@ impl Connection {
 
         // §6.9: the whole declared frame counts against the connection recv window on receipt.
         self.recv_window.on_data(hdr.length as i64);
+        self.note_recv_window(sink);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,
@@ -1379,7 +1404,7 @@ impl Connection {
 
         if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
+            let recv_init = self.acked_local_initial_window;
             let mut s = Stream::new(send_init, recv_init);
             s.state = State::Open;
             self.streams.insert(hdr.stream_id, s);
@@ -1486,6 +1511,7 @@ impl Connection {
 
         // §6.9: the whole frame counts against the connection recv window.
         self.recv_window.on_data(consumed);
+        self.note_recv_window(sink);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,
@@ -1519,7 +1545,7 @@ impl Connection {
         // here so it isn't mistaken for a closed/idle stream.
         if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
+            let recv_init = self.acked_local_initial_window;
             let mut s = Stream::new(send_init, recv_init);
             s.state = State::Open;
             self.streams.insert(hdr.stream_id, s);
@@ -1635,7 +1661,7 @@ impl Connection {
         // though this engine never saw its HEADERS go out.
         if on_idle && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
+            let recv_init = self.acked_local_initial_window;
             let s = self
                 .streams
                 .entry(hdr.stream_id)
@@ -1734,7 +1760,7 @@ impl Connection {
 
         // Reserve the promised (even) stream.
         let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
+        let recv_init = self.acked_local_initial_window;
         let entry = self
             .streams
             .entry(promised)
@@ -1865,7 +1891,7 @@ impl Connection {
         self.enc_buf.clear();
 
         let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
+        let recv_init = self.acked_local_initial_window;
         let s = self
             .streams
             .entry(stream_id)
@@ -1993,7 +2019,7 @@ impl Connection {
         self.enc_buf.clear();
 
         let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
+        let recv_init = self.acked_local_initial_window;
         let s = self
             .streams
             .entry(promised_id)

@@ -403,7 +403,9 @@ pub struct EventLoopDelayMonitor {
     /// `stop_active_handles` drops it before `~VM` (`All` outlives the heap).
     histogram: bun_jsc::Weak<()>,
     pub(crate) event_loop_timer: EventLoopTimer,
-    pub(crate) resolution_ms: i32,
+    /// Never 0: `on_fire` re-arms at the drain's fixed `now` plus this, and
+    /// `All::drain_timers` pops every node that is not after that `now`.
+    pub(crate) resolution_ms: u32,
     pub(crate) last_fire_ns: u64,
     pub(crate) enabled: bool,
 }
@@ -428,16 +430,17 @@ impl EventLoopDelayMonitor {
         &mut self,
         vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
-        resolution_ms: i32,
+        resolution_ms: f64,
     ) {
         self.disable();
         self.histogram = bun_jsc::Weak::create_passive(histogram, vm.global());
-        self.resolution_ms = resolution_ms;
+        // `as` saturates and maps NaN to 0.
+        self.resolution_ms = (resolution_ms as u32).max(1);
         self.enabled = true;
 
         // Schedule timer
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
-        let next = now.add_ms(i64::from(resolution_ms));
+        let next = now.add_ms(i64::from(self.resolution_ms));
         self.event_loop_timer.next = ElTimespec {
             sec: next.sec,
             nsec: next.nsec,
@@ -481,9 +484,7 @@ impl EventLoopDelayMonitor {
 
         let now_ns = now.ns();
         if self.last_fire_ns > 0 {
-            let expected_ns = u64::try_from(self.resolution_ms)
-                .expect("int cast")
-                .saturating_mul(1_000_000);
+            let expected_ns = u64::from(self.resolution_ms) * 1_000_000;
             let actual_ns = now_ns - self.last_fire_ns;
 
             if actual_ns > expected_ns {

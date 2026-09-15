@@ -511,6 +511,19 @@ impl PatchTask {
             }
         }
 
+        // `.bun-tag-<hash>`: written into the tree before the rename publishes
+        // it, so its presence marks a complete entry.
+        let mut buntagbuf: BuntagHashBuf = [0; MAX_BUNTAG_HASH_BUF_LEN];
+        let buntag_len = {
+            use std::io::Write as _;
+            buntagbuf[..bun_hash_tag.len()].copy_from_slice(bun_hash_tag);
+            let mut cursor = &mut buntagbuf[bun_hash_tag.len()..];
+            let before = cursor.len();
+            write!(&mut cursor, "{:x}", patch.patch_hash).expect("unreachable");
+            bun_hash_tag.len() + (before - cursor.len())
+        };
+        buntagbuf[buntag_len] = 0;
+
         {
             let patch_pkg_dir = match sys::openat(
                 system_tmpdir,
@@ -542,18 +555,7 @@ impl PatchTask {
             }
 
             // 5. Add bun tag
-            let bun_tag_prefix = bun_hash_tag;
-            let mut buntagbuf: BuntagHashBuf = [0; MAX_BUNTAG_HASH_BUF_LEN];
-            buntagbuf[..bun_tag_prefix.len()].copy_from_slice(bun_tag_prefix);
-            let hashlen = {
-                use std::io::Write as _;
-                let mut cursor = &mut buntagbuf[bun_tag_prefix.len()..];
-                let before = cursor.len();
-                write!(&mut cursor, "{:x}", patch.patch_hash).expect("unreachable");
-                before - cursor.len()
-            };
-            buntagbuf[bun_tag_prefix.len() + hashlen] = 0;
-            let buntag_zstr = ZStr::from_buf(&buntagbuf, bun_tag_prefix.len() + hashlen);
+            let buntag_zstr = ZStr::from_buf(&buntagbuf, buntag_len);
             if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
                 log.add_error_fmt_opts(
                     format_args!(
@@ -577,24 +579,51 @@ impl PatchTask {
         );
 
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
-        if let Err(e) = sys::renameat_concurrently(
+        let renamed = sys::renameat2(
             system_tmpdir,
             path_in_tmpdir,
             patch.cache_dir,
             cache_dir_subpath_z,
-            sys::RenameOptions {
-                move_fallback: true,
+            sys::Renameat2Flags {
+                exclude: true,
                 ..Default::default()
             },
-        ) {
-            log.add_error_fmt_opts(
-                format_args!(
-                    "renaming changes to cache dir: {}",
-                    e.with_path(cache_dir_subpath_z.as_bytes())
-                ),
-                Default::default(),
+        )
+        .is_ok();
+        let keep_existing = !renamed && {
+            let mut tag_path_buf = PathBuffer::uninit();
+            let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                &mut tag_path_buf.0,
+                &[cache_dir_subpath_z.as_bytes(), &buntagbuf[..buntag_len]],
             );
-            return Ok(());
+            sys::exists_at(patch.cache_dir, tag_path)
+        };
+        if keep_existing {
+            // A concurrent `bun install` created the same complete entry (the
+            // tag is written before the rename publishes it, and the name embeds
+            // the patch hash, so contents are equivalent): keep it, since
+            // replacing it unlinks files another process may be copying out.
+            let _ = sys::Dir::borrow(&system_tmpdir).delete_tree(path_in_tmpdir.as_bytes());
+        } else if !renamed {
+            if let Err(e) = sys::renameat_concurrently(
+                system_tmpdir,
+                path_in_tmpdir,
+                patch.cache_dir,
+                cache_dir_subpath_z,
+                sys::RenameOptions {
+                    move_fallback: true,
+                    ..Default::default()
+                },
+            ) {
+                log.add_error_fmt_opts(
+                    format_args!(
+                        "renaming changes to cache dir: {}",
+                        e.with_path(cache_dir_subpath_z.as_bytes())
+                    ),
+                    Default::default(),
+                );
+                return Ok(());
+            }
         }
         Ok(())
     }

@@ -136,8 +136,7 @@ function validateCiphers(ciphers: string, name: string = "options") {
   if (ciphers !== undefined && ciphers !== null) {
     validateString(ciphers, `${name}.ciphers`);
 
-    // TODO: right now we need this because we dont create the CTX before listening/connecting
-    // we need to change that in the future and let BoringSSL do the validation
+    // Checked in JS because the tls.DEFAULT_CIPHERS setter builds no SSL_CTX.
     const ciphersSet = getValidCiphersSet();
     const requested = StringPrototypeSplit.$call(ciphers, ":");
     let sawLegacyEntry = false;
@@ -696,13 +695,11 @@ function translatePeerCertificate(c) {
 }
 
 const ksecureContext = Symbol("ksecureContext");
-const ksharedCredsOptions = Symbol("ksharedCredsOptions");
 const kcheckServerIdentity = Symbol("kcheckServerIdentity");
 const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
 
 const buntls = Symbol.for("::buntls::");
-const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
 // (Node's `context.context || context` unwrap accepts both the wrapper and
 // the unwrapped native context).
@@ -1144,29 +1141,29 @@ TLSSocket.prototype[buntls] = function (port, host) {
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
-function buildSharedCreds(server) {
-  return (server._sharedCreds = new InternalSecureContext(
+// requestCert/rejectUnauthorized key the interned SSL_CTX as well: one SSL_CTX is one session cache.
+function buildSharedCreds(fields, server) {
+  return new InternalSecureContext(
     {
-      ...server[ksharedCredsOptions],
-      pfx: undefined,
-      _pfxExtraCACerts: undefined,
-      key: server.key,
-      cert: server.cert,
-      ca: server.ca,
-      crl: server.crl,
-      ciphers: server.ciphers,
-      secureOptions: server.secureOptions,
-      allowPartialTrustChain: server.allowPartialTrustChain,
-      sessionTimeout: server.sessionTimeout,
-      sigalgs: server.sigalgs,
-      ecdhCurve: server.ecdhCurve ?? DEFAULT_ECDH_CURVE,
-      passphrase: server.passphrase,
-      secureProtocol: server.secureProtocol,
-      minVersion: server.minVersion,
-      maxVersion: server.maxVersion,
+      key: fields.key,
+      cert: fields.cert,
+      ca: fields.ca,
+      crl: fields.crl,
+      ciphers: fields.ciphers,
+      secureOptions: fields.secureOptions,
+      allowPartialTrustChain: fields.allowPartialTrustChain,
+      sessionTimeout: fields.sessionTimeout,
+      sigalgs: fields.sigalgs,
+      ecdhCurve: fields.ecdhCurve ?? DEFAULT_ECDH_CURVE,
+      passphrase: fields.passphrase,
+      secureProtocol: fields.secureProtocol,
+      minVersion: fields.minVersion,
+      maxVersion: fields.maxVersion,
+      requestCert: server._requestCert === true,
+      rejectUnauthorized: server._rejectUnauthorized !== false,
     },
     true,
-  ));
+  );
 }
 
 function Server(options, secureConnectionListener): void {
@@ -1231,6 +1228,10 @@ function Server(options, secureConnectionListener): void {
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 
   this.addContext = function (hostname, context) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
+    if (!hostname) {
+      throw $ERR_TLS_REQUIRED_SERVER_NAME();
+    }
     if (typeof hostname !== "string") {
       throw new TypeError("hostname must be a string");
     }
@@ -1281,47 +1282,8 @@ function Server(options, secureConnectionListener): void {
       }
       next.key = key;
 
-      // BoringSSL rejects a mixed EC/RSA multi-identity configuration while
-      // loading the chain. The native context is built lazily at listen time,
-      // so surface the most common mismatch synchronously here: a key whose
-      // type differs from its own index-paired certificate. This is a
-      // best-effort check - the native loader at listen time remains the
-      // authority and still rejects configurations that pass it.
-      const keyLength = Array.isArray(key) ? key.length : 0;
-      if (keyLength > 1 && cert) {
-        const certs = Array.isArray(cert) ? cert : [cert];
-        try {
-          const { createPrivateKey, X509Certificate } = require("node:crypto");
-          for (let i = 0; i < keyLength; i++) {
-            const k = key[i];
-            if (typeof k !== "string" && !$isTypedArrayView(k)) continue;
-            const pairedCert = certs[i < certs.length ? i : certs.length - 1];
-            const certType = new X509Certificate(pairedCert).publicKey.asymmetricKeyType;
-            if (createPrivateKey(k).asymmetricKeyType !== certType) {
-              const err = new Error(
-                "error:0b000074:X.509 certificate routines:OPENSSL_internal:KEY_TYPE_MISMATCH",
-              ) as Error & { code: string; library: string; function: string; reason: string };
-              err.code = "ERR_OSSL_X509_KEY_TYPE_MISMATCH";
-              err.library = "X.509 certificate routines";
-              err.function = "OPENSSL_internal";
-              err.reason = "KEY_TYPE_MISMATCH";
-              throw err;
-            }
-          }
-        } catch (e: any) {
-          if (e?.code === "ERR_OSSL_X509_KEY_TYPE_MISMATCH") throw e;
-          // An unparseable key or certificate falls through to the native
-          // load, which produces its own error.
-        }
-      }
-
       let ca = options.ca;
-      // The process-wide default-CA override (tls.setDefaultCACertificates)
-      // applies here too when no explicit `ca` was given: this path hands raw
-      // {key, cert, ca} to the native listener and never goes through
-      // InternalSecureContext, so without this an mTLS server would verify
-      // client certificates against the bundled roots instead of the
-      // overridden defaults.
+      // The listen path bypasses InternalSecureContext, so apply the setDefaultCACertificates() override here.
       if (_defaultCACertificatesOverride !== undefined && ca == null) {
         ca = _defaultCACertificatesOverride;
       }
@@ -1399,6 +1361,11 @@ function Server(options, secureConnectionListener): void {
       next.minVersion = options.minVersion;
       next.maxVersion = options.maxVersion;
     }
+    // Built before the fields are assigned so a bad key/cert throws here, like Node, and the old ones stay.
+    const sharedCreds =
+      serverTLSOptions instanceof InternalSecureContext
+        ? serverTLSOptions
+        : buildSharedCreds(options ? next : this, this);
     if (options) {
       this.ALPNProtocols = next.ALPNProtocols;
       this.cert = next.cert;
@@ -1417,11 +1384,7 @@ function Server(options, secureConnectionListener): void {
       this.minVersion = next.minVersion;
       this.maxVersion = next.maxVersion;
     }
-    this._sharedCreds = serverTLSOptions instanceof InternalSecureContext ? serverTLSOptions : null;
-    this[ksharedCredsOptions] =
-      serverTLSOptions == null || serverTLSOptions instanceof InternalSecureContext
-        ? serverTLSOptions
-        : { ...serverTLSOptions };
+    this._sharedCreds = sharedCreds;
   };
 
   // Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to
@@ -1501,16 +1464,8 @@ function Server(options, secureConnectionListener): void {
     // TLS layer, like Node's tls.Server wraps any injected duplex
     // (node v26.3.0 lib/_tls_wrap.js, Server's connection listener).
     if (!socket || (socket.encrypted && socket.server === this)) return;
-    let secureContext;
-    try {
-      secureContext = this[kSharedCreds]();
-    } catch (err) {
-      socket.destroy();
-      this.emit("error", err);
-      return;
-    }
     const wrapped = new TLSSocket(socket, {
-      secureContext,
+      secureContext: this._sharedCreds,
       isServer: true,
       requestCert: this._requestCert,
       rejectUnauthorized: this._rejectUnauthorized,
@@ -1532,9 +1487,6 @@ function Server(options, secureConnectionListener): void {
   }
 }
 $toClass(Server, "Server", NetServer);
-Server.prototype[kSharedCreds] = function () {
-  return this._sharedCreds || buildSharedCreds(this);
-};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

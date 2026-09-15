@@ -12,13 +12,10 @@ class ThrowScope;
 }
 
 namespace Bun {
-// The UTF-8 bytes of a string, for a consumer that takes a pointer and a length. There is no NUL terminator.
-// An 8-bit all-ASCII string is borrowed, never copied, so it must outlive the view. Any other string is converted.
-// A `const char*` consumer needs a terminator. A WTF string has none, so that always takes a copy: use `tryGetUTF8()` there, not this.
+// UTF-8 bytes for a consumer that takes a pointer and a length. No NUL terminator: a `const char*` consumer needs `tryGetUTF8()`, which always copies.
 class UTF8View {
 public:
-    // std::nullopt when the conversion fails, where `utf8()` asserts: a Latin-1 string of 2^30 characters
-    // or more, or a 16-bit string whose UTF-8 form is 2^31 bytes or more.
+    // std::nullopt when the string does not convert: 2^30 Latin-1 characters or more, or a UTF-8 form of 2^31 bytes or more.
     static std::optional<UTF8View> tryCreate(WTF::StringView view)
     {
         UTF8View result;

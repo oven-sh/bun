@@ -153,6 +153,13 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
+    /// Whether this file is the user's own `.bunfig.toml` (in `$XDG_CONFIG_HOME` or `$HOME`), not one that comes with a project.
+    fn is_user_config(&self) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        crate::arguments::get_home_config_path(&mut buf)
+            .is_some_and(|home| home.as_bytes() == self.source.path.text)
+    }
+
     fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> crate::Result<()> {
         self.log.add_error_opts(
             text,
@@ -767,7 +774,7 @@ impl<'a> Parser<'a> {
                     self.load_log_level(&expr)?;
                 }
 
-                self.parse_install(&install_obj)?;
+                self.parse_install(cmd, &install_obj)?;
             }
 
             if let Some(run_expr) = json.get(b"run") {
@@ -1255,20 +1262,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_install(&mut self, install_obj: &Expr) -> crate::Result<()> {
+    fn parse_install(&mut self, cmd: CommandTag, install_obj: &Expr) -> crate::Result<()> {
         // The helper methods (`expect*`, `add_error`, `parse_registry`) take
         // `&mut self`, which under Stacked Borrows would invalidate any
         // long-lived `&mut` derived from `self.ctx.install`. Move the box
         // out so the install borrow is provably disjoint from `self`, then
         // restore it on every exit path.
         let mut install = self.ctx.install.take().expect("install slot primed");
-        let result = self.parse_install_inner(&mut install, install_obj);
+        let result = self.parse_install_inner(cmd, &mut install, install_obj);
         self.ctx.install = Some(install);
         result
     }
 
     fn parse_install_inner(
         &mut self,
+        cmd: CommandTag,
         install: &mut api::BunInstall,
         install_obj: &Expr,
     ) -> crate::Result<()> {
@@ -1322,9 +1330,16 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(registry) = install_obj.get(b"forceRegistry") {
-            // First writer wins: the global bunfig is parsed first, so a project bunfig cannot replace a machine-level value.
-            if install.force_registry.is_none() {
+            if self.is_user_config() {
                 install.force_registry = Some(self.parse_registry(&registry)?);
+            } else if cmd.is_npm_related() {
+                self.log.add_warning_fmt(
+                    Some(self.source),
+                    registry.loc,
+                    format_args!(
+                        "\"forceRegistry\" is ignored in a project bunfig.toml. Set it in $HOME/.bunfig.toml or in $BUN_CONFIG_FORCE_REGISTRY."
+                    ),
+                );
             }
         }
 

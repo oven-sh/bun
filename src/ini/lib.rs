@@ -1170,18 +1170,6 @@ mod draft {
                 RegistryCredential::Email(email) => registry.email.clone_from(email),
             }
         }
-
-        /// Copies every entry keyed to `registry`'s host and path into it, unless `registry` already has credentials.
-        pub fn apply_matching(auth: &[RegistryAuth], registry: &mut NpmRegistry) {
-            if registry.has_credentials() {
-                return;
-            }
-            for item in auth {
-                if item.matches(&registry.url) {
-                    item.apply_to(registry);
-                }
-            }
-        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1322,7 +1310,15 @@ mod draft {
         }
         if let Some(scoped) = install.scoped.as_mut() {
             for registry in scoped.scopes.values_mut() {
-                RegistryAuth::apply_matching(auth, registry);
+                if registry.has_credentials() {
+                    continue;
+                }
+                for item in auth {
+                    let matched = item.matches(&registry.url);
+                    if matched {
+                        item.apply_to(registry);
+                    }
+                }
             }
         }
     }

@@ -1767,7 +1767,6 @@ impl<'a> Printer<'a> {
             &mut env_loader,
             None,
             None,
-            &[],
             crate::Subcommand::Install,
         )?;
 

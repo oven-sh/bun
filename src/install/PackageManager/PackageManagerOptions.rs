@@ -426,8 +426,6 @@ impl Options {
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_: Option<&Api::BunInstall>,
-        // Host-keyed `.npmrc` credentials. The caller already applied them to `bun_install_`, so only the forced registry needs them.
-        npmrc_auth: &[bun_ini::RegistryAuth],
         subcommand: Subcommand,
     ) -> Result<(), bun_alloc::AllocError> {
         let mut base = Api::NpmRegistry::default();
@@ -941,7 +939,7 @@ impl Options {
                 .filter(|url| !url.is_empty())
             {
                 Some(url) if url.starts_with(b"https://") || url.starts_with(b"http://") => {
-                    Some(Api::NpmRegistry::from_url(url))
+                    Some((Api::NpmRegistry::from_url(url), "BUN_CONFIG_FORCE_REGISTRY"))
                 }
                 Some(_) => {
                     // Fail closed, and do not print the value: it can hold credentials.
@@ -954,35 +952,31 @@ impl Options {
                 None => bun_install_ref
                     .and_then(|config| config.force_registry.as_ref())
                     .filter(|registry| !registry.url.is_empty())
-                    .cloned(),
+                    .map(|registry| (registry.clone(), "install.forceRegistry")),
             };
 
-            if let Some(mut force_registry) = forced {
-                // The credential precedence is listed under `install.forceRegistry` in docs/runtime/bunfig.mdx.
-                let explicit_token: Box<[u8]> = if !cli_token.is_empty() {
-                    cli_token.into()
-                } else {
-                    [
-                        b"BUN_CONFIG_TOKEN".as_slice(),
-                        b"NPM_CONFIG_TOKEN",
-                        b"npm_config_token",
-                    ]
-                    .into_iter()
-                    .find_map(|key| env.get(key).filter(|value| !value.is_empty()))
-                    .unwrap_or(b"")
-                    .into()
-                };
-                if explicit_token.is_empty() {
-                    bun_ini::RegistryAuth::apply_matching(npmrc_auth, &mut force_registry);
-                }
+            if let Some((force_registry, set_by)) = forced {
                 let prev_scope = core::mem::replace(
                     &mut self.scope,
                     Npm::registry::Scope::from_api(b"", force_registry, env)?,
                 );
                 let had_scoped_registries = !self.registries.is_empty();
+                // The credential precedence is listed under `install.forceRegistry` in docs/runtime/bunfig.mdx.
                 if self.scope.token.is_empty() && self.scope.auth.is_empty() {
+                    let explicit_token: &[u8] = if !cli_token.is_empty() {
+                        cli_token
+                    } else {
+                        [
+                            b"BUN_CONFIG_TOKEN".as_slice(),
+                            b"NPM_CONFIG_TOKEN",
+                            b"npm_config_token",
+                        ]
+                        .into_iter()
+                        .find_map(|key| env.get(key).filter(|value| !value.is_empty()))
+                        .unwrap_or(b"")
+                    };
                     if !explicit_token.is_empty() {
-                        self.scope.token = explicit_token;
+                        self.scope.token = explicit_token.into();
                     } else {
                         // The `BUN_CONFIG_REGISTRY` guard from above: `.npmrc` can key `prev_scope.token` to another host.
                         let same_host_no_downgrade = {
@@ -1007,10 +1001,11 @@ impl Options {
                         || had_cli_registry)
                 {
                     bun_core::note!(
-                        "using forced registry <b>{}<r> <d>(install.forceRegistry is set on this machine, ignoring project registry configuration)<r>",
+                        "using forced registry <b>{}<r> <d>({} is set on this machine, ignoring other registry configuration)<r>",
                         bun_fmt::redacted_npm_url(bun_core::without_trailing_slash(
                             self.scope.url.href()
                         )),
+                        set_by,
                     );
                     Output::flush();
                 }

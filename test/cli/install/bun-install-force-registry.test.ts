@@ -86,7 +86,7 @@ describe.concurrent("install.forceRegistry", () => {
     });
     // The note tells the developer why the project's `install.registry` has no effect.
     expect(stderr).toContain(
-      `using forced registry ${forced.origin} (install.forceRegistry is set on this machine, ignoring project registry configuration)`,
+      `using forced registry ${forced.origin} (install.forceRegistry is set on this machine, ignoring other registry configuration)`,
     );
   });
 
@@ -107,71 +107,45 @@ describe.concurrent("install.forceRegistry", () => {
     expect(stderr).not.toContain("using forced registry");
   });
 
-  test("project forceRegistry does not receive a host-scoped ~/.npmrc token", async () => {
-    // A `forceRegistry` checked into a project leaves the default registry alone, so the
-    // developer's `//registry.npmjs.org/:_authToken` still loads into the default scope.
-    // The forced registry is on another host and must not receive that token.
+  test("a project bunfig cannot set forceRegistry", async () => {
     const attacker = makeRegistry();
+    const other = makeRegistry();
     await using _a = attacker.server;
+    await using _o = other.server;
+
+    using dir = tempDir("force-registry-project-scope", {
+      "home/.keep": "",
+      // No user bunfig and no environment variable: only the project names a forced registry.
+      "project/bunfig.toml": `[install]\ncache = false\nregistry = "${other.url}"\nforceRegistry = "${attacker.url}"\n`,
+      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+    });
+
+    const { stderr } = await runInstall(String(dir), makeEnv(String(dir)));
+
+    expect({ attacker: attacker.hits, other: other.hits }).toEqual({
+      attacker: [],
+      other: ["/no-deps"],
+    });
+    expect(stderr).toContain(`"forceRegistry" is ignored in a project bunfig.toml`);
+    expect(stderr).not.toContain("using forced registry");
+  });
+
+  test("a ~/.npmrc token keyed to another host does not reach the forced registry", async () => {
+    const forced = makeRegistry();
+    await using _f = forced.server;
 
     using dir = tempDir("force-registry-npmrc-token", {
-      "home/.npmrc": `//registry.npmjs.org/:_authToken=npm_victim_publish_token\n`,
-      // No global bunfig: the *project* sets forceRegistry.
-      "project/bunfig.toml": `[install]\ncache = false\nforceRegistry = "${attacker.url}"\n`,
+      "home/.bunfig.toml": `[install]\nforceRegistry = "${forced.url}"\n`,
+      // The default registry stays registry.npmjs.org, so this token loads into the default scope.
+      "home/.npmrc": `//registry.npmjs.org/:_authToken=npm_publish_token_for_npmjs\n`,
+      "project/bunfig.toml": `[install]\ncache = false\n`,
       "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
     });
 
     await runInstall(String(dir), makeEnv(String(dir)));
 
-    expect(attacker.hits).toEqual(["/no-deps"]);
-    expect(attacker.auth).toEqual([null]);
-  });
-
-  test.each(["bunfig", "env"] as const)(
-    "forced registry (%s) receives the ~/.npmrc token keyed to its host",
-    async form => {
-      const forced = makeRegistry();
-      const other = makeRegistry();
-      await using _f = forced.server;
-      await using _o = other.server;
-
-      using dir = tempDir(`force-registry-npmrc-hostkey-${form}`, {
-        ...(form === "bunfig" && { "home/.bunfig.toml": `[install]\nforceRegistry = "${forced.url}"\n` }),
-        // Only this entry names the forced host: the default registry is on another host,
-        // so there is no token to inherit from it.
-        "home/.npmrc": `//localhost:${forced.server.port}/:_authToken=corp-npmrc-token\n`,
-        "project/bunfig.toml": `[install]\ncache = false\nregistry = "${other.url}"\n`,
-        "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
-      });
-
-      await runInstall(
-        String(dir),
-        makeEnv(String(dir), form === "env" ? { BUN_CONFIG_FORCE_REGISTRY: forced.url } : {}),
-      );
-
-      expect({ forced: forced.hits, other: other.hits }).toEqual({
-        forced: ["/no-deps"],
-        other: [],
-      });
-      expect(forced.auth).toEqual(["Bearer corp-npmrc-token"]);
-    },
-  );
-
-  test("BUN_CONFIG_TOKEN beats the ~/.npmrc token keyed to the forced host", async () => {
-    const forced = makeRegistry();
-    await using _f = forced.server;
-
-    using dir = tempDir("force-registry-npmrc-hostkey-env-token", {
-      "home/.bunfig.toml": `[install]\nforceRegistry = "${forced.url}"\n`,
-      "home/.npmrc": `//localhost:${forced.server.port}/:_authToken=corp-npmrc-token\n`,
-      "project/bunfig.toml": `[install]\ncache = false\n`,
-      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
-    });
-
-    await runInstall(String(dir), makeEnv(String(dir), { BUN_CONFIG_TOKEN: "corp-env-token" }));
-
     expect(forced.hits).toEqual(["/no-deps"]);
-    expect(forced.auth).toEqual(["Bearer corp-env-token"]);
+    expect(forced.auth).toEqual([null]);
   });
 
   test("global bunfig forceRegistry cannot be changed by project bunfig forceRegistry", async () => {
@@ -187,12 +161,13 @@ describe.concurrent("install.forceRegistry", () => {
       "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
     });
 
-    await runInstall(String(dir), makeEnv(String(dir)));
+    const { stderr } = await runInstall(String(dir), makeEnv(String(dir)));
 
     expect({ forced: forced.hits, other: other.hits }).toEqual({
       forced: ["/no-deps"],
       other: [],
     });
+    expect(stderr).toContain(`"forceRegistry" is ignored in a project bunfig.toml`);
   });
 
   test("project .env cannot inject BUN_CONFIG_FORCE_REGISTRY", async () => {
@@ -380,7 +355,9 @@ describe.concurrent("install.forceRegistry", () => {
     expect(forced.hits).toEqual(["/no-deps"]);
     expect(forced.auth).toEqual(["Basic " + Buffer.from("corpuser:corppass").toString("base64")]);
     // The notice and the 404 line both print the registry URL.
-    expect(stderr).toContain(`using forced registry ${forced.origin} (`);
+    expect(stderr).toContain(
+      `using forced registry ${forced.origin} (BUN_CONFIG_FORCE_REGISTRY is set on this machine`,
+    );
     expect(stderr).not.toContain("corppass");
   });
 

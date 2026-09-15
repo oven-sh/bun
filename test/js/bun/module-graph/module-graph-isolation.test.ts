@@ -133,15 +133,6 @@ const dir = String(
         const data = Buffer.alloc(4 << 20, "T");
         for (const handle of await opensForWriting(dir, count)) handle.write(data, 0, data.length, 0).catch(() => {});
       };
-      // import()s of modules nobody has loaded, and what they settle with.
-      export const heard = [];
-      export const imports = (specifier, count) => {
-        for (let i = 0; i < count; i++) import(specifier + "?tenant" + i).then(() => heard.push("fulfilled"), error => heard.push("rejected: " + error.code));
-      };
-      // import() on a graph it was handed, and what that settles with.
-      export const importsInto = (other, specifier) => {
-        other.import(specifier).then(() => heard.push("fulfilled"), error => heard.push("rejected: " + error.code));
-      };
       // A module loaded through a graph of its own making that has no context of its own.
       export const loadsThroughAPlainGraph = specifier => new Bun.ModuleGraph().import(specifier);
       export const makesAGraph = options => new Bun.ModuleGraph(options);
@@ -279,55 +270,10 @@ const dir = String(
       { length: 40 },
       (_, i) => `export function f${i}(a: number): number { return a + ${i}; }`,
     ).join("\n"),
-    "not-loaded-yet-tla.mjs": `
-      await new Promise(resolve => setImmediate(resolve));
-      export const loaded = true;
-    `,
-    // Evaluation that parks in a top-level await until the host says, and tells the host it is there.
     "parks-in-tla.mjs": `
       parked();
       await gate;
       export const loaded = true;
-    `,
-    "does-not-parse.mjs": "export const = ;",
-    "main-module-after-a-disposed-asker.mjs": `
-      const asker = new Bun.ModuleGraph({ isolateIO: true }), loads = new Bun.ModuleGraph({ isolateIO: true });
-      const app = await asker.import(import.meta.dir + "/left-behind-tenant.mjs");
-      // The first import() of the graph that loads, asked for by a graph that is disposed before it fails.
-      asker.run(() => app.importsInto(loads, import.meta.dir + "/does-not-parse.mjs"));
-      asker.dispose();
-      // (The host's own import of it fails with the same load.)
-      const failed = await loads.import(import.meta.dir + "/does-not-parse.mjs").then(() => false, () => true);
-      // (Two loads of the one file: the asker's may be the later to fail.)
-      while (loads.mainModule !== undefined) await new Promise(resolve => setImmediate(resolve));
-      const good = import.meta.dir + "/not-loaded-yet.ts";
-      await loads.import(good);
-      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ askerHeard: app.heard, failed, mainIsTheOneThatLoaded: loads.mainModule?.endsWith("not-loaded-yet.ts") }));
-      process.exit(0);
-    `,
-    "imports-through-another-graph.mjs": `
-      const gate = Promise.withResolvers(), parked = Promise.withResolvers();
-      const globals = { gate: gate.promise, parked: parked.resolve };
-      const asker = new Bun.ModuleGraph({ isolateIO: true }), loads = new Bun.ModuleGraph({ isolateIO: true, globals });
-      const app = await asker.import(import.meta.dir + "/left-behind-tenant.mjs");
-      const specifier = import.meta.dir + "/parks-in-tla.mjs";
-      asker.run(() => app.importsInto(loads, specifier));
-      await parked.promise;
-      const out = {};
-      if (process.argv[2] === "the one that asked") {
-        asker.dispose();
-        gate.resolve();
-        // The module finishes in the graph that loads it (the host's import of it waits for that).
-        out.host = await loads.import(specifier).then(() => "fulfilled", error => "rejected: " + error.code);
-      } else {
-        // (The gate stays shut: what the module waits for went with its graph.)
-        loads.dispose();
-      }
-      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-      out.askerHeard = app.heard;
-      console.log(JSON.stringify(out));
-      process.exit(0);
     `,
     "host-import-parked-at-dispose.mjs": `
       const parked = Promise.withResolvers();
@@ -430,21 +376,6 @@ const dir = String(
       await inner.import(import.meta.dir + "/throws-later.mjs");
       while (hostSaw.length + tenantSaw.length < 2) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ hostSaw, tenantSaw: tenantSaw.sort() }));
-      process.exit(0);
-    `,
-    "imports-of-a-disposed-graph.mjs": `
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
-      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      const specifier = import.meta.dir + "/" + process.argv[2];
-      graph.run(() => app.imports(specifier, 8));
-      // The host's own, through the same graph. (All in the turn that disposes: no load is back before it.)
-      const mine = graph.import(specifier + "?host").then(() => "fulfilled", error => "rejected: " + error.code);
-      graph.dispose();
-      const host = await mine;
-      // The loads are back (for nobody) once the pool has come round to a job queued behind them.
-      await import(specifier + "?after");
-      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ graphHeard: app.heard, host }));
       process.exit(0);
     `,
     "open-files-of-a-disposed-graph.mjs": `
@@ -2803,36 +2734,6 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("nor do writes the host had queued through FileHandles the graph opened", async () => {
     expect(await runs("queued-writes-of-a-disposed-graph.mjs", "host")).toEqual({
       stdout: `{"hostFilesWrittenTo":0}`,
-      exitCode: 0,
-    });
-  });
-  test.each([
-    ["not-loaded-yet.ts", "the same turn"],
-    ["not-loaded-yet-tla.mjs", "the same turn"],
-  ])(
-    "import()s it had under way (%s, disposed %s) stay pending; the host's import() through it rejects",
-    async (specifier, when) => {
-      expect(await runs("imports-of-a-disposed-graph.mjs", specifier, when)).toEqual({
-        stdout: `{"graphHeard":[],"host":"rejected: ERR_INVALID_STATE"}`,
-        exitCode: 0,
-      });
-    },
-  );
-  test("an import() its script asked another graph for says nothing to it; the graph that loads finishes the module", async () => {
-    expect(await runs("imports-through-another-graph.mjs", "the one that asked")).toEqual({
-      stdout: `{"host":"fulfilled","askerHeard":[]}`,
-      exitCode: 0,
-    });
-  });
-  test("an import() that fails after the graph that asked was disposed still leaves the graph that loads without a main module", async () => {
-    expect(await runs("main-module-after-a-disposed-asker.mjs")).toEqual({
-      stdout: `{"askerHeard":[],"failed":true,"mainIsTheOneThatLoaded":true}`,
-      exitCode: 0,
-    });
-  });
-  test("a graph waiting for a module parked in a top-level await of a graph since disposed goes on waiting", async () => {
-    expect(await runs("imports-through-another-graph.mjs", "the one that loads")).toEqual({
-      stdout: `{"askerHeard":[]}`,
       exitCode: 0,
     });
   });

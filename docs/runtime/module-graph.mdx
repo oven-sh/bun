@@ -34,7 +34,7 @@ Native addons are shared, but their asynchronous work is the graph's too: a Node
 
 ## Disposing
 
-`graph.dispose()` drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and its errors still go to `onError`. From then on `graph.import()`, `graph.run()` and the graph's `require()` fail with `ERR_INVALID_STATE`, as does `import()` from a function of the graph that the host calls; `import()` by the disposed graph's own leftover code stays pending. Modules of the graph that had not run yet never will. `dispose()` settles nothing itself. A `graph.import()` that has not settled is left to the loader: if the load's next step comes after `dispose()` it rejects (nothing loads into a disposed graph), and if its module is suspended in a top-level `await` on something `dispose()` discarded, it stays pending like every other promise that waits on the graph's work. An `import()` the graph's own code had under way stays pending.
+`graph.dispose()` drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and its errors still go to `onError`. From then on `graph.import()`, `graph.run()` and the graph's `require()` fail with `ERR_INVALID_STATE`, as does `import()` from a function of the graph that the host calls; `import()` by the disposed graph's own leftover code stays pending. Modules of the graph that had not run yet never will. An import that was still waiting for a file rejects. One whose module is suspended in a top-level `await` is left alone: it finishes if what the module awaits does.
 
 ## Calling into a graph
 

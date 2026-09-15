@@ -4518,10 +4518,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::jsFunctionMockModuleFactoryResolve;
     } else if (handler == jsFunctionMockModuleFactoryReject) {
         return GlobalObject::PromiseFunctions::jsFunctionMockModuleFactoryReject;
-    } else if (handler == jsModuleGraphImportFulfilled) {
-        return GlobalObject::PromiseFunctions::jsModuleGraphImportFulfilled;
-    } else if (handler == jsModuleGraphImportRejected) {
-        return GlobalObject::PromiseFunctions::jsModuleGraphImportRejected;
     } else if (handler == Bun__TestScope__Describe2__bunTestThen) {
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
     } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {

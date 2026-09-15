@@ -203,15 +203,6 @@ pub struct RuntimeTranspilerStore {
     pub(crate) queue: Queue,
 }
 
-unsafe extern "C" {
-    /// ModuleGraph.cpp. Round-tripped opaquely through C++ (from `Bun__ScriptExecutionContext__create`).
-    #[allow(improper_ctypes)]
-    safe fn Bun__ModuleGraph__contextOfLoader(
-        global: &JSGlobalObject,
-        loader: JSValue,
-    ) -> *const crate::ScriptExecutionContext;
-}
-
 pub type Queue = UnboundedQueue<TranspilerJob>;
 
 impl Default for RuntimeTranspilerStore {
@@ -298,20 +289,8 @@ impl RuntimeTranspilerStore {
                 }
             }
             first = false;
-            // SAFETY: `job` is a live job popped from the intrusive queue; `vm` as above.
-            let fulfilled = unsafe {
-                let vm = &*vm.as_ptr();
-                let context = [(*job).context, (*job).asker]
-                    .into_iter()
-                    .find(|&context| vm.is_context_live(context));
-                if let Some(context) = context {
-                    let _context = vm.enter_context(context);
-                    (*job).run_from_js_thread()
-                } else {
-                    (*job).release_unfulfilled();
-                    Ok(())
-                }
-            };
+            // SAFETY: `job` is a live job popped from the intrusive queue.
+            let fulfilled = unsafe { (*job).run_from_js_thread() };
             job = iter.next();
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
@@ -388,17 +367,6 @@ impl RuntimeTranspilerStore {
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
-                context: if module_loader.is_empty() {
-                    global_object.bun_vm().root_context().id()
-                } else {
-                    // SAFETY: a graph's context outlives the graph's loader.
-                    unsafe {
-                        Bun__ModuleGraph__contextOfLoader(global_object, module_loader).as_ref()
-                    }
-                    .unwrap_or_else(|| global_object.bun_vm().root_context())
-                    .id()
-                },
-                asker: global_object.bun_vm().current_context_or_root().id(),
                 module_loader: if module_loader.is_empty() {
                     StrongOptional::empty()
                 } else {
@@ -450,12 +418,6 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
     pub(crate) promise: StrongOptional,
-    /// The context of the graph whose loader is fetching (the realm's for the global object's
-    /// loader and for a graph without a context): the load is that loader's, whoever asked.
-    pub(crate) context: crate::ContextId,
-    /// The context of the script that asked. A load into a disposed graph is completed (the
-    /// loader refuses it, and whoever asked is told so) unless that script was disposed too.
-    pub(crate) asker: crate::ContextId,
     /// The `JSModuleLoader` that is fetching, when it is not the global object's (a
     /// `Bun.ModuleGraph`'s): handed back with the result. Empty otherwise.
     pub(crate) module_loader: StrongOptional,
@@ -562,24 +524,6 @@ impl TranspilerJob {
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
         ticket.post(ConcurrentTask::create_from(transpiler_store));
-    }
-
-    /// The loader is a `Bun.ModuleGraph`'s that was disposed since, and so was the script that
-    /// asked (its own `import()`): the load is dropped with the rest of what that graph had
-    /// under way, and that `import()` stays pending.
-    fn release_unfulfilled(&mut self) {
-        let vm = self.vm;
-        self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
-        self.promise.deinit();
-        self.module_loader.deinit();
-        self.reset_for_pool();
-        // SAFETY: vm outlives the job; transpiler_store.store.put recycles the slot.
-        unsafe {
-            (*vm)
-                .transpiler_store
-                .store
-                .put(std::ptr::from_mut::<TranspilerJob>(self))
-        };
     }
 
     fn run_from_js_thread(&mut self) -> JsResult<()> {

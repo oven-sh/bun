@@ -78,9 +78,6 @@ public:
 
     JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier);
     void dispose(Zig::GlobalObject*);
-    // The loader's promise for an import() settled: so does what import() returned, unless
-    // dispose() already rejected it or the script that called is a disposed graph's.
-    void settleImport(Zig::GlobalObject*, JSC::JSPromise* result, bool rejected, JSC::JSValue);
 
 protected:
     JSModuleGraph(JSC::VM&, JSC::Structure*, JSC::JSModuleLoader*, JSC::JSObject* onError);
@@ -95,8 +92,6 @@ private:
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
     // The loader's promise for the import that made m_mainPath main.
     JSC::WriteBarrier<JSC::JSPromise> m_mainImport;
-    // What import() returned and has not settled -> the identifier of the context of the script that called.
-    JSC::WriteBarrier<JSC::JSMap> m_pendingImports;
     bool m_disposed { false };
     bool m_runsInItsMakersContext { false };
     bool m_inOnError { false };
@@ -165,14 +160,6 @@ JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
 // ── Which graph ──────────────────────────────────────────────────────────────────────
 // The graph `loader` is the loader of; null for the global object's own.
 JSModuleGraph* moduleGraphOfLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
-
-} // namespace Bun
-
-// Reactions to the loader's promise for a graph.import() (Zig::GlobalObject::thenable).
-BUN_DECLARE_HOST_FUNCTION(jsModuleGraphImportFulfilled);
-BUN_DECLARE_HOST_FUNCTION(jsModuleGraphImportRejected);
-
-namespace Bun {
 // The graph whose module or CommonJS code is running (the innermost frame that says), or null.
 JSModuleGraph* moduleGraphOfRunningCode(JSC::JSGlobalObject*);
 // promiseRejectionTracker: the graph whose code is rejecting `promise` right now, or null.

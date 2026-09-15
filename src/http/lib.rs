@@ -704,8 +704,8 @@ pub(crate) fn hash_header_name(name: &[u8]) -> u64 {
 // `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.
 
-pub use bun_url::strip_ipv6_brackets;
 use bun_url::URL;
+pub use bun_url::strip_ipv6_brackets;
 use core::ptr::NonNull;
 
 /// Owned copies of the proxy environment captured at request creation so the

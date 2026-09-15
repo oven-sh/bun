@@ -616,3 +616,26 @@ describe("JsRef::Weak liveness", () => {
     expect(kept.keep).toBe(true);
   });
 });
+
+it("generateHeapSnapshotForDebugging survives BUN_JSC_validateExceptionChecks", async () => {
+  // JSONParse (LiteralParser::parseRecursively) can throw, so the enclosing
+  // throw scope must release before returning. With validateExceptionChecks
+  // enabled the process aborts when the scope goes unchecked; on release
+  // builds the option is a no-op and this just exercises the snapshot path.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const snap = require("bun:jsc").generateHeapSnapshotForDebugging(); console.log("ok", typeof snap);`,
+    ],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const uncheckedScopes = stderr
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+  expect({ stdout, uncheckedScopes, exitCode }).toEqual({ stdout: "ok object\n", uncheckedScopes: [], exitCode: 0 });
+});

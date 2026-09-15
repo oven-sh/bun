@@ -444,18 +444,6 @@ function emitSessionCloseNT(self: Http2Session, frame) {
     runInFrame(frame, self.emit, self, "close");
   }
 }
-function emitErrorNT(self: any, error: any, destroy: boolean) {
-  if (destroy) {
-    if (self.listenerCount("error") > 0) {
-      self.destroy(error);
-    } else {
-      self.destroy();
-    }
-  } else if (self.listenerCount("error") > 0) {
-    self.emit("error", error);
-  }
-}
-
 function emitOutofStreamErrorNT(self: any) {
   self.destroy($ERR_HTTP2_OUT_OF_STREAMS());
 }
@@ -6268,9 +6256,10 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitEventNT, req, "ready");
       return req;
     } catch (e: any) {
+      // Nothing reached the wire, so the session stays usable and the throw is the only error channel.
       if (connectionsCounted) {
         this.#connections--;
-        process.nextTick(emitErrorNT, this, e, this.#connections === 0 && this.#closed);
+        if (this.#connections === 0 && this.#closed) setImmediate(destroyIfNotDestroyedNT, this);
       }
       throw e;
     }

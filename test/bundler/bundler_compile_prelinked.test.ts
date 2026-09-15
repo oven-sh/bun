@@ -572,6 +572,66 @@ describe.concurrent("bundler", () => {
     // Without splitting everything is the entry module itself, which require.cache does not list.
     stdout: splitting => (splitting ? "0\ntrue 1\nfresh 1" : "0\nfalse 1\nsingle 1"),
   });
+  // RegistryDelete for a module that reads imports: deleting its registry entry and importing the key again gives the
+  // loader a second record of the same module next to the first, whose functions are hot by then. Both keep running,
+  // each against the bindings it links to: imports the graph resolves to another chunk, a named import of a builtin
+  // module and a namespace import of one. `exporterToo` also deletes the chunk those imports come from, so the second
+  // record links to a second record of that chunk (with its own state) while the first stays linked to the first.
+  for (const exporterToo of [false, true]) {
+    bindingCase(exporterToo ? "RegistryDeleteImporterAndExporter" : "RegistryDeleteImporter", {
+      files: {
+        "/entry.ts": /* js */ `
+          import { api } from "./b";
+          import { stateSelf } from "./state";
+          const slashes = (p: string) => p.replaceAll("\\\\", "/");
+          const drop = (path: string) => {
+            const key = Object.keys(import.meta.require.cache).find(k => slashes(k) === slashes(path));
+            if (key !== undefined) delete import.meta.require.cache[key];
+            return key;
+          };
+          console.log(api.loop(20000), api.read());
+          const key = drop(api.self);
+          console.log(key !== undefined, ${exporterToo} && drop(stateSelf) !== undefined);
+          Bun.gc(true);
+          if (key !== undefined) {
+            const again = await import(key);
+            const api2 = Object.values(again).find((v: any) => v && typeof v === "object" && "counter" in v) as typeof api;
+            console.log(api2 === api ? "same" : "fresh", api.read(), api2.read());
+            api2.bump();
+            api2.bump();
+            api.bump();
+            console.log(api.read(), api2.read(), api.loop(20000), api2.loop(20000));
+            const third = await import(key);
+            console.log(third === again);
+          }
+        `,
+        "/b.ts": /* js */ `
+          import { n, inc } from "./state";
+          import { sep } from "node:path";
+          import * as os from "node:os";
+          function bump() { inc(); }
+          function counter() { return n; }
+          function read() { return [n, sep === "/" || sep === "\\\\", typeof os.EOL].join(); }
+          function loop(k: number) { let r = 0; for (let i = 0; i < k; i++) r = counter(); return r; }
+          export const api = { self: import.meta.path, bump, counter, read, loop };
+        `,
+        "/state.ts": /* js */ `
+          export let n = 0;
+          export function inc() { n++; }
+          export const stateSelf = import.meta.path;
+        `,
+      },
+      entries: ["/entry.ts", "/b.ts", "/state.ts"],
+      // Without splitting everything is the entry module itself, which require.cache does not list.
+      stdout: splitting =>
+        !splitting
+          ? "0 0,true,string\nfalse false"
+          : exporterToo
+            ? "0 0,true,string\ntrue true\nfresh 0,true,string 0,true,string\n1,true,string 2,true,string 1 2\ntrue"
+            : "0 0,true,string\ntrue false\nfresh 0,true,string 0,true,string\n3,true,string 3,true,string 3 3\ntrue",
+    });
+  }
+
   // The cases below are about how a record reads another record's bindings: every module listed in `entries` is a chunk
   // (module record) of its own under +splitting, so each import in it crosses a record boundary. Namespace imports of
   // builtin modules stay namespace imports in the output (imports of bundled modules are lowered to named bindings), so

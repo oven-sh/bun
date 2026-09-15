@@ -1037,6 +1037,56 @@ test("SourceTextModule accepts the cachedData it produced", () => {
   );
 });
 
+// Several SourceTextModules with one identifier and one source text are several records of the same module. Each reads
+// the bindings of the module it was linked to, whatever that module's text is, including from functions that were
+// already hot when the next record was made.
+test.each([
+  ["the main context", false],
+  ["a new context", true],
+])(
+  "SourceTextModules with the same identifier and source keep their own import bindings in %s",
+  async (_, inNewContext) => {
+    const context = inNewContext ? createContext({}) : undefined;
+    const importerSource = `
+      import { x, shape } from "dep";
+      import * as ns from "dep";
+      export function read() { return [x, shape, ns.x].join(); }
+      export function loop(n) { let r; for (let i = 0; i < n; i++) r = read(); return r; }
+      export { bump } from "dep";
+    `;
+    const dep1 = `export let x = 0; export const shape = 1; export function bump() { x++; }`;
+    // The same names at other places in the module's environment.
+    const dep2 = `export let w = "w"; export let x = 100; export const shape = 2; export function bump() { x++; }`;
+    const make = async (depSource: string) => {
+      const dep = new SourceTextModule(depSource, { identifier: "dep", context });
+      const importer = new SourceTextModule(importerSource, { identifier: "importer", context });
+      await importer.link(() => dep);
+      await importer.evaluate();
+      return importer.namespace as { read(): string; loop(n: number): string; bump(): void };
+    };
+    const a = await make(dep1);
+    const before = a.loop(20000);
+    const b = await make(dep1);
+    const c = await make(dep2);
+    const d = await make(dep2);
+    const e = await make(dep1);
+    b.bump();
+    c.bump();
+    c.bump();
+    d.bump();
+    d.bump();
+    d.bump();
+    expect([before, ...[a, b, c, d, e].map(m => m.loop(20000))]).toEqual([
+      "0,1,0",
+      "0,1,0",
+      "1,1,1",
+      "102,2,102",
+      "103,2,103",
+      "0,1,0",
+    ]);
+  },
+);
+
 // JSC decodes a code block's function bodies one at a time, the first time each body runs,
 // reading the cachedData payload through the Decoder until then. The three entry points
 // lent JSC a span over a temporary WTF::Vector copy of the caller's buffer that died with

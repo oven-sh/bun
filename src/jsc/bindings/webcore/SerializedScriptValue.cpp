@@ -4338,6 +4338,10 @@ size_t SerializedScriptValue::computeMemoryCost() const
 
 static void markObjectWithPrivateName(VM& vm, JSObject& object, const Identifier& privateName)
 {
+    // A WebAssembly GC struct/array has a Structure that never transitions, so putDirect would
+    // abort. It is already neither cloneable nor transferable. Node leaves it unmarked too.
+    if (object.type() == WebAssemblyGCObjectType)
+        return;
     if (object.getDirect(vm, privateName))
         return;
     object.putDirect(vm, privateName, jsBoolean(true), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);

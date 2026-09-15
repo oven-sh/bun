@@ -919,3 +919,383 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+// A TOML dotted header builds an object nested arbitrarily deep without
+// recursing in the parser, so the printer's recursion guard is the first thing
+// to hit it. The failed part used to join the incremental graph as empty code
+// (imports from it were silently undefined); debug builds crashed on an assert
+// in finalizeBundle instead.
+devTest("module that fails to print becomes a per-file error instead of an empty module", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import config from "./deep.toml";
+      console.log("value: " + config.d);
+    `,
+    "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+  },
+  async test(dev) {
+    const printError = "deep.toml: error: Maximum call stack size exceeded while generating code for this file";
+
+    await using c = await dev.client("/", {
+      errors: [printError],
+    });
+
+    // The dev server must survive the failed bundle and recover once the
+    // file becomes printable. `errors: null` skips the overlay check: the
+    // error page is being replaced by the reload at that moment.
+    await c.expectReload(async () => {
+      await dev.write("deep.toml", "d = 1\n", { dedent: false, errors: null });
+    });
+    await c.expectMessage("value: 1");
+
+    // Re-introduce the failure on an already-bundled file (hot update path).
+    // The loaded route reloads into the error page.
+    await c.expectReload(async () => {
+      await dev.write("deep.toml", "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 2\n", {
+        dedent: false,
+        errors: null,
+      });
+    });
+    // The client's reload triggered the re-bundle; this request settles with it.
+    const errorPage = await dev.fetch("/");
+    expect(errorPage.status).toBe(500);
+    expect(await errorPage.text()).toContain("Build Failed");
+    await c.expectErrorOverlay([printError]);
+
+    await c.expectReload(async () => {
+      await dev.write("deep.toml", "d = 3\n", { dedent: false, errors: null });
+    });
+    await c.expectMessage("value: 3");
+  },
+});
+devTest("server module that fails to print becomes a per-file error", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import config from "../deep.toml";
+      export default function (req, meta) {
+        return new Response("value: " + config.d);
+      }
+    `,
+    "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+  },
+  async test(dev) {
+    const errorPage = await dev.fetch("/");
+    expect(errorPage.status).toBe(500);
+    expect(await errorPage.text()).toContain("Build Failed");
+
+    await dev.write("deep.toml", "d = 1\n", { dedent: false });
+    await dev.fetch("/").equals("value: 1");
+  },
+});
+// Nested `:fullscreen` rules fan out into one copy of the body per vendor
+// prefix at every nesting level, tripping the CSS printer's expansion guard.
+// The failed chunk used to be registered as an empty stylesheet with no error.
+devTest("stylesheet that fails to print becomes a per-file error instead of an empty stylesheet", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["amp.css"],
+      body: "hello",
+    }),
+    "amp.css":
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n.visible { color: blue; }\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["amp.css: error: Failed to generate CSS for this file (PrintError)"],
+    });
+
+    // The dev server must survive the failed bundle and recover once the
+    // file becomes printable.
+    await c.expectReload(async () => {
+      await dev.write("amp.css", ".visible { color: blue; }\n", { dedent: false, errors: null });
+    });
+    await c.style(".visible").color.expect.toBe("#00f");
+  },
+});
+// Same as above, but the unprintable rules live in an `@import`ed child file.
+// The failure belongs to the chunk entry, yet editing the child must still
+// re-enqueue the chunk (the child needs its graph edge even in a failed build).
+devTest("editing an @imported stylesheet recovers a failed CSS print", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css":
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["main.css: error: Failed to generate CSS for this file (PrintError)"],
+    });
+
+    // Recovery must work by editing the child, not just the entry.
+    await c.expectReload(async () => {
+      await dev.write("child.css", ".visible { color: blue; }\n", { dedent: false, errors: null });
+    });
+    await c.style(".visible").color.expect.toBe("#00f");
+  },
+});
+// While a chunk is failed its entry has Unknown content; a hot update that
+// adjusts the chunk's edges used to recurse the css trace through it into a
+// CssChild and trip a debug assert, killing the dev server.
+devTest("adjusting @imports of a failed stylesheet keeps the dev server alive", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css": `.fine { color: red; }\n`,
+    "other.css": `.other { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".fine").color.expect.toBe("red");
+
+    // One bundle that both fails to print and adjusts the chunk's edges.
+    {
+      await using _batch = await dev.batchChanges({
+        errors: ["main.css: error: Failed to generate CSS for this file (PrintError)"],
+      });
+      await dev.write(
+        "child.css",
+        Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+          "\ncolor: red;\n" +
+          Buffer.alloc(30, "}").toString() +
+          "\n",
+        { dedent: false },
+      );
+      await dev.write("main.css", `@import "./child.css";\n@import "./other.css";\nbody { margin: 0; }\n`, {
+        dedent: false,
+      });
+    }
+
+    // The previously applied style stays active while the chunk is broken.
+    await c.style(".fine").color.expect.toBe("red");
+
+    // Fixing the child restyles the same page: both imports apply.
+    await dev.write("child.css", ".visible { color: blue; }\n", { dedent: false });
+    await c.style(".visible").color.expect.toBe("#00f");
+    await c.style(".other").color.expect.toBe("green");
+  },
+});
+// A stylesheet can be a chunk entry and also @imported by another linked
+// stylesheet; a print failure in it fails both chunks. Fixing the shared file
+// must re-enqueue the other failed root too, not just its own chunk.
+devTest("stylesheet both linked and @imported recovers both chunks on one edit", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css", "sub.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./sub.css";\n.main { color: red; }\n`,
+    "sub.css":
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        "main.css: error: Failed to generate CSS for this file (PrintError)",
+        "sub.css: error: Failed to generate CSS for this file (PrintError)",
+      ],
+    });
+    await c.expectReload(async () => {
+      await dev.write("sub.css", ".sub { color: blue; }\n", { dedent: false, errors: null });
+    });
+    await c.style(".sub").color.expect.toBe("#00f");
+    await c.style(".main").color.expect.toBe("red");
+  },
+});
+devTest("multiple unprintable @imports are each reported", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./child1.css";\n@import "./child2.css";\n`,
+    "child1.css":
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n",
+    "child2.css":
+      Array.from({ length: 30 }, (_, i) => `.y${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        "main.css: error: Failed to generate CSS for this file (PrintError)",
+        "main.css: error: Failed to generate CSS for this file (PrintError)",
+      ],
+    });
+
+    await c.expectReload(async () => {
+      await using _batch = await dev.batchChanges({ errors: null });
+      await dev.write("child1.css", ".a { color: red; }\n", { dedent: false });
+      await dev.write("child2.css", ".b { color: blue; }\n", { dedent: false });
+    });
+    await c.style(".a").color.expect.toBe("red");
+    await c.style(".b").color.expect.toBe("#00f");
+  },
+});
+// The route's failure flag is only reset by an HTTP request, so a client that
+// recovers purely over hot updates used to be stuck with a css list that
+// never retraced, dropping later stylesheet additions.
+devTest("css list updates after a failure recovered over hot updates", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      scripts: ["index.ts"],
+      body: "hello",
+    }),
+    "index.ts": `import.meta.hot.accept();\nimport "./a.css";\n`,
+    "main.css": `.base { color: red; }\n`,
+    "a.css": `.a { color: red; }\n`,
+    "b.css": `.b { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".a").color.expect.toBe("red");
+
+    // Break and fix a.css entirely over hot updates; no page request.
+    await dev.write(
+      "a.css",
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+        "\ncolor: red;\n" +
+        Buffer.alloc(30, "}").toString() +
+        "\n",
+      {
+        dedent: false,
+        errors: ["a.css: error: Failed to generate CSS for this file (PrintError)"],
+      },
+    );
+    await dev.write("a.css", ".a { color: blue; }\n", { dedent: false });
+    await c.style(".a").color.expect.toBe("#00f");
+
+    // A new stylesheet import must still reach the page.
+    await dev.write("index.ts", `import.meta.hot.accept();\nimport "./a.css";\nimport "./b.css";\n`, {
+      dedent: false,
+    });
+    await c.style(".b").color.expect.toBe("green");
+  },
+});
+// A failed js file keeps its import edges, and its css imports are chunk
+// roots; the css trace must keep walking through it or the route's css list
+// drops stylesheets that only it reaches.
+devTest("stylesheets imported through a failed js file stay active", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      scripts: ["index.ts"],
+      body: "hello",
+    }),
+    "index.ts": `import.meta.hot.accept();\nimport "./comp.ts";\n`,
+    "comp.ts": `import "./comp.css";\nexport const x = 1;\n`,
+    "comp.css": `.comp { color: red; }\n`,
+    "main.css": `.base { color: red; }\n`,
+    "b.css": `.b { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".comp").color.expect.toBe("red");
+
+    // One batch: parse error in comp.ts plus an edge adjustment, so the
+    // route's css list retraces while comp.ts is failed.
+    {
+      await using _batch = await dev.batchChanges({
+        errors: ["comp.ts:2:18: error: Unexpected ;"],
+      });
+      await dev.write("comp.ts", `import "./comp.css";\nexport const x = ;\n`, { dedent: false });
+      await dev.write("index.ts", `import.meta.hot.accept();\nimport "./comp.ts";\nimport "./b.css";\n`, {
+        dedent: false,
+      });
+    }
+    await c.style(".comp").color.expect.toBe("red");
+    await c.style(".b").color.expect.toBe("green");
+
+    // Recovery keeps both stylesheets.
+    await dev.write("comp.ts", `import "./comp.css";\nexport const x = 1;\n`, { dedent: false });
+    await c.style(".comp").color.expect.toBe("red");
+    await c.style(".b").color.expect.toBe("green");
+  },
+});
+// A parse-failed css root keeps its CssRoot content through insert_failure,
+// so an edge-adjusting retrace neither recurses into its css children (debug
+// assert) nor drops its slot from the route's css list.
+devTest("css parse error with an edge adjustment keeps the dev server alive", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      scripts: ["index.ts"],
+      body: "hello",
+    }),
+    "index.ts": `import.meta.hot.accept();\n`,
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css": `.fine { color: red; }\n`,
+    "b.css": `.b { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".fine").color.expect.toBe("red");
+    {
+      await using _batch = await dev.batchChanges({
+        errors: ["main.css:5:1: error: Unexpected end of input"],
+      });
+      await dev.write("main.css", `@import "./child.css";\nbody {\n color: red;\n background-color\n}\n`, {
+        dedent: false,
+      });
+      await dev.write("index.ts", `import.meta.hot.accept();\nimport "./b.css";\n`, { dedent: false });
+    }
+    await c.style(".fine").color.expect.toBe("red");
+    await c.style(".b").color.expect.toBe("green");
+    await dev.write("main.css", `@import "./child.css";\nbody { margin: 0; }\n`, { dedent: false });
+    await c.style(".fine").color.expect.toBe("red");
+  },
+});
+// The resolution-failure path routes through insert_stale before
+// insert_failure; it must preserve CssRoot content the same way so the
+// retrace neither recurses into css children nor drops the slot.
+devTest("css resolution error with an edge adjustment keeps the dev server alive", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      scripts: ["index.ts"],
+      body: "hello",
+    }),
+    "index.ts": `import.meta.hot.accept();\n`,
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css": `.fine { color: red; }\n`,
+    "b.css": `.b { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".fine").color.expect.toBe("red");
+    {
+      await using _batch = await dev.batchChanges({
+        errors: ['main.css:1:1: error: Could not resolve: "./missing.css"'],
+      });
+      await dev.write("main.css", `@import "./missing.css";\nbody { margin: 0; }\n`, { dedent: false });
+      await dev.write("index.ts", `import.meta.hot.accept();\nimport "./b.css";\n`, { dedent: false });
+    }
+    await c.style(".b").color.expect.toBe("green");
+    await dev.write("main.css", `@import "./child.css";\nbody { margin: 0; }\n`, { dedent: false });
+    await c.style(".fine").color.expect.toBe("red");
+  },
+});

@@ -2384,11 +2384,13 @@ pub mod parse_worker {
         // disjoint `options` field — never the whole struct — so the raw `resolver`
         // pointer (which targets `(*transpiler).resolver`) remains valid.
         let topts = unsafe { &(*transpiler).options };
-        let use_directive: UseDirective = if !is_empty && topts.server_components {
-            UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
-        } else {
-            UseDirective::None
-        };
+        // A text, JSON or markdown file can start with the same bytes as a directive.
+        let use_directive: UseDirective =
+            if !is_empty && topts.server_components && loader.is_javascript_like() {
+                UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
+            } else {
+                UseDirective::None
+            };
 
         if (use_directive == UseDirective::Client
         && task.known_target != options::Target::ServerComponentsSsr
@@ -2668,10 +2670,7 @@ pub mod parse_worker {
         let _ = topts;
         let ast_result: core::result::Result<JSAst, AnyError> =
             if use_directive == UseDirective::Server {
-                // No graph can bundle this module yet: the server needs each export wrapped
-                // in the framework's register call, and the browser needs stubs that call the
-                // server in place of the module's code. Every later step that handles
-                // `UseDirective::Server` is a `todo_panic!`.
+                // Every later step that handles `UseDirective::Server` is a `todo_panic!`.
                 log.add_range_error(
                     Some(source),
                     UseDirective::range(entry_contents),

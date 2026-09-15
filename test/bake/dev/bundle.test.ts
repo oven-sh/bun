@@ -514,6 +514,88 @@ devTest('a "use server" module with no exports is a build error', {
     await using c = await dev.client("/", { errors: [useServerError("setup.ts")] });
   },
 });
+// The browser graph and the SSR graph bundle what a client component imports.
+// Neither has the stubs that would call the server in place of the module.
+devTest('a "use server" module imported by a client component is a build error', {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "actions.ts": `
+      "use server";
+      export async function save() {
+        return "saved";
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      import { save } from '../actions';
+      export function Button() {
+        return save;
+      }
+    `,
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      export default function (req, meta) {
+        return new Response('page: ' + (typeof Comp.Button));
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      // One entry for each graph that bundles the module.
+      await using c = await dev.client("/", {
+        errors: [useServerError("actions.ts"), useServerError("actions.ts")],
+      });
+    }
+
+    await dev.write(
+      "actions.ts",
+      `
+        export async function save() {
+          return "saved";
+        }
+      `,
+    );
+    await dev.fetch("/").equals("page: object");
+  },
+});
+// Every loader got the scan for a use directive. A text file that starts with
+// the same bytes hit the "use server" abort, or became a client component
+// reference for "use client".
+devTest("a file that is not JavaScript does not carry a use directive", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "actions.ts": `"use server"; export async function save() {}`,
+    "server-note.txt": `"use server" marks the exports of a module as server actions.`,
+    "client-note.txt": `"use client" marks a module as a client component.`,
+    "routes/index.ts": `
+      import source from '../actions.ts' with { type: 'text' };
+      import serverNote from '../server-note.txt';
+      import clientNote from '../client-note.txt';
+      export default function (req, meta) {
+        return new Response(JSON.stringify({ source, serverNote, clientNote }));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({
+      source: `"use server"; export async function save() {}`,
+      serverNote: `"use server" marks the exports of a module as server actions.`,
+      clientNote: `"use client" marks a module as a client component.`,
+    });
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

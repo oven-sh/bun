@@ -1368,28 +1368,35 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
-  // Node tears the addon envs down with can_call_into_js() false at a natural
-  // exit of the main thread or of a Worker: cleanup hooks, the finalizers of
-  // live wraps and the instance data finalizer all run there, and every
-  // NAPI_PREAMBLE call is refused with napi_cannot_run_js (23, NAPI_VERSION
-  // >= 10) or napi_pending_exception (10, older). The JS callback never runs.
-  // Ungated calls (value constructors, napi_get_instance_data, napi_create_error)
-  // keep working. See #42793.
+  // Node tears the addon envs down with can_call_into_js() false, at a natural
+  // exit of the main thread or of a Worker and at worker.terminate(): cleanup
+  // hooks, the finalizers of live wraps and the instance data finalizer all run
+  // there, and every NAPI_PREAMBLE call is refused with napi_cannot_run_js (23,
+  // NAPI_VERSION >= 10) or napi_pending_exception (10, older). The JS callback
+  // never runs. Ungated calls (value constructors, napi_get_instance_data,
+  // napi_create_error) keep working. See #42793.
   describe.each([
     [10, 23],
     [8, 10],
   ])("env teardown refuses calls into JS (NAPI_VERSION=%d)", (version, status) => {
-    it.each(["the main thread", "a worker"])("like Node when %s exits", async thread => {
+    it.each(["the main thread exits", "a worker exits", "a worker is terminated"])("like Node when %s", async how => {
       const setup = `
         const addon = require(${JSON.stringify(
           join(__dirname, `napi-app/build/Debug/test_env_teardown_cannot_call_js_v${version}.node`),
         )});
         globalThis.keep = addon.setup(() => { console.log("JS ran at teardown"); throw new Error("from js"); });
       `;
-      const code =
-        thread === "a worker"
-          ? `new (require("worker_threads").Worker)(${JSON.stringify(setup)}, { eval: true });`
-          : setup;
+      const code = {
+        "the main thread exits": setup,
+        "a worker exits": `new (require("worker_threads").Worker)(${JSON.stringify(setup)}, { eval: true });`,
+        "a worker is terminated": `
+          const { Worker } = require("worker_threads");
+          const worker = new Worker(${JSON.stringify(
+            setup + `require("worker_threads").parentPort.postMessage("ready"); setInterval(() => {}, 1000);`,
+          )}, { eval: true });
+          worker.on("message", () => worker.terminate());
+        `,
+      }[how];
       const run = async (exe: string) => {
         await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

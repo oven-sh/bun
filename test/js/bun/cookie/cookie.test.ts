@@ -99,6 +99,98 @@ describe("Bun.Cookie validation tests", () => {
   });
 });
 
+describe("Bun.Cookie.parse Expires (RFC 6265bis §5.1.1 cookie-date)", () => {
+  // The cookie-date algorithm diverges from a general HTTP-date parser on four
+  // observable axes: two-digit-year cutoff, timezone handling, range limits, and
+  // token-order independence. Browsers run §5.1.1, so we must too.
+  const parseExpires = (d: string) => Bun.Cookie.parse("a=v; Expires=" + d).expires?.toISOString();
+
+  test("two-digit years use the 0-69 => 20xx, 70-99 => 19xx rule", () => {
+    expect(parseExpires("21 Oct 65 07:28:00 GMT")).toBe("2065-10-21T07:28:00.000Z");
+    expect(parseExpires("21 Oct 69 07:28:00 GMT")).toBe("2069-10-21T07:28:00.000Z");
+    expect(parseExpires("21 Oct 70 07:28:00 GMT")).toBe("1970-10-21T07:28:00.000Z");
+    expect(parseExpires("21 Oct 99 07:28:00 GMT")).toBe("1999-10-21T07:28:00.000Z");
+    // A cookie 39 years in the future must not be reported as already expired.
+    expect(Bun.Cookie.parse("a=v; Expires=21 Oct 65 07:28:00 GMT").isExpired()).toBe(false);
+  });
+
+  test("timezone tokens are ignored, not honored and not fatal", () => {
+    const want = "2015-10-21T07:28:00.000Z";
+    expect(parseExpires("21 Oct 2015 07:28:00 EST")).toBe(want);
+    expect(parseExpires("21 Oct 2015 07:28:00 PST")).toBe(want);
+    expect(parseExpires("21 Oct 2015 07:28:00 CET")).toBe(want);
+    expect(parseExpires("21 Oct 2015 07:28:00 JST")).toBe(want);
+    expect(parseExpires("21 Oct 2015 07:28:00 Z")).toBe(want);
+    expect(parseExpires("21 Oct 2015 07:28:00 +0500")).toBe(want);
+    expect(parseExpires("21 Oct 2015 07:28:00 -0800")).toBe(want);
+  });
+
+  test("years below 1601 are rejected", () => {
+    expect(parseExpires("21 Oct 1600 07:28:00 GMT")).toBeUndefined();
+    expect(parseExpires("21 Oct 1601 07:28:00 GMT")).toBe("1601-10-21T07:28:00.000Z");
+    // 3-digit years stay as-is (no +1900/+2000) and are then rejected by the 1601 floor.
+    expect(parseExpires("21 Oct 100 07:28:00 GMT")).toBeUndefined();
+  });
+
+  test("time must be H:M:S; H:M is not a cookie-date", () => {
+    expect(parseExpires("21 Oct 2015 07:28 GMT")).toBeUndefined();
+    expect(parseExpires("21 Oct 2015 07:28:00 GMT")).toBe("2015-10-21T07:28:00.000Z");
+    expect(parseExpires("21 Oct 2015 7:8:9 GMT")).toBe("2015-10-21T07:08:09.000Z");
+  });
+
+  test("tokens may appear in any order", () => {
+    const want = "2015-10-21T07:28:00.000Z";
+    expect(parseExpires("07:28:00 21 Oct 2015")).toBe(want);
+    expect(parseExpires("2015 Oct 21 07:28:00")).toBe(want);
+    expect(parseExpires("Oct 21 07:28:00 2015")).toBe(want);
+  });
+
+  test("canonical Set-Cookie date formats still parse", () => {
+    const want = "2025-10-21T07:28:00.000Z";
+    expect(parseExpires("Tue, 21 Oct 2025 07:28:00 GMT")).toBe(want);
+    expect(parseExpires("Tue, 21-Oct-2025 07:28:00 GMT")).toBe(want);
+    expect(parseExpires("Tue Oct 21 07:28:00 2025")).toBe(want);
+  });
+
+  test("out-of-range components are rejected", () => {
+    expect(parseExpires("21 Oct 2015 24:00:00 GMT")).toBeUndefined();
+    expect(parseExpires("21 Oct 2015 07:60:00 GMT")).toBeUndefined();
+    expect(parseExpires("21 Oct 2015 07:28:60 GMT")).toBeUndefined();
+    expect(parseExpires("32 Oct 2015 07:28:00 GMT")).toBeUndefined();
+    expect(parseExpires("0 Oct 2015 07:28:00 GMT")).toBeUndefined();
+  });
+
+  test("non-existent calendar dates are rejected (§5.1.1 step 6)", () => {
+    expect(parseExpires("31 Feb 2025 07:28:00 GMT")).toBeUndefined();
+    expect(parseExpires("31 Apr 2025 07:28:00 GMT")).toBeUndefined();
+    expect(parseExpires("29 Feb 2023 07:28:00 GMT")).toBeUndefined();
+    expect(parseExpires("29 Feb 2024 07:28:00 GMT")).toBe("2024-02-29T07:28:00.000Z");
+  });
+
+  test("round-trips its own serialized Expires", () => {
+    const date = new Date(Date.UTC(2031, 5, 9, 4, 5, 6));
+    const header = new Bun.Cookie("a", "b", { expires: date }).toString();
+    expect(Bun.Cookie.parse(header).expires?.toISOString()).toBe(date.toISOString());
+  });
+
+  test("constructor / setter string path agrees with parse", () => {
+    // The JS-API string path (new Bun.Cookie({ expires: str }) / cookie.expires = str)
+    // applies the same cookie-date algorithm, then falls back to the general
+    // HTTP-date parser for inputs §5.1.1 rejects.
+    const viaCtor = (d: string) => new Bun.Cookie("a", "v", { expires: d }).expires?.toISOString();
+    expect(viaCtor("21 Oct 65 07:28:00 GMT")).toBe("2065-10-21T07:28:00.000Z");
+    expect(viaCtor("21 Oct 2015 07:28:00 CET")).toBe("2015-10-21T07:28:00.000Z");
+    expect(viaCtor("21 Oct 2015 07:28:00 +0500")).toBe("2015-10-21T07:28:00.000Z");
+    // §5.1.1 rejects HH:MM without seconds; the fallback keeps accepting it (GMT so TZ-stable).
+    expect(viaCtor("Wed, 21 Oct 2015 07:28 GMT")).toBe("2015-10-21T07:28:00.000Z");
+    expect(() => new Bun.Cookie("a", "v", { expires: "tomorrow" })).toThrow("Invalid cookie expiration date");
+
+    const cookie = new Bun.Cookie("a", "v");
+    cookie.expires = "21 Oct 65 07:28:00 GMT";
+    expect(cookie.expires?.toISOString()).toBe("2065-10-21T07:28:00.000Z");
+  });
+});
+
 describe("Expires serialization", () => {
   // RFC 6265 expects an IMF-fixdate: "Wdy, DD Mon YYYY HH:MM:SS GMT".
   // Date.prototype.toUTCString() produces exactly that, so the two must agree.

@@ -31,8 +31,8 @@ impl ManagedTask {
         // exit on both the Ok and Err paths.
         let this = unsafe { bun_core::heap::take(this) };
         let callback = this.callback;
-        let ctx = this.ctx;
-        callback(ctx.unwrap().as_ptr())
+        // (A task with no userdata is made with a null `ctx`.)
+        callback(this.ctx.map_or(core::ptr::null_mut(), NonNull::as_ptr))
     }
 
     /// Free without running: the owned context (if `new_owned`) is dropped.

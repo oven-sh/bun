@@ -1235,38 +1235,55 @@ JSValue fetchESMSourceCodeAsync(
 
 using namespace Bun;
 
-// See `MacroModuleQueue` in VirtualMachine.rs. `innermost` is the macro queue the caller is nested in, or null.
-extern "C" JSC::VM::SynchronousModuleQueue* Bun__MacroModuleQueue__push(JSC::VM* vm, JSC::VM::SynchronousModuleQueue* innermost)
+void Bun::requeueSynchronousModuleQueueAsMicrotasks(JSC::JSGlobalObject* globalObject, JSC::VM::SynchronousModuleQueue& queue)
 {
-    auto* current = vm->m_synchronousModuleQueue;
-    if (!current || current == innermost)
-        return nullptr;
-    auto* queue = new JSC::VM::SynchronousModuleQueue;
-    queue->prev = current; // VM::visitAggregateImpl marks what the require() parked through this link.
-    vm->m_synchronousModuleQueue = queue;
-    return queue;
+    auto& vm = JSC::getVM(globalObject);
+    for (auto& task : queue.tasks)
+        globalObject->queueMicrotask(vm, task.task, task.payload, task.arg0, task.arg1, task.arg2, task.arg3);
+    queue.tasks.shrink(0);
 }
 
-// Hands the reactions parked in `queue` to the microtask queue, where they go when nothing diverts them.
-extern "C" bool Bun__MacroModuleQueue__flush(Zig::GlobalObject* globalObject, JSC::VM::SynchronousModuleQueue* queue)
+namespace Bun {
+// A queue on the vm.m_synchronousModuleQueue chain for an asynchronous module load that has to finish inside a require() of an ES module (a macro's own module), not for that require().
+struct NestedModuleQueue {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NestedModuleQueue);
+
+public:
+    JSC::VM::SynchronousModuleQueue queue;
+    JSC::VM::SynchronousModuleQueue* outer { nullptr };
+};
+}
+
+extern "C" NestedModuleQueue* Bun__NestedModuleQueue__push(JSC::VM* vm)
 {
-    auto& tasks = queue->tasks;
-    if (tasks.isEmpty())
+    auto* current = vm->m_synchronousModuleQueue;
+    auto* clientData = WebCore::clientData(*vm);
+    if (!current || current == clientData->nestedModuleQueue)
+        return nullptr;
+    auto* nested = new NestedModuleQueue;
+    nested->queue.prev = current; // VM::visitAggregateImpl marks what the require() parked through this link.
+    nested->outer = std::exchange(clientData->nestedModuleQueue, &nested->queue);
+    vm->m_synchronousModuleQueue = &nested->queue;
+    return nested;
+}
+
+extern "C" bool Bun__NestedModuleQueue__flush(Zig::GlobalObject* globalObject)
+{
+    auto* queue = WebCore::clientData(JSC::getVM(globalObject))->nestedModuleQueue;
+    if (!queue || queue->tasks.isEmpty())
         return false;
-    auto& vm = JSC::getVM(globalObject);
-    for (auto& task : tasks)
-        globalObject->queueMicrotask(vm, task.task, task.payload, task.arg0, task.arg1, task.arg2, task.arg3);
-    tasks.shrink(0);
+    Bun::requeueSynchronousModuleQueueAsMicrotasks(globalObject, *queue);
     return true;
 }
 
-// What the macro leaves parked goes to the require()'s queue, where it would have gone without `queue`.
-extern "C" void Bun__MacroModuleQueue__pop(JSC::VM* vm, JSC::VM::SynchronousModuleQueue* queue)
+// What is still parked goes to the require()'s queue, where it would have gone without the nested one.
+extern "C" void Bun__NestedModuleQueue__pop(JSC::VM* vm, NestedModuleQueue* nested)
 {
-    ASSERT(vm->m_synchronousModuleQueue == queue);
-    queue->prev->tasks.appendVector(queue->tasks);
-    vm->m_synchronousModuleQueue = queue->prev;
-    delete queue;
+    ASSERT(vm->m_synchronousModuleQueue == &nested->queue);
+    nested->queue.prev->tasks.appendVector(nested->queue.tasks);
+    vm->m_synchronousModuleQueue = nested->queue.prev;
+    WebCore::clientData(*vm)->nestedModuleQueue = nested->outer;
+    delete nested;
 }
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

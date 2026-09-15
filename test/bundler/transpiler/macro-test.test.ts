@@ -553,10 +553,34 @@ describe("a macro that runs beneath require() of an ES module", () => {
     expect({ lines, exitCode }).toEqual({ lines: [""], exitCode: 1 });
   });
 
+  // What the macro started and did not await is still parked when the macro returns. It moves to the
+  // require()'s queue, so the import() completes. Where its output lands relative to the program's is
+  // not fixed.
+  test("a macro that starts an import() and does not await it", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "side.ts": `console.log("side evaluated");\nexport {};\n`,
+      "m.ts": [
+        `export function value() {`,
+        `  import("./side.ts").then(() => console.log("side loaded"));`,
+        `  return "from-macro";`,
+        `}`,
+      ].join("\n"),
+      "with-macro.ts": withMacro,
+      "importer.ts": `import { inlined } from "./with-macro.ts";\nexport const seen = inlined + "!";\n`,
+      "index.ts": index,
+    });
+    expect({ lines: lines.sort(), stderr }).toEqual({
+      lines: ["from-macro!", "side evaluated", "side loaded"],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // importer.ts has started to load shared.ts and node:path when the macro's module asks for them, so
   // the macro's load completes them, and importer.ts's own continuation for each runs inside the
   // macro's wait, while JSModuleLoader::innerModuleLoading still iterates importer.ts's requests up
-  // the stack. A debug-only assertion in that loop's bookkeeping does not expect that.
+  // the stack. A debug-only assertion in that loop's bookkeeping does not expect that
+  // (oven-sh/WebKit#363 and oven-sh/WebKit#396 remove it).
   test.todoIf(isDebug || isASAN)("with modules that the require() already started to load", async () => {
     const { lines, stderr, exitCode } = await run({
       "shared.ts": `globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;\nexport const shared = "shared";\n`,
@@ -577,6 +601,40 @@ describe("a macro that runs beneath require() of an ES module", () => {
       "index.ts": index,
     });
     expect({ lines, stderr }).toEqual({ lines: ["shared-string shared string 1"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The macro's entry module loads the macro's file with import(). When the require()'s graph already
+  // holds that file, the import() waits on the file's own fetch or load promise. Only the require()'s
+  // queue can settle that promise, so the macro's wait still spins. 1.3.13 runs both shapes.
+  test.todo("with the macro's file imported earlier by the same module", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": macro + `export const helper = "helper";\n`,
+      "with-macro.ts": withMacro,
+      "importer.ts": [
+        `import { helper } from "./m.ts";`,
+        `import { inlined } from "./with-macro.ts";`,
+        `export const seen = inlined + "!" + helper;`,
+      ].join("\n"),
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["from-macro!helper"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.todo("with the macro's file imported earlier by an ancestor", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": macro + `export const helper = "helper";\n`,
+      "with-macro.ts": withMacro,
+      "child.ts": `import { inlined } from "./with-macro.ts";\nexport const child = inlined + "!";\n`,
+      "importer.ts": [
+        `import { helper } from "./m.ts";`,
+        `import { child } from "./child.ts";`,
+        `export const seen = child + helper;`,
+      ].join("\n"),
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["from-macro!helper"], stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

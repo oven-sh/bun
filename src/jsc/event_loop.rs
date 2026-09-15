@@ -1121,9 +1121,9 @@ impl EventLoop {
                 return Err(jsc::Stopped);
             }
             self.tick();
-            // What a macro's module load parked is work for the next tick, not something to poll for.
+            // What a nested module load parked is work for the next tick, not something to poll for.
             if promise.status() == PromiseStatus::Pending
-                && !self.vm_ref().flush_macro_module_queue()
+                && !self.vm_ref().flush_nested_module_queue()
             {
                 self.auto_tick();
             }

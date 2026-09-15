@@ -283,6 +283,9 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
+    // The innermost queue that Bun__NestedModuleQueue__push (ModuleLoader.cpp) put on vm.m_synchronousModuleQueue, or null.
+    JSC::VM::SynchronousModuleQueue* nestedModuleQueue { nullptr };
+
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);
 

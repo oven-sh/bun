@@ -521,7 +521,11 @@ impl<T: JsSinkType> JSSink<T> {
                 .to_js(global));
         }
 
-        if !arg.is_string() {
+        // `is_string` is string-like: it admits a `String` object, whose
+        // `to_js_string_view` below runs user JS (`Symbol.toPrimitive`). That
+        // JS can `close()` this sink, which frees it, and the write then reads
+        // freed memory. Accept a primitive string only, which never runs JS.
+        if !arg.is_string_literal() {
             return Err(global.throw_value(global.to_type_error(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),

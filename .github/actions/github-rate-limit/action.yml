@@ -1,0 +1,66 @@
+name: GitHub API rate limit
+description: "Check the remaining GitHub API quota before a release job, or report how much the job used after it."
+
+inputs:
+  mode:
+    description: "'check' records the remaining quota and fails when it is below 'floor'; 'report' prints the calls used since 'check'."
+    required: true
+  floor:
+    description: "Minimum remaining API calls 'check' requires before letting the job proceed."
+    default: "200"
+    required: false
+  token:
+    description: "Token whose quota is checked."
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: GitHub API quota (${{ inputs.mode }})
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        MODE: ${{ inputs.mode }}
+        FLOOR: ${{ inputs.floor }}
+      # The rate_limit endpoint itself does not count against the quota.
+      run: |
+        # Inputs are validated before the API read so a misconfigured step
+        # fails loudly instead of riding the cannot-read-quota warning path.
+        if [[ "$MODE" != "check" && "$MODE" != "report" ]]; then
+          echo "error: Unknown mode: $MODE"
+          exit 1
+        fi
+        if ! [[ "$FLOOR" =~ ^[0-9]+$ ]]; then
+          echo "error: floor must be a non-negative integer, got: $FLOOR"
+          exit 1
+        fi
+        remaining="$(gh api rate_limit --jq '.resources.core.remaining' 2> /dev/null || true)"
+        if ! [[ "$remaining" =~ ^[0-9]+$ ]]; then
+          echo "warning: Cannot read GitHub API rate limit, skipping quota $MODE"
+          exit 0
+        fi
+        case "$MODE" in
+          check)
+            echo "GitHub API quota remaining before this job: $remaining"
+            echo "GITHUB_QUOTA_BEFORE=$remaining" >> "$GITHUB_ENV"
+            if [ "$remaining" -lt "$FLOOR" ]; then
+              echo "error: GitHub API quota is too low to complete this job (remaining: $remaining, required: $FLOOR)"
+              reset="$(gh api rate_limit --jq '.resources.core.reset' 2> /dev/null || true)"
+              if [[ "$reset" =~ ^[0-9]+$ ]]; then
+                echo "error: Quota resets in $((reset - $(date +%s))) seconds"
+              fi
+              exit 1
+            fi
+            ;;
+          report)
+            if [[ "${GITHUB_QUOTA_BEFORE:-}" =~ ^[0-9]+$ ]]; then
+              if [ "$remaining" -le "$GITHUB_QUOTA_BEFORE" ]; then
+                echo "GitHub API calls used by this job: $((GITHUB_QUOTA_BEFORE - remaining)) (remaining: $remaining)"
+              else
+                echo "GitHub API quota remaining after this job: $remaining (quota window reset mid-job)"
+              fi
+            else
+              echo "GitHub API quota remaining after this job: $remaining"
+            fi
+            ;;
+        esac

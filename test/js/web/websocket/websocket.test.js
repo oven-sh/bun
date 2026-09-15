@@ -1172,3 +1172,55 @@ it("terminate() on a wss:// socket whose peer never answers close_notify still f
     worker.terminate();
   }
 });
+
+// WebSocketOptions declares `protocols?: string | string[]` and `protocol?: string`.
+// Both are sent as Sec-WebSocket-Protocol, the same as the positional argument.
+describe.concurrent("WebSocket subprotocol options", () => {
+  async function requestedProtocol(options) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        resolve(req.headers.get("sec-websocket-protocol"));
+        server.upgrade(req);
+      },
+      websocket: {
+        open(ws) {
+          ws.close();
+        },
+        message() {},
+      },
+    });
+    const ws = new WebSocket(`ws://${server.hostname}:${server.port}`, options);
+    const closed = Promise.withResolvers();
+    ws.onerror = event => reject(event.error ?? new Error(event.message));
+    ws.onclose = event => {
+      reject(new Error(`closed before the upgrade request arrived: ${event.code}`));
+      closed.resolve();
+    };
+    const header = await promise;
+    await closed.promise;
+    return header;
+  }
+
+  it.each([
+    ["positional string", "chat", "chat"],
+    ["positional array", ["chat", "v2"], "chat, v2"],
+    ["protocols string", { protocols: "chat" }, "chat"],
+    ["protocols array", { protocols: ["chat", "v2"] }, "chat, v2"],
+    ["protocol string", { protocol: "chat" }, "chat"],
+    ["protocols wins over protocol", { protocols: ["a"], protocol: "b" }, "a"],
+    ["protocol when protocols is undefined", { protocols: undefined, protocol: "b" }, "b"],
+    ["protocol when protocols is null", { protocols: null, protocol: "b" }, "b"],
+    ["no protocol", {}, null],
+    ["protocols null", { protocols: null }, null],
+  ])("%s", async (_, options, expected) => {
+    expect(await requestedProtocol(options)).toBe(expected);
+  });
+
+  it("rejects an invalid protocol token in the options object", () => {
+    expect(() => new WebSocket("ws://localhost:1", { protocols: "bad token" })).toThrow(SyntaxError);
+    expect(() => new WebSocket("ws://localhost:1", { protocol: "bad token" })).toThrow(SyntaxError);
+    expect(() => new WebSocket("ws://localhost:1", { protocols: ["a", "a"] })).toThrow(SyntaxError);
+  });
+});

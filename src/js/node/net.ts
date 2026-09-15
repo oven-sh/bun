@@ -4332,7 +4332,12 @@ function closeSocketHandle(self, isException, isCleanupPending = false) {
   const handle = self._handle;
   $debug("closeSocketHandle", isException, isCleanupPending, !!handle);
   if (handle) {
-    handle.close(onSocketHandleClosed);
+    if (handle instanceof Duplex) {
+      // A client-side TLSSocket wrap holds the stream it wraps as its handle until connect() upgrades it.
+      handle.destroy();
+    } else {
+      handle.close(onSocketHandleClosed);
+    }
     setImmediate(() => {
       $debug("emit close", isCleanupPending);
       self.emit("close", isException);

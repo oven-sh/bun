@@ -208,6 +208,7 @@ it("should be able to grab the JSStreamSocket constructor", () => {
   expect(socket._handle._parentWrap).not.toBeNull();
   //@ts-ignore
   expect(socket._handle._parentWrap.constructor).toBeFunction();
+  socket.destroy();
 });
 for (const { name, connect } of tests) {
   describe(name, () => {
@@ -1356,14 +1357,13 @@ it("TLSSocket._requestCert follows Node's _init rule", () => {
   // Clients always request the peer certificate; servers only when asked.
   // Must be decided in the constructor, before a server wrap starts its
   // upgrade: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L845-L848
-  // Like the JSStreamSocket test above, the detached wrappers are not
-  // destroyed: tearing down a never-connected duplex wrap is its own quirk.
   const cases = [
     new TLSSocket(new stream.PassThrough()), // client
     new TLSSocket(new stream.PassThrough(), { isServer: true }),
     new TLSSocket(new stream.PassThrough(), { isServer: true, requestCert: true }),
   ];
   expect(cases.map(s => (s as any)._requestCert)).toEqual([true, false, true]);
+  for (const s of cases) s.destroy();
 });
 
 it("socket.ssl is assignable like Node's plain own property", async () => {
@@ -1952,9 +1952,9 @@ describe.each([
   ["bun", bunExe()],
   ["node", nodeExe()],
 ])("end() and destroySoon() before the handshake completes (%s)", (_runtime, exe) => {
-  async function run(mode: string) {
+  async function run(...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [exe!, join(import.meta.dir, "tls-shutdown-before-handshake-fixture.mjs"), mode],
+      cmd: [exe!, join(import.meta.dir, "tls-shutdown-before-handshake-fixture.mjs"), ...args],
       env: { ...bunEnv, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
       stdout: "pipe",
       stderr: "pipe",
@@ -1990,6 +1990,71 @@ describe.each([
     expect(await run("server-end")).toEqual({
       log: ["end secureConnecting=true", "finish"],
       clientSawFin: true,
+    });
+  });
+
+  // new tls.TLSSocket(stream) without isServer: nothing starts a handshake on
+  // it, and until connect() upgrades it the wrapped stream stands in for the
+  // native handle. Node shuts that stream down, a net.Socket once it is connected:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L155-L160
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+  describe.concurrent.each([
+    ["a connected net.Socket", "connected", [], true],
+    ["a net.Socket that is still connecting", "connecting", ["transport connect"], true],
+    ["a net.Socket that connects later", "unconnected", ["transport connect"], true],
+    ["a Duplex", "duplex", ["transport final"], false],
+    ["a Duplex that has a close(code, callback) of its own", "duplex-with-close", ["transport final"], false],
+  ])("a client-side wrap of %s", (_name, transport, before, peerSawFin) => {
+    it.skipIf(!exe)("end(), destroySoon() and destroy() shut the stream down", async () => {
+      expect(await run("wrap", transport)).toEqual({
+        end: {
+          log: [...before, "finish"],
+          peerSawFin,
+          writableFinished: true,
+          readyState: "readOnly",
+          destroyed: false,
+          transportDestroyed: false,
+        },
+        destroySoon: {
+          log: [...before, "finish", "close"],
+          peerSawFin,
+          writableFinished: true,
+          readyState: "closed",
+          destroyed: true,
+          transportDestroyed: true,
+        },
+        destroy: {
+          log: ["close"],
+          peerSawFin: false,
+          writableFinished: false,
+          readyState: "closed",
+          destroyed: true,
+          transportDestroyed: true,
+        },
+      });
+    });
+  });
+
+  // The wrap closes when the stream under it does:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+  describe.concurrent("a client-side wrap whose stream closes under it", () => {
+    const closed = { readyState: "closed", destroyed: true, transportDestroyed: true };
+
+    it.skipIf(!exe)("a peer that closes on the FIN closes the wrap after end()", async () => {
+      expect(await run("wrap", "peer-closes")).toEqual({
+        end: { log: ["finish", "close"], peerSawFin: true, writableFinished: true, ...closed },
+        destroySoon: { log: ["finish", "close"], peerSawFin: true, writableFinished: true, ...closed },
+        destroy: { log: ["close"], peerSawFin: false, writableFinished: false, ...closed },
+      });
+    });
+
+    it.skipIf(!exe)("a refused connection closes a wrap whose end() waits for 'connect'", async () => {
+      const refused = ["transport error:ECONNREFUSED", "close"];
+      expect(await run("wrap", "refused")).toEqual({
+        end: { log: refused, peerSawFin: false, writableFinished: false, ...closed },
+        destroySoon: { log: refused, peerSawFin: false, writableFinished: false, ...closed },
+        destroy: { log: ["close"], peerSawFin: false, writableFinished: false, ...closed },
+      });
     });
   });
 });

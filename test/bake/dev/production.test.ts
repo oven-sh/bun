@@ -368,7 +368,7 @@ export default function Docs() {
   });
 
   // The bundler has no transform for these modules yet. The build used to abort
-  // ("TODO: registerServerReference") instead of reporting the file.
+  // in the parser instead of reporting the file.
   test('a "use server" module is a build error', async () => {
     using dir = tempDir("bake-production-use-server", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

@@ -413,8 +413,9 @@ devTest("removing 'use client' from a component with a pending resolution failur
   },
 });
 // The bundler has no transform for a module that starts with "use server".
-// Bundling one used to abort the process ("TODO: registerServerReference" on a
-// bundler thread), so saving a server-action file took down every route.
+// Bundling one used to abort the process from a bundler thread (the parser
+// panics on `registerServerReference`), so saving a server-action file took
+// down every route.
 const useServerError = (file: string) => `${file}:1:1: error: "use server" is not supported yet`;
 devTest('saving a "use server" module is a build error', {
   framework: minimalFramework,
@@ -488,8 +489,7 @@ devTest('a "use server" module that exists at startup is a build error', {
   },
 });
 // With a separate SSR graph, a "use server" module with nothing to wrap got
-// past the parser and aborted on the bundler's main thread instead
-// ('TODO: "use server"').
+// past the parser and aborted on the bundler's main thread instead.
 devTest('a "use server" module with no exports is a build error', {
   framework: {
     ...minimalFramework,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
@@ -4258,6 +4258,58 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "m user" },
+  });
+
+  // A source that is not UTF-8 is read as Node.js reads it (U+FFFD); its raw bytes must not reach the output.
+  const latin1 = (s: string) => Buffer.from(s, "latin1");
+  // Stray bytes (\xA9, \xFB), leads with no continuation (\xE9, \xE2\x82), an encoded surrogate (\xED\xA0\x80).
+  const notUtf8Source = latin1(
+    [
+      "#!/usr/bin/env node caf\xE9",
+      "/*! (c) Soci\xE9t\xE9 */",
+      "//! licence \xA9",
+      "globalThis.raw = String.raw`w\xA9`;",
+      "console.log(JSON.stringify([",
+      '  "s\xA9 caf\xE9", `t\xFB caf\xE9`, { "k\xA9": 1 }, "p\xE2\x82q", "s\xED\xA0\x80",',
+      '  /^r\xA9$/.test("r\\uFFFD"), /^r\xA9$/.test("r\\u00A9"),',
+      "]));",
+      "",
+    ].join("\n"),
+  );
+  for (const target of ["node", "bun", "browser"] as const) {
+    for (const minify of [false, true]) {
+      itBundled(`edgecase/SourceFileNotUtf8/${target}${minify ? "/minify" : ""}`, {
+        target,
+        minifyWhitespace: minify,
+        minifyIdentifiers: minify,
+        minifySyntax: minify,
+        sourceMap: "external",
+        files: {
+          "/entry.js": notUtf8Source,
+        },
+        onAfterBundle(api) {
+          const strict = new TextDecoder("utf-8", { fatal: true });
+          const text = strict.decode(readFileSync(api.outfile));
+          expect(text).toStartWith("#!/usr/bin/env node caf\uFFFD\n");
+          expect(text).toContain("/*! (c) Soci\uFFFDt\uFFFD */");
+          expect(text).toContain("//! licence \uFFFD\n");
+          const map = JSON.parse(strict.decode(readFileSync(api.outfile + ".map")));
+          expect(map.sourcesContent).toEqual([new TextDecoder().decode(notUtf8Source)]);
+        },
+        run: {
+          stdout: '["s\uFFFD caf\uFFFD","t\uFFFD caf\uFFFD",{"k\uFFFD":1},"p\uFFFDq","s\uFFFD\uFFFD\uFFFD",true,false]',
+        },
+      });
+    }
+  }
+  // \xFB is a letter in Latin-1, so it used to join the identifier and print raw. Node.js rejects it.
+  itBundled("edgecase/SourceFileNotUtf8Identifier", {
+    files: {
+      "/entry.js": latin1("export const v\xFB0 = 1;\n"),
+    },
+    bundleErrors: {
+      "/entry.js": ['Expected ";" but found "\uFFFD"', 'The constant "v" must be initialized'],
+    },
   });
 });
 

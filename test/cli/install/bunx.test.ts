@@ -79,10 +79,15 @@ async function withTestContext(
 function packageInvocationCommand(
   { useBunx, explicitPackage }: PackageInvocationCase,
   packageSpec: string,
-  binName: string,
+  binName?: string,
 ): { cmd: string[]; argv0?: string } {
   const cmd = useBunx ? [bunExe()] : [bunExe(), "x"];
-  cmd.push(...(explicitPackage ? ["--package", packageSpec, binName] : [packageSpec]));
+  if (explicitPackage) {
+    if (binName === undefined) throw new Error("Explicit package invocations require a binary name");
+    cmd.push("--package", packageSpec, binName);
+  } else {
+    cmd.push(packageSpec);
+  }
   return useBunx ? { cmd, argv0: isWindows ? "bunx.exe" : "bunx" } : { cmd };
 }
 

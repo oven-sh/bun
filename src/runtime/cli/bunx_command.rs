@@ -1754,84 +1754,47 @@ impl BunxCommand {
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
 
-        if opts.specified_package.is_some() {
-            match Self::link_bin_from_installed_package(
-                this_transpiler,
-                result_package_name,
-                opts.binary_name,
-                bunx_cache_dir,
-                &mut package_bin_abs_buf,
-            )? {
-                PackageBinLookup::Found(destination) => {
-                    let out = destination.as_bytes();
-                    if Self::is_trusted_cached_binary(destination, uid) {
-                        bun_output::scoped_log!(
-                            bunx,
-                            "running installed binary: {}",
-                            BStr::new(out)
-                        );
-                        let stored = fs.dirname_store.append_slice(out)?;
-                        Run::run_binary(
-                            ctx,
-                            stored,
-                            destination,
-                            top_level_dir,
-                            env_loader,
-                            passthrough,
-                            None,
-                        )?;
-                    } else {
-                        bun_output::scoped_log!(
-                            bunx,
-                            "refusing untrusted cached binary: {}",
-                            BStr::new(out)
-                        );
-                    }
-                }
-                PackageBinLookup::PackageNotFound
-                | PackageBinLookup::BinNotFound
-                | PackageBinLookup::MissingTarget => {
-                    Self::exit_package_bin_not_found(package_name_for_error, opts.binary_name);
+        let bin_name = if opts.specified_package.is_some() {
+            opts.binary_name
+        } else {
+            None
+        };
+        match Self::link_bin_from_installed_package(
+            this_transpiler,
+            result_package_name,
+            bin_name,
+            bunx_cache_dir,
+            &mut package_bin_abs_buf,
+        )? {
+            PackageBinLookup::Found(destination) => {
+                let out = destination.as_bytes();
+                if Self::is_trusted_cached_binary(destination, uid) {
+                    bun_output::scoped_log!(bunx, "running installed binary: {}", BStr::new(out));
+                    let stored = fs.dirname_store.append_slice(out)?;
+                    Run::run_binary(
+                        ctx,
+                        stored,
+                        destination,
+                        top_level_dir,
+                        env_loader,
+                        passthrough,
+                        None,
+                    )?;
+                } else {
+                    bun_output::scoped_log!(
+                        bunx,
+                        "refusing untrusted cached binary: {}",
+                        BStr::new(out)
+                    );
                 }
             }
-        } else {
-            match Self::link_bin_from_installed_package(
-                this_transpiler,
-                result_package_name,
-                None,
-                bunx_cache_dir,
-                &mut package_bin_abs_buf,
-            )? {
-                PackageBinLookup::Found(destination) => {
-                    let out = destination.as_bytes();
-                    if Self::is_trusted_cached_binary(destination, uid) {
-                        bun_output::scoped_log!(
-                            bunx,
-                            "running installed binary: {}",
-                            BStr::new(out)
-                        );
-                        let stored = fs.dirname_store.append_slice(out)?;
-                        Run::run_binary(
-                            ctx,
-                            stored,
-                            destination,
-                            top_level_dir,
-                            env_loader,
-                            passthrough,
-                            None,
-                        )?;
-                    } else {
-                        bun_output::scoped_log!(
-                            bunx,
-                            "refusing untrusted cached binary: {}",
-                            BStr::new(out)
-                        );
-                    }
+            PackageBinLookup::BinNotFound | PackageBinLookup::MissingTarget => {
+                Self::exit_package_bin_not_found(package_name_for_error, bin_name);
+            }
+            PackageBinLookup::PackageNotFound => {
+                if opts.specified_package.is_some() {
+                    Self::exit_package_bin_not_found(package_name_for_error, bin_name);
                 }
-                PackageBinLookup::BinNotFound | PackageBinLookup::MissingTarget => {
-                    Self::exit_package_bin_not_found(package_name_for_error, None);
-                }
-                PackageBinLookup::PackageNotFound => {}
             }
         }
 

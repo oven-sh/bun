@@ -184,20 +184,13 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
   }
 }
 
-const emittedShims = new WeakMap<Ninja, ShimLinkOpts>();
-
 /**
- * The link environment every *target* executable in the graph needs (bun,
- * testFFI, a dep's `exe` steps such as JSC's LLInt extractors): emits the
- * shim edges once per graph and returns the flags / implicit inputs each of
- * those links appends. A link that skipped them would, e.g., hand rust-lld
- * Alpine's compressed CRT objects on musl, or miss the macho-postlink tool.
+ * Emit shim build edges and return link flags. Call once per link site
+ * (emitBun, emitLinkOnly) before the link() call.
  *
  * See scripts/build/workarounds.ts for the self-obsoleting check on each.
  */
 export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
-  const done = emittedShims.get(n);
-  if (done !== undefined) return done;
   const ldflags: string[] = [];
   const implicitInputs: string[] = [];
 
@@ -260,7 +253,5 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
     ldflags.push(`-B${crtDir}`);
   }
 
-  const result = { ldflags, implicitInputs };
-  emittedShims.set(n, result);
-  return result;
+  return { ldflags, implicitInputs };
 }

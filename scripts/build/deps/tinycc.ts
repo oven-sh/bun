@@ -10,8 +10,7 @@
  * no-sanitize-on-host-tools policy sidesteps both.
  */
 
-import { join } from "node:path";
-import { type Dependency, type DirectBuild, depBuildDir, depSourceDir } from "../source.ts";
+import type { Dependency, DirectBuild } from "../source.ts";
 
 const TINYCC_COMMIT = "05f0fafaa3be31e31d7b4b5c17dc60f62c991171";
 
@@ -23,7 +22,7 @@ export const tinycc: Dependency = {
   enabled: cfg => cfg.tinycc,
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "oven-sh/tinycc",
     commit: TINYCC_COMMIT,
   }),
@@ -59,30 +58,24 @@ export const tinycc: Dependency = {
     }
     if (cfg.windows) defines.CONFIG_WIN32 = true;
 
-    const srcDir = depSourceDir(cfg, "tinycc");
-    const c2str = join(depBuildDir(cfg, "tinycc"), `c2str${cfg.host.exeSuffix}`);
     const spec: DirectBuild = {
       kind: "direct",
-      // tccpp.c includes the generated tccdefs_.h (found through the build
-      // dir -I that `headers` adds).
-      sources: sources.map(s => (s === "tccpp.c" ? { path: s, implicitInputs: ["tccdefs_.h"] } : s)),
+      sources,
       defines,
       includes: [".", "include"],
       cflags: ["-fno-strict-aliasing"],
       // tcc sources #include "config.h" — autotools would generate it,
       // we just stub it.
       headers: { "config.h": "" },
-      steps: [
-        // conftest.c with -DC2STR is a tool that turns tccdefs.h (C macros)
-        // into tccdefs_.h (a C string literal for embedding).
-        { kind: "host-exe", output: "c2str", sources: ["conftest.c"], flags: ["-w", "-DC2STR"] },
-        {
-          outputs: ["tccdefs_.h"],
-          inputs: [c2str, "include/tccdefs.h"],
-          cmd: [c2str, join(srcDir, "include", "tccdefs.h"), join(depBuildDir(cfg, "tinycc"), "tccdefs_.h")],
-          cwd: srcDir,
-        },
-      ],
+      // conftest.c with -DC2STR compiles to a tool that turns tccdefs.h
+      // (C macros) into tccdefs_.h (C string literal for embedding).
+      // tccpp.c includes the generated file.
+      codegen: {
+        tool: "conftest.c",
+        toolDefines: { C2STR: true },
+        args: ["include/tccdefs.h", "$out"],
+        output: "tccdefs_.h",
+      },
     };
 
     // clang-cl is noisy about tinycc's old-C idioms.

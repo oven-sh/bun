@@ -24,7 +24,7 @@ describe.skipIf(isDebug)("does not leak", () => {
 
   test("hashSync", async () => {
     await run(/* js */ `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         // Large warm-up so the JSC heap and allocator arenas reach steady state
         // before we start measuring (debug/ASAN builds especially need this).
@@ -43,7 +43,7 @@ describe.skipIf(isDebug)("does not leak", () => {
 
   test("hash", async () => {
     await run(/* js */ `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         async function batch(n) {
           const promises = [];

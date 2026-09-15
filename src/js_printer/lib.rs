@@ -67,6 +67,15 @@ use renamer as rename;
 // revisit if profiling shows allocation pressure during link.
 pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 
+/// The namespace the printed specifier of `record` starts with (`namespace:path`), if any.
+fn printed_namespace(record: &ImportRecord) -> Option<&'static [u8]> {
+    (record
+        .flags
+        .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
+        && !record.path.is_file())
+    .then_some(record.path.namespace)
+}
+
 /// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
@@ -99,7 +108,8 @@ pub mod analyze_transpiled_module {
         ImportInfoNamespaceDefer,
     }
     impl RecordKind {
-        pub(crate) fn len(self) -> usize {
+        /// `StringID` slots the record occupies in `ModuleInfo::buffer` (part of the serialized format).
+        pub fn len(self) -> usize {
             match self {
                 Self::ImportInfoSingle => 4,
                 Self::ImportInfoSingleTypeScript => 4,
@@ -464,30 +474,6 @@ pub mod analyze_transpiled_module {
             self.phases.push(phase);
             false
         }
-        /// Replace every occurrence of `old` with `new` **in place**,
-        /// preserving insertion order.
-        fn rename_key(&mut self, old: StringID, new: StringID) {
-            let mut touched = false;
-            for k in self.keys.iter_mut() {
-                if *k == old {
-                    *k = new;
-                    touched = true;
-                }
-            }
-            if touched {
-                self.index.clear();
-                for (i, ((&k, &v), &p)) in self
-                    .keys
-                    .iter()
-                    .zip(self.values.iter())
-                    .zip(self.phases.iter())
-                    .enumerate()
-                {
-                    self.index
-                        .insert((k, v.to_script_fetch_parameters_type(), p), i);
-                }
-            }
-        }
     }
 
     pub struct ModuleInfo {
@@ -667,13 +653,48 @@ pub mod analyze_transpiled_module {
             self.exported_names.insert(name, ()).is_some()
         }
 
-        /// Read-only view of the interned string table — `(buf, lens)` —
-        /// safe to call before `finalize()`. Unlike `as_deserialized()` this
-        /// does not assert `finalized`; it exists so the bundler can rewrite
-        /// cross-chunk specifier StringIDs (which must happen pre-finalize
-        /// because `replace_string_id` debug-asserts `!finalized`).
+        /// The interned string table, `(buf, lens)`; usable before `finalize()`.
         pub fn strings(&self) -> (&[u8], &[u32]) {
             (&self.strings_buf, &self.strings_lens)
+        }
+
+        /// Rewrites interned strings in place (`None` keeps one); ids, and so every record, stay valid.
+        pub fn rewrite_strings<'r>(&mut self, mut replace: impl FnMut(&[u8]) -> Option<&'r [u8]>) {
+            debug_assert!(!self.finalized);
+            let mut buf: Vec<u8> = Vec::new();
+            let mut rewritten: Vec<(u32, &'r [u8])> = Vec::new();
+            let mut offset = 0usize;
+            for (index, len) in self.strings_lens.iter_mut().enumerate() {
+                let start = offset;
+                offset += *len as usize;
+                let old = &self.strings_buf[start..offset];
+                let Some(new) = replace(old) else {
+                    if !rewritten.is_empty() {
+                        buf.extend_from_slice(old);
+                    }
+                    continue;
+                };
+                if rewritten.is_empty() {
+                    buf.reserve(self.strings_buf.len() + new.len());
+                    buf.extend_from_slice(&self.strings_buf[..start]);
+                }
+                self.strings_map.remove(old);
+                rewritten.push((index as u32, new));
+                buf.extend_from_slice(new);
+                *len = u32::try_from(new.len()).unwrap();
+            }
+            if rewritten.is_empty() {
+                return;
+            }
+            self.strings_buf = buf;
+            for (index, new) in rewritten {
+                let previous = self.strings_map.insert(new.to_vec(), index);
+                debug_assert!(
+                    previous.is_none(),
+                    "rewrite_strings: two ids now hold {:?}",
+                    bstr::BStr::new(new)
+                );
+            }
         }
 
         pub fn str(&mut self, value: &[u8]) -> StringID {
@@ -686,6 +707,16 @@ pub mod analyze_transpiled_module {
             // PERF: owned-key dupe; revisit with a raw-entry API.
             self.strings_map.insert(value.to_vec(), idx);
             StringID(idx)
+        }
+
+        /// Interns the specifier `print_import_record_path` prints for `record`, so the
+        /// module record requests the same module as the printed source.
+        pub(crate) fn str_for_import_record(&mut self, record: &super::ImportRecord) -> StringID {
+            let path = record.path.text;
+            match super::printed_namespace(record) {
+                Some(namespace) => self.str(&[namespace, b":".as_slice(), path].concat()),
+                None => self.str(path),
+            }
         }
 
         pub(crate) fn request_module(
@@ -771,20 +802,6 @@ pub mod analyze_transpiled_module {
 
             self.flags.contains_import_meta |= other.flags.contains_import_meta;
             self.flags.has_tla |= other.flags.has_tla;
-        }
-
-        /// Replace all occurrences of `old_id` with `new_id` in records and requested_modules.
-        /// Used to fix up cross-chunk import specifiers after final paths are computed.
-        pub fn replace_string_id(&mut self, old_id: StringID, new_id: StringID) {
-            debug_assert!(!self.finalized);
-            for item in self.buffer.iter_mut() {
-                if *item == old_id {
-                    *item = new_id;
-                }
-            }
-            // Must preserve
-            // insertion order (serialized verbatim into ModuleInfo for JSC).
-            self.requested_modules.rename_key(old_id, new_id);
         }
 
         /// find any exports marked as 'local' that are actually 'indirect' and fix them
@@ -1350,6 +1367,9 @@ pub struct Options<'a> {
     pub print_dce_annotations: bool,
 
     pub inline_require_and_import_errors: bool,
+    /// A bundler renamer named every symbol. Those renamers reserve `NaN`,
+    /// `Infinity` and `undefined`, so the printer may emit those globals as
+    /// bare identifiers without a user binding shadowing them.
     pub has_run_symbol_renamer: bool,
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
@@ -2105,10 +2125,7 @@ pub(crate) mod __gated_printer {
 
         #[inline]
         pub(crate) fn print_space_before_identifier(&mut self) {
-            // `writer.written()` starts at -1, so `>= 0` means "at least one byte has
-            // been written". Using `> 0` here would skip the space when exactly one
-            // byte precedes a keyword (e.g. `x instanceof y` minified to `xinstanceof y`).
-            if self.writer.written() >= 0
+            if self.writer.written() > 0
                 && (lexer::is_identifier_continue(self.writer.prev_char() as i32)
                     || self.writer.written() == self.prev_reg_exp_end)
             {
@@ -2740,6 +2757,7 @@ pub(crate) mod __gated_printer {
                 //
                 if record.tag == ImportRecordTag::Bun {
                     if record.kind == ImportKind::Dynamic {
+                        self.print_space_before_identifier();
                         self.print(b"Promise.resolve(globalThis.Bun)");
                         if wrap {
                             self.print(b")");
@@ -2747,6 +2765,7 @@ pub(crate) mod __gated_printer {
                         return;
                     } else if record.kind == ImportKind::Require || record.kind == ImportKind::Stmt
                     {
+                        self.print_space_before_identifier();
                         self.print(b"globalThis.Bun");
                         if wrap {
                             self.print(b")");
@@ -2864,6 +2883,8 @@ pub(crate) mod __gated_printer {
                         let wrap_with_to_cjs = record
                             .flags
                             .contains(ImportRecordFlags::WRAP_WITH_TO_COMMONJS);
+                        // With no `init_x(), ` before it, this is the first token.
+                        self.print_space_before_identifier();
                         if wrap_with_to_cjs {
                             self.print_symbol(self.options.to_commonjs_ref);
                             self.print(b"(");
@@ -5622,15 +5643,13 @@ pub(crate) mod __gated_printer {
                         self.print_whitespacer(ws!(b"from "));
                     }
 
-                    let irp = &self.import_record(s.import_record_index as usize).path.text;
-                    self.print_import_record_path(
-                        self.import_record(s.import_record_index as usize),
-                    );
+                    let import_record = self.import_record(s.import_record_index as usize);
+                    self.print_import_record_path(import_record);
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let irp_id = mi.str(irp);
+                            let irp_id = mi.str_for_import_record(import_record);
                             mi.request_module(
                                 irp_id,
                                 analyze_transpiled_module::FetchParameters::None,
@@ -5806,7 +5825,6 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_whitespacer(ws!(b"} from "));
-                    let irp = &import_record.path.text;
                     self.print_import_record_path(import_record);
                     self.print_semicolon_after_statement();
 
@@ -5815,7 +5833,7 @@ pub(crate) mod __gated_printer {
                         // `name_for_symbol` (which needs `&mut self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let id = mi.str(irp);
+                            let id = mi.str_for_import_record(import_record);
                             mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                             id
                         };
@@ -6339,11 +6357,10 @@ pub(crate) mod __gated_printer {
                         // reshaped for borrowck — `module_info()` borrows `&mut self`,
                         // so we re-borrow it between `name_for_symbol` calls instead of holding
                         // a single long-lived `mi` across the whole block. `irp_id` is Copy.
-                        let import_record_path = &record.path.text;
                         use analyze_transpiled_module::FetchParameters as FP;
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let irp_id = mi.str(import_record_path);
+                            let irp_id = mi.str_for_import_record(record);
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -6525,21 +6542,13 @@ pub(crate) mod __gated_printer {
             }
 
             let quote = best_quote_char_for_string(import_record.path.text, false);
-            if import_record
-                .flags
-                .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
-                && !import_record.path.is_file()
-            {
-                self.print(quote);
-                self.print_string_characters_utf8(import_record.path.namespace, quote);
+            self.print(quote);
+            if let Some(namespace) = printed_namespace(import_record) {
+                self.print_string_characters_utf8(namespace, quote);
                 self.print(b":");
-                self.print_string_characters_utf8(import_record.path.text, quote);
-                self.print(quote);
-            } else {
-                self.print(quote);
-                self.print_string_characters_utf8(import_record.path.text, quote);
-                self.print(quote);
             }
+            self.print_string_characters_utf8(import_record.path.text, quote);
+            self.print(quote);
         }
 
         #[inline]
@@ -7287,9 +7296,6 @@ pub trait WriterContext {
     fn advance_by(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn take_buffer(&mut self) -> MutableString;
-    fn flush(&mut self) -> crate::Result<()> {
-        Ok(())
-    }
     fn done(&mut self) -> crate::Result<()> {
         Ok(())
     }
@@ -7339,7 +7345,6 @@ impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
 
 pub struct Writer<C: WriterContext> {
     pub ctx: C,
-    pub(crate) written: i32,
     pub(crate) err: Option<crate::Error>,
     pub(crate) orig_err: Option<crate::Error>,
 }
@@ -7348,7 +7353,6 @@ impl<C: WriterContext> Writer<C> {
     pub fn init(ctx: C) -> Self {
         Self {
             ctx,
-            written: -1,
             err: None,
             orig_err: None,
         }
@@ -7386,18 +7390,12 @@ impl<C: WriterContext> Writer<C> {
 
     pub(crate) fn advance(&mut self, count: u64) {
         self.ctx.advance_by(count);
-        // PERF: output never approaches 2 GiB; the checked add of
-        // a u64→i32 here was a measurable branch in the per-token print path.
-        // Keep the debug-mode overflow check without paying for it in release.
-        debug_assert!(count <= i32::MAX as u64);
-        self.written = self.written.wrapping_add(count as i32);
     }
 
     #[inline]
     pub(crate) fn print_byte(&mut self, b: u8) {
         match self.ctx.write_byte(b) {
             Ok(n) => {
-                self.written = self.written.wrapping_add(n as i32);
                 if n == 0 {
                     self.err = Some(crate::Error::WriteFailed);
                 }
@@ -7413,7 +7411,6 @@ impl<C: WriterContext> Writer<C> {
     pub(crate) fn print_slice(&mut self, s: &[u8]) {
         match self.ctx.write_all(s) {
             Ok(n) => {
-                self.written = self.written.wrapping_add(n as i32);
                 if n < s.len() {
                     self.err = Some(if n == 0 {
                         crate::Error::WriteFailed
@@ -7429,18 +7426,16 @@ impl<C: WriterContext> Writer<C> {
         }
     }
 
-    pub fn flush(&mut self) -> crate::Result<()> {
-        self.ctx.flush()
-    }
     pub(crate) fn done(&mut self) -> crate::Result<()> {
         self.ctx.done()
     }
 }
 
 impl<C: WriterContext> WriterTrait for Writer<C> {
+    /// Bytes in `ctx`'s buffer. The printer's position fields use -1 for "none".
     #[inline]
     fn written(&self) -> i32 {
-        self.written
+        self.ctx.slice().len() as i32
     }
     #[inline]
     fn prev_char(&self) -> u8 {
@@ -7661,10 +7656,6 @@ impl BufferWriter {
         self.written_len = self.buffer.list.len();
         Ok(())
     }
-
-    pub(crate) fn flush(&mut self) -> crate::Result<()> {
-        Ok(())
-    }
 }
 
 impl WriterContext for BufferWriter {
@@ -7699,10 +7690,6 @@ impl WriterContext for BufferWriter {
     #[inline]
     fn take_buffer(&mut self) -> MutableString {
         self.take_buffer()
-    }
-    #[inline]
-    fn flush(&mut self) -> crate::Result<()> {
-        self.flush()
     }
     #[inline]
     fn done(&mut self) -> crate::Result<()> {
@@ -8042,7 +8029,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     printer.writer.done()?;
 
-    Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
+    Ok(printer.writer.slice().len())
 }
 
 pub fn print_json<W: WriterTrait>(
@@ -8081,7 +8068,7 @@ pub fn print_json<W: WriterTrait>(
     printer.writer.get_error()?;
     printer.writer.done()?;
 
-    Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
+    Ok(printer.writer.slice().len())
 }
 
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(

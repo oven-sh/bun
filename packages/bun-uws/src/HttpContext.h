@@ -447,7 +447,9 @@ private:
             if constexpr (IsNodeHttp) hasQueuedPipelinedResponses = httpResponseData->nodeHttpQueuedPipelinedCount > 0;
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || hasQueuedPipelinedResponses) {
                 if constexpr (!IsNodeHttp) {
-                    us_socket_close((us_socket_t *) s, 0, nullptr);
+                    /* Responses that completed earlier in this read can still
+                     * sit in the cork buffer. close() sends them first. */
+                    ((AsyncSocket<SSL> *) s)->close();
                     return nullptr;
                 } else {
 
@@ -518,11 +520,22 @@ private:
                 }
             }
 
+            /* Bun.serve: every request of this read is dispatched corked, not only
+             * the first. A response to an earlier request can release the cork
+             * taken above (a body larger than the cork buffer, the sendfile
+             * path). The handler writes the status line, each header and the
+             * body as separate writes, and without the cork each of them is one
+             * send(). node:http corks in its own write calls. */
+            if constexpr (!IsNodeHttp) {
+                ((AsyncSocket<SSL> *) s)->cork();
+            }
+
             /* Route the method and URL */
             selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
             if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
-                /* We have to force close this socket as we have no handler for it */
-                us_socket_close((us_socket_t *) s, 0, nullptr);
+                /* We have to force close this socket as we have no handler for it.
+                 * close() first sends the responses to earlier requests of this read. */
+                ((AsyncSocket<SSL> *) s)->close();
                 return nullptr;
             }
 
@@ -582,6 +595,7 @@ private:
                     auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
                     nodeHttpResponseData->lastMessageStartMs = 0;
                     nodeHttpResponseData->headersCompleted = false;
+                    nodeHttpResponseData->requestTimeoutReported = false;
                 }
             }
 
@@ -660,6 +674,10 @@ private:
             if(httpContextData->onClientError) {
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
             }
+            /* The error response below bypasses the cork buffer. Responses to
+             * valid requests earlier in this read can still sit there, so send
+             * them first. */
+            ((AsyncSocket<SSL> *) s)->uncork();
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
             us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
             us_socket_shutdown(s);

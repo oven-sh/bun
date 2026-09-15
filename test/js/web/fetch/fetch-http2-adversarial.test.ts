@@ -141,7 +141,7 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(`
-          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           const baseline = rss();
           let peak = baseline;
           const t = setInterval(() => {

@@ -168,8 +168,7 @@ const buildPlatforms = [
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
   // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
-  // stays non-LTO (LLVM's CodeView emitter aborts on ARM64 NEON tuple
-  // registers under LTO, see config.ts).
+  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
@@ -511,7 +510,7 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
- * deps + C++ + cargo + link on one agent, then package + upload the zips.
+ * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
@@ -1701,7 +1700,7 @@ async function getPipeline(options = {}) {
     return [
       {
         key: getPlatformKey(lane),
-        group: getPlatformLabel({ ...lane, arch: `${lane.arch}-${target.abi}` }),
+        group: getPlatformLabel({ ...lane, arch: target.abi ? `${lane.arch}-${target.abi}` : lane.arch }),
         steps: [step],
       },
     ];

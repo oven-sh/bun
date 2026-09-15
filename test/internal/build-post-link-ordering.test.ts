@@ -15,7 +15,7 @@ import { describe, expect, test } from "bun:test";
 import { isMacOS, tempDir } from "harness";
 import { join, resolve } from "node:path";
 
-import { emitPostLink } from "../../scripts/build/bun.ts";
+import { binaryChecksWarnOnly, emitPostLink } from "../../scripts/build/bun.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
 
@@ -29,6 +29,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     clangVersion: "21.1.8",
     clangResourceDir: "/fake/llvm/lib/clang/21",
     ar: "/fake/llvm/bin/llvm-ar",
+    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
@@ -42,7 +43,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
-    jsRuntimeArgv: ["/fake/bin/bun"],
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -51,6 +51,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
+    mt: undefined,
     nasm: undefined,
     ...overrides,
   };
@@ -104,6 +105,35 @@ describe("emitPostLink ninja ordering", () => {
     expect(buildEdge(out, "strip")).toBe(`build bun${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
   });
 
+  describe.each([
+    ["Release", { buildType: "Release" }, false],
+    ["Release with assertions", { buildType: "Release", assertions: true }, false],
+    ["Debug", { buildType: "Debug", assertions: true }, true],
+    ["ASan", { buildType: "Release", asan: true, assertions: true }, true],
+  ] as [string, PartialConfig, boolean][])("the static scans of a %s build", (_name, partial, warnOnly) => {
+    test(warnOnly ? "only warn" : "fail the build", () => {
+      using dir = tempDir("build-post-link", {});
+      const buildDir = String(dir);
+      const cfg = hostConfig(partial, buildDir);
+      const n = new Ninja({ buildDir });
+      const exe = resolve(buildDir, `bun-profile${cfg.exeSuffix}`);
+      emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
+      const out = n.toString().replace(/ \$\n +/g, " ");
+      const command = (rule: string) => new RegExp(`^rule ${rule}\\n  command = (.*)$`, "m").exec(out)![1]!;
+      const verify = command("binary_verify");
+      const duplicates = command("duplicate_symbols");
+
+      expect(binaryChecksWarnOnly(cfg)).toBe(warnOnly);
+      if (warnOnly) {
+        expect(verify).toContain("verify-binary.ts --warn-only binary ");
+        expect(duplicates).toContain("verify-binary.ts --warn-only duplicates ");
+      } else {
+        expect(verify).not.toContain("--warn-only");
+        expect(duplicates).not.toContain("--warn-only");
+      }
+    });
+  });
+
   test("debug smoke_test has no strip dep (nothing to order against)", () => {
     using dir = tempDir("build-post-link", {});
     const buildDir = String(dir);
@@ -139,10 +169,10 @@ describe("emitPostLink ninja ordering", () => {
     expect(buildEdge(out, "dsymutil")).toBe("build bun-profile.dSYM: dsymutil bun-profile || bun");
     // Cross-compile: smoke_test short-circuits to a `check` phony (the
     // binary can't run on this host), so the strip race can't happen there;
-    // the static scans (ClassInfo canary, verify-binary, duplicate
+    // the static scans (verify-binary, duplicate
     // definitions) run on any host.
     expect(buildEdge(out, "phony")).toBe(
-      "build check: phony bun-profile bun-profile.classinfo-unique bun-profile.binary-verified bun-profile.duplicate-symbols-checked",
+      "build check: phony bun-profile bun-profile.binary-verified bun-profile.duplicate-symbols-checked",
     );
   });
 });

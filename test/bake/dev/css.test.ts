@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { type Dev, devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -704,4 +704,227 @@ function extractCssUrl(backgroundImage: string): string {
     throw new Error("No url found in background-image: " + backgroundImage);
   }
   return url[2];
+}
+
+const stylesheets = {
+  "one.css": `.one { color: red; }`,
+  "two.css": `.two { color: red; }`,
+  "three.css": `.three { color: red; }`,
+  "four.css": `.four { color: red; }`,
+};
+const imports = (...specifiers: string[]) => specifiers.map(specifier => `import "${specifier}";`).join("\n");
+/** The source of a route that answers with its `meta.styles`. */
+const routeRespondingWithStyles = (...specifiers: string[]) => `
+  ${imports(...specifiers)}
+  export default function (req, meta) {
+    return Response.json(meta.styles);
+  }
+`;
+
+const frameworkWithLayouts = {
+  ...minimalFramework,
+  fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], layouts: true }],
+};
+
+// `meta.styles` is cached on the route. Nothing here subscribes to hot updates: `dev.fetch` is plain
+// HTTP and the harness socket only listens for test synchronization.
+devTest("framework route styles follow the css imports of the route, its client components and its layout", {
+  framework: frameworkWithLayouts,
+  files: {
+    "routes/_layout.ts": ``,
+    "routes/index.ts": routeRespondingWithStyles("../one.css"),
+    "routes/other.ts": routeRespondingWithStyles("../components/Box"),
+    "components/Box.ts": `"use client";`,
+    ...stylesheets,
+  },
+  async test(dev) {
+    expect(await routeStyles(dev, "/")).toEqual(["one.css"]);
+    expect(await routeStyles(dev, "/other")).toEqual([]);
+
+    await dev.write("routes/index.ts", routeRespondingWithStyles("../one.css", "../two.css"));
+    const both = await routeStyles(dev, "/");
+    expect(both.toSorted()).toEqual(["one.css", "two.css"]);
+
+    // The same two edges in the graph, only their order changes.
+    await dev.write("routes/index.ts", routeRespondingWithStyles("../two.css", "../one.css"));
+    expect(await routeStyles(dev, "/")).toEqual(both.toReversed());
+
+    await dev.write("routes/index.ts", routeRespondingWithStyles("../two.css"));
+    expect(await routeStyles(dev, "/")).toEqual(["two.css"]);
+
+    // The stylesheets of a client component belong to the routes that reach it.
+    await dev.write("components/Box.ts", `"use client";\n${imports("../three.css", "../four.css")}`);
+    const throughBox = await routeStyles(dev, "/other");
+    expect(throughBox.toSorted()).toEqual(["four.css", "three.css"]);
+    await dev.write("components/Box.ts", `"use client";\n${imports("../four.css", "../three.css")}`);
+    expect(await routeStyles(dev, "/other")).toEqual(throughBox.toReversed());
+
+    // The stylesheets of a layout belong to every route below it. Both routes have a cached list by now.
+    await dev.write("routes/_layout.ts", imports("../one.css"));
+    expect((await routeStyles(dev, "/")).toSorted()).toEqual(["one.css", "two.css"]);
+    expect((await routeStyles(dev, "/other")).toSorted()).toEqual(["four.css", "one.css", "three.css"]);
+  },
+});
+
+devTest("framework route styles with a hot update subscriber", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": routeRespondingWithStyles("../one.css"),
+    "routes/other.ts": routeRespondingWithStyles(),
+    ...stylesheets,
+  },
+  async test(dev) {
+    expect(await routeStyles(dev, "/")).toEqual(["one.css"]);
+    expect(await routeStyles(dev, "/other")).toEqual([]);
+
+    // Every rebuild publishes one hot update to the subscriber. `takeHotUpdate` throws if the last
+    // write published none.
+    using hmr = await viewRouteOverHmr(dev, "/");
+
+    // While another route fails to build, a viewer is shown the error and is not told to reload.
+    // The styles the server renders with are refreshed all the same.
+    await dev.write("routes/other.ts", `export default function (`, { errors: null });
+    hmr.takeHotUpdate();
+    await dev.write("routes/index.ts", routeRespondingWithStyles("../two.css"), { errors: null });
+    expect(hmr.takeHotUpdate()).toEqual({ reloadedRoutes: [], routeCss: {} });
+    expect(await routeStyles(dev, "/")).toEqual(["two.css"]);
+
+    await dev.write("routes/other.ts", routeRespondingWithStyles());
+    hmr.takeHotUpdate();
+
+    // With the error gone, the viewer of "/" is told to reload it, and that it has the stylesheets
+    // the server now renders with.
+    await dev.write("routes/index.ts", routeRespondingWithStyles("../three.css"));
+    const update = hmr.takeHotUpdate();
+    const hrefs: string[] = await dev.fetch("/").json();
+    expect(await stylesheetNames(dev, hrefs)).toEqual(["three.css"]);
+    expect(update).toEqual({
+      reloadedRoutes: [hmr.routeBundleIndex],
+      routeCss: { [hmr.routeBundleIndex]: hrefs.map(href => href.match(/^\/_bun\/asset\/([0-9a-f]{16})\.css$/)![1]) },
+    });
+  },
+});
+
+devTest("framework route styles list a stylesheet again after it fails to build and is fixed", {
+  framework: frameworkWithLayouts,
+  files: {
+    "routes/_layout.ts": imports("../two.css"),
+    "routes/index.ts": routeRespondingWithStyles("../one.css", "../helper"),
+    "routes/other.ts": routeRespondingWithStyles(),
+    "helper.ts": `export const version = 1;`,
+    ...stylesheets,
+  },
+  async test(dev) {
+    expect((await routeStyles(dev, "/")).toSorted()).toEqual(["one.css", "two.css"]);
+
+    // A stylesheet that fails to build is not listed, and its fix rebuilds only the stylesheet, so
+    // it does not reach a route. "/other" computes its list for the first time while two.css fails.
+    await dev.write("two.css", `.two { color }`, { errors: null });
+    expect(await routeStyles(dev, "/other")).toEqual([]);
+    await dev.write("two.css", stylesheets["two.css"]);
+    expect(await routeStyles(dev, "/other")).toEqual(["two.css"]);
+
+    // The save of the helper reaches "/" and drops its cached list, so "/" computes a new one while
+    // two.css fails.
+    await dev.write("two.css", `.two { color }`, { errors: null });
+    await dev.write("helper.ts", `export const version = 2;`, { errors: null });
+    expect(await routeStyles(dev, "/")).toEqual(["one.css"]);
+    await dev.write("two.css", stylesheets["two.css"]);
+    expect((await routeStyles(dev, "/")).toSorted()).toEqual(["one.css", "two.css"]);
+  },
+});
+
+/** Fetches a route written with `routeRespondingWithStyles` and names the stylesheets it lists. */
+async function routeStyles(dev: Dev, route: string): Promise<string[]> {
+  return stylesheetNames(dev, await dev.fetch(route).json());
+}
+
+/** Resolves served stylesheet urls to file names. Each file in `stylesheets` holds one rule, for the class of its name. */
+function stylesheetNames(dev: Dev, hrefs: string[]): Promise<string[]> {
+  return Promise.all(
+    hrefs.map(async href => {
+      const css = await dev.fetch(href).text();
+      const selector = css.match(/\.(\w+)\s*\{/);
+      if (!selector) throw new Error(`${href} has no class selector:\n${css}`);
+      return `${selector[1]}.css`;
+    }),
+  );
+}
+
+/** The two route lists at the start of a hot update payload: "List 1" and "List 2" in `finalize_bundle` (DevServer.rs). */
+interface HotUpdateRouteLists {
+  /** The route bundles whose server-side code changed. A viewer of one requests the route again. */
+  reloadedRoutes: number[];
+  /** The stylesheet ids of each changed route bundle that has a viewer, or `null` if no import was added or removed. */
+  routeCss: Record<number, string[] | null>;
+}
+
+function decodeRouteLists(frame: Uint8Array): HotUpdateRouteLists {
+  const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
+  let offset = 1; // MessageId.hot_update
+  const i32 = () => {
+    const value = view.getInt32(offset, true);
+    offset += 4;
+    return value;
+  };
+  const reloadedRoutes: number[] = [];
+  for (let route = i32(); route !== -1; route = i32()) {
+    reloadedRoutes.push(route);
+  }
+  const routeCss: Record<number, string[] | null> = {};
+  for (let route = i32(); route !== -1; route = i32()) {
+    const count = i32();
+    if (count === -1) {
+      routeCss[route] = null;
+      continue;
+    }
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) {
+      ids.push(Buffer.from(frame.buffer, frame.byteOffset + offset, 16).toString());
+      offset += 16;
+    }
+    routeCss[route] = ids;
+  }
+  return { reloadedRoutes, routeCss };
+}
+
+/**
+ * Does what the HMR runtime does in a browser tab, on the harness socket: subscribes to hot updates
+ * and tells the dev server which route the tab views. One socket orders the frames of a build: the
+ * hot update comes before the frame that resolves `dev.write()`. So the last hot update seen when
+ * `dev.write()` resolves belongs to that write.
+ */
+async function viewRouteOverHmr(dev: Dev, route: string) {
+  const socket = dev.socket!;
+  const viewing = Promise.withResolvers<number>();
+  let lastHotUpdate: Uint8Array | null = null;
+  const onFrame = (frame: Uint8Array) => {
+    switch (frame[0]) {
+      case "n".charCodeAt(0): // set_url_response
+        viewing.resolve(new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(1, true));
+        break;
+      case "u".charCodeAt(0): // hot_update
+        lastHotUpdate = frame;
+        break;
+    }
+  };
+  const onClose = () => viewing.reject(new Error("the harness socket closed"));
+  dev.on("hmr", onFrame);
+  socket.addEventListener("close", onClose);
+  socket.send("srh"); // keep the synchronization topic of the harness, add hot updates
+  socket.send("n" + route); // set_url
+  return {
+    routeBundleIndex: await viewing.promise,
+    /** The route lists of the hot update that the last `dev.write()` published. Call it after each write. */
+    takeHotUpdate(): HotUpdateRouteLists {
+      if (!lastHotUpdate) throw new Error("the last write published no hot update");
+      const lists = decodeRouteLists(lastHotUpdate);
+      lastHotUpdate = null;
+      return lists;
+    },
+    [Symbol.dispose]() {
+      dev.off("hmr", onFrame);
+      socket.removeEventListener("close", onClose);
+    },
+  };
 }

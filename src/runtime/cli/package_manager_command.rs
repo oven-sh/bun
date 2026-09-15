@@ -559,6 +559,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
+            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
+            if trusted_only {
+                pm.load_trusted_dependencies_from_package_json()?;
+            }
 
             Output::flush();
             Output::disable_buffering();
@@ -598,8 +602,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             if first_directory.dependencies.len() > 1 {
                 more_packages[0] = true;
             }
-
-            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
 
             if strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]) {
                 if trusted_only {

@@ -14,7 +14,6 @@ type ErrorCodeMapping = Array<
 
 const errors: ErrorCodeMapping = [
   ["ABORT_ERR", Error, "AbortError"],
-  ["ERR_ACCESS_DENIED", Error],
   ["ERR_AMBIGUOUS_ARGUMENT", TypeError],
   ["ERR_ARG_NOT_ITERABLE", TypeError],
   ["ERR_ASSERTION", Error],
@@ -269,7 +268,6 @@ const errors: ErrorCodeMapping = [
   ["MODULE_NOT_FOUND", Error],
   ["ERR_INTERNAL_ASSERTION", Error],
   ["ERR_OSSL_EVP_INVALID_DIGEST", Error],
-  ["ERR_KEY_GENERATION_JOB_FAILED", Error],
   ["ERR_MISSING_OPTION", TypeError],
   ["ERR_REDIS_AUTHENTICATION_FAILED", Error, "RedisError"],
   ["ERR_REDIS_CONNECTION_CLOSED", Error, "RedisError"],

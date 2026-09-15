@@ -7,7 +7,6 @@ interface PropertyAttribute {
    * from the prototype hash table, instead setting it using `putDirect()`.
    */
   privateSymbol?: string;
-  publicSymbol?: string;
   name?: string;
 }
 
@@ -87,13 +86,6 @@ export class ClassDefinition {
    * function.
    */
   name: string;
-  /**
-   * Legacy. All classes emit implementer thunks into `generated_classes.rs`;
-   * this field is accepted for backward compatibility but has no effect.
-   *
-   * @default "rust"
-   */
-  lang?: "rust";
   /**
    * Fully-qualified Rust path of the native struct backing this class, e.g.
    * `crate::webcore::request::Request`. The codegen emits
@@ -220,7 +212,6 @@ export class ClassDefinition {
   configurable?: boolean;
   enumerable?: boolean;
   structuredClone?: { transferable: boolean; tag: number; storable: boolean };
-  inspectCustom?: boolean;
 
   constructor(options: Partial<ClassDefinition>) {
     this.name = options.name ?? "";
@@ -245,18 +236,9 @@ export function define(
     call = false,
     construct = false,
     structuredClone,
-    inspectCustom = false,
     ...rest
   } = {} as Partial<ClassDefinition>,
 ): ClassDefinition {
-  if (inspectCustom) {
-    proto.inspectCustom = {
-      fn: "inspectCustom",
-      length: 2,
-      publicSymbol: "inspectCustom",
-      name: "[nodejs.util.inspect.custom]",
-    };
-  }
   return new ClassDefinition({
     ...rest,
     // `refCounted` is a kind of finalize as far as the C++ wrapper is concerned.

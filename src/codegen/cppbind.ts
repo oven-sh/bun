@@ -773,12 +773,6 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
       if (nodeRef.name !== "FunctionDefinition") {
         return true; // Continue traversal
       }
-      // console.log(
-      //   `\n--- Found ZIG_EXPORT on function in ${file} at line ${lineInfo.get(nodeRef.node.from).line} ---\n`,
-      // );
-      // // Use the new pretty-printer to log the tree structure of the matched function
-      // console.log(prettyPrintLezerNode(nodeRef.node, ctx.sourceCode));
-      // console.log(`-------------------------------------------------------------------\n`);
 
       const fnNode = nodeRef.node;
       let zigExportAttr: SyntaxNode | null = null;

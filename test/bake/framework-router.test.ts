@@ -133,3 +133,15 @@ test("discovers from filesystem paths", () => {
     ],
   });
 });
+
+describe("framework config validation", () => {
+  test.each([1, "hello", null, true])("fileSystemRouterTypes with non-object element %p throws", item => {
+    expect(() =>
+      Bun.serve({
+        port: 0,
+        // @ts-expect-error
+        app: { framework: { fileSystemRouterTypes: [item] } },
+      }),
+    ).toThrow("'fileSystemRouterTypes[0]' is not an object");
+  });
+});

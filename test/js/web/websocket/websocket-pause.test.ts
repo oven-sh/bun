@@ -2,9 +2,17 @@ import { describe, expect, it } from "bun:test";
 import { tls } from "harness";
 import net from "node:net";
 import nodeTls from "node:tls";
+import { WebSocket as WS } from "ws";
 
 const CHUNK = new Uint8Array(64 * 1024);
-const TOTAL = 4096; // 256 MiB, far past any socket/TLS buffer
+// The origin's send() has to return -1 (TCP backpressure) before the stream
+// ends, so TOTAL_BYTES must exceed what the kernel buffers of one loopback
+// connection hold while the client does not read. Measured: 2.5 MiB on Linux
+// (sndbuf autotunes to 2.5 MiB, rcvbuf stays at its 128 KiB default), 192 KiB
+// on Windows. macOS caps a socket buffer at kern.ipc.maxsockbuf (8 MiB), so
+// 32 MiB keeps a 2x margin even over two such buffers. sendAll() fails the
+// test instead of hanging if the stream ever ends without backpressure.
+const TOTAL = 512; // 32 MiB
 const TOTAL_BYTES = TOTAL * CHUNK.byteLength;
 
 type Signals = {
@@ -16,16 +24,23 @@ type Signals = {
 // Streams TOTAL chunks. send() returning -1 means the chunk was enqueued
 // under backpressure; wait for the drain callback instead of re-sending.
 // The waiter is armed before send() because drain can fire synchronously
-// inside it on a plain TCP socket.
+// inside it on a plain TCP socket. Resolves to the number of sends that
+// backpressured; rejects if a send is dropped or the stream never backs up.
 async function sendAll(ws: Bun.ServerWebSocket<Signals>): Promise<number> {
   let backpressured = 0;
   for (let i = 0; i < TOTAL; i++) {
     ws.data.drained = Promise.withResolvers();
-    if (ws.send(CHUNK) === -1) {
+    const status = ws.send(CHUNK);
+    if (status === -1) {
       backpressured++;
       ws.data.backpressured.resolve();
       await ws.data.drained.promise;
+    } else if (status !== CHUNK.byteLength) {
+      throw new Error(`send() returned ${status} for chunk ${i}`);
     }
+  }
+  if (backpressured === 0) {
+    throw new Error(`sent ${TOTAL_BYTES} bytes to a paused peer without backpressure`);
   }
   return backpressured;
 }
@@ -58,7 +73,7 @@ function streamServer(signals: Signals, secure: boolean) {
 // end to end: with the client paused, the origin server's send() must back
 // up through the proxy. (proxy-test-utils copies with on("data") → write(),
 // which would absorb the whole stream in memory instead.)
-async function pipingConnectProxy(secure: boolean): Promise<{ port: number; close(): void }> {
+async function pipingConnectProxy(secure: boolean): Promise<{ port: number; [Symbol.dispose](): void }> {
   function onConnection(client: net.Socket) {
     client.once("data", head => {
       const match = /^CONNECT ([^:]+):(\d+) /.exec(head.toString("latin1"));
@@ -81,7 +96,7 @@ async function pipingConnectProxy(secure: boolean): Promise<{ port: number; clos
   const port = await new Promise<number>(resolve =>
     server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
   );
-  return { port, close: () => server.close() };
+  return { port, [Symbol.dispose]: () => server.close() };
 }
 
 // Forces the event loop through `n` I/O roundtrips without a timer. A
@@ -108,8 +123,9 @@ type Pausable = {
 };
 
 // The scenario every variant runs: the peer streams TOTAL_BYTES at us while
-// paused; we must see the peer block on TCP (its send() backpressures) with
-// our received count frozen far below the total, then drain it all on resume.
+// we are paused. pause() preceded its first send(), so we must see the peer
+// block on TCP (its send() backpressures) with our received count still at
+// zero, then drain it all on resume. Resolves to what resume() returned.
 async function expectPauseHolds({
   ws,
   signals,
@@ -122,26 +138,36 @@ async function expectPauseHolds({
   clock: WebSocket;
   getReceived: () => number;
   done: Promise<void>;
-}) {
+}): Promise<unknown> {
   const stream = await signals.stream.promise;
   const serverDone = sendAll(stream);
 
-  expect(ws.isPaused).toBe(true);
   // The peer's send() went to -1: our kernel receive buffer is full and the
-  // TCP window is closed. Frames decoded before the pause may already have
-  // dispatched; nothing more may arrive from here on.
-  await signals.backpressured.promise;
-  const baseline = getReceived();
+  // TCP window is closed. Nothing may arrive from here on. The race fails
+  // the test at once if sendAll() rejects before that first -1.
+  await Promise.race([signals.backpressured.promise, serverDone]);
+  const receivedAtBackpressure = getReceived();
   await ioRoundtrips(clock, 20);
-  expect(getReceived()).toBe(baseline);
-  // Far below the total: the peer is blocked on TCP, not buffering in us.
-  expect(baseline).toBeLessThan(TOTAL_BYTES / 8);
+  expect({
+    isPaused: ws.isPaused,
+    receivedAtBackpressure,
+    receivedAfterRoundtrips: getReceived(),
+  }).toEqual({
+    isPaused: true,
+    receivedAtBackpressure: 0,
+    receivedAfterRoundtrips: 0,
+  });
 
-  ws.resume();
-  expect(ws.isPaused).toBe(false);
+  const resumed = ws.resume();
+  const isPausedAfterResume = ws.isPaused;
+  const backpressured = await serverDone;
   await done;
-  expect(getReceived()).toBe(TOTAL_BYTES);
-  expect(await serverDone).toBeGreaterThan(0);
+  expect({ isPausedAfterResume, received: getReceived() }).toEqual({
+    isPausedAfterResume: false,
+    received: TOTAL_BYTES,
+  });
+  expect(backpressured).toBeGreaterThan(0);
+  return resumed;
 }
 
 function newSignals(): Signals {
@@ -166,78 +192,83 @@ const MODES = [
   { name: "ws via https:// proxy", secure: false, proxy: "https" },
 ] as const;
 
+// The tests stay sequential on purpose: all of the work (framing, TLS, the
+// proxy copies) runs on this one thread, so concurrent tests only interleave
+// and each one's own duration grows toward the timeout.
 for (const mode of MODES) {
   const { secure } = mode;
   describe(`WebSocket.pause() / resume() (${mode.name})`, () => {
     it("stops reads while paused and drains after resume", async () => {
-      const proxy = mode.proxy ? await pipingConnectProxy(mode.proxy === "https") : undefined;
-      try {
-        const signals = newSignals();
-        using server = streamServer(signals, secure);
-        const url = `${secure ? "wss" : "ws"}://localhost:${server.port}`;
-        const options = {
-          tls: { rejectUnauthorized: false },
-          ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
-        };
+      using proxy = mode.proxy ? await pipingConnectProxy(mode.proxy === "https") : undefined;
+      const signals = newSignals();
+      using server = streamServer(signals, secure);
+      const url = `${secure ? "wss" : "ws"}://localhost:${server.port}`;
+      const options = {
+        tls: { rejectUnauthorized: false },
+        ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
+      };
 
-        const ws = new WebSocket(url, options);
-        ws.binaryType = "arraybuffer";
-        let received = 0;
-        const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
-        ws.onmessage = ({ data }) => {
-          received += (data as ArrayBuffer).byteLength;
-          if (received >= TOTAL_BYTES) resolveDone();
-        };
-        await open(ws);
-        const clock = new WebSocket(url, options);
-        await open(clock);
+      const ws = new WebSocket(url, options);
+      ws.binaryType = "arraybuffer";
+      let received = 0;
+      const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
+      ws.onmessage = ({ data }) => {
+        received += (data as ArrayBuffer).byteLength;
+        if (received >= TOTAL_BYTES) resolveDone();
+      };
+      await open(ws);
+      const clock = new WebSocket(url, options);
+      await open(clock);
 
-        expect(ws.isPaused).toBe(false);
-        expect(ws.pause()).toBe(true);
-        await expectPauseHolds({ ws, signals, clock, getReceived: () => received, done });
+      expect({ isPausedBefore: ws.isPaused, paused: ws.pause(), isPausedAfterPause: ws.isPaused }).toEqual({
+        isPausedBefore: false,
+        paused: true,
+        isPausedAfterPause: true,
+      });
+      expect(await expectPauseHolds({ ws, signals, clock, getReceived: () => received, done })).toBe(true);
 
-        ws.close();
-        clock.close();
-      } finally {
-        proxy?.close();
-      }
-    }, 60_000);
+      ws.close();
+      clock.close();
+    });
 
     it("pause() and resume() are idempotent", async () => {
-      const proxy = mode.proxy ? await pipingConnectProxy(mode.proxy === "https") : undefined;
-      try {
-        const signals = newSignals();
-        using server = streamServer(signals, secure);
-        const url = `${secure ? "wss" : "ws"}://localhost:${server.port}`;
-        const options = {
-          tls: { rejectUnauthorized: false },
-          ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
-        };
-        const ws = new WebSocket(url, options);
-        await open(ws);
-        expect(ws.resume()).toBe(true);
-        expect(ws.isPaused).toBe(false);
-        expect(ws.pause()).toBe(true);
-        expect(ws.pause()).toBe(true);
-        expect(ws.isPaused).toBe(true);
-        expect(ws.resume()).toBe(true);
-        expect(ws.resume()).toBe(true);
-        expect(ws.isPaused).toBe(false);
+      using proxy = mode.proxy ? await pipingConnectProxy(mode.proxy === "https") : undefined;
+      const signals = newSignals();
+      using server = streamServer(signals, secure);
+      const url = `${secure ? "wss" : "ws"}://localhost:${server.port}`;
+      const options = {
+        tls: { rejectUnauthorized: false },
+        ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
+      };
+      const ws = new WebSocket(url, options);
+      await open(ws);
 
-        // Still a working connection after the churn.
-        const { promise: echoed, resolve } = Promise.withResolvers<string>();
-        ws.onmessage = ({ data }) => resolve(data);
-        ws.send("still alive");
-        expect(await echoed).toBe("still alive");
+      // Each entry records the return value and the state right after the call.
+      const transitions = [
+        { call: "resume", returned: ws.resume(), isPaused: ws.isPaused },
+        { call: "pause", returned: ws.pause(), isPaused: ws.isPaused },
+        { call: "pause", returned: ws.pause(), isPaused: ws.isPaused },
+        { call: "resume", returned: ws.resume(), isPaused: ws.isPaused },
+        { call: "resume", returned: ws.resume(), isPaused: ws.isPaused },
+      ];
+      expect(transitions).toEqual([
+        { call: "resume", returned: true, isPaused: false },
+        { call: "pause", returned: true, isPaused: true },
+        { call: "pause", returned: true, isPaused: true },
+        { call: "resume", returned: true, isPaused: false },
+        { call: "resume", returned: true, isPaused: false },
+      ]);
 
-        const closed = new Promise(resolve => (ws.onclose = resolve));
-        ws.close();
-        await closed;
-        expect(ws.pause()).toBe(false);
-        expect(ws.resume()).toBe(false);
-      } finally {
-        proxy?.close();
-      }
+      // Still a working connection after the churn.
+      const { promise: echoed, resolve } = Promise.withResolvers<string>();
+      ws.onmessage = ({ data }) => resolve(data);
+      ws.send("still alive");
+      expect(await echoed).toBe("still alive");
+
+      const closed = new Promise(resolve => (ws.onclose = resolve));
+      ws.close();
+      await closed;
+      expect({ pause: ws.pause(), resume: ws.resume() }).toEqual({ pause: false, resume: false });
     });
   });
 }
@@ -250,8 +281,8 @@ describe("WebSocket.pause() before open", () => {
 
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
-    expect(ws.pause()).toBe(true);
-    expect(ws.isPaused).toBe(true);
+    const paused = ws.pause();
+    const isPausedWhileConnecting = ws.isPaused;
     let received = 0;
     const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
     ws.onmessage = ({ data }) => {
@@ -259,14 +290,18 @@ describe("WebSocket.pause() before open", () => {
       if (received >= TOTAL_BYTES) resolveDone();
     };
     await open(ws);
-    expect(ws.isPaused).toBe(true);
+    expect({ paused, isPausedWhileConnecting, isPausedAfterOpen: ws.isPaused }).toEqual({
+      paused: true,
+      isPausedWhileConnecting: true,
+      isPausedAfterOpen: true,
+    });
     const clock = new WebSocket(url);
     await open(clock);
 
-    await expectPauseHolds({ ws, signals, clock, getReceived: () => received, done });
+    expect(await expectPauseHolds({ ws, signals, clock, getReceived: () => received, done })).toBe(true);
     ws.close();
     clock.close();
-  }, 60_000);
+  });
 
   it("resume() before open clears the latch", async () => {
     using server = Bun.serve({
@@ -283,12 +318,25 @@ describe("WebSocket.pause() before open", () => {
       },
     });
     const ws = new WebSocket(`ws://localhost:${server.port}`);
-    expect(ws.pause()).toBe(true);
-    expect(ws.resume()).toBe(true);
-    expect(ws.isPaused).toBe(false);
+    const paused = ws.pause();
+    const resumed = ws.resume();
+    const isPausedWhileConnecting = ws.isPaused;
     const { promise: got, resolve } = Promise.withResolvers<string>();
     ws.onmessage = ({ data }) => resolve(data);
-    expect(await got).toBe("a");
+    await open(ws);
+    expect({
+      paused,
+      resumed,
+      isPausedWhileConnecting,
+      isPausedAfterOpen: ws.isPaused,
+      firstMessage: await got,
+    }).toEqual({
+      paused: true,
+      resumed: true,
+      isPausedWhileConnecting: false,
+      isPausedAfterOpen: false,
+      firstMessage: "a",
+    });
     ws.close();
   });
 
@@ -301,19 +349,26 @@ describe("WebSocket.pause() before open", () => {
       websocket: { message() {} },
     });
     const ws = new WebSocket(`ws://localhost:${server.port}`);
-    expect(ws.pause()).toBe(true);
+    const pausedWhileConnecting = ws.pause();
     const closed = new Promise(resolve => (ws.onclose = resolve));
     ws.onerror = () => {};
     await closed;
-    expect(ws.readyState).toBe(WebSocket.CLOSED);
-    expect(ws.pause()).toBe(false);
-    expect(ws.resume()).toBe(false);
+    expect({
+      pausedWhileConnecting,
+      readyState: ws.readyState,
+      pause: ws.pause(),
+      resume: ws.resume(),
+    }).toEqual({
+      pausedWhileConnecting: true,
+      readyState: WebSocket.CLOSED,
+      pause: false,
+      resume: false,
+    });
   });
 });
 
 describe("ws package", () => {
   it("pause()/resume()/isPaused reach the socket", async () => {
-    const { WebSocket: WS } = await import("ws");
     const signals = newSignals();
     using server = streamServer(signals, false);
     const url = `ws://localhost:${server.port}`;
@@ -329,10 +384,14 @@ describe("ws package", () => {
     const clock = new WebSocket(url);
     await open(clock);
 
-    expect(ws.isPaused).toBe(false);
-    ws.pause();
-    await expectPauseHolds({ ws, signals, clock, getReceived: () => received, done });
+    // npm ws returns undefined from pause() and resume().
+    expect({ isPausedBefore: ws.isPaused, paused: ws.pause(), isPausedAfterPause: ws.isPaused }).toEqual({
+      isPausedBefore: false,
+      paused: undefined,
+      isPausedAfterPause: true,
+    });
+    expect(await expectPauseHolds({ ws, signals, clock, getReceived: () => received, done })).toBeUndefined();
     ws.close();
     clock.close();
-  }, 60_000);
+  });
 });

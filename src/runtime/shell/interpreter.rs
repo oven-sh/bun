@@ -293,6 +293,9 @@ pub struct Interpreter {
 
     pub(crate) has_pending_activity: AtomicU32,
     pub(crate) keep_alive: JsCell<bun_io::KeepAlive>,
+    /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
+    /// child the script spawns belongs to it, and once it stops the script runs no further.
+    pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
 
     pub(crate) async_commands_executing: Cell<u32>,
 
@@ -576,6 +579,7 @@ impl Interpreter {
             }),
             has_pending_activity: AtomicU32::new(0),
             keep_alive: JsCell::new(bun_io::KeepAlive::default()),
+            context: Cell::new(None),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
@@ -932,7 +936,26 @@ impl Interpreter {
 
     /// A sequencing state stops early: Ctrl+C cut the member short, or the script failed.
     pub(crate) fn interrupted(&self, id: NodeId) -> bool {
-        self.failed() || self.node(id).base().is_some_and(|b| b.interrupted)
+        self.context_stopped()
+            || self.failed()
+            || self.node(id).base().is_some_and(|b| b.interrupted)
+    }
+
+    /// Enters the context of the script that started this (a `Bun.ModuleGraph`'s), if it has one.
+    fn enter_context<'a>(
+        &self,
+        global_this: &'a crate::jsc::JSGlobalObject,
+    ) -> Option<bun_jsc::virtual_machine::ContextScope<'a>> {
+        self.context
+            .get()
+            .map(|id| global_this.bun_vm().enter_context(id))
+    }
+
+    /// The `Bun.ModuleGraph` whose script started this was disposed (or its realm is going).
+    pub(crate) fn context_stopped(&self) -> bool {
+        self.context
+            .get()
+            .is_some_and(|id| !bun_jsc::virtual_machine::VirtualMachine::get().is_context_live(id))
     }
 
     /// Some ancestor is a member of a multi-command pipeline.
@@ -1293,6 +1316,8 @@ impl Interpreter {
                     // (allocation failure), the promise is rejected with that
                     // instead; a terminating VM settles nothing.
                     let event_loop = global_this.bun_vm().event_loop_mut();
+                    // Settled for the script that started the shell.
+                    let _context = self.enter_context(global_this);
                     match buffers {
                         Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
                             resolve,
@@ -1367,6 +1392,8 @@ impl Interpreter {
                 .global_this_ref()
                 .expect("take_failure returned a rejection on the Js path");
             let _entered = self.event_loop.entered();
+            // Settled for the script that started the shell.
+            let _context = self.enter_context(global_this);
             global_this.bun_vm().event_loop_mut().run_callback(
                 reject,
                 global_this,
@@ -1424,7 +1451,7 @@ impl Interpreter {
     pub(crate) fn run_from_js(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
-        _callframe: &crate::jsc::CallFrame,
+        callframe: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
         log!(
             "Interpreter(0x{:x}) runFromJS",
@@ -1441,6 +1468,11 @@ impl Interpreter {
             ));
         }
         Self::incr_pending_activity_flag(&self.has_pending_activity);
+        let vm = global_this.bun_vm();
+        self.context.set(
+            vm.as_graph_context(vm.context_of_caller(callframe))
+                .map(bun_jsc::ScriptExecutionContext::id),
+        );
 
         let shell = self.root_shell.as_ptr();
         let ast = &raw const self.args.get().script_ast;
@@ -2715,6 +2747,9 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 ///
 /// `Taskable` is a supertrait so [`ShellTask::on_finish`] can build the
 /// JS-side `ConcurrentTask`.
+/// Its `Taskable::context` is `Always`: a step is what its interpreter is waiting for, and the
+/// interpreter checks its own context before anything reaches script (`Interpreter::interrupted`,
+/// `finish`, `fail`).
 pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// Byte offset of the embedded `task: ShellTask` field within `Self`.
     /// Implementors define this as `core::mem::offset_of!(Self, task)`.

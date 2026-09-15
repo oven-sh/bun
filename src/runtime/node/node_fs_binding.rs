@@ -37,6 +37,9 @@ where
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
+    if let bun_jsc::virtual_machine::FdUse::Closes(fd) = args.fd_use() {
+        vm.disown_fd(fd);
+    }
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
@@ -61,14 +64,24 @@ fn run_async<A: FsArgument>(
     this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, &Binding, ThreadIsolated<A>, &mut VirtualMachine) -> JSValue,
+    create_task: fn(
+        &bun_jsc::JsThread<'_>,
+        &Binding,
+        ThreadIsolated<A>,
+        &mut VirtualMachine,
+    ) -> JSValue,
 ) -> JsResult<JSValue> {
     let args = match parse_async_args::<A>(global, frame) {
         Ok(args) => args,
         Err(result) => return result,
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(global, this, args, vm))
+    Ok(create_task(
+        &global.js_thread_of_caller(frame),
+        this,
+        args,
+        vm,
+    ))
 }
 
 /// Parses a promise-returning binding's arguments; `Err` is what the binding returns instead.
@@ -162,7 +175,12 @@ impl Binding {
             Err(result) => return result,
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(AsyncCpTask::create(global, this, cp_args, vm))
+        Ok(AsyncCpTask::create(
+            &global.js_thread_of_caller(frame),
+            this,
+            cp_args,
+            vm,
+        ))
     }
 
     /// `callSync(.cp)`.
@@ -201,9 +219,18 @@ impl Binding {
         let is_bunfs = bun_standalone_graph::Graph::get_ref().is_some()
             && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
         if rd_args.recursive && !is_bunfs {
-            return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
+            return Ok(AsyncReaddirRecursiveTask::create(
+                &global.js_thread_of_caller(frame),
+                rd_args,
+                vm,
+            ));
         }
-        Ok(async_::Readdir::create(global, this, rd_args, vm))
+        Ok(async_::Readdir::create(
+            &global.js_thread_of_caller(frame),
+            this,
+            rd_args,
+            vm,
+        ))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -217,7 +244,10 @@ impl Binding {
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
-        let watch_args = fs::Watcher::Arguments::from_js(global, &mut slice)?;
+        let watch_args = fs::Watcher::Arguments::from_js(
+            &global.js_thread(vm.context_of_caller(frame)),
+            &mut slice,
+        )?;
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
@@ -240,7 +270,10 @@ impl Binding {
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
-        let wf_args = fs::StatWatcher::Arguments::from_js(global, &mut slice)?;
+        let wf_args = fs::StatWatcher::Arguments::from_js(
+            &global.js_thread(vm.context_of_caller(frame)),
+            &mut slice,
+        )?;
 
         match this
             .node_fs
@@ -336,6 +369,70 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     // `module` was `Box::new`-allocated; ownership transfers to the GC
     // wrapper, which calls `Binding::finalize` to reclaim it.
     Binding::to_js_boxed(module, global)
+}
+
+/// `(fd)` → its owner: a node:fs stream or `FileHandle` opened `fd` for itself. If the script that is
+/// running is a `Bun.ModuleGraph`'s, that graph's context closes the descriptor when the graph is
+/// disposed (nothing is reported to a disposed graph, so the object never gets to close it), and
+/// the owner is that context's id. 0: nobody but the object closes it.
+#[bun_jsc::host_fn]
+pub(crate) fn own_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_sys_jsc::FdJsc as _;
+    let vm = global.bun_vm();
+    if let (Some(context), Some(fd)) = (
+        vm.as_graph_context(vm.context_of_caller(frame)),
+        bun_sys::Fd::from_js(frame.argument(0)),
+    ) {
+        context.own_fd(fd);
+        return Ok(JSValue::js_number(f64::from(context.id().raw())));
+    }
+    Ok(JSValue::js_number(0.0))
+}
+
+/// `(owner)` → whether a descriptor [`own_fd`] gave to `owner` is still open: not once that context
+/// stopped. (The number may be another file's by then.)
+#[bun_jsc::host_fn]
+pub(crate) fn is_owned_fd_open(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let owner = frame.argument(0).coerce_to_i32(global)?;
+    Ok(JSValue::from(
+        owner == 0
+            || global
+                .bun_vm()
+                .is_context_live(bun_jsc::ContextId::from_raw(owner as u32)),
+    ))
+}
+
+/// `(fd, owner)` → whether the caller is to close `fd`, which is its own again: not if the context
+/// that owned it has stopped, and closed it.
+#[bun_jsc::host_fn]
+pub(crate) fn release_owned_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_sys_jsc::FdJsc as _;
+    let owner = frame.argument(1).coerce_to_i32(global)?;
+    if owner == 0 {
+        return Ok(JSValue::TRUE);
+    }
+    let context = global
+        .bun_vm()
+        .graph_context(bun_jsc::ContextId::from_raw(owner as u32))
+        .filter(|context| !context.is_stopped());
+    if let (Some(context), Some(fd)) = (context, bun_sys::Fd::from_js(frame.argument(0))) {
+        context.disown_fd(fd);
+    }
+    Ok(JSValue::from(context.is_some()))
+}
+
+/// `(owner, callback)`: `callback()` in the context [`own_fd`] named, so what it queues or throws
+/// is that context's script's. (By id: holding the context's async frame from a registry that
+/// lives as long as the realm would keep its graph from ever being collected.)
+#[bun_jsc::host_fn]
+pub(crate) fn call_in_owner(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let owner = frame.argument(0).coerce_to_i32(global)?;
+    let _context = (owner != 0).then(|| {
+        global
+            .bun_vm()
+            .enter_context(bun_jsc::ContextId::from_raw(owner as u32))
+    });
+    frame.argument(1).call(global, JSValue::UNDEFINED, &[])
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the

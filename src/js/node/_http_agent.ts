@@ -10,6 +10,12 @@ const { kDestroyOnRead } = require("internal/net/symbols");
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
 const kRequestAsyncResource = Symbol("requestAsyncResource");
+// The frame of the Bun.ModuleGraph an Agent was made in, if any. Its sockets are opened in that
+// graph's context (or the host's), not in that of whichever request needed one: a disposed graph's
+// sockets close without a word, and an agent of the host's that a graph had used would wait on
+// them for ever.
+const kOwnerFrame = Symbol("ownerFrame");
+const AsyncContextFrame = require("internal/async_context_frame");
 
 function freeSocketErrorListener(err) {
   const socket = this;
@@ -25,6 +31,7 @@ function Agent(options): void {
   EventEmitter.$call(this);
 
   this.options = { __proto__: null, ...options };
+  this[kOwnerFrame] = AsyncContextFrame.currentGraphFrame();
 
   this.defaultPort = this.options.defaultPort || 80;
   this.protocol = this.options.protocol || "http:";
@@ -315,7 +322,11 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     options.keepAliveInitialDelay = this.keepAliveMsecs;
   }
 
-  const newSocket = this.createConnection(options, oncreate);
+  const ownerFrame = this[kOwnerFrame];
+  const newSocket =
+    ownerFrame?.graph === AsyncContextFrame.current()?.graph
+      ? this.createConnection(options, oncreate)
+      : AsyncContextFrame.run(ownerFrame, this.createConnection, this, options, oncreate);
   if (newSocket && !newSocket[kWaitForProxyTunnel]) oncreate(null, newSocket);
 };
 

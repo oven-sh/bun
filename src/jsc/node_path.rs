@@ -182,6 +182,15 @@ impl<'a> PathOrFileDescriptor<'a> {
         matches!(self, Self::Fd(_))
     }
 
+    /// For an operation that reads or writes what this names (see `VirtualMachine::owned_fd_job`).
+    #[inline]
+    pub fn fd_use(&self) -> crate::virtual_machine::FdUse {
+        match self {
+            Self::Fd(fd) => crate::virtual_machine::FdUse::Uses(*fd),
+            Self::Path(_) => crate::virtual_machine::FdUse::None,
+        }
+    }
+
     /// Unwrap the `Path` arm. Panics on `Fd` (used only after the caller has
     /// matched on the tag).
     #[inline]

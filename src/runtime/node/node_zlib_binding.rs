@@ -985,6 +985,11 @@ macro_rules! __impl_compression_stream {
                 // SAFETY: fn contract — the stream the pool posted (write's ref held).
                 unsafe { $crate::node::node_zlib_binding::CompressionStream::<$native>::release_unrun(this) }
             }
+            /// The write always completes (its buffers are unpinned); the callbacks it reports to carry
+            /// the async context of the script that set them.
+            unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+                bun_event_loop::TaskContext::Always
+            }
         }
 
         /// `T.js.*` — cached-property accessors emitted by

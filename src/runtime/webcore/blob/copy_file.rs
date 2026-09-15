@@ -72,14 +72,19 @@ unsafe impl Send for CopyFile {}
 
 impl jsc::JobContext for CopyFile {
     type OffThread = Self;
-    type Js = jsc::JSPromiseStrong;
+    /// (With the counts of whoever else owns the two descriptors, if script named them by number.)
+    type Js = (
+        jsc::virtual_machine::OwnedFdJob,
+        jsc::virtual_machine::OwnedFdJob,
+        jsc::JSPromiseStrong,
+    );
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         this.run_async();
         Some(done)
     }
     fn then(
         mut this: Self,
-        mut promise: jsc::JSPromiseStrong,
+        (_source_fd_job, _destination_fd_job, mut promise): Self::Js,
         cx: &jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
         CopyFile::then(&mut this, promise.swap(), cx.global())
@@ -94,7 +99,7 @@ impl CopyFile {
         source_store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         mkdirp_if_not_exists: bool,
         destination_mode: Option<Mode>,
     ) -> JSValue {
@@ -113,10 +118,15 @@ impl CopyFile {
             system_error: None,
             read_len: 0,
         };
-        let cx = global_this.js_thread();
-        let promise = jsc::JSPromiseStrong::init(global_this);
+        let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        jsc::Job::<CopyFile>::schedule(&cx, copy, promise);
+        let fd_jobs = (
+            cx.vm()
+                .owned_fd_job(cx.context(), copy.source_file_store.pathlike.fd_use()),
+            cx.vm()
+                .owned_fd_job(cx.context(), copy.destination_file_store.pathlike.fd_use()),
+        );
+        jsc::Job::<CopyFile>::schedule(cx, copy, (fd_jobs.0, fd_jobs.1, promise));
         value
     }
 
@@ -1069,6 +1079,13 @@ pub struct CopyFileWindows<'a> {
     // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
     // likely should be *const jsc::EventLoop.
     pub(crate) event_loop: &'a jsc::event_loop::EventLoop,
+    /// The context of the script that asked for the copy.
+    pub(crate) context: jsc::ContextId,
+    /// For a descriptor another context's script opened: that context's count of requests on it.
+    pub(crate) _fd_jobs: (
+        jsc::virtual_machine::OwnedFdJob,
+        jsc::virtual_machine::OwnedFdJob,
+    ),
 
     pub(crate) size: SizeType,
 
@@ -1362,12 +1379,21 @@ impl<'a> CopyFileWindows<'a> {
         destination_file_store: RefPtr<Store>,
         source_file_store: RefPtr<Store>,
         event_loop: &'a jsc::event_loop::EventLoop,
+        context: &jsc::ScriptExecutionContext,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
         destination_mode: Option<Mode>,
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
         let global = event_loop.global_ref();
+        let vm = jsc::virtual_machine::VirtualMachine::get();
+        let fd_jobs = (
+            vm.owned_fd_job(context, source_file_store.data.as_file().pathlike.fd_use()),
+            vm.owned_fd_job(
+                context,
+                destination_file_store.data.as_file().pathlike.fd_use(),
+            ),
+        );
         let result = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
@@ -1375,6 +1401,8 @@ impl<'a> CopyFileWindows<'a> {
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
+            context: context.id(),
+            _fd_jobs: fd_jobs,
             mkdirp_if_not_exists,
             destination_mode,
             size: size_,
@@ -1625,6 +1653,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     pub fn throw(&mut self, err: bun_sys::Error) {
+        let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
         // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
@@ -1710,6 +1739,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn resolve_promise(&mut self, written: usize) {
+        let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.

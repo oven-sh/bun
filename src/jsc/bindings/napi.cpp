@@ -101,7 +101,8 @@ using namespace Zig;
     auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm()); \
     NAPI_RETURN_IF_EXCEPTION(_env);                                             \
     /* Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...) */       \
-    if (WebCore::clientData(_env->vm())->isStoppingOrStopped(_env->vm()))       \
+    if (_env->m_isCompletingForStoppedContext                                   \
+        || WebCore::clientData(_env->vm())->isStoppingOrStopped(_env->vm()))    \
         [[unlikely]]                                                            \
         return napi_set_last_error(_env, _env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
 
@@ -3406,6 +3407,11 @@ extern "C" void Bun__napi_remove_finalizer(napi_env env, napi_finalize callback,
 extern "C" void Bun__napi_check_gc(napi_env env)
 {
     env->checkGC();
+}
+
+extern "C" bool NapiEnv__setCompletingForStoppedContext(napi_env env, bool value)
+{
+    return std::exchange(env->m_isCompletingForStoppedContext, value);
 }
 
 extern "C" bool NapiEnv__hasPendingException(napi_env env)

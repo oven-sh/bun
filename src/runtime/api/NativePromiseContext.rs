@@ -66,10 +66,12 @@ pub enum Tag {
     /// Task-only tag (never a context cell): drops the last ref of a
     /// `RewriterPipe` on behalf of `RewriterPipe::deref_outside_caller`.
     HTMLRewriterPipeFree,
+    /// The pump of an S3 stream upload (`S3UploadStreamWrapper`).
+    S3UploadStream,
 }
 
 impl Tag {
-    pub const COUNT: usize = 10;
+    pub const COUNT: usize = 11;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -84,6 +86,7 @@ impl Tag {
             7 => Tag::DebugHTTPSServerMuxRequestContext,
             8 => Tag::HTMLRewriterSuspension,
             9 => Tag::HTMLRewriterPipeFree,
+            10 => Tag::S3UploadStream,
             _ => unreachable!(),
         }
     }
@@ -117,6 +120,9 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> NativePromis
 }
 impl NativePromiseContextType for html_rewriter::RewriterPipe {
     const TAG: Tag = Tag::HTMLRewriterSuspension;
+}
+impl NativePromiseContextType for crate::webcore::s3::client::S3UploadStreamWrapper {
+    const TAG: Tag = Tag::S3UploadStream;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -202,7 +208,7 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
             Tag::DebugHTTPSServerMuxRequestContext => {
                 (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
             }
-            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree => {}
+            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree | Tag::S3UploadStream => {}
         }
     }
 }
@@ -234,6 +240,10 @@ impl Taskable for DeferredDerefTask {
     /// script-free, so do it.
     unsafe fn release_unrun(this: *mut Self) {
         Self::run_from_js_thread(this as usize);
+    }
+    /// A deferred deref; calls no script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }
 
@@ -273,10 +283,7 @@ impl DeferredDerefTask {
 
         // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so
         // build it directly — dispatch unpacks via `task.ptr as usize`.
-        let task = Task::new(
-            <DeferredDerefTask as Taskable>::TAG,
-            (addr | (tag as usize)) as *mut (),
-        );
+        let task = Task::init((addr | (tag as usize)) as *mut DeferredDerefTask);
         // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
         // sole mutator on the JS thread here.
         vm.event_loop_ref().enqueue_task(task);
@@ -325,6 +332,12 @@ impl DeferredDerefTask {
                         NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
                     );
                 }
+                Tag::S3UploadStream => {
+                    // The pump's promise was collected unsettled (the script running it is gone):
+                    // as a rejection with no reason.
+                    (*ctx.cast::<crate::webcore::s3::client::S3UploadStreamWrapper>())
+                        .handle_reject_stream(JSValue::ZERO);
+                }
             }
         }
     }
@@ -353,3 +366,7 @@ const _: () = assert!(
 );
 const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<crate::webcore::s3::client::S3UploadStreamWrapper>()
+        > DeferredDerefTask::TAG_MASK
+);

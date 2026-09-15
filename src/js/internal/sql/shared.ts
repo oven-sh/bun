@@ -641,13 +641,28 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
    */
   protected abstract isConnectFailureError(err: Error | null): boolean;
 
+  /// `method` bound to this slot for the native connection to call (from a socket event,
+  /// which has no async context): in the owning graph's context, so a retry it arms is the graph's.
+  protected nativeCallback(method: (...args: any[]) => void): (...args: any[]) => void {
+    const graphFrame = this.adapter.ownerGraphFrame;
+    if (graphFrame === undefined) return method.bind(this);
+    return (...args) => AsyncContextFrame.run(graphFrame, method, this, ...args);
+  }
+
   async #beginConnecting() {
     // a fresh connect cycle (not a backoff retry) starts the retry budget
     if (this.connectStartedAt === 0) {
       this.connectStartedAt = Date.now();
       this.connectAttempts = 0;
     }
-    await this.startConnection();
+    // The pool's connections are its owner's: the Bun.ModuleGraph the SQL instance was made in
+    // (a redial starts from a close event, which has no async context), or no graph's when the
+    // host made it, even if a graph's query is what makes it dial: that graph's dispose() would
+    // otherwise close the host's connections under its queries.
+    const graphFrame = this.adapter.ownerGraphFrame;
+    await (graphFrame === undefined && AsyncContextFrame.current()?.graph === undefined
+      ? this.startConnection()
+      : AsyncContextFrame.run(graphFrame, this.startConnection, this));
     if (this.onFinish !== null) {
       // the pool was force-closed while the native handle was being created;
       // close it now so onClose fires and onFinish settles
@@ -937,9 +952,13 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /// inside it rather than in whatever context the native callback happens to fire in
   /// (none for a socket event, the close() caller's when the socket closes synchronously).
   public readonly callbackAsyncContext: unknown;
+  /// The Bun.ModuleGraph context frame the SQL instance was created inside of, if any:
+  /// every connection of the pool is opened in it, so it belongs to that graph.
+  public readonly ownerGraphFrame: unknown;
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
+    this.ownerGraphFrame = AsyncContextFrame.currentGraphFrame();
     this.callbackAsyncContext =
       connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
     // Slots are filled one at a time in connect()'s pool-start loop, and

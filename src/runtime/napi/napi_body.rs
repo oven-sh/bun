@@ -53,6 +53,11 @@ impl Taskable for napi_async_work {
         // SAFETY: fn contract — the addon's live work object the pool posted.
         let _ = unsafe { (*this).run_from_js(global) };
     }
+    /// An addon's completion always runs (it frees the work there): `NapiEnv::complete_in_context`
+    /// enters the context that queued it, and refuses calls into script if that context has stopped.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 impl Taskable for ThreadSafeFunction {
     const TAG: TaskTag = task_tag::ThreadSafeFunction;
@@ -60,6 +65,10 @@ impl Taskable for ThreadSafeFunction {
     /// run with the exit handlers before the queue is released) already
     /// neutralised or freed. Nothing to do, and `this` must not be dereferenced.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// As `napi_async_work`.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 impl Taskable for NapiFinalizerTask {
     const TAG: TaskTag = task_tag::NapiFinalizerTask;
@@ -69,6 +78,10 @@ impl Taskable for NapiFinalizerTask {
     unsafe fn release_unrun(this: *mut Self) {
         // `Err` is left pending for the release dispatcher's fold.
         let _ = NapiFinalizerTask::run_on_js_thread(this);
+    }
+    /// An addon counts on its finalizers running.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }
 
@@ -93,6 +106,8 @@ unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
     fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
+    /// Returns the previous value.
+    fn NapiEnv__setCompletingForStoppedContext(env: *mut NapiEnv, value: bool) -> bool;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
@@ -143,6 +158,26 @@ impl NapiEnv {
 
     pub(crate) fn pending_exception(&self) -> napi_status {
         Self::set_last_error(Some(self), NapiStatus::pending_exception)
+    }
+
+    /// Runs `completion` (an addon's `complete` or `call_js`) in `context`, the one whose script
+    /// asked for the work: what the callback opens is that context's. Once the context has
+    /// stopped the callback still runs, since it owns memory only it can free, but functions
+    /// that would run script answer it as they do in a VM that is stopping.
+    pub(crate) fn complete_in_context(
+        &self,
+        context: bun_jsc::ContextId,
+        completion: impl FnOnce(),
+    ) {
+        let vm = self.to_js().bun_vm();
+        let stopped = !vm.is_context_live(context);
+        let _context = vm.enter_context(context);
+        // SAFETY: `self` is a live C++-owned napi_env; JS thread.
+        let previous =
+            unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), stopped) };
+        completion();
+        // SAFETY: as above; the env outlives its completions (the caller holds a ref).
+        unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), previous) };
     }
 
     /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
@@ -314,7 +349,14 @@ impl Drop for NapiHandleScopeGuard<'_> {
 type napi_handle_scope = *mut NapiHandleScope;
 type napi_escapable_handle_scope = *mut NapiHandleScope;
 pub(super) type napi_callback_info = *mut CallFrame;
-type napi_deferred = *mut JSPromiseStrong;
+/// What `napi_create_promise` hands the addon.
+pub(crate) struct Deferred {
+    promise: JSPromiseStrong,
+    /// The context whose script made the promise: settling it once that context has stopped
+    /// settles nothing, whichever completion the addon does it from.
+    context: bun_jsc::ContextId,
+}
+type napi_deferred = *mut Deferred;
 
 // ──────────────────────────────────────────────────────────────────────────
 // napi_value
@@ -1621,11 +1663,14 @@ extern "C" fn napi_create_promise(
     let env = preamble!(env_);
     let deferred = get_out!(env, deferred_);
     let promise = get_out!(env, promise_);
-    let strong = Box::new(JSPromiseStrong::init(env.to_js()));
+    let strong = Box::new(Deferred {
+        promise: JSPromiseStrong::init(env.to_js()),
+        context: env.to_js().bun_vm().context_of_caller_no_frame().id(),
+    });
     let strong_ptr = bun_core::heap::into_raw(strong);
     *deferred = strong_ptr;
     // SAFETY: strong_ptr was just created from heap::alloc and is non-null.
-    let prom_value = unsafe { (*strong_ptr).get() }.as_value(env.to_js());
+    let prom_value = unsafe { (*strong_ptr).promise.get() }.as_value(env.to_js());
     promise.set(env, prom_value);
     env.ok()
 }
@@ -1641,8 +1686,11 @@ extern "C" fn napi_resolve_deferred(
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
     let deferred_box = unsafe { bun_core::heap::take(deferred) };
     // `deferred_box` drops at scope exit (deinit + free).
+    if !env.to_js().bun_vm().is_context_live(deferred_box.context) {
+        return env.ok();
+    }
     let resolution = resolution_.get();
-    let prom = deferred_box.get();
+    let prom = deferred_box.promise.get();
     if prom.resolve(env.to_js(), resolution).is_err() {
         return env.generic_failure();
     }
@@ -1659,8 +1707,11 @@ extern "C" fn napi_reject_deferred(
     let env = preamble!(env_);
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
     let deferred_box = unsafe { bun_core::heap::take(deferred) };
+    if !env.to_js().bun_vm().is_context_live(deferred_box.context) {
+        return env.ok();
+    }
     let rejection = rejection_.get();
-    let prom = deferred_box.get();
+    let prom = deferred_box.promise.get();
     if prom.reject(env.to_js(), Ok(rejection)).is_err() {
         return env.generic_failure();
     }
@@ -1829,6 +1880,8 @@ pub(crate) struct napi_async_work {
     pub(crate) status: AtomicU32, // AsyncWorkStatus
     pub(crate) scheduled: bool,
     pub poll_ref: KeepAlive,
+    /// The context whose script created the work: `complete` runs in it.
+    pub(crate) context: bun_jsc::ContextId,
 }
 
 bun_threading::intrusive_work_task!(napi_async_work, task);
@@ -1858,6 +1911,7 @@ impl napi_async_work {
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
             scheduled: false,
             poll_ref: KeepAlive::default(),
+            context: global.bun_vm().context_of_caller_no_frame().id(),
         }))
     }
 
@@ -1968,7 +2022,8 @@ impl napi_async_work {
                 NapiStatus::ok
             };
 
-        complete(env, status as napi_status, self.data);
+        let data = self.data;
+        env_ref.complete_in_context(self.context, || complete(env, status as napi_status, data));
 
         // SAFETY: env is valid for the duration of this call.
         unsafe { &*env }.surface_exception(global)
@@ -2471,6 +2526,8 @@ pub(crate) struct ThreadSafeFunction {
     pub(crate) handle: bun_jsc::VmHandle,
     pub(crate) loop_kind: bun_jsc::LoopKind,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
+    /// The context whose script created the function: its calls run in it.
+    pub(crate) context: bun_jsc::ContextId,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
     pub(crate) env: Option<NapiEnvRef>,
@@ -2805,7 +2862,10 @@ impl ThreadSafeFunction {
                     Some(v) => napi_value::create(env, v),
                     None => napi_value(0),
                 };
-                napi_threadsafe_function_call_js(env.as_mut_ptr(), js, self.ctx, task);
+                let ctx = self.ctx;
+                env.complete_in_context(self.context, || {
+                    napi_threadsafe_function_call_js(env.as_mut_ptr(), js, ctx, task)
+                });
                 env.surface_exception(global_object)
             }
         }
@@ -3242,6 +3302,7 @@ extern "C" fn napi_create_threadsafe_function(
         thread_count: AtomicI64::new(i64::try_from(initial_thread_count).expect("int cast")),
         poll_ref: KeepAlive::init(),
         tracker: Debugger::AsyncTaskTracker::init(vm),
+        context: vm.context_of_caller_no_frame().id(),
         finalizer_fun: thread_finalize_cb,
         finalizer_data: thread_finalize_data,
         has_queued_finalizer: false,

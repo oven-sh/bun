@@ -176,6 +176,7 @@
 #include "JSURLSearchParams.h"
 
 #include "AsyncContextFrame.h"
+#include "ModuleGraph.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/JSAsyncFunctionGenerator.h"
 #include "JavaScriptCore/JSGenerator.h"
@@ -3271,6 +3272,8 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     JSValue restoreAsyncContext;
     InternalFieldTuple* asyncContextData = nullptr;
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(jsObject)) {
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), wrapper->context.get())) [[unlikely]]
+            return JSValue::encode(jsUndefined());
         jsObject = wrapper->callback.get();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
@@ -5822,7 +5825,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    auto* context = thisObject->scriptExecutionContext();
+    auto* context = thisObject->currentScriptExecutionContext();
     RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
     return abortSignal.leakRef();
 }
@@ -5830,7 +5833,7 @@ extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* 
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    auto* context = thisObject->scriptExecutionContext();
+    auto* context = thisObject->currentScriptExecutionContext();
     auto abortSignal = WebCore::AbortSignal::create(context);
 
     return JSValue::encode(toJSNewlyCreated<IDLInterface<WebCore::AbortSignal>>(*globalObject, *uncheckedDowncast<JSDOMGlobalObject>(globalObject), WTF::move(abortSignal)));

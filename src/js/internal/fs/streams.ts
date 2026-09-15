@@ -41,6 +41,54 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
+// A stream opens its descriptor for itself and closes it from its _destroy. A Bun.ModuleGraph that
+// was disposed is told nothing more, so its streams never get there: the graph's context closes
+// what they had opened. (A descriptor the caller passed in is the caller's.)
+const kFdOwner = Symbol("kFdOwner");
+const ownFd = $newRustFunction("node_fs_binding.rs", "ownFd", 1);
+const isOwnedFdOpen = $newRustFunction("node_fs_binding.rs", "isOwnedFdOpen", 1);
+const releaseOwnedFd = $newRustFunction("node_fs_binding.rs", "releaseOwnedFd", 2);
+
+// A stream over a FileHandle copies the handle's descriptor number; the handle knows whether the
+// number is still its own.
+const kFileHandle = Symbol("kFileHandle");
+
+/** The graph that opened this stream's descriptor was disposed (the host still holds the stream):
+ *  the descriptor is closed, and its number may be another file's. */
+function ownerClosedFd(stream) {
+  const handle = stream[kFileHandle];
+  if (handle !== undefined) {
+    if (handle[kFd] !== -1) return false;
+  } else {
+    const owner = stream[kFdOwner];
+    if (!owner || isOwnedFdOpen(owner)) return false;
+  }
+  stream.fd = null;
+  return true;
+}
+
+/** EBADF to whoever is using the stream, unless that is the disposed graph's own leftover code, which is told
+ *  nothing: a stream that was reading or writing at dispose() finds this out from its own queued continuation,
+ *  and an 'error' nobody listens for there would be an uncaught exception of the host's. */
+function reportClosedByOwner(syscall: string, report: (er: Error) => void) {
+  if (!require("internal/shared").isStoppedModuleGraphRunning()) report(badFileDescriptor(syscall));
+}
+
+/** A write that finds the descriptor gone: nothing is in flight, whoever is or is not told, so a later destroy() must
+ *  not wait for it (and one already waiting is let go). */
+function writeFoundFdClosed(stream, syscall: string, cb: (er?: Error) => void) {
+  stream[kIsPerformingIO] = false;
+  reportClosedByOwner(syscall, cb);
+  if (stream.destroyed) stream.emit(kIoDone);
+}
+
+function badFileDescriptor(syscall: string) {
+  const err: any = new Error("EBADF: bad file descriptor, " + syscall);
+  err.code = "EBADF";
+  err.errno = process.platform === "win32" ? -4083 : -9;
+  err.syscall = syscall;
+  return err;
+}
 
 const {
   read: fileHandlePrototypeRead,
@@ -166,6 +214,7 @@ function ReadStream(this: FSStream, path, options): void {
       throw $ERR_METHOD_NOT_IMPLEMENTED("fs.FileHandle with custom fs operations");
     }
     this[kFs] = fileHandleStreamFs(fd);
+    this[kFileHandle] = fd;
     this.fd = fd[kFd];
     fd[kRef]();
     fd.on("close", this.close.bind(this));
@@ -256,6 +305,8 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
         callback(err);
       } else {
         this.fd = fd;
+        // Only this stream closes it: see closeAfterSync.
+        if (this[kFs] === fs) this[kFdOwner] = ownFd(fd);
         callback();
         this.emit("open", this.fd);
         this.emit("ready");
@@ -269,6 +320,8 @@ readStreamPrototype.open = streamNoop;
 readStreamPrototype._construct = streamConstruct;
 
 readStreamPrototype._read = function (n) {
+  if (ownerClosedFd(this))
+    return void reportClosedByOwner("read", er => require("internal/streams/destroy").errorOrDestroy(this, er));
   n = this.pos !== undefined ? $min(this.end - this.pos + 1, n) : $min(this.end - this.bytesRead + 1, n);
 
   if (n <= 0) {
@@ -350,7 +403,7 @@ function close(stream, err, cb) {
     return;
   }
 
-  if (!stream.fd) {
+  if (ownerClosedFd(stream) || !stream.fd) {
     cb(err);
   } else if (stream.flush) {
     stream[kFs].fsync(stream.fd, flushErr => {
@@ -362,6 +415,10 @@ function close(stream, err, cb) {
 }
 
 function closeAfterSync(stream, err, cb) {
+  if (stream[kFdOwner] && !releaseOwnedFd(stream.fd, stream[kFdOwner])) {
+    stream.fd = null;
+    return void cb(err);
+  }
   stream[kFs].close(stream.fd, er => {
     cb(er || err);
   });
@@ -411,6 +468,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
       throw $ERR_METHOD_NOT_IMPLEMENTED("fs.FileHandle with custom fs operations");
     }
     this[kFs] = customFs = fileHandleStreamFs(fd);
+    this[kFileHandle] = fd;
     fd[kRef]();
     fd.on("close", this.close.bind(this));
     this.fd = fd = fd[kFd];
@@ -496,6 +554,7 @@ writeStreamPrototype.open = streamNoop;
 writeStreamPrototype._construct = streamConstruct;
 
 function writeAll(data, size, pos, cb, retries = 0) {
+  if (ownerClosedFd(this)) return void writeFoundFdClosed(this, "write", cb);
   this[kFs].write(this.fd, data, 0, size, pos, (er, bytesWritten, buffer) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
@@ -526,6 +585,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 }
 
 function writevAll(chunks, size, pos, cb, retries = 0) {
+  if (ownerClosedFd(this)) return void writeFoundFdClosed(this, "writev", cb);
   this[kFs].writev(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {

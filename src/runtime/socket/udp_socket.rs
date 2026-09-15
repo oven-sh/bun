@@ -82,7 +82,7 @@ unsafe extern "C" {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
-    crate::jsc_hooks::ActiveHandle::UdpSocket(core::ptr::NonNull::from(this)).unregister();
+    this.abort_handle.leave();
     this.poll_ref.with_mut(|p| p.disable());
     this.this_value.with_mut(|r| r.downgrade());
     this.socket.set(None);
@@ -546,7 +546,14 @@ pub struct UDPSocket {
     /// replaces the config. POSIX-only, like the registry itself.
     #[cfg(not(windows))]
     registered_fd: Cell<Option<c_int>>,
+    /// Armed while open: the socket closes with the context that opened it.
+    abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(UDPSocket, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run).
+    UDPSocket::close_socket(unsafe { &*this })
+});
 
 impl UDPSocket {
     pub(crate) fn new(init: Self) -> *mut Self {
@@ -569,13 +576,19 @@ impl UDPSocket {
         unsafe { &*user.cast::<UDPSocket>() }
     }
 
-    pub(crate) fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn udp_socket(cx: &bun_jsc::JsThread<'_>, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
+
+        // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
+        // A socket that is closed from the queue can send before that: it is not bound at all.
+        if cx.context().is_stopped() {
+            return Ok(bun_jsc::JSPromise::create(cx.global()).to_js());
+        }
 
         let this_ptr = Self::new(Self {
             socket: Cell::new(None),
             config: JsCell::new(UDPSocketConfig::default()),
-            global_this: BackRef::new(global_this),
+            global_this: BackRef::new(cx.global()),
             loop_: uws::Loop::get(),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -583,6 +596,7 @@ impl UDPSocket {
             connect_info: Cell::new(None),
             #[cfg(not(windows))]
             registered_fd: Cell::new(None),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<UDPSocket>(),
         });
         // SAFETY: just allocated above; we are the sole owner. R-2: shared
         // borrow — every mutated field is `Cell`/`JsCell`.
@@ -626,31 +640,31 @@ impl UDPSocket {
         //
         // SAFETY: `this_ptr` is a fresh `heap::into_raw` allocation (line 478);
         // ownership transfers to the C++ wrapper's `m_ctx`.
-        let this_value = unsafe { Self::to_js_ptr(this_ptr, global_this) };
+        let this_value = unsafe { Self::to_js_ptr(this_ptr, cx.global()) };
         this_value.ensure_still_alive();
         this.this_value
-            .with_mut(|r| r.set_strong(this_value, global_this));
+            .with_mut(|r| r.set_strong(this_value, cx.global()));
 
         this.config
-            .set(UDPSocketConfig::from_js(global_this, options, this_value)?);
+            .set(UDPSocketConfig::from_js(cx.global(), options, this_value)?);
 
         let mut err: c_int = 0;
 
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
         if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
-            return Err(
-                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
-                    global_this,
+            return Err(cx
+                .global()
+                .throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    cx.global(),
                     hostname_z.as_bytes(),
-                )),
-            );
+                )));
         }
         if let Some(connect) = &config.connect {
             let address = connect.address.to_utf8();
             if !bun_dns::is_valid_hostname(&address) {
-                return Err(global_this.throw_value(
-                    crate::dns_jsc::cares_jsc::not_a_hostname_error(global_this, &address),
+                return Err(cx.global().throw_value(
+                    crate::dns_jsc::cares_jsc::not_a_hostname_error(cx.global(), &address),
                 ));
             }
         }
@@ -663,12 +677,12 @@ impl UDPSocket {
             Some(fd) => match dgram_begin_adoption(fd) {
                 Some(previous) => Some((fd, previous)),
                 None => {
-                    return Err(global_this.throw_value(
+                    return Err(cx.global().throw_value(
                         bun_sys::Error::from_code_int(
                             SystemErrno::EEXIST as c_int,
                             bun_sys::Tag::open,
                         )
-                        .to_js(global_this),
+                        .to_js(cx.global()),
                     ));
                 }
             },
@@ -708,8 +722,9 @@ impl UDPSocket {
         this.socket.set(if created.is_null() {
             None
         } else {
-            // Open: the VM's stop phase closes it if script never does.
-            crate::jsc_hooks::ActiveHandle::UdpSocket(core::ptr::NonNull::from(this)).register();
+            // Open: its context closes it when it stops if script never does.
+            // SAFETY: heap-allocated above; leaves its context in `on_close`.
+            unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, cx.context()) };
             Some(created)
         });
 
@@ -744,15 +759,15 @@ impl UDPSocket {
                     syscall: BunString::static_(syscall),
                     ..Default::default()
                 };
-                let error_value = sys_err.to_error_instance(global_this);
+                let error_value = sys_err.to_error_instance(cx.global());
                 if !is_fd {
-                    error_value.put(global_this, b"address", config.hostname.to_js(global_this)?);
+                    error_value.put(cx.global(), b"address", config.hostname.to_js(cx.global())?);
                 }
 
-                return Err(global_this.throw_value(error_value));
+                return Err(cx.global().throw_value(error_value));
             }
 
-            return Err(global_this.throw(format_args!("Failed to bind socket")));
+            return Err(cx.global().throw(format_args!("Failed to bind socket")));
         }
 
         // Register this socket's live descriptor (adopted or freshly created)
@@ -775,14 +790,14 @@ impl UDPSocket {
                 .connect(address_z.as_ptr(), connect.port as u32);
             if ret != 0 {
                 if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
-                    return Err(global_this.throw_value(sys_err.to_js(global_this)));
+                    return Err(cx.global().throw_value(sys_err.to_js(cx.global())));
                 }
 
                 if let Some(eai_err) = c_ares::Error::init_eai(ret) {
-                    return Err(global_this.throw_value(
+                    return Err(cx.global().throw_value(
                         crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
                             eai_err,
-                            global_this,
+                            cx.global(),
                             b"connect",
                             address_z.as_bytes(),
                         )?,
@@ -798,7 +813,7 @@ impl UDPSocket {
 
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         Ok(bun_jsc::JSPromise::resolved_promise_value(
-            global_this,
+            cx.global(),
             this_value,
         ))
     }
@@ -1686,12 +1701,6 @@ impl UDPSocket {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
 
         Ok(JSValue::UNDEFINED)
-    }
-
-    /// The VM's stop phase (script forbidden): close the uSockets socket, as
-    /// `close()` from script would; `on_close` unregisters and drops the keep-alive.
-    pub(crate) fn stop_for_vm_teardown(this: &Self) {
-        Self::close_socket(this);
     }
 
     #[bun_jsc::host_fn(method)]

@@ -74,6 +74,7 @@ unsafe extern "C" {
         opcode: u8,
     );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__bunContext(websocket_context: &CppWebSocket) -> *const core::ffi::c_void;
     safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
@@ -85,6 +86,20 @@ unsafe extern "C" {
 // borrows (often while `&mut WebSocket<SSL>` is also live), so `&mut self`
 // would force needless `unsafe { &mut *ptr }` at every site.
 impl CppWebSocket {
+    /// The context of the script that made this WebSocket: its connection is that context's.
+    pub(crate) fn context<'a>(
+        &self,
+        vm: &'a VirtualMachine,
+    ) -> &'a bun_jsc::ScriptExecutionContext {
+        // SAFETY: a `Bun.ModuleGraph`'s context outlives the DOM objects made in it.
+        unsafe {
+            WebSocket__bunContext(self)
+                .cast::<bun_jsc::ScriptExecutionContext>()
+                .as_ref()
+        }
+        .unwrap_or_else(|| vm.root_context())
+    }
+
     pub(crate) fn did_abrupt_close(&self, reason: ErrorCode) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).

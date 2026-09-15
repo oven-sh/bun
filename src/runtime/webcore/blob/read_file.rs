@@ -117,10 +117,19 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                     blob.size
                         .set((bytes.len() as SizeType).min(blob.size.get()));
                 }
+                // Owned until `F::call` takes it: `wrap` does not call this for a graph that was
+                // disposed, and a raw buffer would be left behind.
+                // SAFETY: `result.buf` is the `heap::into_raw` of a boxed slice (see the producers).
+                let bytes = unsafe { bun_core::heap::take(bytes) };
                 // The `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // provides the source-location/exception-scope behaviour.
                 AnyPromise::Normal(promise).wrap(global_this, move |g| {
-                    F::call(&blob, g, bytes, Lifetime::Temporary)
+                    F::call(
+                        &blob,
+                        g,
+                        bun_core::heap::into_raw(bytes),
+                        Lifetime::Temporary,
+                    )
                 })?;
             }
             ReadFileResultType::Err(err) => {
@@ -222,8 +231,9 @@ impl bun_jsc::JobContext for ReadFile {
     const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
     /// Where the bytes go: completed by `then`, or cancelled (its `Drop`) when the job comes
-    /// back to a VM that is no longer running script and is released unrun.
-    type Js = ReadFileCompletionFns;
+    /// back to a VM that is no longer running script and is released unrun. And, for a read of
+    /// a descriptor another context's script opened, that context's count of jobs on it.
+    type Js = (bun_jsc::virtual_machine::OwnedFdJob, ReadFileCompletionFns);
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the read; finishes from the io loop via the token.
         this.run(done);
@@ -231,7 +241,7 @@ impl bun_jsc::JobContext for ReadFile {
     }
     fn then(
         this: Self,
-        completion: ReadFileCompletionFns,
+        (_fd_job, completion): Self::Js,
         cx: &bun_jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
         ReadFile::then(this, completion, cx.global())
@@ -258,9 +268,12 @@ impl ReadFile {
     pub(crate) fn schedule(
         this: ReadFile,
         completion: ReadFileCompletionFns,
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
     ) {
-        bun_jsc::Job::<ReadFile>::schedule(&global.js_thread(), this, completion);
+        let fd_job = cx
+            .vm()
+            .owned_fd_job(cx.context(), this.file_store.pathlike.fd_use());
+        bun_jsc::Job::<ReadFile>::schedule(cx, this, (fd_job, completion));
     }
 }
 
@@ -943,6 +956,10 @@ pub struct ReadFileUV<'a> {
     /// `Some` until the read completes; a `ReadFileUV` dropped before that cancels it.
     pub(crate) completion: Option<ReadFileCompletionFns>,
     pub(crate) is_regular_file: bool,
+    /// The context of the script that asked for the read.
+    pub(crate) context: jsc::ContextId,
+    /// For a descriptor another context's script opened: that context's count of requests on it.
+    pub(crate) _fd_job: jsc::virtual_machine::OwnedFdJob,
 
     pub(crate) req: libuv::fs_t,
     /// Stash for the open completion callback across the libuv async hop.
@@ -1025,6 +1042,7 @@ impl<'a> ReadFileUV<'a> {
     /// Typed entry: `C` supplies run/cancel for the erased completion.
     pub(crate) fn start<C: ReadFileCompletion>(
         event_loop: *mut EventLoop,
+        context: &bun_jsc::ScriptExecutionContext,
         store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
@@ -1032,6 +1050,7 @@ impl<'a> ReadFileUV<'a> {
     ) {
         Self::start_with_ctx(
             event_loop,
+            context,
             store,
             off,
             max_len,
@@ -1043,6 +1062,7 @@ impl<'a> ReadFileUV<'a> {
     /// Shares the body with `start`.
     pub(crate) fn start_with_ctx(
         event_loop: *mut EventLoop,
+        context: &bun_jsc::ScriptExecutionContext,
         store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
@@ -1054,6 +1074,8 @@ impl<'a> ReadFileUV<'a> {
         // async op, which additionally holds a keep-alive on it below.
         let event_loop: &'a EventLoop = unsafe { &*event_loop };
         let file_store = store.data.as_file().clone();
+        let fd_job = jsc::virtual_machine::VirtualMachine::get()
+            .owned_fd_job(context, file_store.pathlike.fd_use());
         let this = Box::new(ReadFileUV {
             // Projected through the helper to avoid materializing a
             // `&VirtualMachine`.
@@ -1075,6 +1097,8 @@ impl<'a> ReadFileUV<'a> {
             errno: None,
             completion: Some(completion),
             is_regular_file: false,
+            context: context.id(),
+            _fd_job: fd_job,
             req: bun_core::ffi::zeroed(),
             open_callback: Self::on_file_open,
         });
@@ -1097,6 +1121,7 @@ impl<'a> ReadFileUV<'a> {
             .completion
             .take()
             .expect("a ReadFileUV completes once");
+        let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(this_box.context);
 
         let result = if let Some(err) = this_box.system_error.take() {
             ReadFileResultType::Err(err)

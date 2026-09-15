@@ -1678,6 +1678,10 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
+        // A `Bun.ModuleGraph` that was disposed hears nothing more from native code.
+        if global.bun_vm().calls_nobody() {
+            return Ok(JSValue::UNDEFINED);
+        }
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.

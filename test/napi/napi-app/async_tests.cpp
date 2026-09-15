@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -267,6 +268,117 @@ void complete_for_cancel(napi_env env, napi_status status, void *data) {
 
   napi_delete_reference(env, cancel_data->callback);
   napi_delete_async_work(env, cancel_data->work);
+}
+
+// Three completions that each end in the caller's script, and a record of what
+// the runtime answered: a completion always runs (it frees what the call
+// allocated); whether script may run from it is up to the runtime.
+//   call_back_from_async_work(callback): `complete` calls `callback`
+//   resolve_from_async_work(): `complete` resolves the returned promise
+//   call_back_from_threadsafe_function(callback): `call_js` calls `callback`
+//   completion_statuses(): "<which>:<napi_status>" for each completion so far
+static std::vector<std::string> completion_statuses_so_far;
+
+struct CompletionData {
+  napi_ref callback = nullptr;
+  napi_deferred deferred = nullptr;
+  napi_async_work work = nullptr;
+  napi_threadsafe_function tsfn = nullptr;
+};
+
+static void execute_nothing(napi_env env, void *data) {}
+
+static void complete_by_calling_back(napi_env env, napi_status status,
+                                     void *opaque) {
+  auto *data = reinterpret_cast<CompletionData *>(opaque);
+  napi_value callback, global;
+  napi_get_reference_value(env, data->callback, &callback);
+  napi_get_global(env, &global);
+  completion_statuses_so_far.push_back(
+      "async_work_callback:" +
+      std::to_string(
+          napi_call_function(env, global, callback, 0, nullptr, nullptr)));
+  napi_delete_reference(env, data->callback);
+  napi_delete_async_work(env, data->work);
+  delete data;
+}
+
+static void complete_by_resolving(napi_env env, napi_status status,
+                                  void *opaque) {
+  auto *data = reinterpret_cast<CompletionData *>(opaque);
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  completion_statuses_so_far.push_back(
+      "async_work_deferred:" +
+      std::to_string(napi_resolve_deferred(env, data->deferred, undefined)));
+  napi_delete_async_work(env, data->work);
+  delete data;
+}
+
+static void call_js_by_calling_back(napi_env env, napi_value callback,
+                                    void *context, void *opaque) {
+  auto *data = reinterpret_cast<CompletionData *>(context);
+  napi_value global;
+  napi_get_global(env, &global);
+  completion_statuses_so_far.push_back(
+      "threadsafe_function_callback:" +
+      std::to_string(
+          napi_call_function(env, global, callback, 0, nullptr, nullptr)));
+  napi_release_threadsafe_function(data->tsfn, napi_tsfn_release);
+  delete data;
+}
+
+static napi_value call_back_from_async_work(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new CompletionData();
+  NODE_API_CALL(env, napi_create_reference(env, info[0], 1, &data->callback));
+  NODE_API_CALL(env, napi_create_async_work(
+                         env, nullptr,
+                         Napi::String::New(env, "call_back_from_async_work"),
+                         execute_nothing, complete_by_calling_back, data,
+                         &data->work));
+  NODE_API_CALL(env, napi_queue_async_work(env, data->work));
+  return ok(env);
+}
+
+static napi_value resolve_from_async_work(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new CompletionData();
+  napi_value promise;
+  NODE_API_CALL(env, napi_create_promise(env, &data->deferred, &promise));
+  NODE_API_CALL(env, napi_create_async_work(
+                         env, nullptr,
+                         Napi::String::New(env, "resolve_from_async_work"),
+                         execute_nothing, complete_by_resolving, data,
+                         &data->work));
+  NODE_API_CALL(env, napi_queue_async_work(env, data->work));
+  return promise;
+}
+
+static napi_value
+call_back_from_threadsafe_function(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new CompletionData();
+  NODE_API_CALL(
+      env, napi_create_threadsafe_function(
+               env, info[0], nullptr,
+               Napi::String::New(env, "call_back_from_threadsafe_function"), 0,
+               1, nullptr, nullptr, data, call_js_by_calling_back, &data->tsfn));
+  std::thread([tsfn = data->tsfn]() {
+    napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
+  }).detach();
+  return ok(env);
+}
+
+static napi_value completion_statuses(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::Array statuses =
+      Napi::Array::New(env, completion_statuses_so_far.size());
+  for (size_t i = 0; i < completion_statuses_so_far.size(); i++) {
+    statuses.Set(static_cast<uint32_t>(i),
+                 Napi::String::New(env, completion_statuses_so_far[i]));
+  }
+  return statuses;
 }
 
 std::atomic<bool> cancel_flag(false);
@@ -661,6 +773,10 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_execute);
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_complete);
   REGISTER_FUNCTION(env, exports, test_cancel_async_work);
+  REGISTER_FUNCTION(env, exports, call_back_from_async_work);
+  REGISTER_FUNCTION(env, exports, resolve_from_async_work);
+  REGISTER_FUNCTION(env, exports, call_back_from_threadsafe_function);
+  REGISTER_FUNCTION(env, exports, completion_statuses);
   REGISTER_FUNCTION(env, exports, create_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, use_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, create_leaked_threadsafe_functions);

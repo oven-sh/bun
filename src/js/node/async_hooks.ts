@@ -47,24 +47,37 @@ class Frame {
   // frame object: holders of that exact frame and copies made from it later lose
   // the binding, earlier copies keep it. Usually undefined.
   masked: AsyncLocalStorage[] | undefined;
+  // The innermost Bun.ModuleGraph (ModuleGraph.cpp) this frame is inside of; native code reads it.
+  readonly graph: object | undefined;
   constructor(
     storage: AsyncLocalStorage,
     value: unknown,
     prev: Frame | undefined,
     masked: AsyncLocalStorage[] | undefined,
+    graph: object | undefined,
   ) {
     this.storage = storage;
     this.value = value;
     this.prev = prev;
     this.masked = masked;
+    this.graph = graph;
   }
 }
 
 // Only run during debug
 function assertValidFrame(frame: unknown): boolean {
   for (var f = frame, n = 0; f !== undefined; f = (f as Frame).prev, n++) {
-    $assert(f instanceof Frame, "AsyncContextData must be a Frame chain or undefined, got", f);
-    $assert((f as Frame).storage instanceof AsyncLocalStorage, "Frame.storage must be an AsyncLocalStorage");
+    // A Bun.ModuleGraph's context is a frame whose storage is the graph: made in
+    // ModuleGraph.cpp (null prototype), or a copy of one made here.
+    $assert(
+      f instanceof Frame || Object.getPrototypeOf(f) === null,
+      "AsyncContextData must be a Frame chain or undefined, got",
+      f,
+    );
+    $assert(
+      $isObject((f as Frame).storage),
+      "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, or (leaving a graph's context) the frame",
+    );
     $assert((f as Frame).masked === undefined || $isJSArray((f as Frame).masked), "Frame.masked must be an array");
     $assert(n < 10000, "AsyncContextData chain is unreasonably long (cycle?)");
   }
@@ -130,7 +143,9 @@ function find(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | und
 
 // A new binding on top of `head`; what was visible from `head` stays visible.
 function push(head: Frame | undefined, storage: AsyncLocalStorage, value: unknown): Frame {
-  return new Frame(storage, value, head, head === undefined ? undefined : unmask(head.masked, storage));
+  return head === undefined
+    ? new Frame(storage, value, undefined, undefined, undefined)
+    : new Frame(storage, value, head, unmask(head.masked, storage), head.graph);
 }
 
 // `frame` with the binding of `storage` removed. Frames above it are copied
@@ -152,14 +167,14 @@ function without(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | 
 function copyUntil(from: Frame, stop: Frame, tail: Frame | undefined): Frame | undefined {
   if (from === stop) {
     if (tail === undefined || tail.masked === from.masked) return tail;
-    return new Frame(tail.storage, tail.value, tail.prev, from.masked);
+    return new Frame(tail.storage, tail.value, tail.prev, from.masked, tail.graph);
   }
   var copied: Frame[] = [];
   for (var f = from; f !== stop; f = f.prev!) {
     $arrayPush(copied, f);
   }
   for (var i = copied.length - 1; i >= 0; i--) {
-    tail = new Frame(copied[i].storage, copied[i].value, tail, copied[i].masked);
+    tail = new Frame(copied[i].storage, copied[i].value, tail, copied[i].masked, copied[i].graph);
   }
   return tail;
 }
@@ -287,7 +302,11 @@ class AsyncLocalStorage {
         // disable() reaches continuations captured after run() returned but not
         // ones captured before it, so `prior` itself must not become current
         // again. An enclosing run() recognises the copy of its frame above.
-        set(prior === undefined ? undefined : new Frame(prior.storage, prior.value, prior.prev, prior.masked));
+        set(
+          prior === undefined
+            ? undefined
+            : new Frame(prior.storage, prior.value, prior.prev, prior.masked, prior.graph),
+        );
       } else {
         // enterWith()/disable() ran inside the callback. Node's finally is
         // enterWith(prior store): keep whatever else the callback installed and

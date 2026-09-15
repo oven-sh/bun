@@ -16,6 +16,10 @@ impl Taskable for JSCDeferredWorkTask {
         // SAFETY: fn contract; heap-allocated by JSCTaskScheduler::onScheduleWorkSoon.
         unsafe { Bun__deleteDeferredWorkTask(this) }
     }
+    /// `JSCTaskScheduler::runPendingWork` checks the graph that scheduled the work.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 unsafe extern "C" {

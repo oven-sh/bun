@@ -479,6 +479,19 @@ impl PostgresSQLQuery {
             JsError::Thrown
         };
 
+        // A connection that failed or closed answers nothing: a query queued on it would hold the
+        // event loop for ever. The pool hears of a close through `onclose` and stops handing the
+        // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
+        if matches!(
+            connection.status.get(),
+            bun_sql::postgres::Status::Failed | bun_sql::postgres::Status::Disconnected
+        ) {
+            return Err(throw_write_error(
+                b"Connection closed",
+                AnyPostgresError::ConnectionClosed,
+            ));
+        }
+
         if this.flags.get().simple {
             bun_core::scoped_log!(Postgres, "executeQuery");
 

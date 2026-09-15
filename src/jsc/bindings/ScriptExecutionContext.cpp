@@ -11,8 +11,10 @@
 #include "EventLoopTask.h"
 #include "Performance.h"
 #include "ZigGlobalObject.h"
+#include "ModuleGraph.h"
 #include <wtf/SetForScope.h>
 #include <wtf/Threading.h>
+#include <JavaScriptCore/WeakInlines.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
@@ -61,6 +63,96 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     addToContextsMap();
 }
 
+ScriptExecutionContext::ScriptExecutionContext(ScriptExecutionContext& parent)
+    : m_bunVM(parent.m_bunVM)
+    , m_vmHandle(parent.m_vmHandle)
+    , m_identifier(++lastUniqueIdentifier)
+    , m_contextThreadUID(parent.m_contextThreadUID)
+    , m_parent(&parent)
+{
+    ASSERT(parent.isContextThread());
+    ASSERT(!parent.m_parent);
+    addToContextsMap();
+}
+
+extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
+extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM, ScriptExecutionContext*);
+extern "C" void Bun__ScriptExecutionContext__stop(void* bunVM, void* bunContext);
+extern "C" void Bun__ScriptExecutionContext__release(void* bunVM, void* bunContext);
+
+void ScriptExecutionContext::setModuleGraph(JSC::JSObject* moduleGraph)
+{
+    m_moduleGraph = JSC::Weak<JSC::JSObject>(moduleGraph);
+}
+
+Ref<ScriptExecutionContext> ScriptExecutionContext::createForModuleGraph(ScriptExecutionContext& parent)
+{
+    auto context = adoptRef(*new ScriptExecutionContext(parent));
+    context->m_bunContext = Bun__ScriptExecutionContext__create(context->m_bunVM, context.ptr());
+    return context;
+}
+
+// VirtualMachine::stop_graph_context, when the realm or the VM goes (dispose() goes through stop()).
+extern "C" void WebCore__ScriptExecutionContext__stopActiveDOMObjects(ScriptExecutionContext* context)
+{
+    context->stopActiveDOMObjects();
+}
+
+void ScriptExecutionContext::stop()
+{
+    ASSERT(m_bunContext);
+    ASSERT(isContextThread());
+    bool alreadyStopped = std::exchange(m_isStopped, true);
+    Bun__ScriptExecutionContext__stop(m_bunVM, m_bunContext);
+    closeSQLiteDatabases();
+    // A graph its script made is disposed with it (its registry too, so a load it had in flight
+    // does not complete into it).
+    for (auto& owned : copyToVectorOf<Ref<ScriptExecutionContext>>(m_ownedGraphContexts))
+        Bun::disposeModuleGraphOfContext(owned.get());
+    if (alreadyStopped)
+        return;
+    // Its objects are stopped (its workers terminated) from the queue, not under whatever script
+    // is disposing; nothing reaches their listeners from here on either way (isJSExecutionForbidden).
+    Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stopActiveDOMObjects(); }));
+}
+
+extern "C" void Bun__closeSQLiteDatabasesOfGraphContext(ScriptExecutionContextIdentifier);
+extern "C" void Bun__closeNodeSqliteDatabasesOfGraphContext(ScriptExecutionContextIdentifier);
+
+void ScriptExecutionContext::closeSQLiteDatabases()
+{
+    Bun__closeSQLiteDatabasesOfGraphContext(m_identifier);
+    Bun__closeNodeSqliteDatabasesOfGraphContext(m_identifier);
+}
+
+ScriptExecutionContextIdentifier ScriptExecutionContext::ownerOfSQLiteDatabase(JSC::JSGlobalObject* globalObject)
+{
+    auto* context = defaultGlobalObject(globalObject)->currentScriptExecutionContext();
+    if (!context->isForModuleGraph())
+        return 0;
+    // Opened by what a disposed graph had queued: closed from the queue, not under its caller.
+    if (context->isStopped())
+        Bun__VM__queueTask(context->m_bunVM, new EventLoopTask([protectedThis = Ref { *context }](ScriptExecutionContext&) { protectedThis->closeSQLiteDatabases(); }));
+    return context->identifier();
+}
+
+void ScriptExecutionContext::ownGraphContext(ScriptExecutionContext& made)
+{
+    ASSERT(isForModuleGraph() && made.isForModuleGraph());
+    m_ownedGraphContexts.add(made);
+    if (isStopped())
+        made.stop();
+}
+
+void ScriptExecutionContext::moduleGraphDestroyed()
+{
+    m_moduleGraph.clear();
+    // Its objects (a WebSocket, a Worker) may be alive and mid-operation: they keep a live
+    // context until they are stopped. At VM teardown they already were (prepareForDestruction).
+    if (!isStopped())
+        Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stop(); }));
+}
+
 static Lock allScriptExecutionContextsMapLock;
 static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
 {
@@ -80,15 +172,14 @@ ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(Script
 
 JSGlobalObject* ScriptExecutionContext::globalObject()
 {
-    return m_globalObject;
+    return realm().m_globalObject;
 }
 
 JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
 {
-    return m_globalObject;
+    return realm().m_globalObject;
 }
 
-extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
 extern "C" void Bun__VM__queueTaskAfterYield(void* bunVM, EventLoopTask*);
 extern "C" void Bun__VmHandle__queueTaskConcurrently(const ::BunVmHandleRef*, EventLoopTask*);
 
@@ -106,6 +197,12 @@ void ScriptExecutionContext::unrefEventLoop()
 ScriptExecutionContext::~ScriptExecutionContext()
 {
     checkConsistency();
+
+    if (m_bunContext) {
+        // Possibly a GC finalizer: the Rust half closes what it still owns from the event loop.
+        removeFromContextsMap();
+        Bun__ScriptExecutionContext__release(m_bunVM, m_bunContext);
+    }
 
 #if ASSERT_ENABLED
     {
@@ -151,6 +248,11 @@ void ScriptExecutionContext::stopActiveDOMObjects()
         activeDOMObject.stop();
         return ShouldContinue::Yes;
     });
+
+    if (isForModuleGraph()) {
+        if (auto* performance = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject())->existingPerformance())
+            performance->disconnectObserversOf(*this);
+    }
 }
 
 void ScriptExecutionContext::suspendActiveDOMObjectIfNeeded(ActiveDOMObject& activeDOMObject)
@@ -211,7 +313,12 @@ void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionOb
 
 bool ScriptExecutionContext::isJSExecutionForbidden()
 {
-    return !m_vm || WebCore::clientData(*m_vm)->isStoppingOrStopped(*m_vm);
+    // A Bun.ModuleGraph that was disposed hears nothing more: no listener, callback or message
+    // of its context is called, as none is once the VM was asked to stop.
+    if (m_parent && m_isStopped)
+        return true;
+    JSC::VM* vm = realm().m_vm;
+    return !vm || WebCore::clientData(*vm)->isStoppingOrStopped(*vm);
 }
 
 void ScriptExecutionContext::prepareForDestruction()

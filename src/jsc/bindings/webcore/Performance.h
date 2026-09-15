@@ -102,6 +102,7 @@ public:
     void removeAllObservers();
     void registerPerformanceObserver(PerformanceObserver&);
     void unregisterPerformanceObserver(PerformanceObserver&);
+    void scheduleTaskIfNeeded();
 
     static Seconds reduceTimeResolution(Seconds);
 
@@ -125,7 +126,6 @@ private:
     void derefEventTarget() final { deref(); }
 
     void queueEntry(PerformanceEntry&);
-    void scheduleTaskIfNeeded();
 
     // mutable RefPtr<PerformanceNavigation> m_navigation;
     mutable RefPtr<PerformanceTiming> m_timing;

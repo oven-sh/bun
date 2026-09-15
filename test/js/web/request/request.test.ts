@@ -85,7 +85,7 @@ describe("RequestInit method presence", () => {
   const xHeaders = (r: Request) => Object.fromEntries([...r.headers].filter(([name]) => name.startsWith("x-")));
 
   test("a Response passed as init contributes headers and body, not a method", async () => {
-    // @ts-expect-error a Response is not a RequestInit, but it is an object with `headers`/`body`.
+    // A Response is not a RequestInit, but it is an object with `headers` and `body`.
     const r = new Request(put(), new Response("b", { headers: { "x-r": "2" } }));
     expect(r.method).toBe("PUT");
     expect(r.url).toBe("http://h.example/x");
@@ -95,7 +95,6 @@ describe("RequestInit method presence", () => {
   });
 
   test("a Response with a null body passed as init keeps the input Request's method", () => {
-    // @ts-expect-error
     const r = new Request(put(), new Response(null, { status: 204 }));
     expect(r.method).toBe("PUT");
     expect(r.url).toBe("http://h.example/x");
@@ -149,7 +148,6 @@ describe("RequestInit method presence", () => {
         return "PATCH";
       }
     }
-    // @ts-expect-error
     expect(new Request(put(), new WithMethod()).method).toBe("PATCH");
     let reads = 0;
     const init = {
@@ -162,13 +160,64 @@ describe("RequestInit method presence", () => {
     expect(reads).toBe(1);
   });
 
-  test("an object input keeps its method when init has none", () => {
-    // A plain object with a `url` as input is a Bun extension.
-    // @ts-expect-error
-    const r = new Request({ url: "http://h.example/x", method: "PUT" }, { headers: { "x-o": "3" } });
-    expect(r.method).toBe("PUT");
-    expect(r.url).toBe("http://h.example/x");
-    expect(xHeaders(r)).toEqual({ "x-o": "3" });
+  // https://github.com/oven-sh/bun/issues/42759
+  // An object that is not a native Request is accepted as `input` (a Bun extension). Its members
+  // are read as properties, and `init` overrides only the members it has.
+  describe("a non-native input", () => {
+    // Not a native Request, but every getter and method forwards to one, and it passes
+    // `instanceof Request`. srvx hands Node.js requests to fetch handlers in this form.
+    function requestLike() {
+      const backing = put();
+      class RequestLike {}
+      for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(Request.prototype))) {
+        if (key === "constructor") continue;
+        Object.defineProperty(
+          RequestLike.prototype,
+          key,
+          desc.get
+            ? { get: () => Reflect.get(backing, key) }
+            : { value: (...args: unknown[]) => Reflect.apply(Reflect.get(backing, key), backing, args) },
+        );
+      }
+      Object.setPrototypeOf(RequestLike.prototype, Request.prototype);
+      return new RequestLike() as unknown as Request;
+    }
+
+    test("a Request look-alike keeps its method when init has none", async () => {
+      expect(requestLike()).toBeInstanceOf(Request);
+      // A fresh look-alike each time: a copy consumes the body of its input.
+      expect(new Request(requestLike()).method).toBe("PUT");
+      expect(new Request(requestLike(), {}).method).toBe("PUT");
+      expect(new Request(requestLike(), { method: "POST" }).method).toBe("POST");
+
+      const kept = new Request(requestLike(), {});
+      expect(xHeaders(kept)).toEqual({ "x-k": "1" });
+      expect(await kept.text()).toBe("a");
+
+      const replaced = new Request(requestLike(), { headers: { "x-o": "3" } });
+      expect(replaced.method).toBe("PUT");
+      expect(replaced.url).toBe("http://h.example/x");
+      expect(xHeaders(replaced)).toEqual({ "x-o": "3" });
+      expect(await replaced.text()).toBe("a");
+    });
+
+    test("a plain object keeps its method when init has none", async () => {
+      const input = () =>
+        ({ url: "http://h.example/x", method: "PUT", body: "a", headers: { "x-k": "1" } }) as unknown as Request;
+      expect(new Request(input()).method).toBe("PUT");
+      expect(new Request(input(), { method: "POST" }).method).toBe("POST");
+
+      const kept = new Request(input(), {});
+      expect(kept.method).toBe("PUT");
+      expect(xHeaders(kept)).toEqual({ "x-k": "1" });
+      expect(await kept.text()).toBe("a");
+
+      const replaced = new Request(input(), { headers: { "x-o": "3" } });
+      expect(replaced.method).toBe("PUT");
+      expect(replaced.url).toBe("http://h.example/x");
+      expect(xHeaders(replaced)).toEqual({ "x-o": "3" });
+      expect(await replaced.text()).toBe("a");
+    });
   });
 
   test("ResponseInit-only members on a RequestInit are not read", () => {

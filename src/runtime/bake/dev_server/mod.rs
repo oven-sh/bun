@@ -1244,12 +1244,18 @@ impl DirectoryWatchStore {
             _ => debug_assert!(false),
         }
 
+        // A specifier has no length bound. A directory whose path does not fit a
+        // path buffer cannot be opened, so there is no directory to watch.
         let mut buf = bun_paths::path_buffer_pool::get();
-        let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
-            &mut buf.0,
-            &[specifier],
-        );
+        let Some(joined) =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
+                &mut buf.0,
+                &[specifier],
+            )
+        else {
+            return Ok(());
+        };
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
 
         // The `import_source` parameter is not a stable string. Since the

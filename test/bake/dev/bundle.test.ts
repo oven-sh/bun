@@ -99,6 +99,33 @@ devTest("importing a file before it is created", {
     await c.expectMessage("value: 456");
   },
 });
+// A specifier has no length bound. The dev server joined one into a fixed-size
+// path buffer twice after a failed resolution, once to bust the resolver's
+// directory cache and once to watch the directory it names. Both aborted the
+// whole process on the rebuild that followed the save.
+devTest("unresolved import of a specifier longer than a path buffer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `console.log('value: ' + 123);`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value: 123");
+
+    const specifier = "./" + Buffer.alloc(5000, "d/").toString() + "x";
+    await dev.write("index.ts", `import ${JSON.stringify(specifier)};`, {
+      errors: [`index.ts:1:8: error: Could not resolve: "${specifier}"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log('value: ' + 456);`);
+    });
+    await c.expectMessage("value: 456");
+  },
+});
 devTest("default export same-scope handling", {
   files: {
     "index.html": emptyHtmlFile({

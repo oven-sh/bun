@@ -1451,7 +1451,7 @@ impl Interpreter {
     pub(crate) fn run_from_js(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
-        _callframe: &crate::jsc::CallFrame,
+        callframe: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
         log!(
             "Interpreter(0x{:x}) runFromJS",
@@ -1468,10 +1468,9 @@ impl Interpreter {
             ));
         }
         Self::incr_pending_activity_flag(&self.has_pending_activity);
+        let vm = global_this.bun_vm();
         self.context.set(
-            global_this
-                .bun_vm()
-                .current_graph_context()
+            vm.as_graph_context(vm.context_of_caller(callframe))
                 .map(bun_jsc::ScriptExecutionContext::id),
         );
 

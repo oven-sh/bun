@@ -506,10 +506,13 @@ impl HTMLRewriter {
             // SAFETY: releases the wrapper's ref that `detach_ptr` orphaned.
             unsafe { Response::deref(out_response.as_const_ptr().cast_mut()) };
 
+            let context = global.bun_vm().context_of(script_context);
             return match kind {
-                ResponseKind::String => blob.to_string(global, webcore::Lifetime::Transfer),
+                ResponseKind::String => {
+                    blob.to_string(global, context, webcore::Lifetime::Transfer)
+                }
                 ResponseKind::ArrayBuffer => {
-                    blob.to_array_buffer(global, webcore::Lifetime::Transfer)
+                    blob.to_array_buffer(global, context, webcore::Lifetime::Transfer)
                 }
                 ResponseKind::Other => unreachable!(),
             };
@@ -654,6 +657,13 @@ fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
 /// `WritablePending` promise, a captured handler error, and the suspension
 /// promise.
 pub type HTMLRewriterTransform = RewriterPipe;
+
+impl bun_event_loop::TaskOwner for RewriterPipe {
+    /// As a callback task: the pull of the next chunk of input, which checks the pipe's context.
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
+}
 
 /// Streaming pipe for one `HTMLRewriter::transform()`: receives input bytes
 /// via [`SinkHandle::HTMLRewriter`], feeds them through lol-html (suspending
@@ -1142,8 +1152,9 @@ impl RewriterPipe {
                 _ => false,
             };
             if needs_stream {
+                let context = global.bun_vm().context_of(pipe.script_context);
                 match value
-                    .to_readable_stream(global)
+                    .to_readable_stream(global, context)
                     .and_then(|v| ReadableStream::from_js(v, global))
                 {
                     Ok(s) => stream = s,
@@ -1303,8 +1314,6 @@ impl RewriterPipe {
             .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
                 core::ptr::from_ref(self).cast_mut(),
                 Self::run_background_pull,
-                // Pulls the next chunk for a rewriter pipe.
-                bun_event_loop::TaskContext::Always,
             ));
     }
 
@@ -1597,7 +1606,14 @@ impl RewriterPipe {
                 was_string: false,
             }),
         );
-        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global, headers);
+        let context = self.global.bun_vm().context_of(self.script_context);
+        let _ = webcore::body::Value::resolve(
+            &mut prev_value,
+            body_value,
+            &self.global,
+            context,
+            headers,
+        );
     }
 
     /// Feed the accumulated `pending_input` once unblocked, then maybe end,
@@ -1866,17 +1882,26 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         )));
         bun_sys::Result::Ok(())
     }
-    fn end_from_js(&mut self, _global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+    fn end_from_js(
+        &mut self,
+        _global: &JSGlobalObject,
+        _context: &bun_jsc::ScriptExecutionContext,
+    ) -> bun_sys::Result<JSValue> {
         self.end_from_stream(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
     fn flush(&mut self) -> bun_sys::Result<()> {
         bun_sys::Result::Ok(())
     }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
+    fn flush_from_js(
+        &mut self,
+        global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+        wait: bool,
+    ) -> bun_sys::Result<JSValue> {
         use streams::PendingState;
         if self.pending.get().state == PendingState::Pending {
-            let prom = self.pending.with_mut(|p| p.promise(global));
+            let prom = self.pending.with_mut(|p| p.promise(global, context));
             let prom_js = JSPromise::opaque_ref(prom).to_js();
             js_HTMLRewriterTransform::pending_promise_set_cached(self.cell.get(), global, prom_js);
             return bun_sys::Result::Ok(prom_js);
@@ -1895,7 +1920,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         {
             let prom = self.pending.with_mut(|p| {
                 p.result = Writable::Owned(0);
-                p.promise(global)
+                p.promise(global, context)
             });
             let prom_js = JSPromise::opaque_ref(prom).to_js();
             js_HTMLRewriterTransform::pending_promise_set_cached(self.cell.get(), global, prom_js);
@@ -1906,7 +1931,11 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
             JSValue::js_number(0.0),
         ))
     }
-    fn start(&mut self, _config: Start) -> bun_sys::Result<()> {
+    fn start(
+        &mut self,
+        _config: Start,
+        _context: &bun_jsc::ScriptExecutionContext,
+    ) -> bun_sys::Result<()> {
         bun_sys::Result::Ok(())
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {

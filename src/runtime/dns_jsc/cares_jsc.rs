@@ -710,10 +710,17 @@ impl ErrorDeferred {
         context: bun_jsc::ContextId,
     ) {
         struct Context {
+            /// The context of the script that asked; it may stop before the task runs.
+            asking: bun_jsc::ContextId,
             deferred: Box<ErrorDeferred>,
             // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
             // enqueued task (VM-owned), so a `BackRef` captures the invariant.
             global_this: bun_ptr::BackRef<JSGlobalObject>,
+        }
+        impl bun_event_loop::TaskOwner for Context {
+            fn task_context(&self) -> bun_event_loop::TaskContext {
+                bun_event_loop::TaskContext::Of(self.asking)
+            }
         }
         impl Context {
             // `bun_event_loop::ManagedTask::new` expects
@@ -737,8 +744,8 @@ impl ErrorDeferred {
             return;
         }
 
-        let asking = context;
         let context = bun_core::heap::into_raw(Box::new(Context {
+            asking: context,
             deferred: self,
             global_this: bun_ptr::BackRef::new(global_this),
         }));
@@ -749,8 +756,6 @@ impl ErrorDeferred {
             .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_owned(
                 context,
                 Context::callback,
-                // The context may stop before the task runs.
-                bun_event_loop::TaskContext::Of(asking),
             ));
     }
 }

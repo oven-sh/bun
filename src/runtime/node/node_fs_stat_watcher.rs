@@ -892,7 +892,7 @@ impl StatWatcher {
             .set(JsRef::init_strong(js_this, &args.global_this));
         js::listener_set_cached(js_this, &args.global_this, args.listener);
         // SAFETY: `this_ptr` is heap-allocated; `close()` disarms it before any drop.
-        unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, this_ref.ctx.current_context()) };
+        unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, this_ref.ctx.context_of(args.context)) };
         // SAFETY: `this_ptr` was just leaked from `Box`; live with refcount 1.
         InitialStatTask::create_and_schedule(this_ptr);
 
@@ -922,10 +922,16 @@ pub struct Arguments {
     // JSC_BORROW per LIFETIMES.tsv — global outlives the parsed `Arguments`;
     // `BackRef` gives safe `&JSGlobalObject` projection at every read site.
     pub global_this: BackRef<JSGlobalObject>,
+    /// The context of the script that called `fs.watchFile`: the watcher is that script's.
+    pub(crate) context: bun_jsc::ContextId,
 }
 
 impl Arguments {
-    pub fn from_js(global: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Arguments> {
+    pub fn from_js(
+        global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<Arguments> {
         let Some(path) = PathLike::from_js_with_allocator(global, arguments)? else {
             return Err(global
                 .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
@@ -978,6 +984,7 @@ impl Arguments {
             bigint,
             interval,
             global_this: BackRef::new(global),
+            context: context.id(),
         })
     }
 

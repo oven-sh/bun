@@ -640,6 +640,11 @@ impl JSMySQLConnection {
     pub(crate) fn can_execute_query(&self) -> bool {
         self.connection_mut().can_execute_query()
     }
+    /// Connecting or connected: not failed, and not closed.
+    #[inline]
+    pub(crate) fn is_active(&self) -> bool {
+        self.connection.get().is_active()
+    }
     #[inline]
     pub(crate) fn get_writer(&self) -> NewWriter<my_sql_connection::Writer> {
         self.connection_mut().writer()

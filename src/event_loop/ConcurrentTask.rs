@@ -204,6 +204,14 @@ pub trait Taskable {
     unsafe fn context(this: *const Self) -> TaskContext;
 }
 
+/// What a callback task ([`ManagedTask`](crate::ManagedTask::ManagedTask),
+/// [`ConcurrentTask::from_callback`]) is queued for: the callback's argument. It says whose script
+/// the callback continues, as [`Taskable::context`] does for a task with a tag of its own — so a
+/// type cannot be queued this way without having decided it either.
+pub trait TaskOwner {
+    fn task_context(&self) -> TaskContext;
+}
+
 impl TaskTag {
     /// The tag's identifier, for diagnostics.
     pub fn name(self) -> &'static str {
@@ -243,8 +251,8 @@ impl Taskable for crate::ManagedTask::ManagedTask {
         unsafe { crate::ManagedTask::ManagedTask::release(this) }
     }
     unsafe fn context(this: *const Self) -> TaskContext {
-        // SAFETY: fn contract. Whoever made it said (`ManagedTask::new*`).
-        unsafe { (*this).context }
+        // SAFETY: fn contract: queued, so what it was queued for is live.
+        unsafe { crate::ManagedTask::ManagedTask::context(this) }
     }
 }
 // ────────────────────────────────────────────────────────────────────────────
@@ -333,13 +341,12 @@ impl ConcurrentTask {
 
     // callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;
     // callers that have a `fn(*mut T)` should wrap it as `|p| { f(p); Ok(()) }` at the call site.
-    pub fn from_callback<T>(
+    pub fn from_callback<T: TaskOwner>(
         ptr: *mut T,
         callback: fn(*mut T) -> crate::JsResult<()>,
-        context: TaskContext,
     ) -> core::ptr::NonNull<ConcurrentTask> {
         bun_core::mark_binding!();
-        Self::create(ManagedTask::ManagedTask::new(ptr, callback, context))
+        Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
     pub fn from<T: Taskable>(

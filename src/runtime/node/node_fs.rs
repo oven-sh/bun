@@ -675,7 +675,7 @@ mod _async_tasks {
             vm: &mut VirtualMachine,
             context: &bun_jsc::ScriptExecutionContext,
         ) -> JSValue {
-            let fd_job = vm.owned_fd_job(task_args.target_fd());
+            let fd_job = vm.owned_fd_job(context, task_args.target_fd());
             disown_fd_being_closed(vm, &*task_args);
             let task = Box::new(Self {
                 promise: JSPromiseStrong::init(global_object),
@@ -1417,7 +1417,7 @@ mod _async_tasks {
             tracker.did_schedule(global_object);
             let promise = JSPromiseStrong::init(global_object);
             let value = promise.value();
-            let fd_job = vm.owned_fd_job(args.target_fd());
+            let fd_job = vm.owned_fd_job(context, args.target_fd());
             disown_fd_being_closed(vm, &*args);
             bun_jsc::Job::<Self>::schedule(
                 &global_object.js_thread(context),
@@ -2493,7 +2493,7 @@ mod _async_tasks {
                 AsyncFSJs {
                     promise,
                     tracker,
-                    _fd_job: vm.owned_fd_job(None),
+                    _fd_job: vm.owned_fd_job(context, None),
                 },
             );
             value

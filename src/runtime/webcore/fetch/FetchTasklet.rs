@@ -94,6 +94,14 @@ const SCHEDULED_PRERESERVE_MAX: usize = 256 * 1024 * 1024;
 
 use http::signals::BodyReceiveMode;
 
+impl bun_event_loop::TaskOwner for FetchTasklet {
+    /// As a callback task: the hop that resumes the request body's stream, which releases the ref
+    /// taken for it.
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
+}
+
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct FetchTasklet {
     // Heap-allocated `FetchRequestBodySink` (a `JSSink`). FetchTasklet owns the
@@ -213,7 +221,11 @@ impl HTTPRequestBody {
         }
     }
 
-    pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<HTTPRequestBody> {
+    pub fn from_js(
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+        value: JSValue,
+    ) -> JsResult<HTTPRequestBody> {
         let mut body_value = BodyValue::from_js(global_this, value)?;
         if matches!(body_value, BodyValue::Used)
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(global_this)))
@@ -238,7 +250,7 @@ impl HTTPRequestBody {
             }
         }
         if matches!(&body_value, BodyValue::Locked(_)) {
-            let readable = body_value.to_readable_stream(global_this)?;
+            let readable = body_value.to_readable_stream(global_this, context)?;
             if !readable.is_empty_or_undefined_or_null() {
                 if let BodyValue::Locked(l) = &mut body_value {
                     if l.readable.has() {
@@ -879,7 +891,8 @@ impl FetchTasklet {
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`
                     // (response.init); both live for this block.
                     let body = unsafe { &mut *body };
-                    BodyValue::resolve(&mut old, body, &self.global_this, headers)?;
+                    let context = self.global_this.bun_vm().context_of(self.context);
+                    BodyValue::resolve(&mut old, body, &self.global_this, context, headers)?;
                 }
             }
         }
@@ -1846,6 +1859,7 @@ impl FetchTasklet {
 
     fn get(
         global_this: &JSGlobalObject,
+        context: &jsc::ScriptExecutionContext,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
@@ -1871,7 +1885,7 @@ impl FetchTasklet {
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
             abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
-            context: global_this.bun_vm().current_context().id(),
+            context: context.id(),
             signals: Signals::default(),
             signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),
@@ -2095,12 +2109,7 @@ impl FetchTasklet {
         // ref until the main thread callback is called
         this_ref.ref_();
         // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`.
-        let task = ConcurrentTask::from_callback(
-            this,
-            FetchTasklet::resume_request_data_stream,
-            // As `FetchTasklet`'s own task: the ref taken above is released there.
-            bun_event_loop::TaskContext::Always,
-        );
+        let task = ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream);
         this_ref
             .http_ticket
             .as_ref()
@@ -2306,11 +2315,12 @@ impl FetchTasklet {
 
     pub(crate) fn queue(
         global: &JSGlobalObject,
+        context: &jsc::ScriptExecutionContext,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
         http::http_thread::init(&http::http_thread::InitOpts::default());
-        let node = Self::get(global, fetch_options, promise)?;
+        let node = Self::get(global, context, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);
         let mut batch = bun_threading::thread_pool::Batch::default();
@@ -2325,7 +2335,7 @@ impl FetchTasklet {
         // aborts it when it stops, and the VM waits for it (the ticket).
         node_ref.http_ticket = Some(global.bun_vm().ticket());
         // SAFETY: as in `get`.
-        unsafe { jsc::AbortHandle::arm_owner(node, global.bun_vm().current_context()) };
+        unsafe { jsc::AbortHandle::arm_owner(node, context) };
         http::HTTPThread::schedule(batch);
 
         Ok(node)

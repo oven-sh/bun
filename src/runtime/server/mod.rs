@@ -225,6 +225,13 @@ bun_jsc::impl_abort_handle_owner!(
     }
 );
 
+impl<const SSL: bool, const DEBUG: bool> bun_event_loop::TaskOwner for NewServer<SSL, DEBUG> {
+    /// A callback task queued for the server is a step of its own teardown.
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
+}
+
 pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) app: Option<*mut uws_sys::NewApp<SSL>>,
     pub(crate) listener: Option<*mut uws_sys::app::ListenSocket<SSL>>,
@@ -1954,20 +1961,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // scheduleDeinit can be called inside a finalizer.
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
-            let app = self.app.unwrap();
             // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
             // (non-null for the server's lifetime); single-threaded JS
             // context, `&mut` scoped to this call.
             unsafe {
                 (*self.vm_mut()).enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                    app,
-                    |app| {
-                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                        bun_opaque::opaque_deref_mut(app).close();
+                    std::ptr::from_mut::<Self>(self),
+                    |this| {
+                        // SAFETY: the task below, queued after this one, is what frees the server.
+                        if let Some(app) = (*this).app {
+                            // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                            bun_opaque::opaque_deref_mut(app).close();
+                        }
                         Ok(())
                     },
-                    // The server's own teardown.
-                    bun_event_loop::TaskContext::Always,
                 ));
             }
         }
@@ -1982,8 +1989,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(this);
                     Ok(())
                 },
-                // The server's own teardown.
-                bun_event_loop::TaskContext::Always,
             ));
         }
     }
@@ -3636,6 +3641,8 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
 pub trait ServerLike {
     fn global_this(&self) -> &jsc::JSGlobalObject;
     fn vm(&self) -> &jsc::VirtualMachine;
+    /// The context of the script that made the server: what a request starts continues it.
+    fn context(&self) -> &jsc::ScriptExecutionContext;
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&mut self);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
@@ -3662,6 +3669,10 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     #[inline(always)]
     fn vm(&self) -> &jsc::VirtualMachine {
         Self::vm(self)
+    }
+    #[inline]
+    fn context(&self) -> &jsc::ScriptExecutionContext {
+        Self::vm(self).context_of(self.context.get())
     }
     #[inline(always)]
     fn config(&self) -> &ServerConfig {

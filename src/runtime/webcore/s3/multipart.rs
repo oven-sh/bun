@@ -193,6 +193,13 @@ pub enum State {
 }
 
 impl MultiPartUpload {
+    /// The context of the script that started the upload: its requests are that script's.
+    fn context(&self) -> &bun_jsc::ScriptExecutionContext {
+        self.abort_handle
+            .armed_in()
+            .map_or_else(|| self.vm.root_context(), |id| self.vm.context_of(id))
+    }
+
     const MAX_QUEUE_SIZE: usize = MultiPartUploadOptions::MAX_QUEUE_SIZE as usize;
     const MAX_UPLOAD_ID_LEN: usize = 2000;
     // `const AWS = S3Credentials;` — type alias unused in this file; dropped.
@@ -353,6 +360,7 @@ impl UploadPart {
         let search_params = &params_buffer[..written];
         execute_simple_s3_request(
             &ctx.credentials,
+            ctx.context(),
             s3_simple_request::S3RequestOptions {
                 path: &ctx.path,
                 method: bun_http::Method::PUT,
@@ -433,6 +441,7 @@ impl MultiPartUpload {
                     self_.ref_();
                     execute_simple_s3_request(
                         &self_.credentials,
+                        self_.context(),
                         s3_simple_request::S3RequestOptions {
                             path: &self_.path,
                             method: bun_http::Method::PUT,
@@ -829,6 +838,7 @@ impl MultiPartUpload {
 
         execute_simple_s3_request(
             &self.credentials,
+            self.context(),
             s3_simple_request::S3RequestOptions {
                 path: &self.path,
                 method: bun_http::Method::POST,
@@ -859,6 +869,7 @@ impl MultiPartUpload {
 
         execute_simple_s3_request(
             &self.credentials,
+            self.context(),
             s3_simple_request::S3RequestOptions {
                 path: &self.path,
                 method: bun_http::Method::DELETE,
@@ -889,6 +900,7 @@ impl MultiPartUpload {
             self.ref_();
             execute_simple_s3_request(
                 &self.credentials,
+                self.context(),
                 s3_simple_request::S3RequestOptions {
                     path: &self.path,
                     method: bun_http::Method::POST,
@@ -1023,6 +1035,7 @@ impl MultiPartUpload {
             self.ref_();
             let _ = execute_simple_s3_request(
                 &self.credentials,
+                self.context(),
                 s3_simple_request::S3RequestOptions {
                     path: &self.path,
                     method: bun_http::Method::PUT,

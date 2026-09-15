@@ -268,12 +268,9 @@ impl ReadFile {
         this: ReadFile,
         completion: ReadFileCompletionFns,
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
     ) {
-        bun_jsc::Job::<ReadFile>::schedule(
-            &global.js_thread(global.bun_vm().current_context()),
-            this,
-            completion,
-        );
+        bun_jsc::Job::<ReadFile>::schedule(&global.js_thread(context), this, completion);
     }
 }
 
@@ -1040,6 +1037,7 @@ impl<'a> ReadFileUV<'a> {
     /// Typed entry: `C` supplies run/cancel for the erased completion.
     pub(crate) fn start<C: ReadFileCompletion>(
         event_loop: *mut EventLoop,
+        context: &bun_jsc::ScriptExecutionContext,
         store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
@@ -1047,6 +1045,7 @@ impl<'a> ReadFileUV<'a> {
     ) {
         Self::start_with_ctx(
             event_loop,
+            context,
             store,
             off,
             max_len,
@@ -1058,6 +1057,7 @@ impl<'a> ReadFileUV<'a> {
     /// Shares the body with `start`.
     pub(crate) fn start_with_ctx(
         event_loop: *mut EventLoop,
+        context: &bun_jsc::ScriptExecutionContext,
         store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
@@ -1090,9 +1090,7 @@ impl<'a> ReadFileUV<'a> {
             errno: None,
             completion: Some(completion),
             is_regular_file: false,
-            context: jsc::virtual_machine::VirtualMachine::get()
-                .current_context()
-                .id(),
+            context: context.id(),
             req: bun_core::ffi::zeroed(),
             open_callback: Self::on_file_open,
         });

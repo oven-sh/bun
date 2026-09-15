@@ -899,7 +899,7 @@ impl BunTest {
             RunTestsTask::call(NonNull::new(this).unwrap())
         }
         // `new_owned`: if the task never runs (VM teardown), the queue drainer frees `done_callback_test`.
-        let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased, bun_event_loop::TaskContext::Always);
+        let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased);
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
@@ -1508,6 +1508,12 @@ impl RefData {
     }
     pub(crate) fn bun_test(&self) -> Option<BunTestPtr> {
         self.buntest_weak.upgrade()
+    }
+}
+
+impl bun_event_loop::TaskOwner for RunTestsTask {
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }
 

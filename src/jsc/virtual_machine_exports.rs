@@ -137,6 +137,13 @@ pub fn handle_rejected_promise(
     jsc_vm.auto_garbage_collect();
 }
 
+impl bun_event_loop::TaskOwner for HandledPromiseContext {
+    /// `process.on("rejectionHandled")`: the realm's.
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
+}
+
 struct HandledPromiseContext {
     // VM-lifetime backref (JSC_BORROW) — `GlobalRef` encapsulates the deref.
     global_this: crate::GlobalRef,
@@ -174,12 +181,7 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     global
         .bun_vm()
         .event_loop_mut()
-        .enqueue_task(ManagedTask::new(
-            context,
-            HandledPromiseContext::callback,
-            // `process.on("rejectionHandled")`: the realm's.
-            bun_event_loop::TaskContext::Always,
-        ));
+        .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
 }
 
 // HOST_EXPORT(Bun__onDidAppendPlugin, c)

@@ -413,7 +413,6 @@ fn get_entry_data<'a>(
 ///   - gzip: { level?: number } - Override compression settings
 #[bun_jsc::host_fn]
 pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    // What this starts is the calling script's.
     let context = global.bun_vm().context_of_caller(callframe);
     let [path_arg, data_arg, options_arg] = callframe.arguments_as_array::<3>();
     if data_arg.is_empty() {
@@ -504,7 +503,6 @@ impl Archive {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(callframe);
         let [path_arg, options_arg] = callframe.arguments_as_array::<2>();
         if path_arg.is_empty() || !path_arg.is_string() {
@@ -618,7 +616,6 @@ impl Archive {
     /// Returns Promise<Blob> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
     pub(crate) fn blob(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(frame);
         start_blob_task(
             global,
@@ -633,7 +630,6 @@ impl Archive {
     /// Returns Promise<Uint8Array> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
     pub(crate) fn bytes(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(frame);
         start_blob_task(
             global,
@@ -652,7 +648,6 @@ impl Archive {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(callframe);
         let glob_arg = callframe.argument(0);
 

@@ -296,11 +296,9 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
-            // SAFETY: `new` is exported for the C++ CompressionStream constructor, a host function.
-            context: unsafe {
-                bun_jsc::virtual_machine::VirtualMachine::get().context_of_cpp_caller()
-            }
-            .id(),
+            context: bun_jsc::virtual_machine::VirtualMachine::get()
+                .context_of_caller_no_frame()
+                .id(),
         }))
     }
 
@@ -928,7 +926,7 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
                     .write(&crate::webcore::streams::Result::Temporary(
                         bun_ptr::RawSlice::new(&out),
                     ))
-                    .to_js(global)
+                    .to_js(global, global.bun_vm().context_of_caller_no_frame())
             }
         }
         Err(e) => {
@@ -1056,8 +1054,7 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
     };
     let cx = global.js_thread(match &entered {
         Some(scope) => scope.context(),
-        // SAFETY: exported for the C++ CompressionStream transform, which script is calling.
-        None => unsafe { vm.context_of_cpp_caller() },
+        None => vm.context_of_caller_no_frame(),
     });
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,

@@ -233,6 +233,14 @@ where
         self.defer_deinit_until_callback_completes.get().is_none()
     }
 
+    /// The context of the script that made the server, for what answering the request starts.
+    /// `None` once the request has outlived its server.
+    pub(crate) fn script_context(&self) -> Option<&bun_jsc::ScriptExecutionContext> {
+        let server = self.server.get()?;
+        // SAFETY: BACKREF — the server outlives every context it allocates.
+        Some(unsafe { &*server.as_ptr() }.context())
+    }
+
     pub(crate) fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
         let server = self.server.get()?;
         // SAFETY: BACKREF — the server outlives every context it allocates.
@@ -2642,6 +2650,8 @@ where
 
                     let _ = S3::client::stat(
                         credentials,
+                        this.script_context()
+                            .unwrap_or_else(|| global_this.bun_vm().root_context()),
                         path,
                         Self::on_s3_size_resolved_thunk,
                         this.as_ctx_ptr().cast::<c_void>(),
@@ -3272,7 +3282,10 @@ where
 
                 if lock.on_receive_value.is_some() || lock.task.is_some() {
                     // someone else is waiting for the stream or waiting for `onStartStreaming`
-                    let readable = match value.to_readable_stream(global_this) {
+                    let context = this
+                        .script_context()
+                        .unwrap_or_else(|| global_this.bun_vm().root_context());
+                    let readable = match value.to_readable_stream(global_this, context) {
                         Ok(readable) => readable,
                         Err(err) => {
                             this.run_error_handler(global_this.take_exception(err));
@@ -4231,7 +4244,10 @@ where
                 if matches!(old, Body::Value::Locked(_)) {
                     let _exit = vm.enter_event_loop_scope();
 
-                    let _ = Body::Value::resolve(&mut old, body, global_this, None); // TODO: properly propagate exception upwards
+                    let context = this
+                        .script_context()
+                        .unwrap_or_else(|| global_this.bun_vm().root_context());
+                    let _ = Body::Value::resolve(&mut old, body, global_this, context, None); // TODO: properly propagate exception upwards
                 }
                 return;
             }
@@ -4390,7 +4406,13 @@ where
                     }
                     let mut new_body: Body::Value = Body::Value::Null;
                     let global_this = server.global_this();
-                    let _ = Body::Value::resolve(&mut old, &mut new_body, global_this, None); // TODO: properly propagate exception upwards
+                    let _ = Body::Value::resolve(
+                        &mut old,
+                        &mut new_body,
+                        global_this,
+                        server.context(),
+                        None,
+                    ); // TODO: properly propagate exception upwards
                     *body = new_body;
                 }
             }

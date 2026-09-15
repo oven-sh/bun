@@ -191,6 +191,7 @@ impl All {
     /// slightly differently for historical reasons (see jsValueToCountdown)
     pub(crate) fn sleep(
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         promise: JSValue,
         countdown: JSValue,
     ) -> JsResult<JSValue> {
@@ -205,6 +206,7 @@ impl All {
         let wrapped_promise = promise.with_async_context_if_needed(global);
         Ok(TimeoutObject::init(
             global,
+            context,
             id,
             Kind::SetTimeout,
             countdown_int,
@@ -215,6 +217,7 @@ impl All {
 
     pub(crate) fn set_immediate(
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         callback: JSValue,
         arguments: JSValue,
     ) -> JsResult<JSValue> {
@@ -227,6 +230,7 @@ impl All {
         let wrapped_callback = callback.with_async_context_if_needed(global);
         Ok(ImmediateObject::init(
             global,
+            context,
             id,
             wrapped_callback,
             arguments,
@@ -235,6 +239,7 @@ impl All {
 
     pub(crate) fn set_timeout(
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         callback: JSValue,
         arguments: JSValue,
         countdown: JSValue,
@@ -250,6 +255,7 @@ impl All {
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
         Ok(TimeoutObject::init(
             global,
+            context,
             id,
             Kind::SetTimeout,
             countdown_int,
@@ -260,6 +266,7 @@ impl All {
 
     pub(crate) fn set_interval(
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         callback: JSValue,
         arguments: JSValue,
         countdown: JSValue,
@@ -275,6 +282,7 @@ impl All {
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
         Ok(TimeoutObject::init(
             global,
+            context,
             id,
             Kind::SetInterval,
             countdown_int,
@@ -292,8 +300,13 @@ impl All {
     }
 
     /// The timer `id` names for the running script, removed from the map
-    /// (see `VirtualMachine::current_context_may_name`).
-    fn remove_timer_by_id(&mut self, vm: &VirtualMachine, id: i32) -> Option<*mut TimeoutObject> {
+    /// (see `VirtualMachine::context_may_name`).
+    fn remove_timer_by_id(
+        &mut self,
+        vm: &VirtualMachine,
+        context: &bun_jsc::ScriptExecutionContext,
+        id: i32,
+    ) -> Option<*mut TimeoutObject> {
         let (map, idx) = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
             (&mut self.maps.set_timeout, idx)
         } else {
@@ -306,7 +319,7 @@ impl All {
         // SAFETY: entry value points to TimeoutObject.event_loop_timer
         let timeout = unsafe { TimeoutObject::from_timer_ptr(value) };
         // SAFETY: in the map ⇒ live.
-        if !vm.current_context_may_name(unsafe { (*timeout).internals.context }) {
+        if !vm.context_may_name(context, unsafe { (*timeout).internals.context }) {
             return None;
         }
         map.swap_remove_at(idx);
@@ -321,6 +334,8 @@ impl All {
         bun_jsc::mark_binding!();
 
         let vm = global_this.bun_vm_ptr();
+        // `clearTimeout` / `clearInterval` / `clearImmediate`, C++ host functions, call this.
+        let context = global_this.bun_vm().context_of_caller_no_frame();
         let all = timer_all_mut();
 
         let timer: Option<*mut TimerObjectInternals> = 'brk: {
@@ -331,7 +346,7 @@ impl All {
                     return Ok(());
                 };
                 // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-                let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), id) else {
+                let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), context, id) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
@@ -389,7 +404,7 @@ impl All {
                     }
                     accumulator
                 };
-                let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), parsed) else {
+                let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), context, parsed) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
@@ -512,7 +527,8 @@ pub fn set_immediate_export(
     callback: JSValue,
     arguments: JSValue,
 ) -> JsResult<JSValue> {
-    All::set_immediate(global, callback, arguments)
+    let context = global.bun_vm().context_of_caller_no_frame();
+    All::set_immediate(global, context, callback, arguments)
 }
 
 // HOST_EXPORT(Bun__Timer__sleep, c)
@@ -521,7 +537,8 @@ pub fn sleep_export(
     promise: JSValue,
     countdown: JSValue,
 ) -> JsResult<JSValue> {
-    All::sleep(global, promise, countdown)
+    let context = global.bun_vm().context_of_caller_no_frame();
+    All::sleep(global, context, promise, countdown)
 }
 
 // HOST_EXPORT(Bun__Timer__setTimeout, c)
@@ -531,7 +548,8 @@ pub fn set_timeout_export(
     arguments: JSValue,
     countdown: JSValue,
 ) -> JsResult<JSValue> {
-    All::set_timeout(global, callback, arguments, countdown)
+    let context = global.bun_vm().context_of_caller_no_frame();
+    All::set_timeout(global, context, callback, arguments, countdown)
 }
 
 // HOST_EXPORT(Bun__Timer__setInterval, c)
@@ -541,7 +559,8 @@ pub fn set_interval_export(
     arguments: JSValue,
     countdown: JSValue,
 ) -> JsResult<JSValue> {
-    All::set_interval(global, callback, arguments, countdown)
+    let context = global.bun_vm().context_of_caller_no_frame();
+    All::set_interval(global, context, callback, arguments, countdown)
 }
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)

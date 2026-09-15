@@ -1300,6 +1300,7 @@ impl Listener {
                     let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
                             global,
+                            context,
                             &buf[..pipe_name_len.unwrap()],
                             ssl_taken.take(),
                             ctx_for_pipe,
@@ -1307,6 +1308,7 @@ impl Listener {
                         ),
                         UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
                             global,
+                            context,
                             *fd,
                             ssl_taken.take(),
                             ctx_for_pipe,
@@ -1385,6 +1387,7 @@ impl Listener {
                     let named_pipe_result = match tcp_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
                             global,
+                            context,
                             &buf[..pipe_name_len.unwrap()],
                             None,
                             None,
@@ -1392,6 +1395,7 @@ impl Listener {
                         ),
                         UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
                             global,
+                            context,
                             *fd,
                             None,
                             None,
@@ -1806,7 +1810,7 @@ impl WindowsNamedPipeListeningContext {
         let listener_ref = this_ref.listener.unwrap();
         let listener: &Listener = listener_ref.get();
         // An accepted pipe is the listening script's.
-        let _context = this_ref.vm.enter_context(listener.context);
+        let entered = this_ref.vm.enter_context(listener.context);
         use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
         let socket: PipeSocketType = if this_ref.ctx.is_some() {
             PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))
@@ -1814,7 +1818,8 @@ impl WindowsNamedPipeListeningContext {
             PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
         };
 
-        let client = WindowsNamedPipeContext::create(&this_ref.global_this, socket);
+        let client =
+            WindowsNamedPipeContext::create(&this_ref.global_this, entered.context(), socket);
 
         // SAFETY: `client` was just heap-allocated by `create()`; exclusive
         // here. The `&mut` to `uv_pipe` comes from the root pointer, scoped to

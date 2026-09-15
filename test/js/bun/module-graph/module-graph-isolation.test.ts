@@ -513,6 +513,39 @@ const dir = String(
       // Not process.exit(): an upload that still held the event loop would keep this process here.
       console.log("idle");
     `,
+    "subscribes-to-redis.mjs": `
+      export let subscribed = false;
+      export const subscribe = url => new Bun.RedisClient(url).subscribe("channel", () => {}).then(() => { subscribed = true; });
+    `,
+    "subscribed-then-gone.mjs": `
+      // Speaks enough RESP3 to accept a subscriber, and never publishes.
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket, data) {
+            for (const command of String(data).split(/(?=\\*\\d+\\r\\n)/)) {
+              if (/HELLO/i.test(command)) socket.write("%2\\r\\n$6\\r\\nserver\\r\\n$5\\r\\nredis\\r\\n$5\\r\\nproto\\r\\n:3\\r\\n");
+              else if (/SUBSCRIBE/i.test(command)) socket.write(">3\\r\\n$9\\r\\nsubscribe\\r\\n$7\\r\\nchannel\\r\\n:1\\r\\n");
+            }
+          },
+        },
+      });
+      const url = "redis://127.0.0.1:" + server.port;
+      if (process.argv[2] === "disposed") {
+        const graph = new Bun.ModuleGraph();
+        const app = await graph.import(import.meta.dir + "/subscribes-to-redis.mjs");
+        await graph.run(() => app.subscribe(url));
+        graph.dispose();
+      } else {
+        const client = new Bun.RedisClient(url);
+        await client.subscribe("channel", () => {});
+        client.close();
+      }
+      server.stop(true);
+      // Not process.exit(): a subscription that still held the event loop would keep this process here.
+      console.log("idle");
+    `,
     "leaves-things-half-done.mjs": `
       import { Duplex } from "node:stream";
       import tls from "node:tls";
@@ -2103,6 +2136,53 @@ test("ModuleGraph isolation: a Bun.SQL query of a disposed graph reports nothing
   expect({ inFlight: inFlight.heard, startedAfter: startedAfter.heard }).toEqual({ inFlight: [], startedAfter: [] });
 });
 
+test("ModuleGraph isolation: a query the host makes on a disposed graph's Bun.SQL fails instead of waiting for ever", async () => {
+  // Servers that let a client in and answer nothing afterwards.
+  using postgres = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket) {
+        if (socket.data) return;
+        socket.data = true;
+        // AuthenticationOk, ReadyForQuery (idle)
+        socket.write(Buffer.from([0x52, 0, 0, 0, 8, 0, 0, 0, 0, 0x5a, 0, 0, 0, 5, 0x49]));
+      },
+    },
+  });
+  using mysql = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open: socket => void socket.write(mysqlGreeting()),
+      data(socket, data) {
+        // OK to every packet: the handshake response, then the session setup.
+        for (let at = 0; at + 4 <= data.length; at += 4 + data.readUIntLE(at, 3)) {
+          socket.write(Buffer.from([7, 0, 0, data[at + 3] + 1, 0, 0, 0, 2, 0, 0, 0]));
+        }
+      },
+    },
+  });
+  using made = await newGraph();
+  const clients = made.graph.run(() =>
+    made.app.call(() => ({
+      postgres: new Bun.SQL(`postgres://u@127.0.0.1:${postgres.port}/db?sslmode=disable`, { max: 1 }),
+      mysql: new Bun.SQL(`mysql://u@127.0.0.1:${mysql.port}/db`, { max: 1 }),
+    })),
+  ) as Record<"postgres" | "mysql", Bun.SQL>;
+  await made.graph.run(() => made.app.call(() => Promise.all([clients.postgres.connect(), clients.mysql.connect()])));
+  made.graph.dispose();
+  const codeOf = (query: Promise<unknown>) =>
+    query.then(
+      () => "fulfilled",
+      error => error.code,
+    );
+  expect({
+    postgres: await codeOf(clients.postgres`select 1`),
+    mysql: await codeOf(clients.mysql`select 1`),
+  }).toEqual({ postgres: "ERR_POSTGRES_CONNECTION_CLOSED", mysql: "ERR_MYSQL_CONNECTION_CLOSED" });
+});
+
 test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts nothing and announces nothing", async () => {
   using made = await newGraph();
   const state = newState("late-spawn");
@@ -3104,6 +3184,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
   test("an S3 upload waiting for its script to write more does not keep the process running", async () => {
     expect(await runs("disposed-while-uploading.mjs")).toEqual({ stdout: "idle", exitCode: 0 });
+  });
+  test("a Redis subscription does not keep the process running once its client cannot hear anything", async () => {
+    expect({
+      disposed: await runs("subscribed-then-gone.mjs", "disposed"),
+      closed: await runs("subscribed-then-gone.mjs", "closed"),
+    }).toEqual({ disposed: { stdout: "idle", exitCode: 0 }, closed: { stdout: "idle", exitCode: 0 } });
   });
   test("a performance observer and an HTTP/2 session it left behind do not keep it", async () => {
     expect(await runs("dropped-after-observing-and-connecting.mjs")).toEqual({ stdout: "collected", exitCode: 0 });

@@ -495,8 +495,8 @@ impl FileSink {
     /// This sink opened its file itself, for the script that is running: if that is a
     /// `Bun.ModuleGraph`'s, the file is closed with the graph. (The host's sinks are left to
     /// flush at exit as they always have.)
-    pub(crate) fn close_with_current_graph(&self) {
-        if let Some(context) = self.js_vm().and_then(|vm| vm.current_graph_context()) {
+    pub(crate) fn close_with_graph(&self, context: &bun_jsc::ScriptExecutionContext) {
+        if let Some(context) = self.js_vm().and_then(|vm| vm.as_graph_context(context)) {
             // SAFETY: a started sink is heap-allocated; it leaves its context in `on_close`.
             unsafe {
                 bun_jsc::AbortHandle::arm_owner(core::ptr::from_ref(self).cast_mut(), context);
@@ -652,7 +652,11 @@ impl FileSink {
         Self::init(fd, event_loop_)
     }
 
-    pub(crate) fn setup(&self, options: &Options) -> sys::Result<()> {
+    pub(crate) fn setup(
+        &self,
+        options: &Options,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> sys::Result<()> {
         if self.pipe.get().has_stream() {
             // Already started.
             return sys::Result::Ok(());
@@ -736,7 +740,7 @@ impl FileSink {
         };
 
         if matches!(options.input_path, PathOrFileDescriptor::Path(_)) {
-            self.close_with_current_graph();
+            self.close_with_graph(context);
         }
 
         #[cfg(windows)]
@@ -844,7 +848,11 @@ impl FileSink {
         Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
-    pub(crate) fn start(&self, stream_start: &streams::Start) -> sys::Result<()> {
+    pub(crate) fn start(
+        &self,
+        stream_start: &streams::Start,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> sys::Result<()> {
         match stream_start {
             streams::Start::Err(err) => {
                 return sys::Result::Err(err.clone());
@@ -852,7 +860,7 @@ impl FileSink {
             streams::Start::FileSink(file)
                 if !matches!(file.input_path, PathOrFileDescriptor::Fd(Fd::INVALID)) =>
             {
-                match self.setup(file) {
+                match self.setup(file, context) {
                     sys::Result::Err(err) => {
                         return sys::Result::Err(err);
                     }
@@ -973,6 +981,7 @@ impl FileSink {
     pub(crate) fn flush_from_js(
         &self,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         wait: bool,
     ) -> sys::Result<JSValue> {
         let _ = wait;
@@ -1014,7 +1023,7 @@ impl FileSink {
         // bytes it pushed out. It only reaches here when no write is pending.
         match self.to_result(rc, flushed) {
             streams::Writable::Err(_) => unreachable!(),
-            result => sys::Result::Ok(result.to_js(global_this)),
+            result => sys::Result::Ok(result.to_js(global_this, context)),
         }
     }
 
@@ -1282,7 +1291,11 @@ impl FileSink {
         JSSink::create_object(global_this, self, destructor.unwrap_or(0))
     }
 
-    pub(crate) fn end_from_js(&self, global_this: &JSGlobalObject) -> sys::Result<JSValue> {
+    pub(crate) fn end_from_js(
+        &self,
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> sys::Result<JSValue> {
         if self.done.get() {
             if self.pending.get().state == streams::PendingState::Pending {
                 if let streams::WritableFuture::Promise { strong, .. } = &self.pending.get().future
@@ -1310,7 +1323,7 @@ impl FileSink {
                     // `to_result` already seeded `Owned(consumed)`.
                     // SAFETY: JsCell — `WritablePending::promise` allocates a
                     // JSPromise (may GC) but invokes no FileSink host-fn.
-                    let promise = unsafe { self.pending.get_mut() }.promise(global_this);
+                    let promise = unsafe { self.pending.get_mut() }.promise(global_this, context);
                     self.run_pending_later();
                     // SAFETY: `WritablePending::promise()` never returns null.
                     return sys::Result::Ok(unsafe { (*promise).to_js() });
@@ -1340,7 +1353,8 @@ impl FileSink {
                     // SAFETY: JsCell — `WritablePending::promise` allocates a
                     // JSPromise (may GC) but does not invoke any FileSink
                     // host-fn synchronously.
-                    let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
+                    let promise_result =
+                        unsafe { self.pending.get_mut() }.promise(global_this, context);
                     self.writer.with_mut(|w| w.end());
                     self.run_pending_later();
                     // SAFETY: `WritablePending::promise()` never returns null.
@@ -1368,7 +1382,8 @@ impl FileSink {
 
                 // SAFETY: JsCell — `WritablePending::promise` allocates a JSPromise
                 // (may GC) but does not invoke any FileSink host-fn synchronously.
-                let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
+                let promise_result =
+                    unsafe { self.pending.get_mut() }.promise(global_this, context);
 
                 // SAFETY: `WritablePending::promise()` never returns null.
                 sys::Result::Ok(unsafe { (*promise_result).to_js() })
@@ -1377,7 +1392,7 @@ impl FileSink {
                 self.writer.with_mut(|w| w.end());
                 if has_pending {
                     // SAFETY: JsCell — see the `Done` arm above.
-                    let promise = unsafe { self.pending.get_mut() }.promise(global_this);
+                    let promise = unsafe { self.pending.get_mut() }.promise(global_this, context);
                     self.run_pending_later();
                     // SAFETY: `WritablePending::promise()` never returns null.
                     return sys::Result::Ok(unsafe { (*promise).to_js() });
@@ -1418,7 +1433,7 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     const HAS_GET_FD: bool = true;
     const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::FileSink);
 
-    crate::impl_js_sink_forwarders!();
+    crate::impl_js_sink_forwarders!(start_takes_context);
 
     unsafe fn finalize(this: *mut Self) {
         // SAFETY: same contract, forwarded.
@@ -1429,8 +1444,12 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // the C++ `JSFileSink` wrapper `js_construct` is about to create.
         this.write(Self::construct());
     }
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue> {
-        Self::end_from_js(self, global)
+    fn end_from_js(
+        &mut self,
+        global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> sys::Result<JSValue> {
+        Self::end_from_js(self, global, context)
     }
     /// The JS pump's source failed, or `controller.close(error)`: a piped stream rejects with `reason`.
     unsafe fn close_with_error(

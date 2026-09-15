@@ -127,6 +127,13 @@ pub enum ParseTaskStage {
 // Result
 // ───────────────────────────────────────────────────────────────────────────
 
+impl bun_event_loop::TaskOwner for Result {
+    /// A step of the bundle: what the build reports is its completion's to decide.
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
+}
+
 /// The information returned to the Bundler thread when a parse finishes.
 pub(crate) struct Result {
     pub(crate) task: EventLoop::Task,
@@ -2889,17 +2896,13 @@ pub mod parse_worker {
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
             bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                    result,
-                    |p| {
+                let ct =
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
                         // SAFETY: `p` is the `result` Box leaked above; ownership
                         // transfers to `on_complete`, which deallocates it.
                         unsafe { on_complete(p) };
                         Ok(())
-                    },
-                    // A step of the bundle: what the build reports is its completion's to decide.
-                    bun_event_loop::TaskContext::Always,
-                );
+                    });
                 let poster = worker
                     .ctx
                     .js_poster

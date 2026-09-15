@@ -387,7 +387,12 @@ impl Request {
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
         self.throw_if_body_unusable(global_this).ok()?;
-        self.clone(global_this).ok()
+        // `BunRequest.prototype.clone`, a C++ host function, calls this.
+        self.clone(
+            global_this,
+            global_this.bun_vm().context_of_caller_no_frame(),
+        )
+        .ok()
     }
 
     /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a
@@ -975,6 +980,7 @@ impl Request {
 
     pub(crate) fn construct_into(
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         arguments: &[JSValue],
         this_value: JSValue,
     ) -> JsResult<Request> {
@@ -1091,6 +1097,7 @@ impl Request {
                             request,
                             &mut req,
                             global_this,
+                            context,
                             fields.contains(Fields::Url),
                         ) {
                             Ok(()) => {}
@@ -1136,7 +1143,9 @@ impl Request {
                         match request.body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match request.clone_body_value_via_cached_stream(global_this) {
+                                match request
+                                    .clone_body_value_via_cached_stream(global_this, context)
+                                {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
@@ -1184,7 +1193,9 @@ impl Request {
                         match response.get_body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match response.clone_body_value_via_cached_stream(global_this) {
+                                match response
+                                    .clone_body_value_via_cached_stream(global_this, context)
+                                {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
@@ -1438,7 +1449,12 @@ impl Request {
     ) -> JsResult<Box<Request>> {
         let arguments = callframe.arguments();
 
-        let request = Self::construct_into(global_this, arguments, this_value)?;
+        let request = Self::construct_into(
+            global_this,
+            global_this.bun_vm().context_of_caller(callframe),
+            arguments,
+            this_value,
+        )?;
         Ok(Request::new(request))
     }
 
@@ -1449,7 +1465,10 @@ impl Request {
     ) -> JsResult<JSValue> {
         self.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
-        let cloned = self.clone(global_this)?;
+        let cloned = self.clone(
+            global_this,
+            global_this.bun_vm().context_of_caller(callframe),
+        )?;
 
         let cloned_ptr = bun_core::heap::into_raw(cloned);
         // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
@@ -1462,11 +1481,12 @@ impl Request {
         &self,
         req: &mut Request,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         preserve_url: bool,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
-        let body_ = self.clone_body_value_via_cached_stream(global_this)?;
+        let body_ = self.clone_body_value_via_cached_stream(global_this, context)?;
         // BodyValue's Drop frees `body_` on the `?` error path
         let body = body::hive_alloc(body_);
         // Last fallible call; an early return here leaves `req.url` untouched.
@@ -1513,7 +1533,11 @@ impl Request {
         Ok(())
     }
 
-    pub(crate) fn clone(&self, global_this: &JSGlobalObject) -> JsResult<Box<Request>> {
+    pub(crate) fn clone(
+        &self,
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> JsResult<Box<Request>> {
         // allocator param dropped (global mimalloc)
         // `clone_into` `ptr::write`s the new fields over the seed
         // without reading or dropping it.
@@ -1536,7 +1560,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, global_this, false)?;
+        self.clone_into(&mut req, global_this, context, false)?;
         Ok(req)
     }
 }

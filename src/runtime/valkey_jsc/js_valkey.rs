@@ -476,7 +476,12 @@ impl JSValkeyClient {
         callframe: &CallFrame,
         js_this: JSValue,
     ) -> JsResult<*mut JSValkeyClient> {
-        Self::create(global_object, callframe.arguments(), js_this)
+        Self::create(
+            global_object,
+            global_object.bun_vm().context_of_caller(callframe),
+            callframe.arguments(),
+            js_this,
+        )
     }
 
     /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
@@ -484,6 +489,7 @@ impl JSValkeyClient {
     /// This whole client needs a refactor.
     pub(crate) fn create_no_js_no_pubsub(
         global_object: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         arguments: &[JSValue],
     ) -> JsResult<*mut JSValkeyClient> {
         let global_object = GlobalRef::from(global_object);
@@ -743,16 +749,18 @@ impl JSValkeyClient {
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
-            context: VirtualMachine::get().current_context().id(),
+            context: context.id(),
         }))
     }
 
     pub(crate) fn create(
         global_object: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         arguments: &[JSValue],
         js_this: JSValue,
     ) -> JsResult<*mut JSValkeyClient> {
-        let new_client_ptr = JSValkeyClient::create_no_js_no_pubsub(global_object, arguments)?;
+        let new_client_ptr =
+            JSValkeyClient::create_no_js_no_pubsub(global_object, context, arguments)?;
         // SAFETY: just allocated above
         let new_client = unsafe { &*new_client_ptr };
 
@@ -774,6 +782,7 @@ impl JSValkeyClient {
     pub(crate) fn clone_without_connecting(
         &self,
         global_object: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
     ) -> Result<*mut JSValkeyClient, bun_alloc::AllocError> {
         let global_object = GlobalRef::from(global_object);
         let vm: &'static VirtualMachine = global_object.bun_vm();
@@ -856,7 +865,7 @@ impl JSValkeyClient {
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
-            context: VirtualMachine::get().current_context().id(),
+            context: context.id(),
         }))
     }
 
@@ -1606,12 +1615,21 @@ impl JSValkeyClient {
         // This is a mess beyond belief and it is incredibly fragile.
         let has_pending_commands = self.client.get().has_any_pending_commands();
 
-        let has_activity = has_pending_commands
-            || self.has_subscriptions()
-            || self.client.get().flags.is_reconnecting;
+        // A subscription is something to wait for only while messages can still arrive: on a
+        // client that closed and will not reconnect (`close()`, a failure, its `Bun.ModuleGraph`
+        // disposed) nothing will be delivered.
+        let status = self.client.get().status;
+        let is_reconnecting = self.client.get().flags.is_reconnecting;
+        let listening = self.has_subscriptions()
+            && (is_reconnecting
+                || matches!(
+                    status,
+                    valkey::Status::Connecting | valkey::Status::Connected
+                ));
+        let has_activity = has_pending_commands || listening || is_reconnecting;
 
         // There's a couple cases to handle here:
-        if has_activity || self.client.get().status == valkey::Status::Connecting {
+        if has_activity || status == valkey::Status::Connecting {
             // If we currently have pending activity or we are connecting, we need to keep the
             // event loop alive.
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));

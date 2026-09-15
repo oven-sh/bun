@@ -348,6 +348,7 @@ impl WindowsNamedPipeContext {
 
     pub(crate) fn create(
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         socket: SocketType,
     ) -> *mut WindowsNamedPipeContext {
         let global_this = GlobalRef::from(global_this);
@@ -428,7 +429,7 @@ impl WindowsNamedPipeContext {
             });
 
             // SAFETY: non-null, fully initialised above, heap-pinned; disarmed when freed.
-            unsafe { bun_jsc::AbortHandle::arm_owner(this, vm.current_context()) };
+            unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
 
             this
         }
@@ -440,6 +441,7 @@ impl WindowsNamedPipeContext {
     /// alone would be empty.
     pub(crate) fn open(
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         fd: Fd,
         ssl_config: Option<SSLConfig>,
         owned_ctx: Option<boringssl::OwnedSslCtx>,
@@ -447,7 +449,7 @@ impl WindowsNamedPipeContext {
     ) -> Result<*mut WindowsNamedPipe, crate::Error> {
         // TODO: reuse the same context for multiple connections when possibles
 
-        let this = WindowsNamedPipeContext::create(global_this, socket);
+        let this = WindowsNamedPipeContext::create(global_this, context, socket);
 
         // The guard reaches `socket` through `this`: `create()` moved it there.
         let mut guard = Self::armed(this);
@@ -463,6 +465,7 @@ impl WindowsNamedPipeContext {
     /// See `open` for `owned_ctx` ownership.
     pub(crate) fn connect(
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         path: &[u8],
         ssl_config: Option<SSLConfig>,
         owned_ctx: Option<boringssl::OwnedSslCtx>,
@@ -470,7 +473,7 @@ impl WindowsNamedPipeContext {
     ) -> Result<*mut WindowsNamedPipe, crate::Error> {
         // TODO: reuse the same context for multiple connections when possibles
 
-        let this = WindowsNamedPipeContext::create(global_this, socket);
+        let this = WindowsNamedPipeContext::create(global_this, context, socket);
         let mut guard = Self::armed(this);
 
         // SAFETY: `this` is live and exclusively accessed here

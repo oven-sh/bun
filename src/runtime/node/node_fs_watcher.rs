@@ -637,6 +637,8 @@ pub struct Arguments<'a> {
     pub path: PathLike<'static>,
     pub(crate) listener: JSValue,
     pub global_this: &'a JSGlobalObject,
+    /// The context of the script that called `fs.watch`: the watcher is that script's.
+    pub(crate) context: &'a bun_jsc::ScriptExecutionContext,
     pub(crate) signal: Option<&'a AbortSignal>,
     pub(crate) persistent: bool,
     pub(crate) recursive: bool,
@@ -647,6 +649,7 @@ pub struct Arguments<'a> {
 impl<'a> Arguments<'a> {
     pub fn from_js(
         ctx: &'a JSGlobalObject,
+        context: &'a bun_jsc::ScriptExecutionContext,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Arguments<'a>> {
         let Some(path) = PathLike::from_js(ctx, arguments)? else {
@@ -741,6 +744,7 @@ impl<'a> Arguments<'a> {
             path,
             listener,
             global_this: ctx,
+            context,
             signal,
             persistent,
             recursive,
@@ -1225,7 +1229,7 @@ impl FSWatcher {
             )
         };
         // SAFETY: `ctx` is heap-allocated; `detach()` disarms it before it is finalized.
-        unsafe { bun_jsc::AbortHandle::arm_owner(ctx, vm_ref.current_context()) };
+        unsafe { bun_jsc::AbortHandle::arm_owner(ctx, args.context) };
         Ok(ctx)
     }
 }

@@ -1111,14 +1111,12 @@ impl VirtualMachine {
         self.current_context_or_root()
     }
 
-    /// [`context_of_caller`](Self::context_of_caller) for a function exported to C++, which has no
-    /// `CallFrame` to show.
-    ///
-    /// # Safety
-    /// Called synchronously under a C++ host function (script is running), or by native code
-    /// inside a [`ContextScope`].
+    /// [`context_of_caller`](Self::context_of_caller) where script is calling but no `CallFrame`
+    /// reaches Rust: a function exported to C++ that a C++ host function calls, a custom getter or
+    /// setter, a Node-API function (an addon calls those from a callback script called, or from one
+    /// of its own completions, which entered the context it was scheduled in).
     #[inline]
-    pub unsafe fn context_of_cpp_caller(&self) -> &crate::ScriptExecutionContext {
+    pub fn context_of_caller_no_frame(&self) -> &crate::ScriptExecutionContext {
         self.current_context_or_root()
     }
 
@@ -1133,13 +1131,6 @@ impl VirtualMachine {
             .then_some(context)
     }
 
-    /// The context the running script belongs to: what it opens from here is
-    /// stopped with that context.
-    #[inline]
-    pub fn current_context(&self) -> &crate::ScriptExecutionContext {
-        self.current_graph_context().unwrap_or(&self.root_context)
-    }
-
     /// The context of the realm's own script: what belongs to the realm rather
     /// than to whichever `Bun.ModuleGraph` first needed it.
     #[inline]
@@ -1147,24 +1138,11 @@ impl VirtualMachine {
         &self.root_context
     }
 
-    /// [`current_context`](Self::current_context) when it is a
-    /// `Bun.ModuleGraph`'s (stopped or not).
-    #[inline]
-    pub fn current_graph_context(&self) -> Option<&crate::ScriptExecutionContext> {
-        if self.gone_scopes.get() != 0 {
-            return Some(&self.dead_context);
-        }
-        if self.graph_contexts.count() == 0 {
-            return None;
-        }
-        // SAFETY: a graph's context outlives every async context frame that names it.
-        unsafe { Bun__currentGraphContext(self.global()).as_ref() }
-    }
-
-    /// [`current_context`](Self::current_context) for code a native pump reaches as well as
-    /// script (a sink a stream's native reader writes into): with no script on the stack and no
-    /// context entered it is nobody's in particular, so the realm's.
-    pub fn current_context_or_root(&self) -> &crate::ScriptExecutionContext {
+    /// What the running script's async context, or the [`ContextScope`] native code entered, says.
+    /// With no script on the stack and no context entered it is nobody's in particular, so the
+    /// realm's. The VM's own: everything else is handed a context (`context_of_caller`,
+    /// [`ContextScope::context`]).
+    fn current_context_or_root(&self) -> &crate::ScriptExecutionContext {
         if self.gone_scopes.get() != 0 {
             return &self.dead_context;
         }
@@ -1242,12 +1220,16 @@ impl VirtualMachine {
     /// owns it (the host writing through a `FileHandle` a graph made), the job counts for the
     /// owner until the guard is dropped, on this thread: the owner's `dispose()` must not close
     /// the descriptor under it either.
-    pub fn owned_fd_job(&self, fd: Option<bun_sys::Fd>) -> OwnedFdJob {
+    pub fn owned_fd_job(
+        &self,
+        context: &crate::ScriptExecutionContext,
+        fd: Option<bun_sys::Fd>,
+    ) -> OwnedFdJob {
         let fd = match fd {
             Some(fd) if self.graph_contexts.count() != 0 => fd,
             _ => return OwnedFdJob(None),
         };
-        let current = self.current_context().id();
+        let current = context.id();
         let owner = self.graph_contexts.values().iter().find_map(|context| {
             // SAFETY: registered ⇒ not freed.
             let context = unsafe { context.as_ref() };
@@ -1319,8 +1301,7 @@ impl VirtualMachine {
 
     /// Native code reached from the event loop is about to continue what `context`'s script
     /// started (run a completion, start the next step): while the guard lives
-    /// [`current_context`](Self::current_context) is that context, for native code and for the
-    /// script it calls.
+    /// [`ContextScope::context`] is that context, and the script it calls belongs to it.
     ///
     /// A stopped context can still be entered, and one that is
     /// gone (freed, its graph collected, a realm `bun test --isolate` retired) is entered as a
@@ -1383,19 +1364,15 @@ impl VirtualMachine {
     /// Whether the running script may name by number (a timer id) something `owner`'s script
     /// made: the host may name anything; a graph's script its own and the host's (whose
     /// `globalThis` it shares anyway), never another graph's.
-    pub fn current_context_may_name(&self, owner: crate::ContextId) -> bool {
-        match self.current_graph_context() {
+    pub fn context_may_name(
+        &self,
+        context: &crate::ScriptExecutionContext,
+        owner: crate::ContextId,
+    ) -> bool {
+        match self.as_graph_context(context) {
             None => true,
             Some(current) => owner == current.id() || owner == self.root_context.id(),
         }
-    }
-
-    /// The groups a client socket the running script opens joins.
-    pub fn client_socket_groups(&mut self) -> &mut crate::rare_data::SocketGroups {
-        let context = core::ptr::from_ref(self.current_context());
-        // SAFETY: the realm's, the dead one or a registered graph's: none is freed under a call
-        // made from its own script (JS thread).
-        self.client_socket_groups_in(unsafe { &*context })
     }
 
     /// The groups a client socket opened by `context`'s script joins.
@@ -1438,9 +1415,17 @@ impl VirtualMachine {
     /// stopped context `id`: they go on the next turn of the loop, before the
     /// context can be freed.
     pub(crate) fn stop_graph_context_again(&mut self, id: crate::ContextId) {
-        fn stop_again(id: *mut crate::ContextId) -> crate::JsResult<()> {
+        /// The VM's own sweep (of a context that has stopped).
+        struct StopAgain(crate::ContextId);
+        impl bun_event_loop::TaskOwner for StopAgain {
+            /// Runs for a context that has stopped.
+            fn task_context(&self) -> bun_event_loop::TaskContext {
+                bun_event_loop::TaskContext::Always
+            }
+        }
+        fn stop_again(this: *mut StopAgain) -> crate::JsResult<()> {
             // SAFETY: boxed below for this task.
-            let id = *unsafe { Box::from_raw(id) };
+            let StopAgain(id) = *unsafe { Box::from_raw(this) };
             let vm = VirtualMachine::get().as_mut();
             if let Some(context) = vm.graph_context(id).map(NonNull::from) {
                 // SAFETY: registered ⇒ not freed.
@@ -1465,12 +1450,7 @@ impl VirtualMachine {
             }
             if !self.dead_context.stop_again_is_queued() {
                 let vm = std::ptr::from_mut(self);
-                self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                    vm,
-                    stop_dead,
-                    // The VM's own sweep.
-                    bun_event_loop::TaskContext::Always,
-                ));
+                self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(vm, stop_dead));
             }
             return;
         }
@@ -1480,10 +1460,8 @@ impl VirtualMachine {
         {
             // (Owned: released with the task if the VM goes before it runs.)
             self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(
-                Box::into_raw(Box::new(id)),
+                Box::into_raw(Box::new(StopAgain(id))),
                 stop_again,
-                // The VM's own sweep (of a context that has stopped).
-                bun_event_loop::TaskContext::Always,
             ));
         }
     }
@@ -1592,8 +1570,6 @@ impl VirtualMachine {
         self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
             context.as_ptr(),
             stop_and_free,
-            // The VM's own sweep.
-            bun_event_loop::TaskContext::Always,
         ));
     }
 
@@ -7807,5 +7783,12 @@ impl Drop for ContextScope<'_> {
             // SAFETY: the realm entered above; it is reachable from this frame until here.
             Bun__ModuleGraph__leaveContext(unsafe { &*self.entered }, self.previous);
         }
+    }
+}
+
+impl bun_event_loop::TaskOwner for VirtualMachine {
+    /// A callback task queued for the VM is the VM's own sweep.
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }

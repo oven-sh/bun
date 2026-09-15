@@ -507,15 +507,17 @@ impl ReadableStream {
 
     pub(crate) fn from_owned_slice(
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         bytes: impl Into<Vec<u8>>,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
         let blob = Blob::init(bytes.into(), global_this);
-        Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
+        Self::from_blob_copy_ref(global_this, context, &blob, recommended_chunk_size)
     }
 
     pub fn from_blob_copy_ref(
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         blob: &Blob,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
@@ -530,7 +532,7 @@ impl ReadableStream {
                     ..Default::default()
                 });
                 reader.context.setup(blob, recommended_chunk_size);
-                reader.to_readable_stream(global_this)
+                reader.to_readable_stream(global_this, context)
             }
             webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
@@ -550,7 +552,7 @@ impl ReadableStream {
                     },
                     ..Default::default()
                 });
-                reader.to_readable_stream(global_this)
+                reader.to_readable_stream(global_this, context)
             }
             webcore::blob::store::Data::S3(s3) => {
                 let credentials = s3.get_credentials();
@@ -567,6 +569,7 @@ impl ReadableStream {
 
                 crate::webcore::s3::client::readable_stream(
                     credentials,
+                    context,
                     path,
                     blob.offset.get() as usize,
                     if blob.size.get() != webcore::blob::MAX_SIZE {
@@ -584,6 +587,7 @@ impl ReadableStream {
 
     pub fn from_pipe<P>(
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         _parent: P,
         buffered_reader: &mut bun_io::BufferedReader,
     ) -> JsResult<JSValue> {
@@ -603,7 +607,7 @@ impl ReadableStream {
             .reader()
             .from(buffered_reader, ctx_ptr.cast::<c_void>());
 
-        let stream = source.to_readable_stream(global_this)?;
+        let stream = source.to_readable_stream(global_this, context)?;
 
         // The transferred poll's owner now points into this box; root the
         // wrapper before JS can GC it. `on_start` skips a second ref via the
@@ -619,6 +623,7 @@ impl ReadableStream {
     /// A stream that delivers `bytes`, then errors with `err`.
     pub fn from_bytes_then_error(
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         bytes: Vec<u8>,
         err: syscall::Error,
     ) -> JsResult<JSValue> {
@@ -636,7 +641,7 @@ impl ReadableStream {
             },
             ..Default::default()
         });
-        source.to_readable_stream(global_this)
+        source.to_readable_stream(global_this, context)
     }
 
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -836,6 +841,7 @@ pub trait SourceContext: Sized {
     fn to_buffered_value(
         &mut self,
         _global_this: &JSGlobalObject,
+        _context: &bun_jsc::ScriptExecutionContext,
         _action: streams::BufferActionTag,
     ) -> Option<JsResult<JSValue>> {
         None
@@ -1273,6 +1279,7 @@ impl<C: SourceContext> NewSource<C> {
     fn to_readable_stream_with(
         &mut self,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         from_native: fn(&JSGlobalObject, JSValue) -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
         let out_value = if let Some(v) = self.this_jsvalue.try_get() {
@@ -1283,7 +1290,7 @@ impl<C: SourceContext> NewSource<C> {
         out_value.ensure_still_alive();
         if self.this_jsvalue.is_empty() {
             self.this_jsvalue = jsc::JsRef::init_weak(out_value);
-            if let Some(context) = global_this.bun_vm().current_graph_context() {
+            if let Some(context) = global_this.bun_vm().as_graph_context(context) {
                 // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
                 // context when this is dropped.
                 unsafe { jsc::AbortHandle::arm_owner(core::ptr::from_mut(self), context) };
@@ -1292,15 +1299,20 @@ impl<C: SourceContext> NewSource<C> {
         from_native(global_this, out_value)
     }
 
-    pub(crate) fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        self.to_readable_stream_with(global_this, ReadableStream::from_native)
+    pub(crate) fn to_readable_stream(
+        &mut self,
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> JsResult<JSValue> {
+        self.to_readable_stream_with(global_this, context, ReadableStream::from_native)
     }
 
     pub(crate) fn to_text_readable_stream(
         &mut self,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
     ) -> JsResult<JSValue> {
-        self.to_readable_stream_with(global_this, ReadableStream::from_native_text)
+        self.to_readable_stream_with(global_this, context, ReadableStream::from_native_text)
     }
 
     pub fn set_raw_mode_from_js(
@@ -1359,17 +1371,24 @@ impl<C: SourceContext> NewSource<C> {
             return Ok(JSValue::UNDEFINED);
         };
         let result = self.on_pull_from_js(buffer.slice_mut(), view);
-        Self::process_result(this_jsvalue, global_this, flags, result)
+        Self::process_result(
+            this_jsvalue,
+            global_this,
+            global_this.bun_vm().context_of_caller(call_frame),
+            flags,
+            result,
+        )
     }
 
     pub fn start_from_js(
         &mut self,
         global_this: &JSGlobalObject,
-        _call_frame: &CallFrame,
+        call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         self.global_this = Some(bun_ptr::BackRef::new(global_this));
-        self.reader_context
-            .set(Some(global_this.bun_vm().current_context().id()));
+        self.reader_context.set(Some(
+            global_this.bun_vm().context_of_caller(call_frame).id(),
+        ));
         match self.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
@@ -1386,6 +1405,7 @@ impl<C: SourceContext> NewSource<C> {
     fn process_result(
         this_jsvalue: JSValue,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         flags: JSValue,
         mut result: streams::Result,
     ) -> JsResult<JSValue> {
@@ -1396,7 +1416,7 @@ impl<C: SourceContext> NewSource<C> {
                 Err(global_this.throw_value(js_err))
             }
             streams::Result::Pending(_) => {
-                let out = result.to_js(global_this)?;
+                let out = result.to_js(global_this, context)?;
                 <Self as NewSourceCodegen>::pending_promise_set_cached(
                     this_jsvalue,
                     global_this,
@@ -1408,9 +1428,9 @@ impl<C: SourceContext> NewSource<C> {
             | streams::Result::OwnedAndDone(_)
             | streams::Result::IntoArrayAndDone(_) => {
                 flags.put_index(global_this, 0, JSValue::TRUE)?;
-                result.to_js(global_this)
+                result.to_js(global_this, context)
             }
-            _ => result.to_js(global_this),
+            _ => result.to_js(global_this, context),
         }
     }
 
@@ -1479,10 +1499,11 @@ impl<C: SourceContext> NewSource<C> {
     fn to_buffered_value_from_js(
         &mut self,
         global_this: &JSGlobalObject,
-        _call_frame: &CallFrame,
+        call_frame: &CallFrame,
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
-        if let Some(r) = self.context.to_buffered_value(global_this, action) {
+        let context = global_this.bun_vm().context_of_caller(call_frame);
+        if let Some(r) = self.context.to_buffered_value(global_this, context, action) {
             return r;
         }
         Err(global_this.throw_todo(b"This is not implemented yet"))

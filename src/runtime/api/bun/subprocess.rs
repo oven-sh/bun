@@ -563,7 +563,10 @@ impl Subprocess<'_> {
         this.observable_getters
             .set(this.observable_getters.get() | ObservableGetter::Stderr);
         let exited = this.has_exited();
-        this.stderr.with_mut(|s| s.to_js(global_this, exited))
+        // The stream is the script's that reads the property.
+        let context = global_this.bun_vm().context_of_caller_no_frame();
+        this.stderr
+            .with_mut(|s| s.to_js(global_this, context, exited))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -591,7 +594,10 @@ impl Subprocess<'_> {
         // gets cached on JSSubprocess (created via bindgen). This makes it
         // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
         let exited = this.has_exited();
-        this.stdout.with_mut(|s| s.to_js(global_this, exited))
+        // The stream is the script's that reads the property.
+        let context = global_this.bun_vm().context_of_caller_no_frame();
+        this.stdout
+            .with_mut(|s| s.to_js(global_this, context, exited))
     }
 
     #[bun_jsc::host_fn(getter)]

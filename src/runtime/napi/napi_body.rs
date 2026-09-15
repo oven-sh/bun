@@ -1665,7 +1665,7 @@ extern "C" fn napi_create_promise(
     let promise = get_out!(env, promise_);
     let strong = Box::new(Deferred {
         promise: JSPromiseStrong::init(env.to_js()),
-        context: env.to_js().bun_vm().current_context().id(),
+        context: env.to_js().bun_vm().context_of_caller_no_frame().id(),
     });
     let strong_ptr = bun_core::heap::into_raw(strong);
     *deferred = strong_ptr;
@@ -1911,7 +1911,7 @@ impl napi_async_work {
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
             scheduled: false,
             poll_ref: KeepAlive::default(),
-            context: global.bun_vm().current_context().id(),
+            context: global.bun_vm().context_of_caller_no_frame().id(),
         }))
     }
 
@@ -3302,7 +3302,7 @@ extern "C" fn napi_create_threadsafe_function(
         thread_count: AtomicI64::new(i64::try_from(initial_thread_count).expect("int cast")),
         poll_ref: KeepAlive::init(),
         tracker: Debugger::AsyncTaskTracker::init(vm),
-        context: vm.current_context().id(),
+        context: vm.context_of_caller_no_frame().id(),
         finalizer_fun: thread_finalize_cb,
         finalizer_data: thread_finalize_data,
         has_queued_finalizer: false,

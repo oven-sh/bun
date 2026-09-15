@@ -782,7 +782,10 @@ impl Response {
     ) -> JsResult<JSValue> {
         this.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
-        let cloned = this.clone(global_this)?;
+        let cloned = this.clone(
+            global_this,
+            global_this.bun_vm().context_of_caller(callframe),
+        )?;
 
         // SAFETY: `cloned` is a freshly-boxed Response from `clone()`.
         let js_wrapper = Response::make_maybe_pooled(global_this, cloned);
@@ -801,8 +804,12 @@ impl Response {
         unsafe { (*ptr).to_js(global_object) }
     }
 
-    pub(crate) fn clone_value(&self, global_this: &JSGlobalObject) -> JsResult<Response> {
-        let body = Body::new(self.clone_body_value_via_cached_stream(global_this)?);
+    pub(crate) fn clone_value(
+        &self,
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> JsResult<Response> {
+        let body = Body::new(self.clone_body_value_via_cached_stream(global_this, context)?);
         // `Body` has NO `Drop`; arm a guard so the
         // `?` below releases the cloned body payload.
         let body = scopeguard::guard(body, |b| b.reset());
@@ -816,9 +823,13 @@ impl Response {
         })
     }
 
-    pub(crate) fn clone(&self, global_this: &JSGlobalObject) -> JsResult<*mut Response> {
+    pub(crate) fn clone(
+        &self,
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> JsResult<*mut Response> {
         Ok(bun_core::heap::into_raw(Box::new(
-            self.clone_value(global_this)?,
+            self.clone_value(global_this, context)?,
         )))
     }
 

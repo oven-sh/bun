@@ -1795,8 +1795,12 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     // `Bun.redis` is the realm's: not owned (and closed at dispose()) by whichever
     // Bun.ModuleGraph reads the property first.
     let vm = global_this.bun_vm();
-    let _realm = vm.enter_context(vm.root_context().id());
-    let valkey = match JSValkeyClient::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED]) {
+    let realm = vm.enter_context(vm.root_context().id());
+    let valkey = match JSValkeyClient::create_no_js_no_pubsub(
+        global_this,
+        realm.context(),
+        &[JSValue::UNDEFINED],
+    ) {
         Ok(p) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
@@ -2797,7 +2801,6 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global_this.bun_vm().context_of_caller(callframe);
         let (buffer, _, level) = get_options_async(global_this, callframe)?;
         Ok(create_job(global_this, context, buffer, true, level))
@@ -2808,7 +2811,6 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global_this.bun_vm().context_of_caller(callframe);
         let (buffer, _, _) = get_options_async(global_this, callframe)?;
         Ok(create_job(global_this, context, buffer, false, 0)) // level is ignored for decompression

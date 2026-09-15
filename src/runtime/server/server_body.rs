@@ -2355,7 +2355,7 @@ where
             // SAFETY: JsClass::from_js returns a live *mut Request.
             // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
             // sentinel and calls `clone_into(.., preserve_url=false)`.
-            unsafe { (*request_).clone(ctx)? }
+            unsafe { (*request_).clone(ctx, ctx.bun_vm().context_of_caller(callframe))? }
         } else {
             let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));

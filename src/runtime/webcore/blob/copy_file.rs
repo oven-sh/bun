@@ -95,6 +95,7 @@ impl CopyFile {
         off: SizeType,
         max_len: SizeType,
         global_this: &JSGlobalObject,
+        context: &jsc::ScriptExecutionContext,
         mkdirp_if_not_exists: bool,
         destination_mode: Option<Mode>,
     ) -> JSValue {
@@ -113,7 +114,7 @@ impl CopyFile {
             system_error: None,
             read_len: 0,
         };
-        let cx = global_this.js_thread(global_this.bun_vm().current_context());
+        let cx = global_this.js_thread(context);
         let promise = jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
         jsc::Job::<CopyFile>::schedule(&cx, copy, promise);
@@ -1057,6 +1058,14 @@ impl TryWith {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
+impl bun_event_loop::TaskOwner for CopyFileWindows<'_> {
+    /// A step of the copy: its completion checks its context.
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
+}
+
+#[cfg(windows)]
 pub struct CopyFileWindows<'a> {
     pub(crate) destination_file_store: RefPtr<Store>,
     pub(crate) source_file_store: RefPtr<Store>,
@@ -1364,6 +1373,7 @@ impl<'a> CopyFileWindows<'a> {
         destination_file_store: RefPtr<Store>,
         source_file_store: RefPtr<Store>,
         event_loop: &'a jsc::event_loop::EventLoop,
+        context: &jsc::ScriptExecutionContext,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
         destination_mode: Option<Mode>,
@@ -1377,9 +1387,7 @@ impl<'a> CopyFileWindows<'a> {
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
-            context: jsc::virtual_machine::VirtualMachine::get()
-                .current_context()
-                .id(),
+            context: context.id(),
             mkdirp_if_not_exists,
             destination_mode,
             size: size_,
@@ -1939,12 +1947,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket:
         Ok(())
     }
     ticket.post(jsc::ConcurrentTask::create(
-        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(
-            this,
-            call_erased,
-            // A step of the copy: its completion checks its context.
-            bun_event_loop::TaskContext::Always,
-        ),
+        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
     ));
 }
 

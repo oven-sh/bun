@@ -321,6 +321,7 @@ impl Stdio {
     fn extract_body_value(
         out_stdio: &mut Stdio,
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         i: i32,
         body: &mut webcore::body::Value,
         is_sync: bool,
@@ -378,7 +379,7 @@ impl Stdio {
                     }
                 }
 
-                let stream_value = body.to_readable_stream(global)?;
+                let stream_value = body.to_readable_stream(global, context)?;
 
                 let Some(stream) = webcore::ReadableStream::from_js(stream_value, global)? else {
                     return Err(global
@@ -404,6 +405,7 @@ impl Stdio {
     pub(crate) fn extract(
         out_stdio: &mut Stdio,
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         i: i32,
         value: JSValue,
         is_sync: bool,
@@ -504,9 +506,23 @@ impl Stdio {
             // `value` is on the stack. `dupe()` only bumps the store refcount.
             return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
-            return Self::extract_body_value(out_stdio, global, i, req.get_body_value(), is_sync);
+            return Self::extract_body_value(
+                out_stdio,
+                global,
+                context,
+                i,
+                req.get_body_value(),
+                is_sync,
+            );
         } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
-            return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
+            return Self::extract_body_value(
+                out_stdio,
+                global,
+                context,
+                i,
+                res.get_body_value(),
+                is_sync,
+            );
         }
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {

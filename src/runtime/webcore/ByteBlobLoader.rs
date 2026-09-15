@@ -64,9 +64,10 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     fn to_buffered_value(
         &mut self,
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         action: streams::BufferActionTag,
     ) -> Option<JsResult<JSValue>> {
-        Some(Self::to_buffered_value(self, global, action))
+        Some(Self::to_buffered_value(self, global, context, action))
     }
 }
 
@@ -219,10 +220,11 @@ impl ByteBlobLoader {
     pub(crate) fn to_buffered_value(
         &mut self,
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
         if let Some(mut blob) = self.to_any_blob(global) {
-            let result = blob.to_promise(global, action);
+            let result = blob.to_promise(global, context, action);
             blob.detach();
             return result;
         }

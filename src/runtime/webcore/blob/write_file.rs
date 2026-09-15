@@ -93,12 +93,12 @@ impl Drop for WriteFile {
 impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
-    pub fn schedule(this: WriteFile, global: &JSGlobalObject) {
-        bun_jsc::Job::<WriteFile>::schedule(
-            &global.js_thread(global.bun_vm().current_context()),
-            this,
-            (),
-        );
+    pub fn schedule(
+        this: WriteFile,
+        global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) {
+        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(context), this, ());
     }
 }
 
@@ -595,6 +595,13 @@ mod windows_impl {
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 
+    impl bun_event_loop::TaskOwner for WriteFileWindows {
+        /// A step of the write: its completion checks its context.
+        fn task_context(&self) -> bun_event_loop::TaskContext {
+            bun_event_loop::TaskContext::Always
+        }
+    }
+
     pub(crate) struct WriteFileWindows {
         pub(crate) io_request: uv::fs_t,
         pub(crate) file_blob: Blob,
@@ -637,6 +644,7 @@ mod windows_impl {
             file_blob: Blob,
             bytes_blob: Blob,
             event_loop: *mut EventLoop,
+            script_context: &bun_jsc::ScriptExecutionContext,
             on_write_file_context: *mut c_void,
             on_complete_callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
@@ -656,9 +664,7 @@ mod windows_impl {
                 bytes_blob,
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
-                context: bun_jsc::virtual_machine::VirtualMachine::get()
-                    .current_context()
-                    .id(),
+                context: script_context.id(),
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t {
@@ -990,12 +996,7 @@ mod windows_impl {
                 bun_sys::Result::Ok(()) => None,
             };
             ticket.post(ConcurrentTask::create(
-                ManagedTask::new::<WriteFileWindows>(
-                    this,
-                    Self::on_mkdirp_complete_task,
-                    // A step of the write: its completion checks its context.
-                    bun_event_loop::TaskContext::Always,
-                ),
+                ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
             ));
         }
 
@@ -1210,6 +1211,7 @@ mod windows_impl {
 
         pub(crate) fn create<C>(
             event_loop: *mut EventLoop,
+            script_context: &bun_jsc::ScriptExecutionContext,
             file_blob: Blob,
             bytes_blob: Blob,
             context: *mut C,
@@ -1222,6 +1224,7 @@ mod windows_impl {
                 file_blob,
                 bytes_blob,
                 event_loop,
+                script_context,
                 context.cast::<c_void>(),
                 callback,
                 mkdirp_if_not_exists,
@@ -1287,6 +1290,8 @@ impl WriteFilePromise {
 
 pub struct WriteFileWaitFromLockedValueTask {
     pub(crate) file_blob: Blob,
+    /// The context of the script that asked for the write.
+    pub(crate) context: bun_jsc::ContextId,
     /// JSC_BORROW: process-lifetime global; `BackRef` so the deref is safe and
     /// (being `Copy`) detaches from `&self` for use across `&mut self` and
     /// past `heap::take(this)`.
@@ -1313,6 +1318,7 @@ impl WriteFileWaitFromLockedValueTask {
         let promise: *mut JSPromise = std::ptr::from_mut(this.promise.get());
         let global_ref = this.global_this;
         let global_this = global_ref.get();
+        let context = global_this.bun_vm().context_of(this.context);
         let mut file_blob = core::mem::take(&mut this.file_blob);
         match value {
             body::Value::Error(err_ref) => {
@@ -1345,6 +1351,7 @@ impl WriteFileWaitFromLockedValueTask {
                 // TODO: this should be one promise not two!
                 let new_promise = match blob::write_file_with_source_destination(
                     global_this,
+                    context,
                     &mut blob,
                     &mut file_blob,
                     &blob::WriteFileOptions {

@@ -602,7 +602,14 @@ fn spawn_maybe_sync(
                         let mut stdio_iter = stdio_val.array_iterator(global_this)?;
                         let mut i: i32 = 0;
                         while let Some(value) = stdio_iter.next()? {
-                            Stdio::extract(&mut stdio[i as usize], global_this, i, value, is_sync)?;
+                            Stdio::extract(
+                                &mut stdio[i as usize],
+                                global_this,
+                                context,
+                                i,
+                                value,
+                                is_sync,
+                            )?;
                             if i == 2 {
                                 break;
                             }
@@ -614,7 +621,7 @@ fn spawn_maybe_sync(
                             // extract() leaves `out_stdio` untouched when `value` is undefined, so this
                             // must be initialized to a sane default instead of `undefined`.
                             let mut new_item: Stdio = Stdio::Ignore;
-                            Stdio::extract(&mut new_item, global_this, i, value, is_sync)?;
+                            Stdio::extract(&mut new_item, global_this, context, i, value, is_sync)?;
 
                             let opt = match new_item.as_spawn_option(i) {
                                 stdio::ResultT::Result(opt) => opt,
@@ -639,15 +646,15 @@ fn spawn_maybe_sync(
                 }
             } else {
                 if let Some(value) = args.get(global_this, "stdin")? {
-                    Stdio::extract(&mut stdio[0], global_this, 0, value, is_sync)?;
+                    Stdio::extract(&mut stdio[0], global_this, context, 0, value, is_sync)?;
                 }
 
                 if let Some(value) = args.get(global_this, "stderr")? {
-                    Stdio::extract(&mut stdio[2], global_this, 2, value, is_sync)?;
+                    Stdio::extract(&mut stdio[2], global_this, context, 2, value, is_sync)?;
                 }
 
                 if let Some(value) = args.get(global_this, "stdout")? {
-                    Stdio::extract(&mut stdio[1], global_this, 1, value, is_sync)?;
+                    Stdio::extract(&mut stdio[1], global_this, context, 1, value, is_sync)?;
                 }
             }
 

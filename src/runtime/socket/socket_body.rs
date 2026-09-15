@@ -3575,7 +3575,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 .as_ref()
                 .and_then(|handlers| handlers.listener().map(|listener| listener.context));
             let vm = VirtualMachine::get();
-            let context = listener_context.map_or_else(|| vm.root_context(), |id| vm.context_of(id));
+            let context =
+                listener_context.map_or_else(|| vm.root_context(), |id| vm.context_of(id));
             core::ptr::from_mut(vm.as_mut().client_socket_groups_in(context))
         } else {
             // SAFETY: `raw_socket` is live (below) and client sockets only join a `SocketGroups` group.

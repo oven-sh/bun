@@ -119,6 +119,7 @@ macro_rules! impl_timer_object {
             /// picks `kind`/`interval` and forwards here.
             pub fn init_with(
                 global: &::bun_jsc::JSGlobalObject,
+                context: &::bun_jsc::ScriptExecutionContext,
                 id: i32,
                 kind: super::Kind,
                 interval: u32,
@@ -145,7 +146,7 @@ macro_rules! impl_timer_object {
                 // owned here; `internals.init()` writes every field.
                 unsafe {
                     (*payload).internals.init(
-                        js_value, global, id, kind, interval, callback, arguments,
+                        js_value, global, context, id, kind, interval, callback, arguments,
                     );
                 }
                 if global.bun_vm().as_mut().is_inspector_enabled() {

@@ -60,6 +60,7 @@ bun_core::declare_scope!(S3UploadStream, visible);
 
 pub(crate) fn stat(
     this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     callback: fn(S3StatResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
@@ -68,6 +69,7 @@ pub(crate) fn stat(
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
+        context,
         s3_simple_request::Options {
             path,
             method: bun_http::Method::HEAD,
@@ -83,6 +85,7 @@ pub(crate) fn stat(
 
 pub(crate) fn download(
     this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
@@ -91,6 +94,7 @@ pub(crate) fn download(
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
+        context,
         s3_simple_request::Options {
             path,
             method: bun_http::Method::GET,
@@ -106,6 +110,7 @@ pub(crate) fn download(
 
 pub(crate) fn download_slice(
     this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     offset: usize,
     size: Option<usize>,
@@ -134,6 +139,7 @@ pub(crate) fn download_slice(
 
     s3_simple_request::execute_simple_s3_request(
         this,
+        context,
         s3_simple_request::Options {
             path,
             method: bun_http::Method::GET,
@@ -150,6 +156,7 @@ pub(crate) fn download_slice(
 
 pub(crate) fn delete(
     this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     callback: fn(S3DeleteResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
@@ -158,6 +165,7 @@ pub(crate) fn delete(
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
+        context,
         s3_simple_request::Options {
             path,
             method: bun_http::Method::DELETE,
@@ -173,6 +181,7 @@ pub(crate) fn delete(
 
 pub(crate) fn list_objects(
     this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
     list_options: &S3ListObjectsOptions,
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
@@ -370,15 +379,16 @@ pub(crate) fn list_objects(
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
-    task.context = VirtualMachine::get().current_context().id();
+    task.context = context.id();
     // SAFETY: the task is heap-allocated and drops its handle with itself.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, VirtualMachine::get().current_context()) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }
 
 pub(crate) fn upload(
     this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     content: &[u8],
     content_type: Option<&[u8]>,
@@ -393,6 +403,7 @@ pub(crate) fn upload(
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
+        context,
         s3_simple_request::Options {
             path,
             method: bun_http::Method::PUT,
@@ -416,6 +427,7 @@ pub(crate) fn upload(
 /// `credentials` is moved into the `MultiPartUpload`.
 pub(crate) fn writable_stream(
     credentials: bun_ptr::RefPtr<S3Credentials>,
+    context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     global_this: &JSGlobalObject,
     options: MultiPartUploadOptions,
@@ -544,7 +556,7 @@ pub(crate) fn writable_stream(
     task.poll_ref
         .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, global_this.bun_vm().current_context()) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
 
     // Heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
@@ -820,6 +832,7 @@ impl Drop for S3UploadStreamWrapper {
 /// `credentials` is moved into the `MultiPartUpload`.
 pub(crate) fn upload_stream(
     credentials: bun_ptr::RefPtr<S3Credentials>,
+    context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     readable_stream: ReadableStream,
     global_this: &JSGlobalObject,
@@ -973,7 +986,7 @@ pub(crate) fn upload_stream(
     task.poll_ref
         .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, global_this.bun_vm().current_context()) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
 
     let ctx_ptr: *mut S3UploadStreamWrapper =
         bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {
@@ -1140,6 +1153,7 @@ pub(crate) fn upload_stream(
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
 fn download_stream(
     this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     offset: usize,
     size: Option<usize>,
@@ -1316,7 +1330,7 @@ fn download_stream(
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
     // SAFETY: the task is heap-allocated and drops its handle with itself.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, VirtualMachine::get().current_context()) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
     bun_http::HTTPThread::schedule(batch);
     task_ptr
 }
@@ -1481,6 +1495,7 @@ impl S3DownloadStreamWrapper {
 /// returns a readable stream that reads from the s3 path
 pub(crate) fn readable_stream(
     this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     offset: usize,
     size: Option<usize>,
@@ -1505,7 +1520,7 @@ pub(crate) fn readable_stream(
     let reader_mut = unsafe { &mut *reader };
 
     reader_mut.context.setup();
-    let readable_value = reader_mut.to_readable_stream(global_this)?;
+    let readable_value = reader_mut.to_readable_stream(global_this, context)?;
 
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
         stream: Default::default(),
@@ -1526,6 +1541,7 @@ pub(crate) fn readable_stream(
 
     let task = download_stream(
         this,
+        context,
         path,
         offset,
         size,

@@ -1975,7 +1975,8 @@ pub struct GlobalData {
 impl GlobalData {
     pub(crate) fn init(vm: &VirtualMachine) -> Box<Self> {
         Box::new(Self {
-            resolver: Resolver::setup(vm),
+            // The VM-global resolver serves every context of the realm.
+            resolver: Resolver::setup(vm, vm.root_context().id()),
         })
     }
 }
@@ -3738,7 +3739,8 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 pub struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     pub(crate) channel: Cell<Option<*mut c_ares::Channel>>, // FFI
-    /// The context whose script made the resolver: its channel is that context's, whoever is first to query.
+    /// The context whose script made the resolver (the realm's, for the VM-global one): its channel is that
+    /// context's, whoever is first to query.
     made_in: bun_jsc::ContextId,
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
     pub(crate) polls: JsCell<PollsMap>,
@@ -4058,11 +4060,11 @@ impl Resolver {
         unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
 
-    pub(crate) fn setup(vm: &VirtualMachine) -> Self {
+    pub(crate) fn setup(vm: &VirtualMachine, made_in: bun_jsc::ContextId) -> Self {
         Self {
             ref_count: bun_ptr::RefCount::init(),
             channel: Cell::new(None),
-            made_in: vm.current_context_or_root().id(),
+            made_in,
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
             options: Cell::new(c_ares::ChannelOptions::default()),
@@ -4089,9 +4091,9 @@ impl Resolver {
         }
     }
 
-    pub(crate) fn init(vm: &VirtualMachine) -> *mut Self {
+    pub(crate) fn init(vm: &VirtualMachine, made_in: bun_jsc::ContextId) -> *mut Self {
         bun_output::scoped_log!(DNSResolver, "init");
-        bun_core::heap::into_raw(Box::new(Self::setup(vm)))
+        bun_core::heap::into_raw(Box::new(Self::setup(vm, made_in)))
     }
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
@@ -5043,7 +5045,6 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // The lookup is the calling script's.
         let context = global_this.bun_vm().context_of_caller(callframe).id();
         let arguments = callframe.arguments_as_array::<3>();
         let arguments_len = callframe.arguments_count() as usize;
@@ -5162,7 +5163,6 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // The lookup is the calling script's.
         let context = global_this.bun_vm().context_of_caller(callframe).id();
         let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;
@@ -5239,7 +5239,6 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // The lookup is the calling script's.
         let context = global_this.bun_vm().context_of_caller(callframe).id();
         let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;
@@ -5377,7 +5376,6 @@ macro_rules! resolve_record_fn {
             global_this: &JSGlobalObject,
             callframe: &CallFrame,
         ) -> JsResult<JSValue> {
-            // The lookup is the calling script's.
             let context = global_this.bun_vm().context_of_caller(callframe).id();
             let arguments = callframe.arguments_as_array::<2>();
             let arguments_len = callframe.arguments_count() as usize;
@@ -5412,18 +5410,11 @@ impl c_ares::ChannelContainer for Resolver {
     #[inline]
     fn set_channel(&self, channel: *mut c_ares::Channel) {
         self.channel.set(Some(channel));
-        // The VM-global resolver serves every context of the realm.
-        let is_global = crate::jsc_hooks::global_dns_data()
-            .get()
-            .is_some_and(|global| core::ptr::eq(&raw const global.resolver, self));
-        let context = if is_global {
-            self.vm.root_context()
-        } else {
-            self.vm.context_of(self.made_in)
-        };
         // SAFETY: a resolver with a channel is at its final address (the
         // channel holds it); it leaves its context in `destroy_channel`.
-        unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
+        unsafe {
+            bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), self.vm.context_of(self.made_in))
+        };
     }
 }
 
@@ -6001,7 +5992,10 @@ impl Resolver {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-        let resolver = Resolver::init(global_this.bun_vm());
+        let resolver = Resolver::init(
+            global_this.bun_vm(),
+            global_this.bun_vm().context_of_caller(callframe).id(),
+        );
 
         let options = callframe.argument(0);
         if options.is_object() {
@@ -6044,7 +6038,6 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // The lookup is the calling script's.
         let context = global_this.bun_vm().context_of_caller(callframe).id();
         let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;

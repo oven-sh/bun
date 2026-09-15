@@ -277,6 +277,7 @@ impl TimerObjectInternals {
         &mut self,
         timer: JSValue,
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         id: i32,
         kind: Kind,
         interval: u32,
@@ -287,9 +288,9 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
+        // Only a graph's context keeps a list of its timers.
         // SAFETY: `vm` is the live per-thread VM.
-        let (graph_context, root_context) =
-            unsafe { ((*vm).current_graph_context(), (*vm).root_context().id()) };
+        let graph_context = unsafe { (*vm).as_graph_context(context) };
         *self = Self {
             id,
             flags: {
@@ -300,7 +301,7 @@ impl TimerObjectInternals {
                 Cell::new(f)
             },
             interval: Cell::new(interval),
-            context: graph_context.map_or(root_context, bun_jsc::ScriptExecutionContext::id),
+            context: context.id(),
             this_value: JsCell::new(JsRef::empty()),
         };
         // `self` is at its final address (embedded in its heap-allocated parent).

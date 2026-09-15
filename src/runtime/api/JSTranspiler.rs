@@ -1347,7 +1347,6 @@ impl JSTranspiler {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(callframe);
         jsc::mark_binding();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.

@@ -13,11 +13,20 @@ super::impl_timer_object!(ImmediateObject, ImmediateObject, "Immediate");
 impl ImmediateObject {
     pub(crate) fn init(
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         id: i32,
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
-        Self::init_with(global, id, Kind::SetImmediate, 0, callback, arguments)
+        Self::init_with(
+            global,
+            context,
+            id,
+            Kind::SetImmediate,
+            0,
+            callback,
+            arguments,
+        )
     }
 
     /// Thin forwarder to

@@ -73,6 +73,7 @@ pub trait S3Ext {
         &self,
         store: &RefPtr<Store>,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
     /// See `unlink`.
@@ -80,6 +81,7 @@ pub trait S3Ext {
         &self,
         store: &RefPtr<Store>,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         list_options: JSValue,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
@@ -281,6 +283,7 @@ impl S3Ext for S3 {
         &self,
         store: &RefPtr<Store>,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
         struct Wrapper {
@@ -337,6 +340,7 @@ impl S3Ext for S3 {
 
         s3_client::delete(
             &aws_options.credentials,
+            context,
             self.path(),
             Wrapper::resolve,
             bun_core::heap::into_raw(Wrapper::new(Wrapper {
@@ -356,6 +360,7 @@ impl S3Ext for S3 {
         &self,
         store: &RefPtr<Store>,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         list_options: JSValue,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
@@ -436,6 +441,7 @@ impl S3Ext for S3 {
 
         s3_client::list_objects(
             &aws_options.credentials,
+            context,
             // SAFETY: `wrapper` is freshly leaked and untouched until the
             // callback; this borrow ends before any other access.
             unsafe { &(*wrapper).resolved_list_options },

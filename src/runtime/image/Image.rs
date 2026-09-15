@@ -926,7 +926,6 @@ impl Image {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(callframe);
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
@@ -973,7 +972,6 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_bytes(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(cf);
         self.schedule(
             global,
@@ -986,7 +984,6 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_buffer(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(cf);
         self.schedule(
             global,
@@ -999,7 +996,6 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_blob(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(cf);
         self.schedule(
             global,
@@ -1016,7 +1012,6 @@ impl Image {
         global: &JSGlobalObject,
         cf: &CallFrame,
     ) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(cf);
         self.schedule(
             global,
@@ -1031,7 +1026,6 @@ impl Image {
     /// MIME prefix, so it drops straight into `<img src>`.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_data_url(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(cf);
         self.schedule(
             global,
@@ -1053,7 +1047,6 @@ impl Image {
         global: &JSGlobalObject,
         cf: &CallFrame,
     ) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(cf);
         let args = cf.arguments();
         // Single positional `"dataurl"` for now — leaves room for `"hash"` /
@@ -1084,7 +1077,6 @@ impl Image {
     /// the source format — so `img.resize(100).write("thumb.webp")` Just Works.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_write(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        // What this starts is the calling script's.
         let context = global.bun_vm().context_of_caller(cf);
         let args = cf.arguments();
         if args.len() < 1 || args[0].is_undefined_or_null() {
@@ -1329,7 +1321,7 @@ impl<'a> BlobReadChain<'a> {
         // dispatch hands it to `on_read_bytes` below exactly once, also when it
         // returns `Err` (an exception left pending while delivering synchronously,
         // i.e. after the chain has already been reclaimed).
-        unsafe { blob.read_bytes_to_handler(raw, global) }?;
+        unsafe { blob.read_bytes_to_handler(raw, global, context) }?;
         Ok(promise)
     }
 
@@ -1936,6 +1928,7 @@ impl PipelineTask {
                         // and frees on Drop — no explicit `path.deinit()` needed.
                         let write_promise = match crate::webcore::blob::write_file_internal(
                             global,
+                            cx.context(),
                             &mut path_or_blob,
                             data,
                             Default::default(),

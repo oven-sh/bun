@@ -165,9 +165,7 @@ macro_rules! extern_crypto_job {
                 ctx: *mut Ctx,
                 callback: JSValue,
             ) {
-                // SAFETY: exported for the C++ job's `createAndSchedule`, which the node:crypto
-                // host function calls.
-                let cx = global.js_thread(unsafe { global.bun_vm().context_of_cpp_caller() });
+                let cx = global.js_thread(global.bun_vm().context_of_caller_no_frame());
                 let callback = callback.with_async_context_if_needed(global);
                 Job::<ExternJob>::schedule(
                     &cx,

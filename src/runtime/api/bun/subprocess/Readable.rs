@@ -213,7 +213,12 @@ impl Readable {
         }
     }
 
-    pub fn to_js(&mut self, global: &JSGlobalObject, _exited: bool) -> JsResult<JSValue> {
+    pub fn to_js(
+        &mut self,
+        global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+        _exited: bool,
+    ) -> JsResult<JSValue> {
         match self {
             // should only be reachable when the entire output is buffered.
             Readable::Memfd(_) => self.to_buffered_value(global),
@@ -223,7 +228,7 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = Self::pipe_reader_mut(&pipe).to_js(global);
+                let result = Self::pipe_reader_mut(&pipe).to_js(global, context);
                 Self::pipe_reader_mut(&pipe).process = None;
                 result
             }
@@ -237,7 +242,7 @@ impl Readable {
                 }
 
                 let own = buffer.take_slice()?;
-                ReadableStream::from_owned_slice(global, own.into_vec(), 0)
+                ReadableStream::from_owned_slice(global, context, own.into_vec(), 0)
             }
             Readable::Errored(..) => {
                 let Readable::Errored(mut buffer, err) = mem::replace(self, Readable::Closed)
@@ -245,7 +250,7 @@ impl Readable {
                     unreachable!()
                 };
                 let own = buffer.take_slice()?;
-                ReadableStream::from_bytes_then_error(global, own.into_vec(), err)
+                ReadableStream::from_bytes_then_error(global, context, own.into_vec(), err)
             }
             _ => Ok(JSValue::UNDEFINED),
         }

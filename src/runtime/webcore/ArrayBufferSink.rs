@@ -50,6 +50,7 @@ impl ArrayBufferSink {
     pub(crate) fn flush_from_js(
         &mut self,
         global_this: &JSGlobalObject,
+        _context: &bun_jsc::ScriptExecutionContext,
         _wait: bool,
     ) -> bun_sys::Result<JSValue> {
         if self.streaming {
@@ -127,6 +128,7 @@ impl ArrayBufferSink {
     pub(crate) fn end_from_js(
         &mut self,
         _global_this: &JSGlobalObject,
+        _context: &bun_jsc::ScriptExecutionContext,
     ) -> bun_sys::Result<ArrayBuffer> {
         if self.done {
             return Ok(ArrayBuffer::from_bytes(&mut [], JSType::ArrayBuffer));
@@ -176,8 +178,12 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         Self::construct(this);
     }
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        match Self::end_from_js(self, global) {
+    fn end_from_js(
+        &mut self,
+        global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> bun_sys::Result<JSValue> {
+        match Self::end_from_js(self, global, context) {
             // Not `to_js`: its `mi_is_in_heap_region` probe would skip the
             // deallocator when the global allocator isn't mimalloc.
             bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js_unchecked(global) {

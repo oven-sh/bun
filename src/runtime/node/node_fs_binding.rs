@@ -247,7 +247,8 @@ impl Binding {
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
-        let watch_args = fs::Watcher::Arguments::from_js(global, &mut slice)?;
+        let watch_args =
+            fs::Watcher::Arguments::from_js(global, vm.context_of_caller(frame), &mut slice)?;
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
@@ -270,7 +271,8 @@ impl Binding {
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
-        let wf_args = fs::StatWatcher::Arguments::from_js(global, &mut slice)?;
+        let wf_args =
+            fs::StatWatcher::Arguments::from_js(global, vm.context_of_caller(frame), &mut slice)?;
 
         match this
             .node_fs

@@ -923,6 +923,14 @@ enum PipeEvent {
 }
 
 #[cfg(windows)]
+impl bun_event_loop::TaskOwner for QueuedEvent {
+    /// The WebView's own pipe event.
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
+}
+
+#[cfg(windows)]
 struct QueuedEvent {
     generation: u32,
     event: PipeEvent,
@@ -941,8 +949,6 @@ impl PipeEvent {
             .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_owned(
                 queued,
                 QueuedEvent::deliver,
-                // The WebView's own pipe event.
-                bun_event_loop::TaskContext::Always,
             ));
     }
 }

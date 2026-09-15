@@ -295,7 +295,9 @@ impl Timeout {
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
         let jsc_vm = VirtualMachine::get();
-        let graph_context = jsc_vm.current_graph_context();
+        // `AbortSignal.timeout()`, a C++ host function, calls this.
+        let context = jsc_vm.context_of_caller_no_frame();
+        let graph_context = jsc_vm.as_graph_context(context);
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
                 next: ElTimespec {
@@ -309,7 +311,7 @@ impl Timeout {
             },
             signal: signal_,
             flags: TimerFlags::default(),
-            context: graph_context.unwrap_or_else(|| jsc_vm.root_context()).id(),
+            context: context.id(),
         }));
         if let Some(context) = graph_context {
             context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);

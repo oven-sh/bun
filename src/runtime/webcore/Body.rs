@@ -789,7 +789,11 @@ impl Value {
 
     // pub const empty = Value::Empty;
 
-    pub(crate) fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_readable_stream(
+        &mut self,
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         // From here on the stream is the body: `.body`, `bodyUsed` and every reader go through it.
@@ -800,7 +804,7 @@ impl Value {
                 if let Some(readable) = locked.readable.get() {
                     return Ok(readable.value);
                 }
-                return self.locked_to_native_stream(global_this, false);
+                return self.locked_to_native_stream(global_this, context, false);
             }
             Value::Empty => ReadableStream::empty(global_this)?,
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
@@ -808,7 +812,7 @@ impl Value {
                 let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
-                ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?
+                ReadableStream::from_blob_copy_ref(global_this, context, &blob, blob_size)?
             }
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
@@ -829,6 +833,7 @@ impl Value {
     pub(crate) fn to_text_readable_stream(
         &mut self,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
@@ -841,7 +846,7 @@ impl Value {
             }
             Value::InternalBlob(_) | Value::WTFStringImpl(_) => {
                 let mut blob = self.use_as_any_blob_allow_non_utf8_string();
-                let string = blob.to_string(global_this, Lifetime::Transfer);
+                let string = blob.to_string(global_this, context, Lifetime::Transfer);
                 blob.detach();
                 ReadableStream::from_decoded_text(global_this, string?)
             }
@@ -851,18 +856,22 @@ impl Value {
                     blob.resolve_size();
                     if blob.needs_to_read_file() || blob.is_s3() {
                         let blob_size = blob.size.get();
-                        let bytes =
-                            ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
+                        let bytes = ReadableStream::from_blob_copy_ref(
+                            global_this,
+                            context,
+                            &blob,
+                            blob_size,
+                        )?;
                         ReadableStream::text_decode_from(global_this, bytes)?
                     } else {
-                        let string = blob.to_string(global_this, Lifetime::Transfer)?;
+                        let string = blob.to_string(global_this, context, Lifetime::Transfer)?;
                         ReadableStream::from_decoded_text(global_this, string)?
                     }
                 };
                 *self = Value::Used;
                 Ok(stream)
             }
-            Value::Locked(_) => self.locked_to_native_stream(global_this, true),
+            Value::Locked(_) => self.locked_to_native_stream(global_this, context, true),
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
                 let stream = ReadableStream::errored(global_this, reason)?;
@@ -879,6 +888,7 @@ impl Value {
     fn locked_to_native_stream(
         &mut self,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         text_mode: bool,
     ) -> JsResult<JSValue> {
         let Value::Locked(locked) = self else {
@@ -922,9 +932,9 @@ impl Value {
 
         let context_ptr: *mut ByteStream = &raw mut reader.context;
         let stream_value = if text_mode {
-            reader.to_text_readable_stream(global_this)?
+            reader.to_text_readable_stream(global_this, context)?
         } else {
-            reader.to_readable_stream(global_this)?
+            reader.to_readable_stream(global_this, context)?
         };
         let readable = ReadableStream {
             ptr: webcore::readable_stream::Source::Bytes(context_ptr),
@@ -1064,6 +1074,7 @@ impl Value {
         &mut self,
         new: &mut Value,
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         // Opaque C++ handle, mutated via FFI. Taking
         // `NonNull` (not `&`/`&mut`) avoids manufacturing aliased Rust borrows.
         headers: Option<NonNull<FetchHeaders>>,
@@ -1109,30 +1120,33 @@ impl Value {
                     Action::GetText => match new {
                         Value::WTFStringImpl(_) | Value::InternalBlob(_) => {
                             let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                            let result = promise.wrap(global, |g| blob.to_string_transfer(g));
+                            let result =
+                                promise.wrap(global, |g| blob.to_string_transfer(g, context));
                             blob.detach();
                             result?;
                         }
                         _ => {
                             let blob = new.use_();
-                            promise.wrap(global, |g| blob.to_string_transfer(g))?;
+                            promise.wrap(global, |g| blob.to_string_transfer(g, context))?;
                         }
                     },
                     Action::GetJSON => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result = promise.wrap(global, |g| blob.to_json_share(g));
+                        let result = promise.wrap(global, |g| blob.to_json_share(g, context));
                         blob.detach();
                         result?;
                     }
                     Action::GetArrayBuffer => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result = promise.wrap(global, |g| blob.to_array_buffer_transfer(g));
+                        let result =
+                            promise.wrap(global, |g| blob.to_array_buffer_transfer(g, context));
                         blob.detach();
                         result?;
                     }
                     Action::GetBytes => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result = promise.wrap(global, |g| blob.to_uint8_array_transfer(g));
+                        let result =
+                            promise.wrap(global, |g| blob.to_uint8_array_transfer(g, context));
                         blob.detach();
                         result?;
                     }
@@ -1443,6 +1457,7 @@ impl Value {
     pub(crate) fn tee(
         &mut self,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         owned_readable: Option<&mut ReadableStream>,
     ) -> JsResult<Value> {
         let Value::Locked(locked) = self else {
@@ -1521,7 +1536,7 @@ impl Value {
         locked.readable = webcore::readable_stream::Strong::init(
             ReadableStream {
                 ptr: webcore::readable_stream::Source::Bytes(context_ptr),
-                value: reader.to_readable_stream(global_this)?,
+                value: reader.to_readable_stream(global_this, context)?,
             },
             global_this,
         );
@@ -1546,13 +1561,18 @@ impl Value {
         }))
     }
 
-    pub(crate) fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Value> {
-        self.clone_with_readable_stream(global_this, None)
+    pub(crate) fn clone(
+        &mut self,
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> JsResult<Value> {
+        self.clone_with_readable_stream(global_this, context, None)
     }
 
     pub(crate) fn clone_with_readable_stream(
         &mut self,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         readable: Option<&mut ReadableStream>,
     ) -> JsResult<Value> {
         // A native blob, file, or fully buffered byte stream that nothing has
@@ -1563,7 +1583,7 @@ impl Value {
         if let Value::Locked(locked) = self {
             match locked.take_blob_from_unread_stream(global_this, readable.as_deref().copied()) {
                 Some(blob) => *self = Value::from(blob),
-                None => return self.tee(global_this, readable),
+                None => return self.tee(global_this, context, readable),
             }
         }
 
@@ -1580,8 +1600,8 @@ impl Value {
             {
                 // A pipe or other fd yields its bytes once: read it as one
                 // stream and tee that.
-                self.to_readable_stream(global_this)?;
-                return self.tee(global_this, None);
+                self.to_readable_stream(global_this, context)?;
+                return self.tee(global_this, context, None);
             }
             return Ok(Value::Blob(b.dupe_with_content_type(false)));
         }
@@ -1735,19 +1755,25 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// Shared body-clone for `clone_into` / `clone_value`: clone through the
     /// JS-side cached stream when present, then resync this owner's
     /// `body`/`stream` cache slots with whatever the body now holds.
-    fn clone_body_value_via_cached_stream(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
+    fn clone_body_value_via_cached_stream(
+        &self,
+        global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> JsResult<Value> {
         let cloned = 'brk: {
             if let Some(js_ref) = self.js_ref() {
                 if let Some(stream) = Self::stream_get_cached(js_ref) {
                     let mut readable = ReadableStream::from_js_direct(stream);
                     if let Some(r) = readable.as_mut() {
-                        break 'brk self
-                            .get_body_value()
-                            .clone_with_readable_stream(global_this, Some(r))?;
+                        break 'brk self.get_body_value().clone_with_readable_stream(
+                            global_this,
+                            context,
+                            Some(r),
+                        )?;
                     }
                 }
             }
-            self.get_body_value().clone(global_this)?
+            self.get_body_value().clone(global_this, context)?
         };
         if let Some(js_ref) = self.js_ref() {
             self.sync_body_stream_caches(js_ref, global_this);
@@ -1757,6 +1783,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let context = global_object.bun_vm().context_of_caller(callframe);
         let value = self.get_body_value();
         if matches!(value, Value::Used) {
             return Ok(handle_body_already_used(global_object));
@@ -1788,12 +1815,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| blob.to_string(g, Lifetime::Transfer));
+        let result = JSPromise::wrap(global_object, |g| {
+            blob.to_string(g, context, Lifetime::Transfer)
+        });
         blob.detach();
         result
     }
 
     fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        // The stream the getter makes is the reading script's.
+        let context = global_this.bun_vm().context_of_caller_no_frame();
         let body = self.get_body_value();
 
         if matches!(body, Value::Used) {
@@ -1804,7 +1835,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 return Ok(readable.value);
             }
         }
-        let stream = self.get_body_value().to_readable_stream(global_this)?;
+        let stream = self
+            .get_body_value()
+            .to_readable_stream(global_this, context)?;
         // The wrapper's traced `m_stream` slot owns the stream from here;
         // release the `Strong` `to_readable_stream` parked in `Locked.readable`.
         self.check_body_stream_ref(global_this);
@@ -1815,8 +1848,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     fn get_text_stream(
         &self,
         global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
+        callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let context = global_this.bun_vm().context_of_caller(callframe);
         // Step 1: If this is unusable, throw a TypeError.
         self.throw_if_body_unusable(global_this)?;
 
@@ -1834,7 +1868,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         // Step 2: null body → a new empty closed ReadableStream.
         // Steps 3-6: decode directly from the body's backing bytes.
-        let stream = self.get_body_value().to_text_readable_stream(global_this)?;
+        let stream = self
+            .get_body_value()
+            .to_text_readable_stream(global_this, context)?;
         if stream.is_null() {
             return ReadableStream::empty(global_this);
         }
@@ -1891,6 +1927,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_json(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let context = global_object.bun_vm().context_of_caller(callframe);
         let value = self.get_body_value();
         if matches!(value, Value::Used) {
             return Ok(handle_body_already_used(global_object));
@@ -1929,7 +1966,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| blob.to_json(g, Lifetime::Share));
+        let result = JSPromise::wrap(global_object, |g| blob.to_json(g, context, Lifetime::Share));
         blob.detach();
         result
     }
@@ -1939,6 +1976,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let context = global_object.bun_vm().context_of_caller(callframe);
         bun_core::scoped_log!(BodyMixin, "getArrayBuffer");
         let value = self.get_body_value();
 
@@ -1984,7 +2022,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| {
-            blob.to_array_buffer(g, Lifetime::Transfer)
+            blob.to_array_buffer(g, context, Lifetime::Transfer)
         });
         blob.detach();
         result
@@ -1995,6 +2033,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let context = global_object.bun_vm().context_of_caller(callframe);
         let value = self.get_body_value();
 
         if matches!(value, Value::Used) {
@@ -2035,7 +2074,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| {
-            blob.to_uint8_array(g, Lifetime::Transfer)
+            blob.to_uint8_array(g, context, Lifetime::Transfer)
         });
         blob.detach();
         result

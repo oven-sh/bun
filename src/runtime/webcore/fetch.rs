@@ -357,6 +357,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     ctx: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
+    let context = ctx.bun_vm().context_of_caller(callframe);
     jsc::mark_binding();
     let global_this = ctx;
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -1001,7 +1002,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(options) = options_object {
             if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
+                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, context, body__)?);
                 }
             }
         }
@@ -1051,7 +1052,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ));
                     }
                 }
-                let readable = body_value.to_readable_stream(global_this)?;
+                let readable = body_value.to_readable_stream(global_this, context)?;
                 if !readable.is_empty_or_undefined_or_null() {
                     if let BodyValue::Locked(locked) = body_value {
                         if locked.readable.has() {
@@ -1074,7 +1075,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(req) = request_init_object {
             if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
+                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, context, body__)?);
                 }
             }
         }
@@ -1387,6 +1388,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if let Some(stream) = ReadableStream::from_js(
                 ReadableStream::from_blob_copy_ref(
                     global_this,
+                    context,
                     body.any_blob().blob(),
                     s3::MultiPartUploadOptions::DEFAULT_PART_SIZE as crate::webcore::blob::SizeType,
                 )?,
@@ -1670,6 +1672,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // MultiPartUpload derefs on completion.
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
+                context,
                 s3_path,
                 readable_stream.get().unwrap(),
                 global_this,
@@ -1818,6 +1821,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let _ = FetchTasklet::queue(
         global_this,
+        context,
         fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it

@@ -32,6 +32,8 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
     response_value: JSValue,
     streaming_compiler: *mut c_void,
 ) -> JsResult<JSValue> {
+    // `WebAssembly.compileStreaming` / `instantiateStreaming`, C++ host functions, call this.
+    let context = this.bun_vm().context_of_caller_no_frame();
     let response: &mut Response = match response::from_js(response_value) {
         // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
         // the cell stays live for the duration of this host call (rooted on the
@@ -116,7 +118,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
     let any_blob: AnyBlob = match body {
         BodyValue::Locked(_) => match body.try_use_as_any_blob() {
             Some(b) => b,
-            None => return body.to_readable_stream(this),
+            None => return body.to_readable_stream(this, context),
         },
         _ => body.use_as_any_blob(),
     };
@@ -138,7 +140,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
         let blob = scopeguard::guard(blob, |b: Blob| b.detach());
         blob.resolve_size();
         let size = blob.size.get();
-        return ReadableStream::from_blob_copy_ref(this, &blob, size);
+        return ReadableStream::from_blob_copy_ref(this, context, &blob, size);
     }
 
     // `defer any_blob.detach()` — RAII via scopeguard.

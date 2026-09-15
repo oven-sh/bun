@@ -229,9 +229,10 @@ impl readable_stream::SourceContext for ByteStream {
     fn to_buffered_value(
         &mut self,
         global: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         action: streams::BufferActionTag,
     ) -> Option<bun_jsc::JsResult<JSValue>> {
-        Some(Self::to_buffered_value(self, global, action))
+        Some(Self::to_buffered_value(self, global, context, action))
     }
 }
 
@@ -924,6 +925,7 @@ impl ByteStream {
     fn to_buffered_value(
         &self,
         global_this: &JSGlobalObject,
+        context: &bun_jsc::ScriptExecutionContext,
         action: streams::BufferActionTag,
     ) -> bun_jsc::JsResult<JSValue> {
         if self.buffer_action.get().is_some() {
@@ -944,11 +946,11 @@ impl ByteStream {
 
         if let Some(blob_) = self.to_any_blob() {
             let mut blob = blob_;
-            return blob.to_promise(global_this, action);
+            return blob.to_promise(global_this, context, action);
         }
 
         self.buffer_action
-            .set(Some(BufferAction::new(action, global_this)));
+            .set(Some(BufferAction::new(action, global_this, context)));
         let promise = self.buffer_action.get().as_ref().unwrap().value();
         // Signal after the action is installed so a backpressure-gated
         // producer observes it; a synchronous producer may fulfil it inline.

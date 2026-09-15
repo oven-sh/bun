@@ -2078,9 +2078,9 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _ = frame;
-
-        let new_client_ptr = this.clone_without_connecting(global)?;
+        // The duplicate is the calling script's, whoever made the original.
+        let new_client_ptr =
+            this.clone_without_connecting(global, global.bun_vm().context_of_caller(frame))?;
         // SAFETY: clone_without_connecting returns a freshly allocated, leaked
         // JSValkeyClient (heap::alloc); valid for the rest of this scope.
         let new_client: &JSValkeyClient = unsafe { &*new_client_ptr };

@@ -561,6 +561,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
 
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
     options: S3SimpleRequestOptions<'_>,
     callback: Callback,
     callback_context: *mut c_void,
@@ -719,8 +720,8 @@ pub(crate) fn execute_simple_s3_request(
     unsafe {
         let vm = VirtualMachine::get();
         (*task_ptr).http_ticket = Some(vm.ticket());
-        (*task_ptr).context = vm.current_context().id();
-        bun_jsc::AbortHandle::arm_owner(task_ptr, vm.current_context());
+        (*task_ptr).context = context.id();
+        bun_jsc::AbortHandle::arm_owner(task_ptr, context);
     }
     bun_http::HTTPThread::schedule(batch);
     Ok(())

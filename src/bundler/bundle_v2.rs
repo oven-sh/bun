@@ -1126,6 +1126,12 @@ pub mod bv2_impl {
                 }
                 }
             }
+            impl bun_event_loop::TaskOwner for Resolve {
+                /// As a callback task: the answer on its way back to the bundle, which is waiting for it.
+                fn task_context(&self) -> bun_event_loop::TaskContext {
+                    bun_event_loop::TaskContext::Always
+                }
+            }
             impl bun_event_loop::Taskable for Resolve {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolve;
@@ -1337,6 +1343,12 @@ pub mod bv2_impl {
                             default_loader,
                             is_server_side,
                         );
+                }
+            }
+            impl bun_event_loop::TaskOwner for Load {
+                /// As a callback task: the answer on its way back to the bundle, which is waiting for it.
+                fn task_context(&self) -> bun_event_loop::TaskContext {
+                    bun_event_loop::TaskContext::Always
                 }
             }
             impl bun_event_loop::Taskable for Load {
@@ -4512,8 +4524,6 @@ pub mod bv2_impl {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                         std::ptr::from_mut(load),
                         on_load_from_js_loop_raw,
-                        // A step of the bundle: what the build reports is its completion's to decide.
-                        bun_event_loop::TaskContext::Always,
                     );
                     let poster = self
                         .js_poster
@@ -4548,8 +4558,6 @@ pub mod bv2_impl {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                         std::ptr::from_mut(resolve),
                         on_resolve_from_js_loop_raw,
-                        // A step of the bundle: what the build reports is its completion's to decide.
-                        bun_event_loop::TaskContext::Always,
                     );
                     let poster = self
                         .js_poster

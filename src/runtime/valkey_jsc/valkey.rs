@@ -287,6 +287,13 @@ enum SubscribeHandled {
     Fallthrough,
 }
 
+impl bun_event_loop::TaskOwner for DeferredFailure {
+    /// Commands in flight when their client closed reject once.
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
+}
+
 struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
@@ -316,12 +323,8 @@ impl DeferredFailure {
             let this = unsafe { bun_core::heap::take(ptr) };
             DeferredFailure::run(*this)
         }
-        let managed_task = bun_jsc::ManagedTask::ManagedTask::new(
-            bun_core::heap::into_raw(self),
-            run_raw,
-            // Commands in flight when their client closed reject once.
-            bun_event_loop::TaskContext::Always,
-        );
+        let managed_task =
+            bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
         VirtualMachine::get()
             .event_loop_mut()
             .enqueue_task(managed_task);

@@ -923,6 +923,31 @@ booga"
       .runAsTest("quotes");
   });
 
+  describe("comments", () => {
+    TestBuilder.command /* sh */ `echo one # note
+echo two`
+      .stdout("one\ntwo\n")
+      .runAsTest("trailing comment ends the statement");
+
+    TestBuilder.command /* sh */ `echo one # note \\
+echo two`
+      .stdout("one\ntwo\n")
+      .runAsTest("backslash inside a comment does not continue the line");
+
+    TestBuilder.command /* sh */ `rm -rf build   # clean the previous output
+cp -R src build
+ls`
+      .ensureTempDir()
+      .directory("src")
+      .file("src/index.js", "keep me\n")
+      .directory("build")
+      .file("build/old.js", "stale\n")
+      .stdout(out => expect(out.split("\n").filter(Boolean).sort()).toEqual(["build", "src"]))
+      .fileEquals("src/index.js", "keep me\n")
+      .fileEquals("build/index.js", "keep me\n")
+      .runAsTest("rm with a trailing comment does not take the next line as arguments");
+  });
+
   describe("glob expansion", () => {
     // Issue #8403: https://github.com/oven-sh/bun/issues/8403
     TestBuilder.command`ls *.sdfljsfsdf`

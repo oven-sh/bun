@@ -5,7 +5,7 @@ use core::ffi::{c_uint, c_void};
 
 use bun_uws as uws;
 
-use crate::webcore::CookieMap;
+use crate::webcore::{CookieMap, request};
 
 pub use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
@@ -45,14 +45,22 @@ pub enum CtxTag {
 #[derive(Copy, Clone)]
 pub struct AnyRequestContext {
     pub(crate) tag: CtxTag,
+    /// Held by a copy of the server's `Request` (see [`derive`](Self::derive)): connection only.
+    pub(crate) derived: bool,
     pub ptr: *mut (),
 }
 
 impl AnyRequestContext {
     pub(crate) const NULL: Self = Self {
         tag: CtxTag::None,
+        derived: false,
         ptr: core::ptr::null_mut(),
     };
+
+    #[inline]
+    pub(crate) fn is_null(self) -> bool {
+        self.tag == CtxTag::None
+    }
 }
 
 /// Internal: maps each `RequestContext` monomorphization to its tag so
@@ -87,6 +95,7 @@ impl AnyRequestContext {
     pub(crate) fn init<T: CtxKind>(request_ctx: *const T) -> Self {
         Self {
             tag: T::TAG,
+            derived: false,
             ptr: request_ctx as *mut (),
         }
     }
@@ -162,7 +171,22 @@ impl AnyRequestContext {
     }
 
     pub(crate) fn memory_cost(self) -> usize {
+        if self.derived {
+            // Reported once, by the original `Request`.
+            return 0;
+        }
         dispatch!(self, 0, |_T, ctx| ctx.memory_cost())
+    }
+
+    /// Tracks `copy` on the context and returns the derived handle the copy stores.
+    pub(crate) fn derive(self, copy: request::WeakRef) -> Self {
+        dispatch!(self, Self::NULL, |_T, ctx| {
+            ctx.attach_derived_request(copy);
+            Self {
+                derived: true,
+                ..self
+            }
+        })
     }
 
     pub fn get<T: CtxKind>(self) -> Option<*mut T> {
@@ -178,6 +202,10 @@ impl AnyRequestContext {
     }
 
     pub(crate) fn set_cookies(self, cookie_map: Option<*mut CookieMap>) {
+        if self.derived {
+            // Only the original's cookie map is written to the response (#18547).
+            return;
+        }
         dispatch!(self, (), |_T, ctx| ctx.set_cookies(cookie_map))
     }
 
@@ -186,6 +214,9 @@ impl AnyRequestContext {
     }
 
     pub(crate) fn detach_request(self) {
+        if self.derived {
+            return;
+        }
         dispatch!(self, (), |_T, ctx| {
             ctx.req.set(None);
         })
@@ -193,6 +224,9 @@ impl AnyRequestContext {
 
     /// Wont actually set anything if `self` is `.none`
     pub(crate) fn set_request(self, req: *mut uws::Request) {
+        if self.derived {
+            return;
+        }
         dispatch!(self, (), |T, ctx| {
             if T::IS_MUX {
                 // HTTP/2 and HTTP/3 populate url/headers eagerly
@@ -205,6 +239,10 @@ impl AnyRequestContext {
     }
 
     pub(crate) fn get_request(self) -> Option<*mut uws::Request> {
+        if self.derived {
+            // It backs the original's lazy url/headers; a copy owns its own.
+            return None;
+        }
         dispatch!(self, None, |T, ctx| {
             if T::IS_MUX {
                 // url/headers already on the Request

@@ -128,6 +128,8 @@ pub struct RequestContext<
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
+    /// Copies of the `Request` holding a derived handle; cleared in [`Self::detach_requests`].
+    derived_requests: JsCell<Vec<request::WeakRef>>,
     // NOTE: `Arc<AbortSignal>` was wrong —
     // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
     // the C++ allocation. Store the raw pointer. The request holds TWO counts:
@@ -226,6 +228,7 @@ where
             + self.request_body_buf.get().capacity()
             + self.response_buf_owned.get().capacity()
             + self.blob.get().memory_cost()
+            + self.derived_requests.get().capacity() * core::mem::size_of::<request::WeakRef>()
     }
 
     #[inline]
@@ -650,6 +653,36 @@ where
         // SAFETY: weak handle just reported the allocation live; the pointee
         // is disjoint from `*self`.
         ptr.map(|p| unsafe { &mut *p })
+    }
+
+    /// The server-created `Request` (not a copy), unless JS already finalized it.
+    #[inline]
+    pub(crate) fn original_request<'r>(&self) -> Option<&'r mut Request> {
+        self.request_mut()
+    }
+
+    /// See [`AnyRequestContext::derive`].
+    pub(crate) fn attach_derived_request(&self, copy: request::WeakRef) {
+        self.derived_requests.with_mut(|list| {
+            if list.len() == list.capacity() {
+                // Prune copies JS already finalized so a copy loop pins only live ones.
+                list.retain(|weak| weak.is_alive());
+            }
+            list.push(copy);
+        });
+    }
+
+    /// Clears the context handle on the original `Request` and on every copy. Idempotent.
+    pub(crate) fn detach_requests(&self) {
+        if let Some(request) = self.request_mut() {
+            request.request_context = AnyRequestContext::NULL;
+        }
+        self.request_weakref.set(request::WeakRef::EMPTY);
+        for mut weak in self.derived_requests.take() {
+            if let Some(request) = weak.get() {
+                request.request_context = AnyRequestContext::NULL;
+            }
+        }
     }
 
     /// Take the pooled request-body slot out of `self`; the handle's `Drop`
@@ -1428,6 +1461,7 @@ where
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range: RangeRequest::raw_from_request(&Self::any_request(req)),
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
+                derived_requests: JsCell::new(Vec::new()),
                 signal: Cell::new(None),
                 cookies: JsCell::new(None),
                 flags: Flags::<DEBUG_MODE>::default(),
@@ -1500,10 +1534,7 @@ where
             }
         }
 
-        if let Some(request) = this.request_mut() {
-            request.request_context = AnyRequestContext::NULL;
-            this.request_weakref.set(request::WeakRef::EMPTY);
-        }
+        this.detach_requests();
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
             if !shim::signal_aborted(signal) {
@@ -1601,10 +1632,7 @@ where
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
         drop(self.cookies.replace(None));
 
-        if let Some(request) = self.request_mut() {
-            request.request_context = AnyRequestContext::NULL;
-            self.request_weakref.set(request::WeakRef::EMPTY);
-        }
+        self.detach_requests();
 
         // if signal is not aborted, abort the signal
         if let Some(signal) = self.signal.take() {

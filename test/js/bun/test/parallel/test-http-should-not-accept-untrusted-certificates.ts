@@ -32,5 +32,6 @@ try {
   expect.unreachable();
 } catch (err) {
   expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
-  expect(err.message).toBe("unable to verify the first certificate");
+  expect(err.message).toBe("fetch failed");
+  expect(err.cause.message).toBe("unable to verify the first certificate");
 }

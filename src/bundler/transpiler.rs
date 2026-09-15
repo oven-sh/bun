@@ -2126,6 +2126,11 @@ fn parse_data_loader<'a>(
     });
 }
 
+/// `E::String` must hold well-formed WTF-8, so text/md files are decoded like `Bun.file().text()`.
+pub(crate) fn decode_utf8_file_contents<'a>(contents: &'a [u8], arena: &'a Arena) -> &'a [u8] {
+    strings::to_well_formed_utf8_in(contents, arena).unwrap_or(contents)
+}
+
 #[cold]
 #[inline(never)]
 fn parse_text_loader<'a>(
@@ -2135,7 +2140,7 @@ fn parse_text_loader<'a>(
     arena: &'a Arena,
 ) -> Option<ParseResult<'a>> {
     let expr = bun_ast::Expr::init(
-        bun_ast::E::EString::init(&source.contents),
+        bun_ast::E::EString::init(decode_utf8_file_contents(&source.contents, arena)),
         bun_ast::Loc::EMPTY,
     );
     let stmt = bun_ast::Stmt::alloc(
@@ -2175,7 +2180,8 @@ fn parse_md_loader<'a>(
     arena: &'a Arena,
     log: &mut bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
-    let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
+    let markdown = decode_utf8_file_contents(&source.contents, arena);
+    let html: &'static [u8] = match bun_md::root::render_to_html(markdown) {
         // The rendered HTML is allocated via
         // `arena` (the per-parse arena), so it is freed with the
         // arena. Arena-copy the heap `Box<[u8]>` and let it drop;

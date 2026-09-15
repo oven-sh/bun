@@ -2396,8 +2396,26 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
   return s;
 }
 
+/* A socket marked ssl_fatal_error can neither send (us_internal_ssl_write
+ * refuses it) nor receive (us_internal_ssl_on_data closes it on the next
+ * bytes); the only thing left to do with it is the close the data path would
+ * perform, which also dispatches a reason parked before the handshake was
+ * reported. Used by us_internal_ssl_on_writable, both for the writable event
+ * us_internal_ssl_write arms when SSL_write fails and for a consumer whose
+ * writable handler hit that failure (the loop drops writable interest from a
+ * shut-down socket right after the dispatch, so no further event would come). */
+static struct us_socket_t *ssl_close_if_fatal(struct us_socket_t *s) {
+  if (!s || ssl_gone(s) || !s->ssl_fatal_error) return s;
+  return ssl_close(s, 0, NULL);
+}
+
 struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   ssl_set_loop_data(s);
+  /* Before the spill drain: nothing may wait behind a dead connection (the
+   * loop stops polling a shut-down socket for writable, so a spill could not
+   * finish draining anyway); ssl_close makes one last attempt to send it. */
+  s = ssl_close_if_fatal(s);
+  if (!s || ssl_gone(s)) return s;
   {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     /* Ciphertext from a partial batch flush goes out before anything else;
@@ -2421,7 +2439,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
           us_socket_stalled_write_means_peer_gone(s)) {
         ssl_release_spill(s->group->loop, s);
         s->ssl_fatal_error = 1;
-        return us_dispatch_writable(s);
+        return ssl_close_if_fatal(us_dispatch_writable(s));
       }
       return s;
     }
@@ -2446,7 +2464,11 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
     s = us_internal_ssl_on_data(s, "", 0);
     if (!s || ssl_gone(s)) return s;
   }
-  if (ssl_gone(s) || s->ssl_fatal_error) return s;
+  /* Fatal here means the handshake step above failed and was just dispatched:
+   * close like the data-path driver does instead of leaving the dead socket
+   * open. */
+  s = ssl_close_if_fatal(s);
+  if (!s || ssl_gone(s)) return s;
   /* uWS HTTP sockets keep the pre-existing SENT_SHUTDOWN suppression: their
    * onWritable clears the teardown timeout armed at shutdown. node sockets
    * still get write-completion dispatch after a half-close in either
@@ -2454,7 +2476,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
-    s = us_dispatch_writable(s);
+    s = ssl_close_if_fatal(us_dispatch_writable(s));
   }
   return s;
 }
@@ -2819,11 +2841,32 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   int batching = (loop_ssl_data->ssl_spill_owner == NULL);
   loop_ssl_data->ssl_write_batching = batching;
 
+  /* Same clean-queue rule as the SSL_read and SSL_do_handshake drivers: the
+   * classification at the end peeks the per-thread queue, and an entry left
+   * there by another socket would turn this socket's WANT_READ into a fatal
+   * error. */
+  ERR_clear_error();
+
   int total = 0;
   int last_ssl_written = 1;
   while (total < length) {
     int chunk = length - total;
     if (chunk > 16384) chunk = 16384;
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    {
+      /* One check per SSL_write call, so a rule's after_n_calls can target a
+       * later chunk of a multi-chunk write. */
+      ssize_t injected = 0;
+      int unused = 0;
+      if (US_FAULT_CHECK(US_FAULT_SSL_WRITE, us_poll_fd(&s->p), injected, unused)) {
+        /* What a record-layer failure inside SSL_write looks like from here:
+         * -1 with the reason on the error queue (SSL_get_error reads it). */
+        ERR_put_error(ERR_LIB_SSL, 0, ERR_R_INTERNAL_ERROR, __FILE__, __LINE__);
+        last_ssl_written = -1;
+        break;
+      }
+    }
+#endif
     /* Same deferred-close protocol as the SSL_do_handshake/SSL_read drivers. */
     s->ssl_in_use = 1;
     last_ssl_written = SSL_write(s_ssl(s), data + total, chunk);
@@ -2851,9 +2894,12 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   if (batching) {
     ssl_flush_write_batch(loop_ssl_data, s);
   }
-  if (s->ssl_fatal_error) return 0;
-  if (total > 0) return total;
-  if (last_ssl_written <= 0) {
+  if (!s->ssl_fatal_error && last_ssl_written <= 0) {
+    /* Classify the failing chunk whether or not earlier chunks went through.
+     * Only the bytes before it are reported as consumed, and the caller
+     * buffers the rest; a WANT_READ or fatal error on a later chunk has to
+     * be recorded exactly like one on the first, or that remainder waits for
+     * an event nothing would produce. */
     int err = SSL_get_error(s_ssl(s), last_ssl_written);
     if (err == SSL_ERROR_WANT_READ) {
       s->ssl_write_wants_read = 1;
@@ -2866,6 +2912,18 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
       ssl_park_fatal_reason(s);
     }
   }
+  if (!s->ssl_fatal_error) return total;
+  /* The connection is dead (BoringSSL latched the error, or sealed records
+   * were lost to an allocation failure), but every caller reads the 0 below as
+   * backpressure and waits for a writable event that nothing would otherwise
+   * produce: with the handshake done there is no handshake dispatch to report
+   * through, and the read side only notices if the peer happens to send more.
+   * Closing here would run on_close underneath the caller's write (uWS tears
+   * its per-socket data down in on_close), so arm writable instead;
+   * us_internal_ssl_on_writable closes fatal sockets. Before the handshake is
+   * reported, that close also dispatches the reason parked above. */
+  s->flags.last_write_failed = 1;
+  us_internal_rearm_writable(s);
   return 0;
 }
 

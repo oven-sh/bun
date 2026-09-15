@@ -35,7 +35,6 @@ const {
   hasObserver,
   startPerf,
   stopPerf,
-  isStoppedModuleGraphRunning,
 } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
@@ -4060,8 +4059,7 @@ function addServerAbortSignalOption(self, options) {
 }
 
 function emitListeningNextTick(self) {
-  // (Or the Bun.ModuleGraph whose script listened has been disposed: its listener was closed with it.)
-  if (!self._handle || isStoppedModuleGraphRunning()) return;
+  if (!self._handle) return;
   self.emit("listening");
 }
 

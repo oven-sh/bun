@@ -67,11 +67,6 @@ function ownerClosedFd(stream) {
   return true;
 }
 
-/** EBADF to whoever is using the stream, unless that is the disposed graph's own leftover code: it is told nothing. */
-function reportClosedByOwner(syscall: string, report: (er: Error) => void) {
-  if (!require("internal/shared").isStoppedModuleGraphRunning()) report(badFileDescriptor(syscall));
-}
-
 function badFileDescriptor(syscall: string) {
   const err: any = new Error("EBADF: bad file descriptor, " + syscall);
   err.code = "EBADF";
@@ -311,7 +306,7 @@ readStreamPrototype._construct = streamConstruct;
 
 readStreamPrototype._read = function (n) {
   if (ownerClosedFd(this))
-    return void reportClosedByOwner("read", er => require("internal/streams/destroy").errorOrDestroy(this, er));
+    return void require("internal/streams/destroy").errorOrDestroy(this, badFileDescriptor("read"));
   n = this.pos !== undefined ? $min(this.end - this.pos + 1, n) : $min(this.end - this.bytesRead + 1, n);
 
   if (n <= 0) {
@@ -544,7 +539,7 @@ writeStreamPrototype.open = streamNoop;
 writeStreamPrototype._construct = streamConstruct;
 
 function writeAll(data, size, pos, cb, retries = 0) {
-  if (ownerClosedFd(this)) return void reportClosedByOwner("write", cb);
+  if (ownerClosedFd(this)) return void cb(badFileDescriptor("write"));
   this[kFs].write(this.fd, data, 0, size, pos, (er, bytesWritten, buffer) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
@@ -575,7 +570,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 }
 
 function writevAll(chunks, size, pos, cb, retries = 0) {
-  if (ownerClosedFd(this)) return void reportClosedByOwner("writev", cb);
+  if (ownerClosedFd(this)) return void cb(badFileDescriptor("writev"));
   this[kFs].writev(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {

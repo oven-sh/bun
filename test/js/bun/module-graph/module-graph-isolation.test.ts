@@ -722,6 +722,24 @@ const dir = String(
         const [reading, writing] = [await fs.promises.open(readFrom, "r"), await fs.promises.open(writeTo, "w")];
         return { reader: reading.createReadStream(), writer: writing.createWriteStream() };
       };
+      // From a microtask, which still runs once the graph has been disposed.
+      export const useLater = ({ reader, writer }, told) => queueMicrotask(() => {
+        reader.on("data", chunk => { told.read = "read " + chunk; }).on("error", error => { told.read = error.code; });
+        writer.on("error", () => {}).write("the graph\x27s", error => { told.wrote = error ? error.code : "wrote"; });
+      });
+    `,
+    "its-own-streams-after-it-was-disposed.mjs": `
+      const [data, scratch] = ["/data.txt", "/scratch-own-" + process.pid].map(name => import.meta.dir + name);
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/streams-over-file-handles.mjs");
+      const streams = await graph.run(() => app.open(data, scratch));
+      const told = {};
+      graph.run(() => app.useLater(streams, told));
+      graph.dispose();
+      while (!("read" in told && "wrote" in told)) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ read: told.read, wrote: told.wrote }));
+      (await import("node:fs")).rmSync(scratch);
+      process.exit(0);
     `,
     "host-holds-streams-over-file-handles.mjs": `
       import fs from "node:fs";
@@ -2271,17 +2289,15 @@ test("ModuleGraph isolation: a query the host makes on a disposed graph's Bun.SQ
   }).toEqual({ postgres: "ERR_POSTGRES_CONNECTION_CLOSED", mysql: "ERR_MYSQL_CONNECTION_CLOSED" });
 });
 
-test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts nothing and announces nothing", async () => {
+// As Bun.spawn(): the child is started and then killed. 'spawn' is node:child_process's own
+// announcement, made from a process.nextTick(); what the event loop would report is not.
+test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts a child that is killed at once, and hears of nothing else", async () => {
   using made = await newGraph();
   const state = newState("late-spawn");
-  const marker = join(dir, "late-spawn-ran.txt");
   made.graph.run(() =>
     made.app.call(() =>
       queueMicrotask(() => {
-        const child = require("node:child_process").spawn(bunExe(), [
-          "-e",
-          `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`,
-        ]);
+        const child = require("node:child_process").spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"]);
         for (const event of ["spawn", "exit", "close", "error"]) child.on(event, () => state.heard.push(event));
         state.pid = child.pid;
       }),
@@ -2295,65 +2311,78 @@ test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts no
     env: bunEnv,
   }).exited;
   await hostTimerTurns();
-  expect({ host: existsSync(hostMarker), graph: existsSync(marker), pid: state.pid, heard: state.heard }).toEqual({
+  const gone = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  await until(() => gone(state.pid));
+  expect({ host: existsSync(hostMarker), pid: typeof state.pid, heard: state.heard }).toEqual({
     host: true,
-    graph: false,
-    pid: undefined,
-    heard: [],
+    pid: "number",
+    heard: ["spawn"],
   });
 });
 
-describe.concurrent("ModuleGraph isolation: a disposed graph sends nothing and announces nothing", () => {
-  // What it opens is closed from the event loop, a moment later: nothing may happen in between.
-  for (const order of ["disposed in the turn that opens", "opens after it was disposed"] as const) {
-    test(order, async () => {
-      const received: string[] = [];
-      const hostUdp = await Bun.udpSocket({
-        hostname: "127.0.0.1",
-        port: 0,
-        socket: { data: (socket, data) => void received.push(data.toString()) },
-      });
-      try {
-        // The same from the host: everything does happen when nobody is disposed.
-        const hostState = newState("effects-host");
-        hostApp.effects(hostState, hostUdp.port, tlsCertificate);
-        try {
-          await until(() => hostState.heard.length === 7 && received.length === 2);
-        } finally {
-          hostState.close?.();
-        }
-
-        using made = await newGraph();
-        const state = newState("effects");
-        made.graph.run(() => {
-          if (order === "disposed in the turn that opens") made.app.effects(state, hostUdp.port, tlsCertificate);
-          else made.app.call(() => queueMicrotask(() => made.app.effects(state, hostUdp.port, tlsCertificate)));
+describe.concurrent(
+  "ModuleGraph isolation: a disposed graph sends nothing, and hears only what Node's own JavaScript announces",
+  () => {
+    // What it opens is closed from the event loop, a moment later: nothing may happen in between.
+    // 'listening' is not from the event loop: node:net and node:http announce it themselves, from a
+    // process.nextTick(), which a disposed graph's script still runs. Nobody can connect.
+    for (const order of ["disposed in the turn that opens", "opens after it was disposed"] as const) {
+      test(order, async () => {
+        const received: string[] = [];
+        const hostUdp = await Bun.udpSocket({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { data: (socket, data) => void received.push(data.toString()) },
         });
-        made.graph.dispose();
-        // A datagram of the host's own, sent afterwards, has arrived: the graph's would have too.
-        const sender = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
         try {
-          await until(() => {
-            sender.send("marker", hostUdp.port, "127.0.0.1");
-            return received.includes("marker");
+          // The same from the host: everything does happen when nobody is disposed.
+          const hostState = newState("effects-host");
+          hostApp.effects(hostState, hostUdp.port, tlsCertificate);
+          try {
+            await until(() => hostState.heard.length === 7 && received.length === 2);
+          } finally {
+            hostState.close?.();
+          }
+
+          using made = await newGraph();
+          const state = newState("effects");
+          made.graph.run(() => {
+            if (order === "disposed in the turn that opens") made.app.effects(state, hostUdp.port, tlsCertificate);
+            else made.app.call(() => queueMicrotask(() => made.app.effects(state, hostUdp.port, tlsCertificate)));
+          });
+          made.graph.dispose();
+          // A datagram of the host's own, sent afterwards, has arrived: the graph's would have too.
+          const sender = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+          try {
+            await until(() => {
+              sender.send("marker", hostUdp.port, "127.0.0.1");
+              return received.includes("marker");
+            });
+          } finally {
+            sender.close();
+          }
+          await hostTimerTurns();
+          expect({
+            heard: state.heard,
+            datagrams: received.filter(datagram => datagram === "effect:" + state.tag),
+          }).toEqual({
+            heard: ["net listening", "tls listening", "http listening", "https listening", "http2 listening"],
+            datagrams: [],
           });
         } finally {
-          sender.close();
+          hostUdp.close();
         }
-        await hostTimerTurns();
-        expect({
-          heard: state.heard,
-          datagrams: received.filter(datagram => datagram === "effect:" + state.tag),
-        }).toEqual({
-          heard: [],
-          datagrams: [],
-        });
-      } finally {
-        hostUdp.close();
-      }
-    });
-  }
-});
+      });
+    }
+  },
+);
 
 describe.concurrent("ModuleGraph isolation: fs.watchFile of one path by several owners", () => {
   // node:fs keeps one StatWatcher per path for all the listeners of fs.watchFile(path): per owner,
@@ -3326,6 +3355,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("streams over its FileHandles that the host still holds do not touch whoever has the numbers now", async () => {
     expect(await runsFixture("host-holds-streams-over-file-handles.mjs")).toEqual({
       stdout: `{"sameNumbers":true,"read":"EBADF","wrote":"EBADF","hosts":"the host's"}`,
+      exitCode: 0,
+    });
+  });
+  test("its own leftover script is told the same of them: the descriptor is gone", async () => {
+    expect(await runsFixture("its-own-streams-after-it-was-disposed.mjs")).toEqual({
+      stdout: `{"read":"EBADF","wrote":"EBADF"}`,
       exitCode: 0,
     });
   });

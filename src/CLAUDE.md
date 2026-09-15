@@ -1,8 +1,8 @@
 ## Rust
 
 `src/` is a Cargo workspace (rooted at the repo's top-level `Cargo.toml`, ~200
-member crates). The runtime is built as `libbun_runtime.a` via `cargo build -p
-bun_runtime` (driven by `scripts/build/rust.ts`). Key crates:
+member crates). The runtime is built as `libbun_runtime.a`, one rustc invocation per crate
+planned by cargo and run by ninja (`scripts/build/rust.ts`, `scripts/build/rust/`). Key crates:
 
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)

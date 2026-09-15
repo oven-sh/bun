@@ -3,12 +3,16 @@
  * Rust build-time profiler.
  *
  * Runs `cargo build --timings` with the exact args/rustflags/env the real
- * build uses (shared with `scripts/build/rust.ts::emitRust`), parses the
- * HTML report, and prints the critical path, slowest crates, and
- * low-parallelism windows so you can see where wall time actually goes.
+ * build plans with (`scripts/build/rust.ts::cargoBuildInvocation`), parses
+ * the HTML report, and prints the critical path, slowest crates, and
+ * low-parallelism windows. The real build runs the same rustc invocations as
+ * ninja edges (scripts/build/rust/), not through cargo, so this is cargo's
+ * schedule of the same crate graph — per-crate compile times carry over, the
+ * exact interleaving with C++ does not — built into cargo's own target dir
+ * (`<buildDir>/rust-target`), which the ninja build no longer populates.
  *
  * Usage:
- *   bun run rust:timings                 # incremental timing (warm cache)
+ *   bun run rust:timings                 # timing (warm if a previous rust:timings run left the target dir)
  *   bun run rust:timings --clean         # clean-build timing into a scratch target dir
  *   bun run rust:timings --profile=release
  *   bun run rust:timings --report <path/to/cargo-timing.html>   # re-analyze an existing report
@@ -24,6 +28,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { resolveConfig } from "./build/config.ts";
 import { resolveToolchain } from "./build/configure.ts";
+import { ninjaIfFetched } from "./build/ninja-release.ts";
 import { getProfile } from "./build/profiles.ts";
 import { cargoBuildInvocation, cargoProfile } from "./build/rust.ts";
 
@@ -266,7 +271,7 @@ if (
     cwd: repo,
   });
   if (r.status !== 0) process.exit(1);
-  const nr = spawnSync("ninja", ["-C", cfg.buildDir, "codegen", "clone-lolhtml", "clone-rust-argon2"], {
+  const nr = spawnSync(ninjaIfFetched(cfg), ["-C", cfg.buildDir, "codegen", "clone-lolhtml", "clone-rust-argon2"], {
     stdio: "inherit",
     cwd: repo,
   });
@@ -292,7 +297,7 @@ if (opts.llvmLines !== undefined) {
     "--target-dir",
     llDir,
     "--profile",
-    cargoProfile(cfg).name,
+    cargoProfile(cfg),
   ];
   console.log(cyan("[llvm-lines]") + ` cargo ${llArgs.join(" ")}`);
   const r = spawnSync(cfg.cargo, llArgs, {

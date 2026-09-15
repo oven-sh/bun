@@ -1,14 +1,22 @@
 /**
- * Rust build step — cargo as a ninja edge.
+ * Rust build step — every crate a ninja edge.
  *
- * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`;
- * the leaf crate is `src/runtime` (`bun_runtime`, `crate-type = ["staticlib"]`).
- * One `cargo build -p bun_runtime` produces `libbun_runtime.a` containing the entire
- * Rust crate graph plus libstd, with `main` exported `#[no_mangle] extern "C"`.
+ * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`; the leaf crate is
+ * `src/runtime` (`bun_runtime`, `crate-type = ["staticlib"]`), whose `libbun_runtime.a` carries the
+ * entire crate graph plus libstd with `main` exported `#[no_mangle] extern "C"`.
  *
- * Cargo's own incremental compilation handles per-file tracking; our ninja
- * rule just invokes it and declares the output. `restat` lets cargo's no-op
- * prune the downstream link when nothing changed.
+ * cargo plans, ninja executes: `rust/plan.ts` asks cargo for the unit graph it would build for
+ * exactly the arguments computed here (`cargoBuildInvocation`: profile, target, `-Zbuild-std`, the
+ * profile overrides) and `rust/emit.ts` turns each unit into one rustc edge, `rust/units.ts` holding
+ * cargo's rules for the command line. ninja then schedules the rustc invocations together with the
+ * C++ ones instead of handing all of Rust to one opaque `cargo build` job, and what every crate is
+ * compiled with is in `build.ninja` and `rust/units/*.json` to read. Dependents start on a crate's
+ * `.rmeta`, as under cargo, when the build runs under oven-sh/ninja (`ninja-release.ts`), which
+ * releases an output its running command announces; under a stock ninja they wait for rustc to exit.
+ *
+ * The plan is itself a build edge (`rust/plan.json`, rerun when `Cargo.lock`, a manifest or the
+ * toolchain changes) and `build.ninja` depends on it: the first configure of a fresh tree emits only
+ * that edge, ninja runs it and reconfigures, and from then on the graph is per crate.
  *
  * ## Why an `.a` and not a single `.o`
  *
@@ -25,11 +33,14 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeCpuTargetFlags } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
+import { emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
+import { type PlanInput, planEnv, readPlan } from "./rust/plan.ts";
+import { buildRustGraph } from "./rust/units.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { streamPath } from "./stream.ts";
 
@@ -63,16 +74,12 @@ export function rustTriple(os: OS, arch: Arch, abi: Abi | undefined): string {
 }
 
 /**
- * Cargo profile + the subdirectory it writes into under `--target-dir`.
- * `dev` writes to `debug/`, every other profile name writes to `<name>/`.
- *
- * `cfg.asan` does NOT change the profile (it changes rustflags); a debug-asan
- * build still uses `dev`. RelWithDebInfo / MinSizeRel collapse to `release` —
- * cargo's stock release already keeps debuginfo (`debug = 1` is the workspace
- * default), and we don't ship a `MinSizeRel` Rust path yet.
+ * Cargo profile name. `cfg.asan` does NOT change the profile (it changes rustflags); a debug-asan build still
+ * uses `dev`. RelWithDebInfo / MinSizeRel collapse to `release` — cargo's stock release already keeps debuginfo
+ * (`debug = 1` is the workspace default), and we don't ship a `MinSizeRel` Rust path yet.
  */
-export function cargoProfile(cfg: Config): { name: string; subdir: string } {
-  return cfg.buildType === "Debug" ? { name: "dev", subdir: "debug" } : { name: "release", subdir: "release" };
+export function cargoProfile(cfg: Config): string {
+  return cfg.buildType === "Debug" ? "dev" : "release";
 }
 
 /**
@@ -178,20 +185,14 @@ function windowsShimDestPath(cfg: Config): string {
 // Paths
 // ───────────────────────────────────────────────────────────────────────────
 
-/** `<buildDir>/rust-target` — sibling of `obj/`, `pch/`. */
+/** cargo's `--target-dir`, `<buildDir>/rust-target`: only planning and the Windows shim build still run cargo. */
 function rustTargetDir(cfg: Config): string {
   return resolve(cfg.buildDir, "rust-target");
 }
 
-/**
- * Absolute path to `libbun_runtime.a` (or `bun_runtime.lib` on Windows).
- *
- * `--target` is always passed, so cargo's output layout is
- * `<target-dir>/<triple>/<profile>/<libPrefix>bun_runtime<libSuffix>`.
- */
+/** Absolute path to `libbun_runtime.a` (or `bun_runtime.lib` on Windows): the staticlib root's output, `<buildDir>/rust/<triple>/` (rust/units.ts). */
 export function rustLibPath(cfg: Config): string {
-  const { subdir } = cargoProfile(cfg);
-  return resolve(rustTargetDir(cfg), rustTarget(cfg), subdir, `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`);
+  return resolve(cfg.buildDir, "rust", rustTarget(cfg), `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -204,19 +205,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
 
   if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   const stream = `${cfg.jsRuntime} ${q(streamPath)} rust`;
-
-  // Cargo build for `bun_runtime`. Runs from repo root (workspace `Cargo.toml`
-  // lives there). Env passed via stream.ts `--env=K=V`.
-  //
-  // `--console`: cargo has its own progress bar / colour; pool=console gives
-  // it the TTY directly. restat: cargo's incremental build doesn't touch
-  // the staticlib when nothing changed.
-  n.rule("rust_build", {
-    command: `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`,
-    description: "cargo bun_runtime → $label",
-    pool: "console",
-    restat: true,
-  });
+  registerRustUnitRules(n, cfg);
 
   // Windows .bin/ shim PE: cargo build → copy into the source tree for
   // `include_bytes!`. One rule does both; cargo's own output path and the
@@ -244,14 +233,15 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     n.rule("rust_shim", {
       command: hostWin
         ? `cmd /c "${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
-          `( fc /b $shim_src $shim_dest >nul 2>&1 || copy /Y /B $shim_src $shim_dest >nul ) && type nul > $out"`
+          `( ( fc /b $shim_src $shim_dest >nul 2>&1 && if not exist $out type nul > $out ) || ` +
+          `( copy /Y /B $shim_src $shim_dest >nul && type nul > $out ) )"`
         : `${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
-          `( cmp -s $shim_src $shim_dest 2>/dev/null || cp $shim_src $shim_dest ) && touch $out`,
+          `if cmp -s $shim_src $shim_dest 2>/dev/null; then test -e $out || touch $out; else cp $shim_src $shim_dest && touch $out; fi`,
       description: "cargo bun_shim_impl → $shim_dest",
       pool: "console",
-      // No restat: the stamp ($out) is touched unconditionally, so there's
-      // nothing for ninja to prune on; the content-conditional copy above
-      // exists for cargo's dep-info on $shim_dest, not for restat.
+      // The edge reruns on any .rs change (cargo decides what that means for the shim); the stamp moves only when
+      // the exe was replaced, so with restat the crate that embeds it rebuilds only then.
+      restat: true,
     });
   }
 }
@@ -261,33 +251,27 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Inputs to the cargo build step. Assembled by the caller from
- * emitted codegen outputs + globbed `*.rs` sources.
+ * Inputs to the Rust step. Assembled by the caller from emitted codegen
+ * outputs + globbed sources.
  */
 export interface RustBuildInputs {
   /**
-   * Generated files Rust `include!`s / `include_bytes!`s — content tracked.
-   * The `.rs` files (`generated_classes.rs` etc.) are undeclared side
-   * effects of the same scripts that produce `CodegenOutputs.rustInputs`, so
-   * passing that set here is sufficient to order codegen before cargo.
-   */
-  codegenInputs: string[];
-  /**
-   * Generated files Rust needs to EXIST but doesn't embed (debug-mode bake
-   * runtime, runtime-loaded modules). Order-only.
+   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist (`generated_classes.rs`
+   * and friends are undeclared side effects of the scripts producing these). Order-only for the crate edges:
+   * they must exist before a workspace crate compiles, and from then on rustc's dep-info names exactly the
+   * files each crate read, so a changed one rebuilds just its includers.
    */
   codegenOrderOnly: string[];
   /**
-   * All `*.rs` source files + workspace `Cargo.toml`/`Cargo.lock` (globbed
-   * at configure time). Implicit inputs for ninja's staleness check —
-   * cargo discovers sources itself; this is just so ninja knows when to
-   * re-invoke.
+   * All `*.rs` source files + workspace `Cargo.toml`/`Cargo.lock` (globbed at configure time). The manifests
+   * and lockfile are inputs of the plan edge (they are what changes the crate graph); the `.rs` list only feeds
+   * the Windows shim's cargo edge (per-crate rustc edges track their sources through dep-info).
    */
   rustSources: string[];
   /**
-   * Fetch stamps for vendored Rust crates the workspace consumes as path
-   * dependencies (currently lol-html). Implicit inputs so cargo never runs
-   * before the source tree exists, and so a commit bump re-invokes cargo.
+   * Fetch stamps for vendored Rust crates the workspace consumes as path dependencies (lol-html, rust-argon2).
+   * Inputs of the plan edge — cargo cannot load the workspace before their manifests exist, and a commit bump
+   * re-plans — and order-only for every crate edge.
    */
   vendorStamps: string[];
 }
@@ -302,8 +286,14 @@ export interface RustBuildInputs {
 export interface CargoInvocation {
   /** `cargo build <args>` — everything after `build`. */
   args: string[];
-  /** Env vars the cargo process runs under. `CARGO_ENCODED_RUSTFLAGS` included. */
+  /** The environment `cargo build` runs under (planning, `rust:timings`): `unitEnv` plus what configures cargo itself — profile overrides, `CARGO_ENCODED_RUSTFLAGS`, the target linker, terminal colour. */
   env: Record<string, string>;
+  /** The environment every rustc and build script runs under — what cargo's children inherited from it: toolchain forwarding (CARGO_HOME, RUSTUP_*), CC/CXX/AR for cc-rs, BUN_CODEGEN_DIR, cross-compile SDK variables. */
+  unitEnv: Record<string, string>;
+  /** The target rustflags (what `CARGO_ENCODED_RUSTFLAGS` joins): appended to every target unit's rustc command. */
+  rustflags: string[];
+  /** `-C linker=` for target units (cargo: `CARGO_TARGET_<TRIPLE>_LINKER`). */
+  linker: string;
   /** `--target-dir` absolute path (also present in `args`). */
   targetDir: string;
   /** `--target` triple (also present in `args`). */
@@ -330,7 +320,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     "--target",
     triple,
     "--profile",
-    profile.name,
+    profile,
     "--locked",
   ];
   if (tier3 || cfg.release || cfg.asan) {
@@ -379,9 +369,9 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // Parallel frontend: rustc's default is single-threaded for parse / macro
   // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
   // sits on one core while the rest idle. With this, independent compiler
-  // queries run on a rayon pool and the long pole roughly halves. The pool
-  // shares cargo's jobserver, so N rustcs × 8 doesn't oversubscribe — each
-  // thread acquires a `-j` token before doing work.
+  // queries run on a rayon pool and the long pole roughly halves. These are
+  // threads inside one rustc process; ninja counts the process as one job,
+  // as it does a multi-threaded link.
   //
   // Why 8, not nproc: returns flatten past ~8 (the query DAG has its own
   // serial spine — macro expansion in particular), and `-Zthreads=0` (= nproc)
@@ -583,69 +573,59 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   }
 
   // ─── Environment ───
-  const env: Record<string, string> = {
-    CARGO_TERM_COLOR: "always",
-    // `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_*.rs"))` and
-    // `include_bytes!` in `bun_js_parser`/`bun_runtime` resolve against this.
-    // Set in cargo's env so it reaches every crate's `rustc` invocation
-    // (not just those with a `build.rs` re-export). `bun_core::build_options`
-    // is also `include!()`'d from here — its values come from
-    // `buildOptionsRs.ts` (written at configure time), not env vars.
+  // What every rustc and build script sees (cargo's children inherited cargo's environment).
+  const unitEnv: Record<string, string> = {
+    // `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_*.rs"))` and `include_bytes!` in
+    // `bun_js_parser`/`bun_runtime` resolve against this. `bun_core::build_options` is also `include!()`'d from
+    // here — its values come from `buildOptionsRs.ts` (written at configure time), not env vars.
     BUN_CODEGEN_DIR: cfg.codegenDir,
-
-    // ── toolchain forwarding (cc-rs / build scripts) ──
-    // build.rs of crates in the dep graph (anything using `cc`) and rustc's
-    // own linker invocations must use the SAME clang/ar `tools.ts` resolved —
-    // not whatever is first in PATH. On CI the LLVM toolchain lives at a
-    // versioned path (`/opt/llvm-N/`) and the system `cc` may be absent or
-    // mismatched. cc-rs honours `CC`/`CXX`/`AR`; cargo honours
-    // `CARGO_TARGET_<TRIPLE>_LINKER` for the per-target linker.
+    // Toolchain forwarding: build.rs of crates in the dep graph (anything using `cc`) must use the SAME clang/ar
+    // `tools.ts` resolved — not whatever is first in PATH. On CI the LLVM toolchain lives at a versioned path
+    // (`/opt/llvm-N/`) and the system `cc` may be absent or mismatched. cc-rs honours `CC`/`CXX`/`AR`.
     CC: cfg.cc,
     CXX: cfg.cxx,
     AR: cfg.ar,
-    // Per-target linker. The `bun_runtime` artifact is a staticlib (no link step);
-    // what actually gets linked are HOST executables/dylibs in the dep graph
-    // (build scripts, proc-macros) — and on a native build, `--target` is the
-    // host triple, so this env var sets *their* linker too.
-    //
-    // Non-Windows: `cfg.cxx` (clang++) drives lld with the same flag dialect
-    // the C++ side uses. `-Clink-arg=-fuse-ld=lld` (pushed into rustflags
-    // below) selects lld for any rustc-driven cdylib link.
-    //
-    // Windows: rustc's `*-msvc` linker flavor passes `link.exe`-style args
-    // directly (`/NOLOGO`, `/OUT:`, `/NATVIS:`, `/PDBALTPATH:`, …). `clang-cl`
-    // is a *compiler driver*, not a linker — it reads `/N…` args as input
-    // filenames ("no such file or directory: '/NOLOGO'") and never reaches the
-    // underlying linker. Use the discovered MSVC `link.exe` (matches what
-    // `dep_cargo` sets for vendored crates — see source.ts), falling back to
-    // `lld-link.exe` (`cfg.ld`); both speak the `/X` dialect rustc emits.
-    [`CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`]: cfg.windows
-      ? (cfg.msvcLinker ?? cfg.ld)
-      : cfg.cxx,
   };
-  if (cfg.cargoHome !== undefined) env.CARGO_HOME = cfg.cargoHome;
-  if (cfg.rustupHome !== undefined) env.RUSTUP_HOME = cfg.rustupHome;
-  // Pin the toolchain explicitly. `vendor/` is commonly a symlink shared
-  // across worktrees; rustup's directory walk could otherwise resolve a
-  // different worktree's `rust-toolchain.toml`.
-  if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
-  if (cfg.rustc !== undefined) env.RUSTC = cfg.rustc;
-  // Darwin cross-compile from a non-darwin host: point anything in the dep
-  // graph that cares about the Apple SDK at the extracted sysroot. rustc
-  // itself doesn't need it for a staticlib, but cc-rs (build scripts
-  // compiling target C) honours CFLAGS_<triple>/SDKROOT, and
-  // MACOSX_DEPLOYMENT_TARGET keeps the LC_BUILD_VERSION minos rustc stamps
-  // into its objects consistent with the C++ side's -mmacosx-version-min.
+  if (cfg.cargoHome !== undefined) unitEnv.CARGO_HOME = cfg.cargoHome;
+  if (cfg.rustupHome !== undefined) unitEnv.RUSTUP_HOME = cfg.rustupHome;
+  // Pin the toolchain explicitly. `vendor/` is commonly a symlink shared across worktrees; rustup's directory walk
+  // could otherwise resolve a different worktree's `rust-toolchain.toml`.
+  if (cfg.rustToolchain !== undefined) unitEnv.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
+  if (cfg.rustc !== undefined) unitEnv.RUSTC = cfg.rustc;
+  // Darwin cross-compile from a non-darwin host: point anything in the dep graph that cares about the Apple SDK at
+  // the extracted sysroot. rustc itself doesn't need it for a staticlib, but cc-rs (build scripts compiling target C)
+  // honours CFLAGS_<triple>/SDKROOT, and MACOSX_DEPLOYMENT_TARGET keeps the LC_BUILD_VERSION minos rustc stamps into
+  // its objects consistent with the C++ side's -mmacosx-version-min.
   if (cfg.darwin && cfg.host.os !== "darwin") {
-    if (cfg.osxDeploymentTarget !== undefined) env.MACOSX_DEPLOYMENT_TARGET = cfg.osxDeploymentTarget;
+    if (cfg.osxDeploymentTarget !== undefined) unitEnv.MACOSX_DEPLOYMENT_TARGET = cfg.osxDeploymentTarget;
     if (cfg.osxSysroot !== undefined && cfg.crossTarget !== undefined && cfg.osxDeploymentTarget !== undefined) {
-      env.SDKROOT = cfg.osxSysroot;
+      unitEnv.SDKROOT = cfg.osxSysroot;
       const sdkFlags = `--target=${cfg.crossTarget} -isysroot ${cfg.osxSysroot} -mmacosx-version-min=${cfg.osxDeploymentTarget}`;
       const tripleEnv = triple.replace(/-/g, "_");
-      env[`CFLAGS_${tripleEnv}`] = sdkFlags;
-      env[`CXXFLAGS_${tripleEnv}`] = sdkFlags;
+      unitEnv[`CFLAGS_${tripleEnv}`] = sdkFlags;
+      unitEnv[`CXXFLAGS_${tripleEnv}`] = sdkFlags;
     }
   }
+
+  // The linker for target units (cargo: `CARGO_TARGET_<TRIPLE>_LINKER`). The `bun_runtime` artifact is a staticlib
+  // (no link step); what actually gets linked are host executables/dylibs in the dep graph (build scripts,
+  // proc-macros) — and on a native build the target *is* the host triple, so this sets their linker too.
+  //
+  // Non-Windows: `cfg.cxx` (clang++) drives lld with the same flag dialect the C++ side uses;
+  // `-Clink-arg=-fuse-ld=lld` (in rustflags) selects lld for any rustc-driven link.
+  //
+  // Windows: rustc's `*-msvc` linker flavor passes `link.exe`-style args directly (`/NOLOGO`, `/OUT:`, …).
+  // `clang-cl` is a *compiler driver*, not a linker — it reads `/N…` args as input filenames — so use the
+  // discovered MSVC `link.exe` (matches what `dep_cargo` sets for vendored crates, source.ts), falling back to
+  // `lld-link.exe` (`cfg.ld`); both speak the `/X` dialect rustc emits.
+  const linker = cfg.windows ? (cfg.msvcLinker ?? cfg.ld) : cfg.cxx;
+
+  // What configures cargo itself, on top of the children's environment.
+  const env: Record<string, string> = {
+    ...unitEnv,
+    CARGO_TERM_COLOR: "always",
+    [`CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`]: linker,
+  };
   if (cfg.crossLangLto) {
     // Every crossLangLto platform links ThinLTO, so leave each crate's per-CGU
     // bitcode with its ThinLTO summary intact: the whole link is one uniform
@@ -679,13 +659,12 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
-  return { args, env, targetDir, triple };
+  return { args, env, unitEnv, rustflags, linker, targetDir, triple };
 }
 
 /**
- * Emit the cargo build step. Returns the output staticlib path as a
- * one-element array so the link step can spread it alongside the C++
- * object list.
+ * Emit the Rust step: the Windows shim, the plan edge, and — once a plan exists — one edge per unit. Returns the
+ * output staticlib path as a one-element array so the link step can spread it alongside the C++ object list.
  */
 export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
   assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
@@ -697,18 +676,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
 
   const hostWin = cfg.host.os === "windows";
   const lib = rustLibPath(cfg);
-  const tier3 = rustTargetIsTier3(rustTarget(cfg));
-  const { args, env, targetDir, triple } = cargoBuildInvocation(cfg);
+  const { args, env, unitEnv, rustflags, linker, targetDir, triple } = cargoBuildInvocation(cfg);
 
   // ─── Windows .bin/ shim PE ───
   // Builds `src/install/windows-shim/bun_shim_impl.rs` as a freestanding release PE and wires the artifact into `include_bytes!`. Without this step `include_bytes!` embeds the
   // 0-byte placeholder and `bun install` writes empty `.exe`s into
   // `node_modules/.bin/`.
   //
-  // Ordered before the main cargo build via `implicitInputs` below so the
-  // real PE is on disk when `bun_install` compiles. Same env as the main
-  // build (toolchain forwarding, CARGO_HOME) but no codegen dep — the shim
-  // crate's graph is bun_core/bun_sys/bun_string only.
+  // Its stamp is an implicit input of the workspace crate edges (emit.ts) so the real PE is on disk — and current —
+  // when `bun_install` compiles. Same env as the main build (toolchain forwarding, CARGO_HOME) but no codegen dep:
+  // the shim crate's graph is bun_core/bun_sys/bun_string only.
   const shimInputs: string[] = [];
   if (cfg.windows) {
     const shimDest = windowsShimDestPath(cfg);
@@ -813,32 +790,75 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     shimInputs.push(shimStamp);
   }
 
-  // ─── Emit build node ───
-  n.build({
-    outputs: [lib],
-    rule: "rust_build",
-    inputs: [],
-    // Cargo binary itself + every .rs/Cargo.toml so editing one re-invokes
-    // (cargo's own fingerprinting then decides what to actually recompile).
-    // Codegen `.rs` outputs are side effects of edges in `codegenInputs`,
-    // so depending on those orders the codegen step before cargo without
-    // ninja needing to know the `.rs` paths. vendorStamps orders the
-    // lol-html source fetch before cargo resolves the path dep.
-    implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs, ...inputs.vendorStamps, ...shimInputs],
-    orderOnlyInputs: inputs.codegenOrderOnly,
-    vars: {
-      cwd: cfg.cwd,
-      args: quoteArgs(args, hostWin),
-      label: `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`,
-      env: Object.entries(env)
-        .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
-        .join(" "),
-    },
+  // ─── Plan ───
+  // cargo resolves the unit graph for exactly `args`/`env`; rerun when the lockfile, any workspace manifest (from
+  // the source glob), the toolchain pin, or a vendored path dependency's pinned commit (its fetch stamp — those
+  // manifests live under vendor/, outside the glob) changes, or when what is asked for does (plan.input.json).
+  assert(
+    cfg.rustc !== undefined && cfg.rustSysroot !== undefined && cfg.rustHostTriple !== undefined,
+    "no rustc found for the pinned toolchain",
+  );
+  const manifests = inputs.rustSources.filter(p => p.endsWith("Cargo.toml") || p.endsWith("Cargo.lock"));
+  const planInput: PlanInput = {
+    cwd: cfg.cwd,
+    cargo: cfg.cargo,
+    rustc: cfg.rustc,
+    triple,
+    rustflags,
+    args,
+    env: planEnv(env),
+  };
+  const planFile = emitRustPlan(n, cfg, {
+    input: planInput,
+    inputs: [cfg.cargo, cfg.rustc, ...manifests, resolve(cfg.cwd, "rust-toolchain.toml"), ...inputs.vendorStamps],
   });
-  n.phony("bun-rust", [lib]);
-  n.blank();
+  n.phony("rust-plan", [planFile]);
 
+  // ─── Units ───
+  // On a fresh tree there is no plan yet: build.ninja depends on plan.json (configure.ts), so ninja produces it,
+  // reconfigures, and restarts with the per-crate graph. Until then `bun-rust` builds just the plan.
+  const plan = readPlan(cfg.buildDir, planInput);
+  if (plan === undefined) {
+    n.phony("bun-rust", [planFile]);
+    n.blank();
+    return [lib];
+  }
+  const graph = buildRustGraph(cfg, plan, rustflags);
+  assert(graph.root.output === lib, `rust plan root writes ${graph.root.output}, expected ${lib}`);
+  const toolchainBin = (tool: string) => join(cfg.rustSysroot!, "bin", `${tool}${cfg.host.exeSuffix}`);
+  emitRustUnits(
+    n,
+    {
+      cfg,
+      graph,
+      targetRustflags: rustflags,
+      baseEnv: unitEnv,
+      linker: { host: hostLinker(cfg, triple, linker), target: linker },
+      // cargo exports CARGO as the toolchain's own binary, not the rustup proxy that found it.
+      cargo: existsSync(toolchainBin("cargo")) ? toolchainBin("cargo") : cfg.cargo,
+      rustdoc: toolchainBin("rustdoc"),
+    },
+    {
+      codegenOrderOnly: inputs.codegenOrderOnly,
+      implicitInputs: { bun_install: shimInputs },
+      vendorStamps: inputs.vendorStamps,
+    },
+  );
+  n.blank();
   return [lib];
+}
+
+/**
+ * `-C linker` for host units (build scripts, proc-macros). Under cargo the `[target.<triple>]` linker setting
+ * applies to host units too whenever the host *is* the target triple (the common, non-cross case), so those
+ * builds keep one linker for everything; when cross-compiling, host units get what the generated
+ * `.cargo/config.toml` (cargo-config.ts) names for the host: the discovered host C++ driver, or on a Windows
+ * host the MSVC-style linker.
+ */
+function hostLinker(cfg: Config, targetTriple: string, targetLinker: string): string | undefined {
+  if (cfg.rustHostTriple === targetTriple) return targetLinker;
+  if (cfg.host.os === "windows") return cfg.msvcLinker ?? cfg.ld;
+  return cfg.hostCxx;
 }
 
 /**

@@ -96,14 +96,12 @@ export const workarounds: Workaround[] = [
       // Obsolete once clang's LLVM major catches up to (or passes) rustc's —
       // at that point clang's own ld.lld reads rustc's bitcode and the
       // rust-lld swap in resolveConfig() never fires.
-      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
-      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
-      return clangMajor >= rustMajor;
+      return !cfg.rustLlvmNewer;
     },
     cleanup:
-      `Delete the rust-lld swap block in resolveConfig() (config.ts), findRustLld() and its call ` +
-      `in resolveLlvmToolchain() (tools.ts), the rustLld/rustLlvmVersion fields on Toolchain/Config, ` +
-      `and this entry.`,
+      `Delete the rust-lld swap block in resolveConfig() (config.ts), the rustLld field on Toolchain/Config and ` +
+      `the rust-lld lookup inside findRustLld() (tools.ts; keep the sysroot/host-triple/LLVM-version probe, which ` +
+      `the Rust step and the duplicate-symbol check use), and this entry.`,
   },
   {
     id: "darwin-cross-stack-size",
@@ -145,9 +143,7 @@ export const workarounds: Workaround[] = [
       // Obsolete the same instant the rust-lld swap above is — once clang's
       // ld.lld (built with zlib) reads rustc's bitcode, we never select
       // rust-lld and the compressed CRTs are a non-issue.
-      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
-      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
-      return clangMajor >= rustMajor;
+      return !cfg.rustLlvmNewer;
     },
     cleanup:
       `Delete needsMuslCrtDecompress(), MUSL_CRT_OBJECTS, the shim_crt_decompress rule, and the ` +

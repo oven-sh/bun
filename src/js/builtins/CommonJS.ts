@@ -147,6 +147,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   return mod.exports;
 }
 
+// Exposed as require.resolve
+$overriddenName = "resolve";
 $visibility = "Private";
 export function requireResolve(this: JSCommonJSModule, id: string, options: { paths?: string[] } = {}) {
   // Only `options.paths` extraction happens here; builtin bypass and paths

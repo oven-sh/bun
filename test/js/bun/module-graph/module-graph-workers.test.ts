@@ -245,7 +245,6 @@ const dir = String(
 
         if (cell.graphState === "tla-never" || cell.graphState === "tla-slow") {
           out.import = graph.import(import.meta.dir + "/tla.mjs");
-          out.import.catch(() => {}); // (rejects when the graph is disposed; the cell reads its status)
           await until(() => control.began);
         } else {
           app = await graph.import(import.meta.dir + "/work.mjs");
@@ -656,14 +655,8 @@ function a(name: string, api: Api, mode: LeafState, cell: OwnerCell) {
           terminateResolved: resolved(terminate),
           onError: cell.onError ? thrown : null,
           postThrew: null,
-          // Parked in a top-level await when its graph is disposed, the host's import() rejects
-          // (a graph without a context discards nothing, and leaves it to finish).
           import:
-            (cell.graphState === "tla-never" || cell.graphState === "tla-slow") && disposes && cell.graph !== "plain"
-              ? "rejected"
-              : cell.graphState === "tla-never" || (cell.graphState === "tla-slow" && disposes)
-                ? "pending"
-                : "fulfilled",
+            cell.graphState === "tla-never" || (cell.graphState === "tla-slow" && disposes) ? "pending" : "fulfilled",
           sibling: "ticks",
           leafStopped: true,
           graphStopped: true,

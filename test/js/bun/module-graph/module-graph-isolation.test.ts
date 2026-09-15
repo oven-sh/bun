@@ -321,8 +321,8 @@ const dir = String(
         // The module finishes in the graph that loads it (the host's import of it waits for that).
         out.host = await loads.import(specifier).then(() => "fulfilled", error => "rejected: " + error.code);
       } else {
+        // (The gate stays shut: what the module waits for went with its graph.)
         loads.dispose();
-        gate.resolve();
       }
       for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
       out.askerHeard = app.heard;
@@ -2830,15 +2830,15 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("a graph that asked a graph since disposed for an import() is told", async () => {
+  test("a graph waiting for a module parked in a top-level await of a graph since disposed goes on waiting", async () => {
     expect(await runs("imports-through-another-graph.mjs", "the one that loads")).toEqual({
-      stdout: `{"askerHeard":["rejected: ERR_INVALID_STATE"]}`,
+      stdout: `{"askerHeard":[]}`,
       exitCode: 0,
     });
   });
-  test("the host's import() of a module parked in a top-level await rejects", async () => {
+  test("the host's import() of a module parked in a top-level await is left pending: dispose() settles nothing", async () => {
     expect(await runs("host-import-parked-at-dispose.mjs")).toEqual({
-      stdout: `{"settled":"rejected: ERR_INVALID_STATE"}`,
+      stdout: `{"settled":"pending"}`,
       exitCode: 0,
     });
   });
@@ -2854,9 +2854,9 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("a plain graph it made is disposed with it: the host's import() through one it was handed rejects, in flight or later", async () => {
+  test("a plain graph it made is disposed with it: the host's import() through one it was handed rejects from then on", async () => {
     expect(await runs("plain-graph-handed-to-the-host.mjs")).toEqual({
-      stdout: `{"inFlight":"rejected: ERR_INVALID_STATE","afterwards":"rejected: ERR_INVALID_STATE"}`,
+      stdout: `{"inFlight":"pending","afterwards":"rejected: ERR_INVALID_STATE"}`,
       exitCode: 0,
     });
   });

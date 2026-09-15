@@ -16,7 +16,6 @@
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
-#include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -670,7 +669,6 @@ void JSModuleGraph::settleImport(Zig::GlobalObject* globalObject, JSPromise* res
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue caller = m_pendingImports->get(globalObject, result);
     RETURN_IF_EXCEPTION(scope, );
-    // (dispose() settled it.)
     if (!caller.isNumber())
         return;
     m_pendingImports->remove(globalObject, result);
@@ -708,31 +706,9 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
         isolated->disposeAdopted(globalObject);
         RETURN_IF_EXCEPTION(scope, );
     }
-    // What the graph's script had under way is discarded, so an import() of this graph that has not
-    // settled never would: whoever called and still hears is told. (After the stop: the graph's own
-    // script, which called import() on itself, does not.) A graph without a context discards
-    // nothing: its imports are left to finish.
-    MarkedArgumentBuffer rejected;
-    if (this->context() || m_runsInItsMakersContext) {
-        auto* pending = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), m_pendingImports.get(), IterationKind::Entries);
-        RETURN_IF_EXCEPTION(scope, );
-        JSValue entry;
-        while (pending->next(globalObject, entry)) {
-            RETURN_IF_EXCEPTION(scope, );
-            auto* pair = uncheckedDowncast<JSArray>(entry);
-            JSValue caller = pair->getIndex(globalObject, 1);
-            RETURN_IF_EXCEPTION(scope, );
-            if (!hearsNothing(caller.asUInt32())) {
-                rejected.append(pair->getIndex(globalObject, 0));
-                RETURN_IF_EXCEPTION(scope, );
-            }
-        }
-        RETURN_IF_EXCEPTION(scope, );
-        m_pendingImports->clear(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-    }
-    for (size_t i = 0; i < rejected.size(); ++i)
-        uncheckedDowncast<JSPromise>(rejected.at(i))->reject(vm, createModuleGraphDisposedError(globalObject));
+    // (An import() of this graph that has not settled is left to the loader: it rejects if the load's
+    // next step comes now, since nothing loads into a disposed graph, and never settles if its module
+    // waits for something the stop above discarded.)
     m_requireMap->clear(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     m_requireCache.clear();

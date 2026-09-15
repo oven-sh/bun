@@ -301,8 +301,11 @@ impl RuntimeTranspilerStore {
             // SAFETY: `job` is a live job popped from the intrusive queue; `vm` as above.
             let fulfilled = unsafe {
                 let vm = &*vm.as_ptr();
-                if vm.is_context_live((*job).context) {
-                    let _context = vm.enter_context((*job).context);
+                let context = [(*job).context, (*job).asker]
+                    .into_iter()
+                    .find(|&context| vm.is_context_live(context));
+                if let Some(context) = context {
+                    let _context = vm.enter_context(context);
                     (*job).run_from_js_thread()
                 } else {
                     (*job).release_unfulfilled();
@@ -395,6 +398,7 @@ impl RuntimeTranspilerStore {
                     .unwrap_or_else(|| global_object.bun_vm().root_context())
                     .id()
                 },
+                asker: global_object.bun_vm().current_context_or_root().id(),
                 module_loader: if module_loader.is_empty() {
                     StrongOptional::empty()
                 } else {
@@ -449,6 +453,9 @@ pub struct TranspilerJob {
     /// The context of the graph whose loader is fetching (the realm's for the global object's
     /// loader and for a graph without a context): the load is that loader's, whoever asked.
     pub(crate) context: crate::ContextId,
+    /// The context of the script that asked. A load into a disposed graph is completed (the
+    /// loader refuses it, and whoever asked is told so) unless that script was disposed too.
+    pub(crate) asker: crate::ContextId,
     /// The `JSModuleLoader` that is fetching, when it is not the global object's (a
     /// `Bun.ModuleGraph`'s): handed back with the result. Empty otherwise.
     pub(crate) module_loader: StrongOptional,
@@ -557,9 +564,9 @@ impl TranspilerJob {
         ticket.post(ConcurrentTask::create_from(transpiler_store));
     }
 
-    /// The loader is a `Bun.ModuleGraph`'s that was disposed since (its registry is gone): the load
-    /// is dropped with the rest of what that graph had under way, and its script's `import()`
-    /// stays pending. (`graph.import()` settles what it returned by itself: `JSModuleGraph::dispose`.)
+    /// The loader is a `Bun.ModuleGraph`'s that was disposed since, and so was the script that
+    /// asked (its own `import()`): the load is dropped with the rest of what that graph had
+    /// under way, and that `import()` stays pending.
     fn release_unfulfilled(&mut self) {
         let vm = self.vm;
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));

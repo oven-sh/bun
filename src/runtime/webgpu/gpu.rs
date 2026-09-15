@@ -49,8 +49,7 @@ impl GPU {
         Ok(JSPromise::resolved_promise_value(global, adapter))
     }
 
-    /// There is no canvas to present to. This is the format browsers report
-    /// on every platform but Android.
+    /// No canvas exists. This is the format browsers report everywhere but Android.
     pub(crate) fn get_preferred_canvas_format(
         &self,
         global: &JSGlobalObject,

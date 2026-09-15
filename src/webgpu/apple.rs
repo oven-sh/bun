@@ -1,22 +1,4 @@
-//! macOS: the system frameworks of wgpu's Metal backend, bound on first use.
-//!
-//! The objc2 crates under wgpu-hal import a handful of C functions and
-//! constants from Metal, CoreFoundation, CoreGraphics and Foundation. Linking
-//! those frameworks would load them into every Bun process, and
-//! CoreFoundation's initializer has side effects: among other things it adds
-//! `__CF_USER_TEXT_ENCODING` to the environment, which then shows up in
-//! `process.env` and in every child process.
-//!
-//! Mach-O has no delay-load, so this file is the delay-load: it defines those
-//! symbols itself. The functions forward to the real ones, found with `dlsym`
-//! in frameworks that [`load`] `dlopen`s when `navigator.gpu` is first used.
-//! The constants are copied over at the same moment. Objective-C classes and
-//! selectors need nothing: objc2 looks them up by name in the runtime, and
-//! libobjc is already part of every process through libSystem.
-//!
-//! The list is exactly what `nm -u` shows for the Metal backend. A wgpu
-//! upgrade that imports one more symbol fails the darwin link with that
-//! symbol's name, which is the cue to add it here.
+//! Binds the frameworks wgpu's Metal backend imports with `dlopen`, on first use of `navigator.gpu`.
 #![allow(non_snake_case, non_upper_case_globals, clippy::missing_safety_doc)]
 
 use core::ffi::{CStr, c_void};
@@ -44,8 +26,7 @@ impl Framework {
         bun_sys::dlopen(path, bun_sys::RTLD::LAZY | bun_sys::RTLD::LOCAL).map(Self)
     }
 
-    /// Looks `name` up in this framework and the libraries it depends on. The
-    /// lookup cannot land on the definitions below, which live in the executable.
+    /// `dlsym` in this framework and its dependencies, never in the executable's own definitions.
     fn symbol<T>(self, name: &CStr) -> Option<T> {
         const { assert!(size_of::<T>() == size_of::<*mut c_void>()) };
         // SAFETY: `self.0` is a live `dlopen` handle (never closed) and `name` is NUL-terminated.
@@ -61,6 +42,7 @@ impl Framework {
     }
 }
 
+// Not linked: CoreFoundation's initializer adds `__CF_USER_TEXT_ENCODING` to every process's environment.
 struct Frameworks {
     CoreFoundation: Framework,
     CoreGraphics: Framework,
@@ -85,8 +67,7 @@ impl Frameworks {
     }
 }
 
-/// Declares the forwarded functions: one table entry and one exported
-/// definition under the system's name for each.
+/// Declares the forwarded functions: a table entry and an exported definition for each.
 macro_rules! forward {
     ($( $framework:ident :: fn $name:ident ( $($arg:ident : $ty:ty),* ) $(-> $ret:ty)? ; )+) => {
         struct Functions {
@@ -111,6 +92,7 @@ macro_rules! forward {
     };
 }
 
+// Every symbol `nm -u` shows for the Metal backend. A new import fails the darwin link by its name.
 forward! {
     CoreFoundation::fn CFDataGetBytePtr(data: *const c_void) -> *const u8;
     CoreFoundation::fn CFDataGetLength(data: *const c_void) -> isize;
@@ -129,8 +111,7 @@ forward! {
 #[unsafe(no_mangle)]
 static kCFAbsoluteTimeIntervalSince1970: f64 = 978_307_200.0;
 
-/// Declares the forwarded object constants (`NSString * const`,
-/// `CFStringRef const`): null until [`load`] copies the system's values in.
+/// Declares the forwarded `NSString * const` / `CFStringRef const` values: null until [`load`].
 macro_rules! constants {
     ($( $framework:ident :: $name:ident ; )+) => {
         $(
@@ -169,8 +150,7 @@ fn functions() -> &'static Functions {
         .expect("the Metal backend ran before its frameworks were loaded")
 }
 
-/// Loads the frameworks and binds the symbols above. Returns `false` if any of
-/// it is missing, in which case the Metal backend must not be used.
+/// Returns `false` if a framework or symbol is missing: the Metal backend must not run then.
 pub(crate) fn load() -> bool {
     FUNCTIONS
         .get_or_init(|| {

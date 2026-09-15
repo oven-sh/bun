@@ -14,9 +14,7 @@ static JSValue internalWebGPUModule(VM& vm, Zig::GlobalObject* globalObject)
     return globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalWebgpu);
 }
 
-// The receiver of a CustomValue callback is whatever object the access went
-// through, which is not necessarily the global object (a Proxy around it, an
-// object that inherits from it).
+// The receiver can be a Proxy or an object that inherits from the global object.
 static Zig::GlobalObject* receiverGlobalObject(JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue)
 {
     if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))

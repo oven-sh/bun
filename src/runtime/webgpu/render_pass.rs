@@ -38,9 +38,7 @@ fn optional_u64(global: &JSGlobalObject, v: JSValue, what: &str) -> JsResult<Opt
     Ok(Some(args::to_u64(global, v, what)?))
 }
 
-/// The `size` of `setVertexBuffer()` and `setIndexBuffer()`. wgpu-core takes
-/// `Option<NonZeroU64>` and reads `None` as "to the end of the buffer", so an
-/// explicit 0 binds the same range as an omitted size.
+/// wgpu-core reads `None` as "to the end of the buffer", so a `size` of 0 binds that too.
 fn binding_size(size: Option<u64>) -> Option<NonZeroU64> {
     size.and_then(NonZeroU64::new)
 }
@@ -52,10 +50,7 @@ fn u32_or(global: &JSGlobalObject, v: JSValue, what: &str, default: u32) -> JsRe
     args::to_u32(global, v, what)
 }
 
-/// The render commands `GPURenderPassEncoder` and `GPURenderBundleEncoder`
-/// share (`GPURenderCommandsMixin`, `GPUBindingCommandsMixin` and the label-only
-/// half of `GPUDebugCommandsMixin`), over the wgpu-core functions named by the
-/// `$set_pipeline`, ... arguments.
+/// The commands `GPURenderPassEncoder` and `GPURenderBundleEncoder` share, over the named wgpu-core functions.
 macro_rules! render_commands {
     ($ty:ident {
         set_pipeline: $set_pipeline:ident,
@@ -280,8 +275,7 @@ render_commands!(GPURenderPassEncoder {
     draw_indexed_indirect: render_pass_draw_indexed_indirect_with_id,
 });
 
-/// `view: GPUTextureView | GPUTexture`. A texture stands for its default view,
-/// which is created here and parked in `implicit` until the pass has begun.
+/// A `GPUTexture` stands for its default view, parked in `implicit` until the pass has begun.
 fn attachment_view(
     global: &JSGlobalObject,
     device: &DeviceRef,

@@ -13,8 +13,7 @@ use super::args::Dict;
 use super::device::DeviceRef;
 use super::js_module;
 
-/// One `GPUCompilationMessage`. Positions are in UTF-16 code units, as the
-/// spec wants them; naga reports UTF-8 byte offsets.
+/// One `GPUCompilationMessage`. naga reports UTF-8 byte offsets; the spec wants UTF-16 units.
 struct Message {
     text: String,
     line_num: u32,

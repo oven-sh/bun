@@ -1,5 +1,4 @@
-//! `GPUTexture`, `GPUTextureView`, `GPUSampler`, and the texel-copy
-//! dictionaries the queue and the command encoder share.
+//! `GPUTexture`, `GPUTextureView`, `GPUSampler`, and the texel-copy dictionaries.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -168,8 +167,7 @@ impl GPUTexture {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// A rough figure for the collector: four bytes per texel of the base level and a third
-    /// more for the mip chain.
+    /// A rough figure for the collector: 4 bytes per texel, plus a third for the mip chain.
     pub(crate) fn estimated_size(&self) -> usize {
         let texels = u64::from(self.size.width)
             .saturating_mul(u64::from(self.size.height))

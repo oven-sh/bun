@@ -1,13 +1,6 @@
-// The WebGPU classes that are written in JavaScript: the ones that inherit from
-// a platform class (GPUDevice from EventTarget, GPUUncapturedErrorEvent from
-// Event, GPUPipelineError from DOMException), the read-only set-likes, and the
-// plain data carriers. The resource classes (GPUBuffer, GPUTexture, the
-// encoders...) are native: src/runtime/webgpu/.
-//
-// Native code reaches this module through the `create*` exports at the bottom.
+// The WebGPU classes written in JS. Native code (src/runtime/webgpu/) uses the create* exports at the bottom.
 
-// Proof that a constructor was called from here and not by user code. Every
-// class below is "Illegal constructor" to anyone who does not hold it.
+// Only this module holds it: a constructor called without it throws "Illegal constructor".
 const kConstruct = Symbol("webgpu.construct");
 
 const inspect = Symbol.for("nodejs.util.inspect.custom");
@@ -16,9 +9,7 @@ function checkKey(key: unknown) {
   if (key !== kConstruct) throw $ERR_ILLEGAL_CONSTRUCTOR();
 }
 
-// What WebIDL gives an interface and class syntax does not: enumerable
-// attributes and operations (code copies limits with `for (key in
-// adapter.limits)`), and the interface name as @@toStringTag.
+// Gives a class what WebIDL gives an interface: enumerable members and the name as @@toStringTag.
 function asInterface(constructor: Function, name: string) {
   const prototype = constructor.prototype;
   for (const key of Object.getOwnPropertyNames(prototype)) {
@@ -423,8 +414,7 @@ class GPUDevice extends EventTarget {
   }
 }
 
-// The native side rejects with a `[reason, message]` pair; anything else (a
-// TypeError from descriptor conversion) passes through.
+// A native rejection is a [reason, message] pair. Anything else (a TypeError) passes through.
 function rethrowPipelineError(error: unknown): never {
   if ($isJSArray(error)) {
     const [reason, message] = error as [string, string];

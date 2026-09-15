@@ -64,8 +64,7 @@ impl GPUCommandEncoder {
         GPURenderPassEncoder::begin(global, &self.device, self.raw.id(), callframe.argument(0))
     }
 
-    /// `copyBufferToBuffer(source, destination, size?)` or
-    /// `copyBufferToBuffer(source, sourceOffset, destination, destinationOffset, size?)`.
+    /// `copyBufferToBuffer(src, dst, size?)` or `(src, srcOffset, dst, dstOffset, size?)`.
     pub(crate) fn copy_buffer_to_buffer(
         &self,
         global: &JSGlobalObject,

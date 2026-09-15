@@ -1,10 +1,4 @@
-//! The one place WebGPU work leaves the JS thread: waiting for the GPU.
-//!
-//! wgpu-core has no threads of its own. A `mapAsync` or `onSubmittedWorkDone`
-//! callback only fires while some thread is inside `device_poll`, so each such
-//! promise gets a [`Job`] whose pool half blocks in `device_poll` until the
-//! callback has stored its result in the shared [`Slot`], and whose JS half
-//! then settles the promise.
+//! Waiting for the GPU: wgpu-core fires callbacks only inside `device_poll`, so a pool [`Job`] polls.
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -80,9 +74,7 @@ impl<W: Waiter> JobContext for Wait<W> {
     const CANCELLABLE: bool = true;
 
     fn run(off: &mut Self::OffThread, done: Completion<Self>) -> Option<Completion<Self>> {
-        // Short waits: wgpu-core holds a device-wide read lock for the length of each one, which
-        // `destroy()` on the JS thread has to get past, and a VM that is shutting down should not
-        // be held up by a long-running shader.
+        // Short waits: each holds a device-wide read lock that `destroy()` and VM shutdown must get past.
         const SLICE: Duration = Duration::from_millis(8);
         let mut idle_rounds = 0u32;
         while !off.slot.is_filled()
@@ -93,15 +85,13 @@ impl<W: Waiter> JobContext for Wait<W> {
                 WaitOutcome::TimedOut => {}
                 WaitOutcome::Finished => {
                     if !off.slot.is_filled() {
-                        // The submission is done and the callback still has not fired. wgpu-core
-                        // fires it on a later poll; yield instead of spinning until then.
+                        // Done, but the callback has not fired yet: wgpu-core fires it on a later poll, so yield.
                         idle_rounds = (idle_rounds + 1).min(5);
                         std::thread::sleep(Duration::from_millis(1 << idle_rounds));
                     }
                 }
                 WaitOutcome::Failed => {
-                    // A lost device fails every wait. Its callbacks are fired with an error by
-                    // one last poll; an empty slot after that settles as aborted.
+                    // A lost device fails every wait. One last poll fires its callbacks; an empty slot means aborted.
                     off.device.poll();
                     break;
                 }

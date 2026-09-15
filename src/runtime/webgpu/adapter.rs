@@ -1,5 +1,4 @@
-//! `GPUAdapter`, and the conversions to `GPUSupportedFeatures`,
-//! `GPUSupportedLimits` and `GPUAdapterInfo` it shares with `GPUDevice`.
+//! `GPUAdapter`, and the feature, limit and info conversions it shares with `GPUDevice`.
 
 use std::cell::Cell;
 
@@ -12,8 +11,7 @@ use super::{GPUDeviceHandle, js_module};
 #[bun_jsc::JsClass]
 pub struct GPUAdapter {
     raw: bun_webgpu::Adapter,
-    /// An adapter hands out one device. After that it is "consumed" and
-    /// `requestDevice` rejects.
+    /// Set once `requestDevice` has handed out the adapter's one device; later calls reject.
     consumed: Cell<bool>,
 }
 
@@ -83,8 +81,7 @@ impl GPUAdapter {
             }
             Err(err) => {
                 let message = error_chain(&err);
-                // A feature or limit the adapter does not have is the caller's mistake and
-                // leaves the adapter usable; everything else (the driver refused) consumes it.
+                // An unsupported feature or limit leaves the adapter usable; a driver refusal consumes it.
                 use wgc::instance::RequestDeviceError as E;
                 match err {
                     E::UnsupportedFeature(_) => {

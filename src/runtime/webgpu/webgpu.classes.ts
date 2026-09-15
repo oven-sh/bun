@@ -32,8 +32,7 @@ const renderCommands: Proto = {
   drawIndexedIndirect: fn("drawIndexedIndirect", 2),
 };
 
-// Every class is a global whose constructor throws "Illegal constructor":
-// instances only come from other WebGPU calls.
+// Every class is a global whose constructor throws: instances only come from WebGPU calls.
 function gpu(name: string, proto: Proto, extra: Partial<ClassDefinition> = {}) {
   return define({
     name,
@@ -62,9 +61,7 @@ export default [
     requestDevice: fn("requestDevice", 0),
   }),
 
-  // The native half of GPUDevice. The public `GPUDevice` is a JS class
-  // (src/js/internal/webgpu.ts) because it has to extend EventTarget; it keeps
-  // one of these in a private field and forwards to it.
+  // The native half of GPUDevice. The public class is JS (src/js/internal/webgpu.ts) to extend EventTarget.
   gpu(
     "GPUDeviceHandle",
     {
@@ -116,8 +113,7 @@ export default [
       unmap: { fn: "unmap", length: 0, passThis: true },
       destroy: { fn: "destroy", length: 0, passThis: true },
     },
-    // The GPU allocation is invisible to the collector; report it so wrappers that were
-    // dropped without destroy() do not pile up.
+    // The GPU allocation is invisible to the collector: report it so dropped wrappers get collected.
     { values: ["mappedRanges", "pendingMap"], estimatedSize: true },
   ),
 

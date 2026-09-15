@@ -1,12 +1,4 @@
-//! `navigator.gpu` and the `GPU*` classes (<https://www.w3.org/TR/webgpu/>) on
-//! top of wgpu-core.
-//!
-//! Everything here runs on the JS thread. The only work that leaves it is the
-//! wait for the GPU behind `mapAsync` and `onSubmittedWorkDone` ([`wait`]).
-//! The classes that have to inherit from a platform class (`GPUDevice` from
-//! `EventTarget`, `GPUUncapturedErrorEvent` from `Event`, `GPUPipelineError`
-//! from `DOMException`) and the plain data carriers are written in JS, in
-//! `src/js/internal/webgpu.ts`; [`js_module`] is the bridge to them.
+//! `navigator.gpu` and the `GPU*` classes (<https://www.w3.org/TR/webgpu/>) on wgpu-core.
 
 mod adapter;
 mod args;
@@ -40,8 +32,7 @@ pub use texture::{GPUSampler, GPUTexture, GPUTextureView};
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-/// The constructor every `GPU*` global has (`new GPUBuffer()` is a TypeError),
-/// plus the `label` attribute of `GPUObjectBase` for the types that carry one.
+/// The throwing constructor every `GPU*` global has, plus `label` for the types that carry one.
 macro_rules! gpu_object {
     ($ty:ident) => {
         impl $ty {

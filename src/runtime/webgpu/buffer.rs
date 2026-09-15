@@ -1,19 +1,4 @@
-//! `GPUBuffer`.
-//!
-//! `getMappedRange()` hands JS an ordinary ArrayBuffer holding a copy of the
-//! mapped bytes, and `unmap()` copies a write mapping back before detaching
-//! it. JS never aliases driver-owned memory, so a device loss, which frees
-//! that memory at a time of the driver's choosing, cannot leave a live
-//! ArrayBuffer pointing at it.
-//!
-//! A `mapAsync()` completes inside `device_poll` on a pool thread
-//! ([`super::wait`]). wgpu-core's `Buffer::map` there and `Buffer::unmap` here
-//! both swap the buffer's map state without holding its lock across the swap,
-//! so the two must not meet. Hence the rule this file keeps: while a map
-//! request is in flight in wgpu-core ([`GPUBuffer::in_flight`]), nothing on
-//! the JS thread touches that buffer's wgpu-core map state. `unmap()` of a
-//! pending map only settles the JS side; the completion of the stale request
-//! does the wgpu-core side, then issues the request that was queued behind it.
+//! `GPUBuffer`. Mapped ranges are copies, so JS never aliases driver memory.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -50,8 +35,7 @@ enum MapState {
         /// The mapped byte range of the buffer.
         start: u64,
         end: u64,
-        /// `(offset, size)` of every `getMappedRange()` result, in the order
-        /// of the `mappedRanges` slot's ArrayBuffers.
+        /// `(offset, size)` of each `getMappedRange()` result, in `mappedRanges` slot order.
         ranges: Vec<(u64, u64)>,
     },
 }
@@ -64,17 +48,14 @@ pub struct GPUBuffer {
     size: u64,
     usage: u32,
     map: JsCell<MapState>,
-    /// Names the current `mapAsync()`: bumped by every `mapAsync()`, `unmap()`
-    /// and `destroy()`, so a completion can tell whether it is still wanted.
+    /// Bumped by every `mapAsync()`, `unmap()` and `destroy()`: tells a completion if it is still wanted.
     map_generation: Cell<u32>,
-    /// A map request was handed to wgpu-core and its completion has not run.
+    /// wgpu-core has a map request. Until it completes, nothing here touches wgpu-core's map state (its map and unmap race).
     in_flight: Cell<bool>,
-    /// The current `mapAsync()`, held back because an aborted one is still in
-    /// flight in wgpu-core.
+    /// The current `mapAsync()`, held back while an aborted one is still in flight.
     queued: Cell<Option<MapRequest>>,
     destroyed: Cell<bool>,
-    /// Creation failed validation. wgpu-core has nothing mapped for such a
-    /// buffer, so a "mapped at creation" range is plain zeroed memory.
+    /// Creation failed validation: nothing is mapped in wgpu-core, so mapped ranges are zeroed memory.
     invalid: bool,
 }
 
@@ -166,8 +147,7 @@ impl Waiter for MapWait {
             return Ok(());
         }
 
-        // `unmap()` or `destroy()` gave up on this request while wgpu-core still had it. If it
-        // went through anyway, take the mapping down again, now that nothing else is in flight.
+        // `unmap()` or `destroy()` gave up on this request: if it mapped anyway, unmap it now.
         if result.is_ok() && !buffer.destroyed.get() {
             let _ = instance().buffer_unmap(buffer.raw.id());
         }
@@ -219,8 +199,7 @@ impl GPUBuffer {
                     "createBuffer: usage 0x{usage:x} has bits that are not a GPUBufferUsage"
                 )),
             )?;
-            // wgpu-core only hands out an invalid buffer as the result of a failed creation, so
-            // ask for one that cannot succeed: a buffer with no usage at all.
+            // wgpu-core hands out an invalid buffer only from a failed creation: ask for one with no usage.
             invalid = true;
             desc.mapped_at_creation = false;
             desc.usage = wgt::BufferUsages::empty();
@@ -229,8 +208,7 @@ impl GPUBuffer {
         let raw = bun_webgpu::Buffer::new(id);
         if let (false, Some(err)) = (invalid, err) {
             if mapped_at_creation && matches!(err, wgc::resource::CreateBufferError::Device(_)) {
-                // The allocation failed and the caller expects a mapping back: the spec
-                // throws instead of returning a buffer that cannot be written.
+                // Per spec, a failed allocation with mappedAtCreation throws instead of returning a buffer.
                 return Err(range_error(
                     global,
                     format_args!(
@@ -242,8 +220,7 @@ impl GPUBuffer {
             device.report(global, GpuError::from_wgpu(&err))?;
         }
 
-        // An invalid buffer is still "mapped at creation" as far as script can tell: the
-        // error reaches it only through the error scopes.
+        // An invalid buffer still looks mapped to script: the error only reaches the error scopes.
         let mapped = mapped_at_creation;
         let this = GPUBuffer {
             device: Rc::clone(device),
@@ -334,8 +311,7 @@ impl GPUBuffer {
             MapState::Pending => {
                 return reject(false, "mapAsync: a map is already pending on this buffer");
             }
-            // Not an early reject in the spec, but a validation error: the mapping that
-            // exists stays as it is.
+            // The spec makes this a validation error, not an early reject; the existing mapping stays.
             MapState::Mapped { .. } => {
                 let message = "mapAsync: the buffer is already mapped";
                 self.device.report(global, GpuError::validation(message))?;
@@ -539,9 +515,7 @@ impl GPUBuffer {
         Ok(array_buffer)
     }
 
-    /// Ends whatever mapping script can see: rejects a pending `mapAsync()`, or copies write
-    /// mappings back and detaches every ArrayBuffer handed out. Returns whether wgpu-core has
-    /// a mapping to take down, which is never the case while a request is in flight.
+    /// Ends the mapping script can see. Returns whether wgpu-core has a mapping to take down.
     fn release_mapping(
         &self,
         global: &JSGlobalObject,
@@ -620,15 +594,13 @@ impl GPUBuffer {
     ) -> JsResult<JSValue> {
         self.release_mapping(global, this_value, false)?;
         if !self.destroyed.replace(true) {
-            // Takes wgpu-core's device-wide write lock, so it cannot overlap a poll that is
-            // completing a map of this buffer.
+            // Takes wgpu-core's device-wide write lock, so it cannot overlap a poll that completes a map.
             instance().buffer_destroy(self.raw.id());
         }
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `GPUDevice.destroy()` unmaps every buffer of the device. wgpu-core drops
-    /// the mappings itself when the device goes.
+    /// For `GPUDevice.destroy()`: wgpu-core drops the mappings itself when the device goes.
     pub(crate) fn unmap_for_destroy(
         &self,
         global: &JSGlobalObject,

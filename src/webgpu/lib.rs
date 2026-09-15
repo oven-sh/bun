@@ -1,7 +1,4 @@
-//! The JS-independent half of Bun's WebGPU implementation: the process-wide
-//! wgpu instance, owning handles for wgpu-core ids, error classification, and
-//! the WebGPU string ⇄ enum tables. The JS classes live in
-//! `src/runtime/webgpu/`.
+//! The JS-independent half of WebGPU: the wgpu instance, id handles, errors, and name tables.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -16,9 +13,7 @@ pub mod names;
 use wgc::global::Global;
 use wgc::id;
 
-/// The one wgpu instance of the process. Creating it loads the platform's GPU
-/// API (libvulkan, Metal, D3D12), so it happens on first use and never at
-/// startup. wgpu-core synchronizes internally; every thread shares it.
+/// The process's wgpu instance. Creating it loads the GPU API, so it happens on first use.
 pub fn instance() -> &'static Global {
     static INSTANCE: OnceLock<Global> = OnceLock::new();
     INSTANCE.get_or_init(|| {
@@ -29,8 +24,7 @@ pub fn instance() -> &'static Global {
         if !apple::load() {
             desc.backends = wgt::Backends::empty();
         }
-        // The GPU API's own debug layers (Vulkan validation layers, the D3D12
-        // debug layer). wgpu-core's WebGPU validation does not depend on them.
+        // The GPU API's own debug layers; wgpu-core's WebGPU validation does not need them.
         desc.flags = wgt::InstanceFlags::empty();
         Global::new("bun", desc, None)
     })
@@ -95,8 +89,7 @@ owned_id!(
     render_bundle_encoder_drop
 );
 
-/// A device and its single queue. Dropping it releases both; wgpu-core keeps
-/// the underlying device alive until the resources created from it are gone.
+/// A device and its queue. wgpu-core keeps the device alive while its resources exist.
 pub struct Device {
     device: id::DeviceId,
     queue: id::QueueId,
@@ -115,9 +108,7 @@ impl Device {
         self.queue
     }
 
-    /// Blocks the calling thread until the queue submission `submission` has
-    /// finished on the GPU or `timeout` passes, then fires the `mapAsync` /
-    /// `onSubmittedWorkDone` callbacks that became ready.
+    /// Blocks until `submission` finishes or `timeout` passes, then fires the ready callbacks.
     pub fn wait(&self, submission: wgc::SubmissionIndex, timeout: Duration) -> WaitOutcome {
         let poll = wgt::PollType::Wait {
             submission_index: Some(submission),
@@ -154,8 +145,7 @@ impl Drop for Device {
     }
 }
 
-/// The three `GPUError` subclasses. The discriminant is what crosses to
-/// `src/js/internal/webgpu.ts`, which indexes its class table with it.
+/// The `GPUError` subclasses. src/js/internal/webgpu.ts indexes its class table with the discriminant.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum ErrorKind {
@@ -179,8 +169,7 @@ pub fn parse_error_filter(s: &[u8]) -> Option<ErrorKind> {
 pub struct GpuError {
     pub kind: ErrorKind,
     pub message: String,
-    /// The failure is "the device is lost". WebGPU reports nothing for these:
-    /// operations on a lost device are silently dropped.
+    /// The device is lost. WebGPU drops operations on a lost device without a report.
     pub device_lost: bool,
 }
 

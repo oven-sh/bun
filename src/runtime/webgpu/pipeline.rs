@@ -74,8 +74,7 @@ impl GPUComputePipeline {
         self.raw.id()
     }
 
-    /// Returns the pipeline and the creation error, if any: the sync entry
-    /// point reports it to the device, the async one rejects with it.
+    /// Returns the pipeline and its creation error: sync callers report it, async callers reject.
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,

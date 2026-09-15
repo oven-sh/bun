@@ -1,6 +1,4 @@
-//! `GPUDevice`'s native half, and the per-device state every object created
-//! from a device shares: the error-scope stack and the route to the device's
-//! `uncapturederror` event and `lost` promise.
+//! `GPUDevice`'s native half and the per-device state: error scopes, `uncapturederror`, `lost`.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -23,8 +21,7 @@ struct ErrorScope {
     error: Option<GpuError>,
 }
 
-/// Set by wgpu-core, on whichever thread notices, when the device is lost for a
-/// reason other than `destroy()`. The JS thread picks it up at its next visit.
+/// Filled by wgpu-core, on any thread, when the device is lost. The JS thread reads it later.
 #[derive(Default)]
 pub(crate) struct LostSignal(Guarded<Option<String>>);
 
@@ -33,17 +30,14 @@ pub(crate) struct DeviceState {
     /// The features the device was created with.
     features: wgt::Features,
     scopes: JsCell<Vec<ErrorScope>>,
-    /// The `GPUDeviceHandle` wrapper, weakly: it owns the error handler and the
-    /// `lost` promise in GC-visited slots, so holding it strongly from here
-    /// would tie a cycle through a root.
+    /// The `GPUDeviceHandle` wrapper. Weak, because a strong handle would root a cycle.
     handle: JsCell<bun_jsc::Weak<()>>,
     lost_signal: Arc<LostSignal>,
     /// `destroy()` ran, or the loss was already delivered to `lost`.
     lost: Cell<bool>,
     /// `(reason, message)` of the loss, for a `lost` promise that is first read after it.
     lost_info: JsCell<Option<(&'static str, String)>>,
-    /// Every buffer of this device that is mapped or has a pending map, so
-    /// `destroy()` can unmap them as the spec requires.
+    /// The buffers that are mapped or have a pending map: `destroy()` has to unmap them.
     mapped_buffers: JsCell<Vec<bun_jsc::Weak<()>>>,
 }
 
@@ -55,9 +49,7 @@ impl DeviceState {
         self.raw.id()
     }
 
-    /// WebGPU's "validate texture format required features": naming a format
-    /// whose feature the device did not enable is a TypeError at the call, not
-    /// a validation error later.
+    /// A format whose feature the device did not enable is a TypeError at the call (WebGPU spec).
     pub(crate) fn check_format(
         &self,
         global: &JSGlobalObject,
@@ -83,9 +75,7 @@ impl DeviceState {
         })
     }
 
-    /// Routes a wgpu-core error the way WebGPU's "dispatch error" does: into
-    /// the innermost error scope that filters for its kind, else to the
-    /// device's `uncapturederror` event (fired from a microtask).
+    /// WebGPU's "dispatch error": the innermost matching error scope, else `uncapturederror`.
     pub(crate) fn report(&self, global: &JSGlobalObject, err: GpuError) -> JsResult<()> {
         if err.device_lost || self.lost.get() {
             return Ok(());
@@ -280,8 +270,7 @@ impl GPUDeviceHandle {
         Ok(GPUQueue::create(global, &self.state))
     }
 
-    /// Runs once: the generated getter keeps the promise in the `lost` slot,
-    /// where `resolve_lost` finds it.
+    /// Runs once: the generated getter caches the promise in the `lost` slot for `resolve_lost`.
     pub(crate) fn get_lost(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self.state.lost_info.get() {
             Some((reason, message)) => {
@@ -334,8 +323,7 @@ impl GPUDeviceHandle {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Resolves to `null` or to `[kind, message]`; the JS `GPUDevice` turns the
-    /// pair into the matching `GPUError` subclass.
+    /// Resolves to `null` or `[kind, message]`, which the JS `GPUDevice` turns into a `GPUError`.
     pub(crate) fn pop_error_scope(
         &self,
         global: &JSGlobalObject,
@@ -454,9 +442,7 @@ impl GPUDeviceHandle {
         }
     }
 
-    /// The async forms resolve to the pipeline, or reject with
-    /// `[reason, message]`, which the JS `GPUDevice` turns into a
-    /// `GPUPipelineError`. A failure here does not reach the error scopes.
+    /// Rejects with `[reason, message]` (a `GPUPipelineError` in JS); error scopes do not see it.
     pub(crate) fn create_compute_pipeline_async(
         &self,
         global: &JSGlobalObject,
@@ -529,8 +515,7 @@ fn pipeline_promise(
     }
 }
 
-/// `GPUDeviceDescriptor` → the wgpu descriptor. `Err(message)` is a request the
-/// spec rejects with an OperationError or TypeError before any device exists.
+/// `GPUDeviceDescriptor` as a wgpu descriptor. `Err` is a rejection the spec asks for up front.
 pub(crate) enum DescriptorError {
     Type(String),
     Operation(String),

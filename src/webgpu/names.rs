@@ -1,11 +1,8 @@
-//! WebGPU IDL enum strings ⇄ `wgpu_types` enums.
-//!
-//! The spelling of every string is the one in <https://www.w3.org/TR/webgpu/>.
+//! WebGPU IDL enum strings ⇄ `wgpu_types` enums, spelled as in <https://www.w3.org/TR/webgpu/>.
 
 use crate::wgt;
 
-/// Declares `pub fn $parse(&[u8]) -> Option<$ty>` and `pub fn $name($ty) -> &'static str`
-/// from one table, so the two directions cannot drift apart.
+/// Declares `$parse(&[u8]) -> Option<$ty>` and `$name($ty) -> &'static str` from one table.
 macro_rules! string_enum {
     ($parse:ident, $name:ident, $ty:ty, { $($s:literal => $v:expr,)+ }) => {
         pub fn $parse(s: &[u8]) -> Option<$ty> {
@@ -209,8 +206,7 @@ string_enum!(parse_query_type_name, query_type_name, QueryKind, {
     "timestamp" => QueryKind::Timestamp,
 });
 
-/// `GPUQueryType`. `wgt::QueryType` carries payload for the native-only
-/// pipeline-statistics kind, so the JS-visible subset gets its own enum.
+/// `GPUQueryType`: `wgt::QueryType` without the native-only pipeline-statistics payload.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum QueryKind {
     Occlusion,
@@ -334,9 +330,7 @@ const fn astc(block: wgt::AstcBlock, channel: wgt::AstcChannel) -> wgt::TextureF
     wgt::TextureFormat::Astc { block, channel }
 }
 
-/// The `GPUFeatureName`s this build can report and accept, with the wgpu flag
-/// each one maps to. Everything outside this table (the `wgpu-` prefixed native
-/// extensions) stays invisible to JS.
+/// The `GPUFeatureName`s this build reports and accepts; wgpu's native extensions stay hidden.
 pub const FEATURES: &[(&str, wgt::Features)] = &[
     ("depth-clip-control", wgt::Features::DEPTH_CLIP_CONTROL),
     (

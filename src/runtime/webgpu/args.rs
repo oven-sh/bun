@@ -1,5 +1,4 @@
-//! WebIDL argument conversion for the WebGPU classes: `[EnforceRange]` integers,
-//! restricted floats, enums, interface types, dictionaries and sequences.
+//! WebIDL argument conversion: `[EnforceRange]` integers, floats, enums, dictionaries, sequences.
 
 use core::ffi::c_void;
 
@@ -79,15 +78,12 @@ pub(crate) fn to_utf8(global: &JSGlobalObject, v: JSValue) -> JsResult<Utf8Bytes
     v.to_utf8(global)
 }
 
-/// A `USVString` as the `String` wgpu's `&str` parameters need (labels, WGSL
-/// source, entry-point and constant names).
+/// A `USVString` as the `String` wgpu's `&str` parameters need.
 pub(crate) fn to_string(global: &JSGlobalObject, v: JSValue) -> JsResult<String> {
     Ok(usv_string(&v.to_utf8(global)?))
 }
 
-/// WebIDL defines the `USVString` conversion as "replace every unpaired
-/// surrogate with U+FFFD", which is exactly what the lossy conversion does to
-/// the one kind of invalid sequence a transcoded JS string can contain.
+/// Lossy on purpose: WebIDL's `USVString` replaces unpaired surrogates with U+FFFD, as this does.
 #[allow(clippy::disallowed_methods)]
 pub(crate) fn usv_string(utf8: &[u8]) -> String {
     String::from_utf8_lossy(utf8).into_owned()
@@ -124,8 +120,7 @@ pub(crate) fn to_class<T: JsClass + 'static>(
     }
 }
 
-/// Runs `f` on each element of a WebIDL `sequence<T>`. Arrays take the indexed
-/// path; every other iterable goes through the iteration protocol.
+/// Runs `f` on each element of a WebIDL `sequence<T>`: an array or any other iterable.
 pub(crate) fn for_each<F>(global: &JSGlobalObject, v: JSValue, what: &str, mut f: F) -> JsResult<()>
 where
     F: FnMut(JSValue) -> JsResult<()>,
@@ -173,8 +168,7 @@ where
     iterated
 }
 
-/// A WebIDL dictionary argument. `undefined` and `null` read as the empty
-/// dictionary; a member that is `undefined` reads as missing.
+/// A WebIDL dictionary: `undefined` and `null` are the empty one, an `undefined` member is missing.
 pub(crate) struct Dict<'a> {
     pub global: &'a JSGlobalObject,
     obj: Option<JSValue>,
@@ -338,8 +332,7 @@ impl<'a> Dict<'a> {
         to_class(self.global, v, &self.what(key), class_name)
     }
 
-    /// A nested dictionary member. Missing reads as `None`; `null` is the
-    /// empty dictionary, as WebIDL converts it.
+    /// A nested dictionary member. Missing reads as `None`; `null` is the empty dictionary.
     pub(crate) fn dict(&self, key: &'static str, name: &'static str) -> JsResult<Option<Dict<'a>>> {
         match self.get(key)? {
             Some(v) => Ok(Some(Dict::new(self.global, v, name)?)),
@@ -484,10 +477,7 @@ pub(crate) fn to_color(
     })
 }
 
-/// The bytes behind an `AllowSharedBufferSource` argument (ArrayBuffer,
-/// SharedArrayBuffer, typed array or DataView), plus the size of one element
-/// (1 unless the value is a typed array), which is the unit `dataOffset` and
-/// `size` of `writeBuffer` are counted in.
+/// The bytes of an `AllowSharedBufferSource`, and its element size (the unit of `writeBuffer` offsets).
 pub(crate) struct BufferSource {
     pub ptr: *const u8,
     pub len: usize,
@@ -513,9 +503,7 @@ impl BufferSource {
         })
     }
 
-    /// # Safety
-    /// No JS may run between `from_js` and the last use of the slice: script
-    /// could detach or resize the buffer.
+    /// Safety: no JS may run between `from_js` and the last use of the slice (it could detach the buffer).
     pub(crate) unsafe fn bytes(&self) -> &[u8] {
         if self.len == 0 {
             return &[];

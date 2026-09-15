@@ -71,8 +71,7 @@ impl GPUBindGroupLayout {
         let d = Dict::new(global, descriptor, "GPUBindGroupLayoutDescriptor")?;
         let label = d.label()?;
         let mut entries = Vec::new();
-        // A layout entry that names no binding type, or several, has no wgpu
-        // spelling: it becomes a validation error and an invalid layout.
+        // An entry with no binding type, or several, has no wgpu spelling: validation error, invalid layout.
         let mut malformed: Option<u32> = None;
         d.require_each("entries", |item| {
             let e = Dict::new(global, item, "GPUBindGroupLayoutEntry")?;
@@ -170,8 +169,7 @@ impl GPUBindGroupLayout {
                     "createBindGroupLayout: entry {binding} has to set exactly one of buffer, sampler, texture, storageTexture (externalTexture is not supported)"
                 )),
             )?;
-            // wgpu-core only hands out an invalid layout as the result of a failed creation, so
-            // ask for one that cannot succeed: two entries on the same binding.
+            // wgpu-core hands out an invalid layout only from a failed creation: two entries on one binding.
             let conflict = wgt::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgt::ShaderStages::NONE,
@@ -274,8 +272,7 @@ impl GPUBindGroup {
             .require_class::<GPUBindGroupLayout>("layout", "GPUBindGroupLayout")?
             .id();
         let mut entries: Vec<bm::BindGroupEntry<'static>> = Vec::new();
-        // Views made on the fly for `resource: GPUTexture`. The bind group keeps
-        // what it needs of them; the ids can go once it exists.
+        // Views made here for `resource: GPUTexture`; the bind group keeps what it needs once it exists.
         let mut implicit_views = Vec::new();
         d.require_each("entries", |item| {
             let e = Dict::new(global, item, "GPUBindGroupEntry")?;
@@ -326,10 +323,7 @@ impl GPUBindGroup {
     }
 }
 
-/// The arguments of `setBindGroup`, which every pass and bundle encoder takes
-/// in the same two shapes:
-/// `(index, bindGroup, dynamicOffsets?)` and
-/// `(index, bindGroup, dynamicOffsetsData, dynamicOffsetsDataStart, dynamicOffsetsDataLength)`.
+/// `setBindGroup(index, bindGroup, offsets?)` or `(index, bindGroup, Uint32Array, start, length)`.
 pub(crate) fn parse_set_bind_group(
     global: &JSGlobalObject,
     callframe: &bun_jsc::CallFrame,
@@ -344,10 +338,7 @@ pub(crate) fn parse_set_bind_group(
     if offsets_arg.is_undefined() {
         return Ok((index, bind_group, offsets));
     }
-    // WebIDL picks the overload by argument count: with more than three
-    // arguments this is the (Uint32Array, start, length) form. With three, a
-    // Uint32Array is a plain `sequence<GPUBufferDynamicOffset>`: every element
-    // of it is an offset.
+    // WebIDL picks the overload by argument count: a three-argument Uint32Array is a plain sequence.
     let is_uint32_array = offsets_arg.js_type() == bun_jsc::JSType::Uint32Array;
     let windowed = callframe.arguments_count() > 3;
     if windowed && !is_uint32_array {

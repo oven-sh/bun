@@ -4,12 +4,7 @@
 
 namespace Bun {
 
-// The WebGPU globals that are JavaScript classes (src/js/internal/webgpu.ts):
-// GPUDevice, GPUError, GPUBufferUsage, ... One getter serves them all, keyed by
-// the property name. They are CustomValue entries in ZigGlobalObject.lut.txt and
-// not PropertyCallbacks because a PropertyCallback can run while bytecode is
-// being linked, where evaluating the module's JavaScript is not allowed. The
-// native classes (GPUBuffer, GPUTexture, ...) are ClassStructure entries there.
+// CustomValue rows, not PropertyCallback: JSC resolves globals while it links bytecode, where JS cannot run.
 JSC_DECLARE_CUSTOM_GETTER(jsWebGPUGlobal);
 JSC_DECLARE_CUSTOM_SETTER(setJSWebGPUGlobal);
 

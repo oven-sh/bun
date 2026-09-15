@@ -5757,7 +5757,7 @@ describe("css tests", () => {
         "ParserError::SelectorError(SelectorError::InvalidState)",
       );
       // White space is not allowed between the name and a class, or inside the classes.
-      for (const [argument, message] of [
+      test.each([
         ["*.*", "Expected identifier after '.' in class selector, found: *"],
         ["*. cls", "Expected identifier after '.' in class selector"],
         [". cls", "Expected identifier after '.' in class selector"],
@@ -5770,11 +5770,9 @@ describe("css tests", () => {
         ["foo.inherit", "Unexpected token: inherit"],
         ["inherit.foo", "Unexpected token: inherit"],
         ["", "Unexpected end of input"],
-      ]) {
-        test(`ERROR: :root::${name}(${argument}) {position: fixed}`, () => {
-          expect(() => minify_test_with_options(`:root::${name}(${argument}) {position: fixed}`, "")).toThrow(message);
-        });
-      }
+      ])(`ERROR: :root::${name}(%s) {position: fixed}`, (argument, message) => {
+        expect(() => minify_test_with_options(`:root::${name}(${argument}) {position: fixed}`, "")).toThrow(message);
+      });
     }
 
     minify_test(".foo ::deep .bar {width: 20px}", ".foo ::deep .bar{width:20px}");

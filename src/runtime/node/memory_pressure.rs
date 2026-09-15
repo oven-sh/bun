@@ -24,7 +24,14 @@
 //! Armed lazily on the first listener and disarmed on the last removal via
 //! `onDidChangeListeners` in `BunProcess.cpp`, matching how signal handlers
 //! are wired. The watcher does not keep the event loop alive.
+//!
+//! `BUN_FEATURE_FLAG_EXPERIMENTAL_MEMORY_PRESSURE_HANDLER=1` arms the watcher
+//! at startup, independent of listeners, and has each notification
+//! `shrink_footprint` before the event is emitted.
 
+use core::sync::atomic::Ordering;
+
+use bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_MEMORY_PRESSURE_HANDLER;
 use bun_event_loop::ConcurrentTask::{Task, task_tag};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_jsc::ArrayBuffer;
@@ -33,6 +40,8 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[cfg(not(windows))]
 use core::ptr::NonNull;
+
+bun_core::define_scoped_log!(log, MemoryPressure, hidden);
 
 /// Pressure level passed to JS. Values are the `NOTE_MEMORYSTATUS_PRESSURE_*`
 /// bits on macOS so the kqueue dispatch can pass `fflags` through unchanged.
@@ -45,6 +54,11 @@ unsafe extern "C" {
     fn Process__emitMemoryPressureEvent(global: *mut JSGlobalObject, level: i32);
 }
 
+#[inline]
+fn handler_enabled() -> bool {
+    BUN_FEATURE_FLAG_EXPERIMENTAL_MEMORY_PRESSURE_HANDLER.get() == Some(true)
+}
+
 /// `run_task` target for `task_tag::MemoryPressureTask`. `lvl` is the packed
 /// task payload (macOS kevent `fflags`, or `level::CRITICAL` elsewhere).
 pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
@@ -54,8 +68,25 @@ pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
     } else {
         level::WARNING
     };
+    if handler_enabled() {
+        shrink_footprint(global, lvl == level::CRITICAL);
+    }
     // SAFETY: FFI; `global` is the live per-thread global.
     unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
+}
+
+/// JS thread: sync GC now, then JSC's `shrinkFootprintWhenIdle` (JIT code and
+/// fastMalloc free memory, deferred until no JS is on the stack), then mimalloc.
+fn shrink_footprint(global: &JSGlobalObject, critical: bool) {
+    log!(
+        "memory pressure ({}); shrinking footprint",
+        if critical { "critical" } else { "warning" }
+    );
+    bun_analytics::features::memory_pressure.fetch_add(1, Ordering::Relaxed);
+    let vm = global.vm();
+    let _ = vm.run_gc(true);
+    vm.shrink_footprint();
+    bun_core::Global::mimalloc_cleanup(critical);
 }
 
 /// The queued form of a pressure notification: `Task::ptr` packs the level,
@@ -425,8 +456,42 @@ pub(crate) extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
     windows::install(global);
 }
 
+/// Link-time extern called by `bun_jsc::VirtualMachine::init` for the main thread.
+#[unsafe(no_mangle)]
+fn __bun_memory_pressure_arm_handler(global: &JSGlobalObject) {
+    if !handler_enabled() {
+        return;
+    }
+    log!("handler enabled; arming the OS watch at startup");
+    Bun__MemoryPressure__install(global);
+}
+
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
+    // The handler keeps the watch until the VM is torn down.
+    if handler_enabled() {
+        return;
+    }
+    uninstall(global);
+}
+
+/// Stop phase of VM teardown: release the watch however it was armed (a
+/// listener still registered at exit, or the handler flag).
+pub(crate) fn stop_for_vm_teardown(global: &JSGlobalObject) {
+    // Peek without `rare_data()`, which would allocate RareData for a VM
+    // that never had any just to find the slot empty.
+    let armed = global
+        .bun_vm()
+        .as_mut()
+        .rare_data
+        .as_deref_mut()
+        .is_some_and(|rare| rare.memory_pressure_watcher_slot().is_some());
+    if armed {
+        uninstall(global);
+    }
+}
+
+fn uninstall(global: &JSGlobalObject) {
     #[cfg(not(windows))]
     posix::uninstall(global);
     #[cfg(windows)]

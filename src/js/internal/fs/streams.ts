@@ -67,6 +67,13 @@ function ownerClosedFd(stream) {
   return true;
 }
 
+/** EBADF to whoever is using the stream, unless that is the disposed graph's own leftover code, which is told
+ *  nothing: a stream that was reading or writing at dispose() finds this out from its own queued continuation,
+ *  and an 'error' nobody listens for there would be an uncaught exception of the host's. */
+function reportClosedByOwner(syscall: string, report: (er: Error) => void) {
+  if (!require("internal/shared").isStoppedModuleGraphRunning()) report(badFileDescriptor(syscall));
+}
+
 function badFileDescriptor(syscall: string) {
   const err: any = new Error("EBADF: bad file descriptor, " + syscall);
   err.code = "EBADF";
@@ -306,7 +313,7 @@ readStreamPrototype._construct = streamConstruct;
 
 readStreamPrototype._read = function (n) {
   if (ownerClosedFd(this))
-    return void require("internal/streams/destroy").errorOrDestroy(this, badFileDescriptor("read"));
+    return void reportClosedByOwner("read", er => require("internal/streams/destroy").errorOrDestroy(this, er));
   n = this.pos !== undefined ? $min(this.end - this.pos + 1, n) : $min(this.end - this.bytesRead + 1, n);
 
   if (n <= 0) {
@@ -539,7 +546,7 @@ writeStreamPrototype.open = streamNoop;
 writeStreamPrototype._construct = streamConstruct;
 
 function writeAll(data, size, pos, cb, retries = 0) {
-  if (ownerClosedFd(this)) return void cb(badFileDescriptor("write"));
+  if (ownerClosedFd(this)) return void reportClosedByOwner("write", cb);
   this[kFs].write(this.fd, data, 0, size, pos, (er, bytesWritten, buffer) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
@@ -570,7 +577,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 }
 
 function writevAll(chunks, size, pos, cb, retries = 0) {
-  if (ownerClosedFd(this)) return void cb(badFileDescriptor("writev"));
+  if (ownerClosedFd(this)) return void reportClosedByOwner("writev", cb);
   this[kFs].writev(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {

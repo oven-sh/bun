@@ -522,8 +522,7 @@ impl Watcher {
         #[cfg(windows)]
         {
             // on windows we can only watch items that are in the directory tree of the top level dir
-            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
+            if !self.is_in_top_level_dir(file_path) {
                 bun_core::warn!(
                     "File {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
@@ -591,8 +590,7 @@ impl Watcher {
     ) -> sys::Result<WatchItemIndex> {
         #[cfg(windows)]
         {
-            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
+            if !self.is_in_top_level_dir(file_path) {
                 bun_core::warn!(
                     "Directory {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
@@ -770,12 +768,20 @@ impl Watcher {
 
     #[inline]
     fn is_eligible_directory(&self, dir: &[u8]) -> bool {
-        strings::contains(dir, self.top_level_dir()) && !strings::contains(dir, b"node_modules")
+        self.is_in_top_level_dir(dir) && !strings::contains(dir, b"node_modules")
     }
 
+    #[cfg(windows)]
+    fn is_in_top_level_dir(&self, path: &[u8]) -> bool {
+        use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+        let is_inside = |root: &[u8]| is_parent_or_equal(root, path) != ParentEqual::Unrelated;
+        is_inside(self.cwd) || self.platform.real_root.as_deref().is_some_and(is_inside)
+    }
+
+    #[cfg(not(windows))]
     #[inline]
-    fn top_level_dir(&self) -> &[u8] {
-        self.cwd
+    fn is_in_top_level_dir(&self, path: &[u8]) -> bool {
+        strings::contains(path, self.cwd)
     }
 
     pub fn add_directory<const CLONE_FILE_PATH: bool>(
@@ -956,9 +962,7 @@ impl Watcher {
         // We don't want to watch:
         // - Directories outside the root directory
         // - Directories inside node_modules
-        if !strings::contains(file_path, b"node_modules")
-            && strings::contains(file_path, self.top_level_dir())
-        {
+        if self.is_eligible_directory(file_path) {
             let _ = self.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
         }
     }

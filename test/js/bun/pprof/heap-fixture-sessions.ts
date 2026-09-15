@@ -14,6 +14,12 @@ function secondSession() {
   for (let i = 0; i < 32; i++) second.push(new ArrayBuffer(MiB));
 }
 
+// A collection that an ArrayBuffer sets off allocates and frees under the same JavaScript frames.
+const blocksOf = (profile: ReturnType<typeof decode>) => ({
+  ...profile,
+  samples: profile.samples.filter(s => s.values.alloc_space >= s.values.alloc_objects * MiB),
+});
+
 Bun.pprof.heap.start(options);
 firstSession();
 const firstProfile = decode(Bun.pprof.heap.stop());
@@ -32,6 +38,6 @@ console.log(
     kept: second.length,
     first: totalsWhere(firstProfile, f => f.function === "firstSession"),
     firstInSecondProfile: totalsWhere(secondProfile, f => f.function === "firstSession"),
-    second: totalsWhere(secondProfile, f => f.function === "secondSession"),
+    second: totalsWhere(blocksOf(secondProfile), f => f.function === "secondSession"),
   }),
 );

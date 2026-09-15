@@ -887,7 +887,7 @@ unsafe extern "C" fn on_alloc(
     next.unwrap_or_else(|| bytes_sample_rate.max(MIN_SAMPLE_INTERVAL))
 }
 
-/// The interval until the next sample, `None` when nothing was recorded.
+/// The interval until the next sample, `None` when the session could not be reached.
 #[inline(never)]
 fn record_allocation(
     requested_size: usize,

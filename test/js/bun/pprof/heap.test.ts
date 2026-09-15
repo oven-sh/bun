@@ -202,7 +202,7 @@ describe.concurrent("Bun.pprof.heap", () => {
 
     expect(afterWorkerExit.threadId).toBeGreaterThan(0);
     for (const result of [whileWorkerRuns, afterWorkerExit]) {
-      expect(Math.abs(result.allocSpace - 32 * MiB)).toBeLessThan(4 * MiB);
+      expect(Math.abs(result.allocSpace - 32 * MiB)).toBeLessThan(3 * MiB);
       expect(result.labels.length).toBeGreaterThan(0);
       for (const labels of result.labels) expect(labels.worker).toBe(result.threadId);
       expect(result.frame.function).toBe("allocateInWorker");
@@ -242,7 +242,7 @@ describe.concurrent("Bun.pprof.heap", () => {
     // would hit its first samples: both sessions number theirs from zero.
     expect(result.kept).toBe(32);
     expect(result.second.alloc_objects).toBeGreaterThan(24);
-    expect(Math.abs(result.second.alloc_space - 32 * MiB)).toBeLessThan(5 * MiB);
+    expect(Math.abs(result.second.alloc_space - 32 * MiB)).toBeLessThan(3 * MiB);
     expect(result.second.inuse_objects).toBe(result.second.alloc_objects);
     expect(result.second.inuse_space).toBe(result.second.alloc_space);
   });

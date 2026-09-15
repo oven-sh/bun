@@ -4,6 +4,7 @@
 
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(JSC::JSGlobalObject* globalObject, void* impl);
 extern "C" void Blob__setAsFile(void* impl, const BunString* filename);
+extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
 extern "C" void* Blob__fromBytesWithNormalizedType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const uint8_t* mime, size_t mimeLength);
 
 namespace WebCore {
@@ -13,6 +14,11 @@ RefPtr<Blob> Blob::create(std::span<const uint8_t> bytes, const String& type, JS
     Bun::UTF8View mime(type);
     auto mimeBytes = mime.bytes();
     return createAdopted(Blob__fromBytesWithNormalizedType(globalThis, bytes.data(), bytes.size(), mimeBytes.data(), mimeBytes.size()));
+}
+
+RefPtr<Blob> Blob::createWithExactType(std::span<const uint8_t> bytes, ASCIILiteral type, JSC::JSGlobalObject* globalThis)
+{
+    return createAdopted(Blob__fromBytesWithType(globalThis, bytes.data(), bytes.size(), type.characters()));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebCore::Blob& impl)

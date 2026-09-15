@@ -123,8 +123,8 @@ void Clipboard::read(Ref<DeferredPromise>&& promise)
             ClipboardItemData data;
             data.reserveInitialCapacity(representations.size());
             for (auto& representation : representations) {
-                String type = clipboardMIMETypeString(representation.type);
-                data.append({ type, Blob::create({ representation.bytes, representation.length }, type, &globalObject).releaseNonNull() });
+                auto type = clipboardMIMETypeString(representation.type);
+                data.append({ String(type), Blob::createWithExactType({ representation.bytes, representation.length }, type, &globalObject).releaseNonNull() });
             }
             items.append(ClipboardItem::create(WTF::move(data)));
         }

@@ -357,6 +357,7 @@ void JSClipboardItem::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedTypes);
+    visitor.reportExtraMemoryVisited(thisObject->wrapped().memoryCost());
 }
 
 DEFINE_VISIT_CHILDREN(JSClipboardItem);

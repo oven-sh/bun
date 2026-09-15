@@ -6,6 +6,7 @@ import { dlopen, FFIType, ptr, toBuffer } from "bun:ffi";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { once } from "node:events";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -443,11 +444,11 @@ describe("read / write", () => {
       `,
     });
     const worker = new Worker(join(String(dir), "worker.js"));
-    const collecting = new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
-    const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
-    await collecting;
+    const failed = once(worker, "error").then(([error]) => Promise.reject(error));
+    const closed = once(worker, "close");
+    await Promise.race([once(worker, "message"), failed]);
     worker.terminate();
-    await closed;
+    await Promise.race([closed, failed]);
   });
 
   // The rejections a caller can act on say what was wrong. All of these are
@@ -584,10 +585,8 @@ describe("read / write", () => {
     await expectDOMException(first, "AbortError");
   });
 
-  // Regression: a superseded writer must retire the collect still armed on its
-  // items. The collect completion holds a Ref back to the writer, so dropping
-  // the items without retiring leaves writer, item and the GC-guarded
-  // aggregate promise (which pins the user's promise) alive for good.
+  // A superseded writer retires the collect armed on its item, whose completion
+  // holds the writer; otherwise writer, item and the user's promise leak.
   test("a superseded write releases its items and their promises", async () => {
     const refs: WeakRef<object>[] = [];
     for (let i = 0; i < 300; i++) {
@@ -662,6 +661,7 @@ describe("read / write", () => {
       expect(items[0]).toBeInstanceOf(ClipboardItem);
       expect(items[0].types).toEqual(withHtml ? ["text/plain", "text/html"] : ["text/plain"]);
       expect(await (await items[0].getType("text/plain")).text()).toBe(token);
+      expect((await items[0].getType("text/plain")).type).toBe("text/plain");
       if (withHtml) {
         expect(await (await items[0].getType("text/html")).text()).toBe(`<b>${token}</b>`);
       }
@@ -992,7 +992,7 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     expect({ result, log }).toEqual({
       result: {
         readText: { ok: "from xclip" },
-        // The crashed png read does not fail the read; that type is just absent.
+        // xclip offers png but crashes delivering it, so xsel answers instead.
         read: { ok: [["text/plain"]] },
         writeText: { ok: "hello" },
         writeHtml: { ok: "<b>hi</b>" },
@@ -1006,6 +1006,7 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         "xclip -selection clipboard -out",
         "xclip -selection clipboard -t text/html -out",
         "xclip -selection clipboard -t image/png -out",
+        "xsel --clipboard --output",
         "wl-copy --type text/plain;charset=utf-8",
         "wl-copy --type text/html",
       ],

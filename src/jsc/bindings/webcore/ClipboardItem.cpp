@@ -100,7 +100,14 @@ void ClipboardItem::getType(const String& type, Ref<DeferredPromise>&& promise)
         return;
     }
 
-    m_promises[index].value->whenSettledWithResult([promise = WTF::move(promise), type](JSDOMGlobalObject* globalObject, bool isFulfilled, JSC::JSValue result) {
+    auto* promiseGlobalObject = m_promises[index].value->globalObject();
+    if (!promiseGlobalObject) {
+        promise->reject(ExceptionCode::InvalidStateError);
+        return;
+    }
+    auto scope = DECLARE_THROW_SCOPE(promiseGlobalObject->vm());
+    Ref unregisteredPromise = promise.copyRef();
+    auto registered = m_promises[index].value->whenSettledWithResult([promise = WTF::move(promise), type](JSDOMGlobalObject* globalObject, bool isFulfilled, JSC::JSValue result) {
         if (!isFulfilled) {
             promise->reject(result);
             return;
@@ -117,6 +124,11 @@ void ClipboardItem::getType(const String& type, Ref<DeferredPromise>&& promise)
             return clipboardBlobToJS(&promiseGlobalObject, *blob, type);
         });
     });
+    RETURN_IF_EXCEPTION(scope, void());
+    if (registered == DOMPromise::IsCallbackRegistered::No) {
+        scope.release();
+        unregisteredPromise->reject(ExceptionCode::InvalidStateError);
+    }
 }
 
 bool ClipboardItem::supports(const String& type)
@@ -275,6 +287,12 @@ void ClipboardItem::collectDataForWriting(CollectCompletionHandler&& completion)
     }
 
     m_completionHandler = WTF::move(completion);
+    auto* globalObject = m_promises[0].value->globalObject();
+    if (!globalObject) {
+        finishCollect(std::nullopt);
+        return;
+    }
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     m_collected = Vector<RefPtr<Blob>>(m_promises.size());
     m_pendingCount = m_promises.size();
     auto generation = m_collectGeneration;
@@ -285,7 +303,10 @@ void ClipboardItem::collectDataForWriting(CollectCompletionHandler&& completion)
             if (protectedThis && generation == protectedThis->m_collectGeneration)
                 protectedThis->didSettle(*globalObject, index, isFulfilled, result);
         });
+        // With an exception pending the collect stays armed until the writer retires it.
+        RETURN_IF_EXCEPTION(scope, void());
         if (registered == DOMPromise::IsCallbackRegistered::No) {
+            scope.release();
             finishCollect(std::nullopt);
             return;
         }

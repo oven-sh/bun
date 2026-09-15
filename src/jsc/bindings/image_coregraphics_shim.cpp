@@ -644,35 +644,47 @@ int32_t bun_coregraphics_clipboard_read_types(const char* const* utis, size_t co
     }
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
-    Locker locker { pasteboardLock };
-    Pool pool(s);
-    CFRef pb = generalPasteboard(s);
-    if (!pb) return CG_UNAVAILABLE;
-    CFRef changeCount = s->sel_registerName("changeCount");
-    CFRef retain = s->sel_registerName("retain");
-    long generation = msg<long>(s, pb, changeCount);
-    for (size_t i = 0; i < count; i++) {
-        CFRef data = dataForType(s, pb, utis[i]);
-        CFRef owned = data ? msg<CFRef>(s, data, retain) : nullptr;
-        // A TIFF-only image converts, as in WebKit's reader.
-        if (!owned && !std::strcmp(utis[i], "public.png")) {
-            if (CFRef tiff = dataForType(s, pb, "public.tiff"))
-                owned = pngFromImageData(s, tiff);
+    // A TIFF-only image is converted, as in WebKit's reader, once the lock is released.
+    size_t tiffIndex = count;
+    {
+        Locker locker { pasteboardLock };
+        Pool pool(s);
+        CFRef pb = generalPasteboard(s);
+        if (!pb) return CG_UNAVAILABLE;
+        CFRef changeCount = s->sel_registerName("changeCount");
+        CFRef retain = s->sel_registerName("retain");
+        long generation = msg<long>(s, pb, changeCount);
+        for (size_t i = 0; i < count; i++) {
+            CFRef data = dataForType(s, pb, utis[i]);
+            if (!data && !std::strcmp(utis[i], "public.png")) {
+                data = dataForType(s, pb, "public.tiff");
+                if (data) tiffIndex = i;
+            }
+            if (!data) continue;
+            out_datas[i] = msg<CFRef>(s, data, retain);
+            long n = out_datas[i] ? s->CFDataGetLength(out_datas[i]) : 0;
+            out_lens[i] = n > 0 ? static_cast<size_t>(n) : 0;
         }
-        if (!owned) continue;
-        out_datas[i] = owned;
-        long n = s->CFDataGetLength(owned);
-        out_lens[i] = n > 0 ? static_cast<size_t>(n) : 0;
+        // Another process may have written meanwhile.
+        if (msg<long>(s, pb, changeCount) != generation) {
+            for (size_t i = 0; i < count; i++) {
+                if (out_datas[i]) s->CFRelease(out_datas[i]);
+                out_datas[i] = nullptr;
+                out_lens[i] = 0;
+            }
+            return CG_CLIPBOARD_CHANGED;
+        }
     }
-    // Another process may have written meanwhile.
-    if (msg<long>(s, pb, changeCount) == generation)
-        return CG_OK;
-    for (size_t i = 0; i < count; i++) {
-        if (out_datas[i]) s->CFRelease(out_datas[i]);
-        out_datas[i] = nullptr;
-        out_lens[i] = 0;
+    if (tiffIndex < count && out_datas[tiffIndex]) {
+        Pool pool(s);
+        CFRef tiff = out_datas[tiffIndex];
+        CFRef png = pngFromImageData(s, tiff);
+        s->CFRelease(tiff);
+        out_datas[tiffIndex] = png;
+        long n = png ? s->CFDataGetLength(png) : 0;
+        out_lens[tiffIndex] = n > 0 ? static_cast<size_t>(n) : 0;
     }
-    return CG_CLIPBOARD_CHANGED;
+    return CG_OK;
 }
 
 // Copies a `bun_coregraphics_clipboard_read_types` handle into `out` (which
@@ -724,6 +736,8 @@ int32_t bun_coregraphics_clipboard_write_types(const char* const* utis, const ui
             // in the low byte, so read it as `signed char`.
             if (msg<signed char>(s, pb, s->sel_registerName("setData:forType:"), cfData[i], cfType[i]) == 0) {
                 status = CG_ENCODE_FAILED;
+                // Never leave a partial item behind.
+                msg<long>(s, pb, s->sel_registerName("clearContents"));
                 break;
             }
         }

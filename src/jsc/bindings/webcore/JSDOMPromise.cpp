@@ -75,22 +75,26 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
 auto DOMPromise::whenSettledWithResult(Function<void(JSDOMGlobalObject*, bool, JSC::JSValue)>&& callback) -> IsCallbackRegistered
 {
     auto* globalObject = this->globalObject();
-    if (!globalObject)
+    if (!globalObject || isSuspended())
         return IsCallbackRegistered::No;
     auto& vm = globalObject->vm();
     JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* handler = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String {}, [callback = WTF::move(callback)](JSGlobalObject* globalObject, CallFrame* callFrame) mutable {
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(callFrame->thisValue()))
             std::exchange(callback, {})(uncheckedDowncast<JSDOMGlobalObject>(globalObject), promise->status() == JSC::JSPromise::Status::Fulfilled, promise->result());
         return JSC::JSValue::encode(JSC::jsUndefined());
     });
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
 
     auto* promise = this->promise();
     auto* thisHandler = JSC::JSBoundFunction::create(vm, globalObject, handler, promise, JSC::ArgList {}, 0, jsEmptyString(vm), JSC::makeSource("createWhenPromiseSettledFunction"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
     if (!thisHandler) [[unlikely]]
         return IsCallbackRegistered::No;
 
     promise->performPromiseThenExported(vm, globalObject, thisHandler, thisHandler, JSC::jsUndefined());
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
     return IsCallbackRegistered::Yes;
 }
 

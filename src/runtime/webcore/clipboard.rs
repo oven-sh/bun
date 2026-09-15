@@ -657,13 +657,12 @@ mod platform {
                 format,
                 make_global(*mime, bytes).ok_or(Unavailable::Platform)?,
             ));
+            // The bitmap is an extra; without it the PNG is still written.
             if *mime == Mime::ImagePng
-                && let Some(dib) = dibv5_from_png(bytes)
+                && let Some(dib) =
+                    dibv5_from_png(bytes).and_then(|dib| OwnedGlobal::from_bytes(&dib))
             {
-                formats.push((
-                    CF_DIBV5,
-                    OwnedGlobal::from_bytes(&dib).ok_or(Unavailable::Platform)?,
-                ));
+                formats.push((CF_DIBV5, dib));
             }
         }
         let mut clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
@@ -796,11 +795,19 @@ mod platform {
     enum HelperRun {
         NotInstalled,
         Succeeded(Vec<u8>),
-        /// `clean`: the helper reached the display and says nothing is copied.
+        /// `clean`: the helper said nothing (of that type) is copied.
         Failed {
             clean: bool,
         },
     }
+
+    /// How xclip ("target … not available") and wl-paste say nothing is copied.
+    const NOTHING_COPIED: [&[u8]; 4] = [
+        b"not available",
+        b"No selection",
+        b"Nothing is copied",
+        b"No suitable type",
+    ];
 
     /// The watchdog's codes (127/126 missing, 124 killed) are ones no helper uses.
     fn classify(result: spawn_sync::Result) -> HelperRun {
@@ -813,10 +820,10 @@ mod platform {
         match exited.code {
             126 | 127 => HelperRun::NotInstalled,
             124 => HelperRun::Failed { clean: false },
-            // xclip and xsel: "Can't open display"; wl-paste: "Failed to connect to a Wayland server".
             _ => HelperRun::Failed {
-                clean: !strings::contains(&result.stderr, b"display")
-                    && !strings::contains(&result.stderr, b"connect"),
+                clean: NOTHING_COPIED
+                    .iter()
+                    .any(|message| strings::contains(&result.stderr, message)),
             },
         }
     }
@@ -835,33 +842,38 @@ mod platform {
     }
 
     /// Runs a helper under a `/bin/sh` watchdog: a hung X11 selection owner blocks forever.
-    fn run(
-        argv: &[&str],
-        stdin: Option<Fd>,
-        capture_stdout: bool,
-    ) -> Result<HelperRun, Unavailable> {
+    fn run(argv: &[&str], stdin: Option<Fd>, capture: bool) -> Result<HelperRun, Unavailable> {
         let mut command = Vec::<u8>::with_capacity(256);
+        // An asynchronous command's stdin is /dev/null, so the payload goes through fd 3.
+        if stdin.is_some() {
+            command.extend_from_slice(b"exec 3<&0; ");
+        }
         for (i, word) in argv.iter().enumerate() {
             if i > 0 {
                 command.push(b' ');
             }
             shell_quote_into(&mut command, word.as_bytes());
         }
-        // An asynchronous command reads /dev/null unless stdin is redirected explicitly.
         if stdin.is_some() {
-            command.extend_from_slice(b" <&0");
+            command.extend_from_slice(b" <&3 3<&- & c=$!; exec 3<&-;");
+        } else {
+            command.extend_from_slice(b" & c=$!;");
         }
         let seconds = env_var::BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT
             .get()
             .unwrap_or_default()
             .max(1);
         // Fires only after `sleep` completes; redirected so it holds no captured pipe.
-        command
-            .extend_from_slice(b" & c=$!; { trap 'kill \"$sp\" 2>/dev/null; exit 0' TERM; sleep ");
+        command.extend_from_slice(b" { trap 'kill \"$sp\" 2>/dev/null; exit 0' TERM; sleep ");
         command.extend_from_slice(seconds.to_string().as_bytes());
         command.extend_from_slice(
             b" & sp=$!; wait \"$sp\" && kill \"$c\" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
         );
+        let output = if capture {
+            spawn_sync::SyncStdio::Buffer
+        } else {
+            spawn_sync::SyncStdio::Ignore
+        };
         let result = spawn_sync::spawn(&spawn_sync::Options {
             argv: vec![
                 Box::from(b"/bin/sh".as_slice()),
@@ -870,12 +882,9 @@ mod platform {
             ],
             cwd: Box::from(b".".as_slice()),
             stdin: stdin.map_or(spawn_sync::SyncStdio::Ignore, spawn_sync::SyncStdio::Fd),
-            stdout: if capture_stdout {
-                spawn_sync::SyncStdio::Buffer
-            } else {
-                spawn_sync::SyncStdio::Ignore
-            },
-            stderr: spawn_sync::SyncStdio::Buffer,
+            // Not for writes: a helper that daemonizes keeps its output open.
+            stdout: output,
+            stderr: output,
             envp: None,
             // A pool thread must not arm the process-wide signal forwarder.
             forward_signals: false,
@@ -923,9 +932,10 @@ mod platform {
         };
         let mut present = Vec::new();
         for &mime in types.iter().filter(|&&mime| offers(&targets, mime)) {
-            // One offered type failing to read leaves the others.
-            if let Answer::Present(mut read) = read_one(helper, mime)? {
-                present.append(&mut read);
+            match read_one(helper, mime)? {
+                Answer::Present(mut read) => present.append(&mut read),
+                // An offered type that cannot be delivered is a failed read, not an absent one.
+                Answer::Failed | Answer::NotInstalled => return Ok(Answer::Failed),
             }
         }
         Ok(Answer::Present(present))

@@ -8774,7 +8774,7 @@ declare module "bun" {
 
   /**
    * What the last connection attempt of a `fetch()` did, as reported to
-   * {@link FetchContextOptions.onStats | onStats}. The counters restart on every
+   * {@link FetchSessionOptions.onStats | onStats}. The counters restart on every
    * redirect hop and on the automatic retry of a request whose reused
    * keep-alive socket turned out to be closed.
    */
@@ -8854,17 +8854,17 @@ declare module "bun" {
         respectNoProxy?: boolean | undefined;
       };
 
-  interface FetchContextOptions {
+  interface FetchSessionOptions {
     /**
-     * TLS options for the connections of this context. A request that passes
+     * TLS options for the connections of this session. A request that passes
      * its own `tls` uses that instead, as a whole.
      *
      * A `checkServerIdentity` given here runs once per connection, and the
-     * connection is then shared by the requests of this context.
+     * connection is then shared by the requests of this session.
      */
     tls?: BunFetchRequestInitTLS | undefined;
     /**
-     * The proxy for the requests of this context.
+     * The proxy for the requests of this session.
      */
     proxy?: FetchProxyOption | undefined;
     /**
@@ -8885,7 +8885,7 @@ declare module "bun" {
            */
           idleTimeout?: number | undefined;
           /**
-           * Most idle connections this context keeps per kind of connection
+           * Most idle connections this session keeps per kind of connection
            * (plain, TLS, each distinct `tls` configuration, Unix socket). When
            * one more is released, the longest-idle one is closed.
            */
@@ -8893,7 +8893,7 @@ declare module "bun" {
         }
       | undefined;
     /**
-     * Send the requests of this context over a Unix socket.
+     * Send the requests of this session over a Unix socket.
      */
     unix?: string | undefined;
     /**
@@ -8908,23 +8908,23 @@ declare module "bun" {
   /**
    * Connection settings shared by the `fetch()` calls that name it, and the
    * keep-alive connection pool they share. Connections are never shared between
-   * two contexts, or between a context and plain `fetch()`.
+   * two sessions, or between a session and plain `fetch()`.
    *
    * @example
    * ```ts
-   * const context = new Bun.FetchContext({
+   * const session = new Bun.FetchSession({
    *   proxy: { url: "http://proxy.internal:8080", respectNoProxy: false },
    *   tls: { ca: await Bun.file("corp-ca.pem").text() },
    * });
    *
-   * const response = await fetch("https://example.com", { context });
+   * const response = await fetch("https://example.com", { session });
    * ```
    */
-  class FetchContext {
-    constructor(options?: FetchContextOptions);
+  class FetchSession {
+    constructor(options?: FetchSessionOptions);
     /**
-     * Close the idle connections in this context's pool. Requests in flight
-     * finish, and the context stays usable.
+     * Close the idle connections in this session's pool. Requests in flight
+     * finish, and the session stays usable.
      */
     close(): void;
     [Symbol.dispose](): void;

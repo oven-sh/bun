@@ -240,9 +240,9 @@ pub struct PooledSocket<const SSL: bool> {
     /// HTTP/2 connection state (HPACK tables, server SETTINGS) when
     /// this socket negotiated "h2". Owned by the pool while parked.
     pub(crate) h2_session: Option<RefPtr<h2::ClientSession>>,
-    /// `PoolOptions::id` of the fetch context that opened it.
+    /// `PoolOptions::id` of the fetch session that opened it.
     pub(crate) pool_id: u64,
-    /// `PoolOptions::idle_timeout_seconds` of the context that parked it.
+    /// `PoolOptions::idle_timeout_seconds` of the session that parked it.
     pub(crate) idle_timeout_seconds: u32,
 }
 
@@ -724,14 +724,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
         pooled: PooledSocket<SSL>,
         options: crate::PoolOptions,
     ) -> Option<PooledSocket<SSL>> {
-        // Oldest parked socket, of `options.id` only when `same_context`.
-        let oldest = |same_context: bool| -> (Option<*mut PooledSocket<SSL>>, usize) {
+        // Oldest parked socket, of `options.id` only when `same_session`.
+        let oldest = |same_session: bool| -> (Option<*mut PooledSocket<SSL>>, usize) {
             let mut oldest: Option<*mut PooledSocket<SSL>> = None;
             let mut count = 0usize;
             let mut iter = pool.used.iterator::<true, true>();
             while let Some(idx) = iter.next() {
                 let ptr = pool.at(u16::try_from(idx).expect("int cast"));
-                if same_context && pooled_socket_mut(ptr).pool_id != options.id {
+                if same_session && pooled_socket_mut(ptr).pool_id != options.id {
                     continue;
                 }
                 count += 1;
@@ -1234,7 +1234,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 }
 
 impl<const SSL: bool> HTTPContext<SSL> {
-    /// Retire every parked socket that belongs to fetch context `pool_id`.
+    /// Retire every parked socket that belongs to fetch session `pool_id`.
     pub(crate) fn close_idle_sockets(&mut self, pool_id: u64) {
         fn close_in<const SSL: bool, const N: usize>(
             pool: &HiveArray<PooledSocket<SSL>, N>,

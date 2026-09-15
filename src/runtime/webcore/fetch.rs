@@ -32,9 +32,9 @@ pub use self::fetch_request_body_sink::FetchRequestBodySink;
 #[path = "fetch/compress_body.rs"]
 pub mod compress_body;
 
-#[path = "fetch/FetchContext.rs"]
-pub mod fetch_context;
-pub use self::fetch_context::FetchContext;
+#[path = "fetch/FetchSession.rs"]
+pub mod fetch_session;
+pub use self::fetch_session::FetchSession;
 
 /// `proxyInternals` of `bun:internal-for-testing`. `generated_js2native.rs`
 /// snake-cases `TestingAPIs` as `testing_ap_is`.
@@ -647,8 +647,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // "context: Bun.FetchContext"
-    let context: Option<fetch_context::ContextRef<'_>> = 'extract_context: {
+    // "session: Bun.FetchSession"
+    let session: Option<fetch_session::SessionRef<'_>> = 'extract_session: {
         let objects_to_try = [
             options_object.unwrap_or_default(),
             request_init_object.unwrap_or_default(),
@@ -656,10 +656,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(value) =
-                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Context)?
+                    obj.get_fetch_option(global_this, jsc::FetchOptionName::Session)?
                 {
                     if !value.is_undefined_or_null() {
-                        break 'extract_context Some(fetch_context::ContextRef::from_js(
+                        break 'extract_session Some(fetch_session::SessionRef::from_js(
                             global_this,
                             value,
                         )?);
@@ -667,10 +667,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
         }
-        break 'extract_context None;
+        break 'extract_session None;
     };
 
-    // "tls: TLSConfig". A request's `tls` replaces its context's as a whole.
+    // "tls: TLSConfig". A request's `tls` replaces its session's as a whole.
     let mut request_has_tls = false;
     ssl_config = 'extract_ssl_config: {
         let objects_to_try = [
@@ -683,7 +683,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if let Some(tls) = obj.get_fetch_option(global_this, jsc::FetchOptionName::Tls)? {
                     if tls.is_object() {
                         request_has_tls = true;
-                        let parsed = fetch_context::parse_tls(vm, global_this, tls)?;
+                        let parsed = fetch_session::parse_tls(vm, global_this, tls)?;
                         if let Some(reject) = parsed.reject_unauthorized {
                             reject_unauthorized = reject;
                         }
@@ -702,10 +702,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     };
     // A per-request closure has no identity a pool key could compare.
     let bypass_pool = !check_server_identity.is_empty();
-    if let Some(context) = context.filter(|_| !request_has_tls) {
-        ssl_config = context.ssl_config();
-        reject_unauthorized = context.reject_unauthorized().unwrap_or(reject_unauthorized);
-        if let Some(callback) = context.check_server_identity() {
+    if let Some(session) = session.filter(|_| !request_has_tls) {
+        ssl_config = session.ssl_config();
+        reject_unauthorized = session.reject_unauthorized().unwrap_or(reject_unauthorized);
+        if let Some(callback) = session.check_server_identity() {
             check_server_identity = callback;
         }
     }
@@ -828,8 +828,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_redirect_type redirect_type;
     };
 
-    // keepalive: boolean | undefined; the context's setting is the default.
-    if context.is_some_and(|c| !c.keep_alive()) {
+    // keepalive: boolean | undefined; the session's setting is the default.
+    if session.is_some_and(|c| !c.keep_alive()) {
         disable_keepalive = true;
     }
     disable_keepalive = 'extract_disable_keepalive: {
@@ -889,7 +889,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut proxy_direct = false;
     let mut proxy_respects_no_proxy = true;
     {
-        let mut proxy_option: Option<fetch_context::ProxyOption> = None;
+        let mut proxy_option: Option<fetch_session::ProxyOption> = None;
         let objects_to_try = [
             options_object.unwrap_or_default(),
             request_init_object.unwrap_or_default(),
@@ -899,33 +899,33 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if let Some(proxy_arg) =
                     obj.get_fetch_option(global_this, jsc::FetchOptionName::Proxy)?
                 {
-                    proxy_option = fetch_context::parse_proxy(global_this, proxy_arg)?;
+                    proxy_option = fetch_session::parse_proxy(global_this, proxy_arg)?;
                 }
             }
         }
         // The request's own `unix` or `proxy` wins over whichever of the two
-        // its context names; they cannot be combined.
-        if let Some(context) = context {
+        // its session names; they cannot be combined.
+        if let Some(session) = session {
             if !request_has_unix
                 && !matches!(
                     proxy_option,
-                    Some(fetch_context::ProxyOption::Explicit { .. })
+                    Some(fetch_session::ProxyOption::Explicit { .. })
                 )
             {
-                unix_socket_path = context.unix().into();
+                unix_socket_path = session.unix().into();
             }
         }
-        let proxy_option = match (proxy_option, context.and_then(|c| c.proxy())) {
-            (None, Some(fetch_context::ProxyOption::Explicit { .. })) if request_has_unix => None,
-            (None, Some(from_context)) => Some(from_context.clone()),
+        let proxy_option = match (proxy_option, session.and_then(|c| c.proxy())) {
+            (None, Some(fetch_session::ProxyOption::Explicit { .. })) if request_has_unix => None,
+            (None, Some(from_session)) => Some(from_session.clone()),
             (own, _) => own,
         };
         match proxy_option {
             None => {}
-            Some(fetch_context::ProxyOption::Direct) => {
+            Some(fetch_session::ProxyOption::Direct) => {
                 proxy_direct = true;
             }
-            Some(fetch_context::ProxyOption::Explicit {
+            Some(fetch_session::ProxyOption::Explicit {
                 href,
                 headers,
                 respect_no_proxy,
@@ -953,8 +953,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             on_stats = obj.get_fetch_option_function(global_this, jsc::FetchOptionName::OnStats)?;
         }
     }
-    let on_stats = on_stats.or_else(|| context.and_then(|c| c.on_stats()));
-    let pool = context.map(|c| c.pool()).unwrap_or_default();
+    let on_stats = on_stats.or_else(|| session.and_then(|c| c.on_stats()));
+    let pool = session.map(|c| c.pool()).unwrap_or_default();
 
     // signal: AbortSignal | null | undefined;
     // WebIDL `AbortSignal?` member: present iff not undefined. A present `null`
@@ -1885,10 +1885,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         unix_socket_path: core::mem::take(&mut unix_socket_path),
         pool,
         bypass_pool,
-        // Sockets parked in the context's pool outlive the request; the context
+        // Sockets parked in the session's pool outlive the request; the session
         // closes them when it is collected, so it has to outlive the request too.
-        fetch_context: match context {
-            Some(context) => jsc::strong::Optional::create(context.wrapper(), global_this),
+        fetch_session: match session {
+            Some(session) => jsc::strong::Optional::create(session.wrapper(), global_this),
             None => jsc::strong::Optional::empty(),
         },
         on_stats: match on_stats {

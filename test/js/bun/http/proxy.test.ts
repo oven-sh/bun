@@ -950,11 +950,11 @@ test("HTTPS target through proxy with passing checkServerIdentity round-trips", 
   expect(verified).toEqual(["localhost"]);
 });
 
-test("HTTPS target through proxy reuses the tunnel across a context's checkServerIdentity requests", async () => {
+test("HTTPS target through proxy reuses the tunnel across a session's checkServerIdentity requests", async () => {
   using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
   httpProxyServer.log.length = 0;
   const verified: string[] = [];
-  using context = new Bun.FetchContext({
+  using session = new Bun.FetchSession({
     proxy: httpProxyServer.url,
     tls: {
       ca: tlsCert.cert,
@@ -967,13 +967,13 @@ test("HTTPS target through proxy reuses the tunnel across a context's checkServe
   const connects = () => httpProxyServer.log.filter(l => l.startsWith("CONNECT")).length;
 
   for (let i = 0; i < 3; i++) {
-    expect(await fetch(target.url, { context }).then(r => r.text())).toBe("ok");
+    expect(await fetch(target.url, { session }).then(r => r.text())).toBe("ok");
   }
   expect(verified).toEqual(["localhost"]);
   expect(connects()).toBe(1);
 
   // A per-request callback is a closure nothing can compare: it neither takes
-  // the context's approved tunnel nor leaves one behind.
+  // the session's approved tunnel nor leaves one behind.
   for (let i = 0; i < 2; i++) {
     const own = await fetch(target.url, {
       proxy: httpProxyServer.url,
@@ -982,7 +982,7 @@ test("HTTPS target through proxy reuses the tunnel across a context's checkServe
     expect(await own.text()).toBe("ok");
   }
   expect(connects()).toBe(3);
-  expect(await fetch(target.url, { context }).then(r => r.text())).toBe("ok");
+  expect(await fetch(target.url, { session }).then(r => r.text())).toBe("ok");
   expect(connects()).toBe(3);
   expect(verified).toEqual(["localhost", "own localhost", "own localhost"]);
 });
@@ -2149,9 +2149,9 @@ describe.concurrent("a CONNECT tunnel", () => {
   ])("is established by any 2xx reply, whatever its header fields: %j", async reply => {
     using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
     using proxy = await tunnelingProxy(origin.port, reply);
-    using context = new Bun.FetchContext({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
+    using session = new Bun.FetchSession({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
     for (let i = 0; i < 2; i++) {
-      const response = await fetch(`https://localhost:${origin.port}/`, { context });
+      const response = await fetch(`https://localhost:${origin.port}/`, { session });
       expect(await response.text()).toBe("through");
     }
     // ...and the tunnel is kept alive like any other.
@@ -2178,13 +2178,13 @@ describe.concurrent("a CONNECT tunnel", () => {
     }).toEqual({ name: "Error", code: "ERR_PROXY_TUNNEL", status: 403, statusText: "Forbidden", headers: "policy" });
   });
 
-  test("is pooled per fetch context", async () => {
+  test("is pooled per fetch session", async () => {
     using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
     await using proxy = await createAdversarialProxy();
-    using one = new Bun.FetchContext({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
-    using other = new Bun.FetchContext({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
-    const text = (context: Bun.FetchContext) =>
-      fetch(`https://localhost:${origin.port}/`, { context }).then(r => r.text());
+    using one = new Bun.FetchSession({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
+    using other = new Bun.FetchSession({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
+    const text = (session: Bun.FetchSession) =>
+      fetch(`https://localhost:${origin.port}/`, { session }).then(r => r.text());
     expect([await text(one), await text(one)]).toEqual(["through", "through"]);
     expect(proxy.connectCount()).toBe(1);
     expect(await text(other)).toBe("through");

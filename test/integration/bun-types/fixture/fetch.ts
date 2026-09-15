@@ -350,7 +350,7 @@ if (typeof process !== "undefined") {
 }
 
 {
-  const context = new Bun.FetchContext({
+  const session = new Bun.FetchSession({
     tls: { ca: "ca", rejectUnauthorized: true, checkServerIdentity: () => undefined },
     proxy: { url: "http://proxy:8080", headers: { "x-proxy": "1" }, respectNoProxy: false },
     keepAlive: { idleTimeout: 30, maxIdleSockets: 4 },
@@ -361,8 +361,8 @@ if (typeof process !== "undefined") {
       (void sent, flags, where);
     },
   });
-  fetch("https://example.com", { context });
-  fetch("https://example.com", { context, proxy: false });
+  fetch("https://example.com", { session });
+  fetch("https://example.com", { session, proxy: false });
   fetch("https://example.com", { proxy: false, onStats: () => {} });
   fetch("https://93.184.216.34/", {
     headers: { Host: "example.com" },
@@ -371,11 +371,11 @@ if (typeof process !== "undefined") {
     redirect: "manual",
   });
   fetch("https://example.com", { proxy: new URL("http://proxy:8080") });
-  new Bun.FetchContext({ proxy: false, keepAlive: false, unix: "/tmp/sock" });
-  context.close();
-  context[Symbol.dispose]();
-  // @ts-expect-error not a context
-  fetch("https://example.com", { context: {} });
+  new Bun.FetchSession({ proxy: false, keepAlive: false, unix: "/tmp/sock" });
+  session.close();
+  session[Symbol.dispose]();
+  // @ts-expect-error not a session
+  fetch("https://example.com", { session: {} });
   // @ts-expect-error `true` does not name a proxy
   fetch("https://example.com", { proxy: true });
 }

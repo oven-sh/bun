@@ -1,5 +1,5 @@
-//! `Bun.FetchContext`: connection settings shared by the `fetch()` calls that
-//! name it (`fetch(url, { context })`), and the keep-alive pool they share.
+//! `Bun.FetchSession`: connection settings shared by the `fetch()` calls that
+//! name it (`fetch(url, { session })`), and the keep-alive pool they share.
 
 use core::cell::Cell;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -16,9 +16,9 @@ use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs as _};
 use crate::webcore::FetchHeaders;
 use crate::webcore::response::HeadersRef;
 
-pub use crate::generated_classes::js_FetchContext as js;
+pub use crate::generated_classes::js_FetchSession as js;
 
-/// `proxy` as given to `fetch()` or to a context. Absent means "inherit".
+/// `proxy` as given to `fetch()` or to a session. Absent means "inherit".
 #[derive(Clone)]
 pub(crate) enum ProxyOption {
     /// `proxy: false`: connect directly, whatever the environment says.
@@ -31,7 +31,7 @@ pub(crate) enum ProxyOption {
     },
 }
 
-/// `tls` as given to `fetch()` or to a context.
+/// `tls` as given to `fetch()` or to a session.
 pub(crate) struct TlsOption {
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) reject_unauthorized: Option<bool>,
@@ -132,37 +132,37 @@ pub(crate) fn parse_proxy(
 static NEXT_POOL_ID: AtomicU64 = AtomicU64::new(1);
 
 #[bun_jsc::JsClass]
-pub struct FetchContext {
+pub struct FetchSession {
     pool: http::PoolOptions,
     keep_alive: bool,
     ssl_config: Option<http::ssl_config::SharedPtr>,
     reject_unauthorized: Option<bool>,
     proxy: Option<ProxyOption>,
     unix: Box<[u8]>,
-    /// Whether a request ever named this context, so its pool can hold sockets.
+    /// Whether a request ever named this session, so its pool can hold sockets.
     used: Cell<bool>,
 }
 
-/// The `context` option of one `fetch()` call. The wrapper is an argument of
-/// that call, which keeps the context and its callbacks alive.
+/// The `session` option of one `fetch()` call. The wrapper is an argument of
+/// that call, which keeps the session and its callbacks alive.
 #[derive(Clone, Copy)]
-pub(crate) struct ContextRef<'a> {
-    context: &'a FetchContext,
+pub(crate) struct SessionRef<'a> {
+    session: &'a FetchSession,
     wrapper: JSValue,
 }
 
-impl<'a> ContextRef<'a> {
-    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<ContextRef<'a>> {
-        let Some(context) = FetchContext::from_js(value) else {
+impl<'a> SessionRef<'a> {
+    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<SessionRef<'a>> {
+        let Some(session) = FetchSession::from_js(value) else {
             return Err(global.throw_invalid_arguments(format_args!(
-                "fetch: 'context' must be a Bun.FetchContext"
+                "fetch: 'session' must be a Bun.FetchSession"
             )));
         };
         // SAFETY: `from_js` returned the live `m_ctx` of the wrapper `value` roots.
-        let context = unsafe { &*context };
-        context.used.set(true);
-        Ok(ContextRef {
-            context,
+        let session = unsafe { &*session };
+        session.used.set(true);
+        Ok(SessionRef {
+            session,
             wrapper: value,
         })
     }
@@ -171,40 +171,40 @@ impl<'a> ContextRef<'a> {
         self.wrapper
     }
     pub(crate) fn pool(self) -> http::PoolOptions {
-        self.context.pool
+        self.session.pool
     }
     pub(crate) fn keep_alive(self) -> bool {
-        self.context.keep_alive
+        self.session.keep_alive
     }
     pub(crate) fn ssl_config(self) -> Option<http::ssl_config::SharedPtr> {
-        self.context.ssl_config.clone()
+        self.session.ssl_config.clone()
     }
     pub(crate) fn reject_unauthorized(self) -> Option<bool> {
-        self.context.reject_unauthorized
+        self.session.reject_unauthorized
     }
     pub(crate) fn check_server_identity(self) -> Option<JSValue> {
         js::check_server_identity_get_cached(self.wrapper)
     }
     pub(crate) fn proxy(self) -> Option<&'a ProxyOption> {
-        self.context.proxy.as_ref()
+        self.session.proxy.as_ref()
     }
     pub(crate) fn unix(self) -> &'a [u8] {
-        &self.context.unix
+        &self.session.unix
     }
     pub(crate) fn on_stats(self) -> Option<JSValue> {
         js::on_stats_get_cached(self.wrapper)
     }
 }
 
-impl FetchContext {
+impl FetchSession {
     pub fn constructor(
         global: &JSGlobalObject,
         frame: &CallFrame,
         this_value: JSValue,
-    ) -> JsResult<Box<FetchContext>> {
+    ) -> JsResult<Box<FetchSession>> {
         let vm = global.bun_vm();
         let options = frame.argument(0);
-        let mut this = Box::new(FetchContext {
+        let mut this = Box::new(FetchSession {
             pool: http::PoolOptions {
                 id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
                 idle_timeout_seconds: 0,
@@ -222,7 +222,7 @@ impl FetchContext {
         }
         if !options.is_object() {
             return Err(global
-                .throw_invalid_arguments(format_args!("FetchContext: options must be an object")));
+                .throw_invalid_arguments(format_args!("FetchSession: options must be an object")));
         }
 
         if let Some(tls) = options.get(global, "tls")? {
@@ -235,7 +235,7 @@ impl FetchContext {
                 }
             } else if !tls.is_undefined_or_null() {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "FetchContext: 'tls' must be an object"
+                    "FetchSession: 'tls' must be an object"
                 )));
             }
         }
@@ -249,13 +249,13 @@ impl FetchContext {
                 this.unix = path;
             } else if !unix.is_undefined_or_null() {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "FetchContext: 'unix' must be a non-empty string"
+                    "FetchSession: 'unix' must be a non-empty string"
                 )));
             }
         }
         if !this.unix.is_empty() && matches!(this.proxy, Some(ProxyOption::Explicit { .. })) {
             return Err(global.throw_invalid_arguments(format_args!(
-                "FetchContext: cannot use a proxy with a unix socket"
+                "FetchSession: cannot use a proxy with a unix socket"
             )));
         }
 
@@ -282,7 +282,7 @@ impl FetchContext {
                 }
             } else if !keep_alive.is_undefined_or_null() {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "FetchContext: 'keepAlive' must be a boolean or an object"
+                    "FetchSession: 'keepAlive' must be a boolean or an object"
                 )));
             }
         }
@@ -293,8 +293,8 @@ impl FetchContext {
         Ok(this)
     }
 
-    /// Close this context's idle keep-alive connections. Requests in flight
-    /// finish, and the context stays usable.
+    /// Close this session's idle keep-alive connections. Requests in flight
+    /// finish, and the session stays usable.
     #[bun_jsc::host_fn(method)]
     pub fn close(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         self.close_idle_sockets();
@@ -312,7 +312,7 @@ impl FetchContext {
         reason = "reclaim point for the generated finalizer"
     )]
     pub fn finalize(self: Box<Self>) {
-        // Requests keep their context alive, so nothing is left to use these sockets.
+        // Requests keep their session alive, so nothing is left to use these sockets.
         self.close_idle_sockets();
     }
 }
@@ -336,7 +336,7 @@ fn positive_number(
     };
     if !(number.is_finite() && number > 0.0) {
         return Err(global.throw_invalid_arguments(format_args!(
-            "FetchContext: 'keepAlive.{name}' must be a positive number"
+            "FetchSession: 'keepAlive.{name}' must be a positive number"
         )));
     }
     Ok(Some(number))

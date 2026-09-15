@@ -141,9 +141,9 @@ pub struct FetchTasklet {
     pub(crate) check_server_identity: StrongOptional,
     /// Told the last connection's `ConnectionStats` once the HTTP thread is done.
     pub(crate) on_stats: StrongOptional,
-    /// The `Bun.FetchContext` of this request, kept from being collected (and
+    /// The `Bun.FetchSession` of this request, kept from being collected (and
     /// closing its pool) while the request can still park a socket there.
-    pub(crate) fetch_context: StrongOptional,
+    pub(crate) fetch_session: StrongOptional,
     pub(crate) reject_unauthorized: bool,
     pub(crate) upgraded_connection: bool,
     pub(crate) unix_socket_path: Box<[u8]>,
@@ -497,7 +497,7 @@ impl FetchTasklet {
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
         self.on_stats.deinit();
-        self.fetch_context.deinit();
+        self.fetch_session.deinit();
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
@@ -2004,7 +2004,7 @@ impl FetchTasklet {
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
             on_stats: fetch_options.on_stats,
-            fetch_context: fetch_options.fetch_context,
+            fetch_session: fetch_options.fetch_session,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             unix_socket_path: fetch_options.unix_socket_path,
@@ -2744,7 +2744,7 @@ pub struct FetchOptions {
     pub(crate) pool: http::PoolOptions,
     pub(crate) bypass_pool: bool,
     pub(crate) on_stats: StrongOptional,
-    pub(crate) fetch_context: StrongOptional,
+    pub(crate) fetch_session: StrongOptional,
 }
 
 /// Where a request's proxy comes from.

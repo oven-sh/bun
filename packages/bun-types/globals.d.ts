@@ -1948,7 +1948,7 @@ interface BunFetchRequestInitTLS extends Bun.TLSOptions {
    *
    * A request that passes its own function opens a connection of its own and
    * closes it afterwards. To verify once per connection and reuse it, put the
-   * function on a {@link Bun.FetchContext}.
+   * function on a {@link Bun.FetchSession}.
    *
    * @param hostname - The hostname of the server
    * @param cert - The certificate of the server
@@ -2018,12 +2018,12 @@ interface BunFetchRequestInit extends RequestInit {
 
   /**
    * Take connection settings, and the keep-alive pool, from a
-   * {@link Bun.FetchContext}. Options given on the request take precedence over
-   * the context's; a request's `tls` replaces the context's `tls` as a whole.
+   * {@link Bun.FetchSession}. Options given on the request take precedence over
+   * the session's; a request's `tls` replaces the session's `tls` as a whole.
    *
    * Not part of the Fetch API specification.
    */
-  context?: Bun.FetchContext | undefined;
+  session?: Bun.FetchSession | undefined;
 
   /**
    * Called once when the connection is done with this request, with what its

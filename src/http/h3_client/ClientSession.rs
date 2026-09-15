@@ -33,7 +33,7 @@ pub struct ClientSession {
     pub(crate) hostname: Vec<u8>,
     pub(crate) port: u16,
     pub(crate) reject_unauthorized: bool,
-    /// The fetch context whose requests may share this connection.
+    /// The fetch session whose requests may share this connection.
     pub(crate) pool_id: u64,
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,

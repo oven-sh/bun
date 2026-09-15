@@ -33,6 +33,7 @@ extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSVal
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
+extern "C" EncodedJSValue Server__setMaxHeadersCount(JSC::JSGlobalObject*, EncodedJSValue, uint32_t);
 
 // Bit layout must stay in sync with kDispatchBits* in src/js/node/_http_server.ts.
 static constexpr uint32_t kDispatchConnClose = 1 << 0;
@@ -101,9 +102,6 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    // Deliberate: the bitfield scans every header the parser accepted, like
-    // the parser's own Host/Expect handling, while req.rawHeaders/req.headers
-    // still apply the server.maxHeadersCount truncation on materialization.
     uint32_t bits = 0;
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
@@ -815,6 +813,24 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetAppFlags, (JSGlobalObject * globalObject, Call
     return JSValue::encode(jsUndefined());
 }
 
+// Safe to call on a listening server: server.maxHeadersCount is assignable at any time,
+// like Node's. 0 means the option is not set.
+JSC_DEFINE_HOST_FUNCTION(jsHTTPSetMaxHeadersCount, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(callFrame->argumentCount() == 2);
+    // This is an internal binding.
+    JSValue serverValue = callFrame->uncheckedArgument(0);
+    uint32_t maxHeadersCount = callFrame->uncheckedArgument(1).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Server__setMaxHeadersCount(globalObject, JSValue::encode(serverValue), maxHeadersCount);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
 {
     auto* obj = constructEmptyObject(globalObject);
@@ -825,6 +841,9 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerAppFlags"_s)),
         JSC::JSFunction::create(vm, globalObject, 5, "setServerAppFlags"_s, jsHTTPSetAppFlags, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerMaxHeadersCount"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "setServerMaxHeadersCount"_s, jsHTTPSetMaxHeadersCount, ImplementationVisibility::Public), 0);
     obj->putDirectNativeFunction(
         vm, globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, "drainMicrotasks"_s)),
         0, Bun__drainMicrotasksFromJS, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);

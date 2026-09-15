@@ -285,4 +285,5 @@ export default {
   isLenient,
   calculateLenientFlags,
   prepareError,
+  MAX_HEADER_PAIRS,
 };

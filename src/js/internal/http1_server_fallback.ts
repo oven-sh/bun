@@ -234,7 +234,13 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 // 'request' with http.IncomingMessage/ServerResponse, like Node's httpConnectionListener routing.
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
-  const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
+  const {
+    HTTPParser,
+    prepareError,
+    calculateLenientFlags,
+    continueExpression,
+    MAX_HEADER_PAIRS,
+  } = require("node:_http_common");
   const { ConnResetException } = require("internal/shared");
   const { kHandle: kHttp1ResponseHandle, http1ServerPipeline } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
@@ -261,6 +267,7 @@ function connectionListenerHTTP1(server, socket, options) {
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
 
+  const kOnHeaders = HTTPParser.kOnHeaders | 0;
   const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
   const kOnBody = HTTPParser.kOnBody | 0;
   const kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
@@ -272,13 +279,22 @@ function connectionListenerHTTP1(server, socket, options) {
   parser.initialize(HTTPParser.REQUEST, {}, server.maxHeaderSize || 0, lenientFlags);
   parser.socket = socket;
   socket.parser = parser;
+  // Node takes its parser from the node:_http_common freelist, which seeds MAX_HEADER_PAIRS.
   const { maxHeadersCount } = server;
-  if (typeof maxHeadersCount === "number") {
-    parser.maxHeaderPairs = maxHeadersCount << 1;
-  }
+  parser.maxHeaderPairs = typeof maxHeadersCount === "number" ? maxHeadersCount << 1 : MAX_HEADER_PAIRS;
 
   let req = null;
   let pendingUpgrade = null;
+
+  // Like node:_http_common: the parser hands fields to kOnHeaders when its 32-field buffer is
+  // full, and all trailers. After the first such flush on a connection, kOnHeadersComplete
+  // gets no headers and no url for any later message.
+  let flushedHeaders = [];
+  let flushedUrl = "";
+  parser[kOnHeaders] = function onHttp1Headers(headers, url) {
+    for (let i = 0; i < headers.length; i++) $arrayPush(flushedHeaders, headers[i]);
+    flushedUrl += url;
+  };
 
   parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
     versionMajor,
@@ -291,6 +307,15 @@ function connectionListenerHTTP1(server, socket, options) {
     upgrade,
     shouldKeepAlive,
   ) {
+    if (rawHeaders === undefined) {
+      rawHeaders = flushedHeaders;
+      flushedHeaders = [];
+    }
+    if (url === undefined) {
+      url = flushedUrl;
+      flushedUrl = "";
+    }
+
     socket[kHttp1ActiveRequests]++;
 
     req = new IncomingMessageClass(socket);
@@ -395,8 +420,13 @@ function connectionListenerHTTP1(server, socket, options) {
     if (req && !req._dumped) req.push(chunk);
   };
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
+    // Fields flushed after the header section are the trailers.
+    const rawTrailers = flushedHeaders;
+    if (rawTrailers.length !== 0) flushedHeaders = [];
+    flushedUrl = "";
     if (req) {
       req.complete = true;
+      req._addHeaderLines(rawTrailers, rawTrailers.length);
       req.push(null);
     }
   };

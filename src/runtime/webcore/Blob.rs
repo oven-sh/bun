@@ -3976,14 +3976,23 @@ impl URLSearchParamsConverter {
 // C-exported helpers
 // ──────────────────────────────────────────────────────────────────────────
 
+/// FormData "create an entry": a non-`File` source becomes a new `File`, `lastModified` = now.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
-    let this = Blob::from_js(value)?;
+pub(crate) extern "C" fn Blob__dupeFromJSForFormData(value: JSValue) -> Option<NonNull<Blob>> {
+    let source = Blob::from_js(value)?;
     // SAFETY: `from_js` returns a live heap pointer when Some.
-    Some(
-        NonNull::new(Blob__dupe(unsafe { &*this }))
-            .expect("Blob__dupe returns a fresh heap allocation"),
-    )
+    let source = unsafe { &*source };
+    let entry =
+        NonNull::new(Blob__dupe(source)).expect("Blob__dupe returns a fresh heap allocation");
+    if !source.is_jsdom_file.get() {
+        // SAFETY: `entry` is a fresh allocation that nothing else references yet.
+        let entry = unsafe { entry.as_ref() };
+        entry.is_jsdom_file.set(true);
+        entry
+            .last_modified
+            .set(bun_core::time::milli_timestamp() as f64);
+    }
+    Some(entry)
 }
 
 #[unsafe(no_mangle)]

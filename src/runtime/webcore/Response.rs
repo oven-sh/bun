@@ -1085,6 +1085,7 @@ impl Response {
 
                     let result = match credentials.sign_request::<false>(
                         &bun_s3_signing::SignOptions {
+                            tagging: None,
                             path: s3.path(),
                             method: Method::GET,
                             content_hash: None,

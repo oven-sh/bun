@@ -2015,7 +2015,10 @@ interface BunFetchRequestInit extends RequestInit {
       };
 
   /**
-   * Override the default S3 options
+   * Override the default S3 options.
+   * `tags` is supported only for S3 URLs with method `PUT` or `POST`.
+   * This shared RequestInit type does not discriminate by URL or method;
+   * other methods reject `tags` at runtime.
    *
    * @example
    * ```js
@@ -2028,7 +2031,7 @@ interface BunFetchRequestInit extends RequestInit {
    * });
    * ```
    */
-  s3?: Bun.S3Options;
+  s3?: Bun.S3WriteOptions;
 
   /**
    * Make the request over a Unix socket

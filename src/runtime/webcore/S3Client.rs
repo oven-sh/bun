@@ -277,10 +277,12 @@ impl S3Client {
                 .env_mut()
                 .get_s3_credentials(),
         );
+        let options = args.next_eat();
+        crate::webcore::s3::credentials_jsc::reject_write_tags(options, global)?;
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
             MultiPartUploadOptions::default(),
-            args.next_eat(),
+            options,
             None,
             None,
             false,
@@ -386,6 +388,7 @@ impl S3Client {
             });
         };
         let options = args.next_eat();
+        crate::webcore::s3::credentials_jsc::reject_write_tags(options, global)?;
         Ok((self.construct_blob(global, path, options)?, options))
     }
 
@@ -410,6 +413,7 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
+        crate::webcore::s3::credentials_jsc::reject_write_tags(options, global)?;
         // `Blob::new` heap-promotes and marks `ref_count = 1` so
         // the JSS3File wrapper's `finalize` knows to free the blob.
         let blob = crate::webcore::blob::Blob::new(ptr.construct_blob(global, path, options)?);
@@ -521,6 +525,7 @@ impl S3Client {
             &mut blob_internal,
             data,
             crate::webcore::blob::WriteFileOptions {
+                tagging: None,
                 mkdirp_if_not_exists: Some(false),
                 extra_options: options,
                 mode: None,
@@ -538,6 +543,7 @@ impl S3Client {
 
         let object_keys = args[0];
         let options = opt_js(args[1]);
+        crate::webcore::s3::credentials_jsc::reject_write_tags(options, global)?;
 
         let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
@@ -571,6 +577,28 @@ impl S3Client {
         )?;
         let store = blob.store.get().as_ref().unwrap();
         store.data.as_s3().unlink(store, global, options)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn get_tags(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let (blob, options) = ptr.blob_and_options(
+            global,
+            callframe,
+            "read tags from",
+            MissingPathError::MissingOrInvalid,
+        )?;
+        S3File::get_tags(&blob, global, options)
+    }
+
+    pub(crate) fn static_get_tags(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        S3File::static_get_tags(global, callframe)
     }
 
     // ── Static methods ────────────────────────────────────────────────────
@@ -634,6 +662,7 @@ impl S3Client {
         let args = callframe.arguments_as_array::<2>();
         let object_keys = args[0];
         let options = opt_js(args[1]);
+        crate::webcore::s3::credentials_jsc::reject_write_tags(options, global)?;
 
         // get credentials from env — `Transpiler::env_mut` is the safe accessor
         // for the process-singleton dotenv loader (set during init).

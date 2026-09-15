@@ -230,7 +230,7 @@ pub trait BlobExt {
     fn get_exists_sync(&self) -> JSValue;
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn do_unlink(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
-    fn get_exists(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
+    fn get_exists(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn pipe_readable_stream_to_blob(
         &self,
         global_this: &JSGlobalObject,
@@ -1331,6 +1331,7 @@ impl BlobExt for Blob {
             &mut blob_internal,
             data,
             WriteFileOptions {
+                tagging: None,
                 mkdirp_if_not_exists,
                 extra_options: options,
                 mode: None,
@@ -1353,8 +1354,12 @@ impl BlobExt for Blob {
     }
 
     // This mostly means 'can it be read?'
-    fn get_exists(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    fn get_exists(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         if self.is_s3() {
+            crate::webcore::s3::credentials_jsc::reject_write_tags(
+                callframe.arguments().first().copied(),
+                global_this,
+            )?;
             return crate::webcore::s3_file::S3BlobStatTask::exists(global_this, self);
         }
         Ok(JSPromise::resolved_promise_value(
@@ -1421,6 +1426,7 @@ impl BlobExt for Blob {
                 aws_options.content_encoding.as_deref(),
                 proxy_url,
                 aws_options.request_payer,
+                options.tagging.as_deref(),
                 None,
                 core::ptr::null_mut(),
             );
@@ -1637,6 +1643,10 @@ impl BlobExt for Blob {
                         None => None,
                     };
 
+                let tagging = crate::webcore::s3::credentials_jsc::get_write_tags(
+                    Some(options),
+                    global_this,
+                )?;
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
                 // `defer credentialsWithOptions.deinit()` → Drop handles slices.
@@ -1653,6 +1663,7 @@ impl BlobExt for Blob {
                     proxy,
                     credentials_with_options.storage_class,
                     credentials_with_options.request_payer,
+                    tagging.as_deref(),
                 );
             }
 
@@ -1667,6 +1678,7 @@ impl BlobExt for Blob {
                 proxy,
                 None,
                 s3.request_payer,
+                None,
             );
         }
 
@@ -4120,8 +4132,9 @@ fn body_used_rejection(global: &JSGlobalObject) -> JSValue {
         .reject()
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub struct WriteFileOptions {
+    pub(crate) tagging: Option<Box<[u8]>>,
     pub(crate) mkdirp_if_not_exists: Option<bool>,
     pub(crate) extra_options: Option<JSValue>,
     pub(crate) mode: Option<bun_sys::Mode>,
@@ -4297,6 +4310,7 @@ fn write_file_with_empty_source_to_destination(
                 proxy_url,
                 aws_options.storage_class,
                 aws_options.request_payer,
+                options.tagging.as_deref(),
                 Wrapper::resolve,
                 bun_core::heap::into_raw(Box::new(Wrapper {
                     promise,
@@ -4489,6 +4503,7 @@ pub(crate) fn write_file_with_source_destination(
                             aws_options.content_encoding.as_deref(),
                             proxy_url,
                             aws_options.request_payer,
+                            options.tagging.as_deref(),
                             None,
                             core::ptr::null_mut(),
                         );
@@ -4550,6 +4565,7 @@ pub(crate) fn write_file_with_source_destination(
                         proxy_url,
                         aws_options.storage_class,
                         aws_options.request_payer,
+                        options.tagging.as_deref(),
                         Wrapper::resolve,
                         bun_core::heap::into_raw(Box::new(Wrapper {
                             store: source_store.clone(),
@@ -4588,6 +4604,7 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.content_encoding.as_deref(),
                         proxy_url,
                         aws_options.request_payer,
+                        options.tagging.as_deref(),
                         None,
                         core::ptr::null_mut(),
                     );
@@ -4620,7 +4637,7 @@ pub(crate) fn write_file_internal(
     global_this: &JSGlobalObject,
     path_or_blob_: &mut PathOrBlob,
     data: JSValue,
-    options: WriteFileOptions,
+    mut options: WriteFileOptions,
 ) -> JsResult<JSValue> {
     if data.is_empty_or_undefined_or_null() {
         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -4669,7 +4686,8 @@ pub(crate) fn write_file_internal(
     #[cfg(not(windows))]
     {
         let mut needs_async = false;
-        let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
+        let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(ref path)
+            if !matches!(path, PathOrFileDescriptor::Path(path) if path.slice().starts_with(b"s3://")))
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset.get() == 0 && !b.is_s3()
                     && !(b.store.get().is_some()
@@ -4760,6 +4778,13 @@ pub(crate) fn write_file_internal(
             b.dupe()
         }
     };
+
+    if destination_blob.is_s3() {
+        options.tagging = crate::webcore::s3::credentials_jsc::get_write_tags(
+            options.extra_options,
+            global_this,
+        )?;
+    }
 
     // TODO: implement a writev() fast path
     let source_blob: Blob = 'brk: {
@@ -4871,6 +4896,7 @@ pub(crate) fn write_file_internal(
                                 aws_options.content_encoding.as_deref(),
                                 proxy_url,
                                 aws_options.request_payer,
+                                options.tagging.as_deref(),
                                 None,
                                 core::ptr::null_mut(),
                             )?));
@@ -5127,6 +5153,7 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
         &mut path_or_blob,
         data,
         WriteFileOptions {
+            tagging: None,
             mkdirp_if_not_exists,
             extra_options: options,
             mode,

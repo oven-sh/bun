@@ -512,6 +512,7 @@ pub(crate) type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
 pub(crate) type S3Callback = Callback;
 
 pub struct S3SimpleRequestOptions<'a> {
+    pub(crate) tagging: Option<&'a [u8]>,
     // signing options
     pub path: &'a [u8],
     pub method: Method,
@@ -533,6 +534,7 @@ pub struct S3SimpleRequestOptions<'a> {
 impl<'a> Default for S3SimpleRequestOptions<'a> {
     fn default() -> Self {
         Self {
+            tagging: None,
             path: b"",
             method: Method::GET,
             search_params: None,
@@ -568,6 +570,7 @@ pub(crate) fn execute_simple_s3_request(
     }
     let result = match this.sign_request::<false>(
         &SignOptions {
+            tagging: options.tagging,
             path: options.path,
             method: options.method,
             search_params: options.search_params,

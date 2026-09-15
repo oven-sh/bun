@@ -2063,7 +2063,17 @@ pub fn generate_network_task_for_tarball<'a>(
         },
     };
 
-    network_task.for_tarball(extract_tarball, scope, authorization)?;
+    if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
+        // `has_created_network_task` recorded `task_id` as created, but no task
+        // exists to ever complete or fail it. Without this mark a later enqueue
+        // for the same id queues its callback behind the missing task, and the
+        // isolated installer waits for that callback forever.
+        mark_network_task_failed(this, task_id);
+        // SAFETY: `write_init` fully initialized the slot. `for_tarball` fails
+        // before it writes `unsafe_http_client`, so `put` has nothing else to drop.
+        unsafe { this.preallocated_network_tasks.put(net_ptr) };
+        return Err(err);
+    }
 
     if extract_tarball::uses_streaming_extraction() {
         // Pre-create the extract Task and streaming state here on the

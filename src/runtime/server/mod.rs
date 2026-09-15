@@ -967,8 +967,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         debug_assert!(!callback.is_empty());
         // PERF: stable Rust forbids `ARG_COUNT + 1` in const-generic array lengths.
-        // The conservative GC scan reaches the heap allocation as well as the
-        // stack, so a small Vec is sound.
+        // The GC does not scan a Vec. This one is sound because nothing allocates before
+        // `callback.call` copies the arguments into a MarkedArgumentBuffer.
         let mut args: Vec<JSValue> = Vec::with_capacity(ARG_COUNT + 1);
         args.push(prepared.js_request);
         args.extend_from_slice(&extra_args);

@@ -1,4 +1,4 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
 
 use super::DiffFormatter;
 use super::mock;
@@ -9,6 +9,17 @@ pub(crate) fn to_have_returned_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
+) -> JsResult<JSValue> {
+    MarkedArgumentBuffer::new(|return_roots| {
+        to_have_returned_with_impl(this, global, frame, return_roots)
+    })
+}
+
+fn to_have_returned_with_impl(
+    this: &Expect,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    return_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
     let expected = frame.arguments_as_array::<1>()[0];
     let (this, returns, _value) = this.mock_prologue(
@@ -22,9 +33,9 @@ pub(crate) fn to_have_returned_with(
     let calls_count = u32::try_from(returns.get_length(global)?).unwrap();
     let mut pass = false;
 
-    // A heap-backed Vec<JSValue> is not stack-scanned by JSC's conservative GC;
-    // however every value pushed here is also reachable via the `returns` JSArray (kept live on the
-    // stack), so a plain Vec is safe. SuccessfulReturnsFormatter expects &Vec.
+    // `returns` does not keep these values alive: `jest_deep_equals` runs user code, which can
+    // empty `mock.results` or overwrite a result's `value`. `return_roots` holds every value
+    // pushed here; the Vec is only the slice view SuccessfulReturnsFormatter reads.
     let mut successful_returns: Vec<JSValue> = Vec::new();
 
     let mut has_errors = false;
@@ -40,6 +51,7 @@ pub(crate) fn to_have_returned_with(
 
                 if type_str.eq_ascii(b"return") {
                     let result_value = result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
+                    return_roots.append(result_value);
                     successful_returns.push(result_value);
 
                     // Check for pass condition only if not already passed

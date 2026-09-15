@@ -1,4 +1,5 @@
 import { file, listen, Socket, spawn, write } from "bun";
+import { npmTag } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, readlinkSync, realpathSync, statSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
@@ -17,7 +18,7 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
-import { join, resolve, sep } from "path";
+import { basename, join, resolve, sep } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -11378,5 +11379,129 @@ it.each([
     expect(tarballRequests).toEqual([]);
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
+  });
+});
+
+describe("version specifier classification", () => {
+  it("treats bare words starting with ssh or http as dist-tags", () => {
+    const specs = [
+      // previously misclassified as git (ssh) or tarball (http/https)
+      "sshlatest",
+      "httplatest",
+      "httpslatest",
+      "ssh",
+      "http",
+      "https",
+      "latest",
+      // URL and URL-ish forms keep their classification
+      "ssh://git@example.com/repo.git",
+      "ssh://git@github.com/user/repo.git",
+      "git+ssh://git@example.com/repo.git",
+      "http://example.com/foo.tgz",
+      "https://example.com/foo.tgz",
+      "https://github.com/user/repo",
+      "https://github.com/user/repo.git",
+      "https://gitlab.com/user/repo",
+      "https://bitbucket.org/user/repo.git",
+      // non-URL shapes fall through to the generic classifiers
+      "sshuser@example.com:repo.git",
+      "sshuser/repo",
+      "ssh.tar.gz",
+      "httpuser@example.com:repo.git",
+      "httpsuser@example.com:repo.git",
+      "httpuser/repo",
+      "http.tar.gz",
+    ];
+    expect(Object.fromEntries(specs.map(s => [s, npmTag(s)]))).toEqual({
+      "sshlatest": "dist_tag",
+      "httplatest": "dist_tag",
+      "httpslatest": "dist_tag",
+      "ssh": "dist_tag",
+      "http": "dist_tag",
+      "https": "dist_tag",
+      "latest": "dist_tag",
+      "ssh://git@example.com/repo.git": "git",
+      "ssh://git@github.com/user/repo.git": "git",
+      "git+ssh://git@example.com/repo.git": "git",
+      "http://example.com/foo.tgz": "tarball",
+      "https://example.com/foo.tgz": "tarball",
+      "https://github.com/user/repo": "github",
+      "https://github.com/user/repo.git": "github",
+      "https://gitlab.com/user/repo": "git",
+      "https://bitbucket.org/user/repo.git": "git",
+      "sshuser@example.com:repo.git": "git",
+      "sshuser/repo": "github",
+      "ssh.tar.gz": "tarball",
+      "httpuser@example.com:repo.git": "git",
+      "httpsuser@example.com:repo.git": "git",
+      "httpuser/repo": "github",
+      "http.tar.gz": "tarball",
+    });
+  });
+
+  it("installs dist-tags whose names start with ssh or http from the registry", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, async request => {
+        urls.push(request.url);
+        const url = new URL(request.url.replaceAll("%2f", "/"));
+        if (url.pathname.endsWith(".tgz")) {
+          return new Response(file(join(import.meta.dir, basename(url.pathname).toLowerCase())));
+        }
+        const name = basename(url.pathname);
+        return new Response(
+          JSON.stringify({
+            name,
+            versions: {
+              "0.0.3": {
+                name,
+                version: "0.0.3",
+                dist: { tarball: `${ctx.registry_url}baz-0.0.3.tgz` },
+              },
+            },
+            "dist-tags": {
+              latest: "0.0.3",
+              sshlatest: "0.0.3",
+              httplatest: "0.0.3",
+              httpslatest: "0.0.3",
+            },
+          }),
+        );
+      });
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            "baz": "sshlatest",
+            "http-tagged": "npm:baz@httplatest",
+            "https-tagged": "npm:baz@httpslatest",
+          },
+        }),
+      );
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("+ baz@0.0.3");
+      expect(out).toContain("+ http-tagged@0.0.3");
+      expect(out).toContain("+ https-tagged@0.0.3");
+      expect(exitCode).toBe(0);
+      expect(urls).toContain(`${ctx.registry_url}baz`);
+      for (const dir of ["baz", "http-tagged", "https-tagged"]) {
+        expect(await file(join(ctx.package_dir, "node_modules", dir, "package.json")).json()).toMatchObject({
+          name: "baz",
+          version: "0.0.3",
+        });
+      }
+    });
   });
 });

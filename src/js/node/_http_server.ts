@@ -549,6 +549,10 @@ Server.prototype.listen = function () {
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;
+      // Node normalizes an explicit `port: undefined` or `port: null` to 0.
+      if ((port === undefined && "port" in arg0) || port === null) {
+        port = 0;
+      }
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -577,6 +581,13 @@ Server.prototype.listen = function () {
     if (!Number.isNaN(portNumber)) {
       port = portNumber;
     }
+  }
+
+  // Node precedence: a port wins over `path`, and a `path` listen ignores `host`.
+  if ((typeof port === "number" || typeof port === "string") && socketPath) {
+    socketPath = undefined;
+  } else if (socketPath) {
+    host = undefined;
   }
 
   const lastArg = arguments[argc - 1];

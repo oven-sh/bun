@@ -423,12 +423,25 @@ pub type OpaqueBlob = *mut ();
 
 pub use crate::{VmLoaderCtx, VmLoaderCtxKind};
 
+/// Runtime loader for a `data:` URL, whose MIME type is its type authority.
+pub fn data_url_loader(text: &[u8]) -> Loader {
+    bun_resolver::DataURL::parse_without_check(text)
+        .ok()
+        .and_then(|data_url| data_url.loader())
+        .unwrap_or(Loader::Tsx)
+}
+
 pub(crate) fn normalize_specifier<'a>(
     jsc_vm: &VmLoaderCtx,
     slice_: &'a [u8],
 ) -> (&'a [u8], &'a [u8], &'a [u8]) {
     let mut slice = slice_;
     if slice.is_empty() {
+        return (slice, slice, b"");
+    }
+
+    // Everything after a data: URL's comma is payload, including `?`.
+    if strings::has_prefix_comptime(slice, b"data:") {
         return (slice, slice, b"");
     }
 
@@ -482,10 +495,19 @@ pub fn get_loader_and_virtual_source<'a>(
 ) -> Result<LoaderResult<'a>, GetLoaderAndVirtualSourceErr> {
     let (normalized_file_path_from_specifier, specifier, query) =
         normalize_specifier(jsc_vm, specifier_str);
-    let mut path = Fs::Path::init(normalized_file_path_from_specifier);
+    let is_data_url = strings::has_prefix_comptime(normalized_file_path_from_specifier, b"data:");
+    let mut path = if is_data_url {
+        Fs::Path::init_with_namespace(normalized_file_path_from_specifier, b"dataurl")
+    } else {
+        Fs::Path::init(normalized_file_path_from_specifier)
+    };
 
-    // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
-    let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
+    let mut loader: Option<Loader> = if is_data_url {
+        Some(data_url_loader(path.text))
+    } else {
+        // SAFETY: loaders() returns a borrow tied to jsc_vm.owner.
+        path.loader(unsafe { &*jsc_vm.loaders() })
+    };
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
 
     if let Some(eval_source) = jsc_vm.eval_source() {

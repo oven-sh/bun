@@ -855,6 +855,52 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/4609
+it.concurrent("onLoad filters match file extensions that start with a digit", async () => {
+  using dir = tempDir("plugin-onload-numeric-ext", {
+    "preload.js": `
+      Bun.plugin({
+        name: "numeric-ext",
+        setup(build) {
+          build.onLoad({ filter: /\\.1$/ }, () => ({ exports: { v: "one" }, loader: "object" }));
+          build.onLoad({ filter: /\\.txt\\.2$/ }, () => ({ exports: { v: "two" }, loader: "object" }));
+          build.onLoad({ filter: /\\.3gp$/ }, () => ({ exports: { v: "3gp" }, loader: "object" }));
+          build.onLoad({ filter: /\\.custom$/ }, () => ({ exports: { v: "custom" }, loader: "object" }));
+        },
+      });
+    `,
+    "ok.yaml.1": "",
+    "ok.txt.2": "",
+    "video.3gp": "",
+    "ok.custom": "",
+    "entry.js": `
+      const a = await import("./ok.yaml.1");
+      const b = await import("./ok.txt.2");
+      const c = await import("./video.3gp");
+      const d = await import("./ok.custom");
+      const e = require("./ok.yaml" + ".1");
+      console.log(JSON.stringify({ a: a.v, b: b.v, c: c.v, d: d.v, e: e.v }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    a: "one",
+    b: "two",
+    c: "3gp",
+    d: "custom",
+    e: "one",
+  });
+  expect(exitCode).toBe(0);
+});
+
 it.concurrent("a no-op onResolve that returns args.path unchanged is transparent", async () => {
   using dir = tempDir("plugin-onresolve-no-op", {
     "preload.js": `

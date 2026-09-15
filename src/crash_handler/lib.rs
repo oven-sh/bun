@@ -2376,6 +2376,14 @@ mod draft {
             {
                 b'F'
             }
+            #[cfg(all(target_os = "linux", target_env = "musl", target_arch = "riscv64"))]
+            {
+                b'r'
+            }
+            #[cfg(all(target_os = "linux", not(target_env = "musl"), target_arch = "riscv64"))]
+            {
+                b'R'
+            }
         };
     }
 

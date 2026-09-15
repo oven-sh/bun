@@ -434,6 +434,7 @@ impl CompileTarget {
         let arch: &'static [u8] = match self.arch {
             Architecture::X64 => b"\"x64\"",
             Architecture::Arm64 => b"\"arm64\"",
+            Architecture::Riscv64 => b"\"riscv64\"",
             Architecture::Wasm => b"\"wasm\"",
         };
         const VERSION: &[u8] =

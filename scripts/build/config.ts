@@ -18,7 +18,7 @@ import { clangTargetArch, toolchainOverride } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
-export type Arch = "x64" | "aarch64";
+export type Arch = "x64" | "aarch64" | "riscv64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
@@ -582,7 +582,12 @@ export function detectLinuxMuslSysroot(arch: Arch): string | undefined {
   const looksValid = (p: string) => existsSync(join(p, "usr", "lib", "libc.so"));
   const env = process.env.LINUX_MUSL_SYSROOT;
   if (env && looksValid(env)) return env;
-  const candidate = arch === "aarch64" ? "/opt/linux-sysroot-musl-arm64" : "/opt/linux-sysroot-musl";
+  const candidate =
+    arch === "aarch64"
+      ? "/opt/linux-sysroot-musl-arm64"
+      : arch === "riscv64"
+        ? "/opt/linux-sysroot-musl-riscv64"
+        : "/opt/linux-sysroot-musl";
   return looksValid(candidate) ? candidate : undefined;
 }
 
@@ -733,6 +738,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const unix = linux || darwin || freebsd;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
+  const riscv64 = arch === "riscv64";
   // Darwin target on a non-darwin host (Linux CI box building macOS
   // binaries). Same host-clang + --target/-isysroot model as Android/FreeBSD,
   // with ld64.lld doing the Mach-O link. See the cross block further down.
@@ -1013,7 +1019,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // and the libstdc++ ABI matches the WebKit prebuilt. musl uses an
   // alpine-derived sysroot. Local dev without a sysroot builds native.
   if (linux && abi !== "android" && crossTarget === undefined) {
-    const llvmArch = x64 ? "x86_64" : "aarch64";
+    const llvmArch = x64 ? "x86_64" : riscv64 ? "riscv64" : "aarch64";
     const hostAbi = host.os === "linux" ? detectLinuxAbi() : undefined;
     const isCross = arch !== host.arch || abi !== hostAbi;
     if (abi === "musl") {
@@ -1021,7 +1027,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       if (sysroot !== undefined || isCross) {
         crossTarget = `${llvmArch}-alpine-linux-musl`;
         if (sysroot === undefined) {
-          const p = arch === "aarch64" ? "/opt/linux-sysroot-musl-arm64" : "/opt/linux-sysroot-musl";
+          const p =
+            arch === "aarch64"
+              ? "/opt/linux-sysroot-musl-arm64"
+              : arch === "riscv64"
+                ? "/opt/linux-sysroot-musl-riscv64"
+                : "/opt/linux-sysroot-musl";
           throw new BuildError(`--os=linux --arch=${arch} --abi=musl requires a musl sysroot when cross-compiling`, {
             hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see install_linux_musl_sysroot() in scripts/bootstrap.sh).`,
           });

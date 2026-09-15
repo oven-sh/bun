@@ -72,6 +72,11 @@ export const cpuTargetFlags: Flag[] = [
     when: c => c.x64,
     desc: "x64: Nehalem (2008) — no AVX, broadest compatibility",
   },
+  {
+    flag: ["-march=rv64gc"],
+    when: c => c.arch === "riscv64",
+    desc: "riscv64: RV64GC, the profile TinyEMU and every distro assume",
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -202,6 +202,8 @@ static JSValue constructArch(VM& vm, JSObject* processObject)
     return JSC::jsString(vm, makeAtomString("x64"_s));
 #elif CPU(ARM64)
     return JSC::jsString(vm, makeAtomString("arm64"_s));
+#elif CPU(RISCV64)
+    return JSC::jsString(vm, makeAtomString("riscv64"_s));
 #else
 #error "Unknown architecture"
 #endif
@@ -2914,6 +2916,9 @@ __attribute__((minsize)) static JSValue constructProcessConfigObject(VM& vm, JSO
 #elif CPU(ARM64)
     putDirectNamed(vm, variables, "host_arch"_s, JSC::jsString(vm, String("arm64"_s)));
     putDirectNamed(vm, variables, "target_arch"_s, JSC::jsString(vm, String("arm64"_s)));
+#elif CPU(RISCV64)
+    putDirectNamed(vm, variables, "host_arch"_s, JSC::jsString(vm, String("riscv64"_s)));
+    putDirectNamed(vm, variables, "target_arch"_s, JSC::jsString(vm, String("riscv64"_s)));
 #else
 #error "Unsupported architecture"
 #endif

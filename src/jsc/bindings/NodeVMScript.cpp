@@ -4,6 +4,7 @@
 #include "ErrorCode.h"
 
 #include "JavaScriptCore/CodeCache.h"
+#include "JavaScriptCore/CompilationResult.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"

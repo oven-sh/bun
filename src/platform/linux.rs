@@ -71,7 +71,28 @@ unsafe fn raw_syscall6(
         }
         return ret;
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "riscv64")]
+    {
+        let ret: isize;
+        // SAFETY: Linux riscv64 syscall ABI. Syscall number in a7, args in
+        // a0..a5, return in a0. Memory clobber because the kernel may
+        // read/write through the pointer arguments.
+        unsafe {
+            core::arch::asm!(
+                "ecall",
+                in("a7") nr,
+                inlateout("a0") a1 as isize => ret,
+                in("a1") a2,
+                in("a2") a3,
+                in("a3") a4,
+                in("a4") a5,
+                in("a5") a6,
+                options(nostack),
+            );
+        }
+        return ret;
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")))]
     compile_error!("raw_syscall6: unsupported architecture");
 }
 

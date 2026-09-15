@@ -98,7 +98,12 @@ export const libjpegTurbo: Dependency = {
   patches: ["patches/libjpeg-turbo/8bit-only.patch", "patches/libjpeg-turbo/jbun_stubs.c"],
 
   build: cfg => {
-    const withSimd: [string, string] = ["#cmakedefine WITH_SIMD 1", "#define WITH_SIMD 1"];
+    // Only arm64 and x64 contribute SIMD kernels below; anywhere else WITH_SIMD
+    // would make the core call jsimd_* symbols that were never compiled.
+    const hasSimd = cfg.arm64 || cfg.x64;
+    const withSimd: [string, string] = hasSimd
+      ? ["#cmakedefine WITH_SIMD 1", "#define WITH_SIMD 1"]
+      : ["#cmakedefine WITH_SIMD 1", "/* #undef WITH_SIMD */"];
     const srcDir = depSourceDir(cfg, "libjpeg-turbo");
     const hostWin = cfg.host.os === "windows";
     return {

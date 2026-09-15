@@ -32,6 +32,7 @@ export const tinycc: Dependency = {
   build: cfg => {
     const sources = ["libtcc.c", "tccpp.c", "tccgen.c", "tccdbg.c", "tccelf.c", "tccasm.c", "tccrun.c"];
     if (cfg.arm64) sources.push("arm64-gen.c", "arm64-link.c", "arm64-asm.c");
+    else if (cfg.arch === "riscv64") sources.push("riscv64-gen.c", "riscv64-link.c", "riscv64-asm.c");
     else sources.push("x86_64-gen.c", "x86_64-link.c", "i386-asm.c");
     if (cfg.darwin) sources.push("tccmacho.c");
     if (cfg.windows) sources.push("tccpe.c");

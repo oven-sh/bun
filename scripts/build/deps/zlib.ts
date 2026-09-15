@@ -203,6 +203,11 @@ export const zlib: Dependency = {
       }
       sources.push(...GENERIC.map(s => `arch/generic/${s}.c`));
       sources.push("arch/arm/arm_features.c");
+    } else if (cfg.arch === "riscv64") {
+      kernels = [];
+      archDir = "generic";
+      defines.WITH_ALL_FALLBACKS = true;
+      sources.push(...GENERIC.map(s => `arch/generic/${s}.c`));
     } else {
       throw new Error(`zlib: no SIMD kernel table for arch ${cfg.arch}`);
     }

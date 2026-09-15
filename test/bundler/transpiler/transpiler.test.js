@@ -3058,6 +3058,11 @@ console.log(<div {...obj} key="after" />);`),
       // An expression statement and a for loop head must not start with "let [".
       expectPrinted_("var let = []; (let)[0] = 1;", "var let = [];\n(let)[0] = 1;\n");
       expectPrinted_("if (1) (let)[0] = 2;", "if (1)\n  (let)[0] = 2;\n");
+      expectPrinted_("(let)[0] = 1;", "(let)[0] = 1;\n");
+      expectPrinted_("x;\n(let)[0] = 1;", "x;\n(let)[0] = 1;\n");
+      // Without the parentheses this one still parses, as a destructuring declaration
+      expectPrinted_("(let)\n[a] = b;", "(let)[a] = b;\n");
+      expectPrinted_("x;\n(let)\n[a] = b;", "x;\n(let)[a] = b;\n");
       expectPrinted_("(let)[0].x = 1;", "(let)[0].x = 1;\n");
       expectPrinted_("(let)[0]();", "(let)[0]();\n");
       expectPrinted_("(let)[0]++;", "(let)[0]++;\n");

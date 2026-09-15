@@ -1,6 +1,6 @@
-// Minimal DNS-over-UDP servers for exercising nameserver failover.
-// argv[2]: "failover" (REFUSED server first, answering server second) or
-// "all-refused" (every server answers REFUSED).
+// Minimal DNS-over-UDP servers: the first always answers REFUSED, the
+// second answers an A record. Prints the resolve4 outcome plus how many
+// queries each server saw. Runs unchanged on Node (node fixture.ts).
 import dgram from "node:dgram";
 import dns from "node:dns";
 
@@ -21,11 +21,15 @@ function header(msg: Buffer, rcode: number, ancount: number): Buffer {
   return h;
 }
 
-function listen(reply: (msg: Buffer) => Buffer): Promise<dgram.Socket> {
+function listen(reply: (msg: Buffer) => Buffer): Promise<{ sock: dgram.Socket; hits: { n: number } }> {
   return new Promise(resolve => {
+    const hits = { n: 0 };
     const sock = dgram.createSocket("udp4");
-    sock.on("message", (msg, rinfo) => sock.send(reply(msg), rinfo.port, rinfo.address));
-    sock.bind(0, "127.0.0.1", () => resolve(sock));
+    sock.on("message", (msg, rinfo) => {
+      hits.n++;
+      sock.send(reply(msg), rinfo.port, rinfo.address);
+    });
+    sock.bind(0, "127.0.0.1", () => resolve({ sock, hits }));
   });
 }
 
@@ -33,20 +37,19 @@ const refused = (msg: Buffer) => Buffer.concat([header(msg, 5, 0), msg.subarray(
 
 const answering = (msg: Buffer) => {
   const question = msg.subarray(12, questionEnd(msg));
-  const qtype = question.readUInt16BE(question.length - 4);
-  if (qtype !== 1) return Buffer.concat([header(msg, 0, 0), question]); // NOERROR, no data
   const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 42]);
   return Buffer.concat([header(msg, 0, 1), question, answer]);
 };
 
-const handlers = process.argv[2] === "all-refused" ? [refused, refused] : [refused, answering];
-const sockets = await Promise.all(handlers.map(listen));
-dns.setServers(sockets.map(s => `127.0.0.1:${s.address().port}`));
+const servers = await Promise.all([listen(refused), listen(answering)]);
+dns.setServers(servers.map(s => `127.0.0.1:${s.sock.address().port}`));
 
+let result: Record<string, unknown>;
 try {
-  console.log(JSON.stringify({ addresses: await dns.promises.resolve4("failover.example") }));
+  result = { addresses: await dns.promises.resolve4("failover.example") };
 } catch (e: any) {
-  console.log(JSON.stringify({ code: e.code }));
+  result = { code: e.code };
 } finally {
-  for (const s of sockets) s.close();
+  for (const s of servers) s.sock.close();
 }
+console.log(JSON.stringify({ ...result, queries: servers.map(s => s.hits.n) }));

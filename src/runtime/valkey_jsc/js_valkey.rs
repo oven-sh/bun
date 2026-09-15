@@ -1239,7 +1239,9 @@ impl JSValkeyClient {
             };
             Js::hello_set_cached(this_value, &global_object, hello_value);
             // Call onConnect callback if defined by the user
-            if let Some(on_connect) = Js::onconnect_get_cached(this_value) {
+            if let Some(on_connect) =
+                Js::onconnect_get_cached(this_value).filter(|cb| cb.is_callable())
+            {
                 let js_value = this_value;
                 js_value.ensure_still_alive();
                 global_object.queue_microtask(on_connect, &[js_value, hello_value]);
@@ -1386,7 +1388,7 @@ impl JSValkeyClient {
         }
 
         // Call onClose callback if it exists
-        if let Some(on_close) = Js::onclose_get_cached(this_jsvalue) {
+        if let Some(on_close) = Js::onclose_get_cached(this_jsvalue).filter(|cb| cb.is_callable()) {
             on_close.call(&global_object, this_jsvalue, &[error_value])?;
         }
         Ok(())

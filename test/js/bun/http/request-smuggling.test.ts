@@ -1578,11 +1578,16 @@ describe("pipelined request header isolation", () => {
   });
 });
 
-test("rejects Transfer-Encoding header with empty value", async () => {
-  // RFC 9112 requires rejecting a request whose Transfer-Encoding field names no
-  // valid transfer coding. Treating a present-but-empty Transfer-Encoding value as
-  // if the header were absent falls back to Content-Length framing, so the bytes
-  // after the declared body get parsed as a second pipelined request (CL.TE desync).
+// RFC 9112 requires rejecting a request whose Transfer-Encoding field names no
+// valid transfer coding. Treating a present-but-empty Transfer-Encoding value as
+// if the header were absent falls back to Content-Length framing, so the bytes
+// after the declared body get parsed as a second pipelined request (CL.TE desync).
+// Unlike node:http (which follows llhttp and only rejects the field when it comes
+// after Content-Length), Bun.serve rejects it in either order.
+test.each([
+  ["before", ["Transfer-Encoding: ", "Content-Length: 4"]],
+  ["after", ["Content-Length: 4", "Transfer-Encoding: "]],
+])("rejects Transfer-Encoding header with empty value %s Content-Length", async (name, headers) => {
   const seen: string[] = [];
   await using server = Bun.serve({
     port: 0,
@@ -1601,8 +1606,7 @@ test("rejects Transfer-Encoding header with empty value", async () => {
   const payload =
     "POST / HTTP/1.1\r\n" +
     "Host: localhost\r\n" +
-    "Transfer-Encoding: \r\n" +
-    "Content-Length: 4\r\n" +
+    `${headers.join("\r\n")}\r\n` +
     "\r\n" +
     "ABCD" +
     "GET /admin HTTP/1.1\r\n" +

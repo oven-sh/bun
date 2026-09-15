@@ -82,3 +82,16 @@ pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     let mut v4 = [0u8; 4];
     sys::aton(&buf[..=input.len()], &mut v4).then(|| IpAddr::V4(Ipv4Addr::from(v4)))
 }
+
+/// A host as URLs and `host:port` strings write it keeps an IPv6 literal's
+/// brackets; resolvers, certificates and SNI name the bare address.
+/// `[::1]` -> `::1` (a `%zone` stays). Anything else in brackets, such as
+/// `[example.com]`, passes through verbatim, as in Node.
+pub fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
+    if let [b'[', inner @ .., b']'] = host {
+        if to_ip_address(inner).is_some_and(|ip| ip.is_ipv6()) {
+            return inner;
+        }
+    }
+    host
+}

@@ -923,17 +923,7 @@ impl<'a> URL<'a> {
     }
 }
 
-/// `URL::hostname` keeps an IPv6 literal's brackets; resolvers, certificates
-/// and SNI name the bare address. "[::1]" -> "::1"; anything else, such as
-/// "[example.com]", passes through verbatim, as in Node.
-pub fn strip_ipv6_brackets(hostname: &[u8]) -> &[u8] {
-    if let [b'[', inner @ .., b']'] = hostname {
-        if bun_core::ip_address::is_ipv6_address(inner) {
-            return inner;
-        }
-    }
-    hostname
-}
+pub use bun_core::ip_address::strip_ipv6_brackets;
 
 // ══════════════════════════════════════════════════════════════════════════
 // QueryStringMap & friends

@@ -2,7 +2,7 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, rmSync } from "node:fs";
+import { readdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -464,4 +464,116 @@ it.skipIf(isWindows)(
     await watchee.exited;
   },
   30000,
+);
+
+// The Linux watcher learns about a save that replaces the inode (write a temp
+// file and rename it over the target, or delete and recreate) from the
+// directory event only. The hot reloader used to map that event to the
+// watchlist through the cached directory entry's `abs_path`, which the
+// resolver fills in lazily. A lookup that resolves to nothing busts the
+// directory cache, so the re-read entry had an empty `abs_path` and every later
+// save of that kind in the directory was ignored.
+const replaceFile = {
+  "rename over": async (path: string, contents: string) => {
+    const tmp = `${path}.tmp`;
+    await Bun.write(tmp, contents);
+    renameSync(tmp, path);
+  },
+  "delete and recreate": async (path: string, contents: string) => {
+    rmSync(path);
+    await Bun.write(path, contents);
+  },
+};
+for (const [how, replace] of Object.entries(replaceFile)) {
+  it.skipIf(isWindows)(`--watch sees a ${how} save after a failed lookup in the same directory`, async () => {
+    using dir = tempDir("watch-dir-event-after-miss", {
+      "a.js": `export const a = 1;`,
+      "entry.js": `import { a } from "./a.js";
+console.log("EVAL a =", a);
+try {
+  require("./config.local.js");
+} catch {}
+console.log("MISS done");
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = String(dir);
+    const proc = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    watchee = proc;
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    // "MISS done" means the failed lookup already busted the directory cache.
+    await waitFor("EVAL a = 1\nMISS done\n");
+
+    for (const v of [2, 3]) {
+      await replace(join(cwd, "a.js"), `export const a = ${v};`);
+      await waitFor(`EVAL a = ${v}\nMISS done\n`);
+    }
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  });
+}
+
+// The same state needs no failed lookup. A program that creates an entry next
+// to its sources (a pid file, a log, a cache directory) causes a directory
+// event, and the watcher busts the directory cache for it. A module the
+// program imports lazily after that re-reads the directory.
+it.skipIf(isWindows)(
+  "--watch sees a rename over save after the program wrote into its own directory and then imported lazily",
+  async () => {
+    using dir = tempDir("watch-dir-event-after-own-write", {
+      "trace.log": "",
+      "src/a.js": `export const a = 1;`,
+      "src/lazy.js": `export const lazy = "lazy";`,
+      "src/fence/b.js": `export {};`,
+      "src/entry.js": `import { a } from "./a.js";
+import "./fence/b.js";
+import { mkdirSync, readFileSync, statSync } from "node:fs";
+const trace = process.env.BUN_WATCHER_TRACE;
+const start = statSync(trace).size;
+// The log keys each event by the watched path. kqueue does not log the changed name.
+const logged = dir => readFileSync(trace, "latin1").slice(start).includes("/" + dir + '/"');
+// A new name on every run: kqueue reports a directory only when its entries change.
+const id = crypto.randomUUID();
+mkdirSync("cache-" + id);
+while (!logged("src")) await Bun.sleep(1);
+// The watcher thread logs a batch of events, handles it, then takes the next batch. Once it
+// logs an event for another directory, it has busted the cache for this one.
+mkdirSync("fence/" + id);
+while (!logged("fence")) await Bun.sleep(1);
+const { lazy } = await import("./lazy.js");
+console.log("EVAL a =", a, lazy);
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = join(String(dir), "src");
+    const proc = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      // The trace file is outside the watched directory so that writes to it cause no events.
+      env: { ...bunEnv, BUN_WATCHER_TRACE: join(String(dir), "trace.log") },
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    watchee = proc;
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    await waitFor("EVAL a = 1 lazy\n");
+    await replaceFile["rename over"](join(cwd, "a.js"), `export const a = 2;`);
+    await waitFor("EVAL a = 2 lazy\n");
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
 );

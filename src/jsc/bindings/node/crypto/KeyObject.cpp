@@ -2131,24 +2131,23 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
             return {};
         }
 
-        Vector<uint8_t> copy;
-        copy.append(view->span());
-        return create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, view->span(), "key"_s);
+        if (!copy) return {};
+        return create(WTF::move(*copy));
     }
 
     // TODO(dylan-conway): avoid copying by keeping the buffer alive
     if (auto* view = dynamicDowncast<JSArrayBufferView>(keyValue)) {
-        Vector<uint8_t> copy;
-        copy.append(view->span());
-        return create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, view->span(), "key"_s);
+        if (!copy) return {};
+        return create(WTF::move(*copy));
     }
 
     // TODO(dylan-conway): avoid copying by keeping the buffer alive
     if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(keyValue)) {
-        auto* impl = arrayBuffer->impl();
-        Vector<uint8_t> copy;
-        copy.append(impl->span());
-        return create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, arrayBuffer->impl()->span(), "key"_s);
+        if (!copy) return {};
+        return create(WTF::move(*copy));
     }
 
     if (bufferOnly) {

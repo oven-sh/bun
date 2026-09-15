@@ -139,45 +139,44 @@ KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue ke
         RETURN_IF_EXCEPTION(scope, {});
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
 
-        Vector<uint8_t> copy;
-        copy.append(view->span());
-        return KeyObject::create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, view->span(), "key"_s);
+        if (!copy) return {};
+        return KeyObject::create(WTF::move(*copy));
     }
 
     // Handle ArrayBuffer types
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(key)) {
-        Vector<uint8_t> copy;
-        copy.append(view->span());
-        return KeyObject::create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, view->span(), "key"_s);
+        if (!copy) return {};
+        return KeyObject::create(WTF::move(*copy));
     }
 
     if (auto* buf = dynamicDowncast<JSC::JSArrayBuffer>(key)) {
-        auto* impl = buf->impl();
-        Vector<uint8_t> copy;
-        copy.append(impl->span());
-        return KeyObject::create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, buf->impl()->span(), "key"_s);
+        if (!copy) return {};
+        return KeyObject::create(WTF::move(*copy));
     }
 
     ERR::INVALID_ARG_TYPE(scope, globalObject, "ikm"_s, "string or an instance of SecretKeyObject, ArrayBuffer, TypedArray, DataView, or Buffer"_s, key);
     return {};
 }
 
-void copyBufferOrString(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSValue value, const WTF::ASCIILiteral& name, WTF::Vector<uint8_t>& buffer)
+std::optional<Vector<uint8_t>> copyBufferOrString(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSValue value, ASCIILiteral name)
 {
     if (value.isString()) {
         JSString* str = value.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
         GCOwnedDataScope<WTF::StringView> view = str->view(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
         UTF8View utf8(view);
-        buffer.append(utf8.span());
-    } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        buffer.append(view->span());
-    } else if (auto* buf = dynamicDowncast<JSArrayBuffer>(value)) {
-        buffer.append(buf->impl()->span());
-    } else {
-        ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "string, ArrayBuffer, TypedArray, Buffer"_s, value);
+        return copyArgumentBytes(lexicalGlobalObject, scope, utf8.bytes(), name);
     }
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        return copyArgumentBytes(lexicalGlobalObject, scope, view->span(), name);
+    if (auto* buf = dynamicDowncast<JSArrayBuffer>(value))
+        return copyArgumentBytes(lexicalGlobalObject, scope, buf->impl()->span(), name);
+    ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "string, ArrayBuffer, TypedArray, Buffer"_s, value);
+    return std::nullopt;
 }
 
 std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, ThrowScope& scope, Mode mode)
@@ -196,20 +195,18 @@ std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject
     KeyObject keyObject = prepareKey(lexicalGlobalObject, scope, keyValue);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    WTF::Vector<uint8_t> salt;
-    copyBufferOrString(lexicalGlobalObject, scope, saltValue, "salt"_s, salt);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    auto salt = copyBufferOrString(lexicalGlobalObject, scope, saltValue, "salt"_s);
+    if (!salt) return std::nullopt;
 
-    WTF::Vector<uint8_t> info;
-    copyBufferOrString(lexicalGlobalObject, scope, infoValue, "info"_s, info);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    auto info = copyBufferOrString(lexicalGlobalObject, scope, infoValue, "info"_s);
+    if (!info) return std::nullopt;
 
     int32_t length = 0;
     V::validateInteger(scope, lexicalGlobalObject, lengthValue, "length"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &length);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    if (info.size() > 1024) {
-        ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "info"_s, "must not contain more than 1024 bytes"_s, jsNumber(info.size()));
+    if (info->size() > 1024) {
+        ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "info"_s, "must not contain more than 1024 bytes"_s, jsNumber(info->size()));
         return std::nullopt;
     }
 
@@ -226,7 +223,7 @@ std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject
         return std::nullopt;
     }
 
-    return HkdfJobCtx(hash, length, WTF::move(keyObject), WTF::move(info), WTF::move(salt));
+    return HkdfJobCtx(hash, length, WTF::move(keyObject), WTF::move(*info), WTF::move(*salt));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHkdf, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

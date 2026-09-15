@@ -1758,16 +1758,20 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     fn match_pattern_impl(&self, pattern_component: &Component, filepath: &[u8]) -> bool {
         log!("matchPatternImpl: {}", bstr::BStr::new(filepath));
-        // A pattern segment that itself starts with a literal `.` opts into
-        // matching dotfiles for that segment, regardless of the `dot` flag.
-        if !self.dot
-            && Self::starts_with_dot(filepath)
-            && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
-        {
-            return false;
-        }
         if (self.is_ignored)(filepath) {
             return false;
+        }
+
+        if !self.dot && Self::starts_with_dot(filepath) {
+            let pattern = pattern_component.pattern_slice(&self.pattern);
+            if !Self::starts_with_dot(pattern) {
+                if pattern_component.syntax_hint == SyntaxHint::None
+                    && pattern.first() != Some(&b'!')
+                {
+                    return crate::matcher::match_no_dot(pattern, filepath).matches();
+                }
+                return false;
+            }
         }
 
         match pattern_component.syntax_hint {

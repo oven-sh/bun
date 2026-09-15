@@ -6119,7 +6119,6 @@ impl NodeFS {
     fn readdir_with_entries<T: ReaddirEntry>(
         args: &args::Readdir,
         fd: FD,
-        basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         // On Windows, String/Dirent results read native UTF-16 entry names via the
@@ -6127,7 +6126,7 @@ impl NodeFS {
         // use the u8 iterator.
         #[cfg(windows)]
         if T::IS_U16 {
-            return Self::readdir_with_entries_u16::<T>(args, fd, basename, entries);
+            return Self::readdir_with_entries_u16::<T>(args, fd, entries);
         }
 
         let mut dirent_path = BunString::DEAD;
@@ -6140,9 +6139,10 @@ impl NodeFS {
                 Ok(Some(ent)) => ent,
             };
 
+            // `parentPath` is the caller's path as given, like node.
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
-                    without_nt_prefix::<u8>(basename.as_bytes()),
+                    args.path.slice(),
                     encoding_to_node(args.encoding),
                 );
             }
@@ -6170,7 +6170,6 @@ impl NodeFS {
     fn readdir_with_entries_u16<T: ReaddirEntry>(
         args: &args::Readdir,
         fd: FD,
-        basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         let mut dirent_path = BunString::DEAD;
@@ -6195,7 +6194,7 @@ impl NodeFS {
 
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
-                    without_nt_prefix::<u8>(basename.as_bytes()),
+                    args.path.slice(),
                     encoding_to_node(args.encoding),
                 );
             }
@@ -6219,6 +6218,20 @@ impl NodeFS {
     /// Gone or not enterable since the parent listed it. Reading a gone directory gives ENOENT too.
     fn readdir_skips_subdir(errno: E) -> bool {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
+    }
+
+    /// `Dirent.parentPath`: the caller's path as given at the root, `join(root, rel)` below it (as node).
+    fn dirent_parent_path<'a>(
+        root: &'a [u8],
+        rel: Option<&[u8]>,
+        spill: &'a mut Vec<u8>,
+    ) -> &'a [u8] {
+        match rel {
+            None => root,
+            Some(rel) => {
+                paths::resolve_path::join_spill::<paths::platform::Auto>(spill, &[root, rel])
+            }
+        }
     }
 
     pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
@@ -6290,9 +6303,16 @@ impl NodeFS {
         });
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
-        let mut dirent_path_prev = BunString::EMPTY;
         let mut spill: Vec<u8> = Vec::new();
-        let mut dirent_spill: Vec<u8> = Vec::new();
+        let dirent_path = if T::IS_DIRENT {
+            BunString::clone_utf8(Self::dirent_parent_path(
+                root_basename,
+                (!is_root).then(|| basename.as_bytes()),
+                &mut spill,
+            ))
+        } else {
+            BunString::EMPTY
+        };
 
         loop {
             let current = match iterator.next() {
@@ -6372,22 +6392,12 @@ impl NodeFS {
                 }
             }
 
-            if T::IS_DIRENT {
-                let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
-                    &mut dirent_spill,
-                    &[root_basename, name_to_copy],
-                );
-                let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
-                if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
-                    dirent_path_prev = BunString::clone_utf8(path_u8);
-                }
-            }
             // async path: uses raw `BunString::clone_utf8` — do not apply encoding.
             T::append_entry_recursive(
                 entries,
                 utf8_name,
                 name_to_copy,
-                &dirent_path_prev,
+                &dirent_path,
                 effective_kind,
                 async_task.encoding,
                 false,
@@ -6481,7 +6491,18 @@ impl NodeFS {
             });
 
             let mut iterator = DirIterator::WrappedIterator::init(fd);
-            let mut dirent_path_prev = BunString::DEAD;
+            let dirent_path = if T::IS_DIRENT {
+                webcore::encoding::to_bun_string(
+                    Self::dirent_parent_path(
+                        args.path.slice(),
+                        (!is_root).then_some(basename_bytes),
+                        &mut dirent_spill,
+                    ),
+                    encoding_to_node(args.encoding),
+                )
+            } else {
+                BunString::EMPTY
+            };
 
             loop {
                 let current = match iterator.next() {
@@ -6545,25 +6566,12 @@ impl NodeFS {
                     }
                 }
 
-                if T::IS_DIRENT {
-                    let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
-                        &mut dirent_spill,
-                        &[root_basename.as_bytes(), name_to_copy],
-                    );
-                    let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
-                    if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
-                        dirent_path_prev = webcore::encoding::to_bun_string(
-                            without_nt_prefix::<u8>(path_u8),
-                            encoding_to_node(args.encoding),
-                        );
-                    }
-                }
                 // sync path: uses `webcore::encoding::to_bun_string(.., args.encoding)`.
                 T::append_entry_recursive(
                     entries,
                     utf8_name,
                     name_to_copy,
-                    &dirent_path_prev,
+                    &dirent_path,
                     effective_kind,
                     args.encoding,
                     true,
@@ -6655,8 +6663,7 @@ impl NodeFS {
         let _close = scopeguard::guard(fd, |fd| fd.close());
 
         let mut entries: Vec<T> = Vec::new();
-        Self::readdir_with_entries::<T>(args, fd, path, &mut entries)
-            .map(|()| T::into_readdir(entries))
+        Self::readdir_with_entries::<T>(args, fd, &mut entries).map(|()| T::into_readdir(entries))
     }
 
     /// Caller has already checked `is_bun_standalone_file_path(path)`.

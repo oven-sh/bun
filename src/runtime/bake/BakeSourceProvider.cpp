@@ -15,6 +15,7 @@
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "ImportMetaObject.h"
+#include <atomic>
 
 namespace Bake {
 
@@ -84,7 +85,12 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
   JSC::VM&vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
-  String string = "bake://server.patch.js"_s;
+  // The VM's source map table is keyed by this URL. Modules that later hot
+  // updates do not re-bundle keep running the patch that loaded them, so each
+  // patch needs its own entry instead of replacing the previous patch's map.
+  // Process-wide counter: every dev server in the process shares the VM's table.
+  static std::atomic<unsigned> patchCount { 0 };
+  String string = makeString("bake://server.patch."_s, patchCount++, ".js"_s);
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   
   // Use DevServerSourceProvider with the source map JSON

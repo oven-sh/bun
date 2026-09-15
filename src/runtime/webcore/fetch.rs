@@ -211,28 +211,7 @@ fn bun_fetch_preconnect(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    preconnect_impl(global_object, callframe, None)
-}
-
-/// What `session.fetch.preconnect` is bound from: `this` is the session.
-#[bun_jsc::host_fn]
-pub(crate) fn session_fetch_preconnect(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    preconnect_impl(global_object, callframe, Some(callframe.this()))
-}
-
-fn preconnect_impl(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-    bound_session: Option<JSValue>,
-) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
-    let session = match bound_session {
-        Some(bound) => Some(fetch_session::SessionRef::from_js(global_object, bound)?),
-        None => None,
-    };
 
     if arguments.len() < 1 {
         return Err(global_object.throw_not_enough_arguments(
@@ -304,41 +283,16 @@ fn preconnect_impl(
 
     // `preconnect` is a free fn in `bun_http::async_http`. Ownership
     // of `href_raw` transfers here (`is_url_owned: true`).
-    // A preconnect dials the origin. When the request it is for would go
-    // through a proxy or a unix socket, or could not take the parked socket,
-    // opening that connection is wrong or wasted.
-    let env = VirtualMachine::get().env_loader();
-    let proxied = match session.and_then(|s| s.proxy()) {
-        Some(fetch_session::ProxyOption::Direct) => false,
-        Some(fetch_session::ProxyOption::Explicit {
-            href,
-            respect_no_proxy,
-            ..
-        }) => http::ProxySettings::from_explicit(href, env, *respect_no_proxy)
-            .is_some_and(|settings| settings.resolve(&url).is_some()),
-        None => env.get_http_proxy_for(&url).is_some(),
-    };
-    let unusable = session.is_some_and(|s| {
-        !s.unix().is_empty() || !s.keep_alive() || s.check_server_identity().is_some()
-    });
-    if proxied || unusable {
+    // A request to an origin the environment proxies never dials it.
+    if VirtualMachine::get()
+        .env_loader()
+        .get_http_proxy_for(&url)
+        .is_some()
+    {
         reclaim_href!();
         return Ok(JSValue::UNDEFINED);
     }
-
-    let (options, in_flight) = match session {
-        Some(session) => (
-            http::async_http::Options {
-                pool: session.pool(),
-                tls_props: session.ssl_config(),
-                reject_unauthorized: session.reject_unauthorized(),
-                ..Default::default()
-            },
-            Some(session.preconnecting()),
-        ),
-        None => (Default::default(), None),
-    };
-    http::async_http::preconnect_with(url, true, options, in_flight);
+    http::async_http::preconnect(url, true);
     Ok(JSValue::UNDEFINED)
 }
 

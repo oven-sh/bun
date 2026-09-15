@@ -619,62 +619,6 @@ describe("session.fetch", () => {
     expect(await session.fetch(`http://127.0.0.1:${dead.port}/`).catch(e => e.code)).toBe("ECONNREFUSED");
   });
 
-  // fetch.preconnect() is a no-op on Windows.
-  test.todoIf(isWindows)("preconnect opens its connection in the session's pool, with the session's tls", async () => {
-    const server = connectionCountingServer();
-    const port = await server.listen();
-    try {
-      using session = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
-      const url = `https://localhost:${port}/`;
-      const accepted = once(server.server, "secureConnection");
-      session.fetch.preconnect(url);
-      await accepted;
-      expect(server.connections).toBe(1);
-      // The session's request rides the preconnected socket; one outside the session cannot.
-      let reused: boolean | undefined;
-      expect(await (await session.fetch(url, { onStats: s => (reused = s.connectionReused) })).text()).toBe("ok");
-      expect(server.connections).toBe(1);
-      expect(reused).toBe(true);
-      expect(await (await fetch(url, { tls: { ca: tlsCert.cert } })).text()).toBe("ok");
-      expect(server.connections).toBe(2);
-    } finally {
-      server.close();
-    }
-  });
-
-  test("preconnect dials nothing when the session's requests could not use the connection", async () => {
-    // Counts TCP connections; answers like an origin.
-    let connections = 0;
-    const origin = net.createServer(socket => {
-      connections++;
-      socket.on("error", () => {});
-      socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\norigin"));
-    });
-    origin.listen(0, "127.0.0.1");
-    await once(origin, "listening");
-    const url = `http://127.0.0.1:${(origin.address() as net.AddressInfo).port}/`;
-    using proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("proxy") });
-    using dir = tempDir("fetch-session-preconnect", {});
-    const path = join(String(dir), "s.sock");
-    using unix = Bun.serve({ unix: path, fetch: () => new Response("unix") });
-    try {
-      // Each session answers its request some other way than over a pooled TCP connection to the origin.
-      const cases: [init: Bun.FetchSessionInit, text: string, connectionsAfter: number][] = [
-        [{ proxy: `http://127.0.0.1:${proxy.port}` }, "proxy", 0],
-        [{ unix: path }, "unix", 0],
-        [{ keepAlive: false }, "origin", 1],
-      ];
-      for (const [init, text, connectionsAfter] of cases) {
-        using session = new Bun.FetchSession(init);
-        session.fetch.preconnect(url);
-        expect(await (await session.fetch(url)).text()).toBe(text);
-        expect(connections).toBe(connectionsAfter);
-      }
-    } finally {
-      origin.close();
-    }
-  });
-
   test("keeps its session alive", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
     const calls: number[] = [];

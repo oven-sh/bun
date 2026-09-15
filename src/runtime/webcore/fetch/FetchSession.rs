@@ -147,9 +147,6 @@ pub struct FetchSession {
     this_value: JsCell<JsRef>,
     /// Requests that hold a `SessionHold`.
     in_flight: Cell<u32>,
-    /// Preconnects on their way into this session's pool. The session is not
-    /// collected before they are parked: collecting it is what closes the pool.
-    preconnecting: std::sync::Arc<core::sync::atomic::AtomicUsize>,
 }
 
 /// The `session` option of one `fetch()` call. The wrapper is an argument of
@@ -209,9 +206,6 @@ impl<'a> SessionRef<'a> {
     }
     pub(crate) fn on_stats(self) -> Option<JSValue> {
         js::on_stats_get_cached(self.wrapper)
-    }
-    pub(crate) fn preconnecting(self) -> http::async_http::InFlight {
-        http::async_http::InFlight::new(&self.session.preconnecting)
     }
 }
 
@@ -275,7 +269,6 @@ impl FetchSession {
             used: Cell::new(false),
             this_value: JsCell::new(JsRef::init_weak(this_value)),
             in_flight: Cell::new(0),
-            preconnecting: Default::default(),
         });
         if options.is_undefined_or_null() {
             return Ok(this);
@@ -353,11 +346,6 @@ impl FetchSession {
         Ok(this)
     }
 
-    /// Called by the collector, off the JS thread.
-    pub fn has_pending_activity(&self) -> bool {
-        self.preconnecting.load(Ordering::Acquire) > 0
-    }
-
     /// `fetch` bound to this session, so it can be handed to anything that
     /// takes a `fetch` function.
     pub(crate) fn get_fetch(
@@ -372,30 +360,13 @@ impl FetchSession {
             1,
             Default::default(),
         );
-        let bound = target.bind(
+        target.bind(
             global,
             this_value,
             &bun_core::String::static_("fetch"),
             1.0,
             &[],
-        )?;
-        // `fetch.preconnect`, into this session's pool.
-        let preconnect = jsc::JSFunction::create(
-            global,
-            "preconnect",
-            super::__jsc_host_session_fetch_preconnect,
-            1,
-            Default::default(),
         )
-        .bind(
-            global,
-            this_value,
-            &bun_core::String::static_("preconnect"),
-            1.0,
-            &[],
-        )?;
-        bound.put(global, b"preconnect", preconnect);
-        Ok(bound)
     }
 
     /// Close this session's idle keep-alive connections. Requests in flight

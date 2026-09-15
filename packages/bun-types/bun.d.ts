@@ -8933,15 +8933,17 @@ declare module "bun" {
     /**
      * `fetch()` with this session. The function is bound: hand it to anything
      * that takes a `fetch`. A `session` in `init` does not replace this one.
-     * `session.fetch.preconnect()` opens its connection in this session's pool,
-     * with this session's `tls`.
+     *
+     * It has no `preconnect`, so where an option is typed `typeof fetch`
+     * (which in Bun includes `fetch.preconnect`), pass
+     * `session.fetch as typeof fetch`.
      *
      * @example
      * ```ts
      * const client = new SomeClient({ fetch: session.fetch });
      * ```
      */
-    readonly fetch: typeof fetch;
+    readonly fetch: (input: string | URL | Request, init?: BunFetchRequestInit) => Promise<Response>;
     /**
      * Close the idle connections in this session's pool. Requests in flight
      * finish, and the session stays usable.

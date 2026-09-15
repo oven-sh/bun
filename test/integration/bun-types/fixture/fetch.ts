@@ -362,11 +362,8 @@ if (typeof process !== "undefined") {
     },
   });
   fetch("https://example.com", { session });
-  // The shapes libraries declare for a `fetch` they accept.
-  const bound: typeof fetch = session.fetch;
-  const plain: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = session.fetch;
-  plain("https://example.com");
-  session.fetch.preconnect("https://example.com");
+  // The shape libraries declare for a `fetch` they accept.
+  const bound: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = session.fetch;
   bound("https://example.com", { method: "POST" }).then(r => r.text());
   fetch("https://example.com", { session, proxy: false });
   fetch("https://example.com", { proxy: false, onStats: () => {} });

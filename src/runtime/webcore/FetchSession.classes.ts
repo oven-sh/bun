@@ -6,7 +6,6 @@ export default [
     construct: true,
     constructNeedsThis: true,
     finalize: true,
-    hasPendingActivity: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",

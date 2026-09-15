@@ -1476,7 +1476,7 @@ describe("crypto.KeyObjects", () => {
       passphrase: "top secret",
     });
   });
-  // SKIPED because we round the key size to the nearest multiple of 8 like documented
+  // BoringSSL only generates RSA moduli that are multiples of 128 bits, so 513 is rejected.
   test.skip(`this tests check that generateKeyPair returns correct bit length in KeyObject's asymmetricKeyDetails.`, async () => {
     // This tests check that generateKeyPair returns correct bit length in
     // https://github.com/nodejs/node/issues/46102#issuecomment-1372153541
@@ -1497,6 +1497,41 @@ describe("crypto.KeyObjects", () => {
     const { publicKey, privateKey } = await (promise as Promise<{ publicKey: KeyObject; privateKey: KeyObject }>);
     expect(publicKey.asymmetricKeyDetails?.modulusLength).toBe(513);
     expect(privateKey.asymmetricKeyDetails?.modulusLength).toBe(513);
+  });
+
+  // BoringSSL's RSA_generate_key_ex rounds the requested modulus down to a multiple of
+  // 128 bits. Previously Bun passed the request through unchanged, so asking for 1023
+  // or 3000 bits silently returned an 896- or 2944-bit key. https://github.com/oven-sh/bun/issues/5740
+  describe("generateKeyPair('rsa') never silently returns a smaller modulus than requested", () => {
+    const outcome = (modulusLength: number) => {
+      try {
+        const { publicKey } = generateKeyPairSync("rsa", { modulusLength });
+        return publicKey.asymmetricKeyDetails?.modulusLength;
+      } catch (e) {
+        return { code: (e as NodeJS.ErrnoException).code };
+      }
+    };
+
+    test("generateKeyPairSync", () => {
+      expect({
+        1023: outcome(1023),
+        1024: outcome(1024),
+        3000: outcome(3000),
+      }).toEqual({
+        1023: { code: "ERR_OUT_OF_RANGE" },
+        1024: 1024,
+        3000: { code: "ERR_OUT_OF_RANGE" },
+      });
+    });
+
+    test("generateKeyPair validates before scheduling", () => {
+      expect(() => generateKeyPair("rsa", { modulusLength: 1023 }, () => {})).toThrow(
+        expect.objectContaining({
+          code: "ERR_OUT_OF_RANGE",
+          message: expect.stringContaining("multiple of 128"),
+        }),
+      );
+    });
   });
 
   type TestRunInContextArg =

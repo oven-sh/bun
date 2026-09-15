@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -6092,6 +6092,131 @@ it("remoteSettings/localSettings are never null before the peer's SETTINGS arriv
     client?.destroy();
     server.close();
   }
+});
+
+// A session whose native transport closes still has frames to write: a queued response, a SETTINGS
+// or PING ACK. Node counts them as sent (Http2Session::ClearOutgoing completes every write with
+// status 0), so the stream finishes and nothing errors. Bun handed them to socket.write() on a
+// socket whose handle was gone. That reported ERR_SOCKET_CLOSED (server) or EBADF (client) on the
+// session and on its streams, which is an uncaught exception for a stream with no 'error' listener.
+// The expected values are what node v26.3.0 gives. Every emitter here records its 'error' instead.
+// Linux only. Each case needs the kernel to deliver the bytes queued ahead of the RST and then
+// report the close, which is what epoll does. kqueue and IOCP drop those bytes with the reset.
+describe.concurrent("frames written after the native transport closed count as sent", () => {
+  // :method GET, :scheme http and :path / from the static table, then a literal :authority.
+  const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+
+  // The peer sends one request and resets the connection before the server reads it.
+  async function serverLosesPeer({ allowHalfOpen, openBody }) {
+    const seen = { streams: 0, shapes: [], streamErrors: [], sessionErrors: [] };
+    const streamsClosed = [];
+    const server = http2.createServer({ allowHalfOpen });
+    server.on("session", session => session.on("error", err => seen.sessionErrors.push(err.code)));
+    server.on("stream", stream => {
+      seen.streams++;
+      const events = [];
+      for (const name of ["finish", "aborted"]) stream.on(name, () => events.push(name));
+      stream.on("error", err => seen.streamErrors.push(err.code));
+      streamsClosed.push(
+        new Promise(resolve =>
+          stream.on("close", () => {
+            events.push(`close:${stream.rstCode}`);
+            if (!seen.shapes.includes(events.join())) seen.shapes.push(events.join());
+            resolve();
+          }),
+        ),
+      );
+      stream.respond({ ":status": 200 });
+      stream.end("hello", () => events.push("endcb"));
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    for (let i = 0; i < 5; i++) {
+      const peerGone = new Promise(resolve =>
+        server.once("connection", socket => socket.once("end", resolve).once("close", resolve)),
+      );
+      const socket = net.connect(server.address().port, "127.0.0.1", () => {
+        // One write, so one segment is on the wire before the RST. Nagle cannot hold a part back.
+        socket.write(
+          Buffer.concat([
+            http2utils.kClientMagic,
+            new http2utils.SettingsFrame().data,
+            new http2utils.HeadersFrame(1, requestBlock, 0, true, !openBody).data,
+          ]),
+        );
+        socket.resetAndDestroy();
+      });
+      socket.on("error", () => {});
+      await peerGone;
+    }
+    // Calls back only once every session and socket of the server is released.
+    await new Promise(resolve => server.close(resolve));
+    await Promise.all(streamsClosed);
+    return seen;
+  }
+
+  const finished = ["endcb,finish,close:0"];
+  for (const [name, options, shapes] of [
+    ["server", { allowHalfOpen: false, openBody: false }, finished],
+    // allowHalfOpen keeps the socket open after 'end'. The session has to end it, or close() hangs.
+    ["server with allowHalfOpen", { allowHalfOpen: true, openBody: false }, finished],
+    // Only that it completes and stays silent. Node also closes this stream with NO_ERROR, because
+    // the response finished while the request was open. Bun does not do that yet, transport or not.
+    ["server with allowHalfOpen and the request body still open", { allowHalfOpen: true, openBody: true }, undefined],
+  ]) {
+    it.skipIf(!isLinux)(name, async () => {
+      const { streams, shapes: seen, ...errors } = await serverLosesPeer(options);
+      // A reset can beat the request out of the receive queue. At least one of five is read.
+      expect(streams).toBeGreaterThan(0);
+      expect({ shapes: shapes && seen, ...errors }).toEqual({ shapes, streamErrors: [], sessionErrors: [] });
+    });
+  }
+
+  // The peer answers a request with SETTINGS and a PING, then resets: the client owes two ACKs.
+  it.skipIf(!isLinux)("client", async () => {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      let received = Buffer.alloc(0);
+      socket.on("data", function onData(chunk) {
+        received = Buffer.concat([received, chunk]);
+        let offset = http2utils.kClientMagic.length;
+        while (offset + 9 <= received.length) {
+          const end = offset + 9 + received.readUIntBE(offset, 3);
+          if (end > received.length) break;
+          // The request's HEADERS frame: from here on the request is open on both sides.
+          if (received[offset + 3] === 1) {
+            socket.off("data", onData);
+            socket.write(Buffer.concat([new http2utils.SettingsFrame().data, new http2utils.PingFrame().data]));
+            socket.resetAndDestroy();
+            return;
+          }
+          offset = end;
+        }
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const requests = [];
+    for (let i = 0; i < 3; i++) {
+      const events = [];
+      const session = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      session.on("error", err => events.push(`session error:${err.code}`));
+      const sessionClosed = new Promise(resolve => session.on("close", resolve));
+      const req = session.request({ ":method": "POST", ":path": "/" });
+      req.on("error", err => events.push(`error:${err.code}`));
+      req.on("aborted", () => events.push("aborted"));
+      const reqClosed = new Promise(resolve =>
+        req.on("close", () => {
+          events.push(`close:${req.rstCode}`);
+          resolve();
+        }),
+      );
+      // The body stays open, so the request is in flight when the transport closes.
+      req.write("x");
+      await Promise.all([sessionClosed, reqClosed]);
+      requests.push(events.join());
+    }
+    await new Promise(resolve => server.close(resolve));
+    expect(requests).toEqual(["aborted,close:8", "aborted,close:8", "aborted,close:8"]);
+  });
 });
 
 // node's ServerHttp2Session exposes the Http2Server/Http2SecureServer that accepted the connection

@@ -6287,8 +6287,8 @@ class ClientHttp2Session extends Http2Session {
     }
   }
 
-  // Counts a submitted request against the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit until
-  // Http2Stream#_destroy releases it.
+  // Counts a submitted request against the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit until its
+  // stream is destroyed. Http2Stream#_destroy releases the slot.
   #trackActiveRequest(req: ClientHttp2Stream) {
     this.#activeRequestCount++;
     req[kHoldsRequestSlot] = true;

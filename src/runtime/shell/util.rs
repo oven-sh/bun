@@ -18,21 +18,42 @@ pub(crate) fn throw_if_body_not_in_memory(
     global: &crate::jsc::JSGlobalObject,
     body: &mut crate::webcore::body::Value,
 ) -> crate::jsc::JsResult<()> {
+    use crate::jsc::ErrorCode;
     use crate::webcore::body::Value;
 
     body.to_blob_if_possible();
+    let already_used = || {
+        global
+            .err(
+                ErrorCode::BODY_ALREADY_USED,
+                format_args!("Body already used"),
+            )
+            .throw()
+    };
     match body {
-        Value::Locked(locked) if locked.action.is_none() && !locked.is_disturbed2(global) => {
+        Value::Locked(locked) => {
+            let stream = locked.readable.get();
+            // A read is in flight (`.text()`, `Bun.write`), or the stream gave out bytes.
+            if !locked.action.is_none()
+                || locked.promise.is_some()
+                || locked.on_receive_value.is_some()
+                || stream.is_some_and(|stream| stream.is_disturbed(global))
+            {
+                return Err(already_used());
+            }
+            if stream.is_some_and(|stream| stream.is_locked(global)) {
+                return Err(global
+                    .err(
+                        ErrorCode::INVALID_STATE_TypeError,
+                        format_args!("Invalid state: ReadableStream is locked"),
+                    )
+                    .throw());
+            }
             Err(global.throw(format_args!(
                 "A Response with a ReadableStream body is not supported as a shell redirect yet. Buffer it first, e.g. `< ${{await response.blob()}}`, or use Bun.spawn({{ stdin: response }})"
             )))
         }
-        Value::Locked(_) | Value::Used => Err(global
-            .err(
-                crate::jsc::ErrorCode::BODY_ALREADY_USED,
-                format_args!("Body already used"),
-            )
-            .throw()),
+        Value::Used => Err(already_used()),
         Value::Error(err) => Err(global.throw_value(err.to_js(global))),
         Value::Blob(_)
         | Value::WTFStringImpl(_)

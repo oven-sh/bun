@@ -12,8 +12,8 @@ import { $ } from "bun";
 
 const response = await fetch("https://example.com");
 
-// Use Response as stdin.
-await $`cat < ${response} | wc -c`; // 1256
+// Use the response body as stdin.
+await $`cat < ${await response.blob()} | wc -c`; // 1256
 ```
 
 ---
@@ -176,9 +176,10 @@ You can redirect from these JavaScript objects:
 
 - `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (reads from the underlying buffer)
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
+- `Blob` (reads from the blob)
 - `Response` (reads from the body)
 
-Bun reads the whole `Response` body when the command starts, so the body must be in memory by then. A `Response` whose body is a `ReadableStream` throws an error. So does a `fetch()` response that is still downloading. Buffer the body first:
+Bun reads the whole `Response` body when the command starts, so the body must be in memory by then. A `Response` whose body is a `ReadableStream` throws an error. So does a `fetch()` response that is still downloading ([#42785](https://github.com/oven-sh/bun/issues/42785) tracks support for both). Buffer the body into a `Blob` first:
 
 ```js
 import { $ } from "bun";

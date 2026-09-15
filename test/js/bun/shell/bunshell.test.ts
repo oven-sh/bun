@@ -3518,6 +3518,63 @@ describe("stdin redirect from a Response", () => {
       reader.releaseLock();
       expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
     });
+
+    test("an in-memory body whose stream has a reader", async () => {
+      // A reader on the native stream of an in-memory body disturbs the body at once.
+      const response = new Response(payload);
+      response.body!.getReader();
+      expect(response.bodyUsed).toBe(true);
+      expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
+    });
+
+    test("a stream body that text() is reading", async () => {
+      const rest = Promise.withResolvers<void>();
+      const response = new Response(
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(encoder.encode("first "));
+            await rest.promise;
+            controller.enqueue(encoder.encode("second"));
+            controller.close();
+          },
+        }),
+      );
+      const text = response.text();
+      expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
+      rest.resolve();
+      expect(await text).toBe("first second");
+    });
+
+    test("a fetch() body that text() is reading", async () => {
+      await using held = serveHeldBody();
+      const response = await fetch(held.url);
+      const text = response.text();
+      expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
+      held.sendRest();
+      expect(await text).toBe("first second");
+    });
+
+    test("a fetch() body that Bun.write() is reading", async () => {
+      using dir = tempDir("shell-response-redirect", {});
+      await using held = serveHeldBody();
+      const response = await fetch(held.url);
+      const written = Bun.write(join(String(dir), "body.txt"), response);
+      expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
+      held.sendRest();
+      expect(await written).toBe("first second".length);
+    });
+  });
+
+  test("a stream body that a reader holds rejects the way blob() does", async () => {
+    const response = new Response(streamOf(payload));
+    const reader = response.body!.getReader();
+    const locked = "ERR_INVALID_STATE: Invalid state: ReadableStream is locked";
+    expect(await rejection($`cat < ${response}`)).toBe(locked);
+    expect(await rejection($`echo hi < ${response}`)).toBe(locked);
+    expect(await response.blob().then(String, error => `${error.code}: ${error.message}`)).toBe(locked);
+    // The reader read nothing, so the body is whole once it lets go.
+    reader.releaseLock();
+    expect(await $`cat < ${await response.blob()}`.text()).toBe(payload);
   });
 
   test("a fetch() body that failed rejects with its error", async () => {

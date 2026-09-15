@@ -1929,11 +1929,6 @@ impl BlobExt for Blob {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
-        // `Bytes.stored_name` is File identity: a bytes-backed Blob without
-        // the File bit has no name.
-        if !self.is_jsdom_file.get() && !self.needs_to_read_file() && !self.is_s3() {
-            return None;
-        }
         if let Some(path) = self.store_path() {
             self.name.set(BunString::clone_utf8(path));
             return Some(self.name.get());

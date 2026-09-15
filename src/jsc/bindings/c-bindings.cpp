@@ -1,6 +1,7 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
 #include <cstdio>
+#include <cstdlib>
 
 #if !OS(WINDOWS)
 #include <wtf/WTFConfig.h>
@@ -31,6 +32,17 @@
 #include <wtf/Threading.h>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
+
+// Runs before Output and the Windows env block are initialized, hence the CRT.
+extern "C" [[noreturn]] void bun_abort_missing_simd(const char* requirement, const char* hint)
+{
+    fprintf(stderr, "error: this CPU is missing %s support, which Bun requires for UTF-8 processing.\n%s", requirement, hint);
+    if (const char* forced = getenv("SIMDUTF_FORCE_IMPLEMENTATION")) {
+        fprintf(stderr, "  note: SIMDUTF_FORCE_IMPLEMENTATION is set to \"%s\"\n", forced);
+    }
+    fflush(stderr);
+    exit(134);
+}
 
 // Error condition is encoded as max int32_t.
 // The only error in this function is ESRCH (no process found)

@@ -240,6 +240,68 @@ describe("WebSocket upgrade split across reads", () => {
       ws.close();
     }
   });
+
+  // The cap is on the size of the head, not on where the reads end. A head
+  // one byte over the cap must be rejected even when the whole head arrives
+  // in a single read, and a head exactly at the cap must open.
+  const MAX_HEAD = 16384; // default max_http_header_size
+
+  function serve101(headSize: number) {
+    return Bun.listen<{ buf: string; done: boolean }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { buf: "", done: false };
+        },
+        data(socket, chunk) {
+          const st = socket.data;
+          if (st.done) return;
+          st.buf += chunk.toString("latin1");
+          if (!st.buf.includes("\r\n\r\n")) return;
+          st.done = true;
+          const m = /Sec-WebSocket-Key:\s*(\S+)/i.exec(st.buf);
+          if (!m) {
+            socket.end();
+            return;
+          }
+          const fixed =
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${makeAccept(m[1])}\r\n` +
+            "X-Pad: ";
+          const padLen = headSize - fixed.length - "\r\n\r\n".length;
+          const head = fixed + Buffer.alloc(padLen, "a").toString() + "\r\n\r\n";
+          expect(head.length).toBe(headSize);
+          socket.write(head);
+          socket.flush();
+        },
+      },
+    });
+  }
+
+  function connect(port: number): Promise<string> {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const ws = new globalThis.WebSocket(`ws://127.0.0.1:${port}`);
+    ws.onopen = () => {
+      resolve("open");
+      ws.close();
+    };
+    ws.onerror = ev => resolve("error: " + ((ev as ErrorEvent).message ?? "error"));
+    ws.onclose = ev => resolve(`close: ${ev.code} ${ev.reason}`);
+    return promise;
+  }
+
+  test("101 head of exactly the cap in one write opens", async () => {
+    using server = serve101(MAX_HEAD);
+    expect(await connect(server.port)).toBe("open");
+  });
+
+  test("101 head one byte over the cap in one write is rejected", async () => {
+    using server = serve101(MAX_HEAD + 1);
+    expect(await connect(server.port)).toContain("Invalid response");
+  });
 });
 
 describe("WebSocket buffered handshake data", () => {

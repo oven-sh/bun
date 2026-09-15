@@ -94,6 +94,40 @@ pub(crate) struct ConfigureEnvOptions {
     pub(crate) store_root_fd: bool,
 }
 
+/// How a package script ended. A signal means the wrapper re-raises it in bun.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScriptStatus {
+    Exited(u32),
+    Signaled(Option<bun_core::SignalCode>),
+}
+
+impl ScriptStatus {
+    /// The exit code to report. A signal that asks bun to stop (Ctrl+C, SIGTERM) is re-raised instead.
+    pub(crate) fn exit_code(self) -> u32 {
+        use bun_core::SignalCode;
+        match self {
+            ScriptStatus::Exited(code) => code,
+            ScriptStatus::Signaled(Some(
+                sig @ (SignalCode::SIGINT
+                | SignalCode::SIGTERM
+                | SignalCode::SIGHUP
+                | SignalCode::SIGQUIT),
+            )) => Self::raise(sig),
+            ScriptStatus::Signaled(Some(sig)) => 128 + sig as u8 as u32,
+            ScriptStatus::Signaled(None) => 1,
+        }
+    }
+
+    fn raise(sig: bun_core::SignalCode) -> ! {
+        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()
+            == Some(true)
+        {
+            bun_crash_handler::suppress_reporting();
+        }
+        Global::raise_ignoring_panic_handler(sig)
+    }
+}
+
 pub(crate) struct RunCommand;
 
 impl RunCommand {
@@ -272,6 +306,43 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
     ) -> crate::Result<()> {
+        match Self::run_package_script_foreground_status(
+            ctx,
+            original_script,
+            name,
+            cwd,
+            env,
+            passthrough,
+            silent,
+            use_system_shell,
+            shell_path,
+        )? {
+            ScriptStatus::Exited(0) => Ok(()),
+            ScriptStatus::Exited(code) => Global::exit(code),
+            ScriptStatus::Signaled(Some(sig)) => ScriptStatus::raise(sig),
+            ScriptStatus::Signaled(None) => {
+                if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()
+                    == Some(true)
+                {
+                    bun_crash_handler::suppress_reporting();
+                }
+                Global::exit(1)
+            }
+        }
+    }
+
+    /// Returns how the script ended (already reported) instead of exiting on it.
+    pub(crate) fn run_package_script_foreground_status(
+        ctx: &mut ContextData,
+        original_script: &[u8],
+        name: &[u8],
+        cwd: &[u8],
+        env: &mut DotEnv::Loader,
+        passthrough: &[Box<[u8]>],
+        silent: bool,
+        use_system_shell: bool,
+        shell_path: Option<&[u8]>,
+    ) -> crate::Result<ScriptStatus> {
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin =
             Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?;
@@ -361,9 +432,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     );
                     Output::flush();
                 }
-                Global::exit(code as u32);
+                return Ok(ScriptStatus::Exited(code as u32));
             }
-            return Ok(());
+            return Ok(ScriptStatus::Exited(0));
         }
 
         use crate::api::bun_process::{Status as SpawnStatus, sync};
@@ -426,7 +497,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     );
                 }
                 Output::flush();
-                return Ok(());
+                return Ok(ScriptStatus::Exited(1));
             }
             Ok(Err(err)) => {
                 if !silent {
@@ -437,7 +508,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     );
                 }
                 Output::flush();
-                return Ok(());
+                return Ok(ScriptStatus::Exited(1));
             }
             Ok(Ok(result)) => result,
         };
@@ -454,15 +525,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                             bun_sys::SignalCode(sig as u8).fmt(Output::enable_ansi_colors_stderr()),
                         );
                         Output::flush();
-
-                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
-                            .get()
-                            == Some(true)
-                        {
-                            bun_crash_handler::suppress_reporting();
-                        }
-
-                        Global::raise_ignoring_panic_handler(sig);
+                        return Ok(ScriptStatus::Signaled(Some(sig)));
                     }
                 }
 
@@ -484,7 +547,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         Output::flush();
                     }
 
-                    Global::exit(exit_code.code as u32);
+                    return Ok(ScriptStatus::Exited(exit_code.code as u32));
                 }
             }
 
@@ -504,18 +567,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     }
                 }
 
-                if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()
-                    == Some(true)
-                {
-                    bun_crash_handler::suppress_reporting();
-                }
-
-                if let Some(sig) = signal_code {
-                    Global::raise_ignoring_panic_handler(sig);
-                }
-                // `.signaled` always carries 1..=31 in practice; fallback only
-                // for type-totality.
-                Global::exit(1);
+                return Ok(ScriptStatus::Signaled(signal_code));
             }
 
             SpawnStatus::Err(ref err) => {
@@ -528,13 +580,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
 
                 Output::flush();
-                return Ok(());
+                return Ok(ScriptStatus::Exited(1));
             }
 
             _ => {}
         }
 
-        Ok(())
+        Ok(ScriptStatus::Exited(0))
     }
 
     /// Allocates a

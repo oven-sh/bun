@@ -1943,6 +1943,136 @@ it.skipIf(!nodeExe())(
   },
 );
 
+// Guards for paths that only bun's deferred upgrade has: the stream-level engine
+// that takes over when plaintext is still queued, and a native handle closed
+// directly. Node reports other events in these shapes, so they do not run under
+// node. The shapes that both runtimes share are in the fixture further down.
+describe("bun's deferred TLS upgrade", () => {
+  async function connectingTransport() {
+    const accepted: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      accepted.push(socket);
+      socket.on("error", () => {});
+      socket.resume();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    raw.on("error", () => {});
+    return {
+      raw,
+      [Symbol.dispose]() {
+        raw.destroy();
+        for (const socket of accepted) socket.destroy();
+        server.close();
+      },
+    };
+  }
+
+  it("tls.connect({ socket }).end() finishes after a transport with queued plaintext connects", async () => {
+    using transport = await connectingTransport();
+    const { raw } = transport;
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    const finished = Promise.withResolvers<void>();
+    client.on("error", finished.reject);
+    client.once("close", () => finished.reject(new Error("closed before 'finish'")));
+    try {
+      const events: string[] = [];
+      raw.on("connect", () => events.push("transport connect"));
+      client.on("finish", () => {
+        events.push("finish");
+        finished.resolve();
+      });
+      // Still queued when the transport connects, so the upgrade takes the stream-level engine.
+      raw.write("plain");
+      client.end();
+      await finished.promise;
+      expect(events).toEqual(["transport connect", "finish"]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The engine cannot take a string chunk, and a transport with a decoder hands
+  // it one before the engine's start task runs. The socket is no longer
+  // `connecting` by then, so the report must not depend on that flag.
+  it("tls.connect({ socket }) reports a stream-level engine that fails before it starts", async () => {
+    using transport = await connectingTransport();
+    const { raw } = transport;
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    const outcome = Promise.withResolvers<{ reported: boolean; hadError: boolean; destroyed: boolean }>();
+    let reported = false;
+    client.on("error", () => (reported = true));
+    client.on("close", hadError => outcome.resolve({ reported, hadError, destroyed: client.destroyed }));
+    try {
+      raw.write("plain");
+      raw.setEncoding("utf8");
+      raw.unshift("not a TLS record");
+      expect(await outcome.promise).toEqual({ reported: true, hadError: true, destroyed: true });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // Plain writes queued on the connection between the wrap and the next tick send
+  // the server-side upgrade to the stream-level engine as well.
+  it("a server-side TLSSocket end()s in the wrap tick while plain writes are queued on the connection", async () => {
+    const finished = Promise.withResolvers<void>();
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(raw => {
+      raw.on("error", () => {});
+      const wrapped = new TLSSocket(raw, { isServer: true, ...COMMON_CERT_ });
+      sockets.push(wrapped, raw);
+      wrapped.on("error", finished.reject);
+      wrapped.once("close", () => finished.reject(new Error("closed before 'finish'")));
+      wrapped.on("finish", () => finished.resolve());
+      // More than the kernel takes at once, and the client does not read: still queued on the next tick.
+      raw.write(Buffer.alloc(32 * 1024 * 1024));
+      wrapped.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    client.pause();
+    try {
+      await finished.promise;
+      expect(sockets[0].writableFinished).toBe(true);
+    } finally {
+      client.destroy();
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  });
+
+  // end() waits for a wrap's native handle only while that handle is still to
+  // attach. One that attached and then closed leaves nothing to wait for: the
+  // stream ends itself from the close, and that end() has to finish.
+  it("a server-side TLSSocket wrap finishes and closes after its native handle was closed", async () => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    let wrapped: TLSSocket | undefined;
+    const server = net.createServer(raw => {
+      raw.on("error", () => {});
+      wrapped = new TLSSocket(raw, { isServer: true, ...COMMON_CERT_ });
+      wrapped.on("error", closed.reject);
+      wrapped.on("secure", () => (wrapped as any)._handle.close());
+      for (const event of ["finish", "close"]) wrapped.on(event, () => events.push(event));
+      wrapped.on("close", () => closed.resolve());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    client.on("error", () => {});
+    try {
+      await closed.promise;
+      expect(events).toEqual(["finish", "close"]);
+    } finally {
+      client.destroy();
+      wrapped?.destroy();
+      server.close();
+    }
+  });
+});
+
 // The peer accepts the TCP connection and never answers the ClientHello (a dead
 // TLS backend, a plaintext service on a TLS port). A caller that gives up must
 // still finish its writable side and send the FIN, as node does:
@@ -1983,6 +2113,70 @@ describe.each([
       writableFinished: true,
       readyState: "closed",
       destroyed: true,
+    });
+  });
+
+  // Both shapes shut the socket down before it has its TLS handle. The FIN waits
+  // for the transport, as node's _final does on `connecting`:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+  describe.concurrent("before the TLS handle is attached", () => {
+    it.skipIf(!exe)("end() and destroySoon() wait for a tls.connect({ socket }) transport to connect", async () => {
+      const ended = {
+        log: ["transport connect", "finish"],
+        peerSawFin: true,
+        writableFinished: true,
+        readyState: "readOnly",
+        destroyed: false,
+      };
+      const destroyed = {
+        log: ["transport connect", "finish", "close"],
+        peerSawFin: true,
+        writableFinished: true,
+        readyState: "closed",
+        destroyed: true,
+      };
+      expect(await run("pending-transport")).toEqual({
+        "end connecting": ended,
+        "end unconnected": ended,
+        "destroySoon connecting": destroyed,
+        "destroySoon unconnected": destroyed,
+      });
+    });
+
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+    it.skipIf(!exe)(
+      "a tls.connect({ socket }) transport that closes before it connects closes the socket",
+      async () => {
+        const closed = { log: ["close"], writableFinished: false, readyState: "closed", destroyed: true };
+        // A 'connect' listener that ran first destroyed the transport: the upgrade finds no handle.
+        const closedOnConnect = { readyState: "closed", destroyed: true, transportDestroyed: true };
+        expect(await run("closed-transport")).toEqual({
+          "end refused": closed,
+          "end destroyed": closed,
+          "end destroyed on connect": closedOnConnect,
+          "destroySoon refused": closed,
+          "destroySoon destroyed": closed,
+          "destroySoon destroyed on connect": closedOnConnect,
+        });
+      },
+    );
+
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
+    it.skipIf(!exe)(
+      "end('') over a tls.connect({ socket }) transport that is still connecting follows the handshake",
+      async () => {
+        expect(await run("end-over-connecting-socket")).toEqual({
+          log: ["end connecting=true", "secureConnect", "finish", "close"],
+          serverSawEnd: true,
+        });
+      },
+    );
+
+    it.skipIf(!exe)("a server-side TLSSocket end()s and destroySoon()s in the tick that wraps the socket", async () => {
+      expect(await run("server-same-tick")).toEqual({
+        end: { log: ["finish"], clientSawFin: true, writableFinished: true, destroyed: false },
+        destroySoon: { log: ["finish", "close"], clientSawFin: true, writableFinished: true, destroyed: true },
+      });
     });
   });
 

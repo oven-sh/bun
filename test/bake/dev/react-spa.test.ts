@@ -748,3 +748,98 @@ devTest("react component with hooks and mutual recursion renders without error",
     );
   },
 });
+
+// https://github.com/oven-sh/bun/issues/40245
+// In a workspace, the isolated install linker puts react in the workspace
+// package's node_modules, not the root. Fast refresh detection must resolve
+// react from the HTML entry point's directory, not only the root.
+devTest("react refresh is detected when react is only in a workspace package's node_modules", {
+  files: {
+    "package.json": `{ "name": "repro", "private": true, "workspaces": ["app"] }`,
+    "app/node_modules/react/index.js": `exports.useState = (y) => [y, x => {}];`,
+    "app/node_modules/react/jsx-dev-runtime.js": /* js */ `
+      export const $$typeof = Symbol.for("react.element");
+      export const jsxDEV = (tag, props, key) => ({
+        $$typeof,
+        props,
+        key,
+        ref: null,
+        type: tag,
+      });
+    `,
+    "app/index.html": emptyHtmlFile({
+      scripts: ["index.tsx"],
+      body: `<div id="root"></div>`,
+    }),
+    "app/index.tsx": `
+      import { App } from "./App";
+      console.log(App);
+    `,
+    "app/App.tsx": `
+      import { useState } from "react";
+      export function App() {
+        const [n] = useState(0);
+        return <div>{n}</div>;
+      }
+    `,
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const bundleUrl = html.match(/\/_bun\/client\/[^"]+/)?.[0];
+    expect(bundleUrl).toBeDefined();
+    const bundle = await dev.fetch(bundleUrl!).text();
+    // React is installed but react-refresh is not: the bundled copy of the
+    // react-refresh runtime is used.
+    expect(bundle).toContain("hmr.reactRefreshAccept()");
+    expect(bundle).toContain('refresh: "react-refresh/runtime/index.js"');
+  },
+});
+
+// Same layout, but react-refresh itself is installed in the workspace package.
+devTest("react refresh package is detected from a workspace package's node_modules", {
+  files: {
+    "package.json": `{ "name": "repro", "private": true, "workspaces": ["app"] }`,
+    "app/node_modules/react/index.js": `exports.useState = (y) => [y, x => {}];`,
+    "app/node_modules/react/jsx-dev-runtime.js": /* js */ `
+      export const $$typeof = Symbol.for("react.element");
+      export const jsxDEV = (tag, props, key) => ({
+        $$typeof,
+        props,
+        key,
+        ref: null,
+        type: tag,
+      });
+    `,
+    "app/node_modules/react-refresh/runtime.js": /* js */ `
+      exports.performReactRefresh = () => {};
+      exports.injectIntoGlobalHook = () => {};
+      exports.isLikelyComponentType = () => true;
+      exports.register = () => {};
+      exports.createSignatureFunctionForTransform = () => fn => fn;
+    `,
+    "app/index.html": emptyHtmlFile({
+      scripts: ["index.tsx"],
+      body: `<div id="root"></div>`,
+    }),
+    "app/index.tsx": `
+      import { App } from "./App";
+      console.log(App);
+    `,
+    "app/App.tsx": `
+      import { useState } from "react";
+      export function App() {
+        const [n] = useState(0);
+        return <div>{n}</div>;
+      }
+    `,
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const bundleUrl = html.match(/\/_bun\/client\/[^"]+/)?.[0];
+    expect(bundleUrl).toBeDefined();
+    const bundle = await dev.fetch(bundleUrl!).text();
+    expect(bundle).toContain("hmr.reactRefreshAccept()");
+    // The installed react-refresh runtime is used, not the bundled fallback.
+    expect(bundle).toContain("react-refresh/runtime.js");
+  },
+});

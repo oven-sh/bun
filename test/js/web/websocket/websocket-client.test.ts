@@ -245,6 +245,114 @@ describe("WebSocket", () => {
   });
 });
 
+describe("WebSocket send/ping/pong with detached buffers", () => {
+  async function withOpenSocket(fn: (ws: WebSocket, received: Buffer[]) => void | Promise<void>) {
+    const received: Buffer[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("no", { status: 500 });
+      },
+      websocket: {
+        message(ws, message) {
+          received.push(Buffer.from(message as any));
+          ws.send(message);
+        },
+        ping(ws, data) {
+          received.push(Buffer.from(data));
+        },
+        pong(ws, data) {
+          received.push(Buffer.from(data));
+        },
+      },
+    });
+    const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = e => reject(new Error("connect failed"));
+      });
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      await fn(ws, received);
+    } finally {
+      ws.close();
+    }
+  }
+
+  function detachedUint8Array() {
+    const ab = new ArrayBuffer(8);
+    const view = new Uint8Array(ab).fill(0x41);
+    structuredClone(ab, { transfer: [ab] });
+    expect(ab.detached).toBe(true);
+    return view;
+  }
+
+  function detachedArrayBuffer() {
+    const ab = new ArrayBuffer(8);
+    new Uint8Array(ab).fill(0x41);
+    structuredClone(ab, { transfer: [ab] });
+    expect(ab.detached).toBe(true);
+    return ab;
+  }
+
+  function detachedDataView() {
+    const ab = new ArrayBuffer(8);
+    const view = new DataView(ab);
+    structuredClone(ab, { transfer: [ab] });
+    expect(ab.detached).toBe(true);
+    return view;
+  }
+
+  for (const method of ["send", "ping", "pong"] as const) {
+    it.concurrent(`${method}() throws TypeError for a view whose buffer was detached`, async () => {
+      await withOpenSocket(ws => {
+        expect(() => ws[method](detachedUint8Array())).toThrow(TypeError);
+        expect(() => ws[method](detachedDataView())).toThrow(TypeError);
+        expect(ws.readyState).toBe(WebSocket.OPEN);
+      });
+    });
+    it.concurrent(`${method}() throws TypeError for a detached ArrayBuffer`, async () => {
+      await withOpenSocket(ws => {
+        expect(() => ws[method](detachedArrayBuffer())).toThrow(TypeError);
+        expect(ws.readyState).toBe(WebSocket.OPEN);
+      });
+    });
+  }
+
+  it.concurrent("send/ping/pong(Uint8Array subarray) transmit only the view's bytes", async () => {
+    await withOpenSocket(async (ws, received) => {
+      const ab = new ArrayBuffer(8);
+      new Uint8Array(ab).set([1, 2, 3, 4, 5, 6, 7, 8]);
+      const view = new Uint8Array(ab, 2, 4);
+      const expected = Buffer.from([3, 4, 5, 6]);
+
+      const nextEcho = () =>
+        new Promise<Buffer>((resolve, reject) => {
+          const settle = (fn: () => void) => {
+            ws.onmessage = ws.onerror = ws.onclose = null;
+            fn();
+          };
+          ws.onmessage = e => settle(() => resolve(Buffer.from(e.data as ArrayBuffer)));
+          ws.onerror = () => settle(() => reject(new Error("socket errored before echo")));
+          ws.onclose = e => settle(() => reject(new Error(`socket closed (${e.code}) before echo`)));
+        });
+
+      let echoed = nextEcho();
+      ws.send(view);
+      expect(await echoed).toEqual(expected);
+
+      ws.ping(view);
+      ws.pong(view);
+      echoed = nextEcho();
+      ws.send(new Uint8Array([0xff]));
+      expect(await echoed).toEqual(Buffer.from([0xff]));
+
+      expect(received).toEqual([expected, expected, expected, Buffer.from([0xff])]);
+    });
+  });
+});
+
 function makeTest(
   label: string,
   fn: (ws: WebSocket, done: (err?: unknown) => void) => void,

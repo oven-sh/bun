@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import {
   compileFunction,
   constants,
@@ -1085,6 +1085,34 @@ test.each([
     ]);
   },
 );
+
+// NodeVMSourceTextModule::createModuleRecord pairs import declarations with requestedModules() by position, but JSC lists
+// a specifier once however many declarations name it: builds with assertions enabled abort on "More attributes nodes
+// than requests" (other builds go on, with the attributes lined up by that position). In a subprocess, since the abort
+// would take the test runner with it.
+test.todoIf(isDebug || isASAN)("SourceTextModule with several import declarations for one specifier", async () => {
+  const script = `
+    const { SourceTextModule } = require("node:vm");
+    (async () => {
+      const dep = new SourceTextModule("export let x = 1; export function bump() { x++; }", { identifier: "dep" });
+      const importer = new SourceTextModule(
+        'import { x } from "dep"; import * as ns from "dep"; export { bump } from "dep"; export const read = () => [x, ns.x].join();',
+        { identifier: "importer" },
+      );
+      await importer.link(() => dep);
+      await importer.evaluate();
+      importer.namespace.bump();
+      console.log(importer.namespace.read(), JSON.stringify(importer.moduleRequests));
+    })();
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+    stdout: '2,2 [{"specifier":"dep","attributes":{},"phase":"evaluation"}]',
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
 
 // JSC decodes a code block's function bodies one at a time, the first time each body runs,
 // reading the cachedData payload through the Decoder until then. The three entry points

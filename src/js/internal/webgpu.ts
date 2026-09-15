@@ -16,6 +16,20 @@ function checkKey(key: unknown) {
   if (key !== kConstruct) throw $ERR_ILLEGAL_CONSTRUCTOR();
 }
 
+// What WebIDL gives an interface and class syntax does not: enumerable
+// attributes and operations (code copies limits with `for (key in
+// adapter.limits)`), and the interface name as @@toStringTag.
+function asInterface(constructor: Function, name: string) {
+  const prototype = constructor.prototype;
+  for (const key of Object.getOwnPropertyNames(prototype)) {
+    if (key === "constructor") continue;
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, key)!;
+    descriptor.enumerable = true;
+    Object.defineProperty(prototype, key, descriptor);
+  }
+  Object.defineProperty(prototype, Symbol.toStringTag, { value: name, configurable: true });
+}
+
 // `readonly setlike<DOMString>`
 class ReadonlyStringSet {
   #set: Set<string>;
@@ -61,6 +75,7 @@ class ReadonlyStringSet {
 
 class GPUSupportedFeatures extends ReadonlyStringSet {}
 class WGSLLanguageFeatures extends ReadonlyStringSet {}
+asInterface(ReadonlyStringSet, "ReadonlyStringSet");
 
 type Limits = Record<string, number>;
 
@@ -457,6 +472,25 @@ const GPUColorWrite = Object.freeze({
   ALPHA: 0x8,
   ALL: 0xf,
 });
+
+for (const [name, constructor] of Object.entries({
+  GPUSupportedFeatures,
+  WGSLLanguageFeatures,
+  GPUSupportedLimits,
+  GPUAdapterInfo,
+  GPUDeviceLostInfo,
+  GPUCompilationMessage,
+  GPUCompilationInfo,
+  GPUError,
+  GPUValidationError,
+  GPUOutOfMemoryError,
+  GPUInternalError,
+  GPUPipelineError,
+  GPUUncapturedErrorEvent,
+  GPUDevice,
+})) {
+  asInterface(constructor, name);
+}
 
 export default {
   // globals

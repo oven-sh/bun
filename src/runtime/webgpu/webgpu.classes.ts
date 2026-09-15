@@ -39,6 +39,8 @@ function gpu(name: string, proto: Proto, extra: Partial<ClassDefinition> = {}) {
     name,
     construct: true,
     finalize: true,
+    // WebIDL: attributes and operations are configurable.
+    configurable: true,
     klass: {},
     JSType: "0b11101110",
     proto,

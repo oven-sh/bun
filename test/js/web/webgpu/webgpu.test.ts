@@ -200,6 +200,17 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(adapter.limits).toBeInstanceOf(GPUSupportedLimits);
     expect(adapter.limits.maxBindGroups).toBeGreaterThanOrEqual(4);
     expect(adapter.limits.maxBufferSize).toBeGreaterThanOrEqual(268435456);
+    expect(Object.prototype.toString.call(adapter.limits)).toBe("[object GPUSupportedLimits]");
+
+    // The usual way to ask for everything the adapter has: the limits enumerate.
+    const requiredLimits: Record<string, number> = {};
+    for (const key in adapter.limits) requiredLimits[key] = adapter.limits[key];
+    expect(requiredLimits.maxBufferSize).toBe(adapter.limits.maxBufferSize);
+    const device = await adapter.requestDevice({ requiredLimits });
+    expect(device.limits.maxBufferSize).toBe(adapter.limits.maxBufferSize);
+    expect(device.limits.maxComputeInvocationsPerWorkgroup).toBe(adapter.limits.maxComputeInvocationsPerWorkgroup);
+    expect(Object.prototype.toString.call(device)).toBe("[object GPUDevice]");
+    device.destroy();
   });
 
   test("requestDevice: descriptor errors, and one device per adapter", async () => {

@@ -170,9 +170,6 @@ impl<R> StyleRule<R> {
         let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
 
         if has_declarations {
-            //   #[cfg(feature = "sourcemap")]
-            //   dest.add_mapping(self.loc);
-
             // `dest.context()` borrows `dest`; copy the (Copy) raw
             // ctx field out so it doesn't conflict with the `&mut *dest` below.
             let ctx = dest.ctx;

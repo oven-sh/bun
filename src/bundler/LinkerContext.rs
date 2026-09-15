@@ -5332,7 +5332,6 @@ impl StmtList {
             StmtListWhich::InsideWrapperSuffix => {
                 self.inside_wrapper_suffix.extend_from_slice(stmts)
             }
-            StmtListWhich::AllStmts => self.all_stmts.extend_from_slice(stmts),
         }
     }
 
@@ -5340,7 +5339,6 @@ impl StmtList {
         match list {
             StmtListWhich::OutsideWrapperPrefix => self.outside_wrapper_prefix.push(stmt),
             StmtListWhich::InsideWrapperSuffix => self.inside_wrapper_suffix.push(stmt),
-            StmtListWhich::AllStmts => self.all_stmts.push(stmt),
         }
     }
 }
@@ -5349,5 +5347,4 @@ impl StmtList {
 pub enum StmtListWhich {
     OutsideWrapperPrefix,
     InsideWrapperSuffix,
-    AllStmts,
 }

@@ -2,14 +2,44 @@
 // and checking on input data. The goal is to allow people not aware of
 // various footguns in JavaScript, C++, and the bindings generator to
 // always produce correct code, or bail with an error.
-import { expect } from "bun:test";
 import assert from "node:assert";
+import { createHash } from "node:crypto";
 import * as path from "node:path";
-import type { FuncOptions, t } from "./bindgen-lib";
+import { pathToFileURL } from "node:url";
+import util from "node:util";
+import type { FuncOptions } from "./bindgen-lib.ts";
 
 export const src = path.join(import.meta.dirname, "../");
 
-export type TypeKind = keyof typeof t;
+/** The keys of `t` in bindgen-lib.ts. A `satisfies` there checks that the two lists match. */
+export type TypeKind =
+  | "globalObject"
+  | "virtualMachine"
+  | "any"
+  | "undefined"
+  | "boolean"
+  | "strictBoolean"
+  | "f64"
+  | "u8"
+  | "u16"
+  | "u32"
+  | "u64"
+  | "i8"
+  | "i16"
+  | "i32"
+  | "i64"
+  | "usize"
+  | "DOMString"
+  | "USVString"
+  | "ByteString"
+  | "UTF8String"
+  | "sequence"
+  | "record"
+  | "ref"
+  | "externalClass"
+  | "oneOf"
+  | "dictionary"
+  | "stringEnum";
 
 export let files = new Map<string, File>();
 /** A reachable type is one that is required for code generation */
@@ -57,9 +87,10 @@ interface TypeDataDefs {
 }
 type TypeData<K extends TypeKind> = K extends keyof TypeDataDefs ? TypeDataDefs[K] : any;
 
-export const enum NodeValidator {
-  validateInteger = "validateInteger",
-}
+export const NodeValidator = {
+  validateInteger: "validateInteger",
+} as const;
+export type NodeValidator = (typeof NodeValidator)[keyof typeof NodeValidator];
 
 interface Flags {
   nodeValidator?: NodeValidator;
@@ -134,7 +165,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         h += this.data.map(({ key, required, type }) => `${key}:${required}:${type.hash()}`).join(",");
         break;
     }
-    let hash = String(Bun.hash(h));
+    let hash = hashString(h);
     this.#hash = hash;
     return hash;
   }
@@ -493,7 +524,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   [Symbol.toStringTag] = "Type";
-  [Bun.inspect.custom](depth, options, inspect) {
+  [util.inspect.custom](depth, options, inspect) {
     return (
       `${options.stylize("Type", "special")} ${
         this.lowersToNamedType() && this.nameDeduplicated
@@ -645,7 +676,12 @@ export function cAbiTypeForEnum(length: number): CAbiType {
 }
 
 export function inspect(value: any) {
-  return Bun.inspect(value, { colors: Bun.enableANSIColors });
+  return util.inspect(value, { colors: process.stderr.hasColors?.() ?? false });
+}
+
+/** A 64-bit hash of `text`, in decimal. The same text gives the same hash under node and bun. */
+function hashString(text: string): string {
+  return String(createHash("sha256").update(text).digest().readBigUInt64BE(0));
 }
 
 export function oneOfImpl(types: TypeImpl[]): TypeImpl {
@@ -758,7 +794,7 @@ export interface TypeDef {
 export function registerFunction(opts: FuncOptions) {
   const snapshot = snapshotCallerLocation();
   const filename = stackTraceFileName(snapshot);
-  expect(filename).toEndWith(".bind.ts");
+  assert(filename.endsWith(".bind.ts"), `Expected the caller to be a .bind.ts file, got ${filename}`);
   const sourceFile = path.relative(src, filename);
   let file = files.get(sourceFile);
   if (!file) {
@@ -825,12 +861,16 @@ function validateVariant(variant: any) {
   return { minRequiredArgs };
 }
 
+// Node writes the stack frame of an imported module as a file URL, and the
+// frame of a required module as a path. Bun writes a path for both.
+const codegenDirs = [import.meta.dirname, pathToFileURL(import.meta.dirname).href];
+
 function snapshotCallerLocation(): string {
   const stack = new Error().stack!;
   const lines = stack.split("\n");
   let i = 1;
   for (; i < lines.length; i++) {
-    if (!lines[i].includes(import.meta.dir)) {
+    if (!codegenDirs.some(dir => lines[i].includes(dir))) {
       return lines[i];
     }
   }
@@ -958,17 +998,15 @@ export class Struct {
   }
 
   hash() {
-    return (this.#hash ??= String(
-      Bun.hash(
-        this.fields
-          .map(f => {
-            if (f.type instanceof Struct) {
-              return f.name + `:` + f.type.hash();
-            }
-            return f.name + `:` + f.type;
-          })
-          .join(","),
-      ),
+    return (this.#hash ??= hashString(
+      this.fields
+        .map(f => {
+          if (f.type instanceof Struct) {
+            return f.name + `:` + f.type.hash();
+          }
+          return f.name + `:` + f.type;
+        })
+        .join(","),
     ));
   }
 

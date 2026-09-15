@@ -140,6 +140,8 @@ pub struct FetchTasklet {
 
     /// The context whose script called `fetch()`, and its `signal` option.
     pub(crate) abort_handle: jsc::AbortHandle,
+    /// That context's id: the handle forgets its context once that stops.
+    pub(crate) context: jsc::ContextId,
     pub(crate) signals: Signals,
     pub(crate) signal_store: http::signals::Store,
     pub(crate) has_schedule_callback: AtomicBool,
@@ -892,6 +894,8 @@ impl FetchTasklet {
         let is_done = !self.result.has_more;
 
         let vm = self.global_this.bun_vm();
+        // The response, the upload's pump and what they settle continue the script that fetched.
+        let _context = vm.enter_context(self.context);
         // teardown forbade script: we cannot touch JS. A fetch() made by script of a graph that
         // had already been disposed is aborted the same way: nothing of it is reported.
         if !vm.script_allowed() || self.abort_handle.context_stopped() {
@@ -1875,6 +1879,7 @@ impl FetchTasklet {
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
             abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
+            context: global_this.bun_vm().current_context().id(),
             signals: Signals::default(),
             signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),

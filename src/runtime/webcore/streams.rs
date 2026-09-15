@@ -405,7 +405,7 @@ impl WritablePending {
                 self.future = WritableFuture::Promise {
                     strong: JSPromiseStrong::init(global_this),
                     global: BackRef::new(global_this),
-                    context: global_this.bun_vm().current_context().id(),
+                    context: global_this.bun_vm().current_context_or_root().id(),
                 };
                 match &self.future {
                     WritableFuture::Promise { strong, .. } => {

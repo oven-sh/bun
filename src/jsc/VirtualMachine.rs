@@ -1140,22 +1140,29 @@ impl VirtualMachine {
         unsafe { Bun__currentGraphContext(self.global()).as_ref() }
     }
 
+    /// [`current_context`](Self::current_context) for code a native pump reaches as well as
+    /// script (a sink a stream's native reader writes into): with no script on the stack and no
+    /// context entered it is nobody's in particular, so the realm's.
+    pub fn current_context_or_root(&self) -> &crate::ScriptExecutionContext {
+        if self.gone_scopes.get() != 0 {
+            return &self.dead_context;
+        }
+        if self.graph_contexts.count() == 0 {
+            return &self.root_context;
+        }
+        // SAFETY: a graph's context outlives every async context frame that names it.
+        unsafe { Bun__currentGraphContext(self.global()).as_ref() }.unwrap_or(&self.root_context)
+    }
+
     /// The native code that is running continues the script of a `Bun.ModuleGraph` that was
     /// disposed (or is gone): a completion that entered its context, a handler run while that
     /// context is being stopped, what the graph's leftover microtasks call. Whatever it would
     /// report — a promise settled, an error — goes to nobody; its cleanup runs as always.
     pub fn reports_to_nobody(&self) -> bool {
-        if self.gone_scopes.get() != 0 {
-            return true;
-        }
-        if self.graph_contexts.count() == 0 {
-            return false;
-        }
-        // (Asked from every native settle, so without `current_graph_context`'s assertion: from the
-        // event loop with no context entered the async context names no graph, and the answer is no.)
-        // SAFETY: a graph's context outlives every async context frame that names it.
-        unsafe { Bun__currentGraphContext(self.global()).as_ref() }
-            .is_some_and(|context| context.is_stopped())
+        // (Asked from every native settle: from the event loop with no context entered the async
+        // context names no graph, and the answer is no.)
+        let context = self.current_context_or_root();
+        !core::ptr::eq(context, &self.root_context) && context.is_stopped()
     }
 
     /// As [`reports_to_nobody`](Self::reports_to_nobody), for a call into script: the native
@@ -1414,7 +1421,8 @@ impl VirtualMachine {
             .graph_context(id)
             .is_some_and(|context| !context.stop_again_is_queued())
         {
-            self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
+            // (Owned: released with the task if the VM goes before it runs.)
+            self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(
                 Box::into_raw(Box::new(id)),
                 stop_again,
                 // The VM's own sweep (of a context that has stopped).

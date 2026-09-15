@@ -1,3 +1,4 @@
+import { describe, expect, jest, setSystemTime, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import http from "node:http";
@@ -77,6 +78,45 @@ test("setSystemTime accepts pre-epoch and epoch times and resets with no argumen
     expect(Date.now()).toBeGreaterThanOrEqual(realBefore);
   } finally {
     jest.useRealTimers();
+  }
+});
+
+test("chainable timer functions return their receiver only when called as a method", () => {
+  // Inside `bare`, every callee is a closed-over binding (setSystemTime is a module
+  // binding), so JSC hands the native function the scope object as its raw receiver.
+  // None of that may leak back out as a return value.
+  const {
+    useFakeTimers,
+    advanceTimersByTime,
+    advanceTimersToNextTimer,
+    runOnlyPendingTimers,
+    runAllTimers,
+    clearAllTimers,
+    useRealTimers,
+  } = jest;
+  const bare = () => [
+    useFakeTimers(),
+    advanceTimersByTime(0),
+    advanceTimersToNextTimer(),
+    runOnlyPendingTimers(),
+    runAllTimers(),
+    clearAllTimers(),
+    setSystemTime(),
+    useRealTimers(),
+  ];
+  try {
+    expect([
+      jest.useFakeTimers(),
+      jest.advanceTimersByTime(0),
+      jest.advanceTimersToNextTimer(),
+      jest.runOnlyPendingTimers(),
+      jest.runAllTimers(),
+      jest.clearAllTimers(),
+      jest.setSystemTime(),
+    ]).toEqual(new Array(7).fill(jest));
+    expect(bare()).toEqual(new Array(8).fill(undefined));
+  } finally {
+    expect(jest.useRealTimers()).toBe(jest);
   }
 });
 

@@ -855,4 +855,45 @@ describe("Bun.serve http2 in-process", () => {
     expect(aborted).toBe(1);
     await new Promise<void>(r => session.close(() => r()));
   });
+
+  // A 4-byte stream window stalls the body after its first bytes. One
+  // WINDOW_UPDATE then lets the writable callback send the rest and end the
+  // response, and the same socket event frees the finished stream, before the
+  // promise reaction of the body stream can run: the free has to end the request.
+  test("a streamed response body that ends from the writable callback ends its request", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(new TextEncoder().encode("streamed-past-the-window"));
+              controller.close();
+            },
+          }),
+        ),
+    });
+
+    const SETTINGS_INITIAL_WINDOW_SIZE = 0x4;
+    const settings = Buffer.alloc(6);
+    settings.writeUInt16BE(SETTINGS_INITIAL_WINDOW_SIZE, 0);
+    settings.writeUInt32BE(4, 2);
+    const raw = await RawH2.connect(server.port, false, { settings });
+    raw.headers(1, baseHeaders("/"));
+    const first = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1);
+    const increment = Buffer.alloc(4);
+    increment.writeUInt32BE(1024);
+    raw.write(frame(T.WINDOW_UPDATE, 0, 1, increment));
+    const body = await raw.body(1);
+
+    expect({ first: first.payload.toString(), body: body.toString(), pending: server.pendingRequests }).toEqual({
+      first: "stre",
+      body: "streamed-past-the-window",
+      pending: 0,
+    });
+    raw.close();
+    // A request that never ends keeps a graceful stop pending.
+    await server.stop();
+  });
 });

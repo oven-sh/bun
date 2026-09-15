@@ -1283,27 +1283,31 @@ where
         }
     }
 
-    /// HTTP/1 only: `end_stream()` for a response the JS sink already fully
-    /// ended (`HTTPServerWritable::ended_response`). HTTP/1's uWS `markDone()`
-    /// drops its `onAborted` on end, so nothing nulls `self.resp` if the peer
-    /// closes afterwards: by the time the parked stream-resolution microtask
-    /// runs, uSockets may already have freed the socket
-    /// (`us_internal_free_closed_sockets`) or recycled it onto the next
-    /// keep-alive request. Release the handle without dereferencing it. The
-    /// `clear_on_data()`/`clear_aborted()`/`clear_timeout()` calls
-    /// `detach_response()` would make are already covered by `markDone()`,
-    /// which is also why a later `server.stop(true)` cannot reach `on_abort`:
-    /// callers come here even once the server is terminated.
+    /// `end_stream()` for a response the JS sink already fully ended
+    /// (`HTTPServerWritable::ended_response`) and whose `resp` must not be
+    /// dereferenced any more. Release the handle without touching it.
     ///
-    /// HTTP/2 and HTTP/3 must never reach this. `Http{2,3}Response::markDone()`
-    /// deliberately leave `onAborted` armed so the stream teardown can notify
-    /// the holder, which also proves `resp` is still alive here (`on_abort`
-    /// nulls it first). They therefore need `end_stream()`'s
-    /// `detach_response()` to disarm that callback before the context is
-    /// released, or the later stream teardown invokes it on a freed pool slot.
+    /// HTTP/1 comes here from the stream's resolve/reject reaction. uWS
+    /// `markDone()` drops its `onAborted` on end, so nothing nulls `self.resp`
+    /// if the peer closes afterwards: by the time the parked stream-resolution
+    /// microtask runs, uSockets may already have freed the socket
+    /// (`us_internal_free_closed_sockets`) or recycled it onto the next
+    /// keep-alive request. The `clear_on_data()`/`clear_aborted()`/
+    /// `clear_timeout()` calls `detach_response()` would make are already
+    /// covered by `markDone()`, which is also why a later `server.stop(true)`
+    /// cannot reach `on_abort`: callers come here even once the server is
+    /// terminated.
+    ///
+    /// HTTP/2 and HTTP/3 come here from `on_abort` only.
+    /// `Http{2,3}Response::markDone()` deliberately leave `onAborted` armed so
+    /// the stream teardown can notify the holder: that call is the last one on
+    /// `resp`, which is freed when it returns. Their resolve/reject reaction
+    /// must never reach this: a `resp` that `on_abort` has not nulled is still
+    /// alive, and it needs `end_stream()`'s `detach_response()` to disarm that
+    /// callback before the context is released, or the later stream teardown
+    /// invokes it on a freed pool slot.
     pub(crate) fn end_already_responded_stream(&self) {
         ctx_log!("endAlreadyRespondedStream");
-        debug_assert!(!MUX);
         // `resp` may be freed (see above); the sink resumed it at `ended_response = true`.
         self.flags.set_request_body_paused(false);
         if self.resp.take().is_some() {
@@ -1463,13 +1467,18 @@ where
         debug_assert!(this.resp.get().is_some());
         // An HTTP/2 or HTTP/3 stream is destroyed once both sides finish,
         // so this also fires after a successful end(). HTTP/1 sockets persist
-        // for keep-alive, so the equivalent never happens there. Drop the
-        // pointer; everything else cleans up via the resolve/reject path.
+        // for keep-alive, so the equivalent never happens there. Only the sink
+        // ends a response without `detach_response()`, and its resolve/reject
+        // reaction releases nothing once `resp` is gone: the request ends here.
         if MUX {
             // SAFETY: FFI handle
             if resp.has_responded() {
-                this.resp.set(None);
-                this.flags.set_has_abort_handler(false);
+                // The sink outlives this call when a frame up the stack still
+                // uses the context; its copy of `resp` is freed with the stream.
+                if let Some(wrapper) = this.sink_mut() {
+                    wrapper.sink.res = None;
+                }
+                this.end_already_responded_stream();
                 return;
             }
         }

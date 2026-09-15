@@ -1490,6 +1490,58 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The HEADERS of the first response on a connection wait for the QPACK encoder
+  // stream, and lsquic takes no DATA until they are out. A small streamed body is
+  // therefore written, and the response ended, from the stream's writable
+  // callback. The same tick closes the finished stream, before the promise
+  // reaction of the body stream can run: the close has to end the request.
+  // Each case has its own server, so its request is the first on a connection.
+  describe("a streamed response body ends its request when the stream closes", () => {
+    const bodies: Record<string, () => Bun.BodyInit> = {
+      "ReadableStream": () =>
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(new TextEncoder().encode("streamed"));
+            controller.close();
+          },
+        }),
+      "direct ReadableStream": () =>
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            controller.write("streamed");
+            await controller.end();
+          },
+        }),
+      "async generator": () =>
+        (async function* () {
+          yield "streamed";
+        })(),
+    };
+
+    const requests: Record<string, RequestInit> = {
+      "GET": {},
+      "POST with a request body the handler never reads": { method: "POST", body: "request-content" },
+    };
+
+    describe.each(Object.keys(bodies))("%s", kind => {
+      test.each(Object.keys(requests))("%s", async request => {
+        await using server = Bun.serve({
+          port: 0,
+          tls,
+          http3: true,
+          http1: false,
+          fetch: () => new Response(bodies[kind]()),
+        });
+
+        const text = await fetchH3(server.port, "/", requests[request]).then(res => res.text());
+        expect({ text, pendingRequests: server.pendingRequests }).toEqual({ text: "streamed", pendingRequests: 0 });
+        // A request that never ends keeps a graceful stop pending.
+        await server.stop();
+      });
+    });
+  });
+
   // C: req.signal fires when the client resets the H3 stream mid-request.
   test("req.signal aborts on client RST", async () => {
     const script = `

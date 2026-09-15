@@ -304,6 +304,7 @@ fn parse_array(
                 | types::Tag::char_array
                 | types::Tag::text_array
                 | types::Tag::name_array
+                | types::Tag::uuid_array
                 | types::Tag::numeric_array
                 | types::Tag::money_array
                 | types::Tag::varbit_array
@@ -927,6 +928,7 @@ fn from_bytes(
         | T::char_array
         | T::text_array
         | T::name_array
+        | T::uuid_array
         | T::json_array
         | T::jsonb_array
         // special types handled as text array

@@ -175,8 +175,7 @@ impl ClientSession {
         self.detach_with(stream, false);
     }
 
-    /// With `abort` the lsquic stream is reset even when the request body is
-    /// done. Never `close()`: its FIN would present a cut-off body as complete.
+    /// `abort` kills the lsquic stream even when the request body is done (the response is not).
     fn detach_with(&mut self, stream: *mut Stream, abort: bool) {
         let st = stream_mut(stream);
         let session = st.session.as_ptr();

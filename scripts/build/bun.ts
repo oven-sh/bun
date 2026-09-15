@@ -18,6 +18,7 @@
  *   - "rust-only": codegen + cargo → libbun_runtime.a (CI upstream)
  *   - "link-only": link pre-built artifacts (CI downstream)
  *   - "rust-and-link": cargo + link; downloads cpp-only's archive (CI)
+ *   - "archive-link": full build on one agent, linked from the cpp-only-style archive; uploads it + libbun_runtime.a (CI)
  *
  * The split modes are for CI where C++ and Rust build in parallel on
  * separate machines. rust-and-link folds the rust + link steps onto one
@@ -36,17 +37,8 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { jscShell, jscTestFFI, webkitClassInfoCheckScript, type JSCProgram } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
-import {
-  bunIncludes,
-  computeFlags,
-  computeTargetLinkFlags,
-  extraFlagsFor,
-  linkDepends,
-  linkerMapOutputs,
-  systemLibs,
-} from "./flags.ts";
+import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath } from "./rust.ts";
@@ -63,6 +55,73 @@ import { generateUnifiedSources } from "./unified.ts";
 // Re-exported for existing importers (configure.ts, ci.ts). These live
 // in config.ts now so flags.ts can use bunExeName without circular import.
 export { bunExeName, shouldStrip };
+
+/**
+ * System libraries to link. Platform-dependent.
+ */
+function systemLibs(cfg: Config): string[] {
+  const libs: string[] = [];
+
+  if (cfg.linux) {
+    if (cfg.abi === "android") {
+      // bionic: pthread/dl/rt are folded into libc; no separate libatomic
+      // (compiler-rt builtins). -llog for __android_log_*.
+      libs.push("-lc", "-lm", "-llog");
+    } else {
+      libs.push("-lc", "-lpthread", "-ldl");
+      // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
+      // The static path needs to be the actual file path for lld to find it;
+      // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
+      // found in lib search paths, -latomic.so doesn't exist so we use -latomic.
+      if (cfg.staticLibatomic) {
+        libs.push("-l:libatomic.a");
+      } else {
+        libs.push("-latomic");
+      }
+    }
+    // Linux local WebKit: link system ICU (prebuilt bundles its own).
+    // Assumes system ICU is in default lib paths — true on most distros.
+    // Android: no system ICU; the local WebKit build must bundle it.
+    if (cfg.webkit === "local" && cfg.abi !== "android") {
+      libs.push("-licudata", "-licui18n", "-licuuc");
+    }
+  }
+
+  if (cfg.darwin) {
+    // icucore: system ICU framework.
+    // resolv: DNS resolution (getaddrinfo et al).
+    libs.push("-licucore", "-lresolv");
+  }
+
+  if (cfg.freebsd) {
+    // pthread/m: explicit on FreeBSD (not folded into libc).
+    // execinfo: backtrace() — separate library on FreeBSD.
+    // kvm/procstat/elf: process introspection for node:os and crash handler.
+    // libutil (openpty) is linked statically: its soname bumped .so.9 → .so.10
+    // between 14.x and 15.0, so a dynamic NEEDED entry from the 14.3 sysroot
+    // fails to load on 15.x (#40530). Every other lib here kept its soname.
+    libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-l:libutil.a");
+  }
+
+  if (cfg.windows) {
+    // Explicit .lib: these go after /link so no auto-suffixing by the
+    // clang-cl driver. lld-link auto-appends .lib but link.exe doesn't;
+    // explicit is portable.
+    libs.push(
+      "winmm.lib",
+      "bcrypt.lib",
+      "ntdll.lib",
+      "userenv.lib",
+      "dbghelp.lib",
+      "crypt32.lib",
+      "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
+      "ws2_32.lib",
+      "delayimp.lib", // required for /delayload: in release
+    );
+  }
+
+  return libs;
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Main orchestration
@@ -96,8 +155,8 @@ export interface BunOutput {
   rustObjects: string[];
   /** All compiled .o files. Empty in link-only/rust-only. */
   objects: string[];
-  /** JSC's testFFI executable (webkit source mode), built next to bun for the test suite; a default target. */
-  testFFI?: string;
+  /** Stamps of the buildkite artifact-upload edges; archive-link adds them to the default targets. */
+  uploadStamps?: string[];
 }
 
 /**
@@ -184,11 +243,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
-  // Direct deps' generated headers (WebKit's DerivedSources, zlib's zlib.h…):
-  // declared restat outputs, so order-only — depfiles then track exactly
-  // which ones a TU includes, and regenerating one recompiles its includers
-  // rather than every file (and the PCH) that names the dep.
-  const depHeadersReady: string[] = [];
   // forbidUndefined stamps (source.ts): validations of whatever the dep
   // objects go into next, the archive or the link — a dep that regrows a
   // forbidden reference fails that build without delaying the link.
@@ -199,13 +253,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
     depDefines.push(...d.defines);
-    // d.outputs is the "headers are ready" signal: for prebuilt that's the
-    // stamp (headers are undeclared side-effects), for direct deps
-    // it's the generated-header set + source stamp.
-    if (d.includes.length > 0) {
-      depHeaderSignal.push(...d.outputs);
-      depHeadersReady.push(...d.generatedHeaders);
-    }
+    // d.outputs is the "headers are ready" signal: for nested-cmake/
+    // prebuilt that's the .a/stamp (headers are undeclared side-effects),
+    // for direct deps it's the generated-header set + source stamp.
+    if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
   }
 
   // ─── Step 3: configure-time generated header + assemble flags ───
@@ -231,17 +282,16 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // idiom: order-only inputs never dirty an edge; depfiles track the reads).
   const codegenReady = resolve(cfg.buildDir, "obj", ".codegen-ready");
   n.phony(codegenReady, codegen.cppAll);
-  const depsReady = resolve(cfg.buildDir, "obj", ".dep-headers-ready");
-  n.phony(depsReady, depHeadersReady);
 
   // ─── Step 4: PCH ───
   n.comment("─── PCH ───");
   n.blank();
-  // Dep outputs are IMPLICIT inputs (not order-only): a prebuilt/cargo dep's
-  // headers are undeclared side effects of its output, and ninja stats the
-  // PCH depfile's headers at startup — before that edge rewrites them. As
-  // implicit inputs, restat sees the output changed → PCH rebuilds in the
-  // same run. See the pch() docstring.
+  // Dep outputs are IMPLICIT inputs (not order-only). The crucial case is
+  // local WebKit: headers live in buildDir and get REGENERATED by dep_build
+  // mid-run. At startup, ninja sees old headers via PCH's depfile → thinks
+  // PCH is fresh. dep_build then regenerates them. cxx fails with "file
+  // modified since PCH was built". As implicit inputs, restat sees the .a
+  // changed → PCH rebuilds → one-build convergence. See the pch() docstring.
   //
   // Codegen stays order-only: those outputs only change if inputs change,
   // and inputs don't change mid-build. cppAll (not all) — bake/.rs outputs
@@ -252,7 +302,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const pchOut = pch(n, cfg, "src/jsc/bindings/root-pch.h", {
     flags: cxxFlagsFull,
     implicitInputs: depHeaderSignal,
-    orderOnlyInputs: [codegenReady, depsReady],
+    orderOnlyInputs: [codegenReady],
   });
 
   // ─── Step 5: compile C/C++ ───
@@ -350,7 +400,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     } else {
       // Per-file PCH opt-out — this cxx needs the dep signal directly.
       opts.implicitInputs = depHeaderSignal;
-      opts.orderOnlyInputs = [...codegenOrderOnly, depsReady];
+      opts.orderOnlyInputs = codegenOrderOnly;
     }
     cxxObjects.push(cxx(n, cfg, src, opts));
   }
@@ -361,7 +411,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     const obj = cc(n, cfg, src, {
       flags: cFlagsFull,
       implicitInputs: depHeaderSignal,
-      orderOnlyInputs: [...codegenOrderOnly, depsReady],
+      orderOnlyInputs: codegenOrderOnly,
     });
     cObjects.push(obj);
     return obj;
@@ -396,43 +446,38 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // cfg.archiveDeps they live in depLibs as .a files instead.
   const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
 
-  // Platform shim edges (macho-postlink host tool, asan dyld shim). Emitted
-  // before the cpp-only return: the darwin link rule ends in macho-postlink,
-  // and the WebKit source build links its own target executables with it in
-  // every mode.
-  const shims = emitShims(n, cfg);
-
-  // JSC's testFFI: linked here from the same dep objects, in every mode that
-  // compiles them (cpp-only uploads it for the test shards). Its object has
-  // its own main(), so it is reported (for directory creation) but never
-  // archived or linked into bun.
-  const testFFIEdge = emitTestFFI(n, cfg, depsByName);
-  const testFFI = testFFIEdge?.exe;
-  const jscShellEdge = emitJscShell(n, cfg, depsByName);
-  const sideObjects = [...(testFFIEdge?.objects ?? []), ...(jscShellEdge?.objects ?? [])];
-
-  // ─── Step 6: cpp-only → archive and stop ───
+  // ─── Step 6: cpp-only / archive-link → archive (cpp-only returns here) ───
   // CI's split build-cpp step: archive all .o into libbun-<exe>.a (the exe
   // name so asan/debug variants are distinguishable) for a link-only /
   // rust-and-link step to download and link against libbun_runtime.a.
-  if (cfg.mode === "cpp-only") {
-    n.comment("─── Archive (cpp-only) ───");
+  const archived = cfg.mode === "cpp-only" || cfg.mode === "archive-link";
+  let archive: string | undefined;
+  const uploadStamps: string[] = [];
+  if (archived) {
+    n.comment(`─── Archive (${cfg.mode}) ───`);
     n.blank();
-    const archive = ar(n, cfg, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`, allObjects, depChecks);
+    archive = ar(n, cfg, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`, allObjects, depChecks);
     // Dep libs upload as soon as they're built (minutes before the archive),
     // overlapping the compile; own pool so it doesn't take a compile slot.
     // ci.ts's uploadArtifacts() then only handles the archive. depLibs are
     // explicit in the phony: deps with no provided includes (tinycc, lolhtml)
     // aren't in depHeaderSignal, so the archive doesn't pull them
     // transitively — but link-only still needs them uploaded.
-    const uploadStamps: string[] = [];
     if (cfg.buildkite) {
       registerBkUploadRules(n, cfg);
       if (depLibs.length > 0) uploadStamps.push(emitBkUpload(n, cfg, ".dep-libs-uploaded", depLibs));
+      // archive-link: each upload edge depends only on its input, so it starts the moment the archive / staticlib exists and overlaps the link.
+      if (cfg.mode === "archive-link") {
+        uploadStamps.push(emitBkUpload(n, cfg, ".archive-uploaded", [archive], { gzip: !cfg.windows }));
+        uploadStamps.push(emitBkUpload(n, cfg, ".rust-lib-uploaded", rustObjects, { gzip: !cfg.windows }));
+      }
     }
-    n.phony("bun", [archive, ...depLibs, ...(testFFI !== undefined ? [testFFI] : []), ...uploadStamps]);
-    n.default(["bun"]);
-    return { archive, deps, codegen, rustObjects, objects: [...allObjects, ...sideObjects] };
+
+    if (cfg.mode === "cpp-only") {
+      n.phony("bun", [archive, ...depLibs, ...uploadStamps]);
+      n.default(["bun"]);
+      return { archive, deps, codegen, rustObjects, objects: allObjects };
+    }
   }
 
   // ─── Step 6: link ───
@@ -446,61 +491,33 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
   // Full link.
-  // Order in `$in`: bun's own objects, the dependencies' objects (assembler
-  // output among them lazy — see lazyDepObjects), the Rust staticlib, then
-  // the dependency archives. C++ objects create the `Bun__*` undefined refs,
-  // the Rust archive satisfies them (and `main`, via crt1.o) and in turn
-  // references JSC/WTF, which the dep objects/libs satisfy. Every
-  // `#[no_mangle]` export the C++ side touches is reached transitively from
-  // those roots, so no `--whole-archive` wrapping is needed; if a member ever
-  // isn't, `rustLinkFlags()` in rust.ts is the wrapping helper.
-  const linkObjects = [...allObjects, ...rustObjects, ...windowsRes];
+  // The Rust staticlib goes into `$in` between bun's own objects and the
+  // dependency archives so symbol resolution order is preserved: C++
+  // objects create the `Bun__*` undefined refs, the Rust archive satisfies
+  // them (and `main`, via crt1.o) and in turn references JSC/WTF, depLibs
+  // satisfies those. Every `#[no_mangle]` export the C++ side touches is
+  // reached transitively from those roots, so no `--whole-archive` wrapping
+  // is needed; if a member ever isn't, `rustLinkFlags()` in rust.ts is the
+  // wrapping helper.
+  const shims = emitShims(n, cfg);
+  const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
-  const deps_ = lazyDepObjects(cfg, depObjects);
-  const exe = link(n, cfg, exeName, [...cxxObjects, ...cObjects, ...deps_.eager, ...windowsRes], {
-    lazyObjects: deps_.lazy,
-    libs: [...rustObjects, ...depLibs],
+  const exe = link(n, cfg, exeName, linkObjects, {
+    libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
     // Static scans: the deps' forbidden-symbol checks on the objects going
-    // in, the smoke test / ClassInfo audit on the executable coming out.
+    // in, the smoke test on the executable coming out.
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
 
-  return {
-    exe,
-    strippedExe,
-    dsym,
-    deps,
-    codegen,
-    rustObjects,
-    objects: [...allObjects, ...sideObjects],
-    ...(testFFI !== undefined && { testFFI }),
-  };
-}
-
-/**
- * Split a link's dependency objects into the ones passed eagerly and the ones
- * the linker may leave out (LinkOpts.lazyObjects). On COFF the lazy ones are
- * the assembler-produced objects: their sections are not COMDATs, so /OPT:REF
- * cannot drop them and one nothing calls (BoringSSL's AES-GCM-SIV) would ship
- * whole. Compiled objects stay eager there — /OPT:REF already drops their
- * unreferenced COMDATs, and with every JSC/ICU object lazy (bitcode, under
- * LTO) testFFI's link left the MSVC STL members the CRT pulls in late
- * without the header-inline definitions those objects carry. Elsewhere the
- * distinction is moot (ELF/Mach-O dead-strip per section) and everything
- * rides as lazyObjects, i.e. after bun's objects in $in as before.
- */
-function lazyDepObjects(cfg: Config, depObjects: string[]): { eager: string[]; lazy: string[] } {
-  if (!cfg.windows) return { eager: [], lazy: depObjects };
-  const isAssemblerOutput = (obj: string) => /\.(asm|S)\.obj$/i.test(obj);
-  return { eager: depObjects.filter(o => !isAssemblerOutput(o)), lazy: depObjects.filter(isAssemblerOutput) };
+  return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects, uploadStamps };
 }
 
 function registerBkUploadRules(n: Ninja, cfg: Config): void {
@@ -514,15 +531,24 @@ function registerBkUploadRules(n: Ninja, cfg: Config): void {
     description: "buildkite upload $out",
     pool: "bk_upload",
   });
+  if (!win) {
+    n.rule("bk_upload_gz", {
+      command: `gzip -1 -k -f $in && buildkite-agent artifact upload '$paths' && touch $out`,
+      description: "gzip + buildkite upload $out",
+      pool: "bk_upload",
+    });
+  }
 }
 
-function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[]): string {
+function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[], { gzip = false } = {}): string {
+  const useGz = gzip && cfg.host.os !== "windows";
+  const rel = files.map(p => relative(cfg.buildDir, p));
   const out = resolve(cfg.buildDir, stamp);
   n.build({
     outputs: [out],
-    rule: "bk_upload",
+    rule: useGz ? "bk_upload_gz" : "bk_upload",
     inputs: files,
-    vars: { paths: files.map(p => relative(cfg.buildDir, p)).join(";") },
+    vars: { paths: (useGz ? rel.map(p => `${p}.gz`) : rel).join(";") },
   });
   return out;
 }
@@ -592,9 +618,9 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   n.blank();
 
   // Dep lib paths — computed, not built. Must match cpp-only's output
-  // paths exactly (computeDepLibs() is the one formula both sides use). If
-  // they drift, link fails with "file not found" — loud enough to catch
-  // in CI.
+  // paths exactly; computeDepLibs() and emitNestedCmake()'s path logic
+  // share the same formula. If they drift, link fails with "file not
+  // found" — loud enough to catch in CI.
   const depLibs: string[] = [];
   for (const dep of allDeps) {
     depLibs.push(...computeDepLibs(cfg, dep));
@@ -772,12 +798,11 @@ export function emitPostLink(
   // ASAN binaries to run from subprocesses (shadow memory layout conflict
   // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
   // fall back to direct invocation.
-  // The smoke test plus the JSC ClassInfo canary: validations of the link
+  // The smoke test and the static scans: validations of the link
   // edge (they run whenever the executable is relinked, see postLinkChecks)
   // and, for running them by name, the `check` phony.
   n.phony("check", [
     ...emitSmokeTest(n, cfg, exe, exeName, strippedExe),
-    ...emitClassInfoCheck(n, cfg, exe, exeName, strippedExe),
     ...emitBinaryVerify(n, cfg, exe, exeName, strippedExe),
     ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs, strippedExe),
   ]);
@@ -788,13 +813,6 @@ export function emitPostLink(
 /** Stamp of the `<exe> --revision` smoke test, when the host can run the target. */
 function smokeTestStamp(cfg: Config, exeName: string): string | undefined {
   return cfg.canRunOnHost ? resolve(cfg.buildDir, `${exeName}.smoke-test-passed`) : undefined;
-}
-
-/** Stamp of the JSC ClassInfo uniqueness check, when this build has the script. */
-function classInfoStamp(cfg: Config, exeName: string): string | undefined {
-  return webkitClassInfoCheckScript(cfg) !== undefined
-    ? resolve(cfg.buildDir, `${exeName}.classinfo-unique`)
-    : undefined;
 }
 
 /** Stamp of verify-binary.ts' scans of the executable, when the LLVM readers are available. */
@@ -823,12 +841,9 @@ function binaryVerifyTools(cfg: Config): { nm: string; readobj: string; objdump:
  * that relinks it) runs them, without making them inputs of anything.
  */
 export function postLinkChecks(cfg: Config, exeName: string): string[] {
-  return [
-    smokeTestStamp(cfg, exeName),
-    classInfoStamp(cfg, exeName),
-    binaryVerifyStamp(cfg, exeName),
-    duplicateSymbolsStamp(cfg, exeName),
-  ].filter((p): p is string => p !== undefined);
+  return [smokeTestStamp(cfg, exeName), binaryVerifyStamp(cfg, exeName), duplicateSymbolsStamp(cfg, exeName)].filter(
+    (p): p is string => p !== undefined,
+  );
 }
 
 const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");
@@ -840,6 +855,16 @@ const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");
  * binary-expectations.ts says this target should look like. The
  * expectations are serialized now; the scan runs as a validation of the link.
  */
+/**
+ * ASan and debug builds run the static scans but only warn: the expectations
+ * describe the binaries that ship, and these builds are for finding bugs with,
+ * so a difference from them must not cost the binary. Every other
+ * configuration, release builds in CI above all, fails on a finding.
+ */
+export function binaryChecksWarnOnly(cfg: Config): boolean {
+  return cfg.asan || cfg.debug;
+}
+
 function emitBinaryVerify(
   n: Ninja,
   cfg: Config,
@@ -854,7 +879,7 @@ function emitBinaryVerify(
   writeIfChanged(spec, JSON.stringify({ name: exeName, exe, tools, expect: binaryExpectations(cfg) }, null, 2) + "\n");
   const q = (p: string) => quote(p, cfg.windows);
   n.rule("binary_verify", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)} binary $spec`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} binary $spec`,
     description: `check ${exeName} exports, dynamic deps, initializers, hardening`,
   });
   n.build({
@@ -911,7 +936,7 @@ function emitDuplicateSymbolCheck(
   const objdump = cfg.windows ? rustTool("llvm-objdump", cfg.objdump!) : undefined;
   // The report is always written; $out is the stamp, written only on success.
   n.rule("duplicate_symbols", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)}` : ""}`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)}` : ""}`,
     description: `check ${exeName} link inputs for duplicate definitions`,
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
@@ -921,143 +946,6 @@ function emitDuplicateSymbolCheck(
     rule: "duplicate_symbols",
     inputs: linkInputs,
     implicitInputs: [verifyBinaryPath],
-    ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
-  });
-  return [stamp];
-}
-
-/**
- * JSC's bun:ffi C++/ABI test executable, run by
- * test/js/bun/jsc-stress/testFFI.test.ts: one WebKit source compiled the
- * way JSC compiles its own TUs (deps/webkit.ts says how), linked with the
- * WebKit/ICU/mimalloc objects bun links and the toolchain half of bun's
- * link flags. Linking it also proves those resolve standalone before bun's
- * own link does.
- */
-function emitTestFFI(
-  n: Ninja,
-  cfg: Config,
-  deps: ReadonlyMap<string, ResolvedDep>,
-): { exe: string; objects: string[] } | undefined {
-  return emitJscProgram(n, cfg, deps, "testFFI", jscTestFFI);
-}
-
-/**
- * JSC's `jsc` shell — the same objects plus jsc.cpp. Emitted but not a default
- * target and not uploaded: `bun run build --target=jsc` (or `ninja jsc`)
- * builds it when someone wants a bare JSC REPL against bun's exact JSC build.
- */
-function emitJscShell(
-  n: Ninja,
-  cfg: Config,
-  deps: ReadonlyMap<string, ResolvedDep>,
-): { exe: string; objects: string[] } | undefined {
-  return emitJscProgram(n, cfg, deps, "jsc", jscShell);
-}
-
-/** A standalone JSC program (webkit.ts says how JSC compiles them) linked with the WebKit/ICU/mimalloc objects bun links. */
-function emitJscProgram(
-  n: Ninja,
-  cfg: Config,
-  deps: ReadonlyMap<string, ResolvedDep>,
-  name: string,
-  program: (cfg: Config) => JSCProgram,
-): { exe: string; objects: string[] } | undefined {
-  const webkit = deps.get("WebKit");
-  if (cfg.webkit !== "source" || webkit === undefined) return undefined;
-  const spec = program(cfg);
-  const fromDep = (dep: string): string[] => {
-    const d = deps.get(dep);
-    return d === undefined ? [] : [...d.objects, ...d.libs];
-  };
-  n.comment(`─── ${name} (JSC standalone program) ───`);
-  const objects = spec.sources.map(src =>
-    cxx(n, cfg, src, {
-      flags: spec.cxxflags,
-      implicitInputs: webkit.outputs,
-      orderOnlyInputs: webkit.generatedHeaders,
-    }),
-  );
-  // Where JSC links bun's ICU (everywhere but macOS), its data archive is the
-  // zstd-repacked one (deps/icu.ts), read through the bun_icu_maybe_decompress
-  // hook bun defines in src/jsc/bindings/bun_icu_decompress.cpp. Compile that
-  // TU for the program too (through a wrapper in the build dir, so its object
-  // does not collide with bun's) and link zstd; without it every compressed
-  // item would fail to load and Intl would be English-only in the shell.
-  const icuHook: string[] = [];
-  if (deps.has("icu")) {
-    const wrapper = resolve(cfg.buildDir, "codegen", `${name}-bun_icu_decompress.cpp`);
-    writeIfChanged(wrapper, `#include "${slash(resolve(cfg.cwd, "src/jsc/bindings/bun_icu_decompress.cpp"))}"\n`);
-    objects.push(
-      cxx(n, cfg, wrapper, {
-        flags: [
-          ...spec.cxxflags,
-          `-I${resolve(cfg.cwd, "src/jsc/bindings")}`,
-          ...["zstd", "mimalloc"].flatMap(d => (deps.get(d)?.includes ?? []).map(i => `-I${i}`)),
-          "-Wno-undef", // mimalloc's internal headers under JSC's -Wundef
-        ],
-        // zstd's and mimalloc's stamps too: their headers exist only once fetched.
-        implicitInputs: [...webkit.outputs, ...["zstd", "mimalloc"].flatMap(d => deps.get(d)?.outputs ?? [])],
-        orderOnlyInputs: webkit.generatedHeaders,
-      }),
-    );
-    icuHook.push(...fromDep("zstd"));
-  }
-  const shims = emitShims(n, cfg);
-  const deps_ = lazyDepObjects(cfg, [...fromDep("WebKit"), ...fromDep("icu"), ...icuHook, ...fromDep("mimalloc")]);
-  const exe = link(n, cfg, name, [...objects, ...deps_.eager], {
-    lazyObjects: deps_.lazy,
-    libs: [],
-    // Debug info stripped at link: nothing symbolizes these, and with full
-    // DWARF testFFI is 0.5 GB on the non-LTO lanes' artifacts. (Windows never
-    // gets /DEBUG here, so no PDB either.)
-    flags: [
-      ...computeTargetLinkFlags(cfg),
-      ...(cfg.darwin ? ["-Wl,-dead_strip", "-Wl,-S"] : cfg.windows ? [] : ["-Wl,--gc-sections", "-Wl,--strip-debug"]),
-      ...shims.ldflags,
-      ...spec.ldflags,
-      ...systemLibs(cfg),
-    ],
-    implicitInputs: shims.implicitInputs,
-  });
-  // The file is `<name>[.exe]` at the build root, so `ninja <name>` already
-  // names it on unix; Windows gets the suffix-less alias.
-  if (cfg.windows) n.phony(name, [exe]);
-  return { exe, objects };
-}
-
-/**
- * JSC ClassInfo address-uniqueness canary (see webkitClassInfoCheckScript)
- * on the unstripped executable. Reads the symbol table with llvm-nm, so it
- * runs for cross builds too. Part of `ninja check`.
- */
-function emitClassInfoCheck(
-  n: Ninja,
-  cfg: Config,
-  exe: string,
-  exeName: string,
-  strippedExe: string | undefined,
-): string[] {
-  const script = webkitClassInfoCheckScript(cfg);
-  const stamp = classInfoStamp(cfg, exeName);
-  if (script === undefined || stamp === undefined) return [];
-  // NM: the toolchain's llvm-nm (the script otherwise searches PATH). On
-  // success the script's report is reduced to one `N distinct ClassInfo`
-  // line like the other checks; on failure it is shown whole.
-  // (The paths ride as positional parameters — $$1 script, $$2 exe, $$3
-  // stamp; `$$` is ninja's escape — so none is spliced into the quoted text.)
-  const nmEnv = cfg.nm === undefined ? "" : ` --env=NM=${quote(cfg.nm, false)}`;
-  n.rule("classinfo_check", {
-    command:
-      `${cfg.jsRuntime} ${quote(streamPath, false)} check --label=${exeName} --elapsed --stamp=$out${nmEnv} sh -c ` +
-      `'python3 "$$1" "$$2" > "$$3.log" 2>&1 && sed -n "s/^check-classinfo-uniqueness: [^:]*: \\([0-9]*\\) ClassInfo.*/\\1 distinct ClassInfo/p" "$$3.log" || { cat "$$3.log"; exit 1; }' sh ${quote(script, false)} $in $out`,
-    description: `check ${exeName} JSC ClassInfo uniqueness`,
-  });
-  n.build({
-    outputs: [stamp],
-    rule: "classinfo_check",
-    inputs: [exe],
-    implicitInputs: [script],
     ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
   });
   return [stamp];

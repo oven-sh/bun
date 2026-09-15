@@ -25,12 +25,14 @@ pub(crate) const MAX_KEEPALIVE_HOSTNAME: usize = 128;
 /// The const-generic `SSL` is load-bearing for monomorphization (gates hot
 /// inner-loop branches); do not demote to a runtime bool.
 #[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::destroy_between_ticks)]
 pub struct HTTPContext<const SSL: bool> {
     /// Heap-allocated custom-SSL contexts only. The cache entry in
     /// custom_ssl_context_map holds 1; each in-flight HTTPClient that set
     /// `client.custom_ssl_ctx = this` holds 1. Eviction drops the cache
     /// ref but the context survives until the last client releases it,
-    /// so deinit() never runs while a request is mid-flight. The global
+    /// so deinit() never runs while a request is mid-flight. The last deref
+    /// does not run it in place either, see `destroy_between_ticks`. The global
     /// http_context/https_context start at 1 and are never deref'd.
     pub(crate) ref_count: Cell<u32>,
     pub(crate) pending_sockets: LazyPool<SSL, POOL_SIZE>,
@@ -726,7 +728,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 return Some(pooled);
             };
             bun_core::scoped_log!(HTTPContext, "Keep-Alive pool full, evicting oldest");
-            Self::terminate_socket(pooled_socket_mut(oldest).http_socket);
+            // The evicted connection is healthy: retire it with a FIN
+            // (`close_socket`), not the RST `terminate_socket` sends.
+            Self::close_socket(pooled_socket_mut(oldest).http_socket);
         }
         let Some(slot) = pool.claim() else {
             return Some(pooled);
@@ -872,6 +876,27 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if http_socket.is_shutdown() || http_socket.get_error() != 0 {
                     Self::terminate_socket(http_socket);
                     continue;
+                }
+
+                // `HTTPThread::drain_events` hands a socket out before the loop
+                // polls it, so input the origin already wrote is unread in the
+                // kernel and invisible to the checks above; reuse answers this
+                // request with it. Same verdicts the idle handlers reach after
+                // a poll: `Handler::on_data` terminates, `Handler::on_end`
+                // closes. HTTP/2 idle frames are healthy, so `on_idle_data`
+                // keeps deciding for those.
+                if socket.h2_session.is_none() {
+                    match http_socket.queued_input() {
+                        uws::QueuedInput::None => {}
+                        uws::QueuedInput::Eof => {
+                            Self::close_socket(http_socket);
+                            continue;
+                        }
+                        uws::QueuedInput::Data | uws::QueuedInput::Error => {
+                            Self::terminate_socket(http_socket);
+                            continue;
+                        }
+                    }
                 }
 
                 // Transfer tunnel ownership (the parked strong ref) to the caller.
@@ -1167,6 +1192,19 @@ impl<const SSL: bool> HTTPContext<SSL> {
             pooled.release_parked_refs();
             pooled.http_socket.close(uws::CloseKind::Failure);
         }
+    }
+
+    /// The last ref is gone. A request gives its ref up in its result
+    /// callback, which runs inside callbacks of this context's own sockets,
+    /// and uSockets reads `s->group` (the `group` field here) again when such
+    /// a callback returns. So the HTTP thread frees the context between two
+    /// loop ticks, whoever held the last ref.
+    fn destroy_between_ticks(this: *mut Self) {
+        // The two global contexts are never deref'd.
+        debug_assert!(SSL);
+        let this =
+            NonNull::new(this.cast::<HTTPContext<true>>()).expect("deref passes a live context");
+        crate::http_thread().dead_ssl_contexts.push(this);
     }
 }
 

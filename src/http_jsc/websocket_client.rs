@@ -839,14 +839,16 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Assemble the (optional) close payload, echo a close frame back, and
     /// stop reading: a received Close always terminates the parse loop.
     fn recv_close(&self, cursor: &mut RecvCursor<'_>) -> Step {
-        if cursor.body_remain == 1 || cursor.body_remain > MAX_CONTROL_PAYLOAD {
-            return self.recv_failed(ErrorCode::InvalidControlFrame);
-        }
+        if !self.control_frame_started.get() {
+            if cursor.body_remain == 1 || cursor.body_remain > MAX_CONTROL_PAYLOAD {
+                return self.recv_failed(ErrorCode::InvalidControlFrame);
+            }
 
-        if cursor.body_remain == 0 {
-            self.close_received.set(true);
-            self.send_close();
-            return Step::Terminated;
+            if cursor.body_remain == 0 {
+                self.close_received.set(true);
+                self.send_close();
+                return Step::Terminated;
+            }
         }
 
         let Some((payload, payload_len)) = self.buffer_control_payload(cursor) else {

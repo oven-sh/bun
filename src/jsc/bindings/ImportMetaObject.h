@@ -20,11 +20,16 @@ namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
-class ImportMetaObject final : public JSC::JSNonFinalObject {
+class ImportMetaObject final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<ImportMetaObject*>(cell)->ImportMetaObject::~ImportMetaObject();
+    }
 
     /// Must be called with a valid url string (for `import.meta.url`)
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url);

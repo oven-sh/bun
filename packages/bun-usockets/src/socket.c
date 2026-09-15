@@ -169,6 +169,13 @@ __attribute__((always_inline)) int us_socket_is_established(struct us_socket_t *
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
+int us_socket_queued_input(struct us_socket_t *s) {
+    if (s->flags.is_closed || !us_socket_is_established(s)) {
+        return LIBUS_QUEUED_INPUT_NONE;
+    }
+    return bsd_queued_input(us_poll_fd(&s->p));
+}
+
 /* Detach c from its group + drop the borrowed SSL_CTX ref, but leave c
  * allocated. After this, c->group is NULL and the embedding owner may safely
  * deinit; the only remaining link is into a loop-owned list. */

@@ -935,18 +935,24 @@ impl ClientSession {
         for client in core::mem::take(&mut self.pending_attach) {
             pending_client_mut(client).h2_fail(err);
         }
+        // `handle_data`'s deliver loop holds a stream across the callback that re-entered here.
+        let deliver_loop_frees_streams = self.delivering;
         for &e in self.streams.values() {
             let client = stream_mut(e).client.take();
             if let Some(c) = client {
                 stream_client_mut(c).h2 = None;
             }
-            drop_stream(e);
+            if !deliver_loop_frees_streams {
+                drop_stream(e);
+            }
             if let Some(c) = client {
                 stream_client_mut(c).h2_fail(err);
             }
         }
-        self.streams.clear_retaining_capacity();
-        self.by_http_id.clear_retaining_capacity();
+        if !deliver_loop_frees_streams {
+            self.streams.clear_retaining_capacity();
+            self.by_http_id.clear_retaining_capacity();
+        }
         self.give_up_socket_ref();
     }
 

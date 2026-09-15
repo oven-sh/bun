@@ -55,9 +55,10 @@ import { interactive, nameColor, status } from "./build/tty.ts";
 
 async function main(): Promise<void> {
   // Windows: re-exec inside the VS dev shell if not already there.
-  // The shell provides INCLUDE, LIB and WindowsSdkDir for native builds
-  // that don't use the xwin sysroot. Cheap: VSINSTALLDIR check
-  // short-circuits on subsequent runs in the same terminal.
+  // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB,
+  // WindowsSdkDir — things clang-cl can mostly self-detect but nested
+  // cmake projects can't. Cheap: VSINSTALLDIR check short-circuits on
+  // subsequent runs in the same terminal.
   if (process.platform === "win32" && !process.env.VSINSTALLDIR) {
     const vsShell = join(import.meta.dirname, "vs-shell.ps1");
     const result = spawnSync(
@@ -191,7 +192,11 @@ async function main(): Promise<void> {
       if (result.cfg.mode === "cpp-only" || result.cfg.mode === "rust-only") {
         await startGroup("Upload artifacts", () => uploadArtifacts(result.cfg, result.output));
       }
-      if (result.cfg.mode === "full" || result.cfg.mode === "link-only" || result.cfg.mode === "rust-and-link") {
+      if (
+        result.cfg.mode === "link-only" ||
+        result.cfg.mode === "rust-and-link" ||
+        result.cfg.mode === "archive-link"
+      ) {
         await startGroup("Package and upload", () => packageAndUpload(result.cfg, result.output));
       }
     }
@@ -274,7 +279,7 @@ async function main(): Promise<void> {
 
     if (args.execArgs.length === 0) {
       // Closing line on success: when restat prunes most of the graph
-      // (a no-op shows `[1/555] ...` then silence),
+      // (local WebKit no-op shows `[1/555] build WebKit` then silence),
       // it's not obvious ninja finished vs. stalled. This disambiguates.
       // Targets named when explicit so it's clear what was actually built.
       const what = args.ninjaTargets.length > 0 ? ` ${args.ninjaTargets.map(t => nameColor(t)).join(", ")}` : "";
@@ -578,18 +583,17 @@ Usage: bun scripts/build.ts [options] [exec-args...]
 
 Options:
   --profile=<name>        Build profile (default: debug)
-                          Profiles: debug, debug-no-asan,
-                                    release, release-asan,
+                          Profiles: debug, debug-local, debug-no-asan,
+                                    release, release-local, release-asan,
                                     release-assertions, ci-*,
                                     windows-{x64,arm64}[-release] (cross-compile
                                     from a non-Windows host)
   --<field>=<value>       Override a config field. Boolean fields take
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, assertions, logs, baseline,
-                                  canary, valgrind, webkit (prebuilt|source),
+                                  canary, valgrind, webkit (prebuilt|local),
                                   local-deps (name=path[,name=path] — build a
-                                  vendored dep from your own checkout;
-                                  WebKit alone means \$BUN_WEBKIT_PATH),
+                                  vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
                                   buildDir, mode (full|cpp-only|link-only),
@@ -608,7 +612,7 @@ Examples:
   bun scripts/build.ts --profile=debug
   bun scripts/build.ts --profile=release --lto=off
   bun scripts/build.ts test foo.test.ts
-  bun scripts/build.ts --local-deps=WebKit run script.ts
+  bun scripts/build.ts --profile=debug-local run script.ts
   bun scripts/build.ts --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
   bun scripts/build.ts --target=bun-rust
   bun scripts/build.ts --configure-only

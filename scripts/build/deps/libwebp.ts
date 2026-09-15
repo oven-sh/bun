@@ -115,7 +115,7 @@ export const libwebp: Dependency = {
   name: "libwebp",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "webmproject/libwebp",
     commit: LIBWEBP_COMMIT,
   }),

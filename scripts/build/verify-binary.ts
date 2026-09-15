@@ -820,7 +820,21 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
 
 // ───────────────────────────────────────────────────────────────────────────
 
+/**
+ * `--warn-only` (first argument): the same scan and the same report, but a
+ * finding does not fail the step. bun.ts passes it for ASan and debug builds
+ * (see binaryChecksWarnOnly there); every other configuration fails on a
+ * finding.
+ */
 function main(argv: string[]): number {
+  if (argv[0] !== "--warn-only") return scan(argv);
+  const status = scan(argv.slice(1));
+  if (status !== 1) return status;
+  console.log("warning: findings above do not fail this build (ASan/debug configuration); they fail every other one.");
+  return 0;
+}
+
+function scan(argv: string[]): number {
   const [mode, ...args] = argv;
   if (mode === "binary") {
     const [specPath] = args;
@@ -865,6 +879,7 @@ if (import.meta.main ?? process.argv[1] === import.meta.filename) {
     process.exit(main(process.argv.slice(2)));
   } catch (err) {
     console.error(err instanceof BuildError ? err.format() : err);
-    process.exit(1);
+    // A scan that could not run is a finding like any other.
+    process.exit(process.argv[2] === "--warn-only" ? 0 : 1);
   }
 }

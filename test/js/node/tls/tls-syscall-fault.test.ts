@@ -93,6 +93,36 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     expect(p.client.destroyed).toBe(true);
   });
 
+  test("send → ECONNRESET on an established session fails the write", async () => {
+    // A TLS write reaches the wire from inside the write BIO, where a send the
+    // kernel rejected is folded into "the wire blocked". The code was dropped
+    // there, so the write was buffered as backpressure, nothing reported the
+    // peer's reset, and the connection ended as a clean close. Node reports
+    // `write ECONNRESET` on the write callback and on the socket.
+    using p = await connectedTLSPair();
+    const events: string[] = [];
+    // `once(socket, "close")` would reject on the socket's 'error', so collect
+    // both events by hand.
+    const closed = Promise.withResolvers<boolean>();
+    p.client.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}:${err.syscall}`));
+    p.client.on("end", () => events.push("end"));
+    p.client.on("close", hadError => closed.resolve(hadError));
+    const written = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+
+    fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1 });
+    p.client.write("hello", err => written.resolve(err as NodeJS.ErrnoException | null | undefined));
+    const writeError = await written.promise;
+    const hadError = await closed.promise;
+    fault.clear();
+
+    expect({
+      code: writeError?.code,
+      syscall: writeError?.syscall,
+      events,
+      hadError,
+    }).toEqual({ code: "ECONNRESET", syscall: "write", events: ["error:ECONNRESET:write"], hadError: true });
+  });
+
   test("recv → short reads (1 byte) still decrypt complete payload", async () => {
     using p = await connectedTLSPair();
     // The TLS record layer must reassemble across many tiny BIO reads.

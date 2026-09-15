@@ -146,6 +146,113 @@ describe("bundler", () => {
     },
   });
 
+  // A src/href is a URL. The file it names has its character references and
+  // percent escapes decoded and no ?query#fragment. A copied asset keeps the
+  // ?query#fragment. A scheme or a //host URL is external and stays as-is.
+  itBundled("html/url-decoding", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a&amp;b.css?v=2">
+    <script src="./my%20script.js?v=1#top"></script>
+    <script src="//cdn.example.com/lib.js"></script>
+    <link rel="icon" href="./ic%C3%B6n.png">
+  </head>
+  <body>
+    <img src="./sprite&#x26;2.svg?v=3#home">
+    <img src="./photo.jpg?w=100&amp;h=50">
+  </body>
+</html>`,
+      "/a&b.css": "body { color: red; }",
+      "/my script.js": "console.log('my script')",
+      "/icön.png": "fake icon",
+      "/sprite&2.svg": "<svg></svg>",
+      "/photo.jpg": "fake photo",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toMatch(/href="\.\/index-[a-z0-9]+\.css"/);
+      expect(html).toMatch(/src="\.\/index-[a-z0-9]+\.js"/);
+      expect(html).toContain('src="//cdn.example.com/lib.js"');
+      expect(html).toMatch(/href="\.\/icön-[a-z0-9]+\.png"/);
+      expect(html).toMatch(/src="\.\/sprite&2-[a-z0-9]+\.svg\?v=3#home"/);
+      // The query is kept as written: `&amp;` is how HTML spells `&` there too.
+      expect(html).toMatch(/src="\.\/photo-[a-z0-9]+\.jpg\?w=100&amp;h=50"/);
+      expect(html).not.toContain("%");
+      const js = api.readFile("out/" + html.match(/src="\.\/(index-[a-z0-9]+\.js)"/)![1]);
+      expect(js).toContain("my script");
+      const css = api.readFile("out/" + html.match(/href="\.\/(index-[a-z0-9]+\.css)"/)![1]);
+      expect(css).toContain("color: red");
+    },
+  });
+
+  // Test protocol-relative (scheme-relative) external assets in every tag kind
+  itBundled("html/external-assets-protocol-relative", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="//cdn.example.com/style.css">
+    <script src="//cdn.example.com/script.js"></script>
+  </head>
+  <body>
+    <img src="//cdn.example.com/logo.png">
+  </body>
+</html>`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toContain('href="//cdn.example.com/style.css"');
+      expect(html).toContain('src="//cdn.example.com/script.js"');
+      expect(html).toContain('src="//cdn.example.com/logo.png"');
+    },
+  });
+
+  // #fragment / ?query on an asset URL must survive the rewrite (SVG sprite
+  // symbol selectors, media-fragment ranges, cache-bust queries), and two
+  // references to one file with different suffixes emit one asset.
+  itBundled("html/asset-url-fragment-query", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <img src="./sprite.svg#home">
+    <video src="./clip.png#t=10,20"></video>
+    <img src="./clip.png?v=3">
+    <img src="./sprite.svg?q=1#icon">
+    <img src="https://example.com/sprite.svg#ext">
+  </body>
+</html>`,
+      "/sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="home"/></svg>`,
+      "/clip.png": "fake image content",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const attrs = [...html.matchAll(/(?:src|href)="([^"]*)"/g)].map(m => m[1]);
+
+      expect(attrs.filter(a => /sprite-[a-z0-9]+\.svg#home$/.test(a))).toHaveLength(1);
+      expect(attrs.filter(a => /clip-[a-z0-9]+\.png#t=10,20$/.test(a))).toHaveLength(1);
+      expect(attrs.filter(a => /clip-[a-z0-9]+\.png\?v=3$/.test(a))).toHaveLength(1);
+      expect(attrs.filter(a => /sprite-[a-z0-9]+\.svg\?q=1#icon$/.test(a))).toHaveLength(1);
+      // External reference is left untouched.
+      expect(attrs).toContain("https://example.com/sprite.svg#ext");
+
+      // Both references to clip.png point at the same emitted asset.
+      const clipHashes = new Set(attrs.map(a => a.match(/clip-([a-z0-9]+)\.png/)?.[1]).filter(Boolean));
+      expect(clipHashes.size).toBe(1);
+    },
+  });
+
   // Test mixed local and external assets
   itBundled("html/mixed-assets", {
     outdir: "out/",

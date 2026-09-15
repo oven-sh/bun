@@ -67,11 +67,99 @@ impl<'a> HTMLScanner<'a> {
     }
 }
 
+/// The code point named by the `&name;` character reference, for the names
+/// that can appear in a URL attribute: `amp`, `lt`, `gt`, `quot`, `apos`
+/// and the numeric forms `#NNN` / `#xHH`.
+fn char_ref_code_point(name: &[u8]) -> Option<u32> {
+    let cp = match name {
+        b"amp" => '&' as u32,
+        b"lt" => '<' as u32,
+        b"gt" => '>' as u32,
+        b"quot" => '"' as u32,
+        b"apos" => '\'' as u32,
+        [b'#', b'x' | b'X', hex @ ..] if !hex.is_empty() => {
+            u32::from_str_radix(core::str::from_utf8(hex).ok()?, 16).ok()?
+        }
+        [b'#', dec @ ..] if !dec.is_empty() => core::str::from_utf8(dec).ok()?.parse().ok()?,
+        _ => return None,
+    };
+    (cp != 0 && cp <= 0x10FFFF).then_some(cp)
+}
+
+/// True for `scheme:...` (RFC 3986 scheme syntax) and for `//host/...`.
+/// Neither names a local file, so the resolver marks them external as-is.
+fn url_is_remote(url: &[u8]) -> bool {
+    if url.starts_with(b"//") {
+        return true;
+    }
+    let mut len = 0;
+    while len < url.len()
+        && (url[len].is_ascii_alphanumeric() || matches!(url[len], b'+' | b'-' | b'.'))
+    {
+        len += 1;
+    }
+    len > 0 && url[0].is_ascii_alphabetic() && url.get(len) == Some(&b':')
+}
+
+/// The character reference at the start of `text` as a code point and the
+/// number of bytes it spans, when there is one.
+fn char_ref(text: &[u8]) -> Option<(u32, usize)> {
+    if text.first() != Some(&b'&') {
+        return None;
+    }
+    let end = bun_core::strings::index_of_char_usize(text, b';')?;
+    Some((char_ref_code_point(&text[1..end])?, end + 1))
+}
+
+/// Splits a `src`/`href` attribute value into the URL path it names, with its
+/// HTML character references decoded (`&amp;` is how HTML spells `&`), and
+/// the `?query#fragment` text after it, kept as written.
+pub(crate) fn split_url(value: &[u8]) -> (Vec<u8>, &[u8]) {
+    let mut path = Vec::with_capacity(value.len());
+    let mut i = 0;
+    while i < value.len() {
+        let mut buf = [0u8; 4];
+        let (bytes, consumed): (&[u8], usize) = match char_ref(&value[i..]) {
+            Some((cp, consumed)) => {
+                let len = bun_core::strings::encode_wtf8_rune(&mut buf, cp);
+                (&buf[..len], consumed)
+            }
+            None => (&value[i..i + 1], 1),
+        };
+        if !path.is_empty() && matches!(bytes[0], b'?' | b'#') {
+            return (path, &value[i..]);
+        }
+        path.extend_from_slice(bytes);
+        i += consumed;
+    }
+    (path, b"")
+}
+
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(&mut self, value: &[u8], kind: ImportKind) -> Result<(), Error> {
+        let is_remote = url_is_remote(value);
+        let decoded;
+        let input_path: &[u8] = if is_remote {
+            value
+        } else {
+            let (path, _suffix) = split_url(value);
+            // The file name as a browser or a static file server reads it from
+            // the URL. An invalid escape leaves the path as written.
+            let mut percent_decoded = Vec::with_capacity(path.len());
+            decoded = match bun_url::PercentEncoding::decode_fault_tolerant::<_, true>(
+                &mut percent_decoded,
+                &path,
+            ) {
+                Ok(_) => percent_decoded,
+                Err(_) => path,
+            };
+            &decoded
+        };
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
-        let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
+        let path_to_use: &[u8] = if is_remote {
+            input_path
+        } else if input_path.len() > 1 && input_path[0] == b'/' {
             resolve_path::join_abs_string::<platform::Auto>(
                 fs::FileSystem::instance().top_level_dir,
                 &[&input_path[1..]],

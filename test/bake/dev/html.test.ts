@@ -96,6 +96,31 @@ devTest("image tag", {
     await dev.fetch(url).expect404(); // TODO
   },
 });
+devTest("image tag keeps ?query#fragment", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <img src="./image.png?v=1#frag" alt="test image">
+      </body></html>
+    `,
+    "image.png": "FIRST",
+  },
+  async test(dev) {
+    const imgSrc = async () => (await (await dev.fetch("/")).text()).match(/<img src="([^"]*)"/)?.[1];
+
+    const url = await imgSrc();
+    expect(url).toMatch(/^\/_bun\/asset\/[0-9a-f]{16}\.png\?v=1#frag$/);
+    await dev.fetch(url!).expect.toBe("FIRST");
+
+    // An HTML edit re-renders the page against the asset the dev server has already cached.
+    await dev.patch("index.html", {
+      find: 'alt="test image"',
+      replace: 'alt="modified image"',
+    });
+    await dev.fetch("/").expect.toInclude('alt="modified image"');
+    expect(await imgSrc()).toBe(url);
+  },
+});
 devTest("image import in JS", {
   files: {
     "index.html": `

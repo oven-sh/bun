@@ -9,7 +9,7 @@ use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
+use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, split_url};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
@@ -101,6 +101,21 @@ fn set_attribute(element: &mut Element<'_, '_>, name: &[u8], value: &[u8]) {
     }
 }
 
+/// `set_attribute` with the source URL's `?query#fragment` appended, so that
+/// `sprite.svg#icon` still addresses the icon in the rewritten asset URL.
+fn set_attribute_with_suffix(
+    element: &mut Element<'_, '_>,
+    name: &[u8],
+    value: &[u8],
+    suffix: &[u8],
+) {
+    if suffix.is_empty() {
+        set_attribute(element, name, value);
+    } else {
+        set_attribute(element, name, &[value, suffix].concat());
+    }
+}
+
 impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     fn on_write_html(&mut self, bytes: &[u8]) {
         self.output.extend_from_slice(bytes);
@@ -116,9 +131,9 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     fn on_tag(
         &mut self,
         element: &mut Element<'_, '_>,
-        _path: &[u8],
+        path: &[u8],
         url_attribute: &[u8],
-        _kind: ImportKind,
+        kind: ImportKind,
     ) {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
@@ -145,6 +160,14 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         } else {
             Loader::File
         };
+        // The scanner resolved the URL without its `?query#fragment`. A copied
+        // asset keeps it. A script or stylesheet is merged into the page
+        // bundle, so there is nothing to keep it on.
+        let suffix: &[u8] = if kind == ImportKind::Url {
+            split_url(path).1
+        } else {
+            b""
+        };
 
         if import_record
             .flags
@@ -159,14 +182,24 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 
         if self.linker.dev_server.is_some() {
             if !unique_key_for_additional_files.is_empty() {
-                set_attribute(element, url_attribute, unique_key_for_additional_files);
+                set_attribute_with_suffix(
+                    element,
+                    url_attribute,
+                    unique_key_for_additional_files,
+                    suffix,
+                );
             } else if import_record.path.is_disabled
                 || loader.is_javascript_like()
                 || loader.is_css()
             {
                 element.remove();
             } else {
-                set_attribute(element, url_attribute, import_record.path.pretty);
+                set_attribute_with_suffix(
+                    element,
+                    url_attribute,
+                    import_record.path.pretty,
+                    suffix,
+                );
             }
             return;
         }
@@ -190,14 +223,24 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             let url_for_css =
                 parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
             if !url_for_css.is_empty() {
-                set_attribute(element, url_attribute, url_for_css);
+                // A `?query` would land inside the data: URL body. Keep the fragment only.
+                let fragment: &[u8] = match strings::index_of_char_usize(suffix, b'#') {
+                    Some(i) => &suffix[i..],
+                    None => b"",
+                };
+                set_attribute_with_suffix(element, url_attribute, url_for_css, fragment);
                 return;
             }
         }
 
         if !unique_key_for_additional_files.is_empty() {
             // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
-            set_attribute(element, url_attribute, unique_key_for_additional_files);
+            set_attribute_with_suffix(
+                element,
+                url_attribute,
+                unique_key_for_additional_files,
+                suffix,
+            );
             return;
         }
     }

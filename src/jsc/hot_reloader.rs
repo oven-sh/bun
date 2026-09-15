@@ -63,6 +63,16 @@ impl ImportWatcher {
     }
 
     #[inline]
+    pub fn add_directory_by_path(&mut self, dir_path: &[u8]) -> bool {
+        match self {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
+                w.add_directory_by_path::<true>(dir_path).is_ok()
+            }
+            ImportWatcher::None => true,
+        }
+    }
+
+    #[inline]
     pub fn add_file<const COPY_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
@@ -294,6 +304,34 @@ unsafe impl Sync for WatchChangedPaths {}
 /// (`ZStr` is `[u8]`-backed), so `AtomicCell` would not fit anyway.
 pub static WATCH_CHANGED_TRIGGER_FILE: std::sync::OnceLock<&'static ZStr> =
     std::sync::OnceLock::new();
+
+/// How `bun test --watch` learns that a test file was added. The watchlist
+/// holds the files a run loaded, so a file that did not exist then reaches the
+/// watcher only as a new entry of a watched directory.
+pub trait AddedFileListener: Sync {
+    /// The watched directory `dir` has a new entry. Runs on the watcher
+    /// thread with the watcher's mutex held. `watch_directory` starts to watch
+    /// a directory; the listener calls it before it reads that directory, so
+    /// that no entry appears between the two. Returns the path of an added
+    /// file that must reload the process.
+    fn on_directory_entry_added(
+        &self,
+        dir: &[u8],
+        watch_directory: &mut dyn FnMut(&[u8]),
+    ) -> Option<Box<[u8]>>;
+}
+
+/// Set by `bun test --watch` on the main thread, read by the watcher thread.
+pub static ADDED_FILE_LISTENER: std::sync::OnceLock<&'static dyn AddedFileListener> =
+    std::sync::OnceLock::new();
+
+/// The ops a directory reports when it gets a new entry. kqueue has one op
+/// for every change to a directory's entries.
+const DIRECTORY_ENTRY_ADDED: WatchOp = if IS_KQUEUE {
+    WatchOp::WRITE
+} else {
+    WatchOp::CREATE.union(WatchOp::MOVE_TO)
+};
 
 fn record_changed_path(path: &[u8]) {
     let Some(set) = WATCH_CHANGED_PATHS.get() else {
@@ -838,6 +876,14 @@ where
         #[cfg(windows)]
         let _ = (changed_files, parents, file_descriptors, rfs);
         let mut _on_file_update_path_buf = bun_paths::path_buffer_pool::get();
+        let added_file_listener = if RELOAD_IMMEDIATELY {
+            ADDED_FILE_LISTENER.get()
+        } else {
+            None
+        };
+        // Copies: the listener runs after the loop, where it can grow the
+        // watchlist that `file_paths` points into.
+        let mut directories_with_added_entry: Vec<Box<[u8]>> = Vec::new();
 
         for event in events.iter() {
             // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
@@ -915,6 +961,15 @@ where
                     }
                 }
                 bun_watcher::Kind::Directory => {
+                    if added_file_listener.is_some()
+                        && event.op.intersects(DIRECTORY_ENTRY_ADDED)
+                        // A batch is sorted by index and can repeat an event.
+                        && directories_with_added_entry
+                            .last()
+                            .is_none_or(|last| **last != *file_path)
+                    {
+                        directories_with_added_entry.push(Box::from(file_path));
+                    }
                     #[cfg(windows)]
                     {
                         // on windows we receive file events for all items affected by a directory change
@@ -1250,6 +1305,32 @@ where
                             ));
                         }
                     }
+                }
+            }
+        }
+
+        if let Some(listener) = added_file_listener {
+            for dir in &directories_with_added_entry {
+                let added_file = listener.on_directory_entry_added(dir, &mut |new_dir| {
+                    // SAFETY: the Watcher outlives this call (it owns the Reloader
+                    // that calls us), its mutex is held by `dispatch_file_updates`,
+                    // and the watchlist column slices above are not read after the
+                    // loop.
+                    let _ = unsafe { (*ctx).add_directory_by_path::<false>(new_dir) };
+                });
+                if let Some(path) = added_file {
+                    if self.verbose {
+                        Self::debug(format_args!(
+                            "File added: {}",
+                            bstr::BStr::new(bun_paths::resolve_path::relative(
+                                fs.top_level_dir,
+                                &path
+                            ))
+                        ));
+                    }
+                    record_changed_path(&path);
+                    current_task.append(Watcher::get_hash(&path));
+                    break;
                 }
             }
         }

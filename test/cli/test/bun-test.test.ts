@@ -2092,3 +2092,86 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/8342
+describe.concurrent("--watch runs a test file that is added later", () => {
+  const testFile = (name: string) => `import { test } from "bun:test"; test("${name}", () => {});`;
+
+  function watchTests(cwd: string) {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--watch", "--no-clear-screen"],
+      env: bunEnv,
+      cwd,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    return {
+      // Every run of the watched process appends to the same stream, so a
+      // summary that counts the added file can only come from a later run.
+      async waitFor(needle: string) {
+        while (!output.includes(needle)) {
+          const { value, done } = await reader.read();
+          if (done) throw new Error(`bun test --watch exited before it printed ${JSON.stringify(needle)}\n${output}`);
+          output += decoder.decode(value, { stream: true });
+        }
+      },
+      async [Symbol.asyncDispose]() {
+        proc.kill("SIGKILL");
+        await proc.exited;
+      },
+    };
+  }
+
+  test("next to a test file that ran", async () => {
+    using dir = tempDir("watch-new-test-file-sibling", { "a.test.ts": testFile("a") });
+    await using watcher = watchTests(String(dir));
+
+    await watcher.waitFor("Ran 1 test across 1 file.");
+    writeFileSync(join(String(dir), "b.test.ts"), testFile("b"));
+    await watcher.waitFor("Ran 2 tests across 2 files.");
+  }, 30_000);
+
+  test("in a directory that no run loaded a file from", async () => {
+    using dir = tempDir("watch-new-test-file-unloaded-dir", {
+      "a.test.ts": testFile("a"),
+      "lib/deep/not-imported.ts": `export {};`,
+    });
+    await using watcher = watchTests(String(dir));
+
+    await watcher.waitFor("Ran 1 test across 1 file.");
+    writeFileSync(join(String(dir), "lib", "deep", "b.spec.tsx"), testFile("b"));
+    await watcher.waitFor("Ran 2 tests across 2 files.");
+  }, 30_000);
+
+  test("in a directory that is created with it", async () => {
+    using dir = tempDir("watch-new-test-file-new-dir", { "a.test.ts": testFile("a") });
+    await using watcher = watchTests(String(dir));
+
+    await watcher.waitFor("Ran 1 test across 1 file.");
+    mkdirSync(join(String(dir), "new", "deeper"), { recursive: true });
+    writeFileSync(join(String(dir), "new", "deeper", "b_test.js"), testFile("b"));
+    await watcher.waitFor("Ran 2 tests across 2 files.");
+  }, 30_000);
+
+  test("while the run that did not find it is still in progress", async () => {
+    using dir = tempDir("watch-new-test-file-mid-run", {
+      // The scan for this run is done when a test runs, and nothing watches
+      // `lib` yet. The second run finds b.test.ts and leaves it alone.
+      "a.test.ts": `
+        import { test } from "bun:test";
+        import { existsSync, writeFileSync } from "node:fs";
+        test("a", () => {
+          if (!existsSync("lib/b.test.ts")) writeFileSync("lib/b.test.ts", ${JSON.stringify(testFile("b"))});
+        });
+      `,
+      "lib/not-imported.ts": `export {};`,
+    });
+    await using watcher = watchTests(String(dir));
+
+    await watcher.waitFor("Ran 2 tests across 2 files.");
+  }, 30_000);
+});

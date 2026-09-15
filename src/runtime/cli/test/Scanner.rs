@@ -20,15 +20,16 @@ pub struct Scanner<'a> {
     pub(crate) exclusion_names: &'a [&'a [u8]],
     /// When this list is empty, no filters are applied.
     /// "test" suffixes (e.g. .spec.*) are always applied when traversing directories.
-    pub(crate) filter_names: &'a [&'a [u8]],
+    pub(crate) filter_names: Vec<Box<[u8]>>,
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
-    pub(crate) path_ignore_patterns: &'a [&'a [u8]],
+    pub(crate) path_ignore_patterns: Vec<Box<[u8]>>,
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
+    /// The directories `scan` was asked to walk.
+    pub(crate) roots: Vec<Box<[u8]>>,
     pub(crate) fs: *mut FileSystem,
-    pub(crate) open_dir_buf: PathBuffer,
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) has_iterated: bool,
     pub(crate) search_count: usize,
@@ -79,13 +80,13 @@ impl<'a> Scanner<'a> {
         let results = Vec::with_capacity(initial_results_capacity);
         Ok(Scanner {
             exclusion_names: &[],
-            filter_names: &[],
-            path_ignore_patterns: &[],
+            filter_names: Vec::new(),
+            path_ignore_patterns: Vec::new(),
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
             fs: transpiler.fs,
             test_files: results,
-            open_dir_buf: PathBuffer::ZEROED,
+            roots: Vec::new(),
             has_iterated: false,
             search_count: 0,
             current_dir: None,
@@ -159,6 +160,8 @@ impl<'a> Scanner<'a> {
                     root_err.original_err.name()
                 );
             }
+        } else {
+            self.roots.push(Box::from(path));
         }
 
         // you typed "." and we already scanned it
@@ -259,7 +262,7 @@ impl<'a> Scanner<'a> {
             return true;
         }
 
-        for filter_name in self.filter_names {
+        for filter_name in &self.filter_names {
             if strings::starts_with(name, filter_name) {
                 return true;
             }
@@ -273,7 +276,7 @@ impl<'a> Scanner<'a> {
             return true;
         }
 
-        for filter_name in self.filter_names {
+        for filter_name in &self.filter_names {
             if strings::index_of(name, filter_name).is_some() {
                 return true;
             }
@@ -304,7 +307,7 @@ impl<'a> Scanner<'a> {
             None
         };
 
-        for pattern in self.path_ignore_patterns {
+        for pattern in &self.path_ignore_patterns {
             if bun_glob::r#match(pattern, rel_path).matches() {
                 return true;
             }
@@ -328,6 +331,71 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
+    /// Whether `scan` walks the directory `base` of `dir`. `name` is `base` in
+    /// lowercase.
+    pub(crate) fn walks_directory(&self, dir: &[u8], base: &[u8], name: &[u8]) -> bool {
+        if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
+            return false;
+        }
+
+        debug_assert!(strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none());
+
+        for exclude_name in self.exclusion_names {
+            if strings::eql(exclude_name, name) {
+                return false;
+            }
+        }
+
+        // Prune ignored directory trees early so we never traverse them.
+        if !self.path_ignore_patterns.is_empty() {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let Some(dir_path) = self.join(dir, base, &mut buf) else {
+                return false;
+            };
+            if self.matches_path_ignore_pattern(dir_path) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// The absolute path of the entry `base` of `dir`.
+    pub(crate) fn join<'b>(
+        &self,
+        dir: &[u8],
+        base: &[u8],
+        buf: &'b mut PathBuffer,
+    ) -> Option<&'b [u8]> {
+        let parts: [&[u8]; 2] = [dir, base];
+        Self::abs_buf_projected(self.top_level_dir(), &parts, &mut buf[..])
+    }
+
+    /// The absolute path of the file `base` of `dir`, unless the filters or
+    /// the path ignore patterns exclude it. The caller checks the name with
+    /// `could_be_test_file` first.
+    pub(crate) fn filtered_test_file_path<'b>(
+        &self,
+        dir: &[u8],
+        base: &[u8],
+        buf: &'b mut PathBuffer,
+    ) -> Option<&'b [u8]> {
+        let path = self.join(dir, base, buf)?;
+
+        if !self.does_absolute_path_match_filter(path) {
+            let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);
+            if !self.does_path_match_filter(rel_path) {
+                return None;
+            }
+        }
+
+        if self.matches_path_ignore_pattern(path) {
+            return None;
+        }
+
+        Some(path)
+    }
+
     pub(crate) fn next(&mut self, entry: &mut fs::Entry) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
@@ -336,36 +404,8 @@ impl<'a> Scanner<'a> {
         // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
         match unsafe { entry.kind(real_fs, false) } {
             fs::EntryKind::Dir => {
-                if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
+                if !self.walks_directory(entry.dir, entry.base(), name) {
                     return;
-                }
-
-                debug_assert!(strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none());
-
-                for exclude_name in self.exclusion_names {
-                    if strings::eql(exclude_name, name) {
-                        return;
-                    }
-                }
-
-                // Prune ignored directory trees early so we never traverse them.
-                if !self.path_ignore_patterns.is_empty() {
-                    let parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                    // reshaped for borrowck — drop the &mut borrow from
-                    // abs_buf and reborrow open_dir_buf immutably so &self methods
-                    // can be called with the slice.
-                    let Some(dir_path_len) = Self::abs_buf_projected(
-                        self.top_level_dir(),
-                        &parts,
-                        &mut self.open_dir_buf,
-                    )
-                    .map(<[u8]>::len) else {
-                        return;
-                    };
-                    let dir_path = &self.open_dir_buf[..dir_path_len];
-                    if self.matches_path_ignore_pattern(dir_path) {
-                        return;
-                    }
                 }
 
                 self.search_count += 1;
@@ -389,28 +429,11 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                let parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                // reshaped for borrowck — drop the &mut borrow from
-                // abs_buf and reborrow open_dir_buf immutably so &self methods
-                // below can be called with the slice.
-                let Some(path_len) =
-                    Self::abs_buf_projected(self.top_level_dir(), &parts, &mut self.open_dir_buf)
-                        .map(<[u8]>::len)
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let Some(path) = self.filtered_test_file_path(entry.dir, entry.base(), &mut buf)
                 else {
                     return;
                 };
-                let path = &self.open_dir_buf[..path_len];
-
-                if !self.does_absolute_path_match_filter(path) {
-                    let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);
-                    if !self.does_path_match_filter(rel_path) {
-                        return;
-                    }
-                }
-
-                if self.matches_path_ignore_pattern(path) {
-                    return;
-                }
 
                 let stored = match self.filename_store().append_slice(path) {
                     Ok(s) => s,

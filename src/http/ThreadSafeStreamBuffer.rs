@@ -101,6 +101,12 @@ impl ThreadSafeStreamBuffer {
         self.callback = Some(Callback::init(callback, context));
     }
 
+    /// Main thread; the http thread already holds its ref.
+    pub fn set_drain_callback_shared<T>(&mut self, callback: fn(*mut T), context: *mut T) {
+        let _guard = self.mutex.lock_guard();
+        self.callback = Some(Callback::init(callback, context));
+    }
+
     /// Main thread; the request may still be in flight on the http thread.
     pub fn clear_drain_callback(&mut self) {
         let _guard = self.mutex.lock_guard();

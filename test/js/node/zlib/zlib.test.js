@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -815,5 +815,40 @@ describe("crc32", () => {
     expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     // Omitted second arg defaults to value=0.
     expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
+  });
+});
+
+describe("libdeflate one-shot", () => {
+  // The fixture explains the race. Only a sanitizer sees the stray write.
+  it.skipIf(!isASAN)(
+    "neither overruns the output nor returns an empty result when a writer races the input",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), resolve(import.meta.dir, "libdeflate-racing-input-fixture.ts")],
+        // symbolize=0: symbolizing a sanitizer report takes longer than the test may run.
+        env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
+    },
+    // A debug sanitizer build needs about 3s to boot the worker, before the race starts.
+    20_000,
+  );
+
+  it("compresses an input that holds still", () => {
+    for (const input of [
+      new Uint8Array(0),
+      new Uint8Array([0]),
+      new Uint8Array(64 * 1024).fill(7),
+      randomFillSync(new Uint8Array(64 * 1024)),
+    ]) {
+      for (const library of ["libdeflate", "zlib"]) {
+        expect(Buffer.from(gunzipSync(gzipSync(input, { library })))).toEqual(Buffer.from(input));
+        expect(Buffer.from(inflateSync(deflateSync(input, { library })))).toEqual(Buffer.from(input));
+      }
+    }
   });
 });

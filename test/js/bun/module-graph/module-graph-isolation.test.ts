@@ -288,6 +288,23 @@ const dir = String(
       await gate;
       export const loaded = true;
     `,
+    "does-not-parse.mjs": "export const = ;",
+    "main-module-after-a-disposed-asker.mjs": `
+      const asker = new Bun.ModuleGraph({ isolateIO: true }), loads = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await asker.import(import.meta.dir + "/left-behind-tenant.mjs");
+      // The first import() of the graph that loads, asked for by a graph that is disposed before it fails.
+      asker.run(() => app.importsInto(loads, import.meta.dir + "/does-not-parse.mjs"));
+      asker.dispose();
+      // (The host's own import of it fails with the same load.)
+      const failed = await loads.import(import.meta.dir + "/does-not-parse.mjs").then(() => false, () => true);
+      // (Two loads of the one file: the asker's may be the later to fail.)
+      while (loads.mainModule !== undefined) await new Promise(resolve => setImmediate(resolve));
+      const good = import.meta.dir + "/not-loaded-yet.ts";
+      await loads.import(good);
+      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ askerHeard: app.heard, failed, mainIsTheOneThatLoaded: loads.mainModule === good }));
+      process.exit(0);
+    `,
     "imports-through-another-graph.mjs": `
       const gate = Promise.withResolvers(), parked = Promise.withResolvers();
       const globals = { gate: gate.promise, parked: parked.resolve };
@@ -2753,6 +2770,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("an import() its script asked another graph for says nothing to it; the graph that loads finishes the module", async () => {
     expect(await runs("imports-through-another-graph.mjs", "the one that asked")).toEqual({
       stdout: `{"host":"fulfilled","askerHeard":[]}`,
+      exitCode: 0,
+    });
+  });
+  test("an import() that fails after the graph that asked was disposed still leaves the graph that loads without a main module", async () => {
+    expect(await runs("main-module-after-a-disposed-asker.mjs")).toEqual({
+      stdout: `{"askerHeard":[],"failed":true,"mainIsTheOneThatLoaded":true}`,
       exitCode: 0,
     });
   });

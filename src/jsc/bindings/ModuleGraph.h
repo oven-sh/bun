@@ -86,12 +86,8 @@ private:
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
     // The loader's promise for the import that made m_mainPath main.
     JSC::WriteBarrier<JSC::JSPromise> m_mainImport;
-    // What import() returned and has not settled, with the context of the script that called.
-    struct PendingImport {
-        JSC::WriteBarrier<JSC::JSPromise> result;
-        WebCore::ScriptExecutionContextIdentifier caller;
-    };
-    WTF::Vector<PendingImport> m_pendingImports; // under cellLock()
+    // What import() returned and has not settled -> the identifier of the context of the script that called.
+    JSC::WriteBarrier<JSC::JSMap> m_pendingImports;
     bool m_disposed { false };
     bool m_inOnError { false };
     unsigned m_overlayShape { 0 };

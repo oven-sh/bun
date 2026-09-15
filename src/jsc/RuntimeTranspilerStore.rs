@@ -203,6 +203,15 @@ pub struct RuntimeTranspilerStore {
     pub(crate) queue: Queue,
 }
 
+unsafe extern "C" {
+    /// ModuleGraph.cpp. Round-tripped opaquely through C++ (from `Bun__ScriptExecutionContext__create`).
+    #[allow(improper_ctypes)]
+    safe fn Bun__ModuleGraph__contextOfLoader(
+        global: &JSGlobalObject,
+        loader: JSValue,
+    ) -> *const crate::ScriptExecutionContext;
+}
+
 pub type Queue = UnboundedQueue<TranspilerJob>;
 
 impl Default for RuntimeTranspilerStore {
@@ -376,7 +385,16 @@ impl RuntimeTranspilerStore {
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
-                context: global_object.bun_vm().current_context_or_root().id(),
+                context: if module_loader.is_empty() {
+                    global_object.bun_vm().root_context().id()
+                } else {
+                    // SAFETY: a graph's context outlives the graph's loader.
+                    unsafe {
+                        Bun__ModuleGraph__contextOfLoader(global_object, module_loader).as_ref()
+                    }
+                    .unwrap_or_else(|| global_object.bun_vm().root_context())
+                    .id()
+                },
                 module_loader: if module_loader.is_empty() {
                     StrongOptional::empty()
                 } else {
@@ -428,8 +446,8 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
     pub(crate) promise: StrongOptional,
-    /// The context of the script that asked for the module (the host's for `graph.import()`, a
-    /// graph's for its own `import()`): the load is completed for that script.
+    /// The context of the graph whose loader is fetching (the realm's for the global object's
+    /// loader and for a graph without a context): the load is that loader's, whoever asked.
     pub(crate) context: crate::ContextId,
     /// The `JSModuleLoader` that is fetching, when it is not the global object's (a
     /// `Bun.ModuleGraph`'s): handed back with the result. Empty otherwise.
@@ -539,9 +557,9 @@ impl TranspilerJob {
         ticket.post(ConcurrentTask::create_from(transpiler_store));
     }
 
-    /// The script that asked is a `Bun.ModuleGraph`'s that was disposed since: the load is dropped
-    /// with the rest of what that graph had under way, and its `import()` stays pending. (One the
-    /// host asked for is completed, and rejects if the graph it was for is disposed.)
+    /// The loader is a `Bun.ModuleGraph`'s that was disposed since (its registry is gone): the load
+    /// is dropped with the rest of what that graph had under way, and its script's `import()`
+    /// stays pending. (`graph.import()` settles what it returned by itself: `JSModuleGraph::dispose`.)
     fn release_unfulfilled(&mut self) {
         let vm = self.vm;
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));

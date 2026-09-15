@@ -16,6 +16,7 @@
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
+#include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -374,6 +375,15 @@ extern "C" void* Bun__currentGraphContext(JSGlobalObject* globalObject)
     return defaultGlobalObject(globalObject)->currentScriptExecutionContext()->bunContext();
 }
 
+// RuntimeTranspilerStore: the context of the graph whose loader is fetching, or null (the global
+// object's loader, or a graph without a context).
+extern "C" void* Bun__ModuleGraph__contextOfLoader(JSGlobalObject* globalObject, EncodedJSValue loader)
+{
+    auto* graph = moduleGraphOfLoader(globalObject, uncheckedDowncast<JSModuleLoader>(JSValue::decode(loader)));
+    auto* context = graph ? graph->context() : nullptr;
+    return context ? context->bunContext() : nullptr;
+}
+
 // The frame's properties, in the order async_hooks.ts's Frame declares them, at fixed offsets.
 enum ModuleGraphFrameOffset : PropertyOffset { FrameStorage,
     FrameValue,
@@ -562,6 +572,7 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     m_requireMap.set(vm, this, JSMap::create(vm, globalObject->mapStructure()));
+    m_pendingImports.set(vm, this, JSMap::create(vm, globalObject->mapStructure()));
     setOverlaySlot(vm, overlay(), moduleGraphSlotName(vm), this);
 }
 
@@ -582,9 +593,7 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_onError);
     visitor.append(thisObject->m_mainPath);
     visitor.append(thisObject->m_mainImport);
-    Locker locker { thisObject->cellLock() };
-    for (auto& pending : thisObject->m_pendingImports)
-        visitor.append(pending.result);
+    visitor.append(thisObject->m_pendingImports);
 }
 DEFINE_VISIT_CHILDREN(JSModuleGraph);
 
@@ -628,10 +637,8 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
     // dispose() can reject it whatever stage the load is at, and that it says nothing to a caller
     // that is a disposed graph's script (settleImport).
     JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
-    {
-        Locker locker { cellLock() };
-        m_pendingImports.append({ WriteBarrier<JSPromise>(vm, this, result), globalObject->currentScriptExecutionContext()->identifier() });
-    }
+    m_pendingImports->set(globalObject, result, jsNumber(globalObject->currentScriptExecutionContext()->identifier()));
+    RETURN_IF_EXCEPTION(scope, nullptr);
     loaded->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsModuleGraphImportFulfilled), globalObject->thenable(jsModuleGraphImportRejected), jsUndefined(),
         InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), this, result));
     if (becomesMain)
@@ -649,16 +656,22 @@ static bool hearsNothing(WebCore::ScriptExecutionContextIdentifier caller)
 void JSModuleGraph::settleImport(Zig::GlobalObject* globalObject, JSPromise* result, bool rejected, JSValue value)
 {
     VM& vm = globalObject->vm();
-    WebCore::ScriptExecutionContextIdentifier caller = 0;
-    {
-        Locker locker { cellLock() };
-        auto index = m_pendingImports.findIf([&](auto& pending) { return pending.result.get() == result; });
-        if (index == notFound)
-            return;
-        caller = m_pendingImports[index].caller;
-        m_pendingImports.removeAt(index);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue caller = m_pendingImports->get(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, );
+    // (dispose() settled it.)
+    if (!caller.isNumber())
+        return;
+    m_pendingImports->remove(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, );
+    // How the import that made a module main ended is the loader's doing, whoever hears of it:
+    // failed, the graph is left without a main module (see mainPath()).
+    if (result == m_mainImport.get()) {
+        if (rejected)
+            m_mainPath.clear();
+        m_mainImport.clear();
     }
-    if (hearsNothing(caller))
+    if (hearsNothing(caller.asUInt32()))
         return;
     if (rejected)
         result->reject(vm, value);
@@ -686,11 +699,22 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
     // nothing: its imports are left to finish.
     MarkedArgumentBuffer rejected;
     if (this->context()) {
-        Locker locker { cellLock() };
-        for (auto& pending : std::exchange(m_pendingImports, {})) {
-            if (!hearsNothing(pending.caller))
-                rejected.append(pending.result.get());
+        auto* pending = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), m_pendingImports.get(), IterationKind::Entries);
+        RETURN_IF_EXCEPTION(scope, );
+        JSValue entry;
+        while (pending->next(globalObject, entry)) {
+            RETURN_IF_EXCEPTION(scope, );
+            auto* pair = uncheckedDowncast<JSArray>(entry);
+            JSValue caller = pair->getIndex(globalObject, 1);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!hearsNothing(caller.asUInt32())) {
+                rejected.append(pair->getIndex(globalObject, 0));
+                RETURN_IF_EXCEPTION(scope, );
+            }
         }
+        RETURN_IF_EXCEPTION(scope, );
+        m_pendingImports->clear(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
     }
     for (size_t i = 0; i < rejected.size(); ++i)
         uncheckedDowncast<JSPromise>(rejected.at(i))->reject(vm, createModuleGraphDisposedError(globalObject));

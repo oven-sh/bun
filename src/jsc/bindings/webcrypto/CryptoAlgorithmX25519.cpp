@@ -154,6 +154,8 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
             exceptionCallback(ExceptionCode::DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
+        if (!validateJwkKeyOps(key, usages, exceptionCallback))
+            return;
 
         // RFC 8037: "crv" must name the requested curve.
         if (!key.crv.isNull() && key.crv != "X25519"_s) {

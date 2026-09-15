@@ -1639,6 +1639,12 @@ function getConnectionDetailsFromEnvironment(
   return [url, sslMode, adapter || null];
 }
 
+/** The environment connection URLs only apply when nothing names a target. */
+function hasConnectionTarget(options: Bun.SQL.Options): boolean {
+  const o = options as Record<string, unknown>;
+  return !!(o.url || o.filename || o.hostname || o.host || o.path);
+}
+
 function ensureUrlHasProtocol<T extends string | URL>(
   url: T | null,
   protocol: string,
@@ -1683,7 +1689,9 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     options = stringOrUrlOrOptions
       ? { ...stringOrUrlOrOptions, ...definitelyOptionsButMaybeEmpty }
       : definitelyOptionsButMaybeEmpty;
-    [stringOrUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
+    if (!hasConnectionTarget(options)) {
+      [stringOrUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
+    }
   }
 
   // Resolve URL based on adapter type
@@ -1691,21 +1699,16 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   let optionsFilename;
   let optionsUrl;
-  if (options.adapter === "sqlite") {
-    // SQLite adapter - only check filename (not url)
-    if ("filename" in options && (optionsFilename = options.filename)) {
-      resolvedUrl = optionsFilename;
-    }
-  } else if (!options.adapter) {
-    // Unknown adapter - check both, filename first (more specific)
-    if ("filename" in options && (optionsFilename = options.filename)) {
-      resolvedUrl = optionsFilename;
-    } else if ("url" in options && (optionsUrl = options.url)) {
+  if (options.adapter && options.adapter !== "sqlite") {
+    // Known non-SQLite adapter - only check url (not filename)
+    if ("url" in options && (optionsUrl = options.url)) {
       resolvedUrl = optionsUrl;
     }
   } else {
-    // Known non-SQLite adapter - only check url (not filename)
-    if ("url" in options && (optionsUrl = options.url)) {
+    // SQLite or unknown adapter - filename first (more specific), then url
+    if ("filename" in options && (optionsFilename = options.filename)) {
+      resolvedUrl = optionsFilename;
+    } else if ("url" in options && (optionsUrl = options.url)) {
       resolvedUrl = optionsUrl;
     }
   }

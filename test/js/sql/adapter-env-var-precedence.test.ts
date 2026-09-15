@@ -2,6 +2,8 @@ import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { unlinkSync } from "js/node/fs/export-star-from";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 declare module "bun" {
   namespace SQL {
@@ -84,6 +86,152 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.hostname).toBe("bar_url");
     expect(options.options.port).toBe(5432);
     expect(options.options.username).toBe("postgres");
+  });
+
+  describe("an options object that names a connection target ignores the environment connection strings", () => {
+    const byUrl = { url: "postgres://appuser:apppw@127.0.0.1:1/appdb", max: 1 };
+    const byFields = { hostname: "127.0.0.1", port: 1, username: "appuser", password: "apppw", database: "appdb" };
+
+    test.each([
+      ["MYSQL_URL", "mysql://x:y@127.0.0.1:9/x"],
+      ["MARIADB_URL", "mariadb://x:y@127.0.0.1:9/x"],
+      ["SQLITE_URL", "sqlite://envfile.db"],
+      ["DATABASE_URL", ":memory:"],
+      ["DATABASE_URL", "mysql://envuser:envpw@envhost:7/envdb"],
+      ["POSTGRES_URL", "postgres://envuser:envpw@envhost:7/envdb"],
+    ])("%s=%s does not pick the adapter or the target", (name, value) => {
+      process.env[name] = value;
+
+      for (const options of [byUrl, byFields]) {
+        const sql = new SQL(options);
+        expect(sql.options).toMatchObject({ adapter: "postgres", hostname: "127.0.0.1", port: 1, username: "appuser" });
+        expect(sql.options.database).toBe("appdb");
+        expect(sql.options.filename).toBeUndefined();
+      }
+    });
+
+    test("the explicit URL scheme picks the adapter", () => {
+      process.env.POSTGRES_URL = "postgres://x:y@127.0.0.1:9/x";
+
+      const sql = new SQL({ url: "mysql://appuser:apppw@127.0.0.1:1/appdb" });
+      expect(sql.options).toMatchObject({ adapter: "mysql", hostname: "127.0.0.1", port: 1, username: "appuser" });
+    });
+
+    test.each(["TLS_DATABASE_URL", "TLS_POSTGRES_DATABASE_URL"])("%s does not force sslmode=require", name => {
+      process.env[name] = "postgres://x:y@127.0.0.1:9/x";
+
+      expect(new SQL(byUrl).options.sslMode).toBe(0);
+      expect(new SQL(byFields).options.sslMode).toBe(0);
+    });
+
+    test("a URL copied from TLS_DATABASE_URL into options.url is an explicit URL: its own ?sslmode= applies", () => {
+      process.env.TLS_DATABASE_URL = "postgres://x:y@127.0.0.1:9/x?sslmode=require";
+
+      expect(new SQL({ url: process.env.TLS_DATABASE_URL }).options.sslMode).toBe(2);
+      process.env.TLS_DATABASE_URL = "postgres://x:y@127.0.0.1:9/x";
+      expect(new SQL({ url: process.env.TLS_DATABASE_URL }).options.sslMode).toBe(0);
+    });
+
+    test("a filename is a connection target", () => {
+      process.env.DATABASE_URL = "postgres://x:y@127.0.0.1:9/x";
+
+      const sql = new SQL({ filename: ":memory:" });
+      expect(sql.options.adapter).toBe("sqlite");
+      expect(sql.options.filename).toBe(":memory:");
+    });
+
+    test('a url is a connection target for adapter: "sqlite" too', async () => {
+      using dir = tempDir("sql-sqlite-url-target", { placeholder: "" });
+      const file = (name: string) => join(String(dir), name);
+      const opened: InstanceType<typeof SQL>[] = [];
+      const filenameOf = (options: Bun.SQL.Options) => {
+        const sql = new SQL(options);
+        opened.push(sql);
+        return sql.options.filename;
+      };
+      process.env.DATABASE_URL = `sqlite://${file("env.db")}`;
+      process.env.SQLITE_URL = `sqlite://${file("env.db")}`;
+
+      try {
+        for (const [url, expected] of [
+          [`sqlite://${file("a.db")}`, file("a.db")],
+          [`sqlite:${file("b.db")}`, file("b.db")],
+          [file("c.db"), file("c.db")],
+          [":memory:", ":memory:"],
+        ]) {
+          expect(filenameOf({ adapter: "sqlite", url })).toBe(expected);
+          expect(filenameOf({ adapter: "sqlite", url, filename: file("wins.db") })).toBe(file("wins.db"));
+        }
+        expect(existsSync(file("env.db"))).toBe(false);
+      } finally {
+        await Promise.all(opened.map(sql => sql.close()));
+      }
+    });
+
+    test("the host option alias is a connection target", () => {
+      process.env.DATABASE_URL = ":memory:";
+
+      const sql = new SQL({ host: "127.0.0.1", port: 1 });
+      expect(sql.options).toMatchObject({ adapter: "postgres", hostname: "127.0.0.1", port: 1 });
+    });
+
+    test.each(["DATABASE_URL", "POSTGRES_URL"])("credentials in %s do not go to a host named in the options", name => {
+      process.env[name] = "postgres://envuser:ENVSECRET@10.9.9.9:7/envdb";
+      process.env.USER = "shelluser";
+      delete process.env.PASSWORD;
+
+      const noCreds = new SQL({ hostname: "127.0.0.1", port: 1 });
+      expect(noCreds.options).toMatchObject({
+        adapter: "postgres",
+        hostname: "127.0.0.1",
+        port: 1,
+        username: "shelluser",
+        password: "",
+        database: "shelluser",
+      });
+
+      const withUser = new SQL({ hostname: "127.0.0.1", port: 1, username: "optuser" });
+      expect(withUser.options).toMatchObject({ username: "optuser", password: "", database: "optuser" });
+
+      const withDatabase = new SQL({ hostname: "127.0.0.1", port: 1, database: "optdb" });
+      expect(withDatabase.options).toMatchObject({ username: "shelluser", password: "", database: "optdb" });
+
+      // The host-agnostic per-field variables still fill in what is missing.
+      process.env.PGUSER = "pguser";
+      process.env.PGPASSWORD = "pgpw";
+      const withPgUser = new SQL({ hostname: "127.0.0.1", port: 1 });
+      expect(withPgUser.options).toMatchObject({ username: "pguser", password: "pgpw", database: "pguser" });
+
+      process.env.PGDATABASE = "pgdb";
+      const withPgVars = new SQL({ hostname: "127.0.0.1", port: 1, username: "optuser" });
+      expect(withPgVars.options).toMatchObject({ username: "optuser", password: "pgpw", database: "pgdb" });
+    });
+
+    test("a unix socket path is a connection target", () => {
+      process.env.SQLITE_URL = "sqlite://envfile.db";
+
+      const sql = new SQL({ path: "/var/run/postgresql", database: "appdb" });
+      expect(sql.options).toMatchObject({ adapter: "postgres", database: "appdb" });
+      expect(sql.options.filename).toBeUndefined();
+    });
+
+    test.each([{ max: 1, username: "appuser" }, { port: 9 }])(
+      "an options object without a target (%p) still falls back to the environment",
+      options => {
+        process.env.MYSQL_URL = "mysql://envuser:envpw@envhost:7/envdb";
+
+        const sql = new SQL(options);
+        expect(sql.options).toMatchObject({ adapter: "mysql", hostname: "envhost", port: options.port ?? 7 });
+      },
+    );
+
+    test("an explicit adapter without a target still reads that adapter's environment URL", () => {
+      process.env.MYSQL_URL = "mysql://envuser:envpw@envhost:7/envdb";
+      process.env.POSTGRES_URL = "postgres://pguser:pgpw@pghost:5/pgdb";
+
+      expect(new SQL({ adapter: "mysql" }).options).toMatchObject({ adapter: "mysql", hostname: "envhost", port: 7 });
+      expect(new SQL({ adapter: "postgres" }).options).toMatchObject({ adapter: "postgres", hostname: "pghost" });
+    });
   });
 
   test("should only read PostgreSQL env vars when adapter is postgres", () => {

@@ -113,6 +113,27 @@ console.log(ls); // null
 
 This is a built-in alternative to the [`which`](https://www.npmjs.com/package/which) npm package.
 
+## `Bun.randomCUID2()`
+
+`Bun.randomCUID2()` returns a [CUID2](https://github.com/paralleldrive/cuid2), a compact identifier designed for use across distributed systems.
+
+```ts
+import { randomCUID2 } from "bun";
+
+const id = randomCUID2();
+// => "tz4a98xxat96iws9zmbrgj3a"
+```
+
+The default output is a 24-character lowercase Base36 string that starts with a letter. You can pass a length from 2 through 32. Shorter values have lower collision resistance.
+
+```ts
+const shortId = Bun.randomCUID2(12);
+```
+
+CUID2 hashes the current timestamp, a counter, random salt, and a per-VM random fingerprint with SHA3-512. Bun gets the random values from the same BoringSSL-backed generator used by `crypto.randomUUID()`.
+
+CUID2 values are opaque: they do not expose their timestamp and are not monotonic or sortable by creation time. Store a separate timestamp when you need chronological ordering, or use `Bun.randomUUIDv7()` when the identifier itself needs to sort by creation time.
+
 ## `Bun.randomUUIDv7()`
 
 `Bun.randomUUIDv7()` returns a [UUID v7](https://www.ietf.org/archive/id/draft-peabody-dispatch-new-uuid-format-01.html#name-uuidv7-layout-and-bit-order), which is monotonic and suitable for sorting and databases.

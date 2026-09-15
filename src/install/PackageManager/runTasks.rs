@@ -563,6 +563,8 @@ fn run_tasks_erased(
                         }
                     }
 
+                    // SAFETY: `task_ptr` came out of this batch and is not used again.
+                    unsafe { manifest_request_failed(manager, task_ptr) };
                     continue;
                 };
                 let response = &metadata.response;
@@ -586,6 +588,8 @@ fn run_tasks_erased(
                             &task.url_buf,
                         );
 
+                        // SAFETY: `task_ptr` came out of this batch and is not used again.
+                        unsafe { manifest_request_failed(manager, task_ptr) };
                         continue;
                     }
 
@@ -619,6 +623,8 @@ fn run_tasks_erased(
                         }
                     }
 
+                    // SAFETY: `task_ptr` came out of this batch and is not used again.
+                    unsafe { manifest_request_failed(manager, task_ptr) };
                     continue;
                 }
 
@@ -1093,6 +1099,7 @@ fn run_tasks_erased(
                         );
                     }
 
+                    manifest_task_failed(manager, task.id);
                     continue;
                 }
                 debug_assert!(task.tag == Task::Tag::PackageManifest);
@@ -1920,6 +1927,42 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
         .is_some_and(|e| e.failed)
 }
 
+/// A manifest task that ended without a manifest. Nothing will run its waiters,
+/// so they go. Its `network_dedupe_map` entry stays: one `bun install` run asks
+/// for, and reports, a package once. `failed_manifest_tasks` records it for
+/// `forget_failed_manifest_tasks`.
+fn manifest_task_failed(this: &mut PackageManager, task_id: Task::Id) {
+    let _ = this.task_queue.remove(&task_id);
+    this.failed_manifest_tasks.push(task_id);
+}
+
+/// `manifest_task_failed` for a request that does not reach the parse task,
+/// which is what returns a manifest request's `NetworkTask` to the pool.
+///
+/// # Safety
+/// `task` was popped from `async_network_task_queue` and is not used again.
+unsafe fn manifest_request_failed(this: &mut PackageManager, task: *mut NetworkTask) {
+    // SAFETY: a popped task belongs to this thread alone, and `for_manifest`
+    // initialized its HTTP client before the request ran.
+    unsafe {
+        manifest_task_failed(this, (*task).task_id);
+        (*task).unsafe_http_client.assume_init_drop();
+        this.preallocated_network_tasks.put(task);
+    }
+}
+
+/// The runtime's package manager lives as long as the process. There the
+/// `network_dedupe_map` entry of a failed manifest request would make the
+/// package unresolvable until exit, so the runtime calls this after each
+/// resolve and the next resolve asks the registry again.
+pub(crate) fn forget_failed_manifest_tasks(this: &mut PackageManager) {
+    for task_id in this.failed_manifest_tasks.drain(..) {
+        let _ = this.network_dedupe_map.remove(&task_id);
+        // A resolver pass that ran after the failure queued its waiter again.
+        let _ = this.task_queue.remove(&task_id);
+    }
+}
+
 /// The first failed download in a `run_tasks` pass halves the number of
 /// concurrent requests (down to the configured minimum).
 fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
@@ -2145,6 +2188,10 @@ impl PackageManager {
     #[inline]
     pub(crate) fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
         network_task_has_failed(self, task_id)
+    }
+    #[inline]
+    pub fn forget_failed_manifest_tasks(&mut self) {
+        forget_failed_manifest_tasks(self)
     }
     #[inline]
     pub(crate) fn get_network_task(&mut self) -> *mut NetworkTask {

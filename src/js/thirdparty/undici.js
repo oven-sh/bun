@@ -1,8 +1,10 @@
 const EventEmitter = require("node:events");
+const diagnosticsChannel = require("node:diagnostics_channel");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
+const NativeArrayBuffer = ArrayBuffer;
 
 var fetch = Bun.fetch;
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
@@ -14,7 +16,7 @@ const File = bindings[4];
 const URL = bindings[5];
 const AbortSignal = bindings[6];
 const URLSearchParams = bindings[7];
-const WebSocket = bindings[8];
+const BunWebSocket = bindings[8];
 const CloseEvent = bindings[9];
 const ErrorEvent = bindings[10];
 const MessageEvent = bindings[11];
@@ -364,6 +366,52 @@ const util = {
   },
 };
 
+const pingChannel = diagnosticsChannel.channel("undici:websocket:ping");
+const pongChannel = diagnosticsChannel.channel("undici:websocket:pong");
+
+// undici publishes a Buffer regardless of the socket's binaryType
+function controlFramePayload(data) {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof NativeArrayBuffer) return Buffer.from(data);
+  if ($isTypedArrayView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  return data;
+}
+
+class WebSocket extends BunWebSocket {
+  constructor(...args) {
+    super(...args);
+    this.addEventListener("ping", ({ data }) => {
+      if (pingChannel.hasSubscribers) {
+        pingChannel.publish({ payload: controlFramePayload(data), websocket: this });
+      }
+    });
+    this.addEventListener("pong", ({ data }) => {
+      if (pongChannel.hasSubscribers) {
+        pongChannel.publish({ payload: controlFramePayload(data), websocket: this });
+      }
+    });
+  }
+}
+
+function ping(ws, payload) {
+  if (!(ws instanceof BunWebSocket)) {
+    throw new TypeError("Expected a WebSocket instance");
+  }
+
+  if (Buffer.isBuffer(payload)) {
+    if (payload.length > 125) {
+      throw new TypeError("A PING frame cannot have a body larger than 125 bytes.");
+    }
+  } else if (payload !== undefined) {
+    throw new TypeError("Expected buffer payload");
+  }
+
+  if (ws.readyState === BunWebSocket.OPEN) {
+    if (payload === undefined) ws.ping();
+    else ws.ping(payload);
+  }
+}
+
 class EventSource extends EventTarget {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -474,6 +522,7 @@ const moduleExports = {
   mockErrors,
   MockPool,
   parseMIMEType,
+  ping,
   pipeline,
   Pool,
   ProxyAgent,

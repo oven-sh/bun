@@ -11,12 +11,14 @@ on:
       - "packages/bun-types/**"
       - "test/integration/bun-types/**"
       - "src/cli/init/tsconfig.default.json"
+      - "scripts/build/deps/nodejs-headers.ts"
       - ".github/workflows/bun-types.yml"
   pull_request:
     paths:
       - "packages/bun-types/**"
       - "test/integration/bun-types/**"
       - "src/cli/init/tsconfig.default.json"
+      - "scripts/build/deps/nodejs-headers.ts"
       - ".github/workflows/bun-types.yml"
 
 env:

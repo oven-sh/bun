@@ -15,13 +15,13 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool,
     WorkPoolTask,
 };
-use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{BackRef, ParentRef, RefPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
-use bun_sys::{self, PosixStat};
+use bun_sys::{self, E, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
 
 use crate::generated_classes::js_StatWatcher as js;
+use crate::node::node_fs_watcher::absolute_watch_path_z;
 use crate::node::stat::{StatsBig, StatsSmall};
 use crate::node::types::PathLikeExt;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -828,15 +828,13 @@ impl StatWatcher {
             slice = &slice[b"file://".len()..];
         }
 
-        // SAFETY: `FileSystem::instance()` is initialized at process start
-        // (`FileSystem::init` runs before any JS module loads).
         let top_level_dir = fs::FileSystem::get().top_level_dir;
-        let parts: [&[u8]; 1] = [slice];
-        let file_path =
-            Path::join_abs_string_buf::<platform::Auto>(top_level_dir, &mut buf[..], &parts);
+        let Some(file_path) = absolute_watch_path_z(top_level_dir, slice, &mut buf) else {
+            return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, bun_sys::Tag::watch).into());
+        };
 
         // allocSentinel + memcpy → owned NUL-terminated copy (ZBox)
-        let alloc_file_path = ZBox::from_bytes(file_path);
+        let alloc_file_path = ZBox::from_bytes(file_path.as_bytes());
         // errdefer free → Drop handles it
 
         // `args.global_this` is a `BackRef` (JSC_BORROW); safe Deref.

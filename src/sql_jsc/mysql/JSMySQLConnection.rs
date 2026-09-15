@@ -18,6 +18,7 @@ use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 use bun_sql::mysql::protocol::new_reader::NewReader;
 use bun_sql::mysql::protocol::new_writer::NewWriter;
 use bun_sql::mysql::ssl_mode::SSLMode;
+use bun_sql::shared::connection_flags::ConnectionFlags;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use super::js_mysql_query::JSMySQLQuery;
@@ -706,15 +707,39 @@ impl JSMySQLConnection {
         self.fail_with_js_value(instance);
     }
 
-    pub(crate) fn on_connection_estabilished(&self) {
+    /// Delivers `onconnect` once the read that established the connection has
+    /// been fully processed. Running it from here rather than from inside the
+    /// packet parser keeps JS out of the parser, and running it synchronously
+    /// (like `onclose`) keeps the two callbacks ordered: a connection that
+    /// fails later in the same read reports `onclose` alone, never `onclose`
+    /// followed by a stale `onconnect` for an already-dead connection.
+    fn notify_connected(&self) {
+        if !self
+            .connection
+            .get()
+            .flags
+            .contains(ConnectionFlags::ON_CONNECT_PENDING)
+        {
+            return;
+        }
+        self.connection_mut()
+            .flags
+            .remove(ConnectionFlags::ON_CONNECT_PENDING);
+        if self.connection.get().status != my_sql_connection::Status::Connected {
+            return;
+        }
         let Some(on_connect) = self.consume_on_connect_callback(&self.global_object) else {
             return;
         };
         on_connect.ensure_still_alive();
         let js_value = self.js_value.get().try_get().unwrap_or(JSValue::UNDEFINED);
         js_value.ensure_still_alive();
-        self.global_object
-            .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
+        self.event_loop().run_callback(
+            on_connect,
+            &self.global_object,
+            JSValue::UNDEFINED,
+            &[JSValue::NULL, js_value],
+        );
     }
 
     pub(crate) fn on_query_result(&self, request: &JSMySQLQuery, result: &MySQLQueryResult) {
@@ -982,6 +1007,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         if let Err(e) = this.connection_mut().read_and_process_data(data) {
             this.on_error(None, e);
         }
+        this.notify_connected();
     }
 
     pub fn on_writable(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {

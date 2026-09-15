@@ -1185,11 +1185,17 @@ describe("routes match the same normalized path that request.url reports", () =>
     { target: "/p/..%2fadmin", route: "/p/:v", pathname: "/p/..%2fadmin", param: "../admin" },
     // normalization adds no percent-decoding (https://github.com/oven-sh/bun/issues/37603 tracks that)
     { target: "/admin/%78", route: "fallback", pathname: "/admin/%78" },
-    // the same spellings with the special byte at offsets 7, 8, 15 and 16 of a longer target
+    // the router pre-scans a longer target in 8-byte steps from byte 1: the special byte on both sides of a step edge
     { target: "/p/aaaa\\b", route: "fallback", pathname: "/p/aaaa/b" },
+    { target: "/p/aaaaa\\b", route: "fallback", pathname: "/p/aaaaa/b" },
     { target: "/aaaaaa/../admin/x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/aaaaaaa/../admin/x", route: "/admin/x", pathname: "/admin/x" },
     { target: "/p/aaaaaaaaaaaa\\b", route: "fallback", pathname: "/p/aaaaaaaaaaaa/b" },
+    { target: "/p/aaaaaaaaaaaaa\\b", route: "fallback", pathname: "/p/aaaaaaaaaaaaa/b" },
     { target: "/aaaaaaaaaaaaaa/../admin/x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/aaaaaaaaaaaaaaa/../admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // a "." or "%" that does not start a segment keeps the fast path and changes nothing
+    { target: "/w/file.name.with.dots/a%20b", route: "/w/*", pathname: "/w/file.name.with.dots/a%20b" },
   ];
 
   it.each([

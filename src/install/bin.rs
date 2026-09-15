@@ -1319,13 +1319,35 @@ impl<'a> Linker<'a> {
     }
 
     #[cfg(not(windows))]
-    fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
-        // hoisted from `defer` block in create_symlink
-        if err.is_none() {
-            let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
-            let _ = sys::lchmod(abs_target, mode);
+fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
+    // hoisted from `defer` block in create_symlink
+    if err.is_none() {
+        let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
+        if sys::lchmod(abs_target, mode).is_err() {
+            let mut real_target_buf = path::path_buffer_pool::get();
+            if let Ok(real_target) = sys::realpath(abs_target, &mut *real_target_buf) {
+                let cache_dir = sys::fetch_cache_directory_path();
+                let mut real_cache_buf = path::path_buffer_pool::get();
+                let cache_dir_z = resolve_path::z(&cache_dir, &mut *real_cache_buf);
+                let mut resolved_cache_buf = path::path_buffer_pool::get();
+                if let Ok(real_cache) = sys::realpath(cache_dir_z, &mut *resolved_cache_buf) {
+                    let is_inside_cache = if real_cache.ends_with(&[SEP]) {
+                        real_target.starts_with(real_cache)
+                    } else {
+                        real_target.starts_with(real_cache)
+                            && (real_target.len() == real_cache.len()
+                                || real_target.get(real_cache.len()) == Some(&SEP))
+                    };
+                    if is_inside_cache {
+                        let mut real_target_z_buf = path::path_buffer_pool::get();
+                        let real_target_z = resolve_path::z(real_target, &mut *real_target_z_buf);
+                        let _ = sys::chmod(real_target_z, mode);
+                    }
+                }
+            }
         }
     }
+}
 
     #[cfg(not(windows))]
     fn resolved_target_parent_escapes_package_dir(&self, abs_target: &ZStr) -> bool {

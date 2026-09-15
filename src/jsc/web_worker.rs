@@ -1210,11 +1210,10 @@ fn on_unhandled_rejection(
             ..Default::default()
         },
     );
-    if let Err(err) = format_result {
-        error_instance = global_object.take_exception(err);
-    }
-    // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
-    if error_instance.is_termination_exception() {
+    // A formatter throw costs only the text (the fallback payload), unless it is the termination.
+    if let Err(err) = format_result
+        && global_object.take_exception(err).is_termination_exception()
+    {
         return;
     }
     jsc::mark_binding();

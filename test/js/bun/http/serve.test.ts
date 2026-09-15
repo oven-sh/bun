@@ -4810,6 +4810,43 @@ describe("requests pipelined in one read", () => {
             server.stop(true);
             return result;
           }
+          // The 413 for a body over maxRequestBodySize runs no JavaScript. A client that reads
+          // the 100 Continue alone starts an upload that the server then resets.
+          async function runTooLarge() {
+            const server = Bun.serve({
+              port: 0,
+              hostname: "127.0.0.1",
+              maxRequestBodySize: 1024,
+              fetch: () => new Response("hello"),
+            });
+            const done = Promise.withResolvers();
+            let reply = "";
+            let segments = 0;
+            await Bun.connect({
+              hostname: "127.0.0.1",
+              port: server.port,
+              socket: {
+                open(socket) {
+                  socket.write(
+                    "POST / HTTP/1.1\\r\\nHost: x\\r\\nExpect: 100-continue\\r\\nContent-Length: 2000000\\r\\n\\r\\n",
+                  );
+                },
+                data(socket, chunk) {
+                  reply += chunk.toString("latin1");
+                  segments = dataSegmentsIn(socket.fd);
+                },
+                error(socket, error) {
+                  done.reject(error);
+                },
+                close() {
+                  done.resolve();
+                },
+              },
+            });
+            await done.promise;
+            server.stop(true);
+            return { statuses: reply.split("\\r\\n").filter(line => line.startsWith("HTTP/1.1 ")), segments };
+          }
           console.log(JSON.stringify({
             fetch: await run({ fetch: () => new Response("hello", { headers: { "X-Custom": "1" } }) }),
             route: await run({ routes: { "/": () => new Response("hello") } }),
@@ -4820,6 +4857,7 @@ describe("requests pipelined in one read", () => {
               { routes: { "/static": new Response("hello"), "/js": () => new Response("hello") } },
               ["/static", "/static", "/static", "/js", "/static", "/static", "/js", "/static"],
             ),
+            tooLarge: await runTooLarge(),
           }));
         `,
       ],
@@ -4833,6 +4871,7 @@ describe("requests pipelined in one read", () => {
         route: { responses: 8, segments: 8 },
         static: { responses: 8, segments: 1 },
         mixed: { responses: 8, segments: 3 },
+        tooLarge: { statuses: ["HTTP/1.1 100 Continue", "HTTP/1.1 413 Request Entity Too Large"], segments: 1 },
       },
       exitCode: 0,
     });

@@ -2818,68 +2818,71 @@ describe("fetch should allow duplex", () => {
   });
 });
 
-it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {
-  for (const type of ["normal", "delay"]) {
-    await using server = net.createServer(socket => {
+describe("redirect whose response closes the connection", () => {
+  // The 308 says "Connection: close" and the server ends the socket with it, so
+  // the client cannot reuse that connection for the hop: following the redirect
+  // means connecting again, and the abort handling has to move to the new
+  // connection with it (#15623).
+  async function listen(onRedirectedRequest: (socket: net.Socket) => void) {
+    const server = net.createServer(socket => {
       // Raw test server: tolerate client aborts, surface anything unexpected.
       socket.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
       });
-      let body = "";
-      socket.on("data", data => {
-        body += data.toString("utf8");
-
-        const headerEndIndex = body.indexOf("\r\n\r\n");
-        if (headerEndIndex !== -1) {
-          // headers received
-          const headers = body.split("\r\n\r\n")[0];
-          const path = headers.split("\r\n")[0].split(" ")[1];
-          if (path === "/redirect") {
-            socket.end(
-              "HTTP/1.1 308 Permanent Redirect\r\nCache-Control: public, max-age=0, must-revalidate\r\nContent-Type: text/plain\r\nLocation: /\r\nConnection: close\r\n\r\n",
-            );
-          } else {
-            if (type === "delay") {
-              setTimeout(() => {
-                if (!socket.destroyed)
-                  socket.end(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun",
-                  );
-              }, 200);
-            } else {
-              socket.end(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun",
-              );
-            }
-          }
+      let request = "";
+      socket.on("data", function onData(data) {
+        request += data.toString("utf8");
+        if (!request.includes("\r\n\r\n")) return;
+        socket.off("data", onData);
+        const path = request.split(" ")[1];
+        if (path === "/redirect") {
+          socket.end("HTTP/1.1 308 Permanent Redirect\r\nLocation: /\r\nConnection: close\r\n\r\n");
+        } else {
+          onRedirectedRequest(socket);
         }
       });
     });
-    await once(server.listen(0), "listening");
-
-    try {
-      let { address, port } = server.address() as AddressInfo;
-      if (address === "::") {
-        address = "[::]";
-      }
-      const response = await fetch(`http://${address}:${port}/redirect`, {
-        signal: AbortSignal.timeout(150),
-      });
-      if (type === "delay") {
-        console.error(response, type);
-        expect.unreachable();
-      } else {
-        expect(response.status).toBe(200);
-        expect(await response.text()).toBe("Hello Bun");
-      }
-    } catch (err) {
-      if (type === "delay") {
-        expect((err as Error).name).toBe("TimeoutError");
-      } else {
-        expect.unreachable();
-      }
-    }
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return server;
   }
+
+  it("follows the redirect on a new connection", async () => {
+    // Never aborted: the signal has to survive the reconnect without firing.
+    const controller = new AbortController();
+    await using server = await listen(socket => {
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun");
+    });
+    const { port } = server.address() as AddressInfo;
+
+    const response = await fetch(`http://127.0.0.1:${port}/redirect`, { signal: controller.signal });
+    expect(response.status).toBe(200);
+    expect(response.redirected).toBe(true);
+    expect(await response.text()).toBe("Hello Bun");
+  });
+
+  it("can still be aborted once the redirected request is in flight", async () => {
+    const controller = new AbortController();
+    // The redirected request is never answered; only the abort can end it.
+    const redirected = Promise.withResolvers<net.Socket>();
+    await using server = await listen(redirected.resolve);
+    const { port } = server.address() as AddressInfo;
+
+    const pending = fetch(`http://127.0.0.1:${port}/redirect`, { signal: controller.signal });
+    const socket = await redirected.promise;
+    // Aborting also has to tear down the connection the redirect opened. Not
+    // events.once(): the client may reset the connection, and the resulting
+    // ECONNRESET "error" event would reject it before "close" arrives.
+    const closed = new Promise<void>(resolve => socket.once("close", resolve));
+    controller.abort();
+
+    const error = await pending.then(
+      () => expect.unreachable(),
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe("AbortError");
+    await closed;
+  });
 });
 
 it("rejects a response with an unparseable Content-Length instead of treating it as empty", async () => {

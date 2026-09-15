@@ -76,6 +76,94 @@ devTest('uses "development" condition', {
     await dev.fetch("/").equals("Environment: development");
   },
 });
+devTest("server module that throws while a hot update loads it does not end the process", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function (req, meta) {
+        return new Response("index v1");
+      }
+    `,
+    "routes/other.ts": `
+      export default function (req, meta) {
+        return new Response("other");
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index v1");
+    await dev.fetch("/other").equals("other");
+    await dev.write(
+      "routes/index.ts",
+      `
+        throw new Error("thrown at module scope");
+        export default function (req, meta) {
+          return new Response("index v2");
+        }
+      `,
+    );
+    // The route reports the error. The process and the other route keep working.
+    const failed = await dev.fetch("/");
+    expect(await failed.text()).toContain("thrown at module scope");
+    expect(failed.status).toBe(500);
+    await dev.fetch("/other").equals("other");
+    await dev.write(
+      "routes/index.ts",
+      `
+        export default function (req, meta) {
+          return new Response("index v3");
+        }
+      `,
+    );
+    await dev.fetch("/").equals("index v3");
+  },
+});
+devTest("framework route saved while the stylesheet it imports has an error does not end the process", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "./styles.css";
+      export default function (req, meta) {
+        return Response.json({ page: "v1", styles: meta.styles });
+      }
+    `,
+    "routes/other.ts": `
+      export default function (req, meta) {
+        return new Response("other");
+      }
+    `,
+    "routes/styles.css": `
+      .a { color: red; }
+    `,
+  },
+  async test(dev) {
+    const first = await dev.fetch("/").json();
+    expect(first).toEqual({ page: "v1", styles: [expect.stringMatching(/\.css$/)] });
+    await dev.fetch("/other").equals("other");
+    await dev.write(
+      "routes/styles.css",
+      `
+        .a { color: red; }}
+      `,
+      { errors: null },
+    );
+    // This save compiles the page in the same build as the stylesheet that fails.
+    await dev.patch("routes/index.ts", { find: "v1", replace: "v2", errors: null });
+    // The route reports the build error. The process and the other route keep working.
+    const failed = await dev.fetch("/");
+    expect(await failed.text()).toContain("Build Failed");
+    expect(failed.status).toBe(500);
+    await dev.fetch("/other").equals("other");
+    await dev.write(
+      "routes/styles.css",
+      `
+        .a { color: blue; }
+      `,
+    );
+    expect(await dev.fetch("/").json()).toEqual({ page: "v2", styles: first.styles });
+    await dev.fetch(first.styles[0]).expect.toMatch(/color:\s*#00f/);
+  },
+});
 devTest("importing a file before it is created", {
   files: {
     "index.html": emptyHtmlFile({

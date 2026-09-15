@@ -440,7 +440,8 @@ const dir = String(
       await until(() => { const before = none; return (none = count("ModuleGraph") + count("H2FrameParser")) === before; });
       for (let i = 0; i < 3; i++) await use();
       // Nothing of the host's queues a performance entry, and nothing closes the sessions.
-      await until(() => count("ModuleGraph") + count("H2FrameParser") === none);
+      // (No more than before, not as many: the first one's session may have outlived that reading.)
+      await until(() => count("ModuleGraph") + count("H2FrameParser") <= none);
       console.log("collected");
       process.exit(0);
     `,
@@ -611,8 +612,9 @@ const dir = String(
         graph.run(() => app.writeAndEnd(fifo, Buffer.alloc(1 << 20, "x")));
         graph.dispose();
       }
-      await until(() => fileSinks() === none);
-      out.fileSinks = fileSinks() - none;
+      // (No more than before, not as many: the host's own may have outlived that reading.)
+      await until(() => fileSinks() <= none);
+      out.fileSinks = Math.max(0, fileSinks() - none);
       fs.closeSync(readEnd);
       fs.rmSync(fifo);
       fs.rmSync(import.meta.dir + "/scratch-" + process.pid);

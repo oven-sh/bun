@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { connect } from "node:net";
 
 // `req.url` and `req.headers` are read lazily from the `uWS::HttpRequest`,
@@ -171,4 +171,62 @@ test("server.upgrade after the handler runs the event loop still reads its own h
     ws.close();
     second.destroy();
   }
+});
+
+test("the development error page of a handler that runs the event loop names its own request", async () => {
+  using dir = tempDir("serve-nested-event-loop-dev", { "entry.js": "export default 1;\n" });
+
+  // A subprocess, because the development error log goes to stderr.
+  const script = `
+    const { connect } = require("node:net");
+    const head = token =>
+      "GET /u-" + token + " HTTP/1.1\\r\\nHost: h-" + token + ".example\\r\\nConnection: close\\r\\n\\r\\n";
+    let resolveSetup, second, requests = 0;
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development: true,
+      fetch() {
+        if (++requests > 1) {
+          resolveSetup();
+          return new Response("second");
+        }
+        second.write(head("${SECOND}"));
+        Bun.build({
+          entrypoints: [process.env.ENTRY],
+          plugins: [{ name: "pending-setup", setup: () => new Promise(resolve => (resolveSetup = resolve)) }],
+        }).then(() => {}, () => {});
+        throw new Error("boom");
+      },
+    });
+    const open = () =>
+      new Promise((resolve, reject) => {
+        const socket = connect(server.port, "127.0.0.1", () => resolve(socket));
+        socket.on("error", reject);
+      });
+    const first = await open();
+    second = await open();
+    second.on("data", () => {});
+    let page = "";
+    first.on("data", chunk => (page += chunk.toString("latin1")));
+    first.on("close", () => {
+      console.log(page.match(/GET - \\S+ failed/)?.[0]);
+      server.stop(true);
+      process.exit(0);
+    });
+    first.write(head("${FIRST}"));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, ENTRY: `${dir}/entry.js` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const failed = `GET - http://h-${FIRST}.example/u-${FIRST} failed`;
+  expect(stdout.trim()).toBe(failed);
+  expect(stderr).toContain(failed);
+  expect(exitCode).toBe(0);
 });

@@ -3183,11 +3183,10 @@ where
                 .upgrade_context
                 .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)))
         };
-        // SAFETY: `prepared.request_object` is the heap `Request` just
-        // produced for this frame; `ctx.request_weakref` keeps it alive for
-        // the whole of it.
-        let head_borrow = unsafe { super::borrow_request_head(prepared.request_object) };
-        let _head_borrow = head_borrow.register();
+        let mut head_borrow = super::borrow_request_head(prepared.request_object);
+        // SAFETY: `request_object` stays allocated for this whole frame (its JS wrapper, `prepared.js_request`, is on this
+        // stack), and the guard is a local of the frame.
+        let _head_borrow = unsafe { head_borrow.register() };
         let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
@@ -3328,10 +3327,10 @@ where
         let args = [unsafe { (*request_object_ptr).to_js(&global) }, server_js];
         args[0].ensure_still_alive();
 
-        // SAFETY: `request_object_ptr` is the heap `Request` of this frame;
-        // `ctx.request_weakref` keeps it alive for the whole of it.
-        let head_borrow = unsafe { super::borrow_request_head(request_object_ptr) };
-        let _head_borrow = head_borrow.register();
+        let mut head_borrow = super::borrow_request_head(request_object_ptr);
+        // SAFETY: `request_object_ptr` stays allocated for this whole frame (its JS wrapper, `args[0]`, is on this stack),
+        // and the guard is a local of the frame.
+        let _head_borrow = unsafe { head_borrow.register() };
 
         let response_value = match this.config.on_request.call(&global, server_js, &args) {
             Ok(v) => v,

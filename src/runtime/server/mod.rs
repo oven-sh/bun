@@ -419,26 +419,13 @@ impl Drop for DetachRequestOnDrop {
     }
 }
 
-/// Declares the lazily-read `req.url` / `req.headers` of `request_object` as a
-/// borrow of the uWS receive buffer, for as long as the returned value stays
-/// registered (`RecvBufferBorrow::register`).
-///
-/// A `fetch` handler can run the event loop inside itself, for example
-/// `Bun.build` with a plugin whose `setup()` returns a pending promise. The
-/// next socket read then overwrites the head bytes in place, on this
-/// connection or on any other. The borrow makes the loop copy the head into
-/// the `Request` before it reads a socket again.
-///
-/// # Safety
-/// `request_object` must point to a live heap `webcore::Request` and stay
-/// valid while the borrow is registered.
+/// The url and headers that `request_object` still reads lazily from the uWS receive buffer when its handler runs.
 #[inline]
-unsafe fn borrow_request_head(
+fn borrow_request_head(
     request_object: *mut crate::webcore::Request,
 ) -> bun_uws_sys::loop_::RecvBufferBorrow {
     unsafe fn release(owner: *mut c_void) {
-        // SAFETY: per `borrow_request_head`'s contract, `owner` is the live
-        // heap `webcore::Request` the borrow was registered for.
+        // SAFETY: whoever registered the borrow keeps `owner`, the heap `webcore::Request`, live until it is unregistered.
         let request = unsafe { &*owner.cast::<crate::webcore::Request>() };
         request.detach_uws_request_head();
         request.request_context.set_pathname(request.url.get());
@@ -1001,11 +988,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         args.push(prepared.js_request);
         args.extend_from_slice(&extra_args);
 
-        // SAFETY: `prepared.request_object` is the heap `Request` of this
-        // frame, kept alive by `ctx.request_weakref`. A saved request has
-        // already copied its head, so its borrow releases as a no-op.
-        let head_borrow = unsafe { borrow_request_head(prepared.request_object) };
-        let _head_borrow = head_borrow.register();
+        let mut head_borrow = borrow_request_head(prepared.request_object);
+        // SAFETY: `request_object` stays allocated for this whole frame (its JS wrapper, `prepared.js_request`, is on this
+        // stack), and the guard is a local of the frame.
+        let _head_borrow = unsafe { head_borrow.register() };
 
         // SAFETY: `this` is the live server backref for this request.
         let server = unsafe { &*this };
@@ -1154,11 +1140,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        // SAFETY: `prepared.request_object` is the heap `Request` just
-        // produced for this frame; `ctx.request_weakref` keeps it alive for
-        // the whole of it.
-        let head_borrow = unsafe { borrow_request_head(prepared.request_object) };
-        let _head_borrow = head_borrow.register();
+        let mut head_borrow = borrow_request_head(prepared.request_object);
+        // SAFETY: `request_object` stays allocated for this whole frame (its JS wrapper, `prepared.js_request`, is on this
+        // stack), and the guard is a local of the frame.
+        let _head_borrow = unsafe { head_borrow.register() };
 
         // SAFETY: `this` is the live server backref for this request.
         let server = unsafe { &*this };
@@ -1212,11 +1197,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        // SAFETY: `prepared.request_object` is the heap `Request` just
-        // produced for this frame; `ctx.request_weakref` keeps it alive for
-        // the whole of it.
-        let head_borrow = unsafe { borrow_request_head(prepared.request_object) };
-        let _head_borrow = head_borrow.register();
+        let mut head_borrow = borrow_request_head(prepared.request_object);
+        // SAFETY: `request_object` stays allocated for this whole frame (its JS wrapper, `prepared.js_request`, is on this
+        // stack), and the guard is a local of the frame.
+        let _head_borrow = unsafe { head_borrow.register() };
 
         // SAFETY: `server` is the live backref stored in `user_route`.
         let server_ref = unsafe { &*server };

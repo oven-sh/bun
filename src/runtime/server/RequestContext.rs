@@ -2359,18 +2359,21 @@ where
                 .set_request(req.cast::<uws::Request>());
         }
 
-        // `req` dies when this stack frame is popped, and the head bytes it
-        // views belong to the next request after that, so the lazily-read url
-        // and headers are copied out here.
+        // `req` dies with this stack frame, so what is still read lazily from it is copied out now.
         request_object.detach_uws_request_head();
+    }
+
+    /// The path the development-mode error page prints once the uWS request is detached.
+    pub(crate) fn set_pathname(&self, url: &BunString) {
+        if DEBUG_MODE {
+            self.pathname.set(url.clone());
+        }
     }
 
     pub(crate) fn to_async(&self, req: *mut Req<SSL_ENABLED, MUX>, request_object: &mut Request) {
         ctx_log!("toAsync");
         self.to_async_without_abort_handler(req, request_object);
-        if DEBUG_MODE {
-            self.pathname.set(request_object.url.get().clone());
-        }
+        self.set_pathname(request_object.url.get());
         self.set_abort_handler();
     }
 

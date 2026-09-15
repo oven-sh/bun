@@ -16,21 +16,7 @@ pub const NOW_NS_UNKNOWN: u64 = 0;
 
 // ─────────────────── borrows of the receive buffer ───────────────────
 
-/// A read of the loop's receive buffer that outlives the callback it started
-/// in.
-///
-/// Every socket read on a loop writes into one buffer: `loop->data.recv_buf`,
-/// or `ssl_read_output` for the decrypted bytes of a TLS socket. The next read
-/// overwrites those bytes in place. A `uWS::HttpRequest` is only
-/// `std::string_view`s into them, and `Bun.serve` reads `req.url` and
-/// `req.headers` from it lazily, after the dispatch callback has already
-/// called into JS. That is safe while the loop is not running, because nothing
-/// else can read a socket. A handler that runs the loop inside itself breaks
-/// it, and the borrower then reads another request's bytes.
-///
-/// A frame that holds such a borrow registers it here. Every entry point that
-/// runs this thread's loop calls `release_recv_buffer_borrows` first, which
-/// asks each borrower to copy out what it still reads.
+/// Receive-buffer bytes that a callback still reads after it called into JS. `release` copies them out.
 pub struct RecvBufferBorrow {
     next: Cell<*const RecvBufferBorrow>,
     release: unsafe fn(*mut c_void),
@@ -44,10 +30,7 @@ thread_local! {
 }
 
 impl RecvBufferBorrow {
-    /// `release` is called with `owner` before this thread's loop runs again.
-    /// It must be idempotent: one nested run releases the borrow, and the
-    /// frame that owns it can still reach its own release path afterwards.
-    pub const fn new(release: unsafe fn(*mut c_void), owner: *mut c_void) -> Self {
+    pub fn new(release: unsafe fn(*mut c_void), owner: *mut c_void) -> Self {
         Self {
             next: Cell::new(core::ptr::null()),
             release,
@@ -55,9 +38,8 @@ impl RecvBufferBorrow {
         }
     }
 
-    /// Registers `self` until the returned guard drops. The guard borrows
-    /// `self`, so the value cannot move while it is registered.
-    pub fn register(&self) -> RecvBufferBorrowGuard<'_> {
+    /// Safety: `release(owner)` stays sound to call, repeatedly, until the guard drops. Guards drop in reverse order.
+    pub unsafe fn register(&mut self) -> RecvBufferBorrowGuard<'_> {
         self.next.set(RECV_BUFFER_BORROWS.get());
         RECV_BUFFER_BORROWS.set(core::ptr::from_ref(self));
         RecvBufferBorrowGuard(self)
@@ -69,33 +51,15 @@ pub struct RecvBufferBorrowGuard<'a>(&'a RecvBufferBorrow);
 
 impl Drop for RecvBufferBorrowGuard<'_> {
     fn drop(&mut self) {
-        let this = core::ptr::from_ref(self.0);
-        // A borrow covers the rest of the callback frame that made it, and
-        // those frames nest, so `this` is the head. Unlink it by a walk
-        // anyway: a guard that drops out of order would otherwise leave the
-        // list holding a node whose stack slot is gone.
-        if core::ptr::eq(RECV_BUFFER_BORROWS.get(), this) {
-            RECV_BUFFER_BORROWS.set(self.0.next.get());
-            return;
-        }
-
-        debug_assert!(false, "RecvBufferBorrowGuard dropped out of order");
-        let mut node = RECV_BUFFER_BORROWS.get();
-        while !node.is_null() {
-            // SAFETY: every node on the list is a registered borrow, which
-            // its own guard keeps alive until it unlinks it here.
-            let previous = unsafe { &*node };
-            node = previous.next.get();
-            if core::ptr::eq(node, this) {
-                previous.next.set(self.0.next.get());
-                return;
-            }
-        }
+        debug_assert!(
+            core::ptr::eq(RECV_BUFFER_BORROWS.get(), core::ptr::from_ref(self.0)),
+            "RecvBufferBorrowGuard dropped out of order"
+        );
+        RECV_BUFFER_BORROWS.set(self.0.next.get());
     }
 }
 
-/// Asks every borrower on this thread to copy out the receive-buffer bytes it
-/// still reads. Call it before running this thread's loop.
+/// Runs before every run of this thread's loop, which is what reads a socket into the buffer again.
 #[inline]
 fn release_recv_buffer_borrows() {
     if RECV_BUFFER_BORROWS.get().is_null() {
@@ -108,9 +72,7 @@ fn release_recv_buffer_borrows() {
 fn release_registered_borrows() {
     let mut node = RECV_BUFFER_BORROWS.get();
     while !node.is_null() {
-        // SAFETY: a registered borrow stays on the list only while
-        // `register`'s guard holds it, so the node is live. `new` pairs
-        // `release` with the `owner` it takes.
+        // SAFETY: `register`'s caller keeps each listed node live and its `release(owner)` sound to call.
         unsafe {
             let borrow = &*node;
             node = borrow.next.get();

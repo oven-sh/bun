@@ -236,30 +236,20 @@ impl Request {
         self.headers.set(headers);
     }
 
-    /// Copies the request head into this `Request` and ends the borrow of the
-    /// `uWS::HttpRequest`.
-    ///
-    /// `url` and `headers` are read lazily from that request, whose
-    /// `std::string_view`s point into the per-loop receive buffer. The next
-    /// socket read overwrites those bytes in place, so every frame that can
-    /// let the event loop run again copies them out first.
-    ///
-    /// Idempotent: with no borrow left there is nothing to copy.
+    /// Copies the url and headers still read lazily from the `uWS::HttpRequest` into `self`, then forgets that request.
     pub(crate) fn detach_uws_request_head(&self) {
-        if self.request_context.get_request().is_none() {
+        let Some(req) = self.request_context.get_request() else {
             return;
-        }
+        };
 
         if self.ensure_url().is_err() {
             self.url.set(BunString::EMPTY);
         }
 
         if !self.has_fetch_headers() {
-            if let Some(req) = self.request_context.get_request() {
-                self.set_fetch_headers(Some(HeadersRef::create_from_uws(
-                    req.cast::<core::ffi::c_void>(),
-                )));
-            }
+            self.set_fetch_headers(Some(HeadersRef::create_from_uws(
+                req.cast::<core::ffi::c_void>(),
+            )));
         }
 
         self.request_context.detach_request();

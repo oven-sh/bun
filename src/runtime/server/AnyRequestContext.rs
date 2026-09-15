@@ -191,12 +191,8 @@ impl AnyRequestContext {
         })
     }
 
-    /// Fills in the path that the development-mode error page and error log
-    /// print. `to_async` does it from the url once the handler is done. A head
-    /// that leaves the receive buffer before that fills it in too, because the
-    /// uWS request the formatter reads instead is gone by then.
     pub(crate) fn set_pathname(self, url: &bun_core::String) {
-        dispatch!(self, (), |_T, ctx| ctx.pathname.set(url.clone()))
+        dispatch!(self, (), |_T, ctx| ctx.set_pathname(url))
     }
 
     /// Wont actually set anything if `self` is `.none`

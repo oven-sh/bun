@@ -367,6 +367,40 @@ const dir = String(
       console.log(JSON.stringify({ callsOfTheTenantsOnError: calls, hostSaw }));
       process.exit(0);
     `,
+    "fetches-bodies.mjs": `
+      export let response;
+      export let bodiesAwaited = 0;
+      export const fetchHeaders = url => fetch(url).then(r => { response = r; });
+      export const awaitBody = url => fetch(url).then(r => { bodiesAwaited++; return r.text(); });
+    `,
+    "response-bodies-of-disposed-graphs.mjs": `
+      import { heapStats } from "bun:jsc";
+      // A body that never ends: a chunk per pull, the next one when the host says so.
+      let release = () => {};
+      const server = Bun.serve({ port: 0, fetch: request => new URL(request.url).pathname === "/turn" ? new Response("turn") : new Response(new ReadableStream({ async pull(controller) { controller.enqueue(new Uint8Array(1024)); await new Promise(resolve => (release = resolve)); } })) });
+      const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+      const hostTurn = async () => void (await (await fetch(server.url.href + "turn")).text());
+      // The host reads the body of a Response a graph was given, after the graph is gone.
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/fetches-bodies.mjs");
+      await graph.run(() => app.fetchHeaders(server.url.href));
+      graph.dispose();
+      await hostTurn();
+      const text = app.response.text();
+      await hostTurn();
+      // Graphs disposed while their script awaits a body.
+      for (let i = 0; i < 20; i++) {
+        const tenant = new Bun.ModuleGraph();
+        const its = await tenant.import(import.meta.dir + "/fetches-bodies.mjs");
+        tenant.run(() => void its.awaitBody(server.url.href));
+        await until(() => its.bodiesAwaited === 1);
+        tenant.dispose();
+      }
+      await hostTurn();
+      Bun.gc(true);
+      console.log(JSON.stringify({ text: Bun.peek.status(text), protectedPromises: heapStats().protectedObjectTypeCounts.Promise ?? 0 }));
+      process.exit(0);
+    `,
     "errors-of-a-graph-made-by-a-graph.mjs": `
       const hostSaw = [], tenantSaw = [];
       process.on("uncaughtException", error => hostSaw.push(error.message));
@@ -2761,6 +2795,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("a graph it made is disposed with it: the host's import() through one it was handed rejects from then on", async () => {
     expect(await runs("plain-graph-handed-to-the-host.mjs")).toEqual({
       stdout: `{"inFlight":"pending","afterwards":"rejected: ERR_INVALID_STATE"}`,
+      exitCode: 0,
+    });
+  });
+  test("a Response whose body was still arriving: the host asking for it is told it failed, and nothing awaiting one is kept", async () => {
+    expect(await runs("response-bodies-of-disposed-graphs.mjs")).toEqual({
+      stdout: `{"text":"rejected","protectedPromises":0}`,
       exitCode: 0,
     });
   });

@@ -3692,3 +3692,48 @@ describe("Bun.ModuleGraph — imports racing edits, workers, deep re-export chai
     expect(await outcome(ModuleGraph().import(join(dir, "w.mjs")))).toBe(await outcome(import(join(dir, "w.mjs"))));
   });
 });
+
+describe("Bun.ModuleGraph — what a program that makes no graph sees of node:http is node's", () => {
+  // Run in a child: whether a graph has existed is per process.
+  const run = async (script: string) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout: stdout.trim(), exitCode };
+  };
+  test("globalAgent is a data property of https and _http_agent, which export nothing new", async () => {
+    expect(
+      await run(`
+        const shape = name => Object.keys(Object.getOwnPropertyDescriptor(require(name), "globalAgent")).sort().join();
+        console.log(JSON.stringify({ https: shape("https"), agent: shape("_http_agent"), exports: Object.keys(require("_http_agent")).sort().join() }));
+      `),
+    ).toEqual({
+      stdout: `{"https":"configurable,enumerable,value,writable","agent":"configurable,enumerable,value,writable","exports":"Agent,globalAgent,shouldUseEnvProxy"}`,
+      exitCode: 0,
+    });
+  });
+  test("an Agent and a perf_hooks observer do not keep the AsyncLocalStorage store they were made under", async () => {
+    expect(
+      await run(`
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const http = require("node:http");
+        const { PerformanceObserver } = require("node:perf_hooks");
+        const als = new AsyncLocalStorage();
+        const kept = [], stores = [];
+        for (let i = 0; i < 20; i++) {
+          const store = { i };
+          stores.push(new WeakRef(store));
+          als.run(store, () => {
+            kept.push(new http.Agent({ keepAlive: true }));
+            const observer = new PerformanceObserver(() => {});
+            observer.observe({ entryTypes: ["http"] });
+            kept.push(observer);
+          });
+        }
+        const alive = () => stores.filter(ref => ref.deref() !== undefined).length;
+        for (let i = 0; i < 50 && alive() > 0; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
+        console.log(JSON.stringify({ kept: kept.length, stores: alive() }));
+        process.exit(0);
+      `),
+    ).toEqual({ stdout: `{"kept":40,"stores":0}`, exitCode: 0 });
+  });
+});

@@ -733,7 +733,7 @@ impl ErrorDeferred {
         // drained-without-run and ManagedTask has no cleanup here, so enqueuing
         // would leak the `Context` and its `JSPromiseStrong` box. Drop now while
         // JSC is still live so the Strong handle releases cleanly.
-        if vm.is_shutting_down() || !vm.is_context_live(context) {
+        if vm.is_shutting_down() {
             return;
         }
 

@@ -335,16 +335,17 @@ class NodeEntryObserver {
   types = new Set();
   buffer = [];
   scheduled = false;
-  // Entries are delivered in the context the observer was made in, not the one of whatever
-  // produced the entry: set from a Bun.ModuleGraph that is then disposed, the immediate would be
-  // cancelled with `scheduled` left true, and this observer would never be called again.
-  // An observer made in a graph goes with it: see bufferEntry.
+  // The frame of the Bun.ModuleGraph the observer was made in, if any. Entries are delivered in
+  // that graph's context (or the host's), not the one of whatever produced the entry: set from a
+  // graph that is then disposed, the immediate would be cancelled with `scheduled` left true, and
+  // this observer would never be called again. An observer made in a graph goes with it: see
+  // bufferEntry.
   frame;
 
   constructor(callback, owner) {
     this.callback = callback;
     this.owner = owner;
-    this.frame = require("internal/async_context_frame").current();
+    this.frame = require("internal/async_context_frame").currentGraphFrame();
   }
 
   observe(types) {
@@ -380,7 +381,7 @@ class NodeEntryObserver {
     this.buffer.push(entry);
     if (!this.scheduled) {
       this.scheduled = true;
-      require("internal/async_context_frame").run(this.frame, setImmediate, undefined, () => {
+      const deliver = () => {
         this.scheduled = false;
         const entries = this.buffer;
         if (entries.length === 0) {
@@ -388,7 +389,10 @@ class NodeEntryObserver {
         }
         this.buffer = [];
         this.callback.$call(undefined, makeNodeEntryList(entries), this.owner);
-      });
+      };
+      const AsyncContextFrame = require("internal/async_context_frame");
+      if (this.frame === undefined && AsyncContextFrame.current()?.graph === undefined) setImmediate(deliver);
+      else AsyncContextFrame.run(this.frame, setImmediate, undefined, deliver);
     }
   }
 }

@@ -400,14 +400,14 @@ pub struct VirtualMachine {
     /// every context question has the root context for an answer.
     pub(crate) graph_contexts:
         bun_collections::ArrayHashMap<crate::ContextId, NonNull<crate::ScriptExecutionContext>>,
-    /// The off-thread jobs of graph contexts that have not come back, by context (JS thread).
-    /// A job may be inside a syscall on a descriptor its context owns.
     /// The context the innermost live [`ContextScope`] entered: whose script the native code that
     /// is running continues.
     pub(crate) innermost_scope: Cell<Option<crate::ContextId>>,
     /// That scope was entered as gone: its graph has been collected (its context may not have
     /// been stopped yet: that is queued from the finalizer).
     pub(crate) innermost_scope_gone: Cell<bool>,
+    /// The off-thread jobs of graph contexts that have not come back, by context (JS thread).
+    /// A job may be inside a syscall on a descriptor its context owns.
     pub(crate) graph_jobs:
         crate::JsCell<bun_collections::ArrayHashMap<crate::ContextId, GraphJobs>>,
     pub test_isolation_enabled: bool,
@@ -1197,6 +1197,9 @@ impl VirtualMachine {
     /// stopped closes the descriptors that were waiting for it.
     pub fn graph_job_finished(&self, context: crate::ContextId) {
         let fds = self.graph_jobs.with_mut(|jobs| {
+            if jobs.count() == 0 {
+                return None;
+            }
             let entry = jobs.get_mut(&context)?;
             entry.outstanding -= 1;
             if entry.outstanding != 0 {
@@ -1400,23 +1403,20 @@ impl VirtualMachine {
             Ok(())
         }
         if id == self.dead_context.id() {
-            fn stop_dead(_: *mut ()) -> crate::JsResult<()> {
-                let vm = VirtualMachine::get();
-                let _ = vm.dead_context.stop(crate::StopReason::Disposed);
+            fn stop_dead(vm: *mut VirtualMachine) -> crate::JsResult<()> {
+                // SAFETY: the VM that queued this task on its own loop.
+                let dead_context = &unsafe { &*vm }.dead_context;
+                let _ = dead_context.stop(crate::StopReason::Disposed);
                 if let Some(hooks) = runtime_hooks() {
                     // SAFETY: live per-thread VM on the JS thread.
-                    unsafe {
-                        (hooks.cancel_timers)(
-                            VirtualMachine::get_mut_ptr(),
-                            Some(vm.dead_context.id()),
-                        )
-                    };
+                    unsafe { (hooks.cancel_timers)(vm, Some(dead_context.id())) };
                 }
                 Ok(())
             }
             if !self.dead_context.stop_again_is_queued() {
+                let vm = std::ptr::from_mut(self);
                 self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                    core::ptr::null_mut::<()>(),
+                    vm,
                     stop_dead,
                     // The VM's own sweep.
                     bun_event_loop::TaskContext::Always,

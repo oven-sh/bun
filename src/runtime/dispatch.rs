@@ -622,6 +622,7 @@ pub(crate) fn tick_queue_with_count(
                 match global.bun_vm().enter_context_if_live(context) {
                     Some(entered) => Some(entered),
                     None => {
+                        let _context = global.bun_vm().enter_context(context);
                         __bun_release_task_unrun(task);
                         if global.has_exception() {
                             report_error_or_terminate(global, bun_jsc::JsError::Thrown)?;

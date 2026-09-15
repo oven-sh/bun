@@ -28,7 +28,7 @@
  */
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
-const { STATUS_CODES } = require("internal/http");
+const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
@@ -425,21 +425,6 @@ const {
   validateAbortSignal,
 } = require("internal/validators");
 
-// The `date` header, formatted once per second. Keyed by the second rather than reset by a timer:
-// a timer belongs to whoever happened to be running when it was set, and if that was a
-// Bun.ModuleGraph disposed within the second, nothing would ever clear the cache again.
-let utcCache;
-let utcCacheSecond = -1;
-
-function utcDate() {
-  const now = Date.now();
-  const second = Math.floor(now / 1000);
-  if (second !== utcCacheSecond) {
-    utcCacheSecond = second;
-    utcCache = new Date(now).toUTCString();
-  }
-  return utcCache;
-}
 function emitEventNT(self: any, event: string, ...args: any[]) {
   if (self.listenerCount(event) > 0) {
     self.emit(event, ...args);

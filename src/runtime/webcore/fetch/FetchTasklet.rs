@@ -896,9 +896,8 @@ impl FetchTasklet {
         let vm = self.global_this.bun_vm();
         // The response, the upload's pump and what they settle continue the script that fetched.
         let _context = vm.enter_context(self.context);
-        // teardown forbade script: we cannot touch JS. A fetch() made by script of a graph that
-        // had already been disposed is aborted the same way: nothing of it is reported.
-        if !vm.script_allowed() || self.abort_handle.context_stopped() {
+        // teardown forbade script: we cannot touch JS
+        if !vm.script_allowed() {
             // The certificate will never be checked; release the parked
             // HTTP-thread socket instead of leaving it occupying an active
             // request slot until the idle timeout.
@@ -909,14 +908,6 @@ impl FetchTasklet {
             }
             self.mutex.unlock();
             if is_done {
-                // An upload still streaming for a disposed graph: nothing will drain it, and its
-                // parked write promise is protected. (At teardown script is forbidden, and the
-                // heap goes with the VM.)
-                if vm.script_allowed() {
-                    self.cancel_request_body_sink(JSValue::UNDEFINED);
-                }
-                self.poll_ref
-                    .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
                 // SAFETY: `self` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(self));
             }
@@ -1158,6 +1149,7 @@ impl FetchTasklet {
             promise: self.promise.take(),
             global_object: global_this,
             success,
+            context: self.context,
         });
         // SAFETY: `vm.event_loop()` is the live JS-thread loop.
         unsafe {
@@ -2623,6 +2615,8 @@ pub(crate) struct FetchTaskletPromiseSettle {
     promise: jsc::JSPromiseStrong,
     global_object: GlobalRef,
     success: bool,
+    /// The context of the script that fetched.
+    context: jsc::ContextId,
 }
 
 impl FetchTaskletPromiseSettle {
@@ -2649,8 +2643,9 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
         // SAFETY: fn contract — the box the completion queued.
         drop(unsafe { bun_core::heap::take(this) });
     }
-    /// As `FetchTasklet`.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    /// The fetch() promise is settled for the script that fetched.
+    unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+        // SAFETY: fn contract — the box the completion queued.
+        bun_event_loop::TaskContext::Of(unsafe { (*this).context })
     }
 }

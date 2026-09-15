@@ -492,10 +492,6 @@ impl FileSink {
         }
     }
 
-    /// # Safety
-    /// `this` must be the canonical live `*mut FileSink` (see
-    /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `clear_keep_alive_ref`
-    /// at the end may free `this`.
     /// This sink opened its file itself, for the script that is running: if that is a
     /// `Bun.ModuleGraph`'s, the file is closed with the graph. (The host's sinks are left to
     /// flush at exit as they always have.)
@@ -508,6 +504,10 @@ impl FileSink {
         }
     }
 
+    /// # Safety
+    /// `this` must be the canonical live `*mut FileSink` (see
+    /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `clear_keep_alive_ref`
+    /// at the end may free `this`.
     pub unsafe fn on_close(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onClose()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.

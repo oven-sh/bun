@@ -13,6 +13,18 @@ const AsyncContextFrame = {
   current() {
     return $getInternalField($asyncContext, 0);
   },
+  /**
+   * The frame a Bun.ModuleGraph's context was entered with, when the running script is inside
+   * one. What something long-lived `run()`s its later work in so that the work is that graph's,
+   * without keeping the AsyncLocalStorage stores of whoever happened to create it.
+   */
+  currentGraphFrame() {
+    let frame = $getInternalField($asyncContext, 0);
+    const graph = frame?.graph;
+    if (graph === undefined) return undefined;
+    while (frame.storage !== graph) frame = frame.prev;
+    return frame;
+  },
   /** Install `frame` as the active async-context frame; returns the previous one. */
   exchange(frame) {
     const prev = $getInternalField($asyncContext, 0);

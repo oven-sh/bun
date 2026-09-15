@@ -369,6 +369,20 @@ const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
 // Bun.ModuleGraph disposed within the second, nothing would ever clear the cache again.
 let utcCache;
 let utcCacheSecond = -1;
+// The agent a request with no `agent` uses. For the script of a Bun.ModuleGraph that is the
+// graph's own copy of the realm's default agent, made on first use in the graph's context: the
+// sockets it keeps alive are then the graph's, and close with it.
+const defaultAgentsOfGraphs = new WeakMap();
+function defaultAgentOfRunningScript(realmAgent) {
+  const graph = require("internal/async_context_frame").current()?.graph;
+  if (graph === undefined) return realmAgent;
+  let agents = defaultAgentsOfGraphs.get(graph);
+  if (agents === undefined) defaultAgentsOfGraphs.set(graph, (agents = new WeakMap()));
+  let agent = agents.get(realmAgent);
+  if (agent === undefined) agents.set(realmAgent, (agent = new realmAgent.constructor(realmAgent.options)));
+  return agent;
+}
+
 function utcDate() {
   const now = Date.now();
   const second = Math.floor(now / 1000);
@@ -533,6 +547,7 @@ export {
   onDataIncomingMessage,
   optionsSymbol,
   parseProxyConfigFromEnv,
+  defaultAgentOfRunningScript,
   parseProxyUrl,
   serverSymbol,
   setMaxHTTPHeaderSize,

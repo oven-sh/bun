@@ -958,12 +958,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
-    let frame = AsyncContextFrame.current();
-    const graph = frame?.graph;
-    if (graph !== undefined) {
-      while (frame.storage !== graph) frame = frame.prev;
-      this.ownerGraphFrame = frame;
-    }
+    this.ownerGraphFrame = AsyncContextFrame.currentGraphFrame();
     this.callbackAsyncContext =
       connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
     // Slots are filled one at a time in connect()'s pool-start loop, and

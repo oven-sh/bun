@@ -754,9 +754,7 @@ impl CAresNameInfo {
         let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
         // SAFETY: see fn contract — `this` is a live node.
         let (global_this, context) = unsafe { ((*this).global_this(), (*this).context) };
-        if global_this.bun_vm().is_context_live(context) {
-            result.settle(&mut promise, global_this);
-        }
+        result.settle(&mut promise, global_this, context);
         // SAFETY: see fn contract.
         unsafe { Self::destroy(this) };
     }
@@ -1541,9 +1539,7 @@ impl CAresReverse {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            if global_this.bun_vm().is_context_live((*this).context) {
-                result.settle(&mut promise, global_this);
-            }
+            result.settle(&mut promise, global_this, (*this).context);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1679,9 +1675,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            if global_this.bun_vm().is_context_live((*this).context) {
-                result.settle(&mut promise, global_this);
-            }
+            result.settle(&mut promise, global_this, (*this).context);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1853,9 +1847,7 @@ impl DNSLookup {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            if global_this.bun_vm().is_context_live((*this).context) {
-                result.settle(&mut promise, global_this);
-            }
+            result.settle(&mut promise, global_this, (*this).context);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1920,7 +1912,14 @@ impl Outcome {
     /// libuv) land here to settle the lookup's promise with a value built by
     /// the resolver: this is their fold for what settling leaves pending
     /// (allocation failure, a terminating VM).
-    fn settle(self, promise: &mut JSPromiseStrong, global: &JSGlobalObject) {
+    fn settle(
+        self,
+        promise: &mut JSPromiseStrong,
+        global: &JSGlobalObject,
+        context: bun_jsc::ContextId,
+    ) {
+        // The lookup continues the script that asked for it.
+        let _context = global.bun_vm().enter_context(context);
         let _guard = VirtualMachine::get().enter_event_loop_scope();
         crate::dispatch::fold(match self {
             Outcome::Value(v) => promise.resolve(global, v),

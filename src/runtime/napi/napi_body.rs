@@ -160,8 +160,6 @@ impl NapiEnv {
         Self::set_last_error(Some(self), NapiStatus::pending_exception)
     }
 
-    /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
-    /// VM exception slot. This is the gate Node.js's `NAPI_PREAMBLE` enforces.
     /// Runs `completion` (an addon's `complete` or `call_js`) in `context`, the one whose script
     /// asked for the work: what the callback opens is that context's. Once the context has
     /// stopped the callback still runs, since it owns memory only it can free, but functions
@@ -182,6 +180,8 @@ impl NapiEnv {
         unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), previous) };
     }
 
+    /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
+    /// VM exception slot. This is the gate Node.js's `NAPI_PREAMBLE` enforces.
     pub(crate) fn has_pending_exception(&self) -> bool {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }

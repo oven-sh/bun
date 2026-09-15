@@ -10,9 +10,10 @@ const { kDestroyOnRead } = require("internal/net/symbols");
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
 const kRequestAsyncResource = Symbol("requestAsyncResource");
-// The async context an Agent was made in. Its sockets are opened in that Bun.ModuleGraph's context
-// (or the host's), not in that of whichever request needed one: a disposed graph's sockets close
-// without a word, and an agent of the host's that a graph had used would wait on them for ever.
+// The frame of the Bun.ModuleGraph an Agent was made in, if any. Its sockets are opened in that
+// graph's context (or the host's), not in that of whichever request needed one: a disposed graph's
+// sockets close without a word, and an agent of the host's that a graph had used would wait on
+// them for ever.
 const kOwnerFrame = Symbol("ownerFrame");
 const AsyncContextFrame = require("internal/async_context_frame");
 
@@ -30,7 +31,7 @@ function Agent(options): void {
   EventEmitter.$call(this);
 
   this.options = { __proto__: null, ...options };
-  this[kOwnerFrame] = AsyncContextFrame.current();
+  this[kOwnerFrame] = AsyncContextFrame.currentGraphFrame();
 
   this.defaultPort = this.options.defaultPort || 80;
   this.protocol = this.options.protocol || "http:";
@@ -554,43 +555,18 @@ function shouldUseEnvProxy() {
   return true;
 }
 
-/** `globalAgent` for an agent class: the realm's, and one for each Bun.ModuleGraph whose script asks
- *  (made on first use, in that graph's context, so the sockets it keeps alive are the graph's). */
-function globalAgentAccessors(AgentClass) {
-  const make = () =>
-    new AgentClass({
-      keepAlive: true,
-      scheduling: "lifo",
-      timeout: 5000,
-      proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
-    });
-  // (In no graph's context, whichever script is first to load this module.)
-  let ofRealm = AsyncContextFrame.run(undefined, make);
-  const ofGraphs = new WeakMap();
-  return {
-    get() {
-      const graph = AsyncContextFrame.current()?.graph;
-      if (graph === undefined) return ofRealm;
-      let agent = ofGraphs.get(graph);
-      if (agent === undefined) ofGraphs.set(graph, (agent = make()));
-      return agent;
-    },
-    set(agent) {
-      const graph = AsyncContextFrame.current()?.graph;
-      if (graph === undefined) ofRealm = agent;
-      else ofGraphs.set(graph, agent);
-    },
-    enumerable: true,
-    configurable: true,
-  };
-}
-
-export default Object.defineProperty(
-  {
-    Agent,
-    globalAgentAccessors,
-    shouldUseEnvProxy,
-  },
-  "globalAgent",
-  globalAgentAccessors(Agent),
-);
+export default {
+  Agent,
+  // (Made in no graph's context, whichever script is first to load this module.)
+  globalAgent: AsyncContextFrame.run(
+    undefined,
+    () =>
+      new Agent({
+        keepAlive: true,
+        scheduling: "lifo",
+        timeout: 5000,
+        proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
+      }),
+  ),
+  shouldUseEnvProxy,
+};

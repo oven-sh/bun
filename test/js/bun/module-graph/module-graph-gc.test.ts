@@ -633,13 +633,12 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
 // node:fs remembers every open FileHandle for the life of the realm, to close the ones nobody
 // did: what it remembers of one must not hold the graph whose module holds the handle.
 describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () => {
-  {
-    test("a dropped graph whose module keeps a FileHandle open is collected", async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+  test("a dropped graph whose module keeps a FileHandle open is collected", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
           // (node:fs reports the handle nobody closed; whoever that reaches, it is not the point here.)
           process.on("uncaughtException", () => {});
           let collected = false;
@@ -653,16 +652,15 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
           console.log(JSON.stringify({ collected }));
           process.exit(0);
           `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout.trim()).toBe(`{"collected":true}`);
-      expect(exitCode).toBe(0);
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
     });
-  }
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(`{"collected":true}`);
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("ModuleGraph GC: survives collecting continuously", async () => {

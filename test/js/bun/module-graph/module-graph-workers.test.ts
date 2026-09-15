@@ -616,7 +616,6 @@ const peers = (kinds: string, graphState?: string, racy?: boolean) => ({
 // ── A: a graph on the main thread whose code starts a worker ──────────────────────────────────────
 type OwnerCell = {
   graphState?: string;
-  graph?: string;
   work?: Work[];
   hostPlan: string[];
   onError?: string;
@@ -782,7 +781,6 @@ Object.entries(graphStates).forEach(([state, shape], i) =>
 // ── B to E: a worker hosts the graph ──────────────────────────────────────────────────────────────
 type HostedCell = {
   graphState?: string;
-  graph?: string;
   work?: Work[];
   hostPlan?: string[];
   mainPlan: string[];
@@ -946,7 +944,7 @@ const hostedEvents: Record<string, HostedEvent> = {
 function hosted(
   topology: string,
   prefix: string,
-  shape: { graphState?: string; graph?: string; work?: Work[] },
+  shape: { graphState?: string; work?: Work[] },
   events: string[],
   apiOffset: number,
   extra: Partial<HostedCell> = {},

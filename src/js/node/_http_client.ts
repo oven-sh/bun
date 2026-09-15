@@ -17,7 +17,13 @@ const {
 const { kUniqueHeaders, parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
 const Agent = require("node:_http_agent");
 const { urlToHttpOptions } = require("internal/url");
-const { kOutHeaders, kNeedDrain, kProxyConfig, checkShouldUseProxy } = require("internal/http");
+const {
+  kOutHeaders,
+  kNeedDrain,
+  kProxyConfig,
+  checkShouldUseProxy,
+  defaultAgentOfRunningScript,
+} = require("internal/http");
 const { validateInteger, validateBoolean, validateString, validateOneOf } = require("internal/validators");
 const { getTimerDuration } = require("internal/timers");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
@@ -191,7 +197,7 @@ function ClientRequest(input, options, cb) {
     agent = new defaultAgent.constructor();
   } else if (agent === null || agent === undefined) {
     if (typeof options.createConnection !== "function") {
-      agent = defaultAgent;
+      agent = defaultAgentOfRunningScript(defaultAgent);
     }
     // Explicitly pass through this statement as agent will not be used
     // when createConnection is provided.

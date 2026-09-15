@@ -1068,3 +1068,27 @@ it.skipIf(isWindows || isMacOS)(
     expect(exitCode).toBe(0);
   },
 );
+
+// A query-string name or a route parameter that is a canonical array index
+// ("0") has to land in the indexed storage of the object. A named property of
+// the same spelling shows up in Object.keys() but `query[0]` cannot find it.
+it(".query and .params store an array-index name as an indexed property", () => {
+  const { dir } = make(["posts.tsx", "[0].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const query = router.match("/posts?0=a&0=b&1=c&x=y")!.query;
+  expect(query).toEqual({ 0: ["a", "b"], 1: "c", x: "y" });
+  expect(query[0]).toEqual(["a", "b"]);
+  expect(query["1"]).toBe("c");
+  expect(Object.getOwnPropertyDescriptor(query, "0")).toEqual({
+    value: ["a", "b"],
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+
+  const params = router.match("/hello?0=ignored")!.params;
+  expect(params).toEqual({ 0: "hello" });
+  expect(params[0]).toBe("hello");
+  expect(Object.getOwnPropertyNames(params)).toEqual(["0"]);
+});

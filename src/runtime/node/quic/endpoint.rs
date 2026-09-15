@@ -1083,7 +1083,7 @@ fn apply_transport_params(
 pub(super) fn alloc_exposed_array_buffer(
     global: &JSGlobalObject,
     holder: JSValue,
-    name: &[u8],
+    name: &'static [u8],
     size: usize,
 ) -> JsResult<*mut u8> {
     let zeroes = vec![0u8; size];

@@ -840,7 +840,9 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
                 if (!existing.isNull()) {
                     syncWindowsEnv(store, String(uid), nullptr);
                     store->remove(String(uid));
-                    object->putDirect(vm, propertyName, jsString(vm, existing), 0);
+                    // An env var name can be an array index (`process.env[0] = "x"` or `env 0=x`).
+                    object->putDirectMayBeIndex(globalObject, propertyName, jsString(vm, existing));
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
             }
         }

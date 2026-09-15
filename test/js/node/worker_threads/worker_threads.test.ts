@@ -1694,6 +1694,42 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
+  // A partial descriptor moves the entry from the shared store onto the JS object.
+  // An env var name can be a canonical array index ("0"), and such a property has
+  // to land in the indexed storage, or `process.env[0]` misses it afterwards.
+  it("keeps an array-index env var readable after a partial defineProperty on the shared map", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         new Worker("1", { eval: true, env: SHARE_ENV }).on("exit", () => {
+           process.env[0] = "zero";
+           Object.defineProperty(process.env, "0", { enumerable: true });
+           console.log(JSON.stringify({
+             byIndex: process.env[0],
+             byString: process.env["0"],
+             listed: Object.keys(process.env).includes("0"),
+             descriptor: Object.getOwnPropertyDescriptor(process.env, "0"),
+           }));
+         });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ parsed: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      parsed: {
+        byIndex: "zero",
+        byString: "zero",
+        listed: true,
+        descriptor: { value: "zero", writable: true, enumerable: true, configurable: true },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // node roots a main-founded SHARE_ENV tree at its RealEnvStore, so a worker writing
   // through it reaches the real environment a child process inherits; a snapshot
   // worker's store is private and never does. (child_process enumerates the JS

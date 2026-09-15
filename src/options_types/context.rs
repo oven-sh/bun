@@ -576,6 +576,7 @@ pub struct RuntimeOptions {
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
     pub heap_prof: HeapProf,
+    pub pprof_heap: PprofHeap,
 }
 
 #[derive(Default)]
@@ -620,6 +621,27 @@ pub struct HeapProf {
     pub dir: Box<[u8]>,
 }
 
+/// `--pprof-heap[=<path>]`, `--pprof-heap-interval=<bytes>`
+pub struct PprofHeap {
+    pub enabled: bool,
+    /// Empty: a generated name in the current directory.
+    pub path: Box<[u8]>,
+    /// 0: the default interval.
+    pub sample_interval: usize,
+}
+
+impl Default for PprofHeap {
+    // See `ContextData::default` — folded into the single startup call site.
+    #[inline(always)]
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: Box::default(),
+            sample_interval: 0,
+        }
+    }
+}
+
 impl Default for RuntimeOptions {
     // See `ContextData::default` — folded into the single startup call site.
     #[inline(always)]
@@ -643,6 +665,7 @@ impl Default for RuntimeOptions {
             cron_period: Box::default(),
             cpu_prof: CpuProf::default(),
             heap_prof: HeapProf::default(),
+            pprof_heap: PprofHeap::default(),
         }
     }
 }

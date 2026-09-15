@@ -666,6 +666,7 @@ impl VMHolder {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
         }
+        crate::bun_heap_pprof::write_requested_profile(vm);
         // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
         // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
         // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
@@ -1881,6 +1882,10 @@ impl VirtualMachine {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
         }
+        // `process.exit()` in a Worker ends the Worker.
+        if self.is_main_thread() {
+            crate::bun_heap_pprof::write_requested_profile(self);
+        }
 
         ExitHandler::dispatch_on_exit(self);
 
@@ -1897,6 +1902,11 @@ impl VirtualMachine {
             self.run_cleanup_hooks();
         }
         self.has_run_cleanup_hooks = true;
+
+        // A Worker's sourcemaps are gone with it, and only its thread can use them.
+        if self.worker.is_some() {
+            crate::bun_heap_pprof::resolve_sampled_positions(self);
+        }
 
         // Persist the Node compile cache (NODE_COMPILE_CACHE /
         // module.enableCompileCache()) after user exit handlers ran.

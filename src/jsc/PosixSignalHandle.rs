@@ -152,6 +152,13 @@ pub(crate) extern "C" fn Bun__onSignalListenerCountChanged(number: i32, count: i
     }
 }
 
+/// A Worker's `process.kill(process.pid, "SIGINT")` under `bun run --watch`, where the installed
+/// handler does not tell whether JavaScript listens.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__watchModeSigintHasListeners() -> bool {
+    WATCH_SIGINT_LISTENERS.load(Ordering::Acquire) > 0
+}
+
 /// Watcher-thread query: only ever true for `bun run --watch` (the count is
 /// mirrored solely when `WATCH_MODE_KILL_SIGNAL` is set).
 pub fn watch_kill_signal_has_listeners() -> bool {

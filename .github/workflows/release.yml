@@ -6,7 +6,7 @@ concurrency: release
 
 env:
   BUN_VERSION: ${{ github.event.inputs.tag || github.event.release.tag_name || 'canary' }}
-  BUN_LATEST: ${{ (inputs.is-latest || github.event.release.tag_name) && 'true' || 'false' }}
+  BUN_LATEST: ${{ (inputs.is-latest || (github.event_name == 'release' && !github.event.release.prerelease)) && 'true' || 'false' }}
 
 permissions:
   contents: read
@@ -44,11 +44,7 @@ on:
         type: boolean
         default: false
       use-types:
-        description: Should types be released to npm?
-        type: boolean
-        default: false
-      use-definitelytyped:
-        description: "Should types be PR'd to DefinitelyTyped?"
+        description: Should bun-types be published to npm (and, for the latest release, PR'd to DefinitelyTyped)?
         type: boolean
         default: false
 
@@ -115,107 +111,123 @@ jobs:
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
-    needs: sign
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
+    if: ${{ github.repository_owner == 'oven-sh' && (github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true') }}
+    # With id-token, npm publishes through the trusted publisher registered for this
+    # repository, workflow file and environment on npmjs.com, and NPM_TOKEN is only a
+    # fallback for as long as bun-types has none registered.
+    environment: release
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: packages/bun-types
+      id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      npm-tag: ${{ steps.version.outputs.npm-tag }}
     steps:
+      - name: Resolve release tag
+        id: tag
+        if: ${{ env.BUN_VERSION != 'canary' }}
+        run: echo "tag=bun-v${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Empty for canaries, which are built from the commit the run was triggered on.
+          ref: ${{ steps.tag.outputs.tag }}
+      - name: Pick version
+        id: version
+        run: |
+          if [ "$BUN_VERSION" = canary ]; then
+            echo "version=$(jq -r .version package.json)-canary.$(date -u +%Y%m%dT%H%M%S)" >> "$GITHUB_OUTPUT"
+            echo "npm-tag=canary" >> "$GITHUB_OUTPUT"
+          elif [ "$BUN_LATEST" = true ]; then
+            echo "version=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
+            echo "npm-tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "bun-types is only published for canary builds and for the latest release"
+          fi
       - name: Setup Node.js
+        if: ${{ steps.version.outputs.version != '' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: latest
+          node-version: 24
+          registry-url: https://registry.npmjs.org
       - name: Setup Bun
-        if: ${{ env.BUN_VERSION != 'canary' }}
+        if: ${{ steps.version.outputs.version != '' }}
         uses: ./.github/actions/setup-bun
         with:
           bun-version: "1.3.14"
-      - name: Setup Bun
-        if: ${{ env.BUN_VERSION == 'canary' }}
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: "canary" # Must be 'canary' so tag is correct
-      - name: Install Dependencies
-        run: bun install
-      - name: Setup Tag
-        if: ${{ env.BUN_VERSION == 'canary' }}
-        run: |
-          VERSION=$(bun --version)
-          TAG="${VERSION}-canary.$(date +'%Y%m%dT%H%M%S')"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - name: Build
+        if: ${{ steps.version.outputs.version != '' }}
+        working-directory: packages/bun-types
+        env:
+          BUN_VERSION: ${{ steps.version.outputs.version }}
         run: bun run build
-        env:
-          BUN_VERSION: ${{ env.TAG || env.BUN_VERSION }}
       - name: Release
-        if: ${{ env.BUN_VERSION == 'canary' || env.BUN_LATEST == 'true' }}
+        if: ${{ steps.version.outputs.version != '' }}
+        working-directory: packages/bun-types
         env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NPM_TAG: ${{ steps.version.outputs.npm-tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
-          NPM_TAG: ${{ env.BUN_VERSION == 'canary' && 'canary' || 'latest' }}
         run: |
-          echo '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
-          VERSION=$(node -p 'require("./package.json").version')
-          if [ "$(npm view bun-types@"$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
-            echo "bun-types@$VERSION already published, skipping"
+          if [ "$(npm view "bun-types@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "bun-types@$VERSION is already published"
             exit 0
           fi
-          npm publish --access public --tag "$NPM_TAG"
+          npm publish --access public --tag "$NPM_TAG" --provenance
   definitelytyped:
-    name: Make pr to DefinitelyTyped to update `bun-types` version
+    name: Update @types/bun on DefinitelyTyped
     runs-on: ubuntu-latest
     needs: npm-types
-    if: ${{ github.event_name == 'release' || github.event.inputs.use-definitelytyped == 'true' }}
+    if: ${{ needs.npm-types.outputs.npm-tag == 'latest' }}
     permissions:
       contents: read
+    env:
+      VERSION: ${{ needs.npm-types.outputs.version }}
     steps:
-      - name: Checkout (DefinitelyTyped)
+      - name: Checkout DefinitelyTyped
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: false
           repository: DefinitelyTyped/DefinitelyTyped
-      - name: Checkout (bun)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
           persist-credentials: false
-          path: bun
-      - name: Setup Bun
-        uses: ./bun/.github/actions/setup-bun
-        with:
-          bun-version: "1.3.14"
-      - id: bun-version
-        run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
-      - name: Update bun-types version in package.json
+      - name: Update types/bun/package.json
         run: |
-          bun -e '
-          const file = Bun.file("./types/bun/package.json");
-          const json = await file.json();
-          const version = process.env.BUN_VERSION.replace(/^bun-v/, "");
-          json.dependencies["bun-types"] = version;
-          json.version = version.slice(0, version.lastIndexOf(".")) + ".9999";
-          await file.write(JSON.stringify(json, null, 4) + "\n");
-          '
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        if: ${{ env.BUN_LATEST == 'true' && env.BUN_VERSION != 'canary'}}
-        with:
-          token: ${{ secrets.ROBOBUN_TOKEN }}
-          add-paths: ./types/bun/package.json
-          title: "[bun] update to ${{ steps.bun-version.outputs.BUN_VERSION }}"
-          commit-message: "[bun] update to ${{ steps.bun-version.outputs.BUN_VERSION }}"
-          body: |
-            Update `bun-types` version to ${{ steps.bun-version.outputs.BUN_VERSION }}
-
-            https://bun.com/blog/${{ env.BUN_VERSION }}
-          push-to-fork: oven-sh/DefinitelyTyped
-          branch: ${{env.BUN_VERSION}}
+          jq --indent 4 --arg version "$VERSION" --arg types_version "${VERSION%.*}.9999" \
+            '.version = $types_version | .dependencies["bun-types"] = $version' \
+            types/bun/package.json > package.json.tmp
+          mv package.json.tmp types/bun/package.json
+      - name: Open pull request
+        env:
+          # Pushes the branch to the oven-sh/DefinitelyTyped fork. The push also carries
+          # every upstream commit the fork is missing, some of which edit DefinitelyTyped's
+          # own workflow files, so this token needs the workflows permission: give it
+          # contents + workflows on that one repository (fine-grained PAT or app token) and
+          # nothing else.
+          FORK_TOKEN: ${{ secrets.DEFINITELYTYPED_FORK_TOKEN }}
+          # Opens the pull request on DefinitelyTyped/DefinitelyTyped. Writing to a repository
+          # outside the token owner's own account or organization takes a classic PAT; the
+          # public_repo scope is enough, as it is for the homebrew push below.
+          GH_TOKEN: ${{ secrets.ROBOBUN_TOKEN }}
+        run: |
+          if git diff --quiet; then
+            echo "DefinitelyTyped already depends on bun-types@$VERSION"
+            exit 0
+          fi
+          branch="bun-v$VERSION"
+          title="[bun] update to $VERSION"
+          git -c user.name=robobun -c user.email=robobun@oven.sh commit --all --message "$title"
+          git push --force "https://x-access-token:${FORK_TOKEN}@github.com/oven-sh/DefinitelyTyped" "HEAD:refs/heads/$branch"
+          existing=$(gh api "repos/DefinitelyTyped/DefinitelyTyped/pulls?state=open&head=oven-sh:$branch" --jq '.[].html_url')
+          if [ -n "$existing" ]; then
+            echo "Updated $existing"
+            exit 0
+          fi
+          # Not `gh pr create`: its --head does not accept an organization-owned fork (cli/cli#10093).
+          gh api --method POST repos/DefinitelyTyped/DefinitelyTyped/pulls --jq .html_url \
+            --raw-field base=master \
+            --raw-field head="oven-sh:$branch" \
+            --raw-field title="$title" \
+            --raw-field body="$(printf '%s\n\n%s' "Update \`bun-types\` to $VERSION." "https://bun.com/blog/bun-v$VERSION")"
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest
@@ -344,21 +356,3 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
           AWS_ENDPOINT: ${{ secrets.AWS_ENDPOINT }}
           AWS_BUCKET: bun
-
-  notify-sentry:
-    name: Notify Sentry
-    runs-on: ubuntu-latest
-    needs: s3
-    steps:
-      - name: Notify Sentry
-        uses: getsentry/action-release@ff07929a6537bac57790c3451cf4d364aca38528 # v3.7.0
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
-        with:
-          ignore_missing: true
-          ignore_empty: true
-          version: ${{ env.BUN_VERSION }}
-          environment: production
-

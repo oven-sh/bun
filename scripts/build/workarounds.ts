@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { BORINGSSL_COMMIT } from "./deps/boringssl.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
@@ -65,6 +66,18 @@ export interface Workaround {
 }
 
 export const workarounds: Workaround[] = [
+  {
+    id: "boringssl-ip-name-constraints",
+    issue:
+      "https://github.com/oven-sh/boringssl/blob/41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f/crypto/x509/v3_ncons.cc#L510-L532",
+    description: "BoringSSL rejects iPAddress name constraints instead of matching their address and mask",
+    applies: () => true,
+    // Recheck the patch at the next dependency update; no upstream fix is pinned yet.
+    expectedToBeFixed: () => BORINGSSL_COMMIT !== "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f",
+    cleanup:
+      "Check whether BoringSSL now enforces IP name constraints. If so, remove patches/boringssl/ip-name-constraints.patch, " +
+      "its patches entry in deps/boringssl.ts, and this check. Otherwise, revalidate the patch and update this check's commit.",
+  },
   {
     id: "asan-dyld-shim",
     issue: "https://github.com/llvm/llvm-project/issues/182943",

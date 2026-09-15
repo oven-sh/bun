@@ -93,6 +93,10 @@ impl Taskable for PosixSignalTask {
     const TAG: bun_event_loop::TaskTag = task_tag::PosixSignalTask;
     /// `this` packs the signal number; nothing is owned.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// A signal is the process's: `process.on(<signal>)` listeners of the realm.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 unsafe extern "C" {

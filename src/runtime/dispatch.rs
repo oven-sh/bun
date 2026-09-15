@@ -15,8 +15,8 @@
 //!
 //! **Adding a variant** (do all four):
 //!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
-//!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..) }`;
-//!   3. a `run_task` arm and a `release_task_unrun` arm here;
+//!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..); unsafe fn context(..) }`;
+//!   3. a `run_task` arm, a `release_task_unrun` arm and a `task_context` arm here;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
 // Flat re-export landing pad for `generated_js2native.rs` thunks. Kept in a
@@ -611,6 +611,26 @@ pub(crate) fn tick_queue_with_count(
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
+        // A task continues what the script of some context started: it runs inside that context
+        // (what it opens next, and the script it calls, are that context's), and once that context
+        // has stopped it is released unrun. Not live either: the context of a file
+        // `bun test --isolate` has since retired (the swap was that file's exit), and any context
+        // once the VM was asked to stop (a parent's terminate() while the worker still ticks).
+        let _context = match task_context(task) {
+            bun_event_loop::TaskContext::Always => None,
+            bun_event_loop::TaskContext::Of(context) => {
+                match global.bun_vm().enter_context_if_live(context) {
+                    Some(entered) => Some(entered),
+                    None => {
+                        __bun_release_task_unrun(task);
+                        if global.has_exception() {
+                            report_error_or_terminate(global, bun_jsc::JsError::Thrown)?;
+                        }
+                        continue;
+                    }
+                }
+            }
+        };
         match run_task(task, el, vm, global) {
             Ok(RunTaskResult::Continue) => {}
             Ok(RunTaskResult::EarlyReturn) => {
@@ -1326,6 +1346,148 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             }
             #[cfg(not(windows))]
             unreachable!("windows-only tag (libuv fs request)");
+        }
+        // Every tag has an arm above (`task_tag::COUNT` is asserted); a value
+        // outside the range is a producer bug.
+        _ => unreachable!("task tag out of range: {}", task.tag.0),
+    }
+}
+
+/// Whose script a queued task continues, through its type's
+/// [`Taskable::context`](bun_event_loop::Taskable). One arm per tag, as
+/// [`__bun_release_task_unrun`]: a tag cannot exist without its type having decided it.
+fn task_context(task: bun_event_loop::Task) -> bun_event_loop::TaskContext {
+    use bun_event_loop::{Taskable, task_tag};
+    /// `<T as Taskable>::context(task.ptr as *const T)`, SAFETY spelled once.
+    macro_rules! context {
+        ($ty:ty) => {{
+            // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr`
+            // through `Taskable`; the tag identifies the pointee type, and the
+            // task just came off the queue: live, not yet run or released.
+            unsafe { <$ty as Taskable>::context(task.ptr.cast::<$ty>().cast_const()) }
+        }};
+    }
+    match task.tag {
+        task_tag::AnyTaskJob => {
+            // The one erased tag: every payload is a `Job<C>` reached through its header.
+            // SAFETY: as `context!`.
+            unsafe { bun_jsc::job::context_erased(task.ptr) }
+        }
+        task_tag::AsyncModule => context!(bun_jsc::async_module::AsyncModule),
+        task_tag::BakeHotReloadEvent => context!(BakeHotReloadEvent),
+        task_tag::BundleV2DeferredBatchTask => context!(BundleV2DeferredBatchTask),
+        task_tag::BundleV2PluginResolve => {
+            context!(bun_bundler::bundle_v2::api::JSBundler::Resolve)
+        }
+        task_tag::BundleV2PluginLoad => context!(bun_bundler::bundle_v2::api::JSBundler::Load),
+        task_tag::ShellYesTask => context!(ShellYesTask),
+        task_tag::CppTask => context!(CppTask),
+        task_tag::DuplexUpgradeContext => context!(crate::socket::DuplexUpgradeContext),
+        task_tag::FetchTasklet => context!(FetchTasklet),
+        task_tag::FetchTaskletDeinit => context!(crate::webcore::fetch::FetchTaskletDeinitHop),
+        task_tag::FetchTaskletPromiseSettle => {
+            context!(crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle)
+        }
+        task_tag::FSWatchTask => context!(FSWatchTask),
+        task_tag::HotReloadTask => context!(hot_reloader::HotReloadTask),
+        task_tag::WatchReloadTask => context!(hot_reloader::WatchReloadTask),
+        task_tag::JSBundleCompletionTask => {
+            context!(crate::api::js_bundle_completion_task::JSBundleCompletionTask)
+        }
+        task_tag::JSCDeferredWorkTask => context!(JSCDeferredWorkTask),
+        task_tag::ManagedTask => context!(ManagedTask),
+        task_tag::NapiAsyncWork => context!(napi_async_work),
+        task_tag::NapiFinalizerTask => context!(NapiFinalizerTask),
+        task_tag::NativePromiseContextDeferredDerefTask => {
+            context!(NativePromiseContextDeferredDerefTask)
+        }
+        task_tag::NativeBrotli => context!(NativeBrotli),
+        task_tag::NativeZlib => context!(NativeZlib),
+        task_tag::NativeZstd => context!(NativeZstd),
+        task_tag::PollPendingModulesTask => context!(bun_jsc::async_module::Queue),
+        task_tag::PosixSignalTask => context!(PosixSignalTask),
+        task_tag::MemoryPressureTask => context!(crate::node::memory_pressure::MemoryPressureTask),
+        task_tag::ProcessWaiterThreadTask => {
+            #[cfg(not(windows))]
+            {
+                context!(ProcessWaiterThreadTask<Process>)
+            }
+            #[cfg(windows)]
+            {
+                unreachable!("posix-only tag")
+            }
+        }
+        task_tag::FlushPendingFileSinkTask => context!(FlushPendingFileSinkTask),
+        task_tag::RuntimeTranspilerStore => context!(RuntimeTranspilerStore),
+        task_tag::S3HttpDownloadStreamingTask => context!(S3HttpDownloadStreamingTask),
+        task_tag::S3HttpSimpleTask => context!(S3HttpSimpleTask),
+        task_tag::SendQueueDeferred => context!(crate::ipc::SendQueue),
+        task_tag::ServerAllConnectionsClosedTask => context!(ServerAllConnectionsClosedTask),
+        task_tag::ShellAsync => context!(crate::shell::dispatch_tasks::ShellAsyncTask),
+        task_tag::ShellCondExprStatTask => context!(ShellCondExprStatTask),
+        task_tag::ShellCpTask => context!(ShellCpTask),
+        task_tag::ShellGlobTask => context!(ShellGlobTask),
+        task_tag::ShellLsTask => context!(ShellLsTask),
+        task_tag::ShellMkdirTask => context!(ShellMkdirTask),
+        task_tag::ShellMvBatchedTask => context!(ShellMvBatchedTask),
+        task_tag::ShellMvCheckTargetTask => context!(ShellMvCheckTargetTask),
+        task_tag::ShellRmDirTask => context!(ShellRmDirTask),
+        task_tag::ShellRmTask => context!(ShellRmTask),
+        task_tag::ShellTouchTask => context!(ShellTouchTask),
+        task_tag::StatWatcherTimerUpdate => {
+            context!(crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate)
+        }
+        task_tag::StatWatcherHop => context!(crate::node::node_fs_stat_watcher::StatWatcher),
+        task_tag::AsyncCpTask => context!(crate::node::fs::AsyncCpTask),
+        task_tag::ShellAsyncCpTask => context!(crate::node::fs::ShellAsyncCpTask),
+        task_tag::StreamPending => context!(StreamPending),
+        task_tag::ThreadSafeFunction => context!(ThreadSafeFunction),
+        task_tag::ValkeyDeferredClose => {
+            context!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
+        }
+        // ── Windows-only producers ───────────────────────────────────────
+        task_tag::GetAddrInfoLibuvComplete => {
+            #[cfg(windows)]
+            {
+                context!(crate::dns_jsc::LibuvCompleteHolder)
+            }
+            #[cfg(not(windows))]
+            {
+                unreachable!("windows-only tag")
+            }
+        }
+        task_tag::WindowsNamedPipeContext => {
+            #[cfg(windows)]
+            {
+                context!(crate::socket::WindowsNamedPipeContext)
+            }
+            #[cfg(not(windows))]
+            {
+                unreachable!("windows-only tag")
+            }
+        }
+        task_tag::Open
+        | task_tag::Close
+        | task_tag::Read
+        | task_tag::Readv
+        | task_tag::Write
+        | task_tag::Writev
+        | task_tag::StatFS => {
+            #[cfg(windows)]
+            {
+                macro_rules! __fs_context {
+                    ($($tag:ident $ty:ident;)*) => { match task.tag {
+                        $(task_tag::$tag => context!(fs_async::$ty),)*
+                        // SAFETY: the outer arm proves one of the table tags matched.
+                        _ => unsafe { core::hint::unreachable_unchecked() },
+                    }};
+                }
+                for_each_fs_uv_op!(__fs_context)
+            }
+            #[cfg(not(windows))]
+            {
+                unreachable!("windows-only tag (libuv fs request)")
+            }
         }
         // Every tag has an arm above (`task_tag::COUNT` is asserted); a value
         // outside the range is a producer bug.

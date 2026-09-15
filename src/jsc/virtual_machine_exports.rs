@@ -174,7 +174,12 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     global
         .bun_vm()
         .event_loop_mut()
-        .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
+        .enqueue_task(ManagedTask::new(
+            context,
+            HandledPromiseContext::callback,
+            // `process.on("rejectionHandled")`: the realm's.
+            bun_event_loop::TaskContext::Always,
+        ));
 }
 
 // HOST_EXPORT(Bun__onDidAppendPlugin, c)

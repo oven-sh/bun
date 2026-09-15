@@ -4,13 +4,15 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::{JsResult, Task};
+use crate::{JsResult, Task, TaskContext};
 
 pub struct ManagedTask {
     // Opaque userdata pointer round-tripped through `new`/`run`; raw by design.
     pub ctx: Option<NonNull<c_void>>,
     pub(crate) callback: fn(*mut c_void) -> JsResult<()>,
     pub cleanup: Option<fn(*mut c_void)>,
+    /// Whose script the callback continues ([`Taskable::context`](crate::Taskable::context)).
+    pub(crate) context: TaskContext,
 }
 
 impl ManagedTask {
@@ -47,7 +49,7 @@ impl ManagedTask {
 
     // A per-(Type, Callback) trampoline is folded away by storing
     // the type-erased fn pointer directly — `fn(*mut T)` and `fn(*mut c_void)` share ABI.
-    pub fn new<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
+    pub fn new<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>, context: TaskContext) -> Task {
         let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
             // SAFETY: `fn(*mut T) -> R` and `fn(*mut c_void) -> R` have identical
             // ABI for all `T: Sized`; `run` passes back the exact pointer stored
@@ -59,11 +61,16 @@ impl ManagedTask {
             },
             ctx: NonNull::new(ctx.cast::<c_void>()),
             cleanup: None,
+            context,
         }));
         ManagedTask::task(managed)
     }
 
-    pub fn new_owned<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
+    pub fn new_owned<T>(
+        ctx: *mut T,
+        callback: fn(*mut T) -> JsResult<()>,
+        context: TaskContext,
+    ) -> Task {
         fn drop_ctx<T>(p: *mut c_void) {
             // SAFETY: `p` is the `heap::into_raw(Box<T>)` stored in `ctx` by `new_owned`.
             unsafe { bun_core::heap::destroy(p.cast::<T>()) };
@@ -77,6 +84,7 @@ impl ManagedTask {
             },
             ctx: NonNull::new(ctx.cast::<c_void>()),
             cleanup: Some(drop_ctx::<T>),
+            context,
         }));
         ManagedTask::task(managed)
     }

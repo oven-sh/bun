@@ -202,6 +202,11 @@ impl Taskable for YesTask {
     /// Lives inside the builtin's `Box<Yes>` (freed with the interpreter) and
     /// took nothing for the bounce; nothing to do.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// A step of a shell script, which its interpreter is waiting for: the interpreter checks its
+    /// context before anything reaches script (`Interpreter::interrupted`, `finish`, `fail`).
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 impl YesTask {

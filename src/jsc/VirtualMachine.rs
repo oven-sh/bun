@@ -1288,6 +1288,8 @@ impl VirtualMachine {
                 self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
                     core::ptr::null_mut::<()>(),
                     stop_dead,
+                    // The VM's own sweep.
+                    bun_event_loop::TaskContext::Always,
                 ));
             }
             return;
@@ -1299,6 +1301,8 @@ impl VirtualMachine {
             self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
                 Box::into_raw(Box::new(id)),
                 stop_again,
+                // The VM's own sweep (of a context that has stopped).
+                bun_event_loop::TaskContext::Always,
             ));
         }
     }
@@ -1404,6 +1408,8 @@ impl VirtualMachine {
         self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
             context.as_ptr(),
             stop_and_free,
+            // The VM's own sweep.
+            bun_event_loop::TaskContext::Always,
         ));
     }
 

@@ -2023,4 +2023,8 @@ impl bun_event_loop::Taskable for ValkeyDeferredClose {
             }
         }
     }
+    /// The client's own close: `on_close` checks the client's context before it calls script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }

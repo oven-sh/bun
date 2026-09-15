@@ -989,7 +989,12 @@ mod windows_impl {
                 bun_sys::Result::Ok(()) => None,
             };
             ticket.post(ConcurrentTask::create(
-                ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
+                ManagedTask::new::<WriteFileWindows>(
+                    this,
+                    Self::on_mkdirp_complete_task,
+                    // A step of the write: its completion checks its context.
+                    bun_event_loop::TaskContext::Always,
+                ),
             ));
         }
 

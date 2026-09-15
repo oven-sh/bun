@@ -1007,6 +1007,11 @@ impl bun_event_loop::Taskable for StatWatcher {
         // SAFETY: fn contract.
         unsafe { StatWatcher::release_hop(this) }
     }
+    /// The watcher closes with the context that started it (`abort_handle`); a hop that arrives
+    /// afterwards finds it closed.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 pub(crate) struct InitialStatTask {
@@ -1105,5 +1110,9 @@ impl bun_event_loop::Taskable for StatWatcherTimerUpdate {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box `schedule_timer_update` posted.
         drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// The scheduler's own timer; calls no script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }

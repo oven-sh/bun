@@ -381,6 +381,11 @@ impl bun_event_loop::Taskable for ShellMkdirTask {
             drop(bun_core::heap::take(this));
         }
     }
+    /// A step of a shell script, which its interpreter is waiting for: the interpreter checks its
+    /// context before anything reaches script (`Interpreter::interrupted`, `finish`, `fail`).
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 /// Collects each created directory into

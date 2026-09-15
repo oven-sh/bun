@@ -57,6 +57,10 @@ impl Taskable for FetchTaskletDeinitHop {
         // SAFETY: fn contract.
         unsafe { Self::run(this) }
     }
+    /// Frees a tasklet; calls no script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 impl FetchTaskletDeinitHop {
     /// # Safety
@@ -75,6 +79,11 @@ impl Taskable for FetchTasklet {
     /// it is done with it, and this runs on the JS thread with the heap alive.
     unsafe fn release_unrun(this: *mut Self) {
         FetchTasklet::deref(this);
+    }
+    /// `on_progress_update` decides: a fetch in flight when its context stopped rejects once, and one
+    /// made by a context that had already stopped reports nothing (`opened_after_stop`).
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }
 
@@ -2083,7 +2092,12 @@ impl FetchTasklet {
         // ref until the main thread callback is called
         this_ref.ref_();
         // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`.
-        let task = ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream);
+        let task = ConcurrentTask::from_callback(
+            this,
+            FetchTasklet::resume_request_data_stream,
+            // As `FetchTasklet`'s own task: the ref taken above is released there.
+            bun_event_loop::TaskContext::Always,
+        );
         this_ref
             .http_ticket
             .as_ref()
@@ -2623,5 +2637,9 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box the completion queued.
         drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// As `FetchTasklet`.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }

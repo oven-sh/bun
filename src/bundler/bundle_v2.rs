@@ -1133,6 +1133,11 @@ pub mod bv2_impl {
                     // SAFETY: released ⇒ the hop never ran; the request is ours alone on this thread.
                     unsafe { (*this).answer_cancelled() };
                 }
+                /// A step of the bundle, which is waiting for it to come back: what the build reports is its
+                /// completion's to decide.
+                unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+                    bun_event_loop::TaskContext::Always
+                }
             }
             impl Resolve {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
@@ -1336,6 +1341,11 @@ pub mod bv2_impl {
                 unsafe fn release_unrun(this: *mut Self) {
                     // SAFETY: as `Resolve::release_unrun`.
                     unsafe { (*this).answer_cancelled() };
+                }
+                /// A step of the bundle, which is waiting for it to come back: what the build reports is its
+                /// completion's to decide.
+                unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+                    bun_event_loop::TaskContext::Always
                 }
             }
         }
@@ -4497,6 +4507,8 @@ pub mod bv2_impl {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                         std::ptr::from_mut(load),
                         on_load_from_js_loop_raw,
+                        // A step of the bundle: what the build reports is its completion's to decide.
+                        bun_event_loop::TaskContext::Always,
                     );
                     let poster = self
                         .js_poster
@@ -4531,6 +4543,8 @@ pub mod bv2_impl {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                         std::ptr::from_mut(resolve),
                         on_resolve_from_js_loop_raw,
+                        // A step of the bundle: what the build reports is its completion's to decide.
+                        bun_event_loop::TaskContext::Always,
                     );
                     let poster = self
                         .js_poster

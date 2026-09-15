@@ -221,6 +221,10 @@ impl Taskable for RuntimeTranspilerStore {
     /// The "drain my finished jobs" ping owns nothing (`this` is the VM's
     /// store); the jobs themselves are released by `release_queued_jobs_for_teardown`.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// A ping to the VM's own store.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 impl RuntimeTranspilerStore {

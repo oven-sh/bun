@@ -1283,6 +1283,8 @@ impl RewriterPipe {
             .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
                 core::ptr::from_ref(self).cast_mut(),
                 Self::run_background_pull,
+                // Pulls the next chunk for a rewriter pipe.
+                bun_event_loop::TaskContext::Always,
             ));
     }
 

@@ -941,6 +941,8 @@ impl PipeEvent {
             .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_owned(
                 queued,
                 QueuedEvent::deliver,
+                // The WebView's own pipe event.
+                bun_event_loop::TaskContext::Always,
             ));
     }
 }

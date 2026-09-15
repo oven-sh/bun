@@ -1953,7 +1953,12 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket:
         Ok(())
     }
     ticket.post(jsc::ConcurrentTask::create(
-        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
+        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(
+            this,
+            call_erased,
+            // A step of the copy: its completion checks its context.
+            bun_event_loop::TaskContext::Always,
+        ),
     ));
 }
 

@@ -1582,6 +1582,8 @@ pub mod js_bundler {
                         let ct = ConcurrentTask::from_callback(
                             std::ptr::from_mut::<Load>(self),
                             on_notify_defer_js,
+                            // A step of the bundle, which is waiting for it.
+                            bun_event_loop::TaskContext::Always,
                         );
                         let poster = (*ctx.as_mut_ptr())
                             .js_poster

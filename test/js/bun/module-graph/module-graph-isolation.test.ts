@@ -573,6 +573,29 @@ const dir = String(
         const server = http2.createServer((request, response) => response.end(state.tag));
         return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
       }
+      // Several of one kind of background work; the first to settle calls dispose(). What had
+      // settled by then (its handlers are queued microtasks, which still run) is recorded.
+      export function race(name, count, state, dispose) {
+        const started = [];
+        const settled = () => {
+          if (state.ticks++ !== 0) return;
+          state.settledAtDispose = started.filter(promise => Bun.peek.status(promise) !== "pending").length;
+          dispose();
+        };
+        for (let i = 0; i < count; i++) {
+          const promise = Promise.resolve(background[name]());
+          started.push(promise);
+          promise.then(settled, settled);
+        }
+      }
+      // Native single-file copies (fs.cp's fast path), by promise and by callback.
+      export function copies(from, to, count, state, onFirst) {
+        const settled = () => { if (state.ticks++ === 0) onFirst(); };
+        for (let i = 0; i < count; i++) {
+          fs.promises.cp(from, to + "-promise-" + i).then(settled, settled);
+          fs.cp(from, to + "-callback-" + i, settled);
+        }
+      }
       export function retryForever(name, state, ports) {
         (async () => { for (;;) { try { await steps[name](ports); } catch {} state.ticks++; } })();
       }
@@ -1994,14 +2017,17 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       }),
     );
     // An entry buffered for the observer is a dozen objects: kept for every request, that is
-    // twelve times `requests` more than the control keeps.
+    // twelve times `requests` more than the control keeps. Half of that is the line.
     expect({
-      more: observed.kept - control.kept < observed.requests,
-      exitCodes: [observed.exitCode, control.exitCode],
+      ...observed,
+      keptMoreThanControl: Math.max(0, observed.kept - control.kept - 6 * observed.requests),
     }).toEqual({
-      more: true,
-      exitCodes: [0, 0],
+      requests: observed.requests,
+      kept: observed.kept,
+      exitCode: 0,
+      keptMoreThanControl: 0,
     });
+    expect(control.exitCode).toBe(0);
   });
   // (Counts the process's descriptors through /proc/self/fd or /dev/fd.)
   test.skipIf(isWindows)("the files its fs.promises.open() calls in flight opened are closed", async () => {
@@ -2402,6 +2428,48 @@ test("ModuleGraph isolation: background work of a disposed graph does not settle
   await hostTimerTurns();
   const settled = pending.filter(name => Bun.peek.status(started[name]) !== "pending");
   expect(settled.filter(name => !mayStillSettle.includes(name))).toEqual(mustSettle);
+});
+
+describe.concurrent(
+  "ModuleGraph isolation: background work under way when its graph is disposed does not settle into it",
+  () => {
+    // Disposed from the handler of the first one to settle: the others are under way, or finished
+    // and queued behind it, whatever the speed of the build. (The same-turn dispose() of the test
+    // above never gets past the first step of work that takes several.)
+    for (const name of Object.keys(hostApp.background)) {
+      test(name, async () => {
+        using made = await newGraph();
+        const state = newState("race") as ReturnType<typeof newState> & { settledAtDispose?: number };
+        made.graph.run(() => made.app.race(name, 8, state, () => made.graph.dispose()));
+        await until(() => state.ticks > 0);
+        // The same work in the host, started afterwards, has all finished: the graph's had too.
+        const hostState = newState("race-host");
+        hostApp.race(name, 8, hostState, () => {});
+        await until(() => hostState.ticks === 8);
+        await hostTimerTurns();
+        // The exit of a child the graph started is a close notification: each is told once.
+        const toldOnce = ["child_process.exec", "Bun.spawn().exited"].includes(name);
+        expect({ settled: state.ticks }).toEqual({ settled: toldOnce ? 8 : state.settledAtDispose });
+      });
+    }
+  },
+);
+
+test("ModuleGraph isolation: a native fs.cp in flight does not settle into a disposed graph", async () => {
+  const from = join(dir, "cp-source.bin");
+  writeFileSync(from, Buffer.alloc(1 << 20, 1));
+  using made = await newGraph();
+  const state = newState("cp");
+  // Disposed from the first copy's own handler: the other 31 are under way, or finished and
+  // queued behind it, whatever the speed of the build and the disk.
+  made.graph.run(() => made.app.copies(from, join(dir, "cp-of-the-graph"), 16, state, () => made.graph.dispose()));
+  await until(() => state.ticks > 0);
+  // The same copies, asked for afterwards by the host, have all finished: the graph's had too.
+  const hostState = newState("cp-host");
+  hostApp.copies(from, join(dir, "cp-of-the-host"), 16, hostState, () => {});
+  await until(() => hostState.ticks === 32);
+  await hostTimerTurns();
+  expect(state.ticks).toBe(1);
 });
 
 test("ModuleGraph isolation: work that continues from one thread-pool step to the next stays the graph's: disposing it mid-way ends the chain", async () => {

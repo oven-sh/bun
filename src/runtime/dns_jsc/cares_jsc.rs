@@ -714,7 +714,6 @@ impl ErrorDeferred {
             // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
             // enqueued task (VM-owned), so a `BackRef` captures the invariant.
             global_this: bun_ptr::BackRef<JSGlobalObject>,
-            context: bun_jsc::ContextId,
         }
         impl Context {
             // `bun_event_loop::ManagedTask::new` expects
@@ -724,10 +723,6 @@ impl ErrorDeferred {
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { bun_core::heap::take(this) };
                 let global = this.global_this.get();
-                // The context may have stopped since the task was queued.
-                if !global.bun_vm().is_context_live(this.context) {
-                    return Ok(());
-                }
                 this.deferred.reject(global)
             }
         }
@@ -742,18 +737,20 @@ impl ErrorDeferred {
             return;
         }
 
+        let asking = context;
         let context = bun_core::heap::into_raw(Box::new(Context {
             deferred: self,
             global_this: bun_ptr::BackRef::new(global_this),
-            context,
         }));
         // TODO(@heimskr): new custom Task type
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
         // the JSGlobalObject).
         vm.as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_owned(
                 context,
                 Context::callback,
+                // The context may stop before the task runs.
+                bun_event_loop::TaskContext::Of(asking),
             ));
     }
 }

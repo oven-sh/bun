@@ -204,6 +204,10 @@ pub(crate) mod lib_uv_backend {
             // SAFETY: fn contract — the box `on_raw_libuv_complete` queued.
             unsafe { bun_core::heap::take(this) }.run();
         }
+        /// A lookup is shared by the realm; each promise waiting on it is settled for its own context.
+        unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+            bun_event_loop::TaskContext::Always
+        }
     }
 
     extern "C" fn on_raw_libuv_complete(

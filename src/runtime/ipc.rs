@@ -1951,6 +1951,10 @@ impl bun_event_loop::Taskable for SendQueue {
         // SAFETY: fn contract — the SendQueue root queued with a held ref.
         unsafe { SendQueue::release_deferred_unrun(this) }
     }
+    /// The channel's own close hop.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 impl Drop for SendQueue {

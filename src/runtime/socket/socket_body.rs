@@ -4225,6 +4225,10 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
         // SAFETY: fn contract; nothing else frees the context and no borrow of it is live.
         unsafe { Self::deinit(this) };
     }
+    /// A socket's own upgrade hop; its handlers carry their context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 pub(crate) struct DuplexUpgradeContext {

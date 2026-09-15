@@ -132,6 +132,32 @@ pub struct Task {
     pub ptr: *mut (),
 }
 
+/// Identifies a script execution context within its VM (`bun_jsc` hands them out, counting up).
+/// What outlived its context (a pool job, a queued task, a timer that was not swept) holds an id
+/// no live context has.
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Default, Debug)]
+pub struct ContextId(u32);
+
+impl ContextId {
+    #[inline]
+    pub const fn from_raw(raw: u32) -> ContextId {
+        ContextId(raw)
+    }
+}
+
+/// Whose script a queued task continues: what the event loop checks before it runs one.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum TaskContext {
+    /// Runs whenever the VM runs script: work that serves the whole realm, and a step of a
+    /// larger operation that checks its own context before it reaches script (the impl says
+    /// which, and where).
+    Always,
+    /// Continues the script of this context (the one that was current when the work was
+    /// started): run inside it, and released unrun once it has stopped.
+    Of(ContextId),
+}
+
 /// What it takes to be queued as a [`Task`]: a tag, and how the task is
 /// freed when it will never run. Implement on every type that can be
 /// enqueued; the impl lives in whatever crate owns the type.
@@ -162,6 +188,15 @@ pub trait Taskable {
     /// # Safety
     /// `this` came off the queue under `Self::TAG` and is not used afterwards.
     unsafe fn release_unrun(this: *mut Self);
+
+    /// Whose script the task continues. Required, so that no type can be queued without having
+    /// decided it: the event loop enters a [`TaskContext::Of`] context around the task, and
+    /// [releases it unrun](Self::release_unrun) if that context (a `Bun.ModuleGraph`'s) has
+    /// stopped. Only asked while some graph has a context.
+    ///
+    /// # Safety
+    /// `this` is the queued [`Task::ptr`], live (not yet run or released).
+    unsafe fn context(this: *const Self) -> TaskContext;
 }
 
 impl TaskTag {
@@ -201,6 +236,10 @@ impl Taskable for crate::ManagedTask::ManagedTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — a queued ManagedTask is the heap box `new*` made.
         unsafe { crate::ManagedTask::ManagedTask::release(this) }
+    }
+    unsafe fn context(this: *const Self) -> TaskContext {
+        // SAFETY: fn contract. Whoever made it said (`ManagedTask::new*`).
+        unsafe { (*this).context }
     }
 }
 // ────────────────────────────────────────────────────────────────────────────
@@ -292,9 +331,10 @@ impl ConcurrentTask {
     pub fn from_callback<T>(
         ptr: *mut T,
         callback: fn(*mut T) -> crate::JsResult<()>,
+        context: TaskContext,
     ) -> core::ptr::NonNull<ConcurrentTask> {
         bun_core::mark_binding!();
-        Self::create(ManagedTask::ManagedTask::new(ptr, callback))
+        Self::create(ManagedTask::ManagedTask::new(ptr, callback, context))
     }
 
     pub fn from<T: Taskable>(

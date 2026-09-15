@@ -525,4 +525,8 @@ impl bun_event_loop::Taskable for WindowsNamedPipeContext {
         // SAFETY: fn contract.
         unsafe { Self::run_event(this) }
     }
+    /// A socket's own hop; its handlers carry their context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }

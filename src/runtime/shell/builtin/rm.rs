@@ -1733,6 +1733,11 @@ impl bun_event_loop::Taskable for ShellRmTask {
             ShellRmTask::decr_pending_and_maybe_deinit(this);
         }
     }
+    /// A step of a shell script, which its interpreter is waiting for: the interpreter checks its
+    /// context before anything reaches script (`Interpreter::interrupted`, `finish`, `fail`).
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 impl bun_event_loop::Taskable for DirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRmDirTask;
@@ -1748,6 +1753,11 @@ impl bun_event_loop::Taskable for DirTask {
             }
             ShellRmTask::decr_pending_and_maybe_deinit(tm);
         }
+    }
+    /// A step of a shell script, which its interpreter is waiting for: the interpreter checks its
+    /// context before anything reaches script (`Interpreter::interrupted`, `finish`, `fail`).
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }
 

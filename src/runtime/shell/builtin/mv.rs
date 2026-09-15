@@ -687,6 +687,11 @@ impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
         // SAFETY: fn contract; the Mv state outlives the queue entry.
         unsafe { (*this).task.unref_unrun() }
     }
+    /// A step of a shell script, which its interpreter is waiting for: the interpreter checks its
+    /// context before anything reaches script (`Interpreter::interrupted`, `finish`, `fail`).
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 impl bun_event_loop::Taskable for ShellMvBatchedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
@@ -694,6 +699,11 @@ impl bun_event_loop::Taskable for ShellMvBatchedTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: as above.
         unsafe { (*this).task.unref_unrun() }
+    }
+    /// A step of a shell script, which its interpreter is waiting for: the interpreter checks its
+    /// context before anything reaches script (`Interpreter::interrupted`, `finish`, `fail`).
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }
 

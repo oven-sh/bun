@@ -1956,6 +1956,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         bun_opaque::opaque_deref_mut(app).close();
                         Ok(())
                     },
+                    // The server's own teardown.
+                    bun_event_loop::TaskContext::Always,
                 ));
             }
         }
@@ -1970,6 +1972,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(this);
                     Ok(())
                 },
+                // The server's own teardown.
+                bun_event_loop::TaskContext::Always,
             ));
         }
     }
@@ -4270,6 +4274,10 @@ impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box `schedule` queued.
         drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// The server's own notification that it has closed.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }
 

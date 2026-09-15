@@ -574,6 +574,10 @@ impl bun_event_loop::Taskable for Pending {
     unsafe fn release_unrun(this: *mut Self) {
         Pending::release_without_running(this);
     }
+    /// Fulfils a pending read of a stream. Its source does not record which context reads it.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 pub enum PendingFuture {

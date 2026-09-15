@@ -169,6 +169,11 @@ impl Taskable for FSWatchTaskPosix {
             ctx.expect("FSWatchTask.ctx unset").get().unref_task();
         }
     }
+    /// The watcher closes with the context that started it (`abort_handle`); a batch that arrives
+    /// afterwards finds it closed.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 #[cfg(not(windows))]
@@ -392,6 +397,10 @@ impl Taskable for FSWatchTaskWindows {
             Self::deinit(this);
             ctx.expect("FSWatchTask.ctx unset").get().unref_task();
         }
+    }
+    /// As `FSWatchTaskPosix`.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }
 

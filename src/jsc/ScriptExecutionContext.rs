@@ -13,11 +13,7 @@ use core::ptr;
 use crate::virtual_machine::SweepResult;
 use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
 
-/// Identifies a context within its VM. What outlived its context (a pool job,
-/// a timer that was not swept) holds an id no live context has.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Default, Debug)]
-pub struct ContextId(u32);
+pub use bun_event_loop::ContextId;
 
 /// Why a context is stopping what it owns.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -118,7 +114,7 @@ pub enum ContextTimer {
 impl Default for ScriptExecutionContext {
     fn default() -> Self {
         Self {
-            id: JsCell::new(ContextId(0)),
+            id: JsCell::new(ContextId::default()),
             head: JsCell::new(ptr::null_mut()),
             tail: JsCell::new(ptr::null_mut()),
             stopped: JsCell::new(None),
@@ -551,7 +547,7 @@ pub(crate) struct ContextIdAllocator {
 impl ContextIdAllocator {
     pub(crate) fn next(&mut self) -> ContextId {
         self.last = self.last.wrapping_add(1);
-        ContextId(self.last)
+        ContextId::from_raw(self.last)
     }
 }
 

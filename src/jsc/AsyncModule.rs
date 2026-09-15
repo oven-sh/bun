@@ -114,6 +114,10 @@ impl bun_event_loop::Taskable for Queue {
     /// A "poll your pending modules" ping from an install thread: `this` is
     /// the VM's own queue; nothing is owned.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// A ping to the VM's own module queue.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 impl bun_event_loop::Taskable for AsyncModule {
@@ -127,6 +131,10 @@ impl bun_event_loop::Taskable for AsyncModule {
         let vm = VirtualMachine::get().as_mut();
         this.poll_ref.unref(bun_io::js_vm_ctx());
         vm.modules.scheduled -= 1;
+    }
+    /// Fulfils a module fetch of a loader; calls no script of its own.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }
 

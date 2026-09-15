@@ -53,6 +53,11 @@ impl Taskable for napi_async_work {
         // SAFETY: fn contract — the addon's live work object the pool posted.
         let _ = unsafe { (*this).run_from_js(global) };
     }
+    /// An addon's completion always runs (it frees the work there): `NapiEnv::complete_in_context`
+    /// enters the context that queued it, and refuses calls into script if that context has stopped.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 impl Taskable for ThreadSafeFunction {
     const TAG: TaskTag = task_tag::ThreadSafeFunction;
@@ -60,6 +65,10 @@ impl Taskable for ThreadSafeFunction {
     /// run with the exit handlers before the queue is released) already
     /// neutralised or freed. Nothing to do, and `this` must not be dereferenced.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// As `napi_async_work`.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 impl Taskable for NapiFinalizerTask {
     const TAG: TaskTag = task_tag::NapiFinalizerTask;
@@ -69,6 +78,10 @@ impl Taskable for NapiFinalizerTask {
     unsafe fn release_unrun(this: *mut Self) {
         // `Err` is left pending for the release dispatcher's fold.
         let _ = NapiFinalizerTask::run_on_js_thread(this);
+    }
+    /// An addon counts on its finalizers running.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
     }
 }
 

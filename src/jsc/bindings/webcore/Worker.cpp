@@ -134,6 +134,10 @@ void Worker::dispatchEvent(Event& event)
 {
     if (m_wasTerminated || !m_contextProxy->hasPendingActivity())
         return;
+    // A Bun.ModuleGraph's context stops its objects from a queued task; a message that was
+    // queued ahead of it is not delivered either.
+    if (auto* context = scriptExecutionContext(); context && context->isStopped())
+        return;
     EventTargetWithInlineData::dispatchEvent(event);
 }
 

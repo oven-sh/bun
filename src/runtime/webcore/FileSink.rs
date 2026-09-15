@@ -1573,6 +1573,10 @@ impl bun_event_loop::Taskable for FlushPendingTask {
             drop(RefPtr::from_raw(sink));
         }
     }
+    /// Flushes what the sink has buffered.
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 impl FlushPendingTask {

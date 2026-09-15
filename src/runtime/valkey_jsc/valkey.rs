@@ -316,8 +316,12 @@ impl DeferredFailure {
             let this = unsafe { bun_core::heap::take(ptr) };
             DeferredFailure::run(*this)
         }
-        let managed_task =
-            bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
+        let managed_task = bun_jsc::ManagedTask::ManagedTask::new(
+            bun_core::heap::into_raw(self),
+            run_raw,
+            // Commands in flight when their client closed reject once.
+            bun_event_loop::TaskContext::Always,
+        );
         VirtualMachine::get()
             .event_loop_mut()
             .enqueue_task(managed_task);

@@ -635,9 +635,7 @@ impl JSBundleCompletionTask {
         // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
         this.poll_ref
             .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
-        if this.cancelled.load(core::sync::atomic::Ordering::Acquire)
-            || !this.global_this.bun_vm().is_context_live(this.context)
-        {
+        if this.cancelled.load(core::sync::atomic::Ordering::Acquire) {
             return Ok(());
         }
 
@@ -1319,6 +1317,17 @@ impl bun_event_loop::Taskable for JSBundleCompletionTask {
     /// the stop phase): its completion releases the keep-alive, plugin cell
     /// and promise against the live heap.
     unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this)
+                .cancelled
+                .store(true, core::sync::atomic::Ordering::Release)
+        };
         let _ = JSBundleCompletionTask::on_complete_anytask(this);
+    }
+    /// The context whose script called `Bun.build`.
+    unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+        // SAFETY: fn contract.
+        bun_event_loop::TaskContext::Of(unsafe { (*this).context })
     }
 }

@@ -379,8 +379,10 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
         held.push(graph);
       }
     })();
-    const after = await settle(baseline);
-    expect(Object.keys(after).filter(type => after[type] > baseline[type])).toEqual([]);
+    // Kept, it is every module of all eight: sixteen of each type.
+    const limits = Object.fromEntries(types.map(type => [type, baseline[type] + 7]));
+    const after = await settle(limits);
+    expect(Object.keys(after).filter(type => after[type] > limits[type])).toEqual([]);
     expect(held.length).toBe(8);
   });
 

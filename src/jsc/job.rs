@@ -317,6 +317,11 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
         // SAFETY: fn contract; JS thread with the heap alive.
         drop(unsafe { Self::take(this, VirtualMachine::get()) })
     }
+    /// Reached through the header ([`context_erased`]): the tag is shared.
+    unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+        // SAFETY: fn contract.
+        bun_event_loop::TaskContext::Of(unsafe { (*this).header.context })
+    }
 }
 
 impl<C: JobContext> Job<C> {
@@ -455,27 +460,18 @@ impl<C: JobContext> Drop for Completion<C> {
 /// `ptr` is a `Job<C>` posted by its `Completion` (for some `C`).
 pub unsafe fn complete_erased(ptr: *mut (), cx: &JsThread<'_>) -> JsResult<()> {
     let header = ptr.cast::<JobHeader>();
-    // A completion dispatched after the VM was asked to stop (a parent's
-    // terminate() lands while the worker still ticks): its `then` would only
-    // build script-facing values under a pending termination. Release it as
-    // teardown would — Node's threadpool `after` callbacks bail the same way
-    // on `!can_call_into_js()`.
-    //
-    // Likewise one scheduled by a file `bun test --isolate` has since retired:
-    // the swap was that file's exit, and a `then` that calls back directly
-    // (node:crypto's callback forms) would run its script under the next file.
-    // SAFETY: `ptr` is a live posted `Job<C>`, header first (fn contract).
-    //
-    // `then` continues what the scheduling script started: the next job it schedules, and the
-    // script it calls, are that context's.
-    // SAFETY: `ptr` is a live posted `Job<C>`, header first (fn contract).
-    let Some(_context) = cx.vm().enter_context_if_live(unsafe { (*header).context }) else {
-        // SAFETY: as below; released exactly once, here.
-        unsafe { ((*header).release_unrun)(header) };
-        return Ok(());
-    };
     // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
     unsafe { ((*header).complete)(header, cx) }
+}
+
+/// [`Taskable::context`](bun_event_loop::Taskable::context) for the erased tag: the context
+/// whose script scheduled the job.
+///
+/// # Safety
+/// As [`complete_erased`].
+pub unsafe fn context_erased(ptr: *mut ()) -> bun_event_loop::TaskContext {
+    // SAFETY: `ptr` is a live posted `Job<C>`, header first (fn contract).
+    bun_event_loop::TaskContext::Of(unsafe { (*ptr.cast::<JobHeader>()).context })
 }
 
 /// Teardown's release for a queued, never-dispatched `Job<C>` completion

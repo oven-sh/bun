@@ -62,6 +62,11 @@ impl Taskable for S3HttpDownloadStreamingTask {
     unsafe fn release_unrun(this: *mut Self) {
         S3HttpDownloadStreamingTask::on_response(this);
     }
+    /// The completion frees the request; the stream it feeds was aborted with its context
+    /// (`abort_handle`).
+    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
+        bun_event_loop::TaskContext::Always
+    }
 }
 
 impl S3HttpDownloadStreamingTask {

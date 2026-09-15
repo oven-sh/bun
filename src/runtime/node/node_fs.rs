@@ -947,18 +947,6 @@ mod _async_tasks {
             // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
             let _deinit =
                 scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
-            // A request of a context that has stopped is not reported: its promise stays pending.
-            let Some(_context) = self
-                .global_object()
-                .bun_vm()
-                .enter_context_if_live(self.context)
-            else {
-                if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::default()))
-                {
-                    result.discard();
-                }
-                return Ok(());
-            };
             // Move `result` out so the `global_object()` `&self` borrow can coexist
             // with consuming it below; the sentinel left behind is dropped in `destroy()`.
             let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
@@ -997,6 +985,10 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in create()).
             let mut task = unsafe { bun_core::heap::take(this) };
+            // A result nobody took (the request's context stopped: released unrun).
+            if let Ok(result) = core::mem::replace(&mut task.result, Err(sys::Error::default())) {
+                result.discard();
+            }
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
         }
@@ -1233,6 +1225,11 @@ mod _async_tasks {
             // SAFETY: fn contract — `Box::leak`'d in `UVFSRequest::create`.
             unsafe { Self::destroy(this) }
         }
+        /// The context whose script asked.
+        unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+            // SAFETY: fn contract.
+            bun_event_loop::TaskContext::Of(unsafe { (*this).context })
+        }
     }
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
@@ -1398,6 +1395,8 @@ mod _async_tasks {
         // `ref_()`/`unref()` (`KeepAlive::default()` is inert until ref'd).
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
+        /// `fs.cp`: the context whose script asked. The shell's `cp`: a step of its script.
+        pub(crate) context: bun_event_loop::TaskContext,
         pub(crate) has_result: AtomicBool,
         /// Number of in-flight references to `this`. Starts at 1 for the main
         /// directory-scan task; incremented for each `SingleTask` spawned. Every
@@ -1531,6 +1530,10 @@ mod _async_tasks {
             // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
             unsafe { Self::destroy(this) }
         }
+        unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+            // SAFETY: fn contract.
+            unsafe { (*this).context }
+        }
     }
 
     impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
@@ -1566,6 +1569,7 @@ mod _async_tasks {
                 EventLoopHandle::init(vm.event_loop.cast()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
+                bun_event_loop::TaskContext::Of(vm.current_context().id()),
                 core::ptr::null_mut(),
             );
             // SAFETY: `schedule_new` returns a Box::leak'd pointer; valid until destroy()
@@ -1587,6 +1591,8 @@ mod _async_tasks {
                 evtloop,
                 poster,
                 AsyncTaskTracker { id: 0 },
+                // As `ShellCpTask`, which is waiting for this.
+                bun_event_loop::TaskContext::Always,
                 shelltask,
             )
         }
@@ -1597,10 +1603,12 @@ mod _async_tasks {
             evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
             tracker: AsyncTaskTracker,
+            context: bun_event_loop::TaskContext,
             shelltask: *mut ShellCpTask,
         ) -> *mut Self {
             let mut task = Box::new(Self {
                 promise,
+                context,
                 args: cp_args,
                 has_result: AtomicBool::new(false),
                 // Sentinel — overwritten by `finish_concurrently` (gated by the

@@ -993,6 +993,15 @@ devTest("a save reloads the viewers of every route that shares a symlinked file"
       ws.binaryType = "arraybuffer";
       const routeBundle = Promise.withResolvers<number>();
       const reloaded = Promise.withResolvers<number[]>();
+      // Nothing awaits `reloaded` when an earlier assertion fails.
+      reloaded.promise.catch(() => {});
+      const fail = (event: Event) => {
+        const error = new Error(`The HMR socket of ${pathname} got "${event.type}" before the expected message`);
+        routeBundle.reject(error);
+        reloaded.reject(error);
+      };
+      ws.onerror = fail;
+      ws.onclose = fail;
       ws.onmessage = event => {
         const view = new DataView(event.data);
         switch (String.fromCharCode(view.getUint8(0))) {
@@ -1006,7 +1015,9 @@ devTest("a save reloads the viewers of every route that shares a symlinked file"
           case "u": {
             // A hot update starts with the route bundles that have to reload. -1 ends the list.
             const routeBundles: number[] = [];
-            for (let i = 1; view.getInt32(i, true) !== -1; i += 4) routeBundles.push(view.getInt32(i, true));
+            for (let i = 1; i + 4 <= view.byteLength && view.getInt32(i, true) !== -1; i += 4) {
+              routeBundles.push(view.getInt32(i, true));
+            }
             reloaded.resolve(routeBundles);
             break;
           }

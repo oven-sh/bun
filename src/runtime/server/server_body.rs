@@ -3267,6 +3267,8 @@ where
             resp.end_without_body(true);
             return;
         }
+        // Same as `prepare_js_request_context`, which this path does not use.
+        resp.send_corked();
         let _entered = this.vm().enter_event_loop_scope_without_checkpoint();
         this.on_pending_request();
         req.set_yield(false);

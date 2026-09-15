@@ -35,12 +35,6 @@ pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()
 }
 
-/// Caller must check for termination exception
-// HOST_EXPORT(Bun__drainMicrotasks, c)
-pub fn drain_microtasks() {
-    VirtualMachine::get().event_loop_mut().tick();
-}
-
 // HOST_EXPORT(Bun__readOriginTimer, c)
 pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     // Check if performance.now() is overridden (for fake timers)

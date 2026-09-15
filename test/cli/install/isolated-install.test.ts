@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, githubTarball, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -963,39 +963,10 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 test("adding and removing a patch for a github dependency in a workspace completes", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
-  // Minimal gzipped tarball shaped like a github codeload tarball: a single
-  // root directory wrapping the package contents.
-  function tarHeader(name: string, size: number, isDir: boolean): Uint8Array {
-    const header = new Uint8Array(512);
-    const encoder = new TextEncoder();
-    header.set(encoder.encode(name), 0);
-    header.set(encoder.encode(isDir ? "0000755 " : "0000644 "), 100);
-    header.set(encoder.encode("0000000 "), 108);
-    header.set(encoder.encode("0000000 "), 116);
-    header.set(encoder.encode(size.toString(8).padStart(11, "0") + " "), 124);
-    header.set(encoder.encode("00000000000 "), 136);
-    header.set(encoder.encode("        "), 148);
-    header[156] = (isDir ? "5" : "0").charCodeAt(0);
-    header.set(encoder.encode("ustar"), 257);
-    header.set(encoder.encode("00"), 263);
-    let checksum = 0;
-    for (const byte of header) checksum += byte;
-    header.set(encoder.encode(checksum.toString(8).padStart(6, "0") + "\0 "), 148);
-    return header;
-  }
-  const blocks: Uint8Array[] = [];
-  blocks.push(tarHeader("testowner-testrepo-aaaaaaa/", 0, true));
-  for (const [name, contents] of [
-    ["package.json", JSON.stringify({ name: "gh-dep", version: "1.0.0" })],
-    ["index.js", 'console.log("original");\n'],
-  ]) {
-    const bytes = new TextEncoder().encode(contents);
-    blocks.push(tarHeader(`testowner-testrepo-aaaaaaa/${name}`, bytes.length, false));
-    blocks.push(bytes);
-    if (bytes.length % 512 !== 0) blocks.push(new Uint8Array(512 - (bytes.length % 512)));
-  }
-  blocks.push(new Uint8Array(1024));
-  const tarball = Bun.gzipSync(Buffer.concat(blocks));
+  const tarball = await githubTarball("testowner-testrepo-aaaaaaa", {
+    "package.json": JSON.stringify({ name: "gh-dep", version: "1.0.0" }),
+    "index.js": 'console.log("original");\n',
+  });
 
   using server = Bun.serve({
     port: 0,

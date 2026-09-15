@@ -6,6 +6,7 @@ import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
+  githubTarball,
   isLinux,
   isWindows,
   readdirSorted,
@@ -15,14 +16,51 @@ import { join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
 
+// `owner/repo#commit` dependencies are downloaded from `${GITHUB_API_URL}/repos/...`, so
+// the repository below is served by this local server instead of api.github.com.
+const githubOwner = "lifecycle-owner";
+const githubRepo = "lifecycle-install-test";
+const githubCommit = "1234567890abcdef1234567890abcdef12345678";
+const githubDependency = `${githubOwner}/${githubRepo}#${githubCommit}`;
+const githubTarballPath = `/repos/${githubOwner}/${githubRepo}/tarball/${githubCommit}`;
+const githubLifecycleScripts = ["preinstall", "install", "postinstall", "preprepare", "prepare", "postprepare"];
+const githubRepositoryTarball = await githubTarball(`${githubOwner}-${githubRepo}-${githubCommit.slice(0, 7)}`, {
+  "package.json": JSON.stringify({
+    name: githubRepo,
+    version: "1.0.0",
+    scripts: Object.fromEntries(githubLifecycleScripts.map(script => [script, `bun ${script}.js`])),
+  }),
+  ...Object.fromEntries(
+    githubLifecycleScripts.map(script => [
+      `${script}.js`,
+      `
+      import { writeFileSync } from "fs";
+      import { join } from "path";
+
+      writeFileSync(join(import.meta.dir, "${script}.txt"), "${script}!");
+      `,
+    ]),
+  ),
+});
+let github: ReturnType<typeof Bun.serve>;
+
 setDefaultTimeout(1000 * 60 * 5);
 
 beforeAll(async () => {
+  github = Bun.serve({
+    port: 0,
+    fetch(request) {
+      return new URL(request.url).pathname === githubTarballPath
+        ? new Response(githubRepositoryTarball)
+        : new Response("Not Found", { status: 404 });
+    },
+  });
   await verdaccio.start();
 });
 
-afterAll(() => {
+afterAll(async () => {
   verdaccio.stop();
+  await github.stop();
 });
 
 function splitErrLines(err: string): string[] {
@@ -1956,7 +1994,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     test("git dependencies also run `preprepare`, `prepare`, and `postprepare` scripts", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
-      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+      const testEnv = {
+        ...env,
+        GITHUB_API_URL: github.url.origin,
+        ...(forceWaiterThread ? { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : {}),
+      };
 
       await writeFile(
         packageJson,
@@ -1964,7 +2006,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           name: "foo",
           version: "1.0.0",
           dependencies: {
-            "lifecycle-install-test": "dylan-conway/lifecycle-install-test#3ba6af5b64f2d27456e08df21d750072dffd3eee",
+            "lifecycle-install-test": githubDependency,
           },
         }),
       );
@@ -1986,7 +2028,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        "+ lifecycle-install-test@github:dylan-conway/lifecycle-install-test#3ba6af5",
+        `+ lifecycle-install-test@github:${githubOwner}/${githubRepo}#${githubCommit.slice(0, 7)}`,
         "",
         "1 package installed",
         "",
@@ -2009,7 +2051,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           name: "foo",
           version: "1.0.0",
           dependencies: {
-            "lifecycle-install-test": "dylan-conway/lifecycle-install-test#3ba6af5b64f2d27456e08df21d750072dffd3eee",
+            "lifecycle-install-test": githubDependency,
           },
           trustedDependencies: ["lifecycle-install-test"],
         }),

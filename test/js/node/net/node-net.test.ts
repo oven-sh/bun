@@ -1524,8 +1524,10 @@ describe("Socket fd adoption", () => {
     try {
       const wfd = fs.openSync(fifo, O_WRONLY | O_NONBLOCK);
       // Larger than a pipe buffer (64 KiB on Linux and macOS): the first
-      // write(2) loop hits EAGAIN before the reader below gets a turn.
-      const payload = Buffer.alloc(512 * 1024, "x");
+      // write(2) loop hits EAGAIN before the reader below gets a turn. The
+      // 251-byte period lines up with no buffer size, so a lost, repeated or
+      // reordered piece shows in the comparison below.
+      const payload = Buffer.alloc(512 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
       const socket = new Socket({ fd: wfd, readable: false, writable: true });
       const events: string[] = [];
       socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
@@ -1538,14 +1540,16 @@ describe("Socket fd adoption", () => {
 
       // Drain the read end once per loop turn until EOF, which arrives when
       // the socket has closed the write end after its last byte.
-      const received = await new Promise<number>((resolve, reject) => {
+      const received = await new Promise<{ total: number; intact: boolean }>((resolve, reject) => {
         const chunk = Buffer.alloc(64 * 1024);
         let total = 0;
+        let intact = true;
         const pump = () => {
           try {
             for (;;) {
               const n = fs.readSync(rfd, chunk);
-              if (n === 0) return resolve(total);
+              if (n === 0) return resolve({ total, intact });
+              if (!chunk.subarray(0, n).equals(payload.subarray(total, total + n))) intact = false;
               total += n;
             }
           } catch (e) {
@@ -1558,7 +1562,7 @@ describe("Socket fd adoption", () => {
       await closed;
 
       expect(events).toEqual(["write()=false", "cb:ok"]);
-      expect(received).toBe(payload.length);
+      expect(received).toEqual({ total: payload.length, intact: true });
       expect(socket.bytesWritten).toBe(payload.length);
     } finally {
       fs.closeSync(rfd);
@@ -1578,11 +1582,15 @@ describe("Socket fd adoption", () => {
       const rfd = fs.openSync(process.env.FIFO, O_RDONLY | O_NONBLOCK);
       const wfd = fs.openSync(process.env.FIFO, O_WRONLY | O_NONBLOCK);
       // Larger than a pipe buffer: the tail of a write stays queued until something reads.
-      const payload = Buffer.alloc(512 * 1024, "x");
+      // The 251-byte period lines up with no buffer size, so a foreign or reordered byte shows.
+      const payload = Buffer.alloc(512 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+      // At most two payloads are written. What reaches the pipe must be a prefix of them.
+      const expected = Buffer.concat([payload, payload]);
       const chunk = Buffer.alloc(64 * 1024);
       const events = [];
       let dispatched = 0;
       let delivered = 0;
+      let prefixIntact = true;
       let eof = false;
       let writeError;
 
@@ -1592,6 +1600,7 @@ describe("Socket fd adoption", () => {
           for (;;) {
             const n = fs.readSync(rfd, chunk);
             if (n === 0) return void (eof = true);
+            if (!chunk.subarray(0, n).equals(expected.subarray(delivered, delivered + n))) prefixIntact = false;
             delivered += n;
           }
         } catch (e) {
@@ -1642,6 +1651,7 @@ describe("Socket fd adoption", () => {
             errored: socket.errored.message,
             bytesWritten: socket.bytesWritten === dispatched,
             tailDropped: delivered > 0 && delivered < dispatched,
+            prefixIntact,
           }));
         })();
       });
@@ -1674,6 +1684,7 @@ describe("Socket fd adoption", () => {
         errored: "write ECANCELED",
         bytesWritten: true,
         tailDropped: true,
+        prefixIntact: true,
       };
 
       it.concurrent("destroy()", async () => {

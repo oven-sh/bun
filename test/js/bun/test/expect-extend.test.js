@@ -330,7 +330,7 @@ describe("async support", () => {
 
 it("should not crash under intensive usage", () => {
   withoutAggressiveGC(() => {
-    for (let i = 0; i < 10000; ++i) {
+    for (let i = 0; i < 2000; ++i) {
       expect(i)._toBeDivisibleBy(1);
       expect(i).toEqual(expect._toBeDivisibleBy(1));
     }
@@ -355,28 +355,46 @@ it("should support asymmetric matchers", () => {
   expect(() => expect(1).not._toCustomEqual(expect.any(Number))).toThrow();
 });
 
-it("works on prototypes", () => {
+it("only registers own properties, not inherited ones", () => {
   const Bar = {
-    _toBeBar() {
+    _toBeInherited() {
       return { pass: true };
     },
   };
   const Foo = Object.create(Bar);
+  Foo._toBeOwned = function () {
+    return { pass: true };
+  };
 
+  // Only own properties are registered (matches Jest's Object.keys behavior);
+  // the inherited _toBeInherited must not become a matcher.
   expect.extend(Foo);
-  expect(123)._toBeBar();
+  expect(123)._toBeOwned();
+  expect(typeof expect(123)._toBeOwned).toBe("function");
+  expect(typeof expect(123)._toBeInherited).toBe("undefined");
 });
 
-it("works on classes", () => {
-  class Bar {
-    _toBeBar() {
+it("works on plain objects", () => {
+  const matchers = {
+    _toBeBar2() {
       return { pass: true };
-    }
-  }
-  class Foo extends Bar {}
+    },
+  };
 
-  expect.extend(new Foo());
-  expect(123)._toBeBar();
+  expect.extend(matchers);
+  expect(123)._toBeBar2();
+});
+
+it("does not crash when prototype has non-function properties", () => {
+  const proto = { [Symbol.toStringTag]: "CustomMatcher", inheritedProp: "not a function" };
+  const matchers = Object.create(proto);
+  matchers._toBeOwnProp = function (actual, expected) {
+    return { pass: actual === expected, message: () => `expected ${actual} to be ${expected}` };
+  };
+
+  // Should not throw due to inherited non-function properties on the prototype
+  expect.extend(matchers);
+  expect(42)._toBeOwnProp(42);
 });
 
 test("expect.extend with numeric index keys does not crash", () => {

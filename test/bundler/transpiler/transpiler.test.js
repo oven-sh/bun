@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -5215,6 +5215,45 @@ it("does not crash with --minify-syntax and revisiting dot expressions", () => {
   expect(stderr.toString()).toBe("");
   expect(stdout.toString()).toBe("undefined\n");
   expect(exitCode).toBe(0);
+});
+
+// The printer aborted the process on these inputs, so they run in subprocesses.
+describe.concurrent("minify.identifiers on an empty source or a data loader", () => {
+  const printed = stdout => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+  const minified = "var key=1;export{key};export default {key};";
+
+  it.each([
+    [`new Bun.Transpiler({ minify: { identifiers: true } }).transformSync("")`, ""],
+    [`new Bun.Transpiler({ minify: true }).transformSync(" ")`, ""],
+    [`new Bun.Transpiler({ minify: true }).transformSync('{"key":1}', "json")`, minified],
+    [`await new Bun.Transpiler({ minify: true }).transform('{"key":1}', "json")`, minified],
+  ])("%s", async (expression, output) => {
+    const result = await bunRun(["-e", `console.log(JSON.stringify(${expression}))`]);
+    expect(result).toEqual(printed(JSON.stringify(output)));
+  });
+
+  it("the toml, yaml and text loaders", async () => {
+    const result = await bunRun([
+      "-e",
+      `const browser = new Bun.Transpiler({ minify: true });
+      const bun = new Bun.Transpiler({ minify: true, target: "bun" });
+      console.log(JSON.stringify([
+        browser.transformSync("key = 1", "toml"),
+        bun.transformSync("key: 1", "yaml"),
+        browser.transformSync("key", "text"),
+      ]));`,
+    ]);
+    expect(result).toEqual(printed(JSON.stringify([minified, minified, 'export default "key";'])));
+  });
+
+  it.each([
+    ["--minify", "data.json", '{"key":1}\n', minified],
+    ["--minify-identifiers", "empty.js", "", ""],
+  ])("bun build --no-bundle %s %s", async (flag, file, contents, output) => {
+    using dir = tempDir("minify-identifiers-no-char-freq", { [file]: contents });
+    const result = await bunRun(["build", "--no-bundle", flag, join(String(dir), file)]);
+    expect(result).toEqual(printed(output));
+  });
 });
 
 it("runtime transpiler stack overflows", async () => {

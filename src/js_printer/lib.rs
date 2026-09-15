@@ -7876,8 +7876,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         top_level_symbols.sort_unstable_by(rename::StableSymbolCount::less_than);
 
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols)?;
-        let minifier = tree.char_freq.as_ref().unwrap().compile();
-        minify_renamer.assign_names_by_frequency(&minifier)?;
+        // `None` if the JS parser did not build `tree`: an empty file, a data loader.
+        let char_freq = tree.char_freq.as_deref().copied().unwrap_or_default();
+        minify_renamer.assign_names_by_frequency(&char_freq.compile())?;
 
         rename::Renamer::MinifyRenamer(&mut *minify_renamer)
     } else {

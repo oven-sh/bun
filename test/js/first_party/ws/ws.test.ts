@@ -1462,3 +1462,364 @@ describe("module loading", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/8261
+// The `ws` WebSocketServer `maxPayload` option was ignored: Bun applied a fixed
+// 16 MiB native limit regardless of the value passed, so a smaller limit let
+// oversized frames through and a larger limit still rejected frames above the
+// native default.
+describe("WebSocketServer maxPayload", () => {
+  const SMALL = 4096;
+  // Just over Bun.serve's 16 MiB websocket default, to prove the native cap is
+  // raised without shipping a needlessly large payload through a debug build.
+  const BIG = 17 * 1024 * 1024;
+
+  it.concurrent("rejects a message larger than maxPayload with a RangeError on the server socket", async () => {
+    const wss = new WebSocketServer({ port: 0, maxPayload: SMALL });
+    const serverEvents: any[] = [];
+    const serverDone = Promise.withResolvers<void>();
+    const clientClose = Promise.withResolvers<number>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("message", m => serverEvents.push({ type: "message", length: (m as Buffer).length }));
+      serverWs.on("error", err => serverEvents.push({ type: "error", err }));
+      serverWs.on("close", code => {
+        serverEvents.push({ type: "close", code });
+        serverDone.resolve();
+      });
+    });
+
+    const ws = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.send(new Uint8Array(64 * 1024)));
+    ws.on("close", code => clientClose.resolve(code));
+    ws.on("error", () => {});
+
+    try {
+      await serverDone.promise;
+      // Server side matches npm `ws`: 'error' (RangeError, WS_ERR_UNSUPPORTED_MESSAGE_LENGTH)
+      // fires before 'close' (1009), and no 'message' event is emitted.
+      expect(serverEvents).toHaveLength(2);
+      expect(serverEvents[0].type).toBe("error");
+      expect(serverEvents[0].err).toBeInstanceOf(RangeError);
+      expect(serverEvents[0].err.message).toBe("Max payload size exceeded");
+      expect(serverEvents[0].err.code).toBe("WS_ERR_UNSUPPORTED_MESSAGE_LENGTH");
+      expect(serverEvents[1]).toEqual({ type: "close", code: 1009 });
+      expect(await clientClose.promise).toBe(1009);
+    } finally {
+      ws.close();
+      wss.close();
+    }
+  });
+
+  it.concurrent("rejects an oversized text message the same way as a binary one", async () => {
+    const wss = new WebSocketServer({ port: 0, maxPayload: SMALL });
+    const serverOutcome = Promise.withResolvers<{ type: string; code?: string; length?: number }>();
+    const clientClose = Promise.withResolvers<number>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("message", m => serverOutcome.resolve({ type: "message", length: (m as Buffer).length }));
+      serverWs.on("error", (err: any) => serverOutcome.resolve({ type: err.constructor.name, code: err.code }));
+    });
+
+    const ws = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.send(Buffer.alloc(SMALL + 1, "A").toString()));
+    ws.on("close", code => clientClose.resolve(code));
+    ws.on("error", () => {});
+
+    try {
+      expect(await serverOutcome.promise).toEqual({ type: "RangeError", code: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" });
+      expect(await clientClose.promise).toBe(1009);
+    } finally {
+      ws.close();
+      wss.close();
+    }
+  });
+
+  // The server socket's binaryType decides whether a binary frame arrives as a
+  // Buffer, an ArrayBuffer or a Blob; the size check must see all three.
+  for (const binaryType of ["nodebuffer", "arraybuffer", "blob"] as const) {
+    it.concurrent(`rejects an oversized binary message when binaryType is ${binaryType}`, async () => {
+      const wss = new WebSocketServer({ port: 0, maxPayload: SMALL });
+      const serverOutcome = Promise.withResolvers<{ type: string; code?: string }>();
+      const clientClose = Promise.withResolvers<number>();
+
+      wss.on("connection", serverWs => {
+        serverWs.binaryType = binaryType;
+        serverWs.on("message", m => serverOutcome.resolve({ type: "message:" + m.constructor.name }));
+        serverWs.on("error", (err: any) => serverOutcome.resolve({ type: err.constructor.name, code: err.code }));
+      });
+
+      const ws = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port);
+      ws.on("open", () => ws.send(new Uint8Array(SMALL + 1)));
+      ws.on("close", code => clientClose.resolve(code));
+      ws.on("error", () => {});
+
+      try {
+        expect(await serverOutcome.promise).toEqual({ type: "RangeError", code: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" });
+        expect(await clientClose.promise).toBe(1009);
+      } finally {
+        ws.close();
+        wss.close();
+      }
+    });
+  }
+
+  // npm `ws` flips the socket to CLOSING before emitting 'error' (receiverOnError), so
+  // close()/send() inside the handler are no-ops and the close code stays 1009. The
+  // server-side surface is the same whether the frame is caught by the shim's own check
+  // (just over maxPayload) or by Bun.serve's native 16 MiB cap (BIG); in the native case
+  // the transport is dropped before a close frame can be sent, so only the server side
+  // is asserted there.
+  for (const [label, size, expectedClientCode] of [
+    ["the shim's check", SMALL + 1, 1009],
+    ["the native cap", BIG, undefined],
+  ] as const) {
+    it.concurrent(`is CLOSING inside the error handler and keeps 1009 when ${label} rejects the frame`, async () => {
+      const wss = new WebSocketServer({ port: 0, maxPayload: SMALL });
+      const serverOutcome = Promise.withResolvers<{ readyStateInHandler: number; closeCode: number }>();
+      const clientClose = Promise.withResolvers<number>();
+
+      wss.on("connection", serverWs => {
+        let readyStateInHandler = -1;
+        serverWs.on("error", () => {
+          readyStateInHandler = serverWs.readyState;
+          serverWs.close(1000, "ignored");
+        });
+        serverWs.on("close", closeCode => serverOutcome.resolve({ readyStateInHandler, closeCode }));
+      });
+
+      const ws = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port);
+      ws.on("open", () => ws.send(new Uint8Array(size)));
+      ws.on("close", code => clientClose.resolve(code));
+      ws.on("error", () => {});
+
+      try {
+        expect(await serverOutcome.promise).toEqual({ readyStateInHandler: WebSocket.CLOSING, closeCode: 1009 });
+        if (expectedClientCode !== undefined) expect(await clientClose.promise).toBe(expectedClientCode);
+      } finally {
+        ws.close();
+        wss.close();
+      }
+    });
+  }
+
+  it.concurrent("accepts a message larger than Bun.serve's 16 MiB default when maxPayload is raised", async () => {
+    const wss = new WebSocketServer({ port: 0, maxPayload: BIG + 1024 });
+    const serverOutcome = Promise.withResolvers<{ type: string; length?: number; code?: number }>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("message", m => serverOutcome.resolve({ type: "message", length: (m as Buffer).length }));
+      serverWs.on("error", () => serverOutcome.resolve({ type: "error" }));
+      serverWs.on("close", code => serverOutcome.resolve({ type: "close", code }));
+    });
+
+    const ws = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.send(new Uint8Array(BIG)));
+    ws.on("error", () => {});
+
+    try {
+      expect(await serverOutcome.promise).toEqual({ type: "message", length: BIG });
+    } finally {
+      ws.close();
+      wss.close();
+    }
+  });
+
+  // npm `ws` treats a maxPayload that is not a positive number as unlimited
+  // (Receiver does `maxPayload | 0` and skips the check below 1), so an explicit
+  // 0 or undefined must raise the native cap rather than leave it at 16 MiB.
+  for (const maxPayload of [0, undefined]) {
+    it.concurrent(`treats maxPayload: ${maxPayload} as unlimited`, async () => {
+      const wss = new WebSocketServer({ port: 0, maxPayload });
+      const serverOutcome = Promise.withResolvers<{ type: string; length?: number; code?: number }>();
+
+      wss.on("connection", serverWs => {
+        serverWs.on("message", m => serverOutcome.resolve({ type: "message", length: (m as Buffer).length }));
+        serverWs.on("error", () => serverOutcome.resolve({ type: "error" }));
+        serverWs.on("close", code => serverOutcome.resolve({ type: "close", code }));
+      });
+
+      const ws = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port);
+      ws.on("open", () => ws.send(new Uint8Array(BIG)));
+      ws.on("error", () => {});
+
+      try {
+        expect(await serverOutcome.promise).toEqual({ type: "message", length: BIG });
+      } finally {
+        ws.close();
+        wss.close();
+      }
+    });
+  }
+
+  it.concurrent("delivers a message that is exactly maxPayload bytes", async () => {
+    const wss = new WebSocketServer({ port: 0, maxPayload: SMALL });
+    const serverOutcome = Promise.withResolvers<{ type: string; length?: number }>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("message", m => serverOutcome.resolve({ type: "message", length: (m as Buffer).length }));
+      serverWs.on("error", () => serverOutcome.resolve({ type: "error" }));
+    });
+
+    const ws = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.send(new Uint8Array(SMALL)));
+    ws.on("error", () => {});
+
+    try {
+      expect(await serverOutcome.promise).toEqual({ type: "message", length: SMALL });
+    } finally {
+      ws.close();
+      wss.close();
+    }
+  });
+
+  it.concurrent("raises the native limit when attached to an already-listening server (server mode)", async () => {
+    const httpServer = createServer((req, res) => res.end("ok"));
+    let connections = 0;
+    httpServer.on("connection", () => connections++);
+    httpServer.listen(0);
+    await once(httpServer, "listening");
+    let wss: WebSocketServer | undefined;
+    let ws: WebSocket | undefined;
+    try {
+      const port = (httpServer.address() as AddressInfo).port;
+
+      // Attaching with a maxPayload above Bun.serve's default reloads the native
+      // listener; plain HTTP requests and the 'connection' event on the same
+      // server must keep working across the reload. Use `Connection: close` so
+      // each fetch is a fresh TCP connection.
+      const headers = { Connection: "close" };
+      expect(await (await fetch(`http://127.0.0.1:${port}/`, { headers })).text()).toBe("ok");
+      expect(connections).toBe(1);
+
+      wss = new WebSocketServer({ server: httpServer, maxPayload: BIG + 1024 });
+      const serverOutcome = Promise.withResolvers<{ type: string; length?: number; code?: number }>();
+
+      expect(await (await fetch(`http://127.0.0.1:${port}/`, { headers })).text()).toBe("ok");
+      expect(connections).toBe(2);
+
+      wss.on("connection", serverWs => {
+        serverWs.on("message", m => serverOutcome.resolve({ type: "message", length: (m as Buffer).length }));
+        serverWs.on("error", () => serverOutcome.resolve({ type: "error" }));
+        serverWs.on("close", code => serverOutcome.resolve({ type: "close", code }));
+      });
+
+      ws = new WebSocket("ws://127.0.0.1:" + port);
+      ws.on("open", () => ws!.send(new Uint8Array(BIG)));
+      ws.on("error", () => {});
+
+      expect(await serverOutcome.promise).toEqual({ type: "message", length: BIG });
+    } finally {
+      ws?.close();
+      wss?.close();
+      httpServer.close();
+    }
+  });
+
+  // The http 'connection' event is emitted from inside uWS's connection-filter
+  // loop, so the reload this attachment triggers must not touch that list.
+  it.concurrent("can be attached with a raised maxPayload from inside the 'connection' listener", async () => {
+    const httpServer = createServer();
+    const serverOutcome = Promise.withResolvers<{ type: string; length?: number; code?: number }>();
+    let wss: WebSocketServer | undefined;
+    httpServer.once("connection", () => {
+      wss = new WebSocketServer({ server: httpServer, maxPayload: BIG + 1024 });
+      wss.on("connection", serverWs => {
+        serverWs.on("message", m => serverOutcome.resolve({ type: "message", length: (m as Buffer).length }));
+        serverWs.on("error", () => serverOutcome.resolve({ type: "error" }));
+        serverWs.on("close", code => serverOutcome.resolve({ type: "close", code }));
+      });
+    });
+    httpServer.listen(0);
+    await once(httpServer, "listening");
+
+    const ws = new WebSocket("ws://127.0.0.1:" + (httpServer.address() as AddressInfo).port);
+    ws.on("open", () => ws.send(new Uint8Array(BIG)));
+    ws.on("error", () => {});
+
+    try {
+      expect(await serverOutcome.promise).toEqual({ type: "message", length: BIG });
+    } finally {
+      ws.close();
+      wss?.close();
+      httpServer.close();
+    }
+  });
+
+  it.concurrent("enforces maxPayload in noServer mode", async () => {
+    const wss = new WebSocketServer({ noServer: true, maxPayload: SMALL });
+    const httpServer = createServer();
+    const serverOutcome = Promise.withResolvers<{ type: string; err?: any }>();
+
+    httpServer.on("upgrade", (request, socket, head) => {
+      wss.handleUpgrade(request, socket, head, ws => wss.emit("connection", ws, request));
+    });
+    wss.on("connection", serverWs => {
+      serverWs.on("message", () => serverOutcome.resolve({ type: "message" }));
+      serverWs.on("error", err => serverOutcome.resolve({ type: "error", err }));
+    });
+
+    httpServer.listen(0);
+    await once(httpServer, "listening");
+
+    const ws = new WebSocket("ws://127.0.0.1:" + (httpServer.address() as AddressInfo).port);
+    ws.on("open", () => ws.send(new Uint8Array(64 * 1024)));
+    ws.on("error", () => {});
+
+    try {
+      const outcome = await serverOutcome.promise;
+      expect(outcome.type).toBe("error");
+      expect(outcome.err).toBeInstanceOf(RangeError);
+    } finally {
+      ws.close();
+      wss.close();
+      httpServer.close();
+    }
+  });
+
+  it.concurrent("applies per-WebSocketServer limits when two share one http server", async () => {
+    const httpServer = createServer();
+    httpServer.listen(0);
+    await once(httpServer, "listening");
+
+    const strict = new WebSocketServer({ noServer: true, maxPayload: SMALL });
+    const loose = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+
+    httpServer.on("upgrade", (request, socket, head) => {
+      const which = request.url === "/loose" ? loose : strict;
+      which.handleUpgrade(request, socket, head, ws => which.emit("connection", ws, request));
+    });
+
+    const strictOutcome = Promise.withResolvers<string>();
+    const looseOutcome = Promise.withResolvers<{ type: string; length?: number }>();
+    strict.on("connection", ws => {
+      ws.on("message", () => strictOutcome.resolve("message"));
+      ws.on("error", () => strictOutcome.resolve("error"));
+    });
+    loose.on("connection", ws => {
+      ws.on("message", m => looseOutcome.resolve({ type: "message", length: (m as Buffer).length }));
+      ws.on("error", () => looseOutcome.resolve({ type: "error" }));
+    });
+
+    const port = (httpServer.address() as AddressInfo).port;
+    const payload = new Uint8Array(64 * 1024);
+
+    const c1 = new WebSocket(`ws://127.0.0.1:${port}/strict`);
+    c1.on("open", () => c1.send(payload));
+    c1.on("error", () => {});
+    const c2 = new WebSocket(`ws://127.0.0.1:${port}/loose`);
+    c2.on("open", () => c2.send(payload));
+    c2.on("error", () => {});
+
+    try {
+      expect(await strictOutcome.promise).toBe("error");
+      expect(await looseOutcome.promise).toEqual({ type: "message", length: 64 * 1024 });
+    } finally {
+      c1.close();
+      c2.close();
+      strict.close();
+      loose.close();
+      httpServer.close();
+    }
+  });
+});

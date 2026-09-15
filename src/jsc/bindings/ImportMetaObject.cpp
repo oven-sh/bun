@@ -49,6 +49,7 @@
 #include "wtf/text/StringView.h"
 
 #include "isBuiltinModule.h"
+#include "VectorSizeLimit.h"
 #include "WebCoreJSBuiltins.h"
 
 namespace Zig {
@@ -289,7 +290,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     WTF::String pathStr = path.toWTFString(globalObject);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;
-                    paths.append(Bun::toStringRef(pathStr));
+                    BunString pathRef = Bun::toStringRef(pathStr);
+                    if (!Bun::tryAppendWithinLimit(paths, pathRef)) [[unlikely]] {
+                        pathRef.deref();
+                        throwOutOfMemoryError(globalObject, scope);
+                        goto cleanup;
+                    }
                 }
 
                 result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());

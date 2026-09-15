@@ -353,7 +353,6 @@ if (typeof process !== "undefined") {
   const context = new Bun.FetchContext({
     tls: { ca: "ca", rejectUnauthorized: true, checkServerIdentity: () => undefined },
     proxy: { url: "http://proxy:8080", headers: { "x-proxy": "1" }, respectNoProxy: false },
-    lookup: async (hostname, { port }) => ({ address: hostname.length > port ? "127.0.0.1" : "::1", family: 4 }),
     keepAlive: { idleTimeout: 30, maxIdleSockets: 4 },
     onStats(stats) {
       const sent: number = stats.requestBodyBytesSent + stats.bytesWritten;
@@ -364,7 +363,13 @@ if (typeof process !== "undefined") {
   });
   fetch("https://example.com", { context });
   fetch("https://example.com", { context, proxy: false });
-  fetch("https://example.com", { proxy: false, lookup: () => "127.0.0.1", onStats: () => {} });
+  fetch("https://example.com", { proxy: false, onStats: () => {} });
+  fetch("https://93.184.216.34/", {
+    headers: { Host: "example.com" },
+    tls: { serverName: "example.com" },
+    proxy: false,
+    redirect: "manual",
+  });
   fetch("https://example.com", { proxy: new URL("http://proxy:8080") });
   new Bun.FetchContext({ proxy: false, keepAlive: false, unix: "/tmp/sock" });
   context.close();

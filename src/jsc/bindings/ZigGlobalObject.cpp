@@ -4469,10 +4469,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
     } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {
         return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onRejectRequestStream;
-    } else if (handler == Bun__FetchTasklet__onResolveLookup) {
-        return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveLookup;
-    } else if (handler == Bun__FetchTasklet__onRejectLookup) {
-        return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onRejectLookup;
     } else if (handler == Bun__S3UploadStream__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onResolveStream;
     } else if (handler == Bun__S3UploadStream__onRejectStream) {

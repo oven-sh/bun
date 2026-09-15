@@ -475,22 +475,12 @@ pub struct HTTPClientResult<'a> {
     pub certificate_info: Option<CertificateInfo>,
     /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
     pub connect_errno: i32,
-    /// Set on the progress callback of a request parked in front of its
-    /// connect: the owner resolves the name and answers through
-    /// `HTTPThread::schedule_lookup_resume`.
-    pub lookup_request: Option<LookupRequest>,
     /// The proxy's reply to CONNECT when `fail` is `ProxyConnectFailed`. Kept
     /// apart from `metadata`, which is only ever the origin's response head.
     /// Boxed: it is large and rare, and every result is moved and dropped
     /// several times per request.
     pub proxy_connect_response: Option<Box<HTTPResponseMetadata>>,
     pub stats: ConnectionStats,
-}
-
-/// The host a request with a `lookup` callback is about to dial.
-pub struct LookupRequest {
-    pub hostname: Box<[u8]>,
-    pub port: u16,
 }
 
 /// Keep-alive pool partition of the fetch context a request belongs to.
@@ -501,19 +491,6 @@ pub struct PoolOptions {
     pub id: u64,
     pub idle_timeout_seconds: u32,
     pub max_idle_sockets: u16,
-}
-
-/// Where a request with a `lookup` callback is in resolving the host it dials.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub enum LookupState {
-    #[default]
-    Off,
-    /// Asked for; the next connect parks until the owner answers.
-    Needed,
-    /// Parked in `HTTPThread::lookup_parked`, holding no socket, until
-    /// `HTTPClient::resume_after_lookup`.
-    Waiting,
-    Resolved(core::net::IpAddr),
 }
 
 /// What the most recent connection attempt of a request did. Reset on every
@@ -615,7 +592,6 @@ impl<'a> HTTPClientResult<'a> {
             body_size: self.body_size,
             certificate_info: self.certificate_info,
             connect_errno: self.connect_errno,
-            lookup_request: self.lookup_request,
             proxy_connect_response: self.proxy_connect_response,
             stats: self.stats,
         }
@@ -874,7 +850,6 @@ pub struct HTTPClient<'a> {
     /// the body hasn't been compressed yet.
     pub(crate) compressed_body_len: usize,
     pub(crate) pool: PoolOptions,
-    pub(crate) lookup: LookupState,
     pub(crate) stats: ConnectionStats,
 }
 
@@ -1702,21 +1677,6 @@ impl<'a> HTTPClient<'a> {
 // ───────────────────────────── impl HTTPClient ─────────────────────────────
 
 impl<'a> HTTPClient<'a> {
-    /// The address a `lookup` callback resolved for the host being dialed.
-    pub(crate) fn dial_address(&self) -> Option<core::net::IpAddr> {
-        match self.lookup {
-            LookupState::Resolved(address) => Some(address),
-            LookupState::Off | LookupState::Needed | LookupState::Waiting => None,
-        }
-    }
-
-    pub(crate) fn pool_partition(&self) -> http_context::PoolPartition {
-        http_context::PoolPartition {
-            pool_id: self.pool.id,
-            dial_address: self.dial_address(),
-        }
-    }
-
     /// How this request authenticates the target's TLS peer on a fresh handshake.
     pub(crate) fn target_verification(&self) -> PeerVerification {
         if !self.flags.reject_unauthorized {
@@ -2035,10 +1995,6 @@ impl<'a> HTTPClient<'a> {
         if !self.unix_socket_path.is_empty() {
             return false;
         }
-        // Sessions are shared by origin, not by the address `lookup` picked.
-        if self.lookup != LookupState::Off {
-            return false;
-        }
         if matches!(
             self.state.original_request_body,
             HTTPRequestBody::Sendfile(_)
@@ -2095,9 +2051,6 @@ impl<'a> HTTPClient<'a> {
             return false;
         }
         if self.has_tls_options_unsupported_by_h3() {
-            return false;
-        }
-        if self.lookup != LookupState::Off {
             return false;
         }
         h3_alt_svc_enabled()
@@ -2740,7 +2693,6 @@ impl<'a> HTTPClient<'a> {
                 None,
                 self.unix_socket_path,
                 self.pool,
-                self.dial_address(),
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
@@ -2810,40 +2762,7 @@ impl<'a> HTTPClient<'a> {
         self.state = InternalState::init(body);
         self.stats = ConnectionStats::default();
         self.flags.hop_bypasses_pool = self.flags.bypass_pool && self.url.is_https();
-        // Every connection attempt (redirect hop, retry) asks `lookup` again.
-        if matches!(self.lookup, LookupState::Resolved(_)) {
-            self.lookup = LookupState::Needed;
-        }
-        self.start_dispatch();
-    }
 
-    /// Hand the host this attempt is about to dial to the owner's `lookup`
-    /// callback and wait, holding no socket, for `resume_after_lookup`.
-    fn park_for_lookup(&mut self) {
-        // The id is what a resume or an abort finds the request by.
-        debug_assert!(self.signals.aborted.is_some());
-        let dialed = self.http_proxy.as_ref().unwrap_or(&self.url);
-        let request = LookupRequest {
-            hostname: strip_ipv6_brackets(dialed.hostname).into(),
-            port: dialed.get_port_auto(),
-        };
-        self.lookup = LookupState::Waiting;
-        let _ = http_thread()
-            .lookup_parked
-            .put(self.async_http_id, self.as_erased_ptr());
-        let mut result = self.to_result();
-        result.lookup_request = Some(request);
-        debug_assert!(result.has_more);
-        self.result_callback.run(self.parent_async_http(), result);
-    }
-
-    pub(crate) fn resume_after_lookup(&mut self, address: core::net::IpAddr) {
-        debug_assert!(self.lookup == LookupState::Waiting);
-        self.lookup = LookupState::Resolved(address);
-        self.start_dispatch();
-    }
-
-    fn start_dispatch(&mut self) {
         if self.is_https() {
             self.start_::<true>();
         } else {
@@ -2946,7 +2865,7 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             }
-            if self.has_tls_options_unsupported_by_h3() || self.lookup != LookupState::Off {
+            if self.has_tls_options_unsupported_by_h3() {
                 self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
                 return;
@@ -2967,12 +2886,6 @@ impl<'a> HTTPClient<'a> {
             ) {
                 self.fail(crate::Error::ConnectionRefused);
             }
-            self.complete_connecting_process();
-            return;
-        }
-
-        if self.lookup == LookupState::Needed && self.unix_socket_path.is_empty() {
-            self.park_for_lookup();
             self.complete_connecting_process();
             return;
         }
@@ -4128,10 +4041,6 @@ impl<'a> HTTPClient<'a> {
 
     fn fail(&mut self, err: crate::Error) {
         self.unregister_abort_tracker();
-        if self.lookup == LookupState::Waiting {
-            self.lookup = LookupState::Needed;
-            let _ = http_thread().lookup_parked.swap_remove(&self.async_http_id);
-        }
         self.resolve_pending_h2(PendingH2Resolution::LeaderFailed);
 
         self.close_proxy_tunnel(true);
@@ -4356,7 +4265,6 @@ impl<'a> HTTPClient<'a> {
                     None,
                     self.unix_socket_path,
                     self.pool,
-                    self.dial_address(),
                 );
             } else {
                 if self.proxy_tunnel.is_some() {
@@ -4521,7 +4429,6 @@ impl<'a> HTTPClient<'a> {
             None,
             b"",
             self.pool,
-            self.dial_address(),
         );
 
         self.state.reset();
@@ -4630,7 +4537,6 @@ impl<'a> HTTPClient<'a> {
                     dns_error: self.state.dns_error,
                     dns_hostname: self.state.dns_hostname.take(),
                     connect_errno: self.state.connect_errno,
-                    lookup_request: None,
                     proxy_connect_response: None,
                     stats,
                     has_more: self.state.fail.is_none() && !self.state.is_done(),
@@ -4652,7 +4558,6 @@ impl<'a> HTTPClient<'a> {
             dns_error: self.state.dns_error,
             dns_hostname: self.state.dns_hostname.take(),
             connect_errno: self.state.connect_errno,
-            lookup_request: None,
             proxy_connect_response,
             stats,
             // check if we are reporting cert errors, do not have a fail state and we are not done

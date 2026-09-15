@@ -2026,23 +2026,6 @@ interface BunFetchRequestInit extends RequestInit {
   context?: Bun.FetchContext | undefined;
 
   /**
-   * Resolve the host of every connection this request opens. See
-   * {@link Bun.FetchLookupFunction}.
-   *
-   * Not part of the Fetch API specification.
-   *
-   * @example
-   * ```js
-   * // Connect to an address that was vetted up front
-   * const response = await fetch("https://example.com/hook", {
-   *   lookup: () => "93.184.216.34",
-   *   redirect: "error",
-   * });
-   * ```
-   */
-  lookup?: Bun.FetchLookupFunction | undefined;
-
-  /**
    * Called once when the connection is done with this request, with what its
    * last connection attempt did. See {@link Bun.FetchConnectionStats}.
    *

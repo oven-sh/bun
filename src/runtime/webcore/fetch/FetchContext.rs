@@ -191,9 +191,6 @@ impl<'a> ContextRef<'a> {
     pub(crate) fn unix(self) -> &'a [u8] {
         &self.context.unix
     }
-    pub(crate) fn lookup(self) -> Option<JSValue> {
-        js::lookup_get_cached(self.wrapper)
-    }
     pub(crate) fn on_stats(self) -> Option<JSValue> {
         js::on_stats_get_cached(self.wrapper)
     }
@@ -290,9 +287,6 @@ impl FetchContext {
             }
         }
 
-        if let Some(lookup) = options.get_function(global, "lookup")? {
-            js::lookup_set_cached(this_value, global, lookup);
-        }
         if let Some(on_stats) = options.get_function(global, "onStats")? {
             js::on_stats_set_cached(this_value, global, on_stats);
         }

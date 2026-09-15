@@ -139,10 +139,6 @@ pub struct FetchTasklet {
 
     // custom checkServerIdentity
     pub(crate) check_server_identity: StrongOptional,
-    /// Resolves the host of every connection this request opens.
-    pub(crate) lookup: StrongOptional,
-    /// The `lookup` promise this request is waiting on, if any.
-    pub(crate) pending_lookup: Option<NonNull<PendingLookup>>,
     /// Told the last connection's `ConnectionStats` once the HTTP thread is done.
     pub(crate) on_stats: StrongOptional,
     /// The `Bun.FetchContext` of this request, kept from being collected (and
@@ -500,8 +496,6 @@ impl FetchTasklet {
 
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
-        self.lookup.deinit();
-        self.abandon_pending_lookup();
         self.on_stats.deinit();
         self.fetch_context.deinit();
         self.clear_abort_signal();
@@ -1077,10 +1071,6 @@ impl FetchTasklet {
             // — falls through to the reject logic with `result.fail` set.
         }
 
-        if let Some(request) = self.result.lookup_request.take() {
-            self.run_lookup(&request);
-        }
-
         if self.metadata.is_none() && self.result.is_success() {
             cleanup(self);
             return Ok(());
@@ -1309,140 +1299,6 @@ impl FetchTasklet {
         if http_thread_is_done {
             self.mutex.lock();
         }
-    }
-
-    /// An object that is not a native promise goes through promise resolution,
-    /// which adopts a thenable and reads `then` once, like `await` does.
-    fn adopt_thenable(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
-        if !value.is_object() || value.as_any_promise().is_some() {
-            return Ok(value);
-        }
-        let promise = jsc::JSPromise::create(global);
-        let promise_value = promise.to_js();
-        promise.resolve(global, value)?;
-        Ok(promise_value)
-    }
-
-    /// The HTTP thread parked a connection attempt until the `lookup`
-    /// callback names the address to dial.
-    fn run_lookup(&mut self, request: &http::LookupRequest) {
-        let global_object = self.global_this;
-        let Some(lookup) = self.lookup.get() else {
-            return;
-        };
-        let hostname = match bun_string_jsc::create_utf8_for_js(&global_object, &request.hostname) {
-            Ok(v) => v,
-            Err(e) => return self.fail_lookup(global_object.take_exception(e)),
-        };
-        let options = JSValue::create_empty_object(&global_object, 1);
-        options.put(
-            &global_object,
-            b"port".as_slice(),
-            JSValue::js_number_from_int32(i32::from(request.port)),
-        );
-        let result = match lookup.call(&global_object, JSValue::UNDEFINED, &[hostname, options]) {
-            Ok(v) => v,
-            Err(e) => return self.fail_lookup(global_object.take_exception(e)),
-        };
-        let result = match Self::adopt_thenable(&global_object, result) {
-            Ok(v) => v,
-            Err(e) => return self.fail_lookup(global_object.take_exception(e)),
-        };
-        let Some(promise) = result.as_any_promise() else {
-            return self.finish_lookup(result);
-        };
-        match promise.status() {
-            bun_jsc::js_promise::Status::Pending => {
-                self.abandon_pending_lookup();
-                let pending = bun_core::heap::into_raw(Box::new(PendingLookup {
-                    tasklet: Some(NonNull::from(&mut *self)),
-                }));
-                self.pending_lookup = NonNull::new(pending);
-                result.then(
-                    &global_object,
-                    pending,
-                    on_resolve_lookup_shim,
-                    on_reject_lookup_shim,
-                );
-            }
-            bun_jsc::js_promise::Status::Fulfilled => {
-                self.finish_lookup(promise.result(global_object.vm()));
-            }
-            bun_jsc::js_promise::Status::Rejected => {
-                promise.set_handled(global_object.vm());
-                self.fail_lookup(promise.result(global_object.vm()));
-            }
-        }
-    }
-
-    /// `value` is what `lookup` produced: an address string, `{ address }`
-    /// (what `dns.promises.lookup` resolves to), or an array of either, of
-    /// which the first entry is used.
-    fn finish_lookup(&mut self, value: JSValue) {
-        let global_object = self.global_this;
-        let address = match Self::lookup_address_from_js(&global_object, value) {
-            Ok(address) => address,
-            Err(e) => return self.fail_lookup(global_object.take_exception(e)),
-        };
-        if self.signal_store.aborted.load(Ordering::Relaxed) {
-            return;
-        }
-        if let Some(http_) = self.http.as_deref() {
-            http::http_thread().schedule_lookup_resume(http_, address);
-        }
-    }
-
-    fn lookup_address_from_js(
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<core::net::IpAddr> {
-        let mut value = value;
-        if value.is_array() {
-            value = value.get_index(global_object, 0)?;
-        }
-        if value.is_object() {
-            value = value
-                .get(global_object, "address")?
-                .unwrap_or(JSValue::UNDEFINED);
-        }
-        if value.is_string() {
-            let text = value.to_utf8(global_object)?;
-            if bun_core::ip_address::is_ip_address(&text) {
-                if let Some(address) = bun_core::ip_address::to_ip_address(&text) {
-                    return Ok(address);
-                }
-            }
-            return Err(global_object
-                .err(
-                    jsc::ErrorCode::INVALID_IP_ADDRESS,
-                    format_args!("Invalid IP address: {}", bstr::BStr::new(&text[..])),
-                )
-                .throw());
-        }
-        Err(global_object
-            .err(
-                jsc::ErrorCode::INVALID_IP_ADDRESS,
-                format_args!("fetch: 'lookup' must return an IP address"),
-            )
-            .throw())
-    }
-
-    /// Whatever the `lookup` promise still pending settles to, it is no longer for this request.
-    fn abandon_pending_lookup(&mut self) {
-        if let Some(mut pending) = self.pending_lookup.take() {
-            // SAFETY: allocated in `run_lookup`; freed only by its settle handler,
-            // which has not run while the tasklet still points at it. JS thread.
-            unsafe { pending.as_mut().tasklet = None };
-        }
-    }
-
-    /// `lookup` threw, rejected, or returned no address: the request rejects with `reason`.
-    fn fail_lookup(&mut self, reason: JSValue) {
-        let global_object = self.global_this;
-        if !self.abort_reason.has() {
-            self.abort_reason.set(&global_object, reason);
-        }
-        self.abort_task();
     }
 
     fn get_abort_error(&mut self) -> Option<BodyValueError> {
@@ -2147,8 +2003,6 @@ impl FetchTasklet {
             has_schedule_callback: AtomicBool::new(false),
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
-            lookup: fetch_options.lookup,
-            pending_lookup: None,
             on_stats: fetch_options.on_stats,
             fetch_context: fetch_options.fetch_context,
             reject_unauthorized: fetch_options.reject_unauthorized,
@@ -2284,7 +2138,6 @@ impl FetchTasklet {
                 tls_props: fetch_options.ssl_config,
                 compress: fetch_options.compress,
                 pool: fetch_options.pool,
-                lookup: fetch_tasklet.lookup.has(),
                 bypass_pool: fetch_options.bypass_pool,
                 collect_stats: fetch_tasklet.on_stats.has(),
             },
@@ -2810,63 +2663,6 @@ fn on_reject_request_stream(
     Ok(JSValue::UNDEFINED)
 }
 
-/// What a pending `lookup` promise's reactions hold. The request can finish
-/// (abort) while the promise never settles, so they do not keep the tasklet
-/// alive: it clears `tasklet` when it stops waiting.
-pub(crate) struct PendingLookup {
-    tasklet: Option<NonNull<FetchTasklet>>,
-}
-
-fn on_settle_lookup(callframe: &bun_jsc::CallFrame, fulfilled: bool) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    let pending: *mut PendingLookup = args[args.len() - 1].as_promise_ptr::<PendingLookup>();
-    // SAFETY: `as_promise_ptr` recovers the box `run_lookup` leaked for exactly
-    // one of the two reactions to reclaim.
-    let pending = unsafe { bun_core::heap::take(pending) };
-    let Some(tasklet) = pending.tasklet else {
-        return Ok(JSValue::UNDEFINED);
-    };
-    let tasklet = tasklet.as_ptr();
-    // SAFETY: a tasklet clears `PendingLookup::tasklet` before it is freed, so
-    // it is live here. JS thread.
-    unsafe {
-        (*tasklet).pending_lookup = None;
-        if (*tasklet).global_this.bun_vm().script_allowed() {
-            if fulfilled {
-                (*tasklet).finish_lookup(args[0]);
-            } else {
-                (*tasklet).fail_lookup(args[0]);
-            }
-        }
-    }
-    Ok(JSValue::UNDEFINED)
-}
-
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FetchTasklet__onResolveLookup")]
-    unsafe fn on_resolve_lookup_shim(
-        _g: *mut JSGlobalObject,
-        cf: *mut bun_jsc::CallFrame,
-    ) -> JSValue {
-        match on_settle_lookup(bun_opaque::opaque_deref(cf), true) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
-    }
-}
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FetchTasklet__onRejectLookup")]
-    unsafe fn on_reject_lookup_shim(
-        _g: *mut JSGlobalObject,
-        cf: *mut bun_jsc::CallFrame,
-    ) -> JSValue {
-        match on_settle_lookup(bun_opaque::opaque_deref(cf), false) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
-    }
-}
-
 // Exported as function symbols so `Zig::GlobalObject::promiseHandlerID`'s
 // address comparison matches; see `Bun__FileSink__onResolveStream` for why a
 // `static` fn-ptr export would fail.
@@ -2947,7 +2743,6 @@ pub struct FetchOptions {
     pub(crate) compress: Option<http::compress_body::CompressOption>,
     pub(crate) pool: http::PoolOptions,
     pub(crate) bypass_pool: bool,
-    pub(crate) lookup: StrongOptional,
     pub(crate) on_stats: StrongOptional,
     pub(crate) fetch_context: StrongOptional,
 }

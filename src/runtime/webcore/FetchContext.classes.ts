@@ -9,7 +9,7 @@ export default [
     configurable: false,
     klass: {},
     JSType: "0b11101110",
-    values: ["checkServerIdentity", "lookup", "onStats"],
+    values: ["checkServerIdentity", "onStats"],
     proto: {
       close: {
         fn: "close",

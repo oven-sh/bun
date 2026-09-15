@@ -103,19 +103,16 @@ pub struct HttpThread {
     pub(crate) queued_writes: Vec<WriteMessage>,
     pub(crate) queued_receive_resumes: Vec<u32>,
     pub(crate) queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
-    /// Rare messages: `has_queued_control` lets a tick skip the lock.
-    pub(crate) queued_control: Vec<ControlMessage>,
-    pub(crate) has_queued_control: AtomicBool,
-    /// Requests parked in front of their connect until the owner resolves the
-    /// host (`LookupState::Waiting`). They hold no socket, so this is
-    /// the only place a resume or an abort can find them. HTTP-thread-only.
-    pub(crate) lookup_parked: ArrayHashMap<u32, NonNull<HttpClient<'static>>>,
+    /// `PoolOptions::id`s whose idle connections to close. Rare:
+    /// `has_queued_pool_closes` lets a tick skip the lock.
+    pub(crate) queued_pool_closes: Vec<u64>,
+    pub(crate) has_queued_pool_closes: AtomicBool,
 
     pub(crate) queued_shutdowns_lock: Mutex,
     pub(crate) queued_writes_lock: Mutex,
     pub(crate) queued_receive_resumes_lock: Mutex,
     pub(crate) queued_cert_check_resumes_lock: Mutex,
-    pub(crate) queued_control_lock: Mutex,
+    pub(crate) queued_pool_closes_lock: Mutex,
 
     /// Refs released on the next loop tick rather than inside the socket
     /// callback that gave them up.
@@ -176,14 +173,13 @@ impl HttpThread {
             queued_writes: Vec::new(),
             queued_receive_resumes: Vec::new(),
             queued_cert_check_resumes: Vec::new(),
-            queued_control: Vec::new(),
-            has_queued_control: AtomicBool::new(false),
-            lookup_parked: ArrayHashMap::new(),
+            queued_pool_closes: Vec::new(),
+            has_queued_pool_closes: AtomicBool::new(false),
             queued_shutdowns_lock: Mutex::new(),
             queued_writes_lock: Mutex::new(),
             queued_receive_resumes_lock: Mutex::new(),
             queued_cert_check_resumes_lock: Mutex::new(),
-            queued_control_lock: Mutex::new(),
+            queued_pool_closes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
             dead_ssl_contexts: Vec::new(),
             has_awoken: AtomicBool::new(false),
@@ -225,16 +221,6 @@ pub struct ShutdownMessage {
 /// certificate; un-park the connection so the request is written.
 pub struct CertCheckResumeMessage {
     pub(crate) async_http_id: u32,
-}
-
-pub enum ControlMessage {
-    /// The owner resolved the host a parked request is about to dial.
-    LookupResume {
-        async_http_id: u32,
-        address: core::net::IpAddr,
-    },
-    /// Close the idle connections of fetch context `PoolOptions::id`.
-    PoolClose(u64),
 }
 
 pub struct LibdeflateState {
@@ -609,14 +595,6 @@ impl HttpThread {
                     if h3::ClientContext::abort_by_http_id(http.async_http_id) {
                         continue;
                     }
-                    // Or it is parked in front of its connect, waiting for a
-                    // `lookup` answer that will now never be used.
-                    if let Some((_, parked)) =
-                        self.lookup_parked.fetch_swap_remove(&http.async_http_id)
-                    {
-                        HttpClient::from_erased_backref(parked).fail(crate::Error::Aborted);
-                        continue;
-                    }
                     // Otherwise the request either hasn't started yet (still in
                     // `queued_tasks`/`deferred_tasks`) or has already completed.
                     // Flag it so `drainEvents` knows to scan the queue for
@@ -747,41 +725,24 @@ impl HttpThread {
         }
     }
 
-    fn drain_queued_control(&mut self) {
+    fn drain_queued_pool_closes(&mut self) {
         // Read before writing so an idle tick leaves the cache line shared. The
         // flag is a hint: the queue is published by its lock, and the producer
         // wakes the loop after raising the flag.
-        while self.has_queued_control.load(Ordering::Relaxed)
-            && self.has_queued_control.swap(false, Ordering::Acquire)
+        while self.has_queued_pool_closes.load(Ordering::Relaxed)
+            && self.has_queued_pool_closes.swap(false, Ordering::Acquire)
         {
             let queued = {
-                let _guard = self.queued_control_lock.lock_guard();
-                core::mem::take(&mut self.queued_control)
+                let _guard = self.queued_pool_closes_lock.lock_guard();
+                core::mem::take(&mut self.queued_pool_closes)
             };
-            for message in queued {
-                match message {
-                    ControlMessage::LookupResume {
-                        async_http_id,
-                        address,
-                    } => {
-                        // Missing: the request was aborted while its lookup ran.
-                        if let Some((_, parked)) =
-                            self.lookup_parked.fetch_swap_remove(&async_http_id)
-                        {
-                            // May synchronously reach a terminal result; do not touch
-                            // the client after this call.
-                            HttpClient::from_erased_backref(parked).resume_after_lookup(address);
-                        }
-                    }
-                    ControlMessage::PoolClose(pool_id) => {
-                        self.http_context.close_idle_sockets(pool_id);
-                        self.https_context.close_idle_sockets(pool_id);
-                        for entry in custom_ssl_context_map().values_mut() {
-                            entry.ctx_mut().close_idle_sockets(pool_id);
-                        }
-                        h3::ClientContext::close_idle_sessions(pool_id);
-                    }
+            for pool_id in queued {
+                self.http_context.close_idle_sockets(pool_id);
+                self.https_context.close_idle_sockets(pool_id);
+                for entry in custom_ssl_context_map().values_mut() {
+                    entry.ctx_mut().close_idle_sockets(pool_id);
                 }
+                h3::ClientContext::close_idle_sessions(pool_id);
             }
         }
     }
@@ -843,7 +804,7 @@ impl HttpThread {
         // turn removes the abort-tracker entry first, so the resume becomes a
         // no-op and the request is never transmitted after a same-tick abort.
         self.drain_queued_cert_check_resumes();
-        self.drain_queued_control();
+        self.drain_queued_pool_closes();
         h3::PendingConnect::drain_resolved();
 
         self.queued_threadlocal_proxy_derefs.clear();
@@ -971,27 +932,14 @@ impl HttpThread {
         self.wakeup();
     }
 
-    fn schedule_control(&mut self, message: ControlMessage) {
-        {
-            let _guard = self.queued_control_lock.lock_guard();
-            self.queued_control.push(message);
-        }
-        self.has_queued_control.store(true, Ordering::Release);
-        self.wakeup();
-    }
-
-    /// Answer the `lookup_request` of a parked request with the address to dial.
-    pub fn schedule_lookup_resume(&mut self, http: &AsyncHttp, address: core::net::IpAddr) {
-        bun_core::scoped_log!(HTTPThread, "scheduleLookupResume {}", http.async_http_id);
-        self.schedule_control(ControlMessage::LookupResume {
-            async_http_id: http.async_http_id,
-            address,
-        });
-    }
-
     /// Close the idle keep-alive connections of fetch context `pool_id`.
     pub fn schedule_pool_close(&mut self, pool_id: u64) {
-        self.schedule_control(ControlMessage::PoolClose(pool_id));
+        {
+            let _guard = self.queued_pool_closes_lock.lock_guard();
+            self.queued_pool_closes.push(pool_id);
+        }
+        self.has_queued_pool_closes.store(true, Ordering::Release);
+        self.wakeup();
     }
 
     pub fn schedule_request_write(&mut self, http: &AsyncHttp, kind: WriteMessageType) {

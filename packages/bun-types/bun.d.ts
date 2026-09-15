@@ -8808,8 +8808,7 @@ declare module "bun" {
      *
      * `null` when there is no peer address to report: the request went over a
      * Unix socket, or it failed before a connection was established (the name
-     * did not resolve, the connect was refused, `lookup` rejected, the request
-     * was aborted first).
+     * did not resolve, the connect was refused, the request was aborted first).
      */
     remoteAddress: string | null;
     /**
@@ -8823,32 +8822,6 @@ declare module "bun" {
      */
     remoteFamily: "IPv4" | "IPv6" | null;
   }
-
-  /**
-   * Resolves the host of a connection `fetch()` is about to open. Return the IP
-   * address to dial: a string, an object with an `address` (what
-   * `dns.promises.lookup` resolves to), or an array of those, of which the first
-   * entry is used. The function may be `async`.
-   *
-   * The URL is not rewritten. The `Host` header, TLS server name, certificate
-   * verification and `NO_PROXY` matching keep using the original hostname. When
-   * the request goes through a proxy, the host being dialed is the proxy's.
-   *
-   * @param hostname The host about to be dialed, which can be an IP literal (an IPv6 one without its brackets)
-   * @param options An object with the `port` about to be dialed
-   */
-  type FetchLookupFunction = (
-    hostname: string,
-    options: { port: number },
-  ) =>
-    | string
-    | { address: string; family?: number | undefined }
-    | Array<string | { address: string; family?: number | undefined }>
-    | Promise<
-        | string
-        | { address: string; family?: number | undefined }
-        | Array<string | { address: string; family?: number | undefined }>
-      >;
 
   /**
    * The proxy a `fetch()` uses.
@@ -8894,15 +8867,6 @@ declare module "bun" {
      * The proxy for the requests of this context.
      */
     proxy?: FetchProxyOption | undefined;
-    /**
-     * Resolves the host of every connection this context opens, including the
-     * connections of redirects. It runs for each request, before a pooled
-     * connection is considered: a request only reuses a connection that was
-     * dialed to the address `lookup` returned for it.
-     *
-     * Not supported together with `protocol: "http2"` or `"http3"`.
-     */
-    lookup?: FetchLookupFunction | undefined;
     /**
      * Connection reuse. `false` closes every connection after its response.
      * The limits do not apply to HTTP/3 connections.

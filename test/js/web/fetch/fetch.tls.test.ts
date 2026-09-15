@@ -207,72 +207,61 @@ describe.concurrent("fetch-tls", () => {
     }
   });
 
-  // `lookup` sends the connection to the IPv4 loopback, so the IPv6-literal
-  // URL is verified on hosts without an IPv6 loopback too.
-  for (const transport of ["lookup to 127.0.0.1", "::1"] as const) {
-    it.skipIf(transport === "::1" && !isIPv6())(
-      `verifies an IPv6-literal URL against the bare address and sends no SNI (${transport})`,
-      async () => {
-        const seen: { sni: string | null; host: string | undefined }[] = [];
-        const server = tls.createServer(CERT_LOCALHOST_IP, socket => {
-          socket.on("error", () => {});
-          socket.once("data", data => {
-            const host = /^host:\s*(.*)\r\n/im.exec(data.toString())?.[1];
-            seen.push({ sni: socket.servername || null, host });
-            socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
-          });
-        });
-        const viaLookup = transport !== "::1";
-        const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
-        server.listen(0, viaLookup ? "127.0.0.1" : "::1", onListening);
-        await listening;
-        try {
-          const port = (server.address() as import("node:net").AddressInfo).port;
-          const url = `https://[::1]:${port}/`;
-          const lookup = viaLookup ? () => "127.0.0.1" : undefined;
-          // The harness certificate lists IP:::1.
-          const native = await fetch(url, { keepalive: false, lookup, tls: { ca: CERT_LOCALHOST_IP.cert } });
-          expect(await native.text()).toBe("ok");
-          let hostnameForCallback = "";
-          const viaCallback = await fetch(url, {
-            keepalive: false,
-            lookup,
-            tls: {
-              ca: CERT_LOCALHOST_IP.cert,
-              checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
-                hostnameForCallback = hostname;
-                return tls.checkServerIdentity(hostname, cert);
-              },
-            },
-          });
-          expect(await viaCallback.text()).toBe("ok");
-          expect(hostnameForCallback).toBe("::1");
-          expect(seen).toEqual([
-            { sni: null, host: `[::1]:${port}` },
-            { sni: null, host: `[::1]:${port}` },
-          ]);
-        } finally {
-          server.close();
-        }
-        // A certificate without that address still fails.
-        using other = Bun.serve({
-          port: 0,
-          hostname: viaLookup ? "127.0.0.1" : "::1",
-          tls: CERT_LOCALHOST_ONLY,
-          fetch: () => new Response("no"),
-        });
-        const mismatch = await fetch(`https://[::1]:${other.port}/`, {
-          keepalive: false,
-          lookup: viaLookup ? () => "127.0.0.1" : undefined,
-          tls: { ca: CERT_LOCALHOST_ONLY.cert },
-        }).then(
-          r => r.status,
-          e => e.code,
-        );
-        expect(mismatch).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
-      },
+  it.skipIf(!isIPv6())("verifies an IPv6-literal URL against the bare address and sends no SNI", async () => {
+    const seen: { sni: string | null; host: string | undefined }[] = [];
+    const server = tls.createServer(CERT_LOCALHOST_IP, socket => {
+      socket.on("error", () => {});
+      socket.once("data", data => {
+        const host = /^host:\s*(.*)\r\n/im.exec(data.toString())?.[1];
+        seen.push({ sni: socket.servername || null, host });
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+      });
+    });
+    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    server.listen(0, "::1", onListening);
+    await listening;
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const url = `https://[::1]:${port}/`;
+      // The harness certificate lists IP:::1.
+      const native = await fetch(url, { keepalive: false, tls: { ca: CERT_LOCALHOST_IP.cert } });
+      expect(await native.text()).toBe("ok");
+      let hostnameForCallback = "";
+      const viaCallback = await fetch(url, {
+        keepalive: false,
+        tls: {
+          ca: CERT_LOCALHOST_IP.cert,
+          checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
+            hostnameForCallback = hostname;
+            return tls.checkServerIdentity(hostname, cert);
+          },
+        },
+      });
+      expect(await viaCallback.text()).toBe("ok");
+      expect(hostnameForCallback).toBe("::1");
+      expect(seen).toEqual([
+        { sni: null, host: `[::1]:${port}` },
+        { sni: null, host: `[::1]:${port}` },
+      ]);
+    } finally {
+      server.close();
+    }
+    // A certificate without that address still fails.
+    using other = Bun.serve({
+      port: 0,
+      hostname: "::1",
+      tls: CERT_LOCALHOST_ONLY,
+      fetch: () => new Response("no"),
+    });
+    const mismatch = await fetch(`https://[::1]:${other.port}/`, {
+      keepalive: false,
+      tls: { ca: CERT_LOCALHOST_ONLY.cert },
+    }).then(
+      r => r.status,
+      e => e.code,
     );
-  }
+    expect(mismatch).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+  });
 
   it("can handle multiple requests with non native checkServerIdentity", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {

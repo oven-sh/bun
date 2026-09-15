@@ -2,7 +2,7 @@ import axios from "axios";
 import type { Server } from "bun";
 import { proxyInternals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import http from "node:http";
@@ -2193,23 +2193,17 @@ describe.concurrent("a CONNECT tunnel", () => {
     expect(proxy.connectCount()).toBe(2);
   });
 
-  test("lookup resolves the proxy's hostname, and stats leave the CONNECT exchange out", async () => {
+  test("stats name the proxy as the peer and leave the CONNECT exchange out", async () => {
     using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
     await using proxy = await createAdversarialProxy();
-    const lookups: [string, number][] = [];
     let stats: Bun.FetchConnectionStats | undefined;
     const response = await fetch(`https://localhost:${origin.port}/`, {
-      proxy: `http://proxy.invalid:${proxy.port}`,
+      proxy: `http://127.0.0.1:${proxy.port}`,
       tls: { ca: tlsCert.cert },
       keepalive: false,
-      lookup(hostname, { port }) {
-        lookups.push([hostname, port]);
-        return "127.0.0.1";
-      },
       onStats: s => (stats = s),
     });
     expect(await response.text()).toBe("through");
-    expect(lookups).toEqual([["proxy.invalid", proxy.port]]);
     expect(proxy.connections.map(c => [c.method, c.target])).toEqual([["CONNECT", `localhost:${origin.port}`]]);
     expect(stats).toEqual({
       // The tunneled request's head: no body, and not the CONNECT request.
@@ -2499,10 +2493,12 @@ describe("proxy resolution", () => {
 
 describe.concurrent("proxy environment", () => {
   // Each case runs in a subprocess that owns its proxy environment. The proxy
-  // answers every request itself with "proxy"; `lookup` sends every direct
-  // connection to the origin, whatever the hostname, which answers "origin".
+  // answers every request itself with "proxy", whatever the host, so only a
+  // host that is expected to be reached directly has to resolve: `localhost`,
+  // 127.0.0.1 and [::1], where an origin answers "origin".
   async function run(env: (deadProxy: string) => Record<string, string | undefined>, body: string) {
     using origin = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("origin") });
+    using origin6 = isIPv6() ? Bun.serve({ port: 0, hostname: "::1", fetch: () => new Response("origin") }) : undefined;
     using proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("proxy") });
     using dead = await deadPort();
     const deadProxy = `http://127.0.0.1:${dead.port}`;
@@ -2514,8 +2510,11 @@ describe.concurrent("proxy environment", () => {
         const PROXY = "http://127.0.0.1:${proxy.port}";
         const DEAD_PROXY = "${deadProxy}";
         const ORIGIN_PORT = ${origin.port};
+        // Without IPv6 only proxied requests name [::1], and those dial nothing.
+        const ORIGIN6_PORT = ${origin6?.port ?? origin.port};
+        const HAS_IPV6 = ${origin6 !== undefined};
         const via = host =>
-          fetch("http://" + host + ":${origin.port}/", { keepalive: false, lookup: () => "127.0.0.1" }).then(
+          fetch("http://" + host + ":" + (host.startsWith("[") ? ORIGIN6_PORT : ORIGIN_PORT) + "/", { keepalive: false }).then(
             r => r.text(),
             e => e.code,
           );
@@ -2534,36 +2533,43 @@ describe.concurrent("proxy environment", () => {
   }
 
   test("NO_PROXY grammar", async () => {
-    const cases: [noProxy: string, host: string, expected: "proxy" | "origin"][] = [
+    // The full grammar is in "proxy resolution" above; this is the path from
+    // the variable to a connection.
+    type Case = [noProxy: string, host: string, expected: "proxy" | "origin"];
+    const ipv6: Case[] = [
+      ["::1", "[::1]", "origin"],
+      ["[::1]", "[::1]", "origin"],
+      ["0:0:0:0:0:0:0:1", "[::1]", "origin"],
+      ["::/127", "[::1]", "origin"],
+    ];
+    const cases: Case[] = [
       // separators
-      ["a.test b.test", "b.test", "origin"],
-      ["a.test\tb.test\n", "b.test", "origin"],
-      ["a.test, b.test", "b.test", "origin"],
-      ["a.test;b.test", "b.test", "proxy"],
+      ["a.test localhost", "localhost", "origin"],
+      ["a.test\tlocalhost\n", "localhost", "origin"],
+      ["a.test, localhost", "localhost", "origin"],
+      ["a.test;localhost", "localhost", "proxy"],
       // domains
-      ["*.example.test", "api.example.test", "origin"],
-      ["*.example.test", "example.test", "origin"],
-      [".example.test", "deep.api.example.test", "origin"],
+      ["*.localhost", "localhost", "origin"],
+      [".localhost", "localhost", "origin"],
+      ["LOCALHOST.", "localhost", "origin"],
+      ["ocalhost", "localhost", "proxy"],
+      ["*.other.test", "api.example.test", "proxy"],
       ["example.test", "notexample.test", "proxy"],
-      ["EXAMPLE.test.", "api.example.test", "origin"],
-      ["*", "anything.test", "origin"],
-      ["", "anything.test", "proxy"],
+      ["*", "localhost", "origin"],
+      ["", "localhost", "proxy"],
       // an IP literal only matches an address or a block, never a suffix
       ["0.0.1", "127.0.0.1", "proxy"],
       ["127.0.0.1", "127.0.0.1", "origin"],
       ["127.0.0.2", "127.0.0.1", "proxy"],
-      ["::1", "[::1]", "origin"],
-      ["[::1]", "[::1]", "origin"],
-      ["0:0:0:0:0:0:0:1", "[::1]", "origin"],
       ["::2", "[::1]", "proxy"],
       // CIDR
       ["127.0.0.0/8", "127.0.0.1", "origin"],
       ["10.0.0.0/8", "127.0.0.1", "proxy"],
       ["127.0.0.128/25", "127.0.0.1", "proxy"],
-      ["::/127", "[::1]", "origin"],
       ["fd00::/8", "[::1]", "proxy"],
       ["127.0.0.0/33", "127.0.0.1", "proxy"],
-      ["127.0.0.0/8", "ten.test", "proxy"],
+      ["127.0.0.0/8", "localhost", "proxy"],
+      ...(isIPv6() ? ipv6 : []),
     ];
     const results = await run(
       () => ({ HTTP_PROXY: "placeholder" }),
@@ -2587,12 +2593,12 @@ describe.concurrent("proxy environment", () => {
       process.env.HTTP_PROXY = PROXY;
       const out = [];
       for (const [noProxy, host] of [
-        ["a.test:" + ORIGIN_PORT, "a.test"],
-        ["a.test:1", "a.test"],
+        ["localhost:" + ORIGIN_PORT, "localhost"],
+        ["localhost:1", "localhost"],
         ["127.0.0.1:" + ORIGIN_PORT, "127.0.0.1"],
         ["127.0.0.1:1", "127.0.0.1"],
-        ["[::1]:" + ORIGIN_PORT, "[::1]"],
         ["[::1]:1", "[::1]"],
+        ...(HAS_IPV6 ? [["[::1]:" + ORIGIN6_PORT, "[::1]"]] : []),
       ]) {
         process.env.NO_PROXY = noProxy;
         out.push(await via(host));
@@ -2600,16 +2606,16 @@ describe.concurrent("proxy environment", () => {
       console.log(JSON.stringify(out));
       `,
     );
-    expect(results).toEqual(["origin", "proxy", "origin", "proxy", "origin", "proxy"]);
+    expect(results).toEqual(["origin", "proxy", "origin", "proxy", "proxy", ...(isIPv6() ? ["origin"] : [])]);
   });
 
   // On Windows the two names are one variable.
   test.skipIf(isWindows)("both no_proxy and NO_PROXY are honoured", async () => {
     const results = await run(
-      () => ({ no_proxy: "lower.test", NO_PROXY: "upper.test" }),
+      () => ({ no_proxy: "localhost", NO_PROXY: "127.0.0.1" }),
       `
       process.env.HTTP_PROXY = PROXY;
-      console.log(JSON.stringify([await via("lower.test"), await via("upper.test"), await via("other.test")]));
+      console.log(JSON.stringify([await via("localhost"), await via("127.0.0.1"), await via("other.test")]));
       `,
     );
     expect(results).toEqual(["origin", "origin", "proxy"]);
@@ -2621,15 +2627,15 @@ describe.concurrent("proxy environment", () => {
       `
       const out = {};
       process.env.ALL_PROXY = PROXY;
-      out.allProxy = await via("a.test");
+      out.allProxy = await via("localhost");
       process.env.ALL_PROXY = "socks5://127.0.0.1:1";
-      out.socks = await via("a.test");
+      out.socks = await via("localhost");
       // In this order: on Windows both names are one variable.
       delete process.env.ALL_PROXY;
       process.env.all_proxy = PROXY;
-      out.lowercase = await via("a.test");
+      out.lowercase = await via("localhost");
       process.env.HTTP_PROXY = DEAD_PROXY;
-      out.schemeSpecificWins = await via("a.test");
+      out.schemeSpecificWins = await via("localhost");
       console.log(JSON.stringify(out));
       `,
     );
@@ -2687,8 +2693,8 @@ describe.concurrent("proxy environment", () => {
         new Promise((resolve, reject) => {
           const worker = new Worker(
             'const { parentPort, workerData } = require("node:worker_threads");' +
-              'fetch(workerData, { keepalive: false, lookup: () => "127.0.0.1" }).then(r => r.text(), e => e.code).then(v => parentPort.postMessage(v));',
-            { eval: true, workerData: "http://a.test:" + ORIGIN_PORT + "/" },
+              'fetch(workerData, { keepalive: false }).then(r => r.text(), e => e.code).then(v => parentPort.postMessage(v));',
+            { eval: true, workerData: "http://localhost:" + ORIGIN_PORT + "/" },
           );
           worker.once("message", resolve);
           worker.once("error", reject);
@@ -2696,7 +2702,7 @@ describe.concurrent("proxy environment", () => {
       process.env.ALL_PROXY = PROXY;
       const out = [await inWorker()];
       delete Bun.env.ALL_PROXY;
-      out.push(await inWorker(), await via("a.test"));
+      out.push(await inWorker(), await via("localhost"));
       console.log(JSON.stringify(out));
       `,
     );
@@ -2707,23 +2713,23 @@ describe.concurrent("proxy environment", () => {
   test("assigning and deleting process.env proxy variables takes effect on the next fetch", async () => {
     const script = `
       const out = [];
-      out.push(await via("a.test"));
+      out.push(await via("localhost"));
       // A variable that was never set is not a property.
       out.push("ALL_PROXY" in process.env);
       // An object inheriting from process.env keeps its writes to itself.
       const child = Object.create(process.env);
       child.HTTP_PROXY = PROXY;
-      out.push(Object.hasOwn(child, "HTTP_PROXY"), await via("a.test"));
+      out.push(Object.hasOwn(child, "HTTP_PROXY"), await via("localhost"));
       process.env.HTTP_PROXY = PROXY;
-      out.push(await via("a.test"));
+      out.push(await via("localhost"));
       delete process.env.HTTP_PROXY;
-      out.push(await via("a.test"), String(process.env.HTTP_PROXY), "HTTP_PROXY" in process.env, "HTTP_PROXY" in { ...process.env });
+      out.push(await via("localhost"), String(process.env.HTTP_PROXY), "HTTP_PROXY" in process.env, "HTTP_PROXY" in { ...process.env });
       process.env.HTTP_PROXY = PROXY;
-      out.push(await via("a.test"), "HTTP_PROXY" in process.env, "HTTP_PROXY" in { ...process.env });
-      process.env.NO_PROXY = "a.test";
-      out.push(await via("a.test"));
+      out.push(await via("localhost"), "HTTP_PROXY" in process.env, "HTTP_PROXY" in { ...process.env });
+      process.env.NO_PROXY = "localhost";
+      out.push(await via("localhost"));
       delete process.env.NO_PROXY;
-      out.push(await via("a.test"));
+      out.push(await via("localhost"));
       console.log(JSON.stringify(out));
     `;
     // `atStartup` is what the environment the process started with leads to.

@@ -195,7 +195,8 @@ impl Property {
     pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Property, bun_alloc::AllocError> {
+        stack_check: bun_core::StackCheck,
+    ) -> Result<Property, crate::DeepCloneError> {
         let mut class_static_block: Option<crate::StoreRef<ClassStaticBlock>> = None;
         if let Some(csb_ref) = self.class_static_block_ref() {
             let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
@@ -206,7 +207,7 @@ impl Property {
         }
         Ok(Property {
             initializer: match self.initializer {
-                Some(init) => Some(init.deep_clone(bump)?),
+                Some(init) => Some(init.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             kind: self.kind,
@@ -215,13 +216,13 @@ impl Property {
             // Vec<Expr> per-element deep clone.
             ts_decorators: self
                 .ts_decorators
-                .try_deep_clone_with(|e| e.deep_clone(bump))?,
+                .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
             key: match self.key {
-                Some(key) => Some(key.deep_clone(bump)?),
+                Some(key) => Some(key.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             value: match self.value {
-                Some(value) => Some(value.deep_clone(bump)?),
+                Some(value) => Some(value.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             ts_metadata: self.ts_metadata.clone(),
@@ -298,11 +299,12 @@ impl Fn {
     pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Fn, bun_alloc::AllocError> {
+        stack_check: bun_core::StackCheck,
+    ) -> Result<Fn, crate::DeepCloneError> {
         let src_args: &[Arg] = self.args.slice();
         let args: &mut [Arg] = bump.alloc_slice_fill_default::<Arg>(src_args.len());
         for i in 0..args.len() {
-            args[i] = src_args[i].deep_clone(bump)?;
+            args[i] = src_args[i].deep_clone(bump, stack_check)?;
         }
         Ok(Fn {
             name: self.name,
@@ -346,15 +348,16 @@ impl Arg {
     pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Arg, bun_alloc::AllocError> {
+        stack_check: bun_core::StackCheck,
+    ) -> Result<Arg, crate::DeepCloneError> {
         Ok(Arg {
             // Vec<Expr> per-element deep clone.
             ts_decorators: self
                 .ts_decorators
-                .try_deep_clone_with(|e| e.deep_clone(bump))?,
+                .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
             binding: self.binding,
             default: match self.default {
-                Some(d) => Some(d.deep_clone(bump)?),
+                Some(d) => Some(d.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,

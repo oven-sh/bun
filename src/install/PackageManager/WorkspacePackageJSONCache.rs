@@ -65,7 +65,7 @@ impl MapEntry {
     pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let json_bump = bun_alloc::Arena::new();
         let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
-        self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
+        self.root = clone_root(&parsed.root, &self.source, log, &json_bump)?;
         self.json_arena = json_bump;
         Ok(())
     }
@@ -89,6 +89,22 @@ fn parse_package_json(
         log,
         bump,
     )?)
+}
+
+fn clone_root(
+    root: &Expr,
+    source: &Source,
+    log: &mut Log,
+    bump: &bun_alloc::Arena,
+) -> Result<Expr, crate::Error> {
+    match root.deep_clone(bump) {
+        Ok(root) => Ok(root),
+        Err(bun_ast::DeepCloneError::StackOverflow) => {
+            json::add_too_deeply_nested_error(log, source, root.loc);
+            Err(bun_parsers::Error::StackOverflow.into())
+        }
+        Err(bun_ast::DeepCloneError::Alloc(err)) => Err(err.into()),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -193,8 +209,15 @@ impl WorkspacePackageJSONCache {
             }
         };
 
+        let root = match clone_root(&parsed.root, &source, log, &json_bump) {
+            Ok(root) => root,
+            Err(err) => {
+                return GetResult::ParseErr(err);
+            }
+        };
+
         let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
+            root,
             source,
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,

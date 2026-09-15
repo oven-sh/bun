@@ -1481,6 +1481,8 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         RETURN_IF_EXCEPTION(scope, );
         return;
     }
+    // Node's loader runs the file on every call, and `hasEvaluated` survives a body that threw.
+    this->hasEvaluated = false;
     this->evaluate(globalObject, key, source, false);
 }
 

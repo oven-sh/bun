@@ -1,6 +1,31 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+// Node prints this and blocks while a CDP frontend is still attached at exit.
+const DISCONNECT_NOTICE = "Waiting for the debugger to disconnect...";
+
+// Children that drive Runtime.evaluate or Debugger.* over the protocol go
+// through JSC's InjectedScript, which misses RELEASE_AND_RETURN at
+// JSInjectedScriptHostPrototype.cpp jsInjectedScriptHostPrototypeFunctionEvaluateWithScopeExtension
+// and JSJavaScriptCallFrame::scopeChain (constructArray return). Both live in
+// the prebuilt WebKit, so validateExceptionChecks aborts the child before the
+// test can observe anything. The debugger thread's global is also never
+// destroyed, so state it allocates that the stop()-time Bun.gc sweep misses is
+// reported by LSAN at exit. Strip both from the child so these tests observe
+// process behavior, not WebKit scope-discipline noise.
+const inspectorChildEnv = (() => {
+  const {
+    BUN_JSC_validateExceptionChecks,
+    BUN_JSC_dumpSimulatedThrows,
+    BUN_DESTRUCT_VM_ON_EXIT,
+    LSAN_OPTIONS,
+    ...env
+  } = bunEnv;
+  return { ...env, ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0" };
+})();
 
 test("inspector.url()", () => {
   expect(inspector.url()).toBeUndefined();
@@ -191,7 +216,7 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -283,7 +308,7 @@ test("inspector.close() followed by inspector.open() starts a new server", async
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -341,7 +366,7 @@ test("inspector.open() can be retried after a failed start", async () => {
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -376,7 +401,7 @@ test("inspector.open() with wait=true does not hang the process after a bind fai
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -398,7 +423,8 @@ process.stderr.write("WAITING_FOR_DEBUGGER\\n");
 inspector.waitForDebugger();
 const resumedByClient = globalThis.__resumed_by_client === true;
 console.log(JSON.stringify({ resumedByClient }));
-inspector.close();
+// No inspector.close(): the test asserts Node's exit handshake, which only
+// runs when a frontend is still attached at process.exit().
 process.exit(resumedByClient ? 0 : 7);
 `;
 
@@ -409,7 +435,7 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -445,17 +471,23 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
   ws.send(JSON.stringify({ id: 2, method: "Runtime.runIfWaitingForDebugger", params: {} }));
 
   // Keep draining stderr so the pipe cannot fill while the fixture finishes.
+  const waitingToDisconnect = Promise.withResolvers<void>();
   const drained = (async () => {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
       stderrText += decoder.decode(value);
+      if (stderrText.includes(DISCONNECT_NOTICE)) waitingToDisconnect.resolve();
     }
+    waitingToDisconnect.resolve();
   })();
+
+  await waitingToDisconnect.promise;
+  expect(stderrText).toContain(DISCONNECT_NOTICE);
+  ws.close();
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   await drained;
-  ws.close();
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumedByClient: true });
   expect(exitCode).toBe(0);
@@ -486,7 +518,7 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -595,7 +627,7 @@ test("Runtime.consoleAPICalled encodes -0/NaN/Infinity/bigint as unserializableV
   }
 });
 
-test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its arguments", () => {
+test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its arguments", async () => {
   const session = new inspector.Session();
   expect(() => session.post("Runtime.enable")).toThrow(
     expect.objectContaining({ code: "ERR_INSPECTOR_NOT_CONNECTED", message: "Session is not connected" }),
@@ -619,7 +651,25 @@ test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its
   expect(() => session.post("Runtime.enable", (() => {}) as any, () => {})).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
-  expect(() => session.post("Nonexistent.domain")).toThrow(expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }));
+  expect(() => session.post("Nonexistent.domain")).not.toThrow();
+  expect(session.post("Nonexistent.domain")).toBeUndefined();
+  session.post("Network.enable");
+  expect(session.post("Network.getResponseBody", { requestId: "nope" })).toBeUndefined();
+  expect(session.post("Network.getRequestPostData", { requestId: "nope" })).toBeUndefined();
+  expect(session.post("Network.streamResourceContent", { requestId: "nope" })).toBeUndefined();
+  {
+    const { promise, resolve } = Promise.withResolvers<any>();
+    session.post("Network.getResponseBody", { requestId: "nope" }, err => resolve(err));
+    const bodyErr = await promise;
+    expect(bodyErr).toBeInstanceOf(Error);
+    expect(bodyErr.code).toBe("ERR_INSPECTOR_COMMAND");
+  }
+  session.post("Network.disable");
+  const { promise: errPromise, resolve: resolveErr } = Promise.withResolvers<any>();
+  session.post("Nonexistent.domain", err => resolveErr(err));
+  const unknownErr = await errPromise;
+  expect(unknownErr).toBeInstanceOf(Error);
+  expect(unknownErr.code).toBe("ERR_INSPECTOR_COMMAND");
   session.disconnect();
 
   // connectToMainThread() throws ERR_INSPECTOR_NOT_WORKER on the main thread.
@@ -770,6 +820,101 @@ test("a console argument whose toString throws does not break console.log", asyn
   }
 });
 
+test("Network.requestWillBeSent / webSocketCreated populate initiator.stack with the caller's frames", () => {
+  const session = new inspector.Session();
+  session.connect();
+  try {
+    const events: any[] = [];
+    session.on("Network.requestWillBeSent", m => events.push(m.params));
+    session.on("Network.webSocketCreated", m => events.push(m.params));
+    session.post("Network.enable");
+    function callerFrame() {
+      inspector.Network.requestWillBeSent({
+        requestId: "r1",
+        timestamp: 0,
+        wallTime: 0,
+        request: { url: "http://x/", method: "GET", headers: {} },
+      });
+      inspector.Network.webSocketCreated({ requestId: "ws1", url: "ws://x/" });
+    }
+    callerFrame();
+    expect(events).toHaveLength(2);
+    const thisFile = pathToFileURL(import.meta.path).href;
+    for (const evt of events) {
+      expect(evt.initiator.type).toBe("script");
+      const frames = evt.initiator.stack?.callFrames;
+      expect(Array.isArray(frames)).toBe(true);
+      const firstUser = frames.find((f: any) => f.url === thisFile);
+      expect(firstUser).toMatchObject({ functionName: "callerFrame", url: thisFile });
+      expect(typeof firstUser.lineNumber).toBe("number");
+    }
+    session.post("Network.disable");
+  } finally {
+    session.disconnect();
+  }
+});
+
+test("a Network/DOMStorage listener that mutates its event does not affect the next session", () => {
+  // One validation pass fans out to every enabled session; like Node, which
+  // serializes per channel, each session must get its own copy of the payload.
+  const a = new inspector.Session();
+  const b = new inspector.Session();
+  a.connect();
+  b.connect();
+  try {
+    a.post("Network.enable");
+    b.post("Network.enable");
+    a.post("DOMStorage.enable");
+    b.post("DOMStorage.enable");
+    a.on("Network.requestWillBeSent", m => {
+      m.params.request.url = "mutated";
+      m.params.request.headers.x = "mutated";
+      m.params.initiator.type = "mutated";
+    });
+    a.on("Network.responseReceived", m => (m.params.response.status = -1));
+    a.on("DOMStorage.domStorageItemAdded", m => (m.params.storageId.securityOrigin = "mutated"));
+    const seenByB: any[] = [];
+    b.on("Network.requestWillBeSent", m => seenByB.push(m.params));
+    b.on("Network.responseReceived", m => seenByB.push(m.params));
+    b.on("DOMStorage.domStorageItemAdded", m => seenByB.push(m.params));
+
+    inspector.Network.requestWillBeSent({
+      requestId: "r1",
+      timestamp: 0,
+      wallTime: 0,
+      request: { url: "http://x/", method: "GET", headers: { x: "1" } },
+    });
+    inspector.Network.responseReceived({
+      requestId: "r1",
+      timestamp: 0,
+      type: "Fetch",
+      response: { url: "http://x/", status: 200, statusText: "OK", headers: {} },
+    });
+    inspector.DOMStorage.domStorageItemAdded({
+      storageId: { securityOrigin: "http://x", storageKey: "k", isLocalStorage: true },
+      key: "key",
+      newValue: "v",
+    });
+
+    expect(
+      seenByB.map(p => [
+        p.request?.url,
+        p.request?.headers?.x,
+        p.initiator?.type,
+        p.response?.status,
+        p.storageId?.securityOrigin,
+      ]),
+    ).toEqual([
+      ["http://x/", "1", "script", undefined, undefined],
+      [undefined, undefined, undefined, 200, undefined],
+      [undefined, undefined, undefined, undefined, "http://x"],
+    ]);
+  } finally {
+    a.disconnect();
+    b.disconnect();
+  }
+});
+
 // Activating breakpoints on a debugger that was attached at runtime (after the
 // entry module has already been linked) used to crash the inspected process:
 // JSC's clearCode discarded the module's UnlinkedModuleProgramCodeBlock, and
@@ -798,7 +943,7 @@ export { after };
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--inspect=127.0.0.1:0/runtime-attach", "entry.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stdin: "pipe",
     stdout: "pipe",
@@ -891,7 +1036,8 @@ let beforeOpen = 1;
 inspector.open(0, "127.0.0.1", true);
 const mod = await import("./mod.mjs");
 console.log(JSON.stringify({ after: mod.after, beforeOpen }));
-inspector.close();
+// No inspector.close(): the test asserts Node's exit handshake, which only
+// runs when a frontend is still attached at process.exit().
 process.exit(0);
 `,
     "mod.mjs": `
@@ -904,7 +1050,7 @@ export { after };
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "entry.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -920,12 +1066,15 @@ export { after };
     stderrText += decoder.decode(value);
     wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
   }
+  const waitingToDisconnect = Promise.withResolvers<void>();
   const stderrDrained = (async () => {
     for (;;) {
       const { value, done } = await stderrReader.read();
       if (done) break;
       stderrText += decoder.decode(value);
+      if (stderrText.includes(DISCONNECT_NOTICE)) waitingToDisconnect.resolve();
     }
+    waitingToDisconnect.resolve();
   })();
 
   const ws = new WebSocket(wsUrl);
@@ -984,6 +1133,11 @@ export { after };
   // the socket first. The JSON on stdout is the real proof the resume landed.
   ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume" }));
 
+  awaiting = "the exit handshake";
+  await waitingToDisconnect.promise;
+  expect(stderrText).toContain(DISCONNECT_NOTICE);
+  ws.close();
+
   const stdoutReader = proc.stdout.getReader();
   let stdoutText = "";
   for (;;) {
@@ -991,12 +1145,11 @@ export { after };
     if (done) break;
     stdoutText += decoder.decode(value);
   }
-  ws.close();
   await stderrDrained;
 
   expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, beforeOpen: 1 });
   expect(await proc.exited).toBe(0);
-});
+}, 30_000);
 
 // JSC's Debugger.scriptParsed classifies a script with scriptType ("program",
 // "module" or "webassembly"); V8 clients read isModule and scriptLanguage. The
@@ -1084,4 +1237,534 @@ test("disconnect does not clobber a console method reassigned by user code", () 
   } finally {
     console.log = before;
   }
+});
+
+// Line 0 is a comment, 1/3/4/8 are blank, the `if` on line 5 folds away and the
+// quotes on line 2 are rewritten: nothing about the transpiler's output lines
+// up with this file, which is what makes it a position oracle.
+const transpileShiftFixture = `// leading comment
+
+const s = 'single quotes';
+
+
+if (1 > 0) {
+  // folded
+}
+
+function f() {
+  debugger;
+}
+setInterval(f, 50);
+`;
+
+async function pausesAt(banner: RegExp, enable: [string, unknown?][], resume: string) {
+  const dir = tempDir("inspector-positions", { "gnarly.js": transpileShiftFixture });
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect-brk=0", "gnarly.js"],
+    env: inspectorChildEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const reap = async () => {
+    proc.kill();
+    // Windows: the child must exit before rm'ing its cwd or rmSync EBUSYs.
+    await proc.exited;
+    dir[Symbol.dispose]();
+  };
+  try {
+    const decoder = new TextDecoder();
+    const stderrReader = proc.stderr.getReader();
+    let stderrText = "";
+    let wsUrl: string | undefined;
+    while (!wsUrl) {
+      const { value, done } = await stderrReader.read();
+      if (done) throw new Error(`stderr closed before the banner: ${stderrText}`);
+      stderrText += decoder.decode(value);
+      wsUrl = stderrText.match(banner)?.[1];
+    }
+
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => resolve();
+      ws.onerror = err => reject(err);
+    });
+    let nextId = 1;
+    let awaiting = "";
+    const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+    const scripts = new Map<string, any>();
+    const pauses: any[] = [];
+    let wantPauses = 1;
+    let sawPauses = Promise.withResolvers<void>();
+    ws.onmessage = event => {
+      const msg = JSON.parse(String(event.data));
+      if (msg.id != null && pending.has(msg.id)) {
+        const p = pending.get(msg.id)!;
+        pending.delete(msg.id);
+        msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result);
+      } else if (msg.method === "Debugger.scriptParsed") {
+        scripts.set(msg.params.scriptId, msg.params);
+      } else if (msg.method === "Debugger.paused") {
+        pauses.push(msg.params);
+        if (pauses.length >= wantPauses) sawPauses.resolve();
+      }
+    };
+    const abandon = (why: string) => {
+      const err = new Error(`${why} while awaiting ${awaiting}; stderr: ${stderrText}`);
+      sawPauses.reject(err);
+      for (const p of pending.values()) p.reject(err);
+      pending.clear();
+    };
+    ws.onerror = () => abandon("inspector websocket errored");
+    ws.onclose = () => abandon("inspector websocket closed");
+    proc.exited.then(code => abandon(`child exited (code ${code})`));
+    function send(method: string, params?: unknown): Promise<any> {
+      return new Promise((resolve, reject) => {
+        const id = nextId++;
+        awaiting = method;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    }
+
+    for (const [method, params] of enable) await send(method, params ?? {});
+    await send(resume, {});
+
+    awaiting = "the break-on-start pause";
+    await sawPauses.promise;
+    const userScript = [...scripts.values()].find(script =>
+      String(script.url ?? script.sourceURL ?? "").endsWith("gnarly.js"),
+    );
+
+    // Resume into the interval callback's `debugger`.
+    wantPauses = 2;
+    sawPauses = Promise.withResolvers<void>();
+    ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume", params: {} }));
+    awaiting = "the debugger-statement pause";
+    await sawPauses.promise;
+
+    const done = async () => {
+      ws.close();
+      await reap();
+    };
+    return { send, done, userScript, pauses, line: (n: number) => pauses[n].callFrames[0].location.lineNumber };
+  } catch (err) {
+    await reap().catch(() => {});
+    throw err;
+  }
+}
+
+test("CDP clients see positions and source from the file the user wrote", async () => {
+  const { send, done, userScript, line } = await pausesAt(
+    /Debugger listening on (ws:\S+)/,
+    [["Runtime.enable"], ["Debugger.enable"]],
+    "Runtime.runIfWaitingForDebugger",
+  );
+
+  try {
+    expect(line(0)).toBe(2);
+    expect(line(1)).toBe(10);
+
+    const { scriptSource } = await send("Debugger.getScriptSource", { scriptId: userScript.scriptId });
+    expect(scriptSource).toBe(transpileShiftFixture);
+    expect(userScript.sourceMapURL).toBe("");
+    expect(userScript.endLine).toBe(13);
+
+    // A breakpoint is named in the same coordinates and comes back in them.
+    const resolved = await send("Debugger.setBreakpointByUrl", { lineNumber: 1, url: userScript.url });
+    expect(resolved.locations[0].lineNumber).toBe(2);
+  } finally {
+    await done();
+  }
+}, 30_000);
+
+test("JSC-protocol clients keep seeing generated positions and Bun's source map", async () => {
+  const { send, done, userScript, line } = await pausesAt(
+    /Listening:\s*\n\s*(ws:\S+)/,
+    [
+      ["Inspector.enable"],
+      ["Runtime.enable"],
+      ["Debugger.enable"],
+      ["Debugger.setBreakpointsActive", { active: true }],
+      ["Debugger.setPauseOnDebuggerStatements", { enabled: true }],
+    ],
+    "Inspector.initialized",
+  );
+
+  try {
+    expect(line(0)).toBe(0);
+    expect(line(1)).toBe(4);
+
+    const { scriptSource } = await send("Debugger.getScriptSource", { scriptId: userScript.scriptId });
+    expect(scriptSource).toContain("//# sourceMappingURL=data:application/json;base64,");
+    expect(scriptSource.split("\n")[0]).toBe("debugger;");
+    expect(userScript.sourceMapURL).toStartWith("data:application/json");
+  } finally {
+    await done();
+  }
+}, 30_000);
+const lazyShiftFixture = `// leading comment
+
+const value = 'single quotes';
+
+
+if (1 > 0) {
+  // folded
+}
+
+export function poke() {
+  return value.length;
+}
+setInterval(poke, 50);
+`;
+
+test("a by-URL breakpoint set before its script parses is re-resolved through the map", async () => {
+  const dir = tempDir("inspector-preparse-bp", {
+    "main.js": `await import("./lazy.js");\n`,
+    "lazy.js": lazyShiftFixture,
+  });
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect-brk=0", "main.js"],
+    env: inspectorChildEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  try {
+    const decoder = new TextDecoder();
+    const stderrReader = proc.stderr.getReader();
+    let stderrText = "";
+    let wsUrl: string | undefined;
+    while (!wsUrl) {
+      const { value, done } = await stderrReader.read();
+      if (done) throw new Error(`stderr closed before the banner: ${stderrText}`);
+      stderrText += decoder.decode(value);
+      wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+    }
+
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => resolve();
+      ws.onerror = err => reject(err);
+    });
+    let nextId = 1;
+    let awaiting = "";
+    const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+    const pauses: any[] = [];
+    let wantPauses = 1;
+    let sawPauses = Promise.withResolvers<void>();
+    ws.onmessage = event => {
+      const msg = JSON.parse(String(event.data));
+      if (msg.id != null && pending.has(msg.id)) {
+        const p = pending.get(msg.id)!;
+        pending.delete(msg.id);
+        msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result);
+      } else if (msg.method === "Debugger.paused") {
+        pauses.push(msg.params);
+        if (pauses.length >= wantPauses) sawPauses.resolve();
+      }
+    };
+    const abandon = (why: string) => {
+      const err = new Error(`${why} while awaiting ${awaiting}; stderr: ${stderrText}`);
+      sawPauses.reject(err);
+      for (const p of pending.values()) p.reject(err);
+      pending.clear();
+    };
+    ws.onerror = () => abandon("inspector websocket errored");
+    ws.onclose = () => abandon("inspector websocket closed");
+    proc.exited.then(code => abandon(`child exited (code ${code})`));
+    function send(method: string, params?: unknown): Promise<any> {
+      return new Promise((resolve, reject) => {
+        const id = nextId++;
+        awaiting = method;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    }
+
+    await send("Runtime.enable", {});
+    await send("Debugger.enable", {});
+
+    const fileUrl = pathToFileURL(join(String(dir), "lazy.js")).href;
+    const set = await send("Debugger.setBreakpointByUrl", { lineNumber: 10, url: fileUrl });
+    expect(typeof set.breakpointId).toBe("string");
+
+    await send("Runtime.runIfWaitingForDebugger", {});
+    awaiting = "the break-on-start pause";
+    await sawPauses.promise;
+
+    wantPauses = 2;
+    sawPauses = Promise.withResolvers<void>();
+    ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume", params: {} }));
+    awaiting = "the pre-parse breakpoint pause";
+    await sawPauses.promise;
+
+    const hit = pauses[1];
+    expect(hit.callFrames[0].location.lineNumber).toBe(10);
+    expect(hit.hitBreakpoints).toEqual([set.breakpointId]);
+    ws.close();
+  } finally {
+    proc.kill();
+    // Windows: the child must exit before rm'ing its cwd or rmSync EBUSYs.
+    await proc.exited;
+    dir[Symbol.dispose]();
+  }
+}, 30_000);
+
+test("a pre-parse breakpoint never surfaces its stale binding to the client", async () => {
+  const dir = tempDir("inspector-preparse-race", {
+    "main.js": `await import("./lazy.js");\n`,
+    "lazy.js": lazyShiftFixture,
+  });
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect-brk=0", "main.js"],
+    env: inspectorChildEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  try {
+    const decoder = new TextDecoder();
+    const stderrReader = proc.stderr.getReader();
+    let stderrText = "";
+    let wsUrl: string | undefined;
+    while (!wsUrl) {
+      const { value, done } = await stderrReader.read();
+      if (done) throw new Error(`stderr closed before the banner: ${stderrText}`);
+      stderrText += decoder.decode(value);
+      wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+    }
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => resolve();
+      ws.onerror = err => reject(err);
+    });
+    let nextId = 1;
+    const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+    const resolvedEvents: any[] = [];
+    const pausesForBp: any[] = [];
+    let bpId = "";
+    let sawBpPause = Promise.withResolvers<void>();
+    ws.onmessage = event => {
+      const msg = JSON.parse(String(event.data));
+      if (msg.id != null && pending.has(msg.id)) {
+        const p = pending.get(msg.id)!;
+        pending.delete(msg.id);
+        msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result);
+      } else if (msg.method === "Debugger.breakpointResolved" && msg.params.breakpointId === bpId) {
+        resolvedEvents.push(msg.params);
+      } else if (msg.method === "Debugger.paused") {
+        if ((msg.params.hitBreakpoints ?? []).includes(bpId)) {
+          pausesForBp.push(msg.params);
+          sawBpPause.resolve();
+        } else {
+          // break-on-start pause: release it (the pre-parse set already went out).
+          ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume", params: {} }));
+        }
+      }
+    };
+    const abandon = (why: string) => {
+      const err = new Error(`${why}; stderr: ${stderrText}`);
+      sawBpPause.reject(err);
+      for (const p of pending.values()) p.reject(err);
+      pending.clear();
+    };
+    ws.onerror = () => abandon("inspector websocket errored");
+    ws.onclose = () => abandon("inspector websocket closed");
+    proc.exited.then(code => abandon(`child exited (code ${code})`));
+    function send(method: string, params?: unknown): Promise<any> {
+      return new Promise((resolve, reject) => {
+        const id = nextId++;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    }
+
+    await send("Runtime.enable", {});
+    await send("Debugger.enable", {});
+    const fileUrl = pathToFileURL(join(String(dir), "lazy.js")).href;
+    const set = await send("Debugger.setBreakpointByUrl", { lineNumber: 10, url: fileUrl });
+    bpId = set.breakpointId;
+    await send("Runtime.runIfWaitingForDebugger", {});
+    await sawBpPause.promise;
+
+    expect(pausesForBp[0].callFrames[0].location.lineNumber).toBe(10);
+    for (const ev of resolvedEvents) {
+      expect(ev.location.lineNumber).toBe(10);
+    }
+    ws.close();
+  } finally {
+    proc.kill();
+    await proc.exited;
+    dir[Symbol.dispose]();
+  }
+}, 30_000);
+
+test("Session.post matches node's return and throw contract", async () => {
+  const session = new inspector.Session();
+  session.connect();
+  try {
+    expect(session.post("Runtime.enable")).toBeUndefined();
+    expect(() => session.post("NodeWorker.enable", { waitForDebuggerOnStart: false })).not.toThrow();
+    const { promise, resolve } = Promise.withResolvers<any>();
+    session.post("NodeWorker.enable", { waitForDebuggerOnStart: false }, err => resolve(err));
+    const err = await promise;
+    expect(err?.code).toBe("ERR_INSPECTOR_COMMAND");
+    expect(session.post("Runtime.disable")).toBeUndefined();
+  } finally {
+    session.disconnect();
+  }
+});
+
+test("pending posts at disconnect settle with node's -32000 error", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const session = new inspector.Session();
+session.connect();
+session.post("Runtime.evaluate", { expression: "new Promise(() => {})", awaitPromise: true }, err => {
+  console.log(JSON.stringify({ code: err?.code, message: err?.message }));
+});
+session.disconnect();`,
+    ],
+    env: inspectorChildEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(JSON.parse(stdout.trim())).toEqual({
+    code: "ERR_INSPECTOR_COMMAND",
+    message: "Inspector error -32000: Execution context was destroyed.",
+  });
+});
+
+test("session.disconnect() from a paused listener detaches after the dispatch, not mid-pause", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const session = new inspector.Session();
+session.connect();
+session.post("Debugger.enable");
+session.on("Debugger.paused", function onPaused() {
+  session.disconnect();
+});
+session.post("Runtime.evaluate", { expression: "debugger; 42" });
+console.log("survived");`,
+    ],
+    env: inspectorChildEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "survived", stderr: "", exitCode: 0 });
+});
+
+test("Debugger.stepOver from a paused listener re-pauses instead of resuming", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const session = new inspector.Session();
+session.connect();
+session.post("Debugger.enable");
+let pauses = 0;
+session.on("Debugger.paused", function onPaused() {
+  pauses++;
+  if (pauses === 1) {
+    session.post("Debugger.stepOver");
+  } else {
+    session.post("Debugger.resume");
+  }
+});
+session.post("Runtime.evaluate", { expression: "debugger; globalThis.x = 1; globalThis.y = 2;" }, function onDone() {
+  console.log(JSON.stringify({ pauses }));
+});`,
+    ],
+    env: inspectorChildEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ pauses: 2 }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test("Debugger.paused from a pause nested inside a post() dispatch reaches listeners before execution continues", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const session = new inspector.Session();
+session.connect();
+session.post("Debugger.enable");
+let sawPausedDuringDispatch = false;
+let evalOnFrame;
+session.on("Debugger.paused", function onPaused(msg) {
+  sawPausedDuringDispatch = true;
+  session.post(
+    "Debugger.evaluateOnCallFrame",
+    { callFrameId: msg.params.callFrames[0].callFrameId, expression: "1+1" },
+    function onEval(err, res) {
+      evalOnFrame = err ? String(err.message) : res?.result?.value;
+    },
+  );
+  session.post("Debugger.resume");
+});
+session.post("Runtime.evaluate", { expression: "debugger; 42" }, function onDone(err, res) {
+  console.log(JSON.stringify({ sawPausedDuringDispatch, evalOnFrame, result: res?.result?.value }));
+});`,
+    ],
+    env: inspectorChildEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: { sawPausedDuringDispatch: true, evalOnFrame: 2, result: 42 },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test("Debugger events only reach the in-process Sessions that enabled the domain", async () => {
+  // All in-process Sessions share one JSC frontend, which broadcasts every
+  // event to every adapter; like Node's per-session agents, a Session that
+  // never enabled Debugger must not observe another Session's enable.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const vm = require("node:vm");
+const a = new inspector.Session();
+const b = new inspector.Session();
+a.connect();
+b.connect();
+let aParsed = 0;
+let bParsed = 0;
+a.on("Debugger.scriptParsed", () => aParsed++);
+b.on("Debugger.scriptParsed", () => bParsed++);
+// Routes to the shared backend, so A has an adapter, without enabling Debugger.
+a.post("Debugger.setAsyncCallStackDepth", { maxDepth: 4 });
+b.post("Debugger.enable");
+vm.runInThisContext("1 + 1", { filename: "probe.js" });
+console.log(JSON.stringify({ aParsed, bSawProbe: bParsed >= 1 }));
+a.disconnect();
+b.disconnect();`,
+    ],
+    env: inspectorChildEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: { aParsed: 0, bSawProbe: true },
+    stderr: "",
+    exitCode: 0,
+  });
 });

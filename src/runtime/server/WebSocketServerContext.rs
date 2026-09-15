@@ -15,6 +15,7 @@ pub struct WebSocketServerContext {
     pub(crate) send_pings_automatically: bool,
     pub(crate) reset_idle_timeout_on_send: bool,
     pub(crate) close_on_backpressure_limit: bool,
+    pub(crate) allow_any_sec_websocket_key: bool,
 }
 
 pub struct Handler {
@@ -178,6 +179,7 @@ impl WebSocketServerContext {
             max_lifetime: self.max_lifetime,
             reset_idle_timeout_on_send: self.reset_idle_timeout_on_send,
             close_on_backpressure_limit: self.close_on_backpressure_limit,
+            allow_any_sec_websocket_key: self.allow_any_sec_websocket_key,
             ..Default::default()
         }
     }
@@ -231,6 +233,9 @@ pub(crate) fn on_create(
         send_pings_automatically: true,
         reset_idle_timeout_on_send: true,
         close_on_backpressure_limit: false,
+        allow_any_sec_websocket_key: object
+            .get(global_object, "internalAllowAnySecWebSocketKey")?
+            .is_some_and(JSValue::to_boolean),
     };
 
     if let Some(per_message_deflate) = object.get(global_object, "perMessageDeflate")? {

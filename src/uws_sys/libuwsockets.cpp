@@ -615,6 +615,7 @@ extern "C"
           .resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend,
           .sendPingsAutomatically = behavior.sendPingsAutomatically,
           .maxLifetime = behavior.maxLifetime,
+          .allowAnySecWebSocketKey = behavior.allowAnySecWebSocketKey,
       };
 
       if (behavior.upgrade)
@@ -673,6 +674,7 @@ extern "C"
           .resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend,
           .sendPingsAutomatically = behavior.sendPingsAutomatically,
           .maxLifetime = behavior.maxLifetime,
+          .allowAnySecWebSocketKey = behavior.allowAnySecWebSocketKey,
       };
 
       if (behavior.upgrade)

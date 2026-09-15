@@ -1,7 +1,7 @@
 // Hardcoded module "node:inspector/promises"
 const inspector = require("node:inspector");
 
-const { Session: BaseSession, console, open, close, url, waitForDebugger } = inspector;
+const { Session: BaseSession, console, open, close, url, waitForDebugger, Network, DOMStorage } = inspector;
 
 // Promise-based Session that wraps the callback-based Session
 class Session extends BaseSession {
@@ -25,4 +25,6 @@ export default {
   url,
   waitForDebugger,
   Session,
+  Network,
+  DOMStorage,
 };

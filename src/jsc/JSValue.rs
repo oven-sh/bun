@@ -2849,6 +2849,27 @@ impl JSValue {
         JSC__JSValue__isConstructor(self)
     }
 
+    /// `Array.isArray(self)`, but a revoked `Proxy` is `false` instead of a TypeError.
+    pub fn is_array_or_proxied_array(self) -> bool {
+        let mut value = self;
+        while value.is_cell() {
+            let ty = value.js_type();
+            if ty.is_array() {
+                return true;
+            }
+            // `revoke()` clears the handler and keeps the target.
+            if ty != JSType::ProxyObject
+                || value
+                    .get_proxy_internal_field(ProxyField::Handler)
+                    .is_undefined_or_null()
+            {
+                return false;
+            }
+            value = value.get_proxy_internal_field(ProxyField::Target);
+        }
+        false
+    }
+
     // ── Jest "is empty object". ────────────────────────
     /// `JSValue.isObjectEmpty` — Jest-extended `toBeEmptyObject` semantics:
     /// Map/Set/RegExp/Date are *not* empty objects; otherwise an object with

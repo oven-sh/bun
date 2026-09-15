@@ -170,19 +170,16 @@ impl FetchRequestBodySink {
 
     pub fn flush_from_js(
         &mut self,
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         use crate::webcore::streams::PendingState;
         if self.pending.state == PendingState::Pending {
-            return bun_sys::Result::Ok(
-                JSPromise::opaque_ref(self.pending.promise(global_this, context)).to_js(),
-            );
+            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
         }
         if self.done || self.ended {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                global_this,
+                cx.global(),
                 JSValue::js_number(0.0),
             ));
         }
@@ -190,12 +187,10 @@ impl FetchRequestBodySink {
             // Bytes were scheduled to the HTTP thread since the last drain ack,
             // so an `on_drain` is guaranteed to arrive and resolve this.
             self.pending.result = Writable::Owned(self.pending_bytes);
-            return bun_sys::Result::Ok(
-                JSPromise::opaque_ref(self.pending.promise(global_this, context)).to_js(),
-            );
+            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-            global_this,
+            cx.global(),
             JSValue::js_number(0.0),
         ))
     }
@@ -239,11 +234,7 @@ impl FetchRequestBodySink {
         self.source.close(sys_err);
     }
 
-    pub fn end_from_js(
-        &mut self,
-        _global_this: &JSGlobalObject,
-        _context: &bun_jsc::ScriptExecutionContext,
-    ) -> bun_sys::Result<JSValue> {
+    pub fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
@@ -293,12 +284,8 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
         // SAFETY: same contract, forwarded.
         unsafe { Self::finalize(this) }
     }
-    fn end_from_js(
-        &mut self,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, global, context)
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)

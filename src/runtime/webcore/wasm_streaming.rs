@@ -118,7 +118,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
     let any_blob: AnyBlob = match body {
         BodyValue::Locked(_) => match body.try_use_as_any_blob() {
             Some(b) => b,
-            None => return body.to_readable_stream(this, context),
+            None => return body.to_readable_stream(&this.js_thread(context)),
         },
         _ => body.use_as_any_blob(),
     };
@@ -140,7 +140,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
         let blob = scopeguard::guard(blob, |b: Blob| b.detach());
         blob.resolve_size();
         let size = blob.size.get();
-        return ReadableStream::from_blob_copy_ref(this, context, &blob, size);
+        return ReadableStream::from_blob_copy_ref(&this.js_thread(context), &blob, size);
     }
 
     // `defer any_blob.detach()` — RAII via scopeguard.

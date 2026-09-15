@@ -568,7 +568,7 @@ impl Subprocess<'_> {
         // The stream is the script's that reads the property.
         let context = global_this.bun_vm().context_of_caller_no_frame();
         this.stderr
-            .with_mut(|s| s.to_js(global_this, context, exited))
+            .with_mut(|s| s.to_js(&global_this.js_thread(context), exited))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -599,7 +599,7 @@ impl Subprocess<'_> {
         // The stream is the script's that reads the property.
         let context = global_this.bun_vm().context_of_caller_no_frame();
         this.stdout
-            .with_mut(|s| s.to_js(global_this, context, exited))
+            .with_mut(|s| s.to_js(&global_this.js_thread(context), exited))
     }
 
     #[bun_jsc::host_fn(getter)]

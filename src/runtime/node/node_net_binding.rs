@@ -172,8 +172,7 @@ pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let maybe_tcp = prev.as_::<TCPSocket>();
     let maybe_tls = prev.as_::<TLSSocket>();
     Listener::connect_inner(
-        global,
-        global.bun_vm().context_of_caller(frame),
+        &global.js_thread_of_caller(frame),
         maybe_tcp,
         maybe_tls,
         opts,

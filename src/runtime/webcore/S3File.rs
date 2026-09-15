@@ -173,17 +173,15 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
     let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
     let store = blob.store.get().as_ref().unwrap();
-    store.data.as_s3().unlink(
-        store,
-        global,
-        global.bun_vm().context_of_caller(callframe),
-        options,
-    )
+    store
+        .data
+        .as_s3()
+        .unlink(store, &global.js_thread_of_caller(callframe), options)
 }
 
 #[bun_jsc::host_fn]
 pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let context = global.bun_vm().context_of_caller(callframe);
+    let cx = global.js_thread_of_caller(callframe);
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
@@ -204,8 +202,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     // `write_file_internal` takes `&mut PathOrBlob`; rewrap the resolved blob.
     let mut blob_internal = PathOrBlob::Blob(blob);
     blob::write_file_internal(
-        global,
-        context,
+        &cx,
         &mut blob_internal,
         data,
         blob::WriteFileOptions {
@@ -227,11 +224,7 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         PathOrBlob::Blob(blob) => return Ok(blob.get_size(global)),
         path => resolve_s3_blob(global, &mut args, path, error_message)?.0,
     };
-    S3BlobStatTask::size(
-        global,
-        global.bun_vm().context_of_caller(callframe),
-        &mut blob,
-    )
+    S3BlobStatTask::size(&global.js_thread_of_caller(callframe), &mut blob)
 }
 
 #[bun_jsc::host_fn]
@@ -245,7 +238,7 @@ pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         PathOrBlob::Blob(blob) => return blob.get_exists(global, callframe),
         path => resolve_s3_blob(global, &mut args, path, error_message)?.0,
     };
-    S3BlobStatTask::exists(global, global.bun_vm().context_of_caller(callframe), &blob)
+    S3BlobStatTask::exists(&global.js_thread_of_caller(callframe), &blob)
 }
 
 fn construct_s3_file_internal_store(
@@ -470,15 +463,11 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    pub(crate) fn exists(
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-        blob: &Blob,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn exists(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(global),
+            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
+            global: bun_ptr::BackRef::new(cx.global()),
         });
         // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
         // callback below. Scoped shared access.
@@ -488,11 +477,11 @@ impl S3BlobStatTask {
         let path = s3_store.path();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
+        let env = cx.vm().as_mut().transpiler.env_mut();
 
         s3::stat(
             credentials,
-            context,
+            cx.context(),
             path,
             S3BlobStatTask::on_s3_exists_resolved,
             this.cast::<core::ffi::c_void>(),
@@ -502,15 +491,11 @@ impl S3BlobStatTask {
         Ok(promise)
     }
 
-    pub(crate) fn stat(
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-        blob: &Blob,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn stat(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(global),
+            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
+            global: bun_ptr::BackRef::new(cx.global()),
         });
         // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
         // callback below. Scoped shared access.
@@ -520,11 +505,11 @@ impl S3BlobStatTask {
         let path = s3_store.path();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
+        let env = cx.vm().as_mut().transpiler.env_mut();
 
         s3::stat(
             credentials,
-            context,
+            cx.context(),
             path,
             S3BlobStatTask::on_s3_stat_resolved,
             this.cast::<core::ffi::c_void>(),
@@ -534,15 +519,11 @@ impl S3BlobStatTask {
         Ok(promise)
     }
 
-    pub(crate) fn size(
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-        blob: &mut Blob,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &mut Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(global),
+            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
+            global: bun_ptr::BackRef::new(cx.global()),
         });
         // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
         // callback below. Scoped shared access.
@@ -552,11 +533,11 @@ impl S3BlobStatTask {
         let path = s3_store.path();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
+        let env = cx.vm().as_mut().transpiler.env_mut();
 
         s3::stat(
             credentials,
-            context,
+            cx.context(),
             path,
             S3BlobStatTask::on_s3_size_resolved,
             this.cast::<core::ffi::c_void>(),
@@ -702,7 +683,7 @@ pub(crate) fn get_stat(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    S3BlobStatTask::stat(global, global.bun_vm().context_of_caller(callframe), this)
+    S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), this)
 }
 
 #[bun_jsc::host_fn]
@@ -714,7 +695,7 @@ pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     let error_message = "Expected a S3 or path to get size";
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
     let (blob, _options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
-    S3BlobStatTask::stat(global, global.bun_vm().context_of_caller(callframe), &blob)
+    S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), &blob)
 }
 
 pub(crate) fn construct_internal_js(

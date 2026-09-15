@@ -11,15 +11,14 @@ super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
 
 impl TimeoutObject {
     pub(crate) fn init(
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         id: i32,
         kind: Kind,
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
-        Self::init_with(global, context, id, kind, interval, callback, arguments)
+        Self::init_with(cx, id, kind, interval, callback, arguments)
     }
 
     #[bun_jsc::host_fn(method)]

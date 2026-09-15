@@ -276,8 +276,7 @@ impl TimerObjectInternals {
     pub(crate) fn init(
         &mut self,
         timer: JSValue,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         id: i32,
         kind: Kind,
         interval: u32,
@@ -290,7 +289,7 @@ impl TimerObjectInternals {
 
         // Only a graph's context keeps a list of its timers.
         // SAFETY: `vm` is the live per-thread VM.
-        let graph_context = unsafe { (*vm).as_graph_context(context) };
+        let graph_context = unsafe { (*vm).as_graph_context(cx.context()) };
         *self = Self {
             id,
             flags: {
@@ -301,7 +300,7 @@ impl TimerObjectInternals {
                 Cell::new(f)
             },
             interval: Cell::new(interval),
-            context: context.id(),
+            context: cx.context().id(),
             this_value: JsCell::new(JsRef::empty()),
         };
         // `self` is at its final address (embedded in its heap-allocated parent).
@@ -313,8 +312,8 @@ impl TimerObjectInternals {
         }
 
         if kind == Kind::SetImmediate {
-            JSImmediate::arguments_set_cached(timer, global, arguments);
-            JSImmediate::callback_set_cached(timer, global, callback);
+            JSImmediate::arguments_set_cached(timer, cx.global(), arguments);
+            JSImmediate::callback_set_cached(timer, cx.global(), callback);
             // `flags.kind` was just set to `SetImmediate` above.
             let TimerParent::Immediate(parent) = self.parent_ptr() else {
                 unreachable!()
@@ -327,16 +326,16 @@ impl TimerObjectInternals {
             // ref'd by event loop
             self.ref_();
         } else {
-            JSTimeout::arguments_set_cached(timer, global, arguments);
-            JSTimeout::callback_set_cached(timer, global, callback);
+            JSTimeout::arguments_set_cached(timer, cx.global(), arguments);
+            JSTimeout::callback_set_cached(timer, cx.global(), callback);
             JSTimeout::idle_timeout_set_cached(
                 timer,
-                global,
+                cx.global(),
                 JSValue::js_number(f64::from(interval)),
             );
             JSTimeout::repeat_set_cached(
                 timer,
-                global,
+                cx.global(),
                 if kind == Kind::SetInterval {
                     JSValue::js_number(f64::from(interval))
                 } else {
@@ -345,10 +344,11 @@ impl TimerObjectInternals {
             );
 
             // this increments the refcount and sets _idleStart
-            self.reschedule(timer, vm, global.as_ptr());
+            self.reschedule(timer, vm, cx.global().as_ptr());
         }
 
-        self.this_value.with_mut(|r| r.set_strong(timer, global));
+        self.this_value
+            .with_mut(|r| r.set_strong(timer, cx.global()));
     }
 
     /// Returns `true` if an

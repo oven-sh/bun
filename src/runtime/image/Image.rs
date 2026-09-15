@@ -926,7 +926,7 @@ impl Image {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let context = global.bun_vm().context_of_caller(callframe);
+        let cx = global.js_thread_of_caller(callframe);
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
@@ -961,21 +961,14 @@ impl Image {
                 }
             }
         }
-        self.schedule(
-            global,
-            context,
-            callframe.this(),
-            Kind::Metadata,
-            Deliver::Uint8Array,
-        )
+        self.schedule(&cx, callframe.this(), Kind::Metadata, Deliver::Uint8Array)
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_bytes(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let context = global.bun_vm().context_of_caller(cf);
+        let cx = global.js_thread_of_caller(cf);
         self.schedule(
-            global,
-            context,
+            &cx,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Uint8Array,
@@ -984,10 +977,9 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_buffer(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let context = global.bun_vm().context_of_caller(cf);
+        let cx = global.js_thread_of_caller(cf);
         self.schedule(
-            global,
-            context,
+            &cx,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Buffer,
@@ -996,10 +988,9 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_blob(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let context = global.bun_vm().context_of_caller(cf);
+        let cx = global.js_thread_of_caller(cf);
         self.schedule(
-            global,
-            context,
+            &cx,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Blob,
@@ -1012,10 +1003,9 @@ impl Image {
         global: &JSGlobalObject,
         cf: &CallFrame,
     ) -> JsResult<JSValue> {
-        let context = global.bun_vm().context_of_caller(cf);
+        let cx = global.js_thread_of_caller(cf);
         self.schedule(
-            global,
-            context,
+            &cx,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Base64,
@@ -1026,10 +1016,9 @@ impl Image {
     /// MIME prefix, so it drops straight into `<img src>`.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_data_url(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let context = global.bun_vm().context_of_caller(cf);
+        let cx = global.js_thread_of_caller(cf);
         self.schedule(
-            global,
-            context,
+            &cx,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::DataUrl,
@@ -1047,7 +1036,7 @@ impl Image {
         global: &JSGlobalObject,
         cf: &CallFrame,
     ) -> JsResult<JSValue> {
-        let context = global.bun_vm().context_of_caller(cf);
+        let cx = global.js_thread_of_caller(cf);
         let args = cf.arguments();
         // Single positional `"dataurl"` for now — leaves room for `"hash"` /
         // `"color"` without growing methods. Anything else throws so the
@@ -1060,13 +1049,7 @@ impl Image {
                 )));
             }
         }
-        self.schedule(
-            global,
-            context,
-            cf.this(),
-            Kind::Placeholder,
-            Deliver::DataUrl,
-        )
+        self.schedule(&cx, cf.this(), Kind::Placeholder, Deliver::DataUrl)
     }
 
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -1077,7 +1060,7 @@ impl Image {
     /// the source format — so `img.resize(100).write("thumb.webp")` Just Works.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_write(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let context = global.bun_vm().context_of_caller(cf);
+        let cx = global.js_thread_of_caller(cf);
         let args = cf.arguments();
         if args.len() < 1 || args[0].is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1111,8 +1094,7 @@ impl Image {
             }
         }
         self.schedule(
-            global,
-            context,
+            &cx,
             cf.this(),
             Kind::Encode(output),
             Deliver::WriteDest(Strong::create(args[0], global)),
@@ -1123,28 +1105,27 @@ impl Image {
 impl Image {
     fn schedule(
         &self,
-        global: &JSGlobalObject,
-        context: &jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
         if matches!(self.source.get(), Source::Blob(_)) {
-            return BlobReadChain::start(self, global, context, this_value, kind, deliver);
+            return BlobReadChain::start(self, cx, this_value, kind, deliver);
         }
-        let (input, pin) = match self.pin_for_task(this_value, global) {
+        let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
             Ok(i) => i,
             Err(PinError::Detached) => {
                 drop(deliver);
                 return Ok(JSPromise::rejected_promise(
-                    global,
+                    cx.global(),
                     error_with_code(
-                        global,
+                        cx.global(),
                         zstr!("ERR_INVALID_STATE"),
                         zstr!("Image: source ArrayBuffer was detached"),
                     ),
                 )
-                .as_value(global));
+                .as_value(cx.global()));
             }
         };
         let work = PipelineTask {
@@ -1155,17 +1136,16 @@ impl Image {
             auto_orient: self.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
-        let cx = global.js_thread(context);
-        let promise = jsc::JSPromiseStrong::init(global);
+        let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
         jsc::Job::<PipelineTask>::schedule(
-            &cx,
+            cx,
             work,
             PipelineJs {
                 promise,
                 deliver,
                 _pin: pin,
-                image: PendingTask::new(self, this_value, global),
+                image: PendingTask::new(self, this_value, cx.global()),
             },
         );
         Ok(promise_value)
@@ -1274,8 +1254,7 @@ struct BlobReadChain<'a> {
 impl<'a> BlobReadChain<'a> {
     fn start(
         image: &Image,
-        global: &'a JSGlobalObject,
-        context: &jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'a>,
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
@@ -1289,7 +1268,9 @@ impl<'a> BlobReadChain<'a> {
         let blob_js = strong.get();
         let Some(blob) = blob_js.as_::<Blob>() else {
             drop(deliver);
-            return Err(global.throw(format_args!("Image: Blob source is no longer a Blob")));
+            return Err(cx
+                .global()
+                .throw(format_args!("Image: Blob source is no longer a Blob")));
         };
         // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
         let blob = unsafe { &mut *blob };
@@ -1299,17 +1280,17 @@ impl<'a> BlobReadChain<'a> {
         if image.pending_tasks.get() == 0 {
             image
                 .this_ref
-                .with_mut(|r| r.set_strong(this_value, global));
+                .with_mut(|r| r.set_strong(this_value, cx.global()));
         }
         image.pending_tasks.set(image.pending_tasks.get() + 1);
 
         let chain = Box::new(BlobReadChain {
             image: std::ptr::from_ref::<Image>(image),
-            global,
-            context: context.id(),
+            global: cx.global(),
+            context: cx.context().id(),
             kind,
             deliver,
-            outer: jsc::JSPromiseStrong::init(global),
+            outer: jsc::JSPromiseStrong::init(cx.global()),
         });
         let promise = chain.outer.value();
         // `read_bytes_to_handler` stores the handler pointer and calls
@@ -1321,7 +1302,7 @@ impl<'a> BlobReadChain<'a> {
         // dispatch hands it to `on_read_bytes` below exactly once, also when it
         // returns `Err` (an exception left pending while delivering synchronously,
         // i.e. after the chain has already been reclaimed).
-        unsafe { blob.read_bytes_to_handler(raw, global, context) }?;
+        unsafe { blob.read_bytes_to_handler(raw, cx) }?;
         Ok(promise)
     }
 
@@ -1370,8 +1351,7 @@ impl<'a> BlobReadChain<'a> {
                 // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
                 // `deliver` was already dropped there and the pending exception is the rejection.
                 let inner = image.schedule(
-                    global,
-                    global.bun_vm().context_of(self.context),
+                    &global.js_thread(global.bun_vm().context_of(self.context)),
                     this_value,
                     kind,
                     deliver,
@@ -1927,8 +1907,7 @@ impl PipelineTask {
                         // `PathOrBlob::Path` owns its `PathOrFileDescriptor`
                         // and frees on Drop — no explicit `path.deinit()` needed.
                         let write_promise = match crate::webcore::blob::write_file_internal(
-                            global,
-                            cx.context(),
+                            cx,
                             &mut path_or_blob,
                             data,
                             Default::default(),

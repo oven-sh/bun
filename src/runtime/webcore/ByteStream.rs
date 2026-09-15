@@ -228,11 +228,10 @@ impl readable_stream::SourceContext for ByteStream {
     }
     fn to_buffered_value(
         &mut self,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> Option<bun_jsc::JsResult<JSValue>> {
-        Some(Self::to_buffered_value(self, global, context, action))
+        Some(Self::to_buffered_value(self, cx, action))
     }
 }
 
@@ -924,16 +923,15 @@ impl ByteStream {
 
     fn to_buffered_value(
         &self,
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> bun_jsc::JsResult<JSValue> {
         if self.buffer_action.get().is_some() {
-            return Err(global_this.throw(format_args!("Cannot buffer value twice")));
+            return Err(cx.global().throw(format_args!("Cannot buffer value twice")));
         }
 
         if let streams::Result::Err(err) = &self.pending.get().result {
-            let err_js = err.to_js(global_this);
+            let err_js = err.to_js(cx.global());
             err_js.ensure_still_alive();
             self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.done.set(true);
@@ -941,16 +939,15 @@ impl ByteStream {
                 b.clear();
                 b.shrink_to_fit();
             });
-            return Ok(jsc::JSPromise::rejected_promise(global_this, err_js).to_js());
+            return Ok(jsc::JSPromise::rejected_promise(cx.global(), err_js).to_js());
         }
 
         if let Some(blob_) = self.to_any_blob() {
             let mut blob = blob_;
-            return blob.to_promise(global_this, context, action);
+            return blob.to_promise(cx, action);
         }
 
-        self.buffer_action
-            .set(Some(BufferAction::new(action, global_this, context)));
+        self.buffer_action.set(Some(BufferAction::new(action, cx)));
         let promise = self.buffer_action.get().as_ref().unwrap().value();
         // Signal after the action is installed so a backpressure-gated
         // producer observes it; a synchronous producer may fulfil it inline.

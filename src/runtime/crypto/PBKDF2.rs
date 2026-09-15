@@ -322,14 +322,12 @@ impl JobContext for Pbkdf2Job {
 
 /// Schedule the derivation on the work pool; `callback` was validated by `from_js_async`.
 pub(crate) fn create_job(
-    global_this: &JSGlobalObject,
-    context: &bun_jsc::ScriptExecutionContext,
+    cx: &bun_jsc::JsThread<'_>,
     data: ThreadIsolated<PBKDF2>,
     callback: JSValue,
 ) {
-    let cx = global_this.js_thread(context);
     Job::<Pbkdf2Job>::schedule(
-        &cx,
+        cx,
         Pbkdf2Job {
             pbkdf2: data,
             output: Vec::new(),
@@ -337,8 +335,8 @@ pub(crate) fn create_job(
         },
         Pbkdf2Js {
             callback: Strong::create(
-                callback.with_async_context_if_needed(global_this),
-                global_this,
+                callback.with_async_context_if_needed(cx.global()),
+                cx.global(),
             ),
         },
     );

@@ -477,8 +477,7 @@ impl JSValkeyClient {
         js_this: JSValue,
     ) -> JsResult<*mut JSValkeyClient> {
         Self::create(
-            global_object,
-            global_object.bun_vm().context_of_caller(callframe),
+            &global_object.js_thread_of_caller(callframe),
             callframe.arguments(),
             js_this,
         )
@@ -488,16 +487,14 @@ impl JSValkeyClient {
     ///
     /// This whole client needs a refactor.
     pub(crate) fn create_no_js_no_pubsub(
-        global_object: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         arguments: &[JSValue],
     ) -> JsResult<*mut JSValkeyClient> {
-        let global_object = GlobalRef::from(global_object);
-        let vm: &'static VirtualMachine = global_object.bun_vm();
+        let vm: &'static VirtualMachine = cx.global().bun_vm();
         let vm_ref = vm;
 
         let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
-            arguments[0].to_bun_string(&global_object)?
+            arguments[0].to_bun_string(cx.global())?
         } else {
             let env = vm_ref.env_loader();
             match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
@@ -518,16 +515,17 @@ impl JSValkeyClient {
             let url_byte_slice = url_slice.slice();
 
             if url_byte_slice.is_empty() {
-                return Err(
-                    global_object.throw_invalid_arguments(format_args!("Invalid URL format"))
-                );
+                return Err(cx
+                    .global()
+                    .throw_invalid_arguments(format_args!("Invalid URL format")));
             }
 
             if strings::contains(url_byte_slice, b"://") {
                 break 'get_url match Parsed::from_utf8(url_byte_slice) {
                     Some(u) => u,
                     None => {
-                        return Err(global_object
+                        return Err(cx
+                            .global()
                             .throw_invalid_arguments(format_args!("Invalid URL format")));
                     }
                 };
@@ -541,9 +539,9 @@ impl JSValkeyClient {
                 if write!(&mut cursor, "valkey://").is_err()
                     || cursor.write_all(url_byte_slice).is_err()
                 {
-                    return Err(
-                        global_object.throw_invalid_arguments(format_args!("URL is too long."))
-                    );
+                    return Err(cx
+                        .global()
+                        .throw_invalid_arguments(format_args!("URL is too long.")));
                 }
                 let written = start_len - cursor.len();
                 break 'get_url_slice &fallback_url_buf[..written];
@@ -552,9 +550,9 @@ impl JSValkeyClient {
             match Parsed::from_utf8(corrected_url) {
                 Some(u) => u,
                 None => {
-                    return Err(
-                        global_object.throw_invalid_arguments(format_args!("Invalid URL format"))
-                    );
+                    return Err(cx
+                        .global()
+                        .throw_invalid_arguments(format_args!("Invalid URL format")));
                 }
             }
         };
@@ -573,7 +571,7 @@ impl JSValkeyClient {
         let uri: valkey::Protocol = if !protocol_slice.is_empty() {
             match valkey::Protocol::MAP.get(protocol_slice) {
                 Some(v) => *v,
-                None => return Err(global_object.throw(format_args!(
+                None => return Err(cx.global().throw(format_args!(
                     "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, redis+unix, redis+tls+unix",
                 ))),
             }
@@ -600,7 +598,7 @@ impl JSValkeyClient {
             valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
                 // For unix sockets, the path is in the pathname
                 if pathname_utf8.slice().is_empty() {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "Expected unix socket path after valkey+unix:// or valkey+tls+unix://",
                     )));
                 }
@@ -620,12 +618,12 @@ impl JSValkeyClient {
                     // Port was explicitly specified
                     if port_value == 0 {
                         // Port 0 is invalid for TCP connections (though it's allowed for unix sockets)
-                        return Err(global_object.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "Port 0 is not valid for TCP connections",
                         )));
                     }
                     if port_value > 65535 {
-                        return Err(global_object.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "Invalid port number in URL. Port must be a number between 0 and 65535",
                         )));
                     }
@@ -638,7 +636,7 @@ impl JSValkeyClient {
             && !arguments[1].is_undefined_or_null()
             && arguments[1].is_object()
         {
-            Options::from_js(&global_object, arguments[1])?
+            Options::from_js(cx.global(), arguments[1])?
         } else {
             valkey::Options::default()
         };
@@ -681,7 +679,7 @@ impl JSValkeyClient {
                     match bun_core::fmt::parse_int::<u32>(&path[1..], 10) {
                         Ok(n) => n,
                         Err(_) => {
-                            return Err(global_object.throw_invalid_arguments(format_args!(
+                            return Err(cx.global().throw_invalid_arguments(format_args!(
                                 "Invalid database number in Redis URL: {}",
                                 bun_core::fmt::quote(&path[1..]),
                             )));
@@ -743,24 +741,22 @@ impl JSValkeyClient {
                 retry_attempts: 0,
                 auto_flusher: Default::default(),
             }),
-            global_object,
+            global_object: GlobalRef::from(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
-            context: context.id(),
+            context: cx.context().id(),
         }))
     }
 
     pub(crate) fn create(
-        global_object: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         arguments: &[JSValue],
         js_this: JSValue,
     ) -> JsResult<*mut JSValkeyClient> {
-        let new_client_ptr =
-            JSValkeyClient::create_no_js_no_pubsub(global_object, context, arguments)?;
+        let new_client_ptr = JSValkeyClient::create_no_js_no_pubsub(cx, arguments)?;
         // SAFETY: just allocated above
         let new_client = unsafe { &*new_client_ptr };
 
@@ -781,11 +777,9 @@ impl JSValkeyClient {
     /// You may need to populate it yourself.
     pub(crate) fn clone_without_connecting(
         &self,
-        global_object: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
     ) -> Result<*mut JSValkeyClient, bun_alloc::AllocError> {
-        let global_object = GlobalRef::from(global_object);
-        let vm: &'static VirtualMachine = global_object.bun_vm();
+        let vm: &'static VirtualMachine = cx.global().bun_vm();
 
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
@@ -859,13 +853,13 @@ impl JSValkeyClient {
                 retry_attempts: 0,
                 auto_flusher: Default::default(),
             }),
-            global_object,
+            global_object: GlobalRef::from(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
-            context: context.id(),
+            context: cx.context().id(),
         }))
     }
 

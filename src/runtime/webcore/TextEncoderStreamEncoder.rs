@@ -324,7 +324,7 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     }
     let wrote = handle
         .write(&streams::Result::Temporary(RawSlice::new(&buf)))
-        .to_js(global, global.bun_vm().context_of_caller_no_frame());
+        .to_js(&global.js_thread_of_caller_no_frame());
     if buf.capacity() <= SCRATCH_CAP {
         this.scratch.replace(buf);
     }
@@ -356,5 +356,5 @@ pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
     }
     handle
         .write(&streams::Result::Temporary(RawSlice::new(&REPLACEMENT)))
-        .to_js(global, global.bun_vm().context_of_caller_no_frame())
+        .to_js(&global.js_thread_of_caller_no_frame())
 }

@@ -267,10 +267,9 @@ impl ReadFile {
     pub(crate) fn schedule(
         this: ReadFile,
         completion: ReadFileCompletionFns,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
     ) {
-        bun_jsc::Job::<ReadFile>::schedule(&global.js_thread(context), this, completion);
+        bun_jsc::Job::<ReadFile>::schedule(cx, this, completion);
     }
 }
 

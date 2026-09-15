@@ -165,7 +165,7 @@ macro_rules! extern_crypto_job {
                 ctx: *mut Ctx,
                 callback: JSValue,
             ) {
-                let cx = global.js_thread(global.bun_vm().context_of_caller_no_frame());
+                let cx = global.js_thread_of_caller_no_frame();
                 let callback = callback.with_async_context_if_needed(global);
                 Job::<ExternJob>::schedule(
                     &cx,
@@ -302,7 +302,7 @@ pub mod random {
         job: RandomFillJob,
         value: JSValue,
     ) {
-        let cx = global.js_thread(global.bun_vm().context_of_caller(call_frame));
+        let cx = global.js_thread_of_caller(call_frame);
         Job::<RandomFillJob>::schedule(
             &cx,
             job,
@@ -1149,12 +1149,7 @@ mod _impl {
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (data, callback) = PBKDF2::from_js_async(global_this, call_frame)?;
-        pbkdf2::create_job(
-            global_this,
-            global_this.bun_vm().context_of_caller(call_frame),
-            data,
-            callback,
-        );
+        pbkdf2::create_job(&global_this.js_thread_of_caller(call_frame), data, callback);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1296,7 +1291,7 @@ mod _impl {
             return Err(global.throw_out_of_memory());
         }
         let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, params.keylen)?;
-        let cx = global.js_thread(global.bun_vm().context_of_caller(call_frame));
+        let cx = global.js_thread_of_caller(call_frame);
         Job::<ScryptJob>::schedule(
             &cx,
             ScryptJob {
@@ -1518,7 +1513,7 @@ mod _impl {
     fn argon2(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (ctx, callback) = Argon2::from_js(global, call_frame)?;
         let _ = validators::validate_function(global, "callback", callback)?;
-        let cx = global.js_thread(global.bun_vm().context_of_caller(call_frame));
+        let cx = global.js_thread_of_caller(call_frame);
         Job::<Argon2>::schedule(
             &cx,
             ctx,

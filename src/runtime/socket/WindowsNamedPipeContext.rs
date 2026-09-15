@@ -11,7 +11,7 @@ use bun_boringssl_sys as boringssl;
 use bun_core::ZStr;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
+use bun_jsc::{GlobalRef, SysErrorJsc};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
@@ -347,11 +347,10 @@ impl WindowsNamedPipeContext {
     }
 
     pub(crate) fn create(
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         socket: SocketType,
     ) -> *mut WindowsNamedPipeContext {
-        let global_this = GlobalRef::from(global_this);
+        let global_this = GlobalRef::from(cx.global());
         let vm: &'static VirtualMachine = global_this.bun_vm();
         let this: *mut WindowsNamedPipeContext = bun_core::heap::into_raw(Box::<
             core::mem::MaybeUninit<WindowsNamedPipeContext>,
@@ -429,7 +428,7 @@ impl WindowsNamedPipeContext {
             });
 
             // SAFETY: non-null, fully initialised above, heap-pinned; disarmed when freed.
-            unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
+            unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
 
             this
         }
@@ -440,8 +439,7 @@ impl WindowsNamedPipeContext {
     /// on this branch `[buntls]` returns `{secureContext}` only, so `ssl_config`
     /// alone would be empty.
     pub(crate) fn open(
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         fd: Fd,
         ssl_config: Option<SSLConfig>,
         owned_ctx: Option<boringssl::OwnedSslCtx>,
@@ -449,7 +447,7 @@ impl WindowsNamedPipeContext {
     ) -> Result<*mut WindowsNamedPipe, crate::Error> {
         // TODO: reuse the same context for multiple connections when possibles
 
-        let this = WindowsNamedPipeContext::create(global_this, context, socket);
+        let this = WindowsNamedPipeContext::create(cx, socket);
 
         // The guard reaches `socket` through `this`: `create()` moved it there.
         let mut guard = Self::armed(this);
@@ -464,8 +462,7 @@ impl WindowsNamedPipeContext {
 
     /// See `open` for `owned_ctx` ownership.
     pub(crate) fn connect(
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         path: &[u8],
         ssl_config: Option<SSLConfig>,
         owned_ctx: Option<boringssl::OwnedSslCtx>,
@@ -473,7 +470,7 @@ impl WindowsNamedPipeContext {
     ) -> Result<*mut WindowsNamedPipe, crate::Error> {
         // TODO: reuse the same context for multiple connections when possibles
 
-        let this = WindowsNamedPipeContext::create(global_this, context, socket);
+        let this = WindowsNamedPipeContext::create(cx, socket);
         let mut guard = Self::armed(this);
 
         // SAFETY: `this` is live and exclusively accessed here

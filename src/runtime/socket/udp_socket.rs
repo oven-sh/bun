@@ -576,23 +576,19 @@ impl UDPSocket {
         unsafe { &*user.cast::<UDPSocket>() }
     }
 
-    pub(crate) fn udp_socket(
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-        options: JSValue,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn udp_socket(cx: &bun_jsc::JsThread<'_>, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
         // A socket that is closed from the queue can send before that: it is not bound at all.
-        if context.is_stopped() {
-            return Ok(bun_jsc::JSPromise::create(global_this).to_js());
+        if cx.context().is_stopped() {
+            return Ok(bun_jsc::JSPromise::create(cx.global()).to_js());
         }
 
         let this_ptr = Self::new(Self {
             socket: Cell::new(None),
             config: JsCell::new(UDPSocketConfig::default()),
-            global_this: BackRef::new(global_this),
+            global_this: BackRef::new(cx.global()),
             loop_: uws::Loop::get(),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -644,31 +640,31 @@ impl UDPSocket {
         //
         // SAFETY: `this_ptr` is a fresh `heap::into_raw` allocation (line 478);
         // ownership transfers to the C++ wrapper's `m_ctx`.
-        let this_value = unsafe { Self::to_js_ptr(this_ptr, global_this) };
+        let this_value = unsafe { Self::to_js_ptr(this_ptr, cx.global()) };
         this_value.ensure_still_alive();
         this.this_value
-            .with_mut(|r| r.set_strong(this_value, global_this));
+            .with_mut(|r| r.set_strong(this_value, cx.global()));
 
         this.config
-            .set(UDPSocketConfig::from_js(global_this, options, this_value)?);
+            .set(UDPSocketConfig::from_js(cx.global(), options, this_value)?);
 
         let mut err: c_int = 0;
 
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
         if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
-            return Err(
-                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
-                    global_this,
+            return Err(cx
+                .global()
+                .throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    cx.global(),
                     hostname_z.as_bytes(),
-                )),
-            );
+                )));
         }
         if let Some(connect) = &config.connect {
             let address = connect.address.to_utf8();
             if !bun_dns::is_valid_hostname(&address) {
-                return Err(global_this.throw_value(
-                    crate::dns_jsc::cares_jsc::not_a_hostname_error(global_this, &address),
+                return Err(cx.global().throw_value(
+                    crate::dns_jsc::cares_jsc::not_a_hostname_error(cx.global(), &address),
                 ));
             }
         }
@@ -681,12 +677,12 @@ impl UDPSocket {
             Some(fd) => match dgram_begin_adoption(fd) {
                 Some(previous) => Some((fd, previous)),
                 None => {
-                    return Err(global_this.throw_value(
+                    return Err(cx.global().throw_value(
                         bun_sys::Error::from_code_int(
                             SystemErrno::EEXIST as c_int,
                             bun_sys::Tag::open,
                         )
-                        .to_js(global_this),
+                        .to_js(cx.global()),
                     ));
                 }
             },
@@ -728,7 +724,7 @@ impl UDPSocket {
         } else {
             // Open: its context closes it when it stops if script never does.
             // SAFETY: heap-allocated above; leaves its context in `on_close`.
-            unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, context) };
+            unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, cx.context()) };
             Some(created)
         });
 
@@ -763,15 +759,15 @@ impl UDPSocket {
                     syscall: BunString::static_(syscall),
                     ..Default::default()
                 };
-                let error_value = sys_err.to_error_instance(global_this);
+                let error_value = sys_err.to_error_instance(cx.global());
                 if !is_fd {
-                    error_value.put(global_this, b"address", config.hostname.to_js(global_this)?);
+                    error_value.put(cx.global(), b"address", config.hostname.to_js(cx.global())?);
                 }
 
-                return Err(global_this.throw_value(error_value));
+                return Err(cx.global().throw_value(error_value));
             }
 
-            return Err(global_this.throw(format_args!("Failed to bind socket")));
+            return Err(cx.global().throw(format_args!("Failed to bind socket")));
         }
 
         // Register this socket's live descriptor (adopted or freshly created)
@@ -794,14 +790,14 @@ impl UDPSocket {
                 .connect(address_z.as_ptr(), connect.port as u32);
             if ret != 0 {
                 if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
-                    return Err(global_this.throw_value(sys_err.to_js(global_this)));
+                    return Err(cx.global().throw_value(sys_err.to_js(cx.global())));
                 }
 
                 if let Some(eai_err) = c_ares::Error::init_eai(ret) {
-                    return Err(global_this.throw_value(
+                    return Err(cx.global().throw_value(
                         crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
                             eai_err,
-                            global_this,
+                            cx.global(),
                             b"connect",
                             address_z.as_bytes(),
                         )?,
@@ -817,7 +813,7 @@ impl UDPSocket {
 
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         Ok(bun_jsc::JSPromise::resolved_promise_value(
-            global_this,
+            cx.global(),
             this_value,
         ))
     }

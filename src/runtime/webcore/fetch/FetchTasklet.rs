@@ -213,16 +213,13 @@ impl HTTPRequestBody {
         }
     }
 
-    pub fn from_js(
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-        value: JSValue,
-    ) -> JsResult<HTTPRequestBody> {
-        let mut body_value = BodyValue::from_js(global_this, value)?;
+    pub fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
+        let mut body_value = BodyValue::from_js(cx.global(), value)?;
         if matches!(body_value, BodyValue::Used)
-            || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(global_this)))
+            || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(cx.global())))
         {
-            return Err(global_this
+            return Err(cx
+                .global()
                 .err(
                     jsc::ErrorCode::BODY_ALREADY_USED,
                     format_args!("body already used"),
@@ -242,7 +239,7 @@ impl HTTPRequestBody {
             }
         }
         if matches!(&body_value, BodyValue::Locked(_)) {
-            let readable = body_value.to_readable_stream(global_this, context)?;
+            let readable = body_value.to_readable_stream(cx)?;
             if !readable.is_empty_or_undefined_or_null() {
                 if let BodyValue::Locked(l) = &mut body_value {
                     if l.readable.has() {
@@ -884,7 +881,12 @@ impl FetchTasklet {
                     // (response.init); both live for this block.
                     let body = unsafe { &mut *body };
                     let context = self.global_this.bun_vm().context_of(self.context);
-                    BodyValue::resolve(&mut old, body, &self.global_this, context, headers)?;
+                    BodyValue::resolve(
+                        &mut old,
+                        body,
+                        &self.global_this.js_thread(context),
+                        headers,
+                    )?;
                 }
             }
         }
@@ -1850,8 +1852,7 @@ impl FetchTasklet {
     }
 
     fn get(
-        global_this: &JSGlobalObject,
-        context: &jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
@@ -1863,7 +1864,7 @@ impl FetchTasklet {
             result: HTTPClientResult::default(),
             metadata: None,
             http_ticket: None,
-            global_this: GlobalRef::from(global_this),
+            global_this: GlobalRef::from(cx.global()),
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
@@ -1877,7 +1878,7 @@ impl FetchTasklet {
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
             abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
-            context: context.id(),
+            context: cx.context().id(),
             signals: Signals::default(),
             signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),
@@ -1892,13 +1893,13 @@ impl FetchTasklet {
             mutex: Mutex::new(),
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
-            tracker: AsyncTaskTracker::init(global_this.bun_vm().as_mut()),
+            tracker: AsyncTaskTracker::init(cx.vm().as_mut()),
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
 
-        fetch_tasklet.tracker.did_schedule(global_this);
+        fetch_tasklet.tracker.did_schedule(cx.global());
 
         // `body` is *moved* through `FetchOptions` into `request_body` (no
         // shallow alias, no post-queue detach), so the RefPtr<Store> already carries
@@ -1907,7 +1908,7 @@ impl FetchTasklet {
         // `clear_data() → request_body.detach()` releases it.
 
         let url = fetch_options.url;
-        let env = global_this.bun_vm().as_mut().transpiler.env_mut();
+        let env = cx.vm().as_mut().transpiler.env_mut();
         // Capture the proxy env so the HTTP thread can re-resolve per redirect
         // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
         // owns copies of the env values, so a later `process.env.HTTP_PROXY =
@@ -2306,13 +2307,12 @@ impl FetchTasklet {
     }
 
     pub(crate) fn queue(
-        global: &JSGlobalObject,
-        context: &jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
         http::http_thread::init(&http::http_thread::InitOpts::default());
-        let node = Self::get(global, context, fetch_options, promise)?;
+        let node = Self::get(cx, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);
         let mut batch = bun_threading::thread_pool::Batch::default();
@@ -2325,9 +2325,9 @@ impl FetchTasklet {
         node_ref.ref_();
         // Out on the HTTP thread from here until its final callback: its context
         // aborts it when it stops, and the VM waits for it (the ticket).
-        node_ref.http_ticket = Some(global.bun_vm().ticket());
+        node_ref.http_ticket = Some(cx.vm().ticket());
         // SAFETY: as in `get`.
-        unsafe { jsc::AbortHandle::arm_owner(node, context) };
+        unsafe { jsc::AbortHandle::arm_owner(node, cx.context()) };
         http::HTTPThread::schedule(batch);
 
         Ok(node)

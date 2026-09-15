@@ -94,8 +94,7 @@ impl CopyFile {
         source_store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
-        global_this: &JSGlobalObject,
-        context: &jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         mkdirp_if_not_exists: bool,
         destination_mode: Option<Mode>,
     ) -> JSValue {
@@ -114,10 +113,9 @@ impl CopyFile {
             system_error: None,
             read_len: 0,
         };
-        let cx = global_this.js_thread(context);
-        let promise = jsc::JSPromiseStrong::init(global_this);
+        let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        jsc::Job::<CopyFile>::schedule(&cx, copy, promise);
+        jsc::Job::<CopyFile>::schedule(cx, copy, promise);
         value
     }
 

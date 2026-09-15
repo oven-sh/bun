@@ -928,12 +928,12 @@ pub struct Arguments {
 
 impl Arguments {
     pub fn from_js(
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Arguments> {
-        let Some(path) = PathLike::from_js_with_allocator(global, arguments)? else {
-            return Err(global
+        let Some(path) = PathLike::from_js_with_allocator(cx.global(), arguments)? else {
+            return Err(cx
+                .global()
                 .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
         };
 
@@ -947,34 +947,35 @@ impl Arguments {
             if options_or_callable.is_object() {
                 // default true
                 persistent = options_or_callable
-                    .get_boolean_strict(global, "persistent")?
+                    .get_boolean_strict(cx.global(), "persistent")?
                     .unwrap_or(true);
 
                 // default false
                 bigint = options_or_callable
-                    .get_boolean_strict(global, "bigint")?
+                    .get_boolean_strict(cx.global(), "bigint")?
                     .unwrap_or(false);
 
-                if let Some(interval_) = options_or_callable.get(global, "interval")? {
+                if let Some(interval_) = options_or_callable.get(cx.global(), "interval")? {
                     if !interval_.is_number() && !interval_.is_any_int() {
-                        return Err(global
+                        return Err(cx
+                            .global()
                             .throw_invalid_arguments(format_args!("interval must be a number")));
                     }
-                    interval = interval_.coerce::<i32>(global)?;
+                    interval = interval_.coerce::<i32>(cx.global())?;
                 }
             }
         }
 
         if let Some(listener_) = arguments.next_eat() {
             if listener_.is_callable() {
-                listener = listener_.with_async_context_if_needed(global);
+                listener = listener_.with_async_context_if_needed(cx.global());
             }
         }
 
         if listener.is_empty() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("Expected \"listener\" callback"))
-            );
+            return Err(cx
+                .global()
+                .throw_invalid_arguments(format_args!("Expected \"listener\" callback")));
         }
 
         Ok(Arguments {
@@ -983,8 +984,8 @@ impl Arguments {
             persistent,
             bigint,
             interval,
-            global_this: BackRef::new(global),
-            context: context.id(),
+            global_this: BackRef::new(cx.global()),
+            context: cx.context().id(),
         })
     }
 

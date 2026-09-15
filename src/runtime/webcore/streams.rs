@@ -396,20 +396,16 @@ pub enum WritableFuture {
 }
 
 impl WritablePending {
-    pub(crate) fn promise(
-        &mut self,
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> *mut JSPromise {
+    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> *mut JSPromise {
         self.state = PendingState::Pending;
 
         match &self.future {
             WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>(strong.get()),
             _ => {
                 self.future = WritableFuture::Promise {
-                    strong: JSPromiseStrong::init(global_this),
-                    global: BackRef::new(global_this),
-                    context: context.id(),
+                    strong: JSPromiseStrong::init(cx.global()),
+                    global: BackRef::new(cx.global()),
+                    context: cx.context().id(),
                 };
                 match &self.future {
                     WritableFuture::Promise { strong, .. } => {
@@ -446,8 +442,7 @@ impl WritablePending {
                 Writable::fulfill_promise(
                     core::mem::replace(&mut self.result, Writable::Done),
                     strong.swap(),
-                    &global,
-                    entered.context(),
+                    &global.js_thread(entered.context()),
                 )
             }
             WritableFuture::None => {}
@@ -461,29 +456,24 @@ impl Writable {
     pub(crate) fn fulfill_promise(
         result: Writable,
         promise: &mut JSPromise,
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
     ) {
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _guard = jsc::js_value::Protected::adopt(promise.to_js());
         let settled = match result {
             Writable::Err(err) => {
-                promise.reject_with_async_stack(global_this, Ok(err.to_js(global_this)))
+                promise.reject_with_async_stack(cx.global(), Ok(err.to_js(cx.global())))
             }
-            Writable::Done => promise.resolve(global_this, JSValue::FALSE),
-            other => promise.resolve(global_this, other.to_js(global_this, context)),
+            Writable::Done => promise.resolve(cx.global(), JSValue::FALSE),
+            other => promise.resolve(cx.global(), other.to_js(cx)),
         };
         crate::dispatch::fold(settled);
     }
 
-    pub fn to_js(
-        self,
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> JSValue {
+    pub fn to_js(self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
         match self {
             Writable::Err(err) => {
-                JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js()
+                JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js()
             }
             Writable::Owned(len) => JSValue::from(len),
             // Negative sentinel; the writer awaits the drain via `flush(true)`.
@@ -496,7 +486,7 @@ impl Writable {
             Writable::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
                 // classification; exclusive borrow scoped to the call.
-                let prom = unsafe { (*pending).promise(global_this, context) };
+                let prom = unsafe { (*pending).promise(cx) };
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 JSPromise::opaque_ref(prom).to_js()
             }
@@ -536,16 +526,12 @@ impl Default for Pending {
 }
 
 impl Pending {
-    pub(crate) fn promise(
-        &mut self,
-        global_object: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> *mut JSPromise {
-        let prom = std::ptr::from_mut::<JSPromise>(JSPromise::create(global_object));
+    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> *mut JSPromise {
+        let prom = std::ptr::from_mut::<JSPromise>(JSPromise::create(cx.global()));
         self.future = PendingFuture::Promise {
             promise: prom,
-            global_this: BackRef::new(global_object),
-            context: context.id(),
+            global_this: BackRef::new(cx.global()),
+            context: cx.context().id(),
         };
         self.state = PendingState::Pending;
         prom
@@ -667,8 +653,7 @@ impl Pending {
                 StreamResult::fulfill_promise(
                     &mut self.result,
                     *promise,
-                    global_this,
-                    entered.context(),
+                    &global_this.js_thread(entered.context()),
                 )
             }
             PendingFuture::Handler(h) => {
@@ -699,11 +684,10 @@ impl StreamResult {
     pub(crate) fn fulfill_promise(
         result: &mut StreamResult,
         promise: *mut JSPromise,
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
     ) {
         // dropped (only used for read-only `event_loop()`) before any re-entrant call.
-        let vm = global_this.bun_vm();
+        let vm = cx.vm();
         // A long-lived `&mut EventLoop` / `&mut JSPromise` held across
         // re-entrant resolve/reject would alias any
         // `&mut` the re-entered JS path materializes through `vm.event_loop()` or the
@@ -728,34 +712,30 @@ impl StreamResult {
         // re-entrant call (no long-lived `&mut JSPromise` held).
         let settled = match result {
             StreamResult::Err(err) => {
-                let value = err.to_js(global_this);
+                let value = err.to_js(cx.global());
                 value.ensure_still_alive();
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(value))
+                JSPromise::opaque_mut(promise).reject_with_async_stack(cx.global(), Ok(value))
             }
             StreamResult::Done => {
-                JSPromise::opaque_mut(promise).resolve(global_this, JSValue::FALSE)
+                JSPromise::opaque_mut(promise).resolve(cx.global(), JSValue::FALSE)
             }
             _ => {
-                let value = result.to_js(global_this, context);
+                let value = result.to_js(cx);
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
                 match value {
                     Ok(value) => {
                         value.ensure_still_alive();
-                        JSPromise::opaque_mut(promise).resolve(global_this, value)
+                        JSPromise::opaque_mut(promise).resolve(cx.global(), value)
                     }
-                    Err(err) => JSPromise::opaque_mut(promise).reject(global_this, Err(err)),
+                    Err(err) => JSPromise::opaque_mut(promise).reject(cx.global(), Err(err)),
                 }
             }
         };
         crate::dispatch::fold(settled);
     }
 
-    pub fn to_js(
-        &mut self,
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> JsResult<JSValue> {
+    pub fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         match self {
             StreamResult::Owned(list) => {
                 // The buffer is handed to JSC; the later
@@ -764,13 +744,13 @@ impl StreamResult {
                 // Drop so JSC's MarkedArrayBuffer_deallocator is the sole owner.
                 let mut taken = core::mem::ManuallyDrop::new(core::mem::take(list));
                 let ab = ArrayBuffer::from_bytes(taken.slice_mut(), JSType::Uint8Array);
-                ab.to_js(global_this)
+                ab.to_js(cx.global())
             }
             StreamResult::OwnedAndDone(list) => {
                 // see Owned arm above — same ownership transfer to JSC.
                 let mut taken = core::mem::ManuallyDrop::new(core::mem::take(list));
                 let ab = ArrayBuffer::from_bytes(taken.slice_mut(), JSType::Uint8Array);
-                ab.to_js(global_this)
+                ab.to_js(cx.global())
             }
             StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
                 // Allocate an uninitialized Uint8Array and
@@ -778,9 +758,9 @@ impl StreamResult {
                 // `ArrayBuffer::create` would do.
                 let temp_slice = temp.slice();
                 let array =
-                    JSValue::create_uninitialized_uint8_array(global_this, temp_slice.len())?;
+                    JSValue::create_uninitialized_uint8_array(cx.global(), temp_slice.len())?;
                 let mut buf = array
-                    .as_array_buffer(global_this)
+                    .as_array_buffer(cx.global())
                     .expect("freshly created Uint8Array has a backing buffer");
                 buf.slice_mut()[..temp_slice.len()].copy_from_slice(temp_slice);
                 Ok(array)
@@ -790,16 +770,16 @@ impl StreamResult {
             StreamResult::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
                 // classification; exclusive borrow scoped to the call.
-                let promise = unsafe { (**pending).promise(global_this, context) };
+                let promise = unsafe { (**pending).promise(cx) };
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 let promise_js = JSPromise::opaque_ref(promise).to_js();
                 promise_js.protect();
                 Ok(promise_js)
             }
             StreamResult::Err(err) => {
-                let js_err = err.to_js(global_this);
+                let js_err = err.to_js(cx.global());
                 js_err.ensure_still_alive();
-                Ok(JSPromise::rejected_promise(global_this, js_err).to_js())
+                Ok(JSPromise::rejected_promise(cx.global(), js_err).to_js())
             }
             // false == controller.close()
             // undefined == noop, but we probably won't send it
@@ -1747,8 +1727,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
     pub(crate) fn flush_from_js(
         &mut self,
-        global_this: &JSGlobalObject,
-        _context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flushFromJS({})", wait);
@@ -1771,7 +1750,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
         if self.is_done() {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                global_this,
+                cx.global(),
                 JSValue::from(0i32),
             ));
         }
@@ -1785,13 +1764,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             // otherwise fall through and let on_writable resolve the promise.
             if !self.has_backpressure {
                 return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                    global_this,
+                    cx.global(),
                     JSValue::from(slice_len),
                 ));
             }
         }
         self.wrote_at_start_of_flush = self.wrote;
-        bun_sys::Result::Ok(self.park_pending_flush(global_this))
+        bun_sys::Result::Ok(self.park_pending_flush(cx.global()))
     }
 
     pub fn flush(&mut self) -> bun_sys::Result<()> {
@@ -1971,12 +1950,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.finalize();
     }
 
-    pub(crate) fn end_from_js(
-        &mut self,
-        global_this: &JSGlobalObject,
-        _context: &bun_jsc::ScriptExecutionContext,
-    ) -> bun_sys::Result<JSValue> {
-        self.finish(global_this)
+    pub(crate) fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        self.finish(cx.global())
     }
 
     fn finish(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
@@ -2274,12 +2249,8 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
     fn controller_created(&mut self, controller: JSValue, global: &JSGlobalObject) {
         self.pipe = PipeCell::root(controller, global);
     }
-    fn end_from_js(
-        &mut self,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, global, context)
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
@@ -2444,8 +2415,7 @@ impl NetworkSink {
 
     pub(crate) fn flush_from_js(
         &mut self,
-        global_this: &JSGlobalObject,
-        _context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         _wait: bool,
     ) -> bun_sys::Result<JSValue> {
         if self.flush_promise.has_value() {
@@ -2453,16 +2423,16 @@ impl NetworkSink {
         }
         if self.done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                global_this,
+                cx.global(),
                 JSValue::js_number(0.0),
             ));
         }
         if self.task_ref().is_some_and(|t| !t.is_queue_empty()) {
-            self.flush_promise = JSPromiseStrong::init(global_this);
+            self.flush_promise = JSPromiseStrong::init(cx.global());
             return bun_sys::Result::Ok(self.flush_promise.value());
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-            global_this,
+            cx.global(),
             JSValue::js_number(0.0),
         ))
     }
@@ -2680,11 +2650,7 @@ impl NetworkSink {
         unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref(wrapper) };
     }
 
-    pub(crate) fn end_from_js(
-        &mut self,
-        _global_this: &JSGlobalObject,
-        _context: &bun_jsc::ScriptExecutionContext,
-    ) -> bun_sys::Result<JSValue> {
+    pub(crate) fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
         if self.end_promise.has_value() {
             // we are already waiting for the end
@@ -2739,12 +2705,8 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
         Self::fail_from_js_pump(this, global, reason);
         bun_sys::Result::Ok(())
     }
-    fn end_from_js(
-        &mut self,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, global, context)
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
@@ -2779,15 +2741,11 @@ pub enum BufferActionTag {
 }
 
 impl BufferAction {
-    pub(crate) fn new(
-        tag: BufferActionTag,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> Self {
+    pub(crate) fn new(tag: BufferActionTag, cx: &bun_jsc::JsThread<'_>) -> Self {
         Self {
             tag,
-            promise: JSPromiseStrong::init(global),
-            context: context.id(),
+            promise: JSPromiseStrong::init(cx.global()),
+            context: cx.context().id(),
         }
     }
 
@@ -2801,8 +2759,7 @@ impl BufferAction {
         let entered = global.bun_vm().enter_context(self.context);
         let settled = blob.wrap(
             jsc::AnyPromise::Normal(self.swap()),
-            global,
-            entered.context(),
+            &global.js_thread(entered.context()),
             self.tag(),
         );
         crate::dispatch::fold(settled);

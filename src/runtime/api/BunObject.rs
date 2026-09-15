@@ -105,33 +105,29 @@ mod static_adapters {
 
     pub(super) fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::connect(g, g.bun_vm().context_of_caller(cf), opts)
+        crate::socket::Listener::connect(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::listen(g, g.bun_vm().context_of_caller(cf), opts)
+        crate::socket::Listener::listen(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::udp_socket_draft::UDPSocket::udp_socket(
-            g,
-            g.bun_vm().context_of_caller(cf),
-            opts,
-        )
+        crate::socket::udp_socket_draft::UDPSocket::udp_socket(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [a0] = cf.arguments_as_array::<1>();
         let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn(g, g.bun_vm().context_of_caller(cf), a0, a1)
+        crate::api::js_bun_spawn_bindings::spawn(&g.js_thread_of_caller(cf), a0, a1)
     }
 
     pub(super) fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [a0] = cf.arguments_as_array::<1>();
         let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn_sync(g, g.bun_vm().context_of_caller(cf), a0, a1)
+        crate::api::js_bun_spawn_bindings::spawn_sync(&g.js_thread_of_caller(cf), a0, a1)
     }
 
     pub(super) fn js_bundler_build(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
@@ -1796,8 +1792,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     // Bun.ModuleGraph reads the property first.
     let vm = global_this.bun_vm();
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(
-        global_this,
-        vm.root_context(),
+        &global_this.js_thread(vm.root_context()),
         &[JSValue::UNDEFINED],
     ) {
         Ok(p) => p,
@@ -2773,17 +2768,15 @@ pub mod JSZstd {
     }
 
     fn create_job(
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         is_compress: bool,
         level: i32,
     ) -> JSValue {
-        let cx = global_this.js_thread(context);
-        let promise = jsc::JSPromiseStrong::init(global_this);
+        let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
         jsc::Job::<ZstdJob>::schedule(
-            &cx,
+            cx,
             ZstdJob {
                 buffer,
                 is_compress,
@@ -2800,9 +2793,9 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let context = global_this.bun_vm().context_of_caller(callframe);
+        let cx = global_this.js_thread_of_caller(callframe);
         let (buffer, _, level) = get_options_async(global_this, callframe)?;
-        Ok(create_job(global_this, context, buffer, true, level))
+        Ok(create_job(&cx, buffer, true, level))
     }
 
     #[bun_jsc::host_fn]
@@ -2810,9 +2803,9 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let context = global_this.bun_vm().context_of_caller(callframe);
+        let cx = global_this.js_thread_of_caller(callframe);
         let (buffer, _, _) = get_options_async(global_this, callframe)?;
-        Ok(create_job(global_this, context, buffer, false, 0)) // level is ignored for decompression
+        Ok(create_job(&cx, buffer, false, 0)) // level is ignored for decompression
     }
 }
 

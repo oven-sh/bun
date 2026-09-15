@@ -648,12 +648,12 @@ pub struct Arguments<'a> {
 
 impl<'a> Arguments<'a> {
     pub fn from_js(
-        ctx: &'a JSGlobalObject,
-        context: &'a bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'a>,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Arguments<'a>> {
-        let Some(path) = PathLike::from_js(ctx, arguments)? else {
-            return Err(ctx
+        let Some(path) = PathLike::from_js(cx.global(), arguments)? else {
+            return Err(cx
+                .global()
                 .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
         };
         // `PathLike: Drop` releases the path: `?` on the error paths below
@@ -668,40 +668,45 @@ impl<'a> Arguments<'a> {
         if let Some(options_or_callable) = arguments.next_eat() {
             // options
             if options_or_callable.is_object() {
-                if let Some(persistent_) = options_or_callable.get_truthy(ctx, "persistent")? {
+                if let Some(persistent_) =
+                    options_or_callable.get_truthy(cx.global(), "persistent")?
+                {
                     if !persistent_.is_boolean() {
-                        return Err(ctx.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "persistent must be a boolean"
                         )));
                     }
                     persistent = persistent_.to_boolean();
                 }
 
-                if let Some(verbose_) = options_or_callable.get_truthy(ctx, "verbose")? {
+                if let Some(verbose_) = options_or_callable.get_truthy(cx.global(), "verbose")? {
                     if !verbose_.is_boolean() {
-                        return Err(
-                            ctx.throw_invalid_arguments(format_args!("verbose must be a boolean"))
-                        );
+                        return Err(cx
+                            .global()
+                            .throw_invalid_arguments(format_args!("verbose must be a boolean")));
                     }
                     verbose = verbose_.to_boolean();
                 }
 
                 if let Some(encoding_) =
-                    options_or_callable.fast_get(ctx, jsc::BuiltinName::encoding)?
+                    options_or_callable.fast_get(cx.global(), jsc::BuiltinName::encoding)?
                 {
-                    encoding = Encoding::assert(encoding_, ctx, encoding)?;
+                    encoding = Encoding::assert(encoding_, cx.global(), encoding)?;
                 }
 
-                if let Some(recursive_) = options_or_callable.get_truthy(ctx, "recursive")? {
+                if let Some(recursive_) =
+                    options_or_callable.get_truthy(cx.global(), "recursive")?
+                {
                     if !recursive_.is_boolean() {
-                        return Err(ctx
+                        return Err(cx
+                            .global()
                             .throw_invalid_arguments(format_args!("recursive must be a boolean")));
                     }
                     recursive = recursive_.to_boolean();
                 }
 
                 // abort signal
-                if let Some(signal_) = options_or_callable.get_truthy(ctx, "signal")? {
+                if let Some(signal_) = options_or_callable.get_truthy(cx.global(), "signal")? {
                     if let Some(signal_obj) = AbortSignal::from_js(signal_) {
                         // Keep it alive
                         signal_.ensure_still_alive();
@@ -712,7 +717,7 @@ impl<'a> Arguments<'a> {
                         // centralised deref proof.
                         signal = Some(AbortSignal::opaque_ref(signal_obj));
                     } else {
-                        return Err(ctx.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "signal is not of type AbortSignal"
                         )));
                     }
@@ -721,7 +726,7 @@ impl<'a> Arguments<'a> {
                 // listener
                 if let Some(callable) = arguments.next_eat() {
                     if !callable.is_cell() || !callable.is_callable() {
-                        return Err(ctx.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "Expected \"listener\" callback to be a function"
                         )));
                     }
@@ -729,7 +734,7 @@ impl<'a> Arguments<'a> {
                 }
             } else {
                 if !options_or_callable.is_cell() || !options_or_callable.is_callable() {
-                    return Err(ctx.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "Expected \"listener\" callback to be a function"
                     )));
                 }
@@ -737,14 +742,16 @@ impl<'a> Arguments<'a> {
             }
         }
         if listener.is_empty() {
-            return Err(ctx.throw_invalid_arguments(format_args!("Expected \"listener\" callback")));
+            return Err(cx
+                .global()
+                .throw_invalid_arguments(format_args!("Expected \"listener\" callback")));
         }
 
         Ok(Arguments {
             path,
             listener,
-            global_this: ctx,
-            context,
+            global_this: cx.global(),
+            context: cx.context(),
             signal,
             persistent,
             recursive,

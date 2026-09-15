@@ -170,11 +170,10 @@ macro_rules! impl_js_sink_forwarders {
         }
         fn flush_from_js(
             &mut self,
-            global: &::bun_jsc::JSGlobalObject,
-            context: &bun_jsc::ScriptExecutionContext,
+            cx: &::bun_jsc::JsThread<'_>,
             wait: bool,
         ) -> ::bun_sys::Result<::bun_jsc::JSValue> {
-            Self::flush_from_js(self, global, context, wait)
+            Self::flush_from_js(self, cx, wait)
         }
     };
 }
@@ -363,11 +362,7 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
-    fn end_from_js(
-        &mut self,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> sys::Result<JSValue>;
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
     fn start(
         &mut self,
@@ -419,12 +414,7 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     /// `&mut Self` and the C++ dispatcher keeps using `m_sinkPtr` in the
     /// same frame; defer a last-owner free to the event loop.
     fn controller_detached(&mut self) {}
-    fn flush_from_js(
-        &mut self,
-        _global: &JSGlobalObject,
-        _context: &bun_jsc::ScriptExecutionContext,
-        _wait: bool,
-    ) -> sys::Result<JSValue> {
+    fn flush_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>, _wait: bool) -> sys::Result<JSValue> {
         // Guarded by `HAS_FLUSH_FROM_JS`; default impl delegates to `flush()`
         // (returning undefined on success) so buffered bytes are
         // still flushed even if a caller bypasses `js_flush`.
@@ -512,7 +502,7 @@ impl<T: JsSinkType> JSSink<T> {
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
-        let context = global.bun_vm().context_of_caller(frame);
+        let cx = global.js_thread_of_caller(frame);
         use crate::webcore::jsc::JSValue;
         bun_core::mark_binding!();
         let Some(this) = Self::get_this(global, frame)? else {
@@ -551,7 +541,7 @@ impl<T: JsSinkType> JSSink<T> {
             return Ok(this
                 .sink
                 .write_bytes(&streams::Result::Temporary(data))
-                .to_js(global, context));
+                .to_js(&cx));
         }
 
         if !arg.is_string() {
@@ -573,14 +563,14 @@ impl<T: JsSinkType> JSSink<T> {
             return Ok(this
                 .sink
                 .write_utf16(&streams::Result::Temporary(data))
-                .to_js(global, context));
+                .to_js(&cx));
         }
 
         let data = bun_ptr::RawSlice::new(view.latin1());
         Ok(this
             .sink
             .write_latin1(&streams::Result::Temporary(data))
-            .to_js(global, context))
+            .to_js(&cx))
     }
 
     /// `${abi_name}__flush` host-fn body.
@@ -588,7 +578,7 @@ impl<T: JsSinkType> JSSink<T> {
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
-        let context = global.bun_vm().context_of_caller(frame);
+        let cx = global.js_thread_of_caller(frame);
         use crate::webcore::jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
@@ -605,7 +595,7 @@ impl<T: JsSinkType> JSSink<T> {
             let wait = frame.arguments_count() > 0
                 && frame.argument(0).is_boolean()
                 && frame.argument(0).as_boolean();
-            return match this.sink.flush_from_js(global, context, wait) {
+            return match this.sink.flush_from_js(&cx, wait) {
                 sys::Result::Ok(value) => Ok(value),
                 sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
             };
@@ -661,7 +651,7 @@ impl<T: JsSinkType> JSSink<T> {
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
-        let context = global.bun_vm().context_of_caller(frame);
+        let cx = global.js_thread_of_caller(frame);
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
@@ -673,7 +663,7 @@ impl<T: JsSinkType> JSSink<T> {
             return Err(global.throw_value(err));
         }
 
-        let result = match this.sink.end_from_js(global, context) {
+        let result = match this.sink.end_from_js(&cx) {
             sys::Result::Ok(value) => Ok(value),
             sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
         };
@@ -786,7 +776,7 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         // TODO: properly propagate exception upwards
-        match this.end_from_js(global, global.bun_vm().context_of_caller_no_frame()) {
+        match this.end_from_js(&global.js_thread_of_caller_no_frame()) {
             sys::Result::Ok(value) => value,
             sys::Result::Err(err) => match err.to_js(global) {
                 Ok(v) => {
@@ -931,7 +921,7 @@ pub extern "C" fn Bun__NativeTransformSink__writeBytes(
     handle
         .write(&streams::Result::Temporary(bun_ptr::RawSlice::new(slice)))
         // A C++ transform step, which script is running, calls this.
-        .to_js(global, global.bun_vm().context_of_caller_no_frame())
+        .to_js(&global.js_thread_of_caller_no_frame())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

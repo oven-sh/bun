@@ -63,11 +63,10 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     }
     fn to_buffered_value(
         &mut self,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> Option<JsResult<JSValue>> {
-        Some(Self::to_buffered_value(self, global, context, action))
+        Some(Self::to_buffered_value(self, cx, action))
     }
 }
 
@@ -219,18 +218,18 @@ impl ByteBlobLoader {
 
     pub(crate) fn to_buffered_value(
         &mut self,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
-        if let Some(mut blob) = self.to_any_blob(global) {
-            let result = blob.to_promise(global, context, action);
+        if let Some(mut blob) = self.to_any_blob(cx.global()) {
+            let result = blob.to_promise(cx, action);
             blob.detach();
             return result;
         }
 
         // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()
-        Ok(global
+        Ok(cx
+            .global()
             .err(
                 bun_jsc::ErrorCode::BODY_ALREADY_USED,
                 format_args!("Body already used"),

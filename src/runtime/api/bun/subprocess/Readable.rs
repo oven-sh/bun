@@ -213,22 +213,17 @@ impl Readable {
         }
     }
 
-    pub fn to_js(
-        &mut self,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-        _exited: bool,
-    ) -> JsResult<JSValue> {
+    pub fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>, _exited: bool) -> JsResult<JSValue> {
         match self {
             // should only be reachable when the entire output is buffered.
-            Readable::Memfd(_) => self.to_buffered_value(global),
+            Readable::Memfd(_) => self.to_buffered_value(cx.global()),
 
-            Readable::Fd(fd) => Ok(fd.to_js(global)),
+            Readable::Fd(fd) => Ok(fd.to_js(cx.global())),
             Readable::Pipe(_) => {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = Self::pipe_reader_mut(&pipe).to_js(global, context);
+                let result = Self::pipe_reader_mut(&pipe).to_js(cx);
                 Self::pipe_reader_mut(&pipe).process = None;
                 result
             }
@@ -238,11 +233,11 @@ impl Readable {
                 };
 
                 if buffer.length() == 0 {
-                    return ReadableStream::empty(global);
+                    return ReadableStream::empty(cx.global());
                 }
 
                 let own = buffer.take_slice()?;
-                ReadableStream::from_owned_slice(global, context, own.into_vec(), 0)
+                ReadableStream::from_owned_slice(cx, own.into_vec(), 0)
             }
             Readable::Errored(..) => {
                 let Readable::Errored(mut buffer, err) = mem::replace(self, Readable::Closed)
@@ -250,7 +245,7 @@ impl Readable {
                     unreachable!()
                 };
                 let own = buffer.take_slice()?;
-                ReadableStream::from_bytes_then_error(global, context, own.into_vec(), err)
+                ReadableStream::from_bytes_then_error(cx, own.into_vec(), err)
             }
             _ => Ok(JSValue::UNDEFINED),
         }

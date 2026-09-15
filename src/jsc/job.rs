@@ -71,6 +71,19 @@ impl JSGlobalObject {
             _not_send: PhantomData,
         }
     }
+
+    /// What a host function starts with: this global, and the context of the script that called it.
+    #[inline]
+    pub fn js_thread_of_caller<'a>(&'a self, frame: &crate::CallFrame) -> JsThread<'a> {
+        self.js_thread(self.bun_vm().context_of_caller(frame))
+    }
+
+    /// As [`js_thread_of_caller`](Self::js_thread_of_caller) where no `CallFrame` reaches Rust
+    /// (see [`VirtualMachine::context_of_caller_no_frame`]).
+    #[inline]
+    pub fn js_thread_of_caller_no_frame(&self) -> JsThread<'_> {
+        self.js_thread(self.bun_vm().context_of_caller_no_frame())
+    }
 }
 
 // ── JsAffine ──────────────────────────────────────────────────────────────

@@ -190,8 +190,7 @@ impl All {
     /// a setTimeout that uses a promise instead of a callback, and interprets the countdown
     /// slightly differently for historical reasons (see jsValueToCountdown)
     pub(crate) fn sleep(
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         promise: JSValue,
         countdown: JSValue,
     ) -> JsResult<JSValue> {
@@ -201,12 +200,15 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let countdown_int =
-            all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::Clamp, true)?;
-        let wrapped_promise = promise.with_async_context_if_needed(global);
+        let countdown_int = all.js_value_to_countdown(
+            cx.global(),
+            countdown,
+            CountdownOverflowBehavior::Clamp,
+            true,
+        )?;
+        let wrapped_promise = promise.with_async_context_if_needed(cx.global());
         Ok(TimeoutObject::init(
-            global,
-            context,
+            cx,
             id,
             Kind::SetTimeout,
             countdown_int,
@@ -216,8 +218,7 @@ impl All {
     }
 
     pub(crate) fn set_immediate(
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         callback: JSValue,
         arguments: JSValue,
     ) -> JsResult<JSValue> {
@@ -227,19 +228,12 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let wrapped_callback = callback.with_async_context_if_needed(global);
-        Ok(ImmediateObject::init(
-            global,
-            context,
-            id,
-            wrapped_callback,
-            arguments,
-        ))
+        let wrapped_callback = callback.with_async_context_if_needed(cx.global());
+        Ok(ImmediateObject::init(cx, id, wrapped_callback, arguments))
     }
 
     pub(crate) fn set_timeout(
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         callback: JSValue,
         arguments: JSValue,
         countdown: JSValue,
@@ -250,12 +244,15 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let wrapped_callback = callback.with_async_context_if_needed(global);
-        let countdown_int =
-            all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
+        let wrapped_callback = callback.with_async_context_if_needed(cx.global());
+        let countdown_int = all.js_value_to_countdown(
+            cx.global(),
+            countdown,
+            CountdownOverflowBehavior::OneMs,
+            true,
+        )?;
         Ok(TimeoutObject::init(
-            global,
-            context,
+            cx,
             id,
             Kind::SetTimeout,
             countdown_int,
@@ -265,8 +262,7 @@ impl All {
     }
 
     pub(crate) fn set_interval(
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         callback: JSValue,
         arguments: JSValue,
         countdown: JSValue,
@@ -277,12 +273,15 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let wrapped_callback = callback.with_async_context_if_needed(global);
-        let countdown_int =
-            all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
+        let wrapped_callback = callback.with_async_context_if_needed(cx.global());
+        let countdown_int = all.js_value_to_countdown(
+            cx.global(),
+            countdown,
+            CountdownOverflowBehavior::OneMs,
+            true,
+        )?;
         Ok(TimeoutObject::init(
-            global,
-            context,
+            cx,
             id,
             Kind::SetInterval,
             countdown_int,
@@ -528,7 +527,7 @@ pub fn set_immediate_export(
     arguments: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller_no_frame();
-    All::set_immediate(global, context, callback, arguments)
+    All::set_immediate(&global.js_thread(context), callback, arguments)
 }
 
 // HOST_EXPORT(Bun__Timer__sleep, c)
@@ -538,7 +537,7 @@ pub fn sleep_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller_no_frame();
-    All::sleep(global, context, promise, countdown)
+    All::sleep(&global.js_thread(context), promise, countdown)
 }
 
 // HOST_EXPORT(Bun__Timer__setTimeout, c)
@@ -549,7 +548,7 @@ pub fn set_timeout_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller_no_frame();
-    All::set_timeout(global, context, callback, arguments, countdown)
+    All::set_timeout(&global.js_thread(context), callback, arguments, countdown)
 }
 
 // HOST_EXPORT(Bun__Timer__setInterval, c)
@@ -560,7 +559,7 @@ pub fn set_interval_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller_no_frame();
-    All::set_interval(global, context, callback, arguments, countdown)
+    All::set_interval(&global.js_thread(context), callback, arguments, countdown)
 }
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)

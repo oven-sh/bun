@@ -320,8 +320,7 @@ impl Stdio {
 
     fn extract_body_value(
         out_stdio: &mut Stdio,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         i: i32,
         body: &mut webcore::body::Value,
         is_sync: bool,
@@ -329,7 +328,7 @@ impl Stdio {
         body.to_blob_if_possible();
 
         if let Some(blob) = body.try_use_as_any_blob() {
-            return out_stdio.extract_blob(global, blob, i);
+            return out_stdio.extract_blob(cx.global(), blob, i);
         }
 
         match body {
@@ -338,7 +337,8 @@ impl Stdio {
                 return Ok(());
             }
             webcore::body::Value::Used => {
-                return Err(global
+                return Err(cx
+                    .global()
                     .err(
                         jsc::ErrorCode::BODY_ALREADY_USED,
                         format_args!("Body already used"),
@@ -346,7 +346,7 @@ impl Stdio {
                     .throw());
             }
             webcore::body::Value::Error(err) => {
-                return Err(global.throw_value(err.to_js(global)));
+                return Err(cx.global().throw_value(err.to_js(cx.global())));
             }
 
             // handled above.
@@ -355,7 +355,7 @@ impl Stdio {
             | webcore::body::Value::InternalBlob(_) => unreachable!(),
             webcore::body::Value::Locked(_) => {
                 if is_sync {
-                    return Err(global.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "ReadableStream cannot be used in sync mode"
                     )));
                 }
@@ -363,31 +363,34 @@ impl Stdio {
                 match i {
                     0 => {}
                     1 => {
-                        return Err(global.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "ReadableStream cannot be used for stdout yet. For now, do .stdout"
                         )));
                     }
                     2 => {
-                        return Err(global.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "ReadableStream cannot be used for stderr yet. For now, do .stderr"
                         )));
                     }
                     _ => {
-                        return Err(global.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "ReadableStream cannot be used for stdio[{i}] yet"
                         )));
                     }
                 }
 
-                let stream_value = body.to_readable_stream(global, context)?;
+                let stream_value = body.to_readable_stream(cx)?;
 
-                let Some(stream) = webcore::ReadableStream::from_js(stream_value, global)? else {
-                    return Err(global
+                let Some(stream) = webcore::ReadableStream::from_js(stream_value, cx.global())?
+                else {
+                    return Err(cx
+                        .global()
                         .throw_invalid_arguments(format_args!("Failed to create ReadableStream")));
                 };
 
-                if stream.is_disturbed(global) {
-                    return Err(global
+                if stream.is_disturbed(cx.global()) {
+                    return Err(cx
+                        .global()
                         .err(
                             jsc::ErrorCode::BODY_ALREADY_USED,
                             format_args!("ReadableStream has already been used"),
@@ -404,8 +407,7 @@ impl Stdio {
 
     pub(crate) fn extract(
         out_stdio: &mut Stdio,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         i: i32,
         value: JSValue,
         is_sync: bool,
@@ -422,7 +424,7 @@ impl Stdio {
         }
 
         if value.is_string() {
-            let str = value.to_js_string_view(global)?;
+            let str = value.to_js_string_view(cx.global())?;
             if str.eq_ascii(b"inherit") {
                 *out_stdio = Stdio::Inherit;
             } else if str.eq_ascii(b"ignore") {
@@ -431,14 +433,14 @@ impl Stdio {
                 *out_stdio = Stdio::Pipe;
             } else if str.eq_ascii(b"socket-fd") {
                 if i < 3 {
-                    return Err(global.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "stdio: 'socket-fd' is only supported at indices >= 3"
                     )));
                 }
                 if is_sync {
                     // Bun.spawnSync's result has no .stdio, so the caller
                     // could never receive the fd it's supposed to own.
-                    return Err(global.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "stdio: 'socket-fd' cannot be used with spawnSync"
                     )));
                 }
@@ -446,7 +448,7 @@ impl Stdio {
             } else if str.eq_ascii(b"ipc") {
                 *out_stdio = Stdio::Ipc;
             } else {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(cx.global().throw_invalid_arguments(format_args!(
                     "stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null"
                 )));
             }
@@ -457,15 +459,15 @@ impl Stdio {
             let fd = Fd::from_uv(value.to_int32());
             let file_fd = fd.uv();
             if file_fd < 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(cx.global().throw_invalid_arguments(format_args!(
                     "file descriptor must be a positive integer"
                 )));
             }
 
             if file_fd >= i32::MAX as _ {
-                let mut formatter = jsc::console_object::Formatter::new(global);
+                let mut formatter = jsc::console_object::Formatter::new(cx.global());
                 // `defer formatter.deinit()` — handled by Drop.
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(cx.global().throw_invalid_arguments(format_args!(
                     "file descriptor must be a valid integer, received: {}",
                     value.to_fmt(&mut formatter),
                 )));
@@ -475,7 +477,7 @@ impl Stdio {
                 match tag {
                     FdStdio::StdIn => {
                         if i == 1 || i == 2 {
-                            return Err(global.throw_invalid_arguments(format_args!(
+                            return Err(cx.global().throw_invalid_arguments(format_args!(
                                 "stdin cannot be used for stdout or stderr"
                             )));
                         }
@@ -485,7 +487,7 @@ impl Stdio {
                     }
                     FdStdio::StdOut | FdStdio::StdErr => {
                         if i == 0 {
-                            return Err(global.throw_invalid_arguments(format_args!(
+                            return Err(cx.global().throw_invalid_arguments(format_args!(
                                 "stdout and stderr cannot be used for stdin"
                             )));
                         }
@@ -504,31 +506,17 @@ impl Stdio {
             // `as_class_ref` is the safe shared-borrow downcast (centralised
             // deref proof in `JSValue`); the JS wrapper roots the payload while
             // `value` is on the stack. `dupe()` only bumps the store refcount.
-            return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
+            return out_stdio.extract_blob(cx.global(), webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
-            return Self::extract_body_value(
-                out_stdio,
-                global,
-                context,
-                i,
-                req.get_body_value(),
-                is_sync,
-            );
+            return Self::extract_body_value(out_stdio, cx, i, req.get_body_value(), is_sync);
         } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
-            return Self::extract_body_value(
-                out_stdio,
-                global,
-                context,
-                i,
-                res.get_body_value(),
-                is_sync,
-            );
+            return Self::extract_body_value(out_stdio, cx, i, res.get_body_value(), is_sync);
         }
 
-        if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {
+        if let Some(stream_) = webcore::ReadableStream::from_js(value, cx.global())? {
             let mut stream = stream_;
-            if let Some(blob) = stream.to_any_blob(global) {
-                return out_stdio.extract_blob(global, blob, i);
+            if let Some(blob) = stream.to_any_blob(cx.global()) {
+                return out_stdio.extract_blob(cx.global(), blob, i);
             }
 
             let name: &'static [u8] = match i {
@@ -536,21 +524,22 @@ impl Stdio {
                 1 => b"stdout",
                 2 => b"stderr",
                 _ => {
-                    return Err(global.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "ReadableStream cannot be used for stdio[{i}] yet"
                     )));
                 }
             };
 
             if is_sync {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(cx.global().throw_invalid_arguments(format_args!(
                     "'{}' ReadableStream cannot be used in sync mode",
                     bstr::BStr::new(name),
                 )));
             }
 
-            if stream.is_disturbed(global) {
-                return Err(global
+            if stream.is_disturbed(cx.global()) {
+                return Err(cx
+                    .global()
                     .err(
                         jsc::ErrorCode::INVALID_STATE,
                         format_args!(
@@ -564,7 +553,7 @@ impl Stdio {
             return Ok(());
         }
 
-        if let Some(array_buffer) = value.as_array_buffer(global) {
+        if let Some(array_buffer) = value.as_array_buffer(cx.global()) {
             // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
             if array_buffer.byte_slice().is_empty() {
                 *out_stdio = Stdio::Ignore;
@@ -572,7 +561,7 @@ impl Stdio {
             }
 
             if i == 1 || i == 2 {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(cx.global().throw_invalid_arguments(format_args!(
                     "ArrayBufferView cannot be used for stdout/stderr yet"
                 )));
             }
@@ -583,7 +572,7 @@ impl Stdio {
             return Ok(());
         }
 
-        Err(global.throw_invalid_arguments(format_args!(
+        Err(cx.global().throw_invalid_arguments(format_args!(
             "stdio must be an array of 'inherit', 'ignore', or null"
         )))
     }

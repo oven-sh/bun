@@ -86,13 +86,8 @@ impl bun_jsc::JobContext for WriteFile {
 impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
-    pub fn schedule(
-        this: WriteFile,
-        promise: Box<WriteFilePromise>,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) {
-        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(context), this, promise);
+    pub fn schedule(this: WriteFile, promise: Box<WriteFilePromise>, cx: &bun_jsc::JsThread<'_>) {
+        bun_jsc::Job::<WriteFile>::schedule(cx, this, promise);
     }
 }
 
@@ -1300,8 +1295,7 @@ impl WriteFileWaitFromLockedValueTask {
                 let mut blob = value.use_();
                 // TODO: this should be one promise not two!
                 let new_promise = match blob::write_file_with_source_destination(
-                    global_this,
-                    context,
+                    &global_this.js_thread(context),
                     &mut blob,
                     &mut file_blob,
                     &blob::WriteFileOptions {

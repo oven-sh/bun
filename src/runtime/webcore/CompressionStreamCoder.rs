@@ -926,7 +926,7 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
                     .write(&crate::webcore::streams::Result::Temporary(
                         bun_ptr::RawSlice::new(&out),
                     ))
-                    .to_js(global, global.bun_vm().context_of_caller_no_frame())
+                    .to_js(&global.js_thread_of_caller_no_frame())
             }
         }
         Err(e) => {

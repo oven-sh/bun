@@ -3285,7 +3285,7 @@ where
                     let context = this
                         .script_context()
                         .unwrap_or_else(|| global_this.bun_vm().root_context());
-                    let readable = match value.to_readable_stream(global_this, context) {
+                    let readable = match value.to_readable_stream(&global_this.js_thread(context)) {
                         Ok(readable) => readable,
                         Err(err) => {
                             this.run_error_handler(global_this.take_exception(err));
@@ -4247,7 +4247,8 @@ where
                     let context = this
                         .script_context()
                         .unwrap_or_else(|| global_this.bun_vm().root_context());
-                    let _ = Body::Value::resolve(&mut old, body, global_this, context, None); // TODO: properly propagate exception upwards
+                    let _ =
+                        Body::Value::resolve(&mut old, body, &global_this.js_thread(context), None); // TODO: properly propagate exception upwards
                 }
                 return;
             }
@@ -4409,8 +4410,7 @@ where
                     let _ = Body::Value::resolve(
                         &mut old,
                         &mut new_body,
-                        global_this,
-                        server.context(),
+                        &global_this.js_thread(server.context()),
                         None,
                     ); // TODO: properly propagate exception upwards
                     *body = new_body;

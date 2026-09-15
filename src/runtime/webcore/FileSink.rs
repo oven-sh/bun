@@ -980,8 +980,7 @@ impl FileSink {
 
     pub(crate) fn flush_from_js(
         &self,
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
+        cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> sys::Result<JSValue> {
         let _ = wait;
@@ -1023,7 +1022,7 @@ impl FileSink {
         // bytes it pushed out. It only reaches here when no write is pending.
         match self.to_result(rc, flushed) {
             streams::Writable::Err(_) => unreachable!(),
-            result => sys::Result::Ok(result.to_js(global_this, context)),
+            result => sys::Result::Ok(result.to_js(cx)),
         }
     }
 
@@ -1291,11 +1290,7 @@ impl FileSink {
         JSSink::create_object(global_this, self, destructor.unwrap_or(0))
     }
 
-    pub(crate) fn end_from_js(
-        &self,
-        global_this: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> sys::Result<JSValue> {
+    pub(crate) fn end_from_js(&self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
         if self.done.get() {
             if self.pending.get().state == streams::PendingState::Pending {
                 if let streams::WritableFuture::Promise { strong, .. } = &self.pending.get().future
@@ -1323,7 +1318,7 @@ impl FileSink {
                     // `to_result` already seeded `Owned(consumed)`.
                     // SAFETY: JsCell — `WritablePending::promise` allocates a
                     // JSPromise (may GC) but invokes no FileSink host-fn.
-                    let promise = unsafe { self.pending.get_mut() }.promise(global_this, context);
+                    let promise = unsafe { self.pending.get_mut() }.promise(cx);
                     self.run_pending_later();
                     // SAFETY: `WritablePending::promise()` never returns null.
                     return sys::Result::Ok(unsafe { (*promise).to_js() });
@@ -1353,8 +1348,7 @@ impl FileSink {
                     // SAFETY: JsCell — `WritablePending::promise` allocates a
                     // JSPromise (may GC) but does not invoke any FileSink
                     // host-fn synchronously.
-                    let promise_result =
-                        unsafe { self.pending.get_mut() }.promise(global_this, context);
+                    let promise_result = unsafe { self.pending.get_mut() }.promise(cx);
                     self.writer.with_mut(|w| w.end());
                     self.run_pending_later();
                     // SAFETY: `WritablePending::promise()` never returns null.
@@ -1382,8 +1376,7 @@ impl FileSink {
 
                 // SAFETY: JsCell — `WritablePending::promise` allocates a JSPromise
                 // (may GC) but does not invoke any FileSink host-fn synchronously.
-                let promise_result =
-                    unsafe { self.pending.get_mut() }.promise(global_this, context);
+                let promise_result = unsafe { self.pending.get_mut() }.promise(cx);
 
                 // SAFETY: `WritablePending::promise()` never returns null.
                 sys::Result::Ok(unsafe { (*promise_result).to_js() })
@@ -1392,7 +1385,7 @@ impl FileSink {
                 self.writer.with_mut(|w| w.end());
                 if has_pending {
                     // SAFETY: JsCell — see the `Done` arm above.
-                    let promise = unsafe { self.pending.get_mut() }.promise(global_this, context);
+                    let promise = unsafe { self.pending.get_mut() }.promise(cx);
                     self.run_pending_later();
                     // SAFETY: `WritablePending::promise()` never returns null.
                     return sys::Result::Ok(unsafe { (*promise).to_js() });
@@ -1444,12 +1437,8 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // the C++ `JSFileSink` wrapper `js_construct` is about to create.
         this.write(Self::construct());
     }
-    fn end_from_js(
-        &mut self,
-        global: &JSGlobalObject,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> sys::Result<JSValue> {
-        Self::end_from_js(self, global, context)
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
     }
     /// The JS pump's source failed, or `controller.close(error)`: a piped stream rejects with `reason`.
     unsafe fn close_with_error(

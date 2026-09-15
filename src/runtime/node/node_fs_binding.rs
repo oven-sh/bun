@@ -65,11 +65,10 @@ fn run_async<A: FsArgument>(
     global: &JSGlobalObject,
     frame: &CallFrame,
     create_task: fn(
-        &JSGlobalObject,
+        &bun_jsc::JsThread<'_>,
         &Binding,
         ThreadIsolated<A>,
         &mut VirtualMachine,
-        &bun_jsc::ScriptExecutionContext,
     ) -> JSValue,
 ) -> JsResult<JSValue> {
     let args = match parse_async_args::<A>(global, frame) {
@@ -78,11 +77,10 @@ fn run_async<A: FsArgument>(
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     Ok(create_task(
-        global,
+        &global.js_thread_of_caller(frame),
         this,
         args,
         vm,
-        global.bun_vm().context_of_caller(frame),
     ))
 }
 
@@ -178,11 +176,10 @@ impl Binding {
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(
-            global,
+            &global.js_thread_of_caller(frame),
             this,
             cp_args,
             vm,
-            global.bun_vm().context_of_caller(frame),
         ))
     }
 
@@ -223,18 +220,16 @@ impl Binding {
             && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(
-                global,
+                &global.js_thread_of_caller(frame),
                 rd_args,
                 vm,
-                global.bun_vm().context_of_caller(frame),
             ));
         }
         Ok(async_::Readdir::create(
-            global,
+            &global.js_thread_of_caller(frame),
             this,
             rd_args,
             vm,
-            global.bun_vm().context_of_caller(frame),
         ))
     }
 
@@ -249,8 +244,10 @@ impl Binding {
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
-        let watch_args =
-            fs::Watcher::Arguments::from_js(global, vm.context_of_caller(frame), &mut slice)?;
+        let watch_args = fs::Watcher::Arguments::from_js(
+            &global.js_thread(vm.context_of_caller(frame)),
+            &mut slice,
+        )?;
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
@@ -273,8 +270,10 @@ impl Binding {
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
-        let wf_args =
-            fs::StatWatcher::Arguments::from_js(global, vm.context_of_caller(frame), &mut slice)?;
+        let wf_args = fs::StatWatcher::Arguments::from_js(
+            &global.js_thread(vm.context_of_caller(frame)),
+            &mut slice,
+        )?;
 
         match this
             .node_fs

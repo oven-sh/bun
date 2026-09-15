@@ -673,10 +673,9 @@ impl TransformTask {
     /// Schedule the transform on the work pool; returns its promise.
     fn schedule(
         transpiler: &JSTranspiler,
-        context: &bun_jsc::ScriptExecutionContext,
         transpiler_js: JSValue,
         input_code: ThreadIsolated<StringOrBuffer<'static>>,
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         loader: Loader,
     ) -> JSValue {
         let config = transpiler.config.get();
@@ -706,15 +705,14 @@ impl TransformTask {
                 entries: config.runtime.replace_exports.entries.clone().expect("OOM"),
             },
         };
-        let cx = global.js_thread(context);
-        let promise = jsc::JSPromiseStrong::init(global);
+        let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
         jsc::Job::<TransformTask>::schedule(
-            &cx,
+            cx,
             task,
             TransformJs {
                 promise,
-                _transpiler: jsc::Strong::create(transpiler_js, global),
+                _transpiler: jsc::Strong::create(transpiler_js, cx.global()),
             },
         );
         value
@@ -1347,7 +1345,7 @@ impl JSTranspiler {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let context = global.bun_vm().context_of_caller(callframe);
+        let cx = global.js_thread_of_caller(callframe);
         jsc::mark_binding();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
@@ -1386,10 +1384,9 @@ impl JSTranspiler {
         let default_loader = self.config.get().default_loader;
         Ok(TransformTask::schedule(
             self,
-            context,
             callframe.this(),
             code,
-            global,
+            &cx,
             loader.unwrap_or(default_loader),
         ))
     }

@@ -118,8 +118,7 @@ macro_rules! impl_timer_object {
             /// inspector `did_schedule_async_call`. The per-type `init` fn
             /// picks `kind`/`interval` and forwards here.
             pub fn init_with(
-                global: &::bun_jsc::JSGlobalObject,
-                context: &::bun_jsc::ScriptExecutionContext,
+                cx: &bun_jsc::JsThread<'_>,
                 id: i32,
                 kind: super::Kind,
                 interval: u32,
@@ -135,7 +134,7 @@ macro_rules! impl_timer_object {
                 // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `*__create`
                 // shim; `payload` is a fresh heap allocation whose ownership
                 // transfers to the GC wrapper.
-                let js_value = unsafe { Self::to_js_ptr(payload, global) };
+                let js_value = unsafe { Self::to_js_ptr(payload, cx.global()) };
                 // Round-trip ABI check.
                 debug_assert!(
                     <Self as ::bun_jsc::JsClass>::from_js(js_value) == Some(payload),
@@ -146,12 +145,12 @@ macro_rules! impl_timer_object {
                 // owned here; `internals.init()` writes every field.
                 unsafe {
                     (*payload).internals.init(
-                        js_value, global, context, id, kind, interval, callback, arguments,
+                        js_value, cx, id, kind, interval, callback, arguments,
                     );
                 }
-                if global.bun_vm().as_mut().is_inspector_enabled() {
+                if cx.vm().as_mut().is_inspector_enabled() {
                     ::bun_jsc::Debugger::did_schedule_async_call(
-                        global,
+                        cx.global(),
                         ::bun_jsc::Debugger::AsyncCallType::DOMTimer,
                         super::ID { id, kind: kind.big() }.async_id(),
                         kind != super::Kind::SetInterval,

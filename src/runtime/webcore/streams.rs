@@ -636,12 +636,8 @@ impl Pending {
                 context,
             } => {
                 // Most sources fulfil a read from their own completion, not from a queued task:
-                // the read of a `Bun.ModuleGraph` that was disposed meanwhile never settles.
-                if !global_this.bun_vm().is_context_live(*context) {
-                    JSPromise::opaque_ref(*promise).to_js().unprotect();
-                    self.result = StreamResult::Done;
-                    return;
-                }
+                // settled for the script that is reading (for nobody, once its context stopped).
+                let _context = global_this.bun_vm().enter_context(*context);
                 StreamResult::fulfill_promise(&mut self.result, *promise, global_this)
             }
             PendingFuture::Handler(h) => {
@@ -2736,16 +2732,6 @@ impl BufferAction {
         }
     }
 
-    /// Whether the promise is still to be settled. Not for a `Bun.ModuleGraph` that was disposed
-    /// meanwhile: the stream ends there like everything else it had, unreported.
-    fn is_reported(&mut self, global: &JSGlobalObject) -> bool {
-        let live = global.bun_vm().is_context_live(self.context);
-        if !live {
-            self.swap();
-        }
-        live
-    }
-
     pub(crate) const fn tag(&self) -> BufferActionTag {
         self.tag
     }
@@ -2753,18 +2739,14 @@ impl BufferAction {
     /// Settle the buffered `text()`/`json()`/`bytes()`/`blob()` promise.
     /// Terminal like the other settle primitives (`Pending::run`).
     pub(crate) fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) {
-        if !self.is_reported(global) {
-            return;
-        }
+        let _context = global.bun_vm().enter_context(self.context);
         let settled = blob.wrap(jsc::AnyPromise::Normal(self.swap()), global, self.tag());
         crate::dispatch::fold(settled);
     }
 
     /// Terminal like [`fulfill`](Self::fulfill).
     pub(crate) fn reject(&mut self, global: &JSGlobalObject, err: &StreamError) {
-        if !self.is_reported(global) {
-            return;
-        }
+        let _context = global.bun_vm().enter_context(self.context);
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         let settled = JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)));
         crate::dispatch::fold(settled);

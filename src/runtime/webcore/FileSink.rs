@@ -496,6 +496,18 @@ impl FileSink {
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `clear_keep_alive_ref`
     /// at the end may free `this`.
+    /// This sink opened its file itself, for the script that is running: if that is a
+    /// `Bun.ModuleGraph`'s, the file is closed with the graph. (The host's sinks are left to
+    /// flush at exit as they always have.)
+    pub(crate) fn close_with_current_graph(&self) {
+        if let Some(context) = self.js_vm().and_then(|vm| vm.current_graph_context()) {
+            // SAFETY: a started sink is heap-allocated; it leaves its context in `on_close`.
+            unsafe {
+                bun_jsc::AbortHandle::arm_owner(core::ptr::from_ref(self).cast_mut(), context);
+            }
+        }
+    }
+
     pub unsafe fn on_close(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onClose()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
@@ -723,15 +735,8 @@ impl FileSink {
             sys::Result::Ok(fd) => fd,
         };
 
-        // A file script of a `Bun.ModuleGraph` opened by path is closed with that graph. (The
-        // host's sinks are left to flush at exit as they always have.)
         if matches!(options.input_path, PathOrFileDescriptor::Path(_)) {
-            if let Some(context) = self.js_vm().and_then(|vm| vm.current_graph_context()) {
-                // SAFETY: a started sink is heap-allocated; it leaves its context in `on_close`.
-                unsafe {
-                    bun_jsc::AbortHandle::arm_owner(core::ptr::from_ref(self).cast_mut(), context);
-                }
-            }
+            self.close_with_current_graph();
         }
 
         #[cfg(windows)]

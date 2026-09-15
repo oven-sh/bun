@@ -1629,22 +1629,9 @@ impl<'a> CopyFileWindows<'a> {
         self.event_loop.ref_keep_alive();
     }
 
-    /// A copy of a context that has stopped is not reported: its promise stays pending.
-    /// Otherwise enters the context for the settling.
-    fn enter_context_or_destroy(&mut self) -> Option<jsc::virtual_machine::ContextScope<'static>> {
-        let context =
-            jsc::virtual_machine::VirtualMachine::get().enter_context_if_live(self.context);
-        if context.is_none() {
-            // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
-            unsafe { Self::destroy(core::ptr::from_mut(self)) };
-        }
-        context
-    }
-
     pub fn throw(&mut self, err: bun_sys::Error) {
-        let Some(_context) = self.enter_context_or_destroy() else {
-            return;
-        };
+        // Reported to the script that asked (to nobody, once its context has stopped).
+        let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
         // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
@@ -1730,9 +1717,8 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn resolve_promise(&mut self, written: usize) {
-        let Some(_context) = self.enter_context_or_destroy() else {
-            return;
-        };
+        // Reported to the script that asked (to nobody, once its context has stopped).
+        let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.

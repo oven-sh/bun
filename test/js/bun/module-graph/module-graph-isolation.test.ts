@@ -3065,8 +3065,8 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
   disposed.graph.dispose();
   letGo.resolve();
   await keptUpload;
-  // The part in flight fails and its script hears, as with an aborted fetch.
-  await until(() => ofDisposed.settled);
+  // The part in flight is aborted, and its script hears nothing of it. (The kept upload's two
+  // later parts and its completion went out after that part was let go.)
   await hostTimerTurns();
   expect({ settled: ofKept.settled, requests: requests[ofKept.tag] }).toEqual({
     settled: "uploaded",
@@ -3077,5 +3077,5 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
   expect({
     settled: ofDisposed.settled,
     requests: requests[ofDisposed.tag].filter(request => request !== "abort"),
-  }).toEqual({ settled: expect.stringMatching(/^Aborted/), requests: ["create", "part 1", "part 2"] });
+  }).toEqual({ settled: undefined, requests: ["create", "part 1", "part 2"] });
 });

@@ -1126,6 +1126,24 @@ impl VirtualMachine {
         unsafe { Bun__currentGraphContext(self.global()).as_ref() }
     }
 
+    /// The native code that is running continues the script of a `Bun.ModuleGraph` that was
+    /// disposed (or is gone): a completion that entered its context, a handler run while that
+    /// context is being stopped, what the graph's leftover microtasks call. Whatever it would
+    /// report — a promise settled, an error — goes to nobody; its cleanup runs as always.
+    pub fn reports_to_nobody(&self) -> bool {
+        if self.gone_scopes.get() != 0 {
+            return true;
+        }
+        if self.graph_contexts.count() == 0 {
+            return false;
+        }
+        // (Asked from every native settle, so without `current_graph_context`'s assertion: from the
+        // event loop with no context entered the async context names no graph, and the answer is no.)
+        // SAFETY: a graph's context outlives every async context frame that names it.
+        unsafe { Bun__currentGraphContext(self.global()).as_ref() }
+            .is_some_and(|context| context.is_stopped())
+    }
+
     /// An off-thread job (a pool job, a libuv fs request) was handed off for `context`'s script.
     pub fn graph_job_started(&self, context: crate::ContextId) {
         if self.graph_context(context).is_some() {
@@ -1411,7 +1429,12 @@ impl VirtualMachine {
     ) -> SweepResult {
         // SAFETY: fn contract.
         let context = unsafe { context.as_ref() };
-        let result = context.stop(reason);
+        let result = {
+            // What stopping it makes its owners do (a connecting socket fails, a client drops
+            // its queue) is done in its context: reported to nobody.
+            let _context = self.enter_context(context.id());
+            context.stop(reason)
+        };
         if reason != crate::StopReason::Disposed {
             context.stop_dom_objects();
         }

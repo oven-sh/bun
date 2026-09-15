@@ -1738,6 +1738,9 @@ impl BlobExt for Blob {
             if let bun_sys::Result::Err(err) = start_result {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
+            if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
+                sink.close_with_current_graph();
+            }
 
             // SAFETY: `&mut` scoped to the call.
             let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
@@ -4363,7 +4366,6 @@ pub(crate) fn write_file_with_source_destination(
                 source_blob.borrowed_view(),
                 write_file_promise,
                 WriteFilePromise::run,
-                WriteFilePromise::abandon,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
                 Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}

@@ -597,7 +597,6 @@ mod windows_impl {
         pub(crate) bytes_blob: Blob,
         pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
         pub(crate) on_complete_ctx: *mut c_void,
-        pub(crate) on_abandon: WriteFileOnAbandon,
         /// The context of the script that asked for the write.
         pub(crate) context: bun_jsc::ContextId,
         pub(crate) mkdirp_if_not_exists: bool,
@@ -636,7 +635,6 @@ mod windows_impl {
             event_loop: *mut EventLoop,
             on_write_file_context: *mut c_void,
             on_complete_callback: WriteFileOnWriteFileCallback,
-            on_abandon: WriteFileOnAbandon,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             let mkdirp = mkdirp_if_not_exists
@@ -654,7 +652,6 @@ mod windows_impl {
                 bytes_blob,
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
-                on_abandon,
                 context: bun_jsc::virtual_machine::VirtualMachine::get()
                     .current_context()
                     .id(),
@@ -1051,23 +1048,15 @@ mod windows_impl {
         pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> WriteFileWindowsError {
             // SAFETY: caller contract — `this` is live; copy out everything we
             // need before `deinit` frees the allocation.
-            let (cb, cb_ctx, on_abandon, context) = unsafe {
+            let (cb, cb_ctx, context) = unsafe {
                 (
                     (*this).on_complete_callback,
                     (*this).on_complete_ctx,
-                    (*this).on_abandon,
                     (*this).context,
                 )
             };
-            // A write of a context that has stopped is not reported.
-            let Some(_context) =
-                bun_jsc::virtual_machine::VirtualMachine::get().enter_context_if_live(context)
-            else {
-                // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
-                on_abandon(cb_ctx);
-                return WriteFileWindowsError::WriteFileWindowsDeinitialized;
-            };
+            // Reported to the script that asked (to nobody, once its context has stopped).
+            let _context = bun_jsc::virtual_machine::VirtualMachine::get().enter_context(context);
 
             // SAFETY: caller contract — `this` is live.
             if let Some(err) = unsafe { (*this).to_system_error() } {
@@ -1221,7 +1210,6 @@ mod windows_impl {
             bytes_blob: Blob,
             context: *mut C,
             callback: WriteFileOnWriteFileCallback,
-            on_abandon: WriteFileOnAbandon,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             // see `WriteFile::create` — caller supplies an erased
@@ -1232,7 +1220,6 @@ mod windows_impl {
                 event_loop,
                 context.cast::<c_void>(),
                 callback,
-                on_abandon,
                 mkdirp_if_not_exists,
             )
         }
@@ -1247,7 +1234,9 @@ pub struct WriteFilePromise {
 }
 
 impl WriteFilePromise {
-    /// The write was dropped without being reported: the promise stays pending.
+    /// The job was released without `then` (its context stopped, or the VM is going): the promise
+    /// stays pending.
+    #[cfg(not(windows))]
     pub(crate) fn abandon(handler: *mut c_void) {
         // SAFETY: as `run`; consumed here.
         drop(unsafe { bun_core::heap::take(handler.cast::<Self>()) });

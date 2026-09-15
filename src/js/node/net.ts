@@ -1819,17 +1819,23 @@ Socket.prototype.address = function address() {
 };
 
 Socket.prototype._onTimeout = function () {
-  // if there is pending data, write is in progress
-  // so we suppress the timeout
-  if (this._pendingData) {
-    return;
-  }
+  // While still connecting, _pendingData holds bytes queued by _write() for
+  // after the handshake, not a write in flight. Suppressing here drops the
+  // connect-phase timeout entirely, because this[kTimeout] is one-shot and is
+  // never refreshed on the suppression path.
+  if (!this.connecting) {
+    // if there is pending data, write is in progress
+    // so we suppress the timeout
+    if (this._pendingData) {
+      return;
+    }
 
-  const handle = this._handle;
-  // if there is a handle, and it has pending data,
-  // we suppress the timeout because a write is in progress
-  if (handle && getBufferedAmount(handle) > 0) {
-    return;
+    const handle = this._handle;
+    // if there is a handle, and it has pending data,
+    // we suppress the timeout because a write is in progress
+    if (handle && getBufferedAmount(handle) > 0) {
+      return;
+    }
   }
   this.emit("timeout");
 };

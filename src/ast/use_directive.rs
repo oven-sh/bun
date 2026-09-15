@@ -19,23 +19,21 @@ impl UseDirective {
     pub fn parse(contents: &[u8]) -> Option<UseDirective> {
         let truncated = strings::trim_left(contents, SKIPPED_PREFIX);
 
-        const DIRECTIVE_LEN: usize = QUOTED_LEN + b";".len();
-
-        if truncated.len() < DIRECTIVE_LEN {
+        if truncated.len() < QUOTED_LEN {
             return Some(UseDirective::None);
         }
 
-        let directive_string = &truncated[0..DIRECTIVE_LEN];
+        let directive_string = &truncated[0..QUOTED_LEN];
 
         let first_quote = directive_string[0];
-        let last_quote = directive_string[DIRECTIVE_LEN - 2];
+        let last_quote = directive_string[QUOTED_LEN - 1];
         if first_quote != last_quote
             || (first_quote != b'"' && first_quote != b'\'' && first_quote != b'`')
         {
             return Some(UseDirective::None);
         }
 
-        let unquoted = &directive_string[1..DIRECTIVE_LEN - 2];
+        let unquoted = &directive_string[1..QUOTED_LEN - 1];
 
         if unquoted == b"use client" {
             return Some(UseDirective::Client);

@@ -369,20 +369,20 @@ export default function Docs() {
 
   // The bundler has no transform for these modules yet. The build used to abort
   // in the parser instead of reporting the file.
-  test('a "use server" module is a build error', async () => {
+  test.each([
+    ["with a semicolon", `"use server";\nexport async function save() {\n  return "saved";\n}\n`],
+    ["without a semicolon", `'use server'\nexport async function save() {\n  return "saved";\n}\n`],
+    ["as the whole file", `"use server"`],
+  ])('a "use server" module is a build error (%s)', async (_, actions) => {
     using dir = tempDir("bake-production-use-server", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,
       "routes/index.ts": `
-import { save } from "../actions";
-export default async function () {
-  return new Response("Hello, " + (await save()) + "!");
+import "../actions";
+export default function () {
+  return new Response("Hello");
 }
 `,
-      "actions.ts": `"use server";
-export async function save() {
-  return "saved";
-}
-`,
+      "actions.ts": actions,
     });
 
     await using proc = Bun.spawn({

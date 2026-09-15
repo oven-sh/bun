@@ -446,6 +446,73 @@ const dir = String(
       console.log("collected");
       process.exit(0);
     `,
+    "makes-modules.cjs": `
+      const Module = require("node:module");
+      const made = name => Object.assign(new Module(__dirname + "/" + name), { filename: __dirname + "/" + name, paths: [] });
+      exports.compiled = () => { const module = made("made.cjs"); module._compile("module.exports = typeof tag === 'undefined' ? 'no globals' : tag;", module.filename); return module.exports; };
+      exports.required = () => Module.prototype.require.call(made("requires.cjs"), __dirname + "/says-its-tag.cjs");
+    `,
+    "says-its-tag.cjs": `module.exports = typeof tag === "undefined" ? "no globals" : tag;`,
+    "modules-made-by-a-graph.mjs": `
+      const graph = new Bun.ModuleGraph({ globals: { tag: "the graph's" } });
+      const app = (await graph.import(import.meta.dir + "/makes-modules.cjs")).default;
+      console.log(JSON.stringify({ compiled: app.compiled(), required: app.required(), inTheHostsCache: Object.keys(require.cache).some(key => key.endsWith("says-its-tag.cjs")) }));
+      process.exit(0);
+    `,
+    "builds-with-a-plugin.mjs": `
+      export const loads = [];
+      // Every module imports the next one, and each import goes to the plugin and back.
+      export const build = entry => void Bun.build({
+        entrypoints: [entry],
+        plugins: [{
+          name: "chain",
+          setup(build) {
+            build.onResolve({ filter: /^chain:/ }, args => ({ path: args.path.slice(6), namespace: "chain" }));
+            build.onLoad({ filter: /.*/, namespace: "chain" }, args => {
+              loads.push(args.path);
+              const next = Number(args.path) + 1;
+              return { loader: "js", contents: next < 200 ? 'import "chain:' + next + '";' : "" };
+            });
+          },
+        }],
+      }).catch(() => {});
+    `,
+    "chain-entry.js": `import "chain:0";`,
+    "disposed-while-building.mjs": `
+      const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/builds-with-a-plugin.mjs");
+      graph.run(() => app.build(import.meta.dir + "/chain-entry.js"));
+      await until(() => app.loads.length > 0);
+      graph.dispose();
+      const atDispose = app.loads.length;
+      for (let turn = 0; turn < 200; turn++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ stoppedShort: atDispose < 200, calledAfterDispose: app.loads.length - atDispose }));
+      process.exit(0);
+    `,
+    "uploads-to-s3.mjs": `
+      const client = endpoint => new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "bucket", endpoint });
+      export const chunks = { pulled: 0 };
+      // A body that never ends: a chunk now, the next one never.
+      const neverEnding = () => new ReadableStream({ pull(controller) { chunks.pulled++; controller.enqueue(new Uint8Array(1 << 16)); return new Promise(() => {}); } });
+      export const streamUp = endpoint => void client(endpoint).file("key").write(new Response(neverEnding())).catch(() => {});
+      export const writerLeftOpen = endpoint => { client(endpoint).file("key").writer().write("some of it"); chunks.pulled++; };
+    `,
+    "disposed-while-uploading.mjs": `
+      // (Nothing is ever sent: neither upload has a part's worth to send yet.)
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("", { status: 500 }) });
+      const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+      for (const how of ["streamUp", "writerLeftOpen"]) {
+        const graph = new Bun.ModuleGraph();
+        const app = await graph.import(import.meta.dir + "/uploads-to-s3.mjs");
+        graph.run(() => app[how](server.url.href));
+        await until(() => app.chunks.pulled > 0);
+        graph.dispose();
+      }
+      server.stop(true);
+      // Not process.exit(): an upload that still held the event loop would keep this process here.
+      console.log("idle");
+    `,
     "leaves-things-half-done.mjs": `
       import { Duplex } from "node:stream";
       import tls from "node:tls";
@@ -3022,6 +3089,21 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       stdout: `{"request":"ECONNRESET","client":"closed"}`,
       exitCode: 0,
     });
+  });
+  test("a Module its code makes with new Module() is the graph's: its globals, its require cache", async () => {
+    expect(await runs("modules-made-by-a-graph.mjs")).toEqual({
+      stdout: `{"compiled":"the graph's","required":"the graph's","inTheHostsCache":false}`,
+      exitCode: 0,
+    });
+  });
+  test("a Bun.build it had under way: the plugin's callbacks are not called again", async () => {
+    expect(await runs("disposed-while-building.mjs")).toEqual({
+      stdout: `{"stoppedShort":true,"calledAfterDispose":0}`,
+      exitCode: 0,
+    });
+  });
+  test("an S3 upload waiting for its script to write more does not keep the process running", async () => {
+    expect(await runs("disposed-while-uploading.mjs")).toEqual({ stdout: "idle", exitCode: 0 });
   });
   test("a performance observer and an HTTP/2 session it left behind do not keep it", async () => {
     expect(await runs("dropped-after-observing-and-connecting.mjs")).toEqual({ stdout: "collected", exitCode: 0 });

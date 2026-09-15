@@ -137,6 +137,9 @@ pub struct MultiPartUpload {
     pub(crate) request_payer: bool,
     pub(crate) credentials: RefPtr<S3Credentials>,
     pub poll_ref: JsCell<KeepAlive>,
+    /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
+    /// was disposed never does: the graph's context fails it.
+    pub(crate) abort_handle: bun_jsc::AbortHandle,
     pub(crate) vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
     pub global_this: GlobalRef,
@@ -164,6 +167,19 @@ pub struct MultiPartUpload {
     pub(crate) on_writable: Option<fn(&MultiPartUpload, *mut c_void, u64)>,
     pub(crate) callback_context: Cell<*mut c_void>,
 }
+
+bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ not dropped); the scoped ref keeps it so
+    // while the completion callback releases others.
+    unsafe {
+        let _guard = RefPtr::init_ref(this);
+        // (What its callback settles is settled in the stopped context: for nobody.)
+        let _ = (*this).fail(S3Error {
+            code: b"AbortError",
+            message: b"The operation was aborted",
+        });
+    }
+});
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -572,11 +588,19 @@ impl MultiPartUpload {
         }
         if self.state.get() != State::Finished {
             let old_state = self.state.replace(State::Finished);
+            self.abort_handle.leave();
             (self.callback)(
                 self,
                 S3UploadResult::Failure(err),
                 self.callback_context.get(),
             )?;
+            // Nothing more is expected for this upload (a rollback request keeps the loop alive
+            // itself), and whoever still holds a ref may hold it for as long as the collector likes.
+            self.poll_ref.with_mut(|poll_ref| {
+                poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+                    bun_io::AllocatorType::Js,
+                ))
+            });
 
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback

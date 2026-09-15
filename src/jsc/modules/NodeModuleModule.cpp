@@ -175,6 +175,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
 
     auto* out = Bun::JSCommonJSModule::create(vm, structure, idString, jsNull(),
         dirname, SourceCode());
+    // A module a Bun.ModuleGraph's code makes is that graph's: what it requires and compiles loads
+    // into the graph, over the graph's `globals`.
+    out->setModuleGraph(vm, Bun::moduleGraphOfRunningCode(globalObject));
 
     if (!parentValue.isUndefined()) {
         out->putDirect(vm, JSC::Identifier::fromString(vm, "parent"_s), parentValue,

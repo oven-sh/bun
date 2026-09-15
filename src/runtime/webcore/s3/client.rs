@@ -511,6 +511,7 @@ pub(crate) fn writable_stream(
         request_payer,
         credentials,
         poll_ref: JsCell::new(KeepAlive::init()),
+        abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
         // outlives every MultiPartUpload (the VM owns the heap that owns the JS objects
         // keeping this task alive). Dereference to `&'static` for storage.
@@ -542,6 +543,8 @@ pub(crate) fn writable_stream(
 
     task.poll_ref
         .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, global_this.bun_vm().current_context()) };
 
     // Heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
@@ -565,7 +568,9 @@ pub(crate) fn writable_stream(
     Ok(sink.to_js(global_this))
 }
 
+// (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
 #[derive(bun_ptr::CellRefCounted)]
+#[repr(align(16))]
 pub struct S3UploadStreamWrapper {
     pub(crate) ref_count: core::cell::Cell<u32>,
 
@@ -625,6 +630,14 @@ impl S3UploadStreamWrapper {
         self.detach_sink();
         // SAFETY: `self` is a live Box allocation; this adopts the pump ref.
         drop(unsafe { RefPtr::from_raw(std::ptr::from_mut::<Self>(self)) });
+    }
+
+    /// The pump's promise was collected without settling (the script running it is gone: a
+    /// disposed `Bun.ModuleGraph`'s): nothing more is written. Balances the +1 ref taken for the
+    /// pump promise in `upload_stream`.
+    pub(crate) fn pump_abandoned(&mut self) {
+        bun_output::scoped_log!(S3UploadStream, "pumpAbandoned");
+        self.handle_reject_stream(JSValue::ZERO);
     }
 
     /// Stream pump rejected. Rejects the caller's end_promise, fails the upload,
@@ -713,6 +726,9 @@ impl S3UploadStreamWrapper {
                     }
                     sink.source.close(None);
                 }
+                // The stream is not read again. Unrooted, its pump (which may never settle: the
+                // script running it may be a disposed `Bun.ModuleGraph`'s) can be collected.
+                self_.readable_stream_ref = ReadableStreamStrong::default();
                 if is_native {
                     self_.detach_sink();
                     // SAFETY: `self_` is the live Box allocation; this balances the
@@ -741,11 +757,13 @@ fn s3_upload_stream_on_resolve(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let args = callframe.arguments();
-    let this: *mut S3UploadStreamWrapper =
-        args[args.len() - 1].as_promise_ptr::<S3UploadStreamWrapper>();
-    // SAFETY: `as_promise_ptr` recovers the ctx stashed by `upload_stream`; kept
-    // alive by the ref taken there, which `handle_resolve_stream` balances.
-    unsafe { (*this).handle_resolve_stream() };
+    // The cell hands back the ref `upload_stream` gave it, which `handle_resolve_stream` balances.
+    if let Some(this) =
+        crate::api::native_promise_context::take::<S3UploadStreamWrapper>(args[args.len() - 1])
+    {
+        // SAFETY: that ref keeps the wrapper alive.
+        unsafe { (*this.as_ptr()).handle_resolve_stream() };
+    }
     Ok(JSValue::UNDEFINED)
 }
 
@@ -754,12 +772,14 @@ fn s3_upload_stream_on_reject(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let args = callframe.arguments();
-    let this: *mut S3UploadStreamWrapper =
-        args[args.len() - 1].as_promise_ptr::<S3UploadStreamWrapper>();
     let err = args[0];
-    // SAFETY: `as_promise_ptr` recovers the ctx stashed by `upload_stream`; kept
-    // alive by the ref taken there, which `handle_reject_stream` balances.
-    unsafe { (*this).handle_reject_stream(err) };
+    // As `s3_upload_stream_on_resolve`; `handle_reject_stream` balances the ref.
+    if let Some(this) =
+        crate::api::native_promise_context::take::<S3UploadStreamWrapper>(args[args.len() - 1])
+    {
+        // SAFETY: that ref keeps the wrapper alive.
+        unsafe { (*this.as_ptr()).handle_reject_stream(err) };
+    }
     Ok(JSValue::UNDEFINED)
 }
 
@@ -921,6 +941,7 @@ pub(crate) fn upload_stream(
         request_payer,
         credentials,
         poll_ref: JsCell::new(KeepAlive::init()),
+        abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
         // outlives every MultiPartUpload. Dereference to `&'static` for storage.
         vm: VirtualMachine::get(),
@@ -951,6 +972,8 @@ pub(crate) fn upload_stream(
 
     task.poll_ref
         .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, global_this.bun_vm().current_context()) };
 
     let ctx_ptr: *mut S3UploadStreamWrapper =
         bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {
@@ -1076,9 +1099,15 @@ pub(crate) fn upload_stream(
         if let Some(promise) = assignment_result.as_any_promise() {
             match promise.status() {
                 bun_jsc::js_promise::Status::Pending => {
-                    assignment_result.then(
+                    // The pump's ref rides a cell the reaction owns: a pump that never
+                    // settles releases it when the promise is collected.
+                    assignment_result.then_with_value(
                         global_this,
-                        ctx_ptr,
+                        crate::api::native_promise_context::create(
+                            global_this,
+                            ctx_ptr,
+                            JSValue::ZERO,
+                        ),
                         s3_upload_stream_on_resolve_shim,
                         s3_upload_stream_on_reject_shim,
                     );

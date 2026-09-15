@@ -1275,6 +1275,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
 
         bv2.plugins = self.plugins();
+        bv2.plugin_context = bun_event_loop::TaskContext::Of(self.context);
         bv2.completion = Some(self.as_js_bundle_completion_task());
         // SAFETY: `file_map` returns a `NonNull` into `self.config.files`,
         // which outlives `bv2` (both live until `generate_in_new_thread`

@@ -3768,6 +3768,20 @@ describe("css tests", () => {
        `,
     );
 
+    // No separator space is printed for an absent <overflow-position>.
+    minify_test(".foo { align-content: center }", ".foo{align-content:center}");
+    minify_test(".foo { align-content: unsafe start }", ".foo{align-content:unsafe start}");
+    minify_test(".foo { align-self: center }", ".foo{align-self:center}");
+    minify_test(".foo { align-self: safe end }", ".foo{align-self:safe end}");
+    minify_test(".foo { align-items: center }", ".foo{align-items:center}");
+    minify_test(".foo { align-items: unsafe flex-start }", ".foo{align-items:unsafe flex-start}");
+    minify_test(".foo { place-content: center start }", ".foo{place-content:center start}");
+    minify_test(".foo { place-content: safe center start }", ".foo{place-content:safe center start}");
+    minify_test(".foo { place-self: center }", ".foo{place-self:center}");
+    minify_test(".foo { place-self: center unsafe start }", ".foo{place-self:center unsafe start}");
+    minify_test(".foo { place-items: center start }", ".foo{place-items:center start}");
+    minify_test(".foo { place-items: safe center }", ".foo{place-items:safe center}");
+
     cssTest(
       `
          .foo {

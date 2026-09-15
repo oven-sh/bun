@@ -462,7 +462,7 @@ impl GPUDeviceHandle {
     ) -> JsResult<JSValue> {
         JSPromise::wrap(global, |global| {
             let created = GPUComputePipeline::create(global, &self.state, callframe.argument(0))?;
-            pipeline_promise(global, created)
+            pipeline_promise(global, &self.state, created)
         })
     }
 
@@ -473,7 +473,7 @@ impl GPUDeviceHandle {
     ) -> JsResult<JSValue> {
         JSPromise::wrap(global, |global| {
             let created = GPURenderPipeline::create(global, &self.state, callframe.argument(0))?;
-            pipeline_promise(global, created)
+            pipeline_promise(global, &self.state, created)
         })
     }
 
@@ -504,10 +504,16 @@ impl GPUDeviceHandle {
 
 fn pipeline_promise(
     global: &JSGlobalObject,
+    state: &DeviceState,
     created: (JSValue, Option<GpuError>),
 ) -> JsResult<JSValue> {
     match created {
         (pipeline, None) => Ok(JSPromise::resolved_promise_value(global, pipeline)),
+        // A lost device generates no errors: the promise resolves with the invalid pipeline.
+        (pipeline, Some(err)) if err.device_lost || state.lost.get() => {
+            state.deliver_loss(global)?;
+            Ok(JSPromise::resolved_promise_value(global, pipeline))
+        }
         (_, Some(err)) => {
             let reason = if err.kind == ErrorKind::Validation {
                 "validation"

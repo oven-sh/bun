@@ -379,6 +379,14 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(Array.from(new Uint32Array(upload.getMappedRange()))).toEqual([5, 6, 7, 8]);
     upload.unmap();
 
+    // An invalid buffer fails validation too (CTS mapAsync,invalidBuffer).
+    device.pushErrorScope("validation");
+    const invalid = device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.STORAGE });
+    expect(await device.popErrorScope()).toBeInstanceOf(GPUValidationError);
+    device.pushErrorScope("validation");
+    await expect(invalid.mapAsync(GPUMapMode.READ)).rejects.toMatchObject({ name: "OperationError" });
+    expect(await device.popErrorScope()).toBeInstanceOf(GPUValidationError);
+
     // A buffer destroyed before the call fails validation: OperationError, not AbortError.
     upload.destroy();
     device.pushErrorScope("validation");
@@ -961,6 +969,7 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     const range = buffer.getMappedRange();
     expect(buffer.mapState).toBe("mapped");
 
+    const module = device.createShaderModule({ code: doubleShader });
     expect(device.lost).toBe(device.lost);
     device.destroy();
     const info = await device.lost;
@@ -972,6 +981,10 @@ describe.skipIf(!hasAdapter)("with a device", () => {
 
     // A lost device stays quiet: no exception and no error event.
     device.createBuffer({ size: 16, usage: 0x8000 });
+    // The async pipeline calls resolve on it (with an invalid pipeline) and do not reject.
+    expect(await device.createComputePipelineAsync({ layout: "auto", compute: { module } })).toBeInstanceOf(
+      GPUComputePipeline,
+    );
     // popErrorScope() on it resolves to null, with or without an open scope.
     expect(await device.popErrorScope()).toBeNull();
     device.pushErrorScope("validation");

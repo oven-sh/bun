@@ -524,6 +524,7 @@ pub(crate) fn writable_stream(
         credentials,
         poll_ref: JsCell::new(KeepAlive::init()),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
+        context: context.id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
         // outlives every MultiPartUpload (the VM owns the heap that owns the JS objects
         // keeping this task alive). Dereference to `&'static` for storage.
@@ -947,6 +948,7 @@ pub(crate) fn upload_stream(
         credentials,
         poll_ref: JsCell::new(KeepAlive::init()),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
+        context: context.id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
         // outlives every MultiPartUpload. Dereference to `&'static` for storage.
         vm: VirtualMachine::get(),

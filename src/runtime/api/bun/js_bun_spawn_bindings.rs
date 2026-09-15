@@ -1333,6 +1333,7 @@ fn spawn_maybe_sync(
         this_value: Default::default(),
         weak_file_sink_stdin_ptr: Cell::new(None),
         abort_handle: bun_jsc::AbortHandle::for_owner::<SubprocessT<'static>>(),
+        context: context.id(),
         event_loop_timer_refd: Cell::new(false),
         event_loop_timer: JsCell::new(crate::timer::EventLoopTimer::init_paused(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,

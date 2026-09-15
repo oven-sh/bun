@@ -144,6 +144,8 @@ pub struct Subprocess<'a> {
     /// `Bun.ModuleGraph` context, which kills it when disposed (children
     /// of the realm's own script are the process auto-killer's).
     pub(crate) abort_handle: bun_jsc::AbortHandle,
+    /// The context of the script that spawned the child: its exit is reported there.
+    pub(crate) context: bun_jsc::ContextId,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
     /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
@@ -1123,10 +1125,7 @@ impl Subprocess<'_> {
         let event_loop = (*jsc_vm).event_loop();
 
         // The exit is reported to the script that spawned the child.
-        let _context = self
-            .abort_handle
-            .armed_in()
-            .map(|context| (*jsc_vm).enter_context(context));
+        let _context = (*jsc_vm).enter_context(self.context);
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {

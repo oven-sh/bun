@@ -140,6 +140,8 @@ pub struct MultiPartUpload {
     /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
     /// was disposed never does: the graph's context fails it.
     pub(crate) abort_handle: bun_jsc::AbortHandle,
+    /// The context of the script that started the upload: its requests are that script's.
+    pub(crate) context: bun_jsc::ContextId,
     pub(crate) vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
     pub global_this: GlobalRef,
@@ -193,11 +195,8 @@ pub enum State {
 }
 
 impl MultiPartUpload {
-    /// The context of the script that started the upload: its requests are that script's.
     fn context(&self) -> &bun_jsc::ScriptExecutionContext {
-        self.abort_handle
-            .armed_in()
-            .map_or_else(|| self.vm.root_context(), |id| self.vm.context_of(id))
+        self.vm.context_of(self.context)
     }
 
     const MAX_QUEUE_SIZE: usize = MultiPartUploadOptions::MAX_QUEUE_SIZE as usize;

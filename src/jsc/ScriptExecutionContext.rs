@@ -21,10 +21,8 @@ pub use bun_event_loop::ContextId;
 pub enum StopReason {
     /// The VM is being torn down; nothing enters script again.
     VmTeardown,
-    /// `bun test --isolate` retired this file's realm; the VM keeps running.
-    TestIsolation,
-    /// The `Bun.ModuleGraph` the context was made for was disposed; the VM and
-    /// the realm keep running.
+    /// The VM keeps running: the `Bun.ModuleGraph` the context was made for was disposed, or
+    /// `bun test --isolate` retired the realm.
     Disposed,
 }
 
@@ -51,7 +49,7 @@ pub struct ScriptExecutionContext {
     tail: JsCell<*mut AbortHandle>,
     /// A graph's context after [`stop`](Self::stop): what is armed from then
     /// on (script of the disposed graph still running) is stopped at once.
-    stopped: JsCell<Option<StopReason>>,
+    stopped: JsCell<bool>,
     /// The client sockets script of a graph's context opened (`Bun.connect`,
     /// WebSocket, SQL, Valkey). A VM's own contexts use `RareData`'s.
     socket_groups: JsCell<Option<Box<crate::rare_data::SocketGroups>>>,
@@ -84,7 +82,7 @@ impl Default for ScriptExecutionContext {
             id: JsCell::new(ContextId::default()),
             head: JsCell::new(ptr::null_mut()),
             tail: JsCell::new(ptr::null_mut()),
-            stopped: JsCell::new(None),
+            stopped: JsCell::new(false),
             socket_groups: JsCell::new(None),
             stop_again_queued: JsCell::new(false),
             dom_context: core::cell::Cell::new(ptr::null_mut()),
@@ -116,7 +114,7 @@ impl ScriptExecutionContext {
     pub(crate) fn dead(id: ContextId) -> Self {
         let context = Self::default();
         context.id.set(id);
-        context.stopped.set(Some(StopReason::Disposed));
+        context.stopped.set(true);
         context
     }
 
@@ -154,16 +152,13 @@ impl ScriptExecutionContext {
 
     #[inline]
     pub fn is_stopped(&self) -> bool {
-        self.stopped.get().is_some()
+        *self.stopped.get()
     }
 
     /// A graph's context stops for good (JS thread): one stop-phase sweep over
     /// its handles and its client sockets.
     pub(crate) fn stop(&self, reason: StopReason) -> SweepResult {
-        // Its realm or VM going outranks its graph having been disposed.
-        if !self.is_stopped() || reason != StopReason::Disposed {
-            self.stopped.set(Some(reason));
-        }
+        self.stopped.set(true);
         self.stop_again_queued.set(false);
         let result = self.stop_handles(reason);
         self.close_sockets();
@@ -210,10 +205,6 @@ impl ScriptExecutionContext {
     /// Whether another [`stop`](Self::stop) was already going to run; it is now.
     pub(crate) fn stop_again_is_queued(&self) -> bool {
         self.stop_again_queued.replace(true)
-    }
-
-    pub(crate) fn stopped_for(&self) -> Option<StopReason> {
-        *self.stopped.get()
     }
 
     /// A timer script of this (graph's) context set exists from here.
@@ -330,8 +321,6 @@ pub struct AbortHandle {
     signal: JsCell<Option<AbortSignalRef>>,
     /// Its context stopped it, or had already stopped when it was armed.
     context_stopped: core::cell::Cell<bool>,
-    /// The context it was last armed in: kept after it leaves, for the owner's late completions.
-    armed_in: core::cell::Cell<Option<ContextId>>,
 }
 
 impl AbortHandle {
@@ -344,14 +333,7 @@ impl AbortHandle {
             on_abort: Self::owner_aborted::<O>,
             signal: JsCell::new(None),
             context_stopped: core::cell::Cell::new(false),
-            armed_in: core::cell::Cell::new(None),
         }
-    }
-
-    /// The context the owner was armed in, if it ever was: whose script its completions continue.
-    #[inline]
-    pub fn armed_in(&self) -> Option<ContextId> {
-        self.armed_in.get()
     }
 
     #[inline]
@@ -389,7 +371,6 @@ impl AbortHandle {
                 return;
             }
             context.push(this);
-            (*this).armed_in.set(Some(context.id()));
             if context.is_stopped() {
                 (*this).context_stopped.set(true);
                 // Script of a disposed graph is still opening things: they go on

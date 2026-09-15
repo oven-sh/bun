@@ -390,19 +390,15 @@ pub struct VirtualMachine {
     /// What native code continues on behalf of a context that is gone runs in: always stopped,
     /// so what it arms is closed at once.
     pub(crate) dead_context: crate::ScriptExecutionContext,
-    /// Live [`ContextScope`]s of gone contexts.
-    pub(crate) gone_scopes: Cell<u32>,
     pub(crate) context_ids: crate::script_execution_context::ContextIdAllocator,
     /// The contexts made for `Bun.ModuleGraph`s, by id, stopped or not. Empty:
     /// every context question has the root context for an answer.
     pub(crate) graph_contexts:
         bun_collections::ArrayHashMap<crate::ContextId, NonNull<crate::ScriptExecutionContext>>,
     /// The context the innermost live [`ContextScope`] entered: whose script the native code that
-    /// is running continues.
+    /// is running continues. The dead context's, for one entered as gone (its graph has been
+    /// collected; its context may not have been stopped yet: that is queued from the finalizer).
     pub(crate) innermost_scope: Cell<Option<crate::ContextId>>,
-    /// That scope was entered as gone: its graph has been collected (its context may not have
-    /// been stopped yet: that is queued from the finalizer).
-    pub(crate) innermost_scope_gone: Cell<bool>,
     /// The off-thread jobs of graph contexts that have not come back, by context (JS thread).
     /// A job may be inside a syscall on a descriptor its context owns.
     pub(crate) graph_jobs:
@@ -1143,7 +1139,7 @@ impl VirtualMachine {
     /// realm's. The VM's own: everything else is handed a context (`context_of_caller`,
     /// [`ContextScope::context`]).
     fn current_context_or_root(&self) -> &crate::ScriptExecutionContext {
-        if self.gone_scopes.get() != 0 {
+        if self.innermost_scope.get() == Some(self.dead_context.id()) {
             return &self.dead_context;
         }
         if self.graph_contexts.count() == 0 {
@@ -1171,11 +1167,9 @@ impl VirtualMachine {
     /// what a disposed graph's leftover script calls synchronously (a comparator, a handler of a
     /// synchronous transform): that is still its script running, which no scope entered.
     pub fn calls_nobody(&self) -> bool {
-        self.innermost_scope_gone.get()
-            || self
-                .innermost_scope
-                .get()
-                .is_some_and(|context| !self.is_context_live(context))
+        self.innermost_scope
+            .get()
+            .is_some_and(|context| !self.is_context_live(context))
     }
 
     /// An off-thread job (a pool job, a libuv fs request) was handed off for `context`'s script.
@@ -1314,8 +1308,6 @@ impl VirtualMachine {
             previous: JSValue::ZERO,
             entered: self.global.cast_const(),
             previous_scope: self.innermost_scope.replace(Some(context)),
-            previous_scope_gone: self.innermost_scope_gone.replace(false),
-            gone: false,
         };
         if context == self.root_context.id() || context == self.vm_context.id() {
             if self.graph_contexts.count() != 0 && self.script_allowed() {
@@ -1343,9 +1335,8 @@ impl VirtualMachine {
                 scope.entered = realm;
             }
             None => {
-                scope.gone = true;
-                self.innermost_scope_gone.set(true);
-                self.gone_scopes.set(self.gone_scopes.get() + 1);
+                scope.context = self.dead_context.id();
+                self.innermost_scope.set(Some(scope.context));
                 if self.graph_contexts.count() != 0 && self.script_allowed() {
                     scope.previous = Bun__ModuleGraph__enterRootContext(self.global());
                 }
@@ -1396,11 +1387,7 @@ impl VirtualMachine {
             let vm = VirtualMachine::get().as_mut();
             if let Some(context) = vm.graph_context(id).map(NonNull::from) {
                 // SAFETY: registered ⇒ not freed.
-                let reason = unsafe { context.as_ref() }
-                    .stopped_for()
-                    .unwrap_or(crate::StopReason::Disposed);
-                // SAFETY: as above.
-                let _ = unsafe { vm.stop_graph_context(context, reason) };
+                let _ = unsafe { vm.stop_graph_context(context, crate::StopReason::Disposed) };
             }
             Ok(())
         }
@@ -1446,6 +1433,8 @@ impl VirtualMachine {
         while let Some(&context) = self.graph_contexts.values().get(i) {
             // SAFETY: registered ⇒ not freed.
             result = result.and(unsafe { self.stop_graph_context(context, reason) });
+            // SAFETY: as above.
+            unsafe { context.as_ref() }.stop_dom_objects();
             i += 1;
         }
         result
@@ -1494,9 +1483,6 @@ impl VirtualMachine {
             let _context = self.enter_context(context.id());
             context.stop(reason)
         };
-        if reason != crate::StopReason::Disposed {
-            context.stop_dom_objects();
-        }
         self.jobs.get().cancel_of_context(context.id());
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: live per-thread VM on the JS thread.
@@ -3287,12 +3273,10 @@ impl VirtualMachine {
             addr_of_mut!((*vm).vm_context).write(Default::default());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
             addr_of_mut!((*vm).innermost_scope).write(Cell::new(None));
-            addr_of_mut!((*vm).innermost_scope_gone).write(Cell::new(false));
             addr_of_mut!((*vm).graph_jobs).write(crate::JsCell::new(Default::default()));
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead(
                 (*vm).context_ids.next(),
             ));
-            addr_of_mut!((*vm).gone_scopes).write(Cell::new(0));
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
             addr_of_mut!((*vm).entry_point).write(Default::default());
             addr_of_mut!((*vm).origin).write(Default::default());
@@ -5840,7 +5824,7 @@ impl VirtualMachine {
         Zig__GlobalObject__retireForTestIsolation(self.global());
         // What the outgoing file's close handlers and last microtasks opened
         // since the caller's sweep.
-        let _ = self.stop_context_handles(crate::StopReason::TestIsolation);
+        let _ = self.stop_context_handles(crate::StopReason::Disposed);
         let next_context = self.context_ids.next();
         self.root_context.renew(next_context);
 
@@ -7719,16 +7703,14 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
 /// See [`VirtualMachine::enter_context`].
 pub struct ContextScope<'a> {
     vm: &'a VirtualMachine,
+    /// The context entered: the dead one's, for a context that is gone.
+    context: crate::ContextId,
     /// The async context to restore; empty when entering changed nothing. (On the stack: kept
     /// alive by the conservative scan.)
-    /// The context entered.
-    context: crate::ContextId,
     previous: JSValue,
     /// The realm `previous` is restored in: the one that was entered. (On the stack, as `previous`.)
     entered: *const JSGlobalObject,
     previous_scope: Option<crate::ContextId>,
-    previous_scope_gone: bool,
-    gone: bool,
 }
 
 impl<'a> ContextScope<'a> {
@@ -7742,10 +7724,6 @@ impl<'a> ContextScope<'a> {
 impl Drop for ContextScope<'_> {
     fn drop(&mut self) {
         self.vm.innermost_scope.set(self.previous_scope);
-        self.vm.innermost_scope_gone.set(self.previous_scope_gone);
-        if self.gone {
-            self.vm.gone_scopes.set(self.vm.gone_scopes.get() - 1);
-        }
         if !self.previous.is_empty() {
             // SAFETY: the realm entered above; it is reachable from this frame until here.
             Bun__ModuleGraph__leaveContext(unsafe { &*self.entered }, self.previous);

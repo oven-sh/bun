@@ -1692,7 +1692,7 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
 /// prepareForDestruction discards the pre-exit queues.)
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = vm.event_loop_mut().drain_microtasks();
-    let _ = stop_active_handles(vm, bun_jsc::StopReason::TestIsolation);
+    let _ = stop_active_handles(vm, bun_jsc::StopReason::Disposed);
 }
 
 pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {

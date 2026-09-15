@@ -407,25 +407,49 @@ impl Framework {
             }
             return;
         }
+        if let Some(resolved) = Self::resolve_specifier(r, path, had_errors, desc) {
+            *path = Cow::Owned(resolved.to_vec());
+        }
+    }
+
+    /// Resolves one framework specifier. A resolve error or a disabled result prints the reason, sets `had_errors` and returns `None`.
+    pub(crate) fn resolve_specifier(
+        r: &mut bun_resolver::Resolver,
+        path: &[u8],
+        had_errors: &mut bool,
+        desc: &[u8],
+    ) -> Option<&'static [u8]> {
+        use bun_resolver::DisabledReason;
+
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
-            Ok(mut result) => {
-                let p = result.path().expect("just resolved");
-                *path = Cow::Owned(p.text.to_vec());
-            }
+        let result = match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
+            Ok(res) => res,
             Err(err) => {
-                // This routes through `Output::err` (stderr), not
-                // `r.log`. The "Errors written into r.log" doc on `Framework.resolve`
-                // refers to entries the resolver itself pushed; this top-level
-                // "Failed to resolve" line goes to the terminal.
                 bun_core::Output::err(
                     err,
-                    "Failed to resolve '{s}' for framework ({s})",
+                    "Failed to resolve '{}' for framework ({})",
                     (bstr::BStr::new(path), bstr::BStr::new(desc)),
                 );
                 *had_errors = true;
+                return None;
             }
+        };
+
+        match result.path_or_disabled() {
+            Ok(p) => return Some(p.text),
+            Err(DisabledReason::NodeBuiltin) => bun_core::err_generic!(
+                "Cannot use \"{}\" for framework ({}): it resolves to a builtin module",
+                bstr::BStr::new(path),
+                bstr::BStr::new(desc),
+            ),
+            Err(DisabledReason::BrowserField) => bun_core::err_generic!(
+                "Cannot use \"{}\" for framework ({}): it is disabled due to \"browser\" field in package.json",
+                bstr::BStr::new(path),
+                bstr::BStr::new(desc),
+            ),
         }
+        *had_errors = true;
+        None
     }
 
     pub(crate) fn add_react_install_command_note(log: &mut bun_ast::Log) {

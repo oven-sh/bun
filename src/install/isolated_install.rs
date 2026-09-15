@@ -2065,6 +2065,7 @@ pub(crate) fn install_isolated_packages(
             global_store_tmp_suffix: fast_random(),
             summary: Default::default(),
             task_queue: Default::default(),
+            failed_optional_entries: Vec::new(),
         };
         // No long-lived `&mut PackageManager` reborrow here — `installer.start_task()`,
         // `on_task_complete()`, and `on_task_fail()` below all reach the manager through
@@ -2618,6 +2619,8 @@ pub(crate) fn install_isolated_packages(
                 Global::exit(1);
             }
         }
+
+        installer.unlink_failed_optional_entries();
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();

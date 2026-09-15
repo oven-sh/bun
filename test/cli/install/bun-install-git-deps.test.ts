@@ -297,17 +297,25 @@ test.concurrent(
   async () => {
     using dir = tempDir("git-dep-dup", {});
     const root = String(dir);
-    const project = writeProject(root, Object.fromEntries(letters.map(l => [nameOf(l), `${sharedRepoUrl}#pkg-${l}`])));
+    const dependencies = Object.fromEntries(letters.map(l => [nameOf(l), `${sharedRepoUrl}#pkg-${l}`]));
     const { resolutions, locked } = expectedGitPackages(sharedRepoUrl, sharedCommits, letters, {
       [nameOf("a")]: sharedTransitive,
     });
 
     // the race depends on threadpool scheduling; two fresh-cache attempts to
-    // make the failure reliable on the unfixed code
-    for (let attempt = 0; attempt < 2; attempt++) {
-      rmSync(join(project, "node_modules"), { recursive: true, force: true });
-      rmSync(join(project, "bun.lock"), { force: true });
-      const { stdout, stderr, exitCode } = await runInstall(project, join(root, `cache-${attempt}`), {});
+    // make the failure reliable on the unfixed code. Each attempt installs
+    // into a project and cache of its own so that both run at the same time:
+    // a cold install of 16 git packages spawns about 60 git processes, which
+    // is what this test costs on Windows. The checks wait for both installs,
+    // so no child process is still inside `dir` if one of them throws.
+    const attempts = await Promise.all(
+      [0, 1].map(async attempt => {
+        const attemptRoot = join(root, `attempt-${attempt}`);
+        const project = writeProject(attemptRoot, dependencies);
+        return { project, ...(await runInstall(project, join(attemptRoot, "cache"), {})) };
+      }),
+    );
+    for (const { project, stdout, stderr, exitCode } of attempts) {
       expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
         "Resolving dependencies
         Resolved, downloaded and extracted [17]

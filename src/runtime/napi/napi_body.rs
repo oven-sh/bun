@@ -2300,6 +2300,25 @@ extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_loop
     env.ok()
 }
 
+/// `uv_default_loop` as N-API addons resolve it from bun.exe (the export is
+/// aliased to this in src/symbols.def; internal callers still bind to the
+/// real libuv symbol at link time). libuv's real default loop exists in the
+/// binary but nothing ever runs it, so a NAN-era addon that posts work to it
+/// (`uv_queue_work(uv_default_loop(), ...)`, e.g. ibm_db) would wait forever
+/// for its after-work callback. As in Node, the default loop is the main
+/// thread's driven loop, from any thread (a Worker's addon gets the main
+/// loop too; `napi_get_uv_event_loop` gives the per-VM loop).
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__uv_default_loop() -> *mut bun_sys::windows::libuv::Loop {
+    let loop_ = VirtualMachine::main_thread_uv_loop();
+    if !loop_.is_null() {
+        return loop_;
+    }
+    // No main VM yet: the real (undriven) default loop, as before.
+    unsafe { bun_sys::windows::libuv::uv_default_loop() }
+}
+
 unsafe extern "C" {
     pub(super) fn napi_fatal_exception(env: napi_env, err: napi_value) -> napi_status;
     pub(super) fn napi_add_async_cleanup_hook(

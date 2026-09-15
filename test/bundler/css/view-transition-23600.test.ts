@@ -205,6 +205,8 @@ describe("css", () => {
       "in.css": `
         ::view-transition-group-children(hero) { overflow: clip }
         ::view-transition-group-children(.big) { overflow: clip }
+        ::view-transition-group-children(hero.big) { overflow: clip }
+        ::view-transition-group-children(*.big.slow) { overflow: clip }
         ::view-transition-group-children(*) { overflow: visible }
         ::view-transition-group-children(hero):only-child { overflow: visible }
       `,
@@ -217,7 +219,14 @@ describe("css", () => {
     expect(result.logs.map(String)).toEqual([]);
     const out = await result.outputs[0].text();
     expect(out.trim()).toBe(
-      "::view-transition-group-children(hero){overflow:clip}::view-transition-group-children(.big){overflow:clip}::view-transition-group-children(*){overflow:visible}::view-transition-group-children(hero):only-child{overflow:visible}",
+      [
+        "::view-transition-group-children(hero){overflow:clip}",
+        "::view-transition-group-children(.big){overflow:clip}",
+        "::view-transition-group-children(hero.big){overflow:clip}",
+        "::view-transition-group-children(*.big.slow){overflow:clip}",
+        "::view-transition-group-children(*){overflow:visible}",
+        "::view-transition-group-children(hero):only-child{overflow:visible}",
+      ].join(""),
     );
   });
 });

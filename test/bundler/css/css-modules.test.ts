@@ -341,6 +341,7 @@ describe("css", () => {
         ::view-transition-old(*.fade) { opacity: 0 }
         ::view-transition-new(.a.b) { opacity: 1 }
         ::view-transition-image-pair(photo.wide.tall) { isolation: auto }
+        ::view-transition-group-children(hero.big.slow) { overflow: clip }
         .card { view-transition-name: hero; view-transition-class: big fade }
       `,
     },
@@ -370,6 +371,10 @@ describe("css", () => {
           isolation: auto;
         }
 
+        ::view-transition-group-children(hero_${hash}.big_${hash}.slow_${hash}) {
+          overflow: clip;
+        }
+
         .card_${hash} {
           view-transition-name: hero_${hash};
           view-transition-class: big_${hash} fade_${hash};
@@ -386,6 +391,7 @@ describe("css", () => {
           b: "b_${hash}",
           wide: "wide_${hash}",
           tall: "tall_${hash}",
+          slow: "slow_${hash}",
           card: "card_${hash}"
         };
 

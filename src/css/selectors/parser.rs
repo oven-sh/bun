@@ -1271,7 +1271,7 @@ impl<'a> SelectorParser<'a> {
             }
             30 if name == b"view-transition-group-children" => {
                 return Ok(PseudoElement::ViewTransitionGroupChildren {
-                    part_name: ViewTransitionPartName::parse(self, input)?,
+                    part: ViewTransitionPartSelector::parse(self, input)?,
                 });
             }
             _ => {}
@@ -2974,8 +2974,8 @@ pub enum PseudoElement {
     },
     /// The [::view-transition-group-children()](https://drafts.csswg.org/css-view-transitions-2/#::view-transition-group-children) functional pseudo element.
     ViewTransitionGroupChildren {
-        /// A part name selector.
-        part_name: ViewTransitionPartName,
+        /// A part selector.
+        part: ViewTransitionPartSelector,
     },
     /// The [::details-content](https://drafts.csswg.org/css-pseudo-4/#details-content-pseudo) pseudo element.
     DetailsContent,

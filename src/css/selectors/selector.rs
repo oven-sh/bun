@@ -1255,9 +1255,9 @@ pub(crate) mod serialize {
                 part.to_css(dest)?;
                 dest.write_char(b')')?;
             }
-            PseudoElement::ViewTransitionGroupChildren { part_name } => {
+            PseudoElement::ViewTransitionGroupChildren { part } => {
                 dest.write_str(b"::view-transition-group-children(")?;
-                part_name.to_css(dest)?;
+                part.to_css(dest)?;
                 dest.write_char(b')')?;
             }
             PseudoElement::DetailsContent => dest.write_str(b"::details-content")?,

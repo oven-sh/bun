@@ -536,6 +536,52 @@ describe("apply", () => {
     // TODO: simple, multiline, multiple hunks
   });
 
+  // `git diff -U0` emits hunks with no context lines. A range of length 0
+  // (`+5,0`) names the line after which the gap sits, so a pure deletion must
+  // not be positioned as if the range started at that line.
+  describe("zero context (-U0) hunks", () => {
+    const numbered = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+    const cases: [name: string, before: string, hunks: string, after: string][] = [
+      [
+        "delete one line",
+        numbered(8),
+        "@@ -6 +5,0 @@\n-line 6\n",
+        "line 1\nline 2\nline 3\nline 4\nline 5\nline 7\nline 8\n",
+      ],
+      [
+        "delete a run of lines",
+        numbered(8),
+        "@@ -3,3 +2,0 @@\n-line 3\n-line 4\n-line 5\n",
+        "line 1\nline 2\nline 6\nline 7\nline 8\n",
+      ],
+      ["delete the first line", numbered(3), "@@ -1 +0,0 @@\n-line 1\n", "line 2\nline 3\n"],
+      ["delete the last line", numbered(3), "@@ -3 +2,0 @@\n-line 3\n", "line 1\nline 2\n"],
+      ["delete every line", numbered(2), "@@ -1,2 +0,0 @@\n-line 1\n-line 2\n", ""],
+      [
+        "two deletions",
+        numbered(8),
+        "@@ -2 +1,0 @@\n-line 2\n@@ -6 +4,0 @@\n-line 6\n",
+        "line 1\nline 3\nline 4\nline 5\nline 7\nline 8\n",
+      ],
+      ["insert after a line", numbered(4), "@@ -3,0 +4,2 @@\n+X\n+Y\n", "line 1\nline 2\nline 3\nX\nY\nline 4\n"],
+      ["insert at the top", numbered(2), "@@ -0,0 +1 @@\n+X\n", "X\nline 1\nline 2\n"],
+      ["replace a line", numbered(3), "@@ -2 +2 @@\n-line 2\n+TWO\n", "line 1\nTWO\nline 3\n"],
+      [
+        "delete then insert",
+        numbered(6),
+        "@@ -2 +1,0 @@\n-line 2\n@@ -5,0 +5 @@\n+X\n",
+        "line 1\nline 3\nline 4\nline 5\nX\nline 6\n",
+      ],
+    ];
+
+    test.each(cases)("%s", async (_name, before, hunks, after) => {
+      await using dir = tempDir("patch-u0", { "index.js": before });
+      const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunks}`;
+      await apply(patchfile, String(dir));
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(after);
+    });
+  });
+
   // Each of these hits an error path in `parse_apply_args`. The native code must
   // surface the failure as a catchable JS exception; it used to return a normal
   // value while the exception was still pending, which aborts debug/ASAN builds
@@ -716,7 +762,7 @@ describe("parse", () => {
               "path": "banana.ts",
               "mode": "non_executable",
               "hunk": {
-                "header": { "original": { "start": 1, "len": 0 }, "patched": { "start": 1, "len": 1 } },
+                "header": { "original": { "start": 0, "len": 0 }, "patched": { "start": 1, "len": 1 } },
                 "parts": {
                   "items": [
                     {

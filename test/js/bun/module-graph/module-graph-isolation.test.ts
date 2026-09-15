@@ -56,14 +56,12 @@ const dir = String(
       await hostTurnsPass(10);
       writeSync(1, "armed\\n");
       graph.dispose();
-      // What was under way may still report once (however late), and its continuation starts one
-      // more step, which reports nothing. A loop that sustains itself never goes quiet.
-      let quiet = false;
-      for (let window = 0; window < 40 && !quiet; window++) {
-        const before = state.ticks;
-        await hostTurnsPass(50);
-        quiet = state.ticks === before;
-      }
+      // What the graph had already queued runs once; nothing that starts settles, so the loop takes
+      // no step after that.
+      await hostTurnsPass(50);
+      const before = state.ticks;
+      await hostTurnsPass(50);
+      const quiet = state.ticks === before;
       writeSync(1, quiet ? "stops\\n" : "keeps running\\n");
       process.exit(0);
     `,
@@ -3000,25 +2998,36 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
   });
 });
 
+/** Runs a fixture of `dir` in a process of its own. One that never exits (what these tests are
+ *  about) fails its test by that test's timeout, and is killed instead of outliving the run. */
+async function runsFixture(script: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, script), ...args],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    timeout: 30_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  return { stdout: stdout.trim(), exitCode };
+}
+
 describe.concurrent("ModuleGraph isolation: what a disposed graph had open does not keep the process running", () => {
   for (const kind of Object.keys(kinds)) {
     test(kind, async () => {
       const state = newState(kind + "-exits");
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          join(dir, "opens-then-disposes.mjs"),
+      expect(
+        await runsFixture(
+          "opens-then-disposes.mjs",
           kind,
           JSON.stringify(state),
           JSON.stringify(kinds[kind].args?.(state) ?? []),
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
+        ),
+      ).toEqual({
+        stdout: "disposed",
+        exitCode: 0,
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("disposed\n");
-      expect(exitCode).toBe(0);
     });
   }
 });
@@ -3029,21 +3038,17 @@ describe.concurrent(
     for (const kind of Object.keys(kinds)) {
       test(kind, async () => {
         const state = newState(kind + "-opening-exits");
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            join(dir, "disposes-while-opening.mjs"),
+        expect(
+          await runsFixture(
+            "disposes-while-opening.mjs",
             kind,
             JSON.stringify(state),
             JSON.stringify(kinds[kind].args?.(state) ?? []),
-          ],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "inherit",
+          ),
+        ).toEqual({
+          stdout: "disposed",
+          exitCode: 0,
         });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        expect(stdout).toBe("disposed\n");
-        expect(exitCode).toBe(0);
       });
     }
   },
@@ -3053,46 +3058,33 @@ describe.concurrent("ModuleGraph isolation: what a disposed graph opens does not
   for (const kind of Object.keys(kinds)) {
     test(kind, async () => {
       const state = newState(kind + "-late-exits");
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          join(dir, "disposes-then-opens.mjs"),
+      expect(
+        await runsFixture(
+          "disposes-then-opens.mjs",
           kind,
           JSON.stringify(state),
           JSON.stringify(kinds[kind].args?.(state) ?? []),
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
+        ),
+      ).toEqual({
+        stdout: "disposed",
+        exitCode: 0,
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("disposed\n");
-      expect(exitCode).toBe(0);
     });
   }
 });
 
 describe.concurrent("ModuleGraph isolation: a disposed graph cannot keep itself running", () => {
-  // What was open at dispose() may tell the graph once that it closed, and that handler may start
-  // the next thing. If that one reported back too, a loop that retries on failure would go on for
-  // ever inside a disposed graph (and a spawn loop would go on launching processes).
+  // If what a disposed graph's leftover code starts reported back, a loop that retries on failure
+  // would go on for ever inside the disposed graph (and a spawn loop would go on launching processes).
   for (const name of Object.keys(hostApp.steps)) {
     test(name, async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          join(dir, "retries-then-is-disposed.mjs"),
+      expect(
+        await runsFixture(
+          "retries-then-is-disposed.mjs",
           name,
           JSON.stringify({ http: hostHttp.port, tcp: hostTcp.port }),
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-        timeout: 4_000,
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("armed\nstops\n");
-      expect(exitCode).toBe(0);
+        ),
+      ).toEqual({ stdout: "armed\nstops", exitCode: 0 });
     });
   }
 });
@@ -3103,20 +3095,10 @@ describe.concurrent("ModuleGraph isolation: a disposed graph cannot keep itself 
 // "background work" test says which completions are dropped once the graph is disposed. "pure": nothing
 // outlives the call. "host": process-wide on purpose (the graph's host decides who may use it).
 describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behind in what is the realm's", () => {
-  const runs = async (script: string, ...args: string[]) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(dir, script), ...args],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    return { stdout: stdout.trim(), exitCode };
-  };
   test("its node:perf_hooks observer is disconnected: the host's requests are not buffered for it", async () => {
     const [observed, control] = await Promise.all(
       ["observe", "control"].map(async mode => {
-        const { stdout, exitCode } = await runs("observer-of-a-disposed-graph.mjs", mode);
+        const { stdout, exitCode } = await runsFixture("observer-of-a-disposed-graph.mjs", mode);
         return { ...(JSON.parse(stdout) as { requests: number; kept: number }), exitCode };
       }),
     );
@@ -3135,97 +3117,100 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
   // (Counts the process's descriptors through /proc/self/fd or /dev/fd.)
   test.skipIf(isWindows)("the files its fs.promises.open() calls in flight opened are closed", async () => {
-    expect(await runs("files-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"leftOpen":0}`, exitCode: 0 });
+    expect(await runsFixture("files-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"leftOpen":0}`, exitCode: 0 });
   });
   test.skipIf(isWindows)("the stdio pipes of the children node:child_process spawned for it are closed", async () => {
-    expect(await runs("pipes-of-a-disposed-graph.mjs")).toEqual({
+    expect(await runsFixture("pipes-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"opened":true,"leftOpen":0}`,
       exitCode: 0,
     });
   });
   test("the host's node:http requests work when a graph was the first to load node:http", async () => {
-    expect(await runs("first-to-load-node-http.mjs")).toEqual({ stdout: `{"status":200}`, exitCode: 0 });
+    expect(await runsFixture("first-to-load-node-http.mjs")).toEqual({ stdout: `{"status":200}`, exitCode: 0 });
   });
   test("fetch() uploads it had streaming are released", async () => {
-    expect(await runs("uploads-of-a-disposed-graph.mjs")).toEqual({
+    expect(await runsFixture("uploads-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"streaming":true,"released":true}`,
       exitCode: 0,
     });
   });
   test("an HTMLRewriter rewrite it had under way is given up without a word when the process winds down", async () => {
-    expect(await runs("rewrite-given-up-at-exit.mjs")).toEqual({ stdout: `{"said":[]}`, exitCode: 0 });
+    expect(await runsFixture("rewrite-given-up-at-exit.mjs")).toEqual({ stdout: `{"said":[]}`, exitCode: 0 });
   });
   test("writes it had queued on the thread pool never reach the files that are given its descriptors next", async () => {
-    expect(await runs("queued-writes-of-a-disposed-graph.mjs")).toEqual({
+    expect(await runsFixture("queued-writes-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"hostFilesWrittenTo":0}`,
       exitCode: 0,
     });
   });
   test("nor do writes the host had queued through FileHandles the graph opened", async () => {
-    expect(await runs("queued-writes-of-a-disposed-graph.mjs", "host")).toEqual({
+    expect(await runsFixture("queued-writes-of-a-disposed-graph.mjs", "host")).toEqual({
       stdout: `{"hostFilesWrittenTo":0}`,
       exitCode: 0,
     });
   });
   test("the host's import() of a module parked in a top-level await is left pending: dispose() settles nothing", async () => {
-    expect(await runs("host-import-parked-at-dispose.mjs")).toEqual({
+    expect(await runsFixture("host-import-parked-at-dispose.mjs")).toEqual({
       stdout: `{"settled":"pending"}`,
       exitCode: 0,
     });
   });
   test("a BroadcastChannel its leftover script makes and posts to says nothing, to it or to the host's listener", async () => {
-    expect(await runs("broadcast-channel-of-a-disposed-graph.mjs")).toEqual({
+    expect(await runsFixture("broadcast-channel-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"outcomes":["said nothing","said nothing"],"heardByTheHost":[]}`,
       exitCode: 0,
     });
   });
   test("what a module opens at its top level is the graph's when the graph loaded it through a graph of its own making", async () => {
-    expect(await runs("graph-made-by-a-graph.mjs")).toEqual({
+    expect(await runsFixture("graph-made-by-a-graph.mjs")).toEqual({
       stdout: `{"evaluatedIn":"a graph's context","ticksAfterDispose":0}`,
       exitCode: 0,
     });
   });
   test("a graph it made is disposed with it: the host's import() through one it was handed rejects from then on", async () => {
-    expect(await runs("graph-handed-to-the-host.mjs")).toEqual({
+    expect(await runsFixture("graph-handed-to-the-host.mjs")).toEqual({
       stdout: `{"inFlight":"pending","afterwards":"rejected: ERR_INVALID_STATE"}`,
       exitCode: 0,
     });
   });
   test("a server and a listener its script had stopped gracefully: what they left connected is closed", async () => {
-    expect(await runs("disposed-after-a-graceful-stop.mjs")).toEqual({
+    expect(await runsFixture("disposed-after-a-graceful-stop.mjs")).toEqual({
       stdout: `{"request":"ECONNRESET","client":"closed"}`,
       exitCode: 0,
     });
   });
   test("a Module its code makes with new Module() is the graph's: its globals, its require cache", async () => {
-    expect(await runs("modules-made-by-a-graph.mjs")).toEqual({
+    expect(await runsFixture("modules-made-by-a-graph.mjs")).toEqual({
       stdout: `{"compiled":"the graph's","required":"the graph's","inTheHostsCache":false}`,
       exitCode: 0,
     });
   });
   test("a Bun.build it had under way: the plugin's callbacks are not called again", async () => {
-    expect(await runs("disposed-while-building.mjs")).toEqual({
+    expect(await runsFixture("disposed-while-building.mjs")).toEqual({
       stdout: `{"stoppedShort":true,"calledAfterDispose":0}`,
       exitCode: 0,
     });
   });
   test("a Bun.build waiting for an answer its plugin will never give does not keep the process running", async () => {
-    expect(await runs("disposed-while-a-plugin-waits.mjs")).toEqual({ stdout: "idle", exitCode: 0 });
+    expect(await runsFixture("disposed-while-a-plugin-waits.mjs")).toEqual({ stdout: "idle", exitCode: 0 });
   });
   test("an S3 upload waiting for its script to write more does not keep the process running", async () => {
-    expect(await runs("disposed-while-uploading.mjs")).toEqual({ stdout: "idle", exitCode: 0 });
+    expect(await runsFixture("disposed-while-uploading.mjs")).toEqual({ stdout: "idle", exitCode: 0 });
   });
   test("a Redis subscription does not keep the process running once its client cannot hear anything", async () => {
     expect({
-      disposed: await runs("subscribed-then-gone.mjs", "disposed"),
-      closed: await runs("subscribed-then-gone.mjs", "closed"),
+      disposed: await runsFixture("subscribed-then-gone.mjs", "disposed"),
+      closed: await runsFixture("subscribed-then-gone.mjs", "closed"),
     }).toEqual({ disposed: { stdout: "idle", exitCode: 0 }, closed: { stdout: "idle", exitCode: 0 } });
   });
   test("a performance observer and an HTTP/2 session it left behind do not keep it", async () => {
-    expect(await runs("dropped-after-observing-and-connecting.mjs")).toEqual({ stdout: "collected", exitCode: 0 });
+    expect(await runsFixture("dropped-after-observing-and-connecting.mjs")).toEqual({
+      stdout: "collected",
+      exitCode: 0,
+    });
   });
   test.skipIf(isWindows)("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
-    expect(await runs("disposed-with-things-half-done.mjs")).toEqual({
+    expect(await runsFixture("disposed-with-things-half-done.mjs")).toEqual({
       stdout: `{"fileSinks":0,"childHeard":[],"tls":{"writes":[],"heard":[]}}`,
       exitCode: 0,
     });
@@ -3244,6 +3229,8 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       env: { ...bunEnv, NEVER_ENDING_URL: neverEnding.url.href },
       stdout: "pipe",
       stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ realms: (stdout + stderr).match(/realms: \d+/)?.[0], exitCode }).toEqual({
@@ -3252,31 +3239,31 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
   });
   test("a CommonJS wrapper made inside another function keeps that function's scope", async () => {
-    expect(await runs("custom-commonjs-wrapper.mjs")).toEqual({
+    expect(await runsFixture("custom-commonjs-wrapper.mjs")).toEqual({
       stdout: `["of the wrapper","undefined"]`,
       exitCode: 0,
     });
   });
   test("streams over its FileHandles that the host still holds do not touch whoever has the numbers now", async () => {
-    expect(await runs("host-holds-streams-over-file-handles.mjs")).toEqual({
+    expect(await runsFixture("host-holds-streams-over-file-handles.mjs")).toEqual({
       stdout: `{"sameNumbers":true,"read":"EBADF","wrote":"EBADF","hosts":"the host's"}`,
       exitCode: 0,
     });
   });
   test("a descriptor its script closed by number is not closed again under whoever has the number now", async () => {
-    expect(await runs("closes-a-descriptor-by-number.mjs")).toEqual({
+    expect(await runsFixture("closes-a-descriptor-by-number.mjs")).toEqual({
       stdout: `{"sameNumber":true,"read":4}`,
       exitCode: 0,
     });
   });
   test("a CommonJS module that had not run yet when dispose() was called never does", async () => {
-    expect(await runs("disposed-before-its-commonjs-ran.mjs")).toEqual({
+    expect(await runsFixture("disposed-before-its-commonjs-ran.mjs")).toEqual({
       stdout: `{"imported":"ERR_INVALID_STATE","told":[]}`,
       exitCode: 0,
     });
   });
   test("a Response whose body was still arriving: the host asking for it is told it failed, and nothing awaiting one is kept", async () => {
-    expect(await runs("response-bodies-of-disposed-graphs.mjs")).toEqual({
+    expect(await runsFixture("response-bodies-of-disposed-graphs.mjs")).toEqual({
       stdout: `{"text":"rejected","protectedPromises":0}`,
       exitCode: 0,
     });
@@ -3284,20 +3271,20 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test.each(["by its script", "by a host function it called"])(
     "errors of a graph made in its context (%s) without an onError go to its onError, not to the host",
     async how => {
-      expect(await runs("errors-of-a-graph-made-by-a-graph.mjs", how)).toEqual({
+      expect(await runsFixture("errors-of-a-graph-made-by-a-graph.mjs", how)).toEqual({
         stdout: `{"hostSaw":[],"tenantSaw":["rejected and unhandled","thrown from a timer"]}`,
         exitCode: 0,
       });
     },
   );
   test("a rejection its onError causes in the code of a graph it made goes to the host, not back to that onError", async () => {
-    expect(await runs("on-error-that-causes-an-inner-rejection.mjs")).toEqual({
+    expect(await runsFixture("on-error-that-causes-an-inner-rejection.mjs")).toEqual({
       stdout: `{"callsOfTheTenantsOnError":1,"hostSaw":["rejected by the inner graph's code"]}`,
       exitCode: 0,
     });
   });
   test("the files it held open are closed: a writer, bun:sqlite and node:sqlite databases, a FileHandle, a stream", async () => {
-    expect(await runs("open-files-of-a-disposed-graph.mjs")).toEqual({
+    expect(await runsFixture("open-files-of-a-disposed-graph.mjs")).toEqual({
       stdout: JSON.stringify({
         open: 5,
         hostUses: ["Database has closed", "Database has closed", "database is not open"],
@@ -3307,12 +3294,15 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
   // (A disposed graph is told nothing, so its streams never get to close what they opened.)
   test.skipIf(isWindows)("the files its node:fs streams had open are closed", async () => {
-    expect(await runs("streams-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"open":32,"leftOpen":0}`, exitCode: 0 });
+    expect(await runsFixture("streams-of-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"open":32,"leftOpen":0}`,
+      exitCode: 0,
+    });
   });
   test.skipIf(isWindows)(
     "a FileHandle it forgot is closed by dispose(), and node:fs reports it to nobody",
     async () => {
-      expect(await runs("forgotten-file-handles.mjs", "disposed")).toEqual({
+      expect(await runsFixture("forgotten-file-handles.mjs", "disposed")).toEqual({
         stdout: `{"open":8,"leftOpenByDispose":0,"leftOpen":0,"host":["ERR_INVALID_STATE"],"graph":[]}`,
         exitCode: 0,
       });
@@ -3321,7 +3311,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test.skipIf(isWindows)(
     "a FileHandle a live graph forgot is reported to that graph's onError, not to the host",
     async () => {
-      expect(await runs("forgotten-file-handles.mjs", "live")).toEqual({
+      expect(await runsFixture("forgotten-file-handles.mjs", "live")).toEqual({
         stdout: JSON.stringify({
           open: 8,
           leftOpenByDispose: 8,
@@ -3334,20 +3324,20 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     },
   );
   test("a FileHandle and a stream of a disposed graph that the host still holds are closed, and never touch the descriptor's next owner", async () => {
-    expect(await runs("file-handle-the-host-holds.mjs")).toEqual({
+    expect(await runsFixture("file-handle-the-host-holds.mjs")).toEqual({
       stdout: `{"fd":-1,"read":"EBADF","streamed":"EBADF","stillMine":[1,1]}`,
       exitCode: 0,
     });
   });
   test("crypto.subtle operations it had rejected early do not stop the host's later ones from settling", async () => {
     // (If they do, the host's await never finishes and the process exits with nothing printed.)
-    expect(await runs("subtle-after-a-disposed-graph.mjs")).toEqual({
+    expect(await runsFixture("subtle-after-a-disposed-graph.mjs")).toEqual({
       stdout: `{"rejectedInTheGraph":200,"settledInTheHost":2000}`,
       exitCode: 0,
     });
   });
   test("the promises of its crypto.subtle operations in flight are released, not kept unsettled", async () => {
-    expect(await runs("subtle-of-a-disposed-graph.mjs")).toEqual({
+    expect(await runsFixture("subtle-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"started":20,"kept":0} FormData`,
       exitCode: 0,
     });

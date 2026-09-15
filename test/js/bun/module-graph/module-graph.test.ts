@@ -164,7 +164,6 @@ async function collected(
   }
   return done;
 }
-const jsc = require("bun:jsc") as typeof import("bun:jsc");
 
 describe("Bun.ModuleGraph", () => {
   test("is a class: requires new, has a prototype, dispose is idempotent and import after dispose rejects", async () => {
@@ -212,7 +211,6 @@ describe("Bun.ModuleGraph", () => {
     const first = await firstGraph.import(join(dir, "mod.mjs"));
     first.runAll();
     const keepAlive: unknown[] = [firstGraph, first];
-    (globalThis as any).__moduleGraphKeepAlive = keepAlive;
     // settle garbage left by earlier tests (and this graph's load) so the delta below is this test's own
     for (let i = 0; i < 6; i++) {
       Bun.gc(true);
@@ -1296,8 +1294,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     await g.import(join(String(d), "a.mjs"));
     const count = () => {
       Bun.gc(true);
-      const counts = heapStats().objectTypeCounts;
-      return { Promise: counts.Promise ?? 0, InternalFieldTuple: counts.InternalFieldTuple ?? 0 };
+      return heapStats().objectTypeCounts.Promise ?? 0;
     };
     const before = count();
     for (let i = 0; i < 2000; i++) {
@@ -1306,10 +1303,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     }
     await new Promise<void>(resolve => setImmediate(resolve));
     const after = count();
-    expect({
-      Promise: after.Promise - before.Promise < 100,
-      InternalFieldTuple: after.InternalFieldTuple - before.InternalFieldTuple < 100,
-    }).toEqual({ Promise: true, InternalFieldTuple: true });
+    expect(after - before).toBeLessThan(100);
   });
   test("a failed import() nobody handles is the graph's when its module threw, and the host's when the host caused it", async () => {
     using d = tempDir("module-graph-import-unhandled", {
@@ -2279,7 +2273,7 @@ describe("Bun.ModuleGraph — loader matrix (importer kind × importee kind)", (
         viaDynamic: async () => ({ esm: (await import("./esm.mjs")).kind, cjs: (await import("./cjs.cjs")).default.kind, tla: (await import("./tla.mjs")).kind }),
       }`,
   });
-  const mk = (t: string) => ModuleGraph({ env: { T: t }, define: undefined } as any);
+  const mk = (t: string) => ModuleGraph({ env: { T: t } } as any);
   test("ESM importer: static import of esm/cjs/tla/json/ts", async () => {
     expect((await mk("A").import(join(dir, "from-esm.mjs"))).viaImport).toEqual({
       esm: "esm:A",

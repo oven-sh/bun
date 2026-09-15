@@ -62,8 +62,9 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const file = (name: string) => join(dir, name);
 
 /** A full collection from a timer callback, then a turn for FinalizationRegistry callbacks. Not
- *  from the caller's own continuation: the native frame that runs microtasks still holds what the
- *  microtasks before it were given (an import()'s settle reaction is given its graph). */
+ *  from the caller's own continuation: that runs inside a microtask job, which still holds what it
+ *  was given (the promise an `await` just resumed from, and through it the module that promise
+ *  was fulfilled with). */
 function collect(): Promise<void> {
   return new Promise(resolve =>
     setTimeout(() => {

@@ -204,7 +204,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
         export async function start(port, childPath) {
           await Bun.connect({ hostname: "127.0.0.1", port, socket: {
             data() {},
-            // (Would keep itself running from here, if it were told.)
+            // (Would keep itself running from here, if it were called.)
             close() { const spin = () => { spins++; setImmediate(spin); }; spin(); },
           } });
           const child = Bun.spawn({

@@ -1576,7 +1576,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
 // reaches a dangling pointer and calls close() on freed memory (UAF, caught by
 // ASAN).
 test.concurrent(
-  "--isolate: unwatchFile'd watcher freed on the work pool leaves no dangling handle in its context",
+  "--isolate: unwatchFile'd watcher freed on the work pool leaves no dangling registry entry",
   async () => {
     // The dance, per file:
     //   1. watchFile, then touch the file until the listener fires — proof the

@@ -25,8 +25,7 @@ pub struct Cmd {
     pub args: Vec<Vec<u8>>,
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) redirection_fd: Option<*mut CowFd>,
-    /// The body of a `< ${response}` redirect that was still arriving when
-    /// the command was ready to start, buffered by [`Self::wait_for_redirect_body`].
+    /// A `< ${response}` body buffered by [`Self::wait_for_redirect_body`].
     pub(crate) redirect_body: Option<crate::webcore::Blob>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
@@ -44,8 +43,7 @@ pub enum CmdState {
         idx: u32,
     },
     Exec,
-    /// `response.blob()` is pending for the `< ${response}` redirect. The
-    /// promise reactions own the box. The Cmd only marks it cancelled.
+    /// `response.blob()` is pending for the `< ${response}` redirect.
     WaitingBody {
         wait: *mut BodyWait,
     },
@@ -53,10 +51,7 @@ pub enum CmdState {
     Done,
 }
 
-/// Context of the promise reactions registered by
-/// [`Cmd::wait_for_redirect_body`]. The reaction that fires frees it. A
-/// cancelled wait (the script failed, or the interpreter is torn down) makes
-/// the reaction free it and touch nothing else.
+/// Owned by the `response.blob()` reaction that fires. The Cmd only sets `cancelled`.
 pub struct BodyWait {
     interp: *mut Interpreter,
     cmd: NodeId,
@@ -445,10 +440,7 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// A `< ${response}` whose body is not in memory yet (a `fetch()` body
-    /// that is still arriving, or a `ReadableStream` body) is buffered with
-    /// `response.blob()` before the command starts. `None` when the command
-    /// can start now.
+    /// Buffer a `< ${response}` body that is not in memory yet. `None`: the command can start.
     fn wait_for_redirect_body(interp: &Interpreter, this: NodeId) -> Option<Yield> {
         use crate::jsc::js_promise::Status;
         use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
@@ -463,8 +455,6 @@ impl Cmd {
         if !node.redirect.stdin() {
             return None;
         }
-        // A bad index or an unsupported value is reported by the redirect
-        // setup of the builtin or the subprocess.
         let global = interp.global_this_ref()?;
         let jsval = *interp.jsobjs.get(val.idx as usize)?;
         let response = jsval.as_class_ref::<crate::webcore::Response>()?;
@@ -533,9 +523,7 @@ impl Cmd {
         if wait.cancelled {
             return;
         }
-        // SAFETY: the wait is not cancelled, so the Cmd is still in
-        // `WaitingBody` and the interpreter that owns it is alive (it has
-        // pending activity until every node is done).
+        // SAFETY: not cancelled, so the Cmd still waits and its interpreter is alive.
         let interp = unsafe { &*wait.interp };
         let this = wait.cmd;
         debug_assert!(matches!(
@@ -556,14 +544,12 @@ impl Cmd {
         y.run(interp);
     }
 
-    /// The script failed while `response.blob()` was pending: finish the
-    /// command now. The reaction that fires later frees the box and stops.
+    /// The script failed while `response.blob()` was pending: finish the command now.
     pub(crate) fn cancel_body_wait(interp: &Interpreter, this: NodeId) {
         let CmdState::WaitingBody { wait } = interp.as_cmd(this).state else {
             return;
         };
-        // SAFETY: the box is alive until a reaction frees it, and a reaction
-        // has not fired because the state is still `WaitingBody`.
+        // SAFETY: the state is still `WaitingBody`, so no reaction has freed the box.
         unsafe { (*wait).cancelled = true };
         let me = interp.as_cmd_mut(this);
         me.state = CmdState::Done;
@@ -1069,9 +1055,7 @@ impl Cmd {
                 CowFd::deref(fd);
             }
             if let CmdState::WaitingBody { wait } = me.state {
-                // Torn down with `response.blob()` pending (VM shutdown): the
-                // reaction must not reach into this interpreter.
-                // SAFETY: the box is alive until a reaction frees it.
+                // SAFETY: the state is still `WaitingBody`, so no reaction has freed the box.
                 unsafe { (*wait).cancelled = true };
                 me.state = CmdState::Done;
             }
@@ -1257,17 +1241,14 @@ impl Cmd {
     }
 }
 
-// Reactions of the `response.blob()` promise that `wait_for_redirect_body`
-// registers. The trailing argument is the `BodyWait` box. Exported as function
-// symbols so `Zig::GlobalObject::promiseHandlerID` can match their address.
+// `response.blob()` reactions. `promiseHandlerID` matches them by address.
 
 fn on_resolve_body(
     global: &crate::jsc::JSGlobalObject,
     callframe: &crate::jsc::CallFrame,
 ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
     let args = callframe.arguments();
-    // SAFETY: `wait_for_redirect_body` leaked the box into the reaction's
-    // trailing argument. Only one of the two reactions fires.
+    // SAFETY: `wait_for_redirect_body` leaked the box into the trailing argument.
     let wait = unsafe { bun_core::heap::take(args[args.len() - 1].as_promise_ptr::<BodyWait>()) };
     Cmd::on_body_settled(global, &wait, Ok(args[0]));
     Ok(crate::jsc::JSValue::UNDEFINED)

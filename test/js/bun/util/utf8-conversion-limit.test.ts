@@ -8,6 +8,12 @@
 // reports for a string it cannot create. An API that only looks the string up
 // answers that nothing matches: the string is not a name in the certificate and
 // it is not a builtin module.
+//
+// An 8-bit ASCII string must stay borrowed: no API here needs a NUL terminator,
+// so a copy of it is waste. The conversion refuses every 8-bit string of 2**30
+// characters before it reads one, ASCII or not. So the last row binds an ASCII
+// string of that length: SQLite's own "too big" shows that SQLite got the
+// string's buffer, where a copy reports "Out of memory".
 import { decodeURIComponentSIMD } from "bun:internal-for-testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -24,43 +30,49 @@ const fixture = `
   import crypto from "node:crypto";
   import Module from "node:module";
 
-  const long = "\\u00e9".repeat(2 ** 30);
   const cert = new crypto.X509Certificate(${JSON.stringify(tls.cert)});
   const db = new Database(":memory:");
 
   const cases = {
-    "X509Certificate#checkHost": () => cert.checkHost(long),
-    "X509Certificate#checkEmail": () => cert.checkEmail(long),
-    "new X509Certificate": () => new crypto.X509Certificate(long),
-    "hkdfSync salt": () => crypto.hkdfSync("sha256", "key", long, "info", 8),
-    "hkdfSync info": () => crypto.hkdfSync("sha256", "key", "salt", long, 8),
-    "hkdf salt": () => crypto.hkdf("sha256", "key", long, "info", 8, () => {}),
-    "require.resolve.paths": () => require.resolve.paths(long),
-    "Module._resolveLookupPaths": () => Module._resolveLookupPaths(long, { paths: ["/node_modules"] }),
-    "Database#run": () => db.run(long),
-    "Database#prepare": () => db.prepare(long),
-    "Statement#get parameter": () => db.prepare("SELECT length(?) AS n").get(long),
-    "decodeURIComponentSIMD": () => decodeURIComponentSIMD(long),
+    "X509Certificate#checkHost": text => cert.checkHost(text),
+    "X509Certificate#checkEmail": text => cert.checkEmail(text),
+    "new X509Certificate": text => new crypto.X509Certificate(text),
+    "hkdfSync salt": text => crypto.hkdfSync("sha256", "key", text, "info", 8),
+    "hkdfSync info": text => crypto.hkdfSync("sha256", "key", "salt", text, 8),
+    "hkdf salt": text => crypto.hkdf("sha256", "key", text, "info", 8, () => {}),
+    "require.resolve.paths": text => require.resolve.paths(text),
+    "Module._resolveLookupPaths": text => Module._resolveLookupPaths(text, { paths: ["/node_modules"] }),
+    "Database#run": text => db.run(text),
+    "Database#prepare": text => db.prepare(text),
+    "Statement#get parameter": text => db.prepare("SELECT length(?) AS n").get(text),
+    "decodeURIComponentSIMD": text => decodeURIComponentSIMD(text),
     // The value of a cookie is converted only when the header has a "%" in it.
-    "new Bun.CookieMap": () => new Bun.CookieMap("a=%41" + long),
+    "new Bun.CookieMap": text => new Bun.CookieMap("a=%41" + text),
   };
-  for (const [name, run] of Object.entries(cases)) {
+  function report(label, name, text) {
     try {
-      const result = run();
-      console.log(name + ": returned " + (Array.isArray(result) ? "an array" : result));
+      const result = cases[name](text);
+      console.log(label + name + ": returned " + (Array.isArray(result) ? "an array" : result));
     } catch (e) {
-      console.log(name + ": " + e.name + ": " + e.message);
+      console.log(label + name + ": " + e.name + ": " + e.message);
     }
   }
+
+  let text = "\\u00e9".repeat(2 ** 30);
+  for (const name of Object.keys(cases)) report("", name, text);
+
+  text = undefined;
+  Bun.gc(true);
+  report("ASCII ", "Statement#get parameter", "q".repeat(2 ** 30));
 `;
 
 // The length is what is under test, so the child holds a string of 1 GiB, and a
-// second one while the last case joins the cookie header. The test skips on small
-// machines (the gate streams-string-limit.test.ts uses). The child takes about 4
-// seconds in a debug ASAN build, which is too close to the default 5 second limit,
-// so this one test carries its own ceiling. `repeat` is used instead of the
-// harness's `Buffer.alloc(n, fill).toString()`: for one character it takes half
-// the time and it does not hold a second 1 GiB.
+// second one while the cookie case joins the header. The test skips on small
+// machines (the gate streams-string-limit.test.ts uses). The child takes about 10
+// seconds in a debug ASAN build, 6 of them in the unoptimized ASCII scan of the
+// last row, so this one test carries its own ceiling. `repeat` is used instead of
+// the harness's `Buffer.alloc(n, fill).toString()`: for one character it takes
+// half the time and it does not hold a second 1 GiB.
 test.skipIf(totalmem() < 8 * 1024 ** 3)(
   "a string whose UTF-8 form does not fit in a buffer is an error instead of an abort",
   async () => {
@@ -86,6 +98,7 @@ test.skipIf(totalmem() < 8 * 1024 ** 3)(
         "Statement#get parameter: RangeError: Out of memory",
         "decodeURIComponentSIMD: RangeError: Out of memory",
         "new Bun.CookieMap: RangeError: Out of memory",
+        "ASCII Statement#get parameter: Error: string or blob too big",
       ],
       stderr: "",
       exitCode: 0,

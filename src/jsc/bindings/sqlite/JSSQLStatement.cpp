@@ -919,6 +919,7 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         if (!roped->is8Bit()) {
             CHECK_BIND(sqlite3_bind_text64(stmt, i, reinterpret_cast<const char*>(roped->span16().data()), static_cast<sqlite3_uint64>(roped->length()) * sizeof(char16_t), SQLITE_TRANSIENT, SQLITE_UTF16));
         } else {
+            // UTF8View borrows an 8-bit ASCII string, so SQLITE_TRANSIENT makes the only copy of it.
             auto utf8 = Bun::UTF8View::tryCreate(lexicalGlobalObject, scope, roped);
             RETURN_IF_EXCEPTION(scope, false);
             CHECK_BIND(sqlite3_bind_text64(stmt, i, utf8->span().data(), utf8->span().size(), SQLITE_TRANSIENT, SQLITE_UTF8));

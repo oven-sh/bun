@@ -12,7 +12,9 @@ class ThrowScope;
 }
 
 namespace Bun {
-// The UTF-8 bytes of a string. An 8-bit all-ASCII string is borrowed, so it must outlive the view. Any other string is converted.
+// The UTF-8 bytes of a string, for a consumer that takes a pointer and a length. There is no NUL terminator.
+// An 8-bit all-ASCII string is borrowed, never copied, so it must outlive the view. Any other string is converted.
+// A `const char*` consumer needs a terminator. A WTF string has none, so that always takes a copy: use `tryGetUTF8()` there, not this.
 class UTF8View {
 public:
     // std::nullopt when the conversion fails, where `utf8()` asserts: a Latin-1 string of 2^30 characters
@@ -21,43 +23,35 @@ public:
     {
         UTF8View result;
         if (view.is8Bit() && view.containsOnlyASCII()) {
-            result.m_view = view;
+            result.m_borrowed = view;
             return result;
         }
         auto utf8 = view.tryGetUTF8();
         if (!utf8) [[unlikely]]
             return std::nullopt;
-        result.m_underlying = WTF::move(utf8.value());
-        result.m_isCString = true;
+        result.m_converted = WTF::move(utf8.value());
+        result.m_isConverted = true;
         return result;
     }
 
     // The same, and throws `RangeError: Out of memory` when the conversion fails.
     static std::optional<UTF8View> tryCreate(JSC::JSGlobalObject*, JSC::ThrowScope&, WTF::StringView);
 
-    std::span<const uint8_t> bytes() const
-    {
-        if (m_isCString) {
-            return std::span(reinterpret_cast<const uint8_t*>(m_underlying.data()), m_underlying.length());
-        }
-        return std::span(reinterpret_cast<const uint8_t*>(m_view.span8().data()), m_view.length());
-    }
+    std::span<const uint8_t> bytes() const { return byteCast<uint8_t>(span()); }
 
     std::span<const char> span() const
     {
-        if (m_isCString) {
-            return std::span(reinterpret_cast<const char*>(m_underlying.data()), m_underlying.length());
-        }
-
-        return std::span(reinterpret_cast<const char*>(m_view.span8().data()), m_view.length());
+        if (m_isConverted)
+            return m_converted.span();
+        return byteCast<char>(m_borrowed.span8());
     }
 
 private:
     UTF8View() = default;
 
-    WTF::CString m_underlying {};
-    WTF::StringView m_view {};
-    bool m_isCString { false };
+    WTF::StringView m_borrowed {};
+    WTF::CString m_converted {};
+    bool m_isConverted { false };
 };
 
 // Pre-hashed and never atomized in place, so any number of threads may hold

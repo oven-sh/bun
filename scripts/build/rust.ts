@@ -426,6 +426,10 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // and shadow-memory bookkeeping agree. Nightly-only flag; the pinned
     // toolchain in `rust-toolchain.toml` is nightly.
     rustflags.push("-Zsanitizer=address");
+    // The C/C++ side's `-fsanitize-address-use-after-return=never` (flags.ts).
+    // rustc builds the ASAN pass in `runtime` mode and has no flag to change
+    // that; the pass's own LLVM option overrides the mode.
+    rustflags.push("-Cllvm-args=-asan-use-after-return=never");
     rustflags.push("--cfg=bun_asan");
   }
   // `bun_debug`: the cargo profile is `dev` (a Debug-buildtype build).

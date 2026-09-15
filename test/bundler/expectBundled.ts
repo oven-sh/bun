@@ -77,6 +77,41 @@ export function decodeSourceMappingsLine(line: string) {
   return segs;
 }
 
+/**
+ * Encodes a source map "mappings" string. `lines[i]` holds the segments of
+ * generated line `i` as `[generatedColumn, sourceIndex, originalLine, originalColumn]`,
+ * every value absolute and zero-based.
+ */
+export function encodeSourceMappings(lines: [number, number, number, number][][]): string {
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const vlq = (value: number) => {
+    let v = value < 0 ? (-value << 1) | 1 : value << 1;
+    let out = "";
+    do {
+      let digit = v & 31;
+      v >>>= 5;
+      if (v > 0) digit |= 32;
+      out += B64[digit];
+    } while (v > 0);
+    return out;
+  };
+  let src = 0,
+    ol = 0,
+    oc = 0;
+  return lines
+    .map(segments => {
+      let gen = 0;
+      return segments
+        .map(([g, s, l, c]) => {
+          const text = vlq(g - gen) + vlq(s - src) + vlq(l - ol) + vlq(c - oc);
+          [gen, src, ol, oc] = [g, s, l, c];
+          return text;
+        })
+        .join(",");
+    })
+    .join(";");
+}
+
 let currentFile: string | undefined;
 
 function errorOrWarnParser(isError = true) {

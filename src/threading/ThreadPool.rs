@@ -1255,17 +1255,21 @@ impl Thread {
         }
     }
 
-    pub(crate) fn drain_idle_events(&self) {
+    /// Returns how many it ran.
+    pub(crate) fn drain_idle_events(&self) -> usize {
         let Ok(mut consumer) = self.idle_queue.try_acquire_consumer() else {
-            return;
+            return 0;
         };
+        let mut ran = 0;
         while let Some(node) = consumer.pop() {
             // SAFETY: node points to the `node` field of a Task.
             let task = unsafe { Task::from_node(node) };
             // SAFETY: `task` was dequeued from this thread's idle queue; it is a
             // live scheduled `Task` whose `callback` was set by the producer.
             unsafe { ((*task).callback)(task) };
+            ran += 1;
         }
+        ran
     }
 
     /// Try to dequeue a Node/Task from the ThreadPool.
@@ -1424,7 +1428,10 @@ impl Event {
                 // A `wake_all()` from here on changes the word the futex wait below expects. The
                 // fence puts the idle tasks of the one whose epoch `word` has in the queue.
                 fence(Ordering::Acquire);
-                worker.drain_idle_events();
+                if worker.drain_idle_events() != 0 {
+                    // What the tasks freed is there for the fallback sweep below to give back.
+                    has_swept = false;
+                }
             }
 
             // Wait on the event until a notify() or shutdown().

@@ -749,3 +749,118 @@ test("my-test", () => {
     });
   }
 });
+
+// `expect(asyncFn).toThrow()` runs the event loop until the function's promise settles.
+// Each timer callback below also resolves that promise, so the error always lands inside the wait.
+describe.concurrent("errors from other work while expect(asyncFn).toThrow() waits fail the test", () => {
+  const cases = {
+    "uncaught exception": {
+      message: "## thrown by a timer ##",
+      body: `
+test("waits", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  setTimeout(() => {
+    resolve();
+    throw new Error("## thrown by a timer ##");
+  }, 1);
+  await expect(async () => { await promise; }).not.toThrow();
+});`,
+    },
+    "unhandled rejection": {
+      message: "## rejected by a timer ##",
+      body: `
+test("waits", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  setTimeout(() => {
+    Promise.reject(new Error("## rejected by a timer ##"));
+    resolve();
+  }, 1);
+  await expect(async () => { await promise; }).not.toThrow();
+});`,
+    },
+    "failed assertion": {
+      message: "## asserted by a timer ##",
+      body: `
+test("waits", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  setTimeout(() => {
+    resolve();
+    expect("## asserted by a timer ##").toBe("other");
+  }, 1);
+  await expect(async () => { await promise; }).not.toThrow();
+});`,
+    },
+    "done(error)": {
+      message: "## passed to done ##",
+      body: `
+test("waits", done => {
+  const { promise, resolve } = Promise.withResolvers();
+  setTimeout(() => {
+    done(new Error("## passed to done ##"));
+    resolve();
+  }, 1);
+  expect(async () => { await promise; }).not.toThrow();
+});`,
+    },
+    "error while the function's own rejection is awaited": {
+      message: "## thrown by a timer ##",
+      body: `
+test("waits", async () => {
+  const { promise, reject } = Promise.withResolvers();
+  setTimeout(() => {
+    reject(new Error("own"));
+    throw new Error("## thrown by a timer ##");
+  }, 1);
+  await expect(async () => { await promise; }).toThrow("own");
+});`,
+    },
+  };
+
+  for (const [name, { message, body }] of Object.entries(cases)) {
+    test(name, async () => {
+      using dir = tempDir("tothrow-wait", {
+        "wait.test.js": `import { test, expect } from "bun:test";\n${body}\n`,
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "wait.test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(message);
+      expect(stderr).toContain("(fail) waits");
+      expect(stderr).toContain(" 0 pass");
+      expect(stderr).toContain(" 1 fail");
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  test("the function's own rejection is not reported as unhandled", async () => {
+    using dir = tempDir("tothrow-wait", {
+      "wait.test.js": `
+import { test, expect } from "bun:test";
+test("waits", async () => {
+  await expect(async () => { await Bun.sleep(1); throw new Error("own late"); }).toThrow("own late");
+  await expect(async () => { throw new Error("own early"); }).toThrow("own early");
+  await expect(async () => { await Bun.sleep(1); }).not.toThrow();
+});
+`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "wait.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("own late");
+    expect(stderr).not.toContain("own early");
+    expect(stderr).toContain("(pass) waits");
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+});

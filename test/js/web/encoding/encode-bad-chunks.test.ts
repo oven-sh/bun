@@ -10,7 +10,7 @@ import { readableStreamFromArray } from "harness";
 const error1 = new Error("error1");
 error1.name = "error1";
 
-test("a chunk that cannot be converted to a string should error the streams", () => {
+test("a chunk that cannot be converted to a string should error the streams", async () => {
   const ts = new TextEncoderStream();
   const writer = ts.writable.getWriter();
   const reader = ts.readable.getReader();
@@ -20,18 +20,12 @@ test("a chunk that cannot be converted to a string should error the streams", ()
     },
   });
   const readPromise = reader.read();
-  expect(async () => {
-    await readPromise;
-  }).toThrow(error1);
-  expect(async () => {
-    await writePromise;
-  }).toThrow(error1);
-  expect(async () => {
-    await reader.closed;
-  }).toThrow(error1);
-  expect(async () => {
-    await writer.closed;
-  }).toThrow(error1);
+  // All four reject together. Observe them together, so that none is unhandled when it rejects.
+  const results = await Promise.allSettled([readPromise, writePromise, reader.closed, writer.closed]);
+  for (const result of results) {
+    expect(result.status).toBe("rejected");
+    expect(result.reason).toBe(error1);
+  }
 });
 
 const oddInputs = [

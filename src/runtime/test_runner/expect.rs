@@ -869,9 +869,11 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            let waited = vm.wait_for_promise(promise);
+            // The quiet handler covers the synchronous call only. The wait runs the event loop, and
+            // an error from other work there must reach the real handler.
             scope.apply(vm);
-            waited.map_err(|stopped| stopped.throw(global_this))?;
+            promise.set_handled(global_this.vm());
+            vm.wait_for_promise(promise).map_err(|stopped| stopped.throw(global_this))?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));

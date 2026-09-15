@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import vm from "node:vm";
 
 const BufferModule = await import("buffer");
@@ -5082,6 +5083,83 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
       }
     });
   });
+});
+
+// 'ascii' decode is `byte & 0x7F`. Sweep the lengths around every SIMD width so the
+// vector body, the overlapped tail and the scalar remainder of the kernel all run.
+it("toString('ascii') and StringDecoder('ascii') clear the high bit at every length", () => {
+  withoutAggressiveGC(() => {
+    // 197 is odd, so every byte value appears
+    const source = Buffer.from(Array.from({ length: 600 }, (_, i) => (i * 197 + 91) & 0xff));
+    const expected = Buffer.from(source.map(byte => byte & 0x7f)).toString("latin1");
+    const mismatches = [];
+    for (let length = 0; length <= 300; length++) {
+      for (const offset of [0, 1, 7, 300 - length]) {
+        const slice = source.subarray(offset, offset + length);
+        const want = expected.slice(offset, offset + length);
+        if (slice.toString("ascii") !== want) mismatches.push({ api: "toString", offset, length });
+        if (new StringDecoder("ascii").write(slice) !== want) mismatches.push({ api: "StringDecoder", offset, length });
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+});
+
+// The ascii decoders used to check the source for non-ASCII bytes and then copy
+// it in a second pass. Over a SharedArrayBuffer another thread can change the
+// bytes between the two reads, so the output could contain a byte above 0x7F,
+// which an 'ascii' source must never produce.
+it.concurrent.each([
+  ["toString", `buf.toString("ascii")`],
+  ["StringDecoder", `decoder.write(buf)`],
+  // '?' replaces a non-ASCII source byte, so a latin1 target is 7-bit too
+  ["transcode", `transcode(buf, "ascii", "latin1").toString("latin1")`],
+])("ascii decode of a SharedArrayBuffer stays 7-bit while a worker writes it (%s)", async (_, decode) => {
+  const script = /* js */ `
+      const { Worker } = require("node:worker_threads");
+      const { StringDecoder } = require("node:string_decoder");
+      const { transcode } = require("node:buffer");
+      const SIZE = 64 * 1024;
+      const sab = new SharedArrayBuffer(SIZE + 4);
+      const ready = new Int32Array(sab, SIZE, 1);
+      const worker = new Worker(
+        \`
+          const { workerData: sab } = require("node:worker_threads");
+          const bytes = new Uint8Array(sab, 0, sab.byteLength - 4);
+          const ready = new Int32Array(sab, sab.byteLength - 4, 1);
+          for (let i = 0; ; i++) {
+            bytes.fill(i & 1 ? 0xe2 : 0x61);
+            if (i === 0) {
+              Atomics.store(ready, 0, 1);
+              Atomics.notify(ready, 0);
+            }
+          }
+        \`,
+        { eval: true, workerData: sab },
+      );
+      Atomics.wait(ready, 0, 0);
+      const buf = Buffer.from(sab, 0, SIZE);
+      const decoder = new StringDecoder("ascii");
+      let firstBad = null;
+      for (let call = 0; call < 128 && firstBad === null; call++) {
+        const s = ${decode};
+        const index = s.search(/[^\\x00-\\x7f]/);
+        if (index !== -1) firstBad = { call, index, code: s.charCodeAt(index) };
+        else if (s.length !== SIZE) firstBad = { call, length: s.length };
+      }
+      console.log(JSON.stringify(firstBad));
+      // the worker never returns on its own
+      process.exit(0);
+    `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "null", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 // MAX_LENGTH is 2**32 on 64-bit: a buffer of exactly that length must not

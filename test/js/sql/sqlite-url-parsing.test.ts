@@ -84,11 +84,14 @@ describe("SQLite URL Parsing Matrix", () => {
     const queryParams = [
       { query: "", readonly: undefined, create: undefined, name: "no params" },
       { query: "?mode=ro", readonly: true, create: undefined, name: "readonly" },
-      { query: "?mode=rw", readonly: false, create: undefined, name: "read-write" },
+      { query: "?mode=rw", readonly: false, create: false, name: "read-write" },
       { query: "?mode=rwc", readonly: false, create: true, name: "read-write-create" },
       { query: "?mode=invalid", readonly: undefined, create: undefined, name: "invalid mode" },
       { query: "?other=param", readonly: undefined, create: undefined, name: "other param" },
       { query: "?mode=ro&cache=shared", readonly: true, create: undefined, name: "multiple params" },
+      // Repeated mode= follows SQLite URI semantics: the last one wins.
+      { query: "?mode=rw&mode=ro", readonly: true, create: undefined, name: "repeated mode, ro last" },
+      { query: "?mode=ro&mode=rw", readonly: false, create: false, name: "repeated mode, rw last" },
     ];
 
     const queryMatrix = protocolsWithQuery.flatMap(base =>

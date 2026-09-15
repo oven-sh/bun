@@ -218,6 +218,13 @@ impl IOReader {
                 let fd = self.state().fd;
                 if let Err(e) = r.start(fd, true) {
                     self.on_reader_error(&e);
+                } else if !r.is_pollable() {
+                    // The kernel refused the poll (a regular file, /dev/null):
+                    // no callback will come, so read the fd now.
+                    // SAFETY: the reader cell is live for `self`'s lifetime and
+                    // `r` is not used past this point; `read` is the raw
+                    // re-entrancy-safe entry (its dispatch runs shell code).
+                    unsafe { bun_io::BufferedReader::read(self.reader.get()) };
                 }
             }
             return Yield::suspended();

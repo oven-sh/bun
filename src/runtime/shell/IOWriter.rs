@@ -356,31 +356,19 @@ impl IOWriter {
         if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
             #[cfg(not(windows))]
             {
-                // We get this if we pass in a file descriptor that is not
-                // pollable, for example a special character device like
-                // /dev/null. If so, restart with polling disabled.
+                // A regular file or a character device such as /dev/null:
+                // restart with polling disabled.
                 //
                 // It's also possible on Linux for EINVAL to be returned
                 // when registering multiple writable/readable polls for the
                 // same file descriptor. The shell code here makes sure to
                 // _not_ run into that case, but it is possible.
-                if e.get_errno() == E::EINVAL {
-                    crate::shell_log!("IOWriter(fd={}) got EINVAL", s.fd);
+                if bun_io::pipes::is_unpollable(&e) {
+                    crate::shell_log!("IOWriter(fd={}) got {}", s.fd, e.get_errno());
                     s.flags.pollable = false;
                     s.flags.nonblock = false;
                     s.flags.is_socket = false;
                     return self.__start();
-                }
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                {
-                    // On linux regular files are not pollable and return EPERM,
-                    // so restart if that's the case with polling disabled.
-                    if e.get_errno() == E::EPERM {
-                        s.flags.pollable = false;
-                        s.flags.nonblock = false;
-                        s.flags.is_socket = false;
-                        return self.__start();
-                    }
                 }
             }
             #[cfg(windows)]

@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -340,4 +340,81 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
+});
+
+it("runs the rest of a setImmediate batch while one of its callbacks is blocked running the event loop", async () => {
+  using dir = tempDir("immediate-batch-nested-loop", {
+    "entry.ts": "export {};",
+    "main.ts": `
+      const order = [];
+      const first = Promise.withResolvers();
+      const second = Promise.withResolvers();
+      // Bun.build() runs the event loop, from inside the caller, until an async
+      // plugin setup() settles (expect().resolves does the same in bun:test).
+      const runEventLoopUntil = promise =>
+        Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "wait", setup: () => promise }] });
+
+      // All four are queued before the loop runs any of them: one batch.
+      setImmediate(() => {
+        order.push("1:start");
+        setImmediate(() => order.push("queued by 1"));
+        runEventLoopUntil(first.promise);
+        order.push("1:end");
+      });
+      setImmediate(() => {
+        order.push("2:start");
+        runEventLoopUntil(second.promise);
+        order.push("2:end");
+      });
+      setImmediate(() => {
+        order.push("3");
+        second.resolve();
+      });
+      setImmediate(() => {
+        order.push("4");
+        first.resolve();
+      });
+      process.on("exit", () => console.log(order.join(",")));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // A broken build never gets past callback 1: it waits for callback 4, which
+    // is queued behind it in the same batch.
+    timeout: 30_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // The loop run from inside 1 runs the rest of the batch (2, whose own nested
+  // run then runs 3 and 4); nothing runs twice; what the batch queued runs on
+  // the next iteration, as usual.
+  expect(stdout.trim().split(",")).toEqual(["1:start", "2:start", "3", "4", "2:end", "1:end", "queued by 1"]);
+  expect(exitCode).toBe(0);
+});
+
+it("releases the rest of a setImmediate batch when the process exits from inside it", async () => {
+  // process.exit() tears the VM down (BUN_DESTRUCT_VM_ON_EXIT, as on the ASAN
+  // lanes) from inside the first callback, with the rest of its batch pending.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      setImmediate(() => { console.log("1"); process.exit(0); });
+      setImmediate(() => console.log("2"));
+      setImmediate(() => console.log("3"));
+      `,
+    ],
+    env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("1\n");
+  expect(exitCode).toBe(0);
 });

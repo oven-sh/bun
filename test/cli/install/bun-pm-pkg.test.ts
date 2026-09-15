@@ -328,6 +328,44 @@ describe.concurrent("bun pm pkg", () => {
       expect(JSON.parse(content)).toEqual({ ...original, config: { limit: 1000000 } });
     });
 
+    it("should write null for numbers that overflow to Infinity, like JSON.stringify", async () => {
+      // `1e400` is valid JSON number syntax. It reads as Infinity, which has
+      // no JSON token. JSON.stringify (and npm) write it back as null.
+      using dir = tempDir("pm-pkg-nonfinite", {
+        "package.json": `{
+  "name": "n",
+  "version": "1.0.0",
+  "config": { "max": 1e400, "min": -1e999, "tiny": 1e-400, "ok": 1.5 }
+}`,
+      });
+
+      // Reading it back out goes through the same printer.
+      const before = await runPmPkg(["get", "config.max"], dir);
+      expect(before.output.trim()).toBe("null");
+      expect(before.error).toBe("");
+
+      // A --json value that overflows, plus a rewrite of the existing literals.
+      const { error, code } = await runPmPkg(["set", "limit=1e400", "low=-1e400", "--json"], dir);
+      expect(error).toBe("");
+      expect(code).toBe(0);
+
+      const content = await Bun.file(join(dir, "package.json")).text();
+      expect(content).not.toContain("Infinity");
+      expect(content).not.toContain("NaN");
+      expect(JSON.parse(content)).toEqual({
+        name: "n",
+        version: "1.0.0",
+        config: { max: null, min: null, tiny: 0, ok: 1.5 },
+        limit: null,
+        low: null,
+      });
+
+      // bun itself must still be able to read the file it wrote.
+      const after = await runPmPkg(["get", "config"], dir);
+      expect(JSON.parse(after.output)).toEqual({ max: null, min: null, tiny: 0, ok: 1.5 });
+      expect(after.error).toBe("");
+    });
+
     it("should write literal keys when setting with bracket notation", async () => {
       // Key-path segments parsed from a bracket path must stay alive until
       // the file is written; otherwise the printer serializes freed bytes.

@@ -526,6 +526,34 @@ describe.concurrent("bun pm version", () => {
         },
       });
     });
+
+    it("keeps the file valid JSON when a number literal overflows to Infinity", async () => {
+      // `1e400` is valid JSON syntax but reads as Infinity. The rewrite must
+      // not print the `Infinity` token, which no JSON parser accepts.
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": `{
+  "name": "test",
+  "version": "1.0.0",
+  "config": { "max": 1e400, "min": -1e400 }
+}`,
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+        String(testDir),
+      );
+      expect(error).toBe("");
+      expect(output.trim()).toBe("v1.0.1");
+      expect(code).toBe(0);
+
+      const updated = await Bun.file(join(String(testDir), "package.json")).text();
+      expect(updated).not.toContain("Infinity");
+      expect(JSON.parse(updated)).toEqual({
+        name: "test",
+        version: "1.0.1",
+        config: { max: null, min: null },
+      });
+    });
   });
 
   describe("prerelease handling", () => {

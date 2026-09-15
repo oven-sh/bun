@@ -457,6 +457,19 @@ const dir = String(
         { length: 400 },
         (_, i) => "export function f" + i + "(a: number): number { return a * " + i + "; }",
       ).join("\n") + "\nconsole.log(f1(2));",
+    // For a run whose cwd is this folder: the server's own plugins, which every page's build borrows.
+    "serve-plugin/bunfig.toml": '[serve.static]\nplugins = ["./plugin.ts"]\n',
+    "serve-plugin/plugin.ts": `
+      export default {
+        name: "loads the pages' script, a turn later",
+        setup(build) {
+          build.onLoad({ filter: /page-script\\.ts$/ }, async ({ path }) => {
+            await new Promise(resolve => setImmediate(resolve));
+            return { contents: await Bun.file(path).text(), loader: "ts" };
+          });
+        },
+      };
+    `,
     "serves-html-routes.mjs": `
       import page0 from "./page-0.html";
       import page1 from "./page-1.html";
@@ -3261,6 +3274,19 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
   test("a server whose HTML routes were still being built is released with it", async () => {
     expect(await runsFixture("disposed-while-building-pages.mjs")).toEqual({ stdout: "collected", exitCode: 0 });
+  });
+  test("and the plugins those builds borrowed from it stay the server's", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "disposed-while-building-pages.mjs")],
+      cwd: join(dir, "serve-plugin"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "collected", exitCode: 0 });
   });
   test.skipIf(isWindows)("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
     expect(await runsFixture("disposed-with-things-half-done.mjs")).toEqual({

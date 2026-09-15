@@ -5143,6 +5143,81 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
   },
 );
 
+// transcode() sized its result, and the UTF-16 copy of the source it converts through, with
+// WTF::Vector::grow(). That aborts the process at 2**31 bytes, also inside try/catch. Each case runs
+// in a child and prints its line as soon as it finishes, so an abort shows which case it was.
+describe("transcode of a source of 1 GiB or more", () => {
+  async function runCases(defineCases) {
+    const script = `
+      const { transcode } = require("node:buffer");
+      ${defineCases}
+      for (const [name, run] of Object.entries(cases)) {
+        try {
+          const result = run();
+          console.log(name + ": " + JSON.stringify({ length: result.length, head: [...result.subarray(0, 4)], tail: [...result.subarray(-4)] }));
+        } catch (e) {
+          console.log(name + ": " + e.name + ": " + e.message);
+        }
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  // The child never writes to the source, so it stays untouched address space and the test is cheap.
+  it("throws when the result or the UTF-16 copy cannot be allocated", async () => {
+    const result = await runCases(`
+      const memory = new ArrayBuffer(2 ** 31 + 1);
+      const cases = {
+        // The result needs 2**32 + 2 bytes and a Buffer holds 2**32.
+        "latin1 to ucs2": () => transcode(new Uint8Array(memory), "latin1", "ucs2"),
+        // These convert through a UTF-16 copy of 2**30 units, which is 2**31 bytes.
+        "latin1 to utf8": () => transcode(new Uint8Array(memory, 0, 2 ** 30), "latin1", "utf8"),
+        "ucs2 to latin1": () => transcode(new Uint8Array(memory, 0, 2 ** 31), "ucs2", "latin1"),
+        "ucs2 to ucs2": () => transcode(new Uint8Array(memory, 0, 2 ** 31 - 1), "ucs2", "ucs2"),
+        "ucs2 to utf8": () => transcode(new Uint8Array(memory, 0, 2 ** 31), "ucs2", "utf8"),
+      };
+    `);
+    expect(result).toEqual({
+      stdout: [
+        "latin1 to ucs2: RangeError: Out of memory",
+        "latin1 to utf8: RangeError: Out of memory",
+        "ucs2 to latin1: RangeError: Out of memory",
+        "ucs2 to ucs2: RangeError: Out of memory",
+        "ucs2 to utf8: RangeError: Out of memory",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node v26.3.0 returns the same 2 GiB Buffer. The child writes all of it, which takes about 2
+  // seconds in a debug ASAN build and more on a loaded machine, so this test has its own ceiling.
+  it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
+    "returns a result of 2 GiB",
+    async () => {
+      const result = await runCases(`
+        const source = new Uint8Array(2 ** 30);
+        source[0] = 0xe9;
+        source[source.length - 1] = 0x41;
+        const cases = { "latin1 to ucs2": () => transcode(source, "latin1", "ucs2") };
+      `);
+      expect(result).toEqual({
+        stdout: ['latin1 to ucs2: {"length":2147483648,"head":[233,0,0,0],"tail":[0,0,65,0]}'],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+});
+
 // The fixed-width read* / write* accessors are C++ host functions that JSC's DFG/FTL compile into
 // bounds-checked loads / stores (JSBuffer.cpp + JavaScriptCore's BufferAccessorRegistry). They must
 // keep agreeing with a DataView reference after tier-up, and everything the JIT does not speculate

@@ -1041,8 +1041,9 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     }
 
 #if LAZY_LOAD_SQLITE
-    if (lazyLoadSQLite() < 0) [[unlikely]] {
-        scope.throwException(globalObject, createError(globalObject, WTF::String::fromUTF8(dlerror())));
+    WTF::String msg;
+    if (lazyLoadSQLite(&msg) < 0) [[unlikely]] {
+        scope.throwException(globalObject, createError(globalObject, msg));
         return false;
     }
 #endif

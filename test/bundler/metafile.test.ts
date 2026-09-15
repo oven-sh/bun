@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { statSync } from "node:fs";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -1149,6 +1150,68 @@ describe("bun build --metafile-md", () => {
     expect(content).toContain("require-call");
   });
 
+  test("markdown reports a split import() / require() as an import of the input it loads", async () => {
+    using dir = tempDir("metafile-md-split-imports", {
+      "entry.js": `
+        import("./lazy.js").then(m => console.log(m.value));
+        import("external-pkg").then(m => console.log(m));
+        export const load = () => require("./required.js").value;
+      `,
+      "lazy.js": `export const value = 1;`,
+      "required.js": `export const value = 2;`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "entry.js",
+        "--metafile-md",
+        "--outdir=dist",
+        "--splitting",
+        "--target=bun",
+        "--external=external-pkg",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const lines = (await Bun.file(`${dir}/meta.md`).text()).split("\n");
+
+    // lazy.js and required.js are bundled into chunks of their own. Only external-pkg is external.
+    expect(lines.filter(line => /^\[(IMPORT|EXTERNAL):/.test(line))).toEqual([
+      "[IMPORT: entry.js -> lazy.js]",
+      "[EXTERNAL: entry.js imports external-pkg]",
+      "[IMPORT: entry.js -> required.js]",
+    ]);
+    expect(lines.filter(line => line.startsWith("[IMPORTED_BY:")).sort()).toEqual([
+      "[IMPORTED_BY: lazy.js <- entry.js]",
+      "[IMPORTED_BY: required.js <- entry.js]",
+    ]);
+    expect(lines.filter(line => line.includes("External imports"))).toEqual(["| External imports | 1 |"]);
+
+    // The module graph lists the same edges.
+    expect(lines.filter(line => line.startsWith("- **Imported by**")).sort()).toEqual([
+      "- **Imported by** (1 files): `entry.js`",
+      "- **Imported by** (1 files): `entry.js`",
+      "- **Imported by**: (entry point or orphan)",
+    ]);
+    expect(
+      lines.filter(line => line.startsWith("  - `")).map(line => line.replace(/contributes [^,]+/, "contributes N")),
+    ).toEqual([
+      "  - `lazy.js` (dynamic-import, contributes N, specifier: `./lazy.js`)",
+      "  - `external-pkg` (dynamic-import, **external**)",
+      "  - `required.js` (require-call, contributes N, specifier: `./required.js`)",
+    ]);
+  });
+
   test("markdown shows commonly imported modules", async () => {
     using dir = tempDir("metafile-md-common-imports", {
       "a.js": `import { shared } from "./shared.js"; console.log("a", shared);`,
@@ -1386,5 +1449,208 @@ describe("bun build --metafile", () => {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const metafile = JSON.parse(text) as Metafile;
     expect(Object.keys(metafile.outputs)).toEqual(["./x\uD800\uFFFD-index.js"]);
+  });
+});
+
+// The bundler writes the final path of a chunk or an asset into the chunks that reference it
+// only after it hashes the chunk contents, and appends the source map comment after that.
+describe("metafile outputs[..].bytes is the size of the emitted file", () => {
+  const splitFiles = {
+    "a.ts": `import { shared } from "./shared.ts";\nconsole.log("a", shared);\nimport("./lazy.ts").then(m => console.log(m.lazy));\n`,
+    "b.ts": `import { shared } from "./shared.ts";\nconsole.log("b", shared);\n`,
+    "lazy.ts": `import { shared } from "./shared.ts";\nexport const lazy = "lazy " + shared;\n`,
+    "shared.ts": `export const shared = "shared value";\n`,
+  };
+
+  // An outdir takes the loop that writes each chunk to disk. No outdir takes the in-memory loop.
+  const destinations = ["on disk", "in memory"] as const;
+  const outdirFor = (dir: unknown, destination: (typeof destinations)[number]) =>
+    destination === "on disk" ? `${dir}/dist` : undefined;
+
+  /** `bytes` of every metafile output, next to the size of the file the build produced for it. */
+  function outputSizes(result: Bun.BuildOutput, outdir: string | undefined) {
+    const reported: Record<string, number> = {};
+    const actual: Record<string, number | undefined> = {};
+    for (const [key, output] of Object.entries((result.metafile as Metafile).outputs)) {
+      reported[key] = output.bytes;
+      actual[key] = outdir
+        ? statSync(`${outdir}/${key}`).size
+        : result.outputs.find(artifact => artifact.path === key)?.size;
+    }
+    return { reported, actual };
+  }
+
+  const withoutHash = (key: string) => key.replace(/-[a-z0-9]+\./, "-[hash].");
+
+  const sourcemaps = ["none", "linked", "inline", "external"] as const;
+  test.each(sourcemaps.flatMap(sourcemap => destinations.map(destination => ({ sourcemap, destination }))))(
+    "chunks that import other chunks (sourcemap: $sourcemap, $destination)",
+    async ({ sourcemap, destination }) => {
+      using dir = tempDir("metafile-bytes-splitting", splitFiles);
+      const outdir = outdirFor(dir, destination);
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/a.ts`, `${dir}/b.ts`],
+        outdir,
+        splitting: true,
+        sourcemap,
+        metafile: true,
+      });
+      expect(result.success).toBe(true);
+
+      // a, b and lazy each import the shared chunk, and a also imports the lazy chunk.
+      const { outputs } = result.metafile as Metafile;
+      expect(
+        Object.values(outputs)
+          .map(output => output.imports.length)
+          .sort((a, b) => a - b),
+      ).toEqual([0, 1, 1, 2]);
+
+      const { reported, actual } = outputSizes(result, outdir);
+      expect(reported).toEqual(actual);
+    },
+  );
+
+  test.each(destinations)("chunks that reference copied assets (%s)", async destination => {
+    using dir = tempDir("metafile-bytes-asset", {
+      "entry.ts": `import logo from "./logo.svg";\nimport "./style.css";\nconsole.log(logo);\n`,
+      "logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"></svg>\n`,
+      "style.css": `body { background: url("./big.png"); }\n`,
+      // A stylesheet inlines a smaller file as a data: URL instead of a path.
+      "big.png": Buffer.alloc(128 * 1024, "a").toString(),
+    });
+    const outdir = outdirFor(dir, destination);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.ts`],
+      outdir,
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const text = (suffix: string) => result.outputs.find(artifact => artifact.path.endsWith(suffix))!.text();
+    expect(await text("entry.js")).toMatch(/"\.\/logo-[a-z0-9]+\.svg"/);
+    expect(await text("entry.css")).toMatch(/url\("\.\/big-[a-z0-9]+\.png"\)/);
+
+    const { reported, actual } = outputSizes(result, outdir);
+    expect(Object.keys(reported).sort()).toEqual(["./entry.css", "./entry.js"]);
+    expect(reported).toEqual(actual);
+  });
+
+  test.each(destinations)("an HTML entry point (%s)", async destination => {
+    using dir = tempDir("metafile-bytes-html", {
+      "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><script type="module" src="./app.ts"></script><img src="./logo.svg"></body></html>\n`,
+      "app.ts": `console.log("app");\n`,
+      "style.css": `body { color: red; }\n`,
+      "logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"></svg>\n`,
+    });
+    const outdir = outdirFor(dir, destination);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      outdir,
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    // The document references its stylesheet, its script and its image by their final paths.
+    const html = await result.outputs.find(artifact => artifact.path.endsWith("index.html"))!.text();
+    expect(html.match(/(?:href|src)="\.\/[^"]+"/g)?.map(withoutHash)).toEqual([
+      `href="./chunk-[hash].css"`,
+      `src="./chunk-[hash].js"`,
+      `src="./logo-[hash].svg"`,
+    ]);
+
+    const { reported, actual } = outputSizes(result, outdir);
+    expect(Object.keys(reported).map(withoutHash).sort()).toEqual([
+      "./chunk-[hash].css",
+      "./chunk-[hash].js",
+      "./index.html",
+    ]);
+    expect(reported).toEqual(actual);
+  });
+
+  // `compile` with `target: "browser"` writes one HTML file with the script and the stylesheet inlined.
+  // Each inlined chunk keeps its metafile output, with no file of its own to compare against:
+  // its bytes are what the document has between the tags.
+  test.each(destinations)("a standalone HTML file (%s)", async destination => {
+    using dir = tempDir("metafile-bytes-standalone", {
+      "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><script type="module" src="./app.ts"></script></body></html>\n`,
+      "app.ts": `import logo from "./logo.svg";\nconsole.log("app", logo);\n`,
+      "style.css": `body { color: red; }\n`,
+      "logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"></svg>\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      outdir: outdirFor(dir, destination),
+      compile: true,
+      target: "browser",
+      sourcemap: "inline",
+      metafile: true,
+    });
+    expect(result.outputs.map(artifact => artifact.loader)).toEqual(["html"]);
+
+    const html = await result.outputs[0].text();
+    const between = (open: string, close: string) => {
+      const start = html.indexOf(open);
+      const end = html.indexOf(close, start);
+      expect({ open, start: start >= 0, end: end >= 0 }).toEqual({ open, start: true, end: true });
+      return html.slice(start + open.length, end);
+    };
+    const script = between(`<script type="module">`, "</script>");
+    const style = between("<style>", "</style>");
+    expect(script).toContain(`"data:image/svg+xml;base64,`);
+    expect(script).toContain("//# sourceMappingURL=data:application/json;base64,");
+
+    const { outputs } = result.metafile as Metafile;
+    expect(
+      Object.fromEntries(Object.entries(outputs).map(([key, output]) => [withoutHash(key), output.bytes])),
+    ).toEqual({
+      "./index.html": Buffer.byteLength(html),
+      "./chunk-[hash].js": Buffer.byteLength(script),
+      "./chunk-[hash].css": Buffer.byteLength(style),
+    });
+  });
+
+  test("bun build --metafile --metafile-md", async () => {
+    using dir = tempDir("metafile-bytes-cli", splitFiles);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "a.ts",
+        "b.ts",
+        "--splitting",
+        "--sourcemap=linked",
+        "--outdir=dist",
+        "--metafile=meta.json",
+        "--metafile-md=meta.md",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const { outputs } = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+    expect(Object.keys(outputs)).toHaveLength(4);
+    // a, b and lazy. The report prints the size of each in full in its raw data section.
+    const entryKeys = Object.keys(outputs).filter(key => outputs[key].entryPoint !== undefined);
+    expect(entryKeys).toHaveLength(3);
+    const markdown = await Bun.file(`${dir}/meta.md`).text();
+    const entries = [...markdown.matchAll(/^\[ENTRY: \S+ -> (\S+) \((\d+) bytes\)\]$/gm)];
+
+    const onDisk = (keys: string[]) => Object.fromEntries(keys.map(key => [key, statSync(`${dir}/dist/${key}`).size]));
+    expect({
+      json: Object.fromEntries(Object.entries(outputs).map(([key, output]) => [key, output.bytes])),
+      markdown: Object.fromEntries(entries.map(([, key, bytes]) => [key, Number(bytes)])),
+    }).toEqual({
+      json: onDisk(Object.keys(outputs)),
+      markdown: onDisk(entryKeys),
+    });
   });
 });

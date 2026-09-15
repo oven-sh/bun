@@ -1798,6 +1798,75 @@ describe("Bun.ModuleGraph — shared code under tier-up, one access path per tes
   });
 });
 
+describe("Bun.ModuleGraph — a CommonJS file compiled for a graph and for the host", () => {
+  // A name of `globals` is a closure variable in the graph's instance of a CommonJS file and a
+  // global (or nothing) in the host's and in a graph without it. Once hot() is JIT-compiled for
+  // one of them, the other has to get code of its own: each function runs hot in every instance,
+  // in every order, in a process of its own (getting it wrong is a wrong value or a crash).
+  const dir = fixture({
+    "forms.cjs": `
+      exports.read = n => { let s = 0; for (let i = 0; i < n; i++) s = (s + shared) | 0; return s; };
+      exports.typeOf = n => { let t; for (let i = 0; i < n; i++) t = typeof shared; return t; };
+      exports.write = n => { for (let i = 0; i < n; i++) shared = i; return shared; };
+      exports.increment = n => { shared = 0; for (let i = 0; i < n; i++) shared++; return shared; };
+      exports.call = n => { let s = 0; for (let i = 0; i < n; i++) s = (s + sharedFunction(i)) | 0; return s; };
+      exports.nested = n => { const inner = () => shared; let s = 0; for (let i = 0; i < n; i++) s = (s + inner()) | 0; return s; };
+      exports.strict = function (n) { "use strict"; let s = 0; for (let i = 0; i < n; i++) s = (s + shared) | 0; return s; };
+      // import() resolves the graph's loader through the overlay too, whatever \`globals\` holds.
+      exports.dynamicImport = async n => { let last; for (let i = 0; i < n; i++) last = import("./leaf.mjs"); return (await last).who; };
+    `,
+    "leaf.mjs": `export const who = typeof shared === "number" ? shared : "none";`,
+    "main.mjs": `
+      const [form, order, n] = [process.argv[2], process.argv[3].split(","), Number(process.argv[4])];
+      // What the host's instance and a graph without the name see.
+      globalThis.shared = 1;
+      globalThis.sharedFunction = i => 1;
+      const instances = {
+        host: () => import("./forms.cjs"),
+        graph: () => new Bun.ModuleGraph({ globals: { shared: 2, sharedFunction: i => 2 } }).import(import.meta.dir + "/forms.cjs"),
+        otherNames: () => new Bun.ModuleGraph({ globals: { shared: 3, sharedFunction: i => 3, more: 0 } }).import(import.meta.dir + "/forms.cjs"),
+        noGlobals: () => new Bun.ModuleGraph().import(import.meta.dir + "/forms.cjs"),
+      };
+      const out = [];
+      for (const who of order) {
+        globalThis.shared = 1;
+        const forms = (await instances[who]()).default;
+        out.push(who + "=" + (await forms[form](n)));
+      }
+      console.log(out.join(" "));
+    `,
+  });
+  const N = 20_000;
+  // Per instance: [host / noGlobals, graph, otherNames].
+  const expected: Record<string, [unknown, unknown, unknown]> = {
+    read: [N, 2 * N, 3 * N],
+    typeOf: ["number", "number", "number"],
+    write: [N - 1, N - 1, N - 1],
+    increment: [N, N, N],
+    call: [N, 2 * N, 3 * N],
+    nested: [N, 2 * N, 3 * N],
+    strict: [N, 2 * N, 3 * N],
+    dynamicImport: [1, 2, 3],
+  };
+  const orders = ["graph,host,graph", "host,graph,host", "graph,otherNames,noGlobals,graph", "noGlobals,host,graph"];
+  for (const form of Object.keys(expected)) {
+    test.concurrent.each(orders)(form + ": %s", async order => {
+      const [host, graph, otherNames] = expected[form];
+      const want = order
+        .split(",")
+        .map(who => who + "=" + { host, noGlobals: host, graph, otherNames }[who])
+        .join(" ");
+      // (import() is slow to call: fewer rounds still reach the baseline JIT.)
+      const { stdout, exitCode } = await runBun(
+        ["main.mjs", form, order, String(form === "dynamicImport" ? 1_000 : N)],
+        { cwd: dir },
+      );
+      expect(stdout).toBe(want);
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 describe("Bun.ModuleGraph — concurrency", () => {
   const dir = fixture({
     "tla.mjs": `globalThis.__c = (globalThis.__c ?? 0) + 1; await new Promise(r => setTimeout(r, 5)); export const n = globalThis.__c; export const who = process.env.T`,
@@ -2988,7 +3057,7 @@ describe("Bun.ModuleGraph — re-entrancy: graphs created/disposed from inside o
     "spawner.mjs": `const inner = new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "inner-of-" + process.env.T }, enumerable: true } }) } }); export const innerWho = (await inner.import(Bun.fileURLToPath(new URL("./who.mjs", import.meta.url)))).who; export const outerWho = process.env.T; inner.dispose();`,
     "who.mjs": `export const who = process.env.T`,
     "disposer.mjs": `export function run(other) { other.dispose(); return process.env.T }`,
-    "gated.mjs": `await gate; export const who = process.env.T`,
+    "gated.mjs": `reachedItsAwait(); await gate; export const who = process.env.T`,
     "thrower.mjs": `export function later() { setTimeout(() => { throw new Error("e1") }, 0) }`,
     "sync-nested-import.mjs": `import { createRequire } from "node:module"; const require = createRequire(import.meta.url); const G = Bun.ModuleGraph; const g = new G({ globals: { process: Object.create(process, { env: { value: { T: "cjs-inner" }, enumerable: true } }) } });
       export const viaRequireInInner = await g.import(Bun.fileURLToPath(new URL("./who.mjs", import.meta.url))).then(m => m.who); export const mine = require("./who-cjs.cjs").who;`,
@@ -3000,9 +3069,12 @@ describe("Bun.ModuleGraph — re-entrancy: graphs created/disposed from inside o
   });
   test("graph A disposing graph B from A's code; B's import suspended in a top-level await is left to finish; A unaffected", async () => {
     const gate = Promise.withResolvers<void>();
+    const suspended = Promise.withResolvers<void>();
     const A = ModuleGraph({ env: { T: "A" } }),
-      B = ModuleGraph({ env: { T: "B" }, globals: { gate: gate.promise } });
+      B = ModuleGraph({ env: { T: "B" }, globals: { gate: gate.promise, reachedItsAwait: suspended.resolve } });
     const bPending = B.import(join(dir, "gated.mjs")); // cannot finish before A disposes B
+    // An import still waiting for its file would reject instead: dispose only once the module is evaluating.
+    await suspended.promise;
     const a = await A.import(join(dir, "disposer.mjs"));
     expect(a.run(B)).toBe("A");
     gate.resolve();

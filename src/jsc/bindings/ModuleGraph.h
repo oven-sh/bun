@@ -41,6 +41,11 @@ public:
 
     JSC::JSModuleLoader* loader() const { return m_loader.get(); }
     JSC::JSLexicalEnvironment* overlay() const;
+    // Which shape the overlay has: one number per `globals` name set, never 0 and never reused.
+    // Code compiled under one shape must not be shared with another, or with the host
+    // (see commonJSSourceForGraph).
+    unsigned overlayShape() const { return m_overlayShape; }
+    void setOverlayShape(unsigned shape) { m_overlayShape = shape; }
     JSC::JSMap* requireMap() const { return m_requireMap.get(); }
     JSC::JSObject* onError() const { return m_onError.get(); } // null if the host gave none
     // Key of the first module import()ed: import.meta.main / require.main. Undefined before.
@@ -75,6 +80,7 @@ private:
     // The loader's promise for the import that made m_mainPath main.
     JSC::WriteBarrier<JSC::JSPromise> m_mainImport;
     bool m_disposed { false };
+    unsigned m_overlayShape { 0 };
 };
 
 // A graph made with `isolateIO`: it owns the context its script's timers and I/O belong to.
@@ -117,6 +123,9 @@ public:
     // set share, which is what JSC keys shared module executables on. Weak: alive while an
     // overlay uses it.
     JSC::WeakGCMap<WTF::String, JSC::SymbolTable> overlaySymbolTables;
+    // The same keys -> JSModuleGraph::overlayShape(). Never forgets, so a number is never reused
+    // for another name set while code compiled under the first may still be cached.
+    WTF::HashMap<WTF::String, unsigned> overlayShapes;
     // Some graph of the global has (had) a context of its own.
     bool hasIsolatedGraphs { false };
     // A graph's onError is running: what it throws synchronously is the host's.

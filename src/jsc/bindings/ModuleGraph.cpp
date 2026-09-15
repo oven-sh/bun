@@ -62,7 +62,7 @@ static ModuleGraphState& moduleGraphState(Zig::GlobalObject* globalObject)
     return *state;
 }
 
-static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Vector<Identifier>& sortedNames)
+static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Vector<Identifier>& sortedNames, unsigned& shape)
 {
     VM& vm = globalObject->vm();
     // One key per name set: each name as <length>:<name>, so no two sets share a key.
@@ -70,6 +70,8 @@ static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Ve
     for (auto& name : sortedNames)
         keyBuilder.append(name.length(), ':', name.string());
     String key = keyBuilder.toString();
+    auto& shapes = moduleGraphState(globalObject).overlayShapes;
+    shape = shapes.ensure(key, [&] { return shapes.size() + 1; }).iterator->value;
     auto& symbolTables = moduleGraphState(globalObject).overlaySymbolTables;
     if (SymbolTable* existing = symbolTables.get(key))
         return existing;
@@ -105,7 +107,7 @@ static void setOverlaySlot(VM& vm, JSLexicalEnvironment* overlay, const Identifi
 }
 
 // The new graph's loader, over a new overlay holding `globals`.
-static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, JSObject* globals)
+static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, JSObject* globals, unsigned& overlayShape)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -118,7 +120,7 @@ static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, 
             names.append(name);
         std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
     }
-    SymbolTable* symbolTable = overlaySymbolTable(globalObject, names);
+    SymbolTable* symbolTable = overlaySymbolTable(globalObject, names, overlayShape);
     JSLexicalEnvironment* overlay = JSLexicalEnvironment::create(vm, globalObject, globalObject->globalLexicalEnvironment(), symbolTable, jsUndefined());
     for (auto& name : names) {
         JSValue value = globals->get(globalObject, name);
@@ -897,11 +899,14 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
         structure = InternalFunction::createSubclassStructure(globalObject, newTarget, structure);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    JSModuleLoader* loader = createModuleGraphLoader(globalObject, globals);
+    unsigned overlayShape = 0;
+    JSModuleLoader* loader = createModuleGraphLoader(globalObject, globals, overlayShape);
     RETURN_IF_EXCEPTION(scope, {});
-    if (isolateIO)
-        return JSValue::encode(JSIsolatedModuleGraph::create(vm, globalObject, structure, loader, onError));
-    return JSValue::encode(JSModuleGraph::create(vm, globalObject, structure, loader, onError));
+    JSModuleGraph* graph = isolateIO
+        ? JSIsolatedModuleGraph::create(vm, globalObject, structure, loader, onError)
+        : JSModuleGraph::create(vm, globalObject, structure, loader, onError);
+    graph->setOverlayShape(overlayShape);
+    return JSValue::encode(graph);
 }
 
 void initJSModuleGraphClassStructure(LazyClassStructure::Initializer& init)

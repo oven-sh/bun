@@ -137,10 +137,46 @@ static void putModuleGraphRequireMain(VM& vm, JSFunction* requireFunction, JSCom
         requireFunction->putDirectCustomAccessor(vm, Identifier::fromString(vm, "main"_s), JSC::CustomGetterSetter::create(vm, jsModuleGraphRequireMainGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | 0);
 }
 
+// The source a graph's module is compiled from: the same text, under a cache identity of its own.
+//
+// JSC shares unlinked code, and the baseline JIT code cached on it, between everything compiled
+// from the same source, and that JIT code assumes each free identifier resolves the same way in
+// every instance (JIT::emit_op_resolve_scope: a closure variable gets an unguarded scope walk).
+// A graph's wrapper closes over the graph's overlay, so a name in the overlay (one of `globals`,
+// or @moduleLoader, which import() resolves) is a closure variable there and a global in the
+// host's instance of the same file. Sharing between the two runs one's JIT code against the
+// other's scope chain. The identity therefore includes the overlay's shape: graphs whose
+// `globals` have the same names share code, and never with the host or another shape. ES
+// modules get this from JSC (CodeCache::getUnlinkedGlobalCodeBlock, privateToExecutable).
+class GraphCommonJSSourceProvider final : public JSC::SourceProvider {
+public:
+    static Ref<GraphCommonJSSourceProvider> create(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
+    {
+        return adoptRef(*new GraphCommonJSSourceProvider(WTF::move(source), overlayShape));
+    }
+
+    unsigned hash() const final { return m_source->hash() ^ m_overlayShape; }
+    StringView source() const final { return m_source->source(); }
+
+private:
+    GraphCommonJSSourceProvider(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
+        : JSC::SourceProvider(source->sourceOrigin(), String(source->sourceURL()), String(source->preRedirectURL()), source->sourceTaintedOrigin(), source->startPosition(), source->sourceType())
+        , m_source(WTF::move(source))
+        // Multiplied by an odd number: distinct shapes stay distinct, spread over the hash's bits.
+        , m_overlayShape(overlayShape * 0x9E3779B1u)
+    {
+    }
+
+    const Ref<JSC::SourceProvider> m_source;
+    const unsigned m_overlayShape;
+};
+
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode code = WTF::move(moduleObject->sourceCode);
+    if (JSModuleGraph* graph = moduleObject->moduleGraph(); graph && code.provider())
+        code = SourceCode(RefPtr<JSC::SourceProvider>(GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape())), code.startOffset(), code.endOffset(), code.firstLine().oneBasedInt(), code.startColumn().oneBasedInt());
 
     // If an exception occurred somewhere else, we might have cleared the source code.
     if (code.isNull()) [[unlikely]] {

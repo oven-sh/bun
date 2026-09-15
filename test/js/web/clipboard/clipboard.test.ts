@@ -28,15 +28,31 @@ async function expectDOMException(promise: Promise<unknown>, name: string) {
 }
 
 const systemClipboard = isCI || !!process.env.BUN_TEST_SYSTEM_CLIPBOARD;
+
+// A macOS agent with no GUI session has no pasteboard server, and then Apple's
+// own tools cannot carry a value either. That is the machine, not the backend.
+function pasteboardToolsRoundTrip() {
+  try {
+    const token = `bun clipboard probe ${process.pid}`;
+    if (Bun.spawnSync({ cmd: ["pbcopy"], stdin: Buffer.from(token) }).exitCode !== 0) return false;
+    const paste = Bun.spawnSync({ cmd: ["pbpaste"] });
+    return paste.exitCode === 0 && paste.stdout.toString() === token;
+  } catch {
+    return false;
+  }
+}
+const machineHasClipboard = systemClipboard && (isWindows || (isMacOS && pasteboardToolsRoundTrip()));
+
 let clipboardReachable = false;
 beforeAll(async () => {
   if (!systemClipboard) return;
-  clipboardReachable = await navigator.clipboard.readText().then(
-    () => true,
-    () => false,
+  const failure = await navigator.clipboard.readText().then(
+    () => null,
+    (e: unknown) => e,
   );
-  if (isCI && (isMacOS || isWindows) && !clipboardReachable) {
-    throw new Error("the system clipboard is not reachable on this CI lane");
+  clipboardReachable = failure === null;
+  if (isCI && machineHasClipboard && !clipboardReachable) {
+    throw new Error(`the system clipboard is not reachable on this CI lane: ${failure}`);
   }
 });
 
@@ -841,6 +857,8 @@ async function runWithHelpers(
       WAYLAND_DISPLAY: undefined,
       CLIP_DIR: String(dir),
       TMPDIR: join(String(dir), "tmp 'dir'"),
+      // The CI runner exports BUN_TMPDIR, which Bun prefers over TMPDIR.
+      BUN_TMPDIR: join(String(dir), "tmp 'dir'"),
       ...env,
     },
     stderr: "pipe",
@@ -1212,7 +1230,7 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
 // macOS segfaulted inside AppKit within a few rounds of this. A child process
 // keeps a crash from taking the runner down; every value read must be one some
 // write actually produced.
-describe.skipIf(!systemClipboard || (!isMacOS && !isWindows))("concurrent operations", () => {
+describe.skipIf(!machineHasClipboard)("concurrent operations", () => {
   test("reads, writes and Bun.Image.fromClipboard() racing each other all settle with whole values", async () => {
     expect(clipboardReachable).toBe(true);
     await using proc = Bun.spawn({
@@ -1281,7 +1299,7 @@ describe.skipIf(!systemClipboard || (!isMacOS && !isWindows))("concurrent operat
 // pbcopy puts on the pasteboard is what readText() returns, and pbpaste sees
 // what writeText() put there, so the data is in the public plain-text type
 // and not something only Bun can read.
-describe.skipIf(!systemClipboard || !isMacOS)("macOS pasteboard interop", () => {
+describe.skipIf(!machineHasClipboard || !isMacOS)("macOS pasteboard interop", () => {
   test("pbcopy feeds readText(), and pbpaste sees writeText()", async () => {
     expect(clipboardReachable).toBe(true);
     const fromPbcopy = `from pbcopy ${Date.now()}`;
@@ -1612,7 +1630,8 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
     expect(await readAll()).toEqual([{ types: ["image/png"], "image/png": PNG_1X1 }]);
 
     // The same image as a bitmap for consumers that only read those: a 1x1
-    // bottom-up BITMAPV5HEADER DIB holding the transparent pixel as BGRA.
+    // bottom-up BITMAPV5HEADER DIB. PNG_1X1 is one blue pixel at alpha 127,
+    // RGBA (0, 0, 255, 127), stored here as straight-alpha BGRA.
     const dib = raw().getRaw(CF_DIBV5)!;
     expect({
       headerSize: dib.readUInt32LE(0),
@@ -1620,7 +1639,7 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
       height: dib.readInt32LE(8),
       bitCount: dib.readUInt16LE(14),
       pixel: [...dib.subarray(124, 128)],
-    }).toEqual({ headerSize: 124, width: 1, height: 1, bitCount: 32, pixel: [0, 0, 0, 0] });
+    }).toEqual({ headerSize: 124, width: 1, height: 1, bitCount: 32, pixel: [255, 0, 0, 127] });
   });
 
   test("a PNG placed by another process reads back byte-exact", async () => {

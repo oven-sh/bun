@@ -26,32 +26,24 @@
 #pragma once
 
 #include "root.h"
-#include "ClipboardItemData.h"
+#include "blob.h"
+#include <wtf/CompletionHandler.h>
 #include <wtf/KeyValuePair.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
-#include <wtf/UniqueRef.h>
 #include <wtf/Vector.h>
-#include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
-
-namespace JSC {
-class JSGlobalObject;
-}
 
 namespace WebCore {
 
-class Blob;
-class Clipboard;
-class ClipboardItemDataSource;
 class DeferredPromise;
 class DOMPromise;
-class ScriptExecutionContext;
 template<typename> class ExceptionOr;
 
-// https://w3c.github.io/clipboard-apis/#clipboarditem — ported from WebCore's ClipboardItem
-// with its two-data-source split (constructor items hold Ref<DOMPromise>s, read() items hold
-// Blobs). Bun diff: no Pasteboard, so the platform source owns its data up front.
+// One item's representations, keyed by serialized MIME type.
+using ClipboardItemData = Vector<KeyValuePair<String, Ref<Blob>>>;
+
+// https://w3c.github.io/clipboard-apis/#clipboarditem
 class ClipboardItem : public RefCountedAndCanMakeWeakPtr<ClipboardItem> {
 public:
     ~ClipboardItem();
@@ -66,37 +58,47 @@ public:
 
     static ExceptionOr<Ref<ClipboardItem>> create(Vector<KeyValuePair<String, Ref<DOMPromise>>>&&, const Options&);
     static Ref<ClipboardItem> create(ClipboardItemData&&);
-    static Ref<Blob> blobFromString(JSC::JSGlobalObject*, const String& stringData, const String& type);
 
-    // Normalizes a settled value to a Blob of `type` per WebIDL `(DOMString or Blob)`:
-    // matching Blob passes through, other Blob is rewrapped, anything else is ToString'd.
-    // Returns null with an exception pending when the coercion throws.
+    // WebIDL `(DOMString or Blob)`: a Blob declaring `type` passes through,
+    // another Blob is rewrapped, anything else is ToString'd. Null with an
+    // exception pending when the coercion throws.
     static RefPtr<Blob> blobFromSettledValue(JSC::JSGlobalObject*, JSC::JSValue, const String& type);
 
     Vector<String> types() const;
     void getType(const String&, Ref<DeferredPromise>&&);
     static bool supports(const String& type);
 
-    // The lowercased mimesniff §4.4 essence (`type/subtype`), or empty for an
-    // input that does not parse. Every MIME-type comparison site normalizes
-    // through this so validation and storage cannot drift apart.
+    // The lowercased mimesniff essence (`type/subtype`), or empty when `type` does not parse.
     static String parseMIMETypeEssence(const String&);
-    // mimesniff §4.4 parse + §4.5 serialize (parameters kept); empty on failure.
+    // mimesniff parse + serialize, parameters kept; empty on failure.
     static String parseAndSerializeMIMEType(const String&);
-    // Whether a stored (serialized) key's essence is `essence`.
     static bool essenceMatches(const String& serializedKey, const String& essence);
 
-    void collectDataForWriting(Clipboard& destination, CompletionHandler<void(std::optional<ClipboardItemData>, JSC::JSValue failureReason)>&&);
+    // `failureReason` is the representation's own rejection or coercion error, if any.
+    using CollectCompletionHandler = CompletionHandler<void(std::optional<ClipboardItemData>, JSC::JSValue failureReason)>;
+    void collectDataForWriting(CollectCompletionHandler&&);
     void cancelDataCollection();
 
     PresentationStyle presentationStyle() const { return m_presentationStyle; }
+    size_t memoryCost() const;
 
 private:
     ClipboardItem(Vector<KeyValuePair<String, Ref<DOMPromise>>>&&, const Options&);
     explicit ClipboardItem(ClipboardItemData&&);
 
-    const UniqueRef<ClipboardItemDataSource> m_dataSource;
+    void didSettle(JSC::JSGlobalObject&, size_t index, bool isFulfilled, JSC::JSValue);
+    void finishCollect(std::optional<ClipboardItemData>&&, JSC::JSValue failureReason = {});
+
+    // Constructed items hold the caller's promises; read() items hold the platform's Blobs.
+    Vector<KeyValuePair<String, Ref<DOMPromise>>> m_promises;
+    ClipboardItemData m_data;
     PresentationStyle m_presentationStyle { PresentationStyle::Unspecified };
+
+    CollectCompletionHandler m_completionHandler;
+    Vector<RefPtr<Blob>> m_collected;
+    size_t m_pendingCount { 0 };
+    // Stamps each collect so a settle callback left over from a retired one is ignored.
+    unsigned m_collectGeneration { 0 };
 };
 
 } // namespace WebCore

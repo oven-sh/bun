@@ -49,13 +49,7 @@ public:
 
     static IsCallbackRegistered whenPromiseIsSettled(JSDOMGlobalObject*, JSC::JSObject* promise, Function<void()>&&);
 
-    IsCallbackRegistered whenSettled(Function<void()>&&);
-    JSC::JSValue result() const;
-
-    enum class Status { Pending,
-        Fulfilled,
-        Rejected };
-    Status status() const;
+    IsCallbackRegistered whenSettledWithResult(Function<void(JSDOMGlobalObject*, bool isFulfilled, JSC::JSValue result)>&&);
 
 private:
     DOMPromise(JSDOMGlobalObject& globalObject, JSC::JSPromise& promise)

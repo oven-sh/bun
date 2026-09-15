@@ -39,11 +39,6 @@ use core::ffi::{CStr, c_int, c_uint, c_void};
 use core::ptr;
 use std::sync::Once;
 
-use bun_sys::windows::clipboard::{
-    GetClipboardSequenceNumber, GlobalLock, GlobalSize, GlobalUnlock, IsClipboardFormatAvailable,
-    OpenedClipboard, register_format,
-};
-
 use crate::image::codecs;
 use bun_sys::windows;
 
@@ -849,6 +844,7 @@ unsafe extern "system" {
     ) -> HRESULT;
     fn GetHGlobalFromStream(stream: *mut IUnknown, out: *mut *mut c_void) -> HRESULT;
 }
+use bun_sys::windows::kernel32::{GlobalLock, GlobalUnlock};
 
 /// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
 /// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary
@@ -934,14 +930,16 @@ fn load_factory() {
 
 // ───────────────────────────── Win32 clipboard ──────────────────────────────
 //
-// Called synchronously on the JS thread by the static `fromClipboard()`;
-// `OpenedClipboard` excludes the `navigator.clipboard` jobs on the work pool
-// (and any other thread) for the duration, and every HGLOBAL is copied out
-// before it closes. We prefer the registered "PNG" format (Chrome/Edge/
+// Called synchronously on the JS thread by the static `fromClipboard()`
+// accessor: a clipboard busy in this process or another reads as no image.
+// We prefer the registered "PNG" format (Chrome/Edge/
 // Snipping Tool put it; no transcode loss) and fall back to CF_DIBV5/CF_DIB,
 // which we re-wrap as a BMP file by prepending the 14-byte BITMAPFILEHEADER
 // the clipboard omits. Either way the result is bytes the regular Bun.Image
 // decoder understands; nothing is decoded here.
+
+use crate::webcore::clipboard::win32::{OpenedClipboard, register_format};
+use bun_sys::windows::user32::{GetClipboardSequenceNumber, IsClipboardFormatAvailable};
 
 const CF_DIB: c_uint = 8;
 const CF_DIBV5: c_uint = 17;
@@ -972,17 +970,14 @@ pub(crate) fn has_clipboard_image() -> bool {
 // The wider `BackendError` type matches the macOS backend so the caller in
 // Image.rs handles both identically.
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
-    let clipboard = OpenedClipboard::open().ok_or(BackendUnavailable)?;
+    let mut clipboard = OpenedClipboard::try_open().ok_or(BackendUnavailable)?;
 
     // 1. Registered file-format chunks — copy verbatim.
     for name in NAMED_FORMATS {
         let id = register_format(name);
         if id != 0 {
-            let h = clipboard.get(id);
-            if !h.is_null() {
-                if let Some(b) = dup_global::<0>(h)? {
-                    return Ok(Some(b));
-                }
+            if let Some(b) = dup_global::<0>(&mut clipboard, id)? {
+                return Ok(Some(b));
             }
         }
     }
@@ -992,11 +987,7 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     //    hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
     //    the format, not panic the process.
     for cf in [CF_DIBV5, CF_DIB] {
-        let h = clipboard.get(cf);
-        if h.is_null() {
-            continue;
-        }
-        let Some(mut buf) = dup_global::<14>(h)? else {
+        let Some(mut buf) = dup_global::<14>(&mut clipboard, cf)? else {
             continue;
         };
         if buf.len() < 14 + 40 || buf.len() as u64 > u32::MAX as u64 {
@@ -1037,25 +1028,14 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
 /// Copy a clipboard HGLOBAL into the global allocator, optionally leaving
 /// `PREFIX` zero bytes at the front for the caller to fill (BITMAPFILEHEADER).
 fn dup_global<const PREFIX: usize>(
-    h: *mut c_void,
+    clipboard: &mut OpenedClipboard,
+    format: c_uint,
 ) -> Result<Option<Vec<u8>>, bun_alloc::AllocError> {
-    // SAFETY: h is a non-null HGLOBAL from GetClipboardData.
-    let size = unsafe { GlobalSize(h) };
-    if size == 0 {
-        return Ok(None);
-    }
-    // SAFETY: h is a non-null HGLOBAL.
-    let ptr_ = unsafe { GlobalLock(h) };
-    if ptr_.is_null() {
-        return Ok(None);
-    }
-    let ptr_ = ptr_ as *const u8;
-    scopeguard::defer! {
-        // SAFETY: h is locked.
-        let _ = unsafe { GlobalUnlock(h) };
-    }
-    let mut out = vec![0u8; PREFIX + size];
-    // SAFETY: ptr_ points to `size` valid bytes inside the locked HGLOBAL.
-    out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(ptr_, size) });
-    Ok(Some(out))
+    Ok(clipboard
+        .with_data(format, |bytes| {
+            let mut out = vec![0u8; PREFIX + bytes.len()];
+            out[PREFIX..].copy_from_slice(bytes);
+            out
+        })
+        .filter(|out| out.len() > PREFIX))
 }

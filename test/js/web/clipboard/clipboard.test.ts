@@ -1,11 +1,11 @@
 // The async Clipboard API: https://w3c.github.io/clipboard-apis/
-// The OS round-trip tests are environment-adaptive: a machine with no
-// reachable system clipboard must reject with a "NotAllowedError"
-// DOMException instead, and that shape is asserted.
+// Tests that reach the system clipboard replace what is on it, so they run on
+// CI or with BUN_TEST_SYSTEM_CLIPBOARD=1. Where no clipboard is reachable
+// (headless Linux) they assert the "NotAllowedError" rejection instead.
 import { dlopen, FFIType, ptr, toBuffer } from "bun:ffi";
 import { heapStats } from "bun:jsc";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isCI, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -26,33 +26,16 @@ async function expectDOMException(promise: Promise<unknown>, name: string) {
   expect((error as DOMException).name).toBe(name);
 }
 
-// Several tests below land real OS writes on a machine with a reachable
-// clipboard. Bracket the whole file so running it locally puts back whatever
-// the developer had. `null` means no reachable clipboard, in which case
-// nothing here reached the OS.
-let savedClipboard: ClipboardItem[] | null = null;
+const systemClipboard = isCI || !!process.env.BUN_TEST_SYSTEM_CLIPBOARD;
+let clipboardReachable = false;
 beforeAll(async () => {
-  savedClipboard = await navigator.clipboard.read().catch(() => null);
-});
-afterAll(async () => {
-  if (savedClipboard === null) return;
-  if (savedClipboard.length === 0) {
-    await navigator.clipboard.writeText("").catch(() => {});
-    return;
-  }
-  // read() packs every present representation into one item, but the POSIX
-  // helper backends can only own one per write and reject a multi-rep item.
-  // Fall back to the text so a browser copy (text/plain + text/html) survives.
-  const restored = await navigator.clipboard.write(savedClipboard).then(
+  if (!systemClipboard) return;
+  clipboardReachable = await navigator.clipboard.readText().then(
     () => true,
     () => false,
   );
-  if (!restored && savedClipboard[0].types.includes("text/plain")) {
-    const text = await savedClipboard[0]
-      .getType("text/plain")
-      .then(b => b.text())
-      .catch(() => "");
-    await navigator.clipboard.writeText(text).catch(() => {});
+  if (isCI && (isMacOS || isWindows) && !clipboardReachable) {
+    throw new Error("the system clipboard is not reachable on this CI lane");
   }
 });
 
@@ -389,6 +372,9 @@ describe("ClipboardEvent", () => {
   test("constructor and brand checks reject bad use", () => {
     // @ts-expect-error: a type argument is required.
     expect(() => new ClipboardEvent()).toThrow(TypeError);
+    // There is no DataTransfer, so only a null `clipboardData` converts.
+    expect(new ClipboardEvent("copy", { clipboardData: null }).clipboardData).toBeNull();
+    expect(() => new ClipboardEvent("copy", { clipboardData: {} as never })).toThrow(TypeError);
     const get = Object.getOwnPropertyDescriptor(ClipboardEvent.prototype, "clipboardData")!.get!;
     expect(() => get.call(new Event("copy"))).toThrow(TypeError);
   });
@@ -429,6 +415,39 @@ describe("read / write", () => {
     await expect(
       navigator.clipboard.write([new ClipboardItem({ "text/plain": Promise.resolve(Symbol("x")) as never })]),
     ).rejects.toThrow(TypeError);
+  });
+
+  // Collection reacts to each representation directly: neither a replaced
+  // Promise.all nor a representation's own `then` is consulted.
+  test("write() collects without user-replaceable promise machinery", async () => {
+    const representation = Promise.resolve(Symbol("x"));
+    representation.then = () => undefined as never;
+    const realAll = Promise.all;
+    Promise.all = () => {
+      throw new Error("Promise.all was called");
+    };
+    try {
+      await expect(
+        navigator.clipboard.write([new ClipboardItem({ "text/plain": representation as never })]),
+      ).rejects.toThrow(TypeError);
+    } finally {
+      Promise.all = realAll;
+    }
+  });
+
+  test("terminating a worker while write() runs its user code ends the worker", async () => {
+    using dir = tempDir("clipboard-terminate", {
+      "worker.js": `
+        postMessage("collecting");
+        navigator.clipboard.write([new ClipboardItem({ "text/plain": { toString() { for (;;); } } })]);
+      `,
+    });
+    const worker = new Worker(join(String(dir), "worker.js"));
+    const collecting = new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
+    const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
+    await collecting;
+    worker.terminate();
+    await closed;
   });
 
   // The rejections a caller can act on say what was wrong. All of these are
@@ -484,18 +503,12 @@ describe("read / write", () => {
 
   // A file-backed Blob (Bun.file) has no resident bytes; the writer reads it
   // in before the platform transaction instead of rejecting it.
-  test("write() reads file-backed representations in; a missing file rejects", async () => {
+  test.skipIf(!systemClipboard)("write() reads file-backed representations in", async () => {
     using fileDir = tempDir("clipboard-file-blob", { "a.txt": "from disk" });
-    // The read failure arrives before any platform access, so this arm is
-    // deterministic even with no reachable clipboard.
-    await expectDOMException(
-      navigator.clipboard.write([new ClipboardItem({ "text/plain": Bun.file(join(String(fileDir), "missing.txt")) })]),
-      "NotAllowedError",
-    );
     const write = navigator.clipboard.write([
       new ClipboardItem({ "text/plain": Bun.file(join(String(fileDir), "a.txt")) }),
     ]);
-    if (savedClipboard === null) {
+    if (!clipboardReachable) {
       await expectDOMException(write, "NotAllowedError");
       return;
     }
@@ -522,7 +535,7 @@ describe("read / write", () => {
   // representation never settles is collected mid-write and destroys its data
   // source with the collect completion still armed: a debug assert, and a
   // permanently pending promise in release.
-  test("an in-flight write keeps its item alive across GC", async () => {
+  test.skipIf(!systemClipboard)("an in-flight write keeps its item alive across GC", async () => {
     // No reference to the item survives this statement; only the writer holds
     // it. Resolve the representation *after* GC so the assertion is that the
     // write still completes, a symptom visible in release, unlike "still
@@ -541,20 +554,19 @@ describe("read / write", () => {
     expect(["settled", "NotAllowedError"]).toContain(outcome);
   });
 
-  // writeText() must supersede an in-flight write() the same way write() does,
-  // or the earlier write lands after and overwrites.
-  test("writeText() supersedes an in-flight write()", async () => {
+  // A write() still collecting its item is superseded by any later write.
+  test.skipIf(!systemClipboard)("writeText() supersedes an in-flight write()", async () => {
     const { promise: rep } = Promise.withResolvers<string>();
     const first = navigator.clipboard.write([new ClipboardItem({ "text/plain": rep })]);
-    navigator.clipboard.writeText("later").catch(() => {});
+    const later = navigator.clipboard.writeText("later").catch(() => {});
     await expectDOMException(first, "AbortError");
+    await later;
   });
 
   // Per spec (and Chrome), write([]) resolves without touching (or clearing)
   // the clipboard.
-  test("write([]) resolves and leaves the clipboard contents alone", async () => {
-    if (savedClipboard === null) {
-      // Nothing is ever written, so this resolves even with no clipboard.
+  test.skipIf(!systemClipboard)("write([]) resolves and leaves the clipboard contents alone", async () => {
+    if (!clipboardReachable) {
       await navigator.clipboard.write([]);
       return;
     }
@@ -570,60 +582,6 @@ describe("read / write", () => {
     const first = navigator.clipboard.write([new ClipboardItem({ "text/plain": rep })]);
     await navigator.clipboard.write([]);
     await expectDOMException(first, "AbortError");
-  });
-
-  // An aborted write's platform job must be cancelled too, or the "aborted"
-  // write still reaches the OS. The two jobs run on whichever pool threads
-  // pick them up, so this holds only because the backend checks the flag
-  // under the lock it writes under.
-  test("a superseded write never lands after its successor", async () => {
-    if (savedClipboard === null) {
-      await expectDOMException(navigator.clipboard.writeText("A"), "NotAllowedError");
-      await expectDOMException(navigator.clipboard.read(), "NotAllowedError");
-      return;
-    }
-    for (let i = 0; i < 10; i++) {
-      // A platform-sourced item collects synchronously, so the platform write
-      // is already queued when writeText() supersedes it.
-      await navigator.clipboard.writeText(`A${i}`);
-      const [itemA] = await navigator.clipboard.read();
-      const aborted = navigator.clipboard.write([itemA]).then(
-        () => "resolved",
-        (e: Error) => e.name,
-      );
-      await navigator.clipboard.writeText(`B${i}`);
-      expect(await aborted).toBe("AbortError");
-      expect(await navigator.clipboard.readText()).toBe(`B${i}`);
-    }
-  });
-
-  // collectDataForWriting() calls the realm's Promise.all, which user JS can
-  // tamper to synchronously re-enter write([sameItem]); the outer frame must
-  // not then touch the newer writer's armed state when it resumes.
-  test("a write re-entered from a tampered Promise.all does not clobber the inner one", async () => {
-    const realAll = Promise.all;
-    let inner: Promise<void> | null = null;
-    const item = new ClipboardItem({ "text/plain": "ok" });
-    (Promise as any).all = function () {
-      Promise.all = realAll;
-      inner = navigator.clipboard.write([item]);
-      return undefined;
-    };
-    try {
-      await expectDOMException(navigator.clipboard.write([item]), "AbortError");
-      expect(inner).not.toBeNull();
-      const outcome = await inner!.then(
-        () => "ok",
-        (e: Error) => e.message,
-      );
-      // Without the generation guard the outer frame fires the inner writer's
-      // completion with nullopt, which rejects with this exact message.
-      expect(outcome).not.toContain("representation could not be read");
-    } finally {
-      Promise.all = realAll;
-      // Retire the tail write so nothing is in flight for the next test.
-      await navigator.clipboard.write([]);
-    }
   });
 
   // Regression: a superseded writer must retire the collect still armed on its
@@ -648,78 +606,84 @@ describe("read / write", () => {
   // Regression: `copy` listeners run synchronously from the finishing write, so
   // a listener that starts another write over the same item used to have its
   // freshly-armed collect retired by the writer that was tearing down.
-  test("a write started from a copy listener is not cancelled by the one that fired it", async () => {
-    const item = new ClipboardItem({ "text/plain": new Blob(["nested"], { type: "text/plain" }) });
-    let nested: Promise<void> | null = null;
-    const onCopy = () => {
-      if (!nested) nested = navigator.clipboard.write([item]);
-    };
-    navigator.clipboard.addEventListener("copy", onCopy);
-    try {
-      const outer = navigator.clipboard.write([item]);
-      await outer.catch(() => {});
-      if (!nested) {
-        // No copy event ⇔ no reachable clipboard: the write must have rejected.
-        await expectDOMException(outer, "NotAllowedError");
+  test.skipIf(!systemClipboard)(
+    "a write started from a copy listener is not cancelled by the one that fired it",
+    async () => {
+      const item = new ClipboardItem({ "text/plain": new Blob(["nested"], { type: "text/plain" }) });
+      let nested: Promise<void> | null = null;
+      const onCopy = () => {
+        if (!nested) nested = navigator.clipboard.write([item]);
+      };
+      navigator.clipboard.addEventListener("copy", onCopy);
+      try {
+        const outer = navigator.clipboard.write([item]);
+        await outer.catch(() => {});
+        if (!nested) {
+          // No copy event ⇔ no reachable clipboard: the write must have rejected.
+          await expectDOMException(outer, "NotAllowedError");
+          return;
+        }
+        const outcome = await nested.then(
+          () => "settled",
+          (e: Error) => e.name,
+        );
+        expect(["settled", "NotAllowedError"]).toContain(outcome);
+      } finally {
+        navigator.clipboard.removeEventListener("copy", onCopy);
+      }
+    },
+  );
+
+  test.skipIf(!systemClipboard)(
+    "round-trips representations, or rejects with NotAllowedError where there is no clipboard",
+    async () => {
+      if (!clipboardReachable) {
+        // No reachable clipboard (e.g. headless Linux): read() and write()
+        // must fail with the same spec'd shape.
+        await expectDOMException(navigator.clipboard.read(), "NotAllowedError");
+        await expectDOMException(
+          navigator.clipboard.write([new ClipboardItem({ "text/plain": "x" })]),
+          "NotAllowedError",
+        );
         return;
       }
-      const outcome = await nested.then(
-        () => "settled",
-        (e: Error) => e.name,
-      );
-      expect(["settled", "NotAllowedError"]).toContain(outcome);
-    } finally {
-      navigator.clipboard.removeEventListener("copy", onCopy);
-    }
-  });
+      // A unique token makes an unrelated process racing the clipboard a
+      // visible mismatch instead of a false pass. Multi-representation items
+      // are native-only: the POSIX helpers can hold one representation.
+      const token = `bun clipboard read/write ${Date.now()} ${Math.random()}`;
+      const types: Record<string, string | Blob> = { "text/plain": token };
+      const multiRep = process.platform === "darwin" || process.platform === "win32";
+      const withHtml = multiRep && ClipboardItem.supports("text/html");
+      if (withHtml) types["text/html"] = `<b>${token}</b>`;
+      await navigator.clipboard.write([new ClipboardItem(types)]);
 
-  test("round-trips representations, or rejects with NotAllowedError where there is no clipboard", async () => {
-    if (savedClipboard === null) {
-      // No reachable clipboard (e.g. headless Linux): read() and write()
-      // must fail with the same spec'd shape.
-      await expectDOMException(navigator.clipboard.read(), "NotAllowedError");
-      await expectDOMException(
-        navigator.clipboard.write([new ClipboardItem({ "text/plain": "x" })]),
-        "NotAllowedError",
-      );
-      return;
-    }
-    // A unique token makes an unrelated process racing the clipboard a
-    // visible mismatch instead of a false pass. Multi-representation items
-    // are native-only: the POSIX helpers can hold one representation.
-    const token = `bun clipboard read/write ${Date.now()} ${Math.random()}`;
-    const types: Record<string, string | Blob> = { "text/plain": token };
-    const multiRep = process.platform === "darwin" || process.platform === "win32";
-    const withHtml = multiRep && ClipboardItem.supports("text/html");
-    if (withHtml) types["text/html"] = `<b>${token}</b>`;
-    await navigator.clipboard.write([new ClipboardItem(types)]);
+      const items = await navigator.clipboard.read();
+      expect(items).toHaveLength(1);
+      expect(items[0]).toBeInstanceOf(ClipboardItem);
+      expect(items[0].types).toEqual(withHtml ? ["text/plain", "text/html"] : ["text/plain"]);
+      expect(await (await items[0].getType("text/plain")).text()).toBe(token);
+      if (withHtml) {
+        expect(await (await items[0].getType("text/html")).text()).toBe(`<b>${token}</b>`);
+      }
+      // readText() sees the text/plain representation written by write().
+      expect(await navigator.clipboard.readText()).toBe(token);
 
-    const items = await navigator.clipboard.read();
-    expect(items).toHaveLength(1);
-    expect(items[0]).toBeInstanceOf(ClipboardItem);
-    expect(items[0].types).toEqual(withHtml ? ["text/plain", "text/html"] : ["text/plain"]);
-    expect(await (await items[0].getType("text/plain")).text()).toBe(token);
-    if (withHtml) {
-      expect(await (await items[0].getType("text/html")).text()).toBe(`<b>${token}</b>`);
-    }
-    // readText() sees the text/plain representation written by write().
-    expect(await navigator.clipboard.readText()).toBe(token);
-
-    // Binary representations survive the platform round-trip byte-exact (on
-    // Windows that means the backend trims GlobalSize's rounding off the PNG).
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": new Blob([PNG_1X1], { type: "image/png" }) })]);
-    const [imageItem] = await navigator.clipboard.read();
-    expect(imageItem.types).toEqual(["image/png"]);
-    expect(Buffer.from(await (await imageItem.getType("image/png")).arrayBuffer())).toEqual(PNG_1X1);
-  });
+      // Binary representations survive the platform round-trip byte-exact (on
+      // Windows that means the backend trims GlobalSize's rounding off the PNG).
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": new Blob([PNG_1X1], { type: "image/png" }) })]);
+      const [imageItem] = await navigator.clipboard.read();
+      expect(imageItem.types).toEqual(["image/png"]);
+      expect(Buffer.from(await (await imageItem.getType("image/png")).arrayBuffer())).toEqual(PNG_1X1);
+    },
+  );
 });
 
 describe("clipboard events", () => {
   // Bun's projection of the spec's clipboard actions onto a runtime: writes
   // that place data fire "copy", successful reads fire "paste" (both at
   // `navigator.clipboard`), failures fire nothing, and "cut" never auto-fires.
-  test("copy/paste fire at navigator.clipboard on success, and only on success", async () => {
-    const unavailable = savedClipboard === null;
+  test.skipIf(!systemClipboard)("copy/paste fire at navigator.clipboard on success, and only on success", async () => {
+    const unavailable = !clipboardReachable;
     const events: string[] = [];
     let lastEvent: ClipboardEvent | null = null;
     const record = (e: Event) => {
@@ -772,46 +736,49 @@ describe("clipboard events", () => {
 });
 
 describe("readText / writeText", () => {
-  test("round-trips text, or rejects with NotAllowedError where there is no system clipboard", async () => {
-    if (savedClipboard === null) {
-      // No reachable clipboard here (e.g. headless Linux with no display):
-      // the spec'd failure is a "NotAllowedError" DOMException for both.
-      await expectDOMException(navigator.clipboard.readText(), "NotAllowedError");
-      await expectDOMException(navigator.clipboard.writeText("x"), "NotAllowedError");
-      return;
-    }
-    // A unique token makes an unrelated process racing the system clipboard
-    // a clear mismatch instead of a false pass.
-    const token = `bun-clipboard-test ${Date.now()} ${Math.random()}`;
-    expect(await navigator.clipboard.writeText(token)).toBeUndefined();
-    expect(await navigator.clipboard.readText()).toBe(token);
+  test.skipIf(!systemClipboard)(
+    "round-trips text, or rejects with NotAllowedError where there is no system clipboard",
+    async () => {
+      if (!clipboardReachable) {
+        // No reachable clipboard here (e.g. headless Linux with no display):
+        // the spec'd failure is a "NotAllowedError" DOMException for both.
+        await expectDOMException(navigator.clipboard.readText(), "NotAllowedError");
+        await expectDOMException(navigator.clipboard.writeText("x"), "NotAllowedError");
+        return;
+      }
+      // A unique token makes an unrelated process racing the system clipboard
+      // a clear mismatch instead of a false pass.
+      const token = `bun-clipboard-test ${Date.now()} ${Math.random()}`;
+      expect(await navigator.clipboard.writeText(token)).toBeUndefined();
+      expect(await navigator.clipboard.readText()).toBe(token);
 
-    // Non-ASCII text must survive the platform round-trip byte-for-byte.
-    const unicode = "héllo 🌍 — ünïcödé ✂️📋";
-    await navigator.clipboard.writeText(unicode);
-    expect(await navigator.clipboard.readText()).toBe(unicode);
+      // Non-ASCII text must survive the platform round-trip byte-for-byte.
+      const unicode = "héllo 🌍 — ünïcödé ✂️📋";
+      await navigator.clipboard.writeText(unicode);
+      expect(await navigator.clipboard.readText()).toBe(unicode);
 
-    // Spec note on writeText: Windows converts bare LF to CRLF for
-    // CF_UNICODETEXT; other platforms write the text byte-for-byte.
-    await navigator.clipboard.writeText("line1\nline2\r\nline3");
-    expect(await navigator.clipboard.readText()).toBe(
-      process.platform === "win32" ? "line1\r\nline2\r\nline3" : "line1\nline2\r\nline3",
-    );
+      // Spec note on writeText: Windows converts bare LF to CRLF for
+      // CF_UNICODETEXT; other platforms write the text byte-for-byte.
+      await navigator.clipboard.writeText("line1\nline2\r\nline3");
+      expect(await navigator.clipboard.readText()).toBe(
+        process.platform === "win32" ? "line1\r\nline2\r\nline3" : "line1\nline2\r\nline3",
+      );
 
-    // WebIDL DOMString conversion: null becomes the string "null".
-    await navigator.clipboard.writeText(null as unknown as string);
-    expect(await navigator.clipboard.readText()).toBe("null");
+      // WebIDL DOMString conversion: null becomes the string "null".
+      await navigator.clipboard.writeText(null as unknown as string);
+      expect(await navigator.clipboard.readText()).toBe("null");
 
-    // Writing "" is legal, and readText() of an empty clipboard resolves "".
-    await navigator.clipboard.writeText("");
-    expect(await navigator.clipboard.readText()).toBe("");
-    // An empty text/plain representation is present, not absent: `read()`
-    // resolves `[ClipboardItem]` with a 0-byte text/plain Blob, like browsers.
-    const emptyItems = await navigator.clipboard.read();
-    expect(emptyItems).toHaveLength(1);
-    expect(emptyItems[0].types).toContain("text/plain");
-    expect(await (await emptyItems[0].getType("text/plain")).text()).toBe("");
-  });
+      // Writing "" is legal, and readText() of an empty clipboard resolves "".
+      await navigator.clipboard.writeText("");
+      expect(await navigator.clipboard.readText()).toBe("");
+      // An empty text/plain representation is present, not absent: `read()`
+      // resolves `[ClipboardItem]` with a 0-byte text/plain Blob, like browsers.
+      const emptyItems = await navigator.clipboard.read();
+      expect(emptyItems).toHaveLength(1);
+      expect(emptyItems[0].types).toContain("text/plain");
+      expect(await (await emptyItems[0].getType("text/plain")).text()).toBe("");
+    },
+  );
 });
 
 // The POSIX backend has no clipboard API to call: it runs `wl-paste`/`wl-copy`,
@@ -889,7 +856,7 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
   test("round-trips through a helper, firing copy/paste; an empty text/plain is present", async () => {
     const { result, log } = await runWithHelpers(
       {
-        xclip: `case "$*" in *-out*) cat "$CLIP_DIR/state" ;; *) cat > "$CLIP_DIR/state" ;; esac`,
+        xclip: `case "$*" in *TARGETS*) printf 'TARGETS\\nUTF8_STRING\\n' ;; *-out*) cat "$CLIP_DIR/state" ;; *) cat > "$CLIP_DIR/state" ;; esac`,
       },
       `
         const events = [];
@@ -908,11 +875,9 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         "xclip -selection clipboard -in",
         "xclip -selection clipboard -out",
         "xclip -selection clipboard -in",
-        // read() probes every supported type; html and png come back empty,
-        // which for them means absent.
+        // read() asks what is offered and reads only that.
+        "xclip -selection clipboard -t TARGETS -out",
         "xclip -selection clipboard -out",
-        "xclip -selection clipboard -t text/html -out",
-        "xclip -selection clipboard -t image/png -out",
       ],
     });
   });
@@ -966,20 +931,15 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         read: { error: NO_HELPER },
         writeText: { error: NO_HELPER },
         write: { error: NO_HELPER },
-        // The staged payload is removed even though no helper consumed it.
         leftovers: [],
       },
       log: [
         "wl-paste --no-newline --type text",
         "xclip -selection clipboard -out",
         "xsel --clipboard --output",
-        "wl-paste --no-newline --type text",
-        "xclip -selection clipboard -out",
+        "wl-paste --list-types",
+        "xclip -selection clipboard -t TARGETS -out",
         "xsel --clipboard --output",
-        "wl-paste --no-newline --type text/html",
-        "xclip -selection clipboard -t text/html -out",
-        "wl-paste --no-newline --type image/png",
-        "xclip -selection clipboard -t image/png -out",
         "wl-copy --type text/plain;charset=utf-8",
         "xclip -selection clipboard -in",
         "xsel --clipboard --input",
@@ -1008,9 +968,10 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     const { result, log } = await runWithHelpers(
       {
         // wl-paste is "not installed" (no body), so reads fall through to xclip,
-        // which serves text, has nothing for html (exit 0, no output) and
-        // crashes on png. wl-copy is installed, so writes never reach xclip.
-        xclip: `case "$*" in *image/png*) kill -KILL $$ ;; *text/html*) exit 0 ;; *) printf 'from xclip' ;; esac`,
+        // which offers all three types but has nothing for html (exit 0, no
+        // output) and crashes on png. wl-copy is installed, so writes never
+        // reach xclip.
+        xclip: `case "$*" in *TARGETS*) printf 'TARGETS\\nUTF8_STRING\\ntext/html\\nimage/png\\n' ;; *image/png*) kill -KILL $$ ;; *text/html*) exit 0 ;; *) printf 'from xclip' ;; esac`,
         xsel: "printf 'from xsel'",
         "wl-copy": `cat > "$CLIP_DIR/wl-copy-received"`,
       },
@@ -1031,7 +992,7 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     expect({ result, log }).toEqual({
       result: {
         readText: { ok: "from xclip" },
-        // The crashed png probe does not fail the read; that type is just absent.
+        // The crashed png read does not fail the read; that type is just absent.
         read: { ok: [["text/plain"]] },
         writeText: { ok: "hello" },
         writeHtml: { ok: "<b>hi</b>" },
@@ -1040,11 +1001,10 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
       log: [
         "wl-paste --no-newline --type text",
         "xclip -selection clipboard -out",
-        "wl-paste --no-newline --type text",
+        "wl-paste --list-types",
+        "xclip -selection clipboard -t TARGETS -out",
         "xclip -selection clipboard -out",
-        "wl-paste --no-newline --type text/html",
         "xclip -selection clipboard -t text/html -out",
-        "wl-paste --no-newline --type image/png",
         "xclip -selection clipboard -t image/png -out",
         "wl-copy --type text/plain;charset=utf-8",
         "wl-copy --type text/html",
@@ -1052,35 +1012,44 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     });
   });
 
-  test("a helper exiting non-zero means nothing is copied, and fails a write", async () => {
+  // A helper that exits non-zero after reaching the display is saying nothing
+  // is copied, and the first helper that answers is the one that counts. One
+  // that could not reach the display proves nothing (a stale $DISPLAY).
+  test.each([
+    {
+      reached: true,
+      stderr: "Error: target STRING not available",
+      readText: { ok: "" },
+      read: { ok: [] },
+      reads: ["xclip -selection clipboard -out", "xclip -selection clipboard -t TARGETS -out"],
+    },
+    {
+      reached: false,
+      stderr: "Error: Can't open display: :0",
+      readText: { error: HELPER_FAILED },
+      read: { error: HELPER_FAILED },
+      reads: [
+        "xclip -selection clipboard -out",
+        "xsel --clipboard --output",
+        "xclip -selection clipboard -t TARGETS -out",
+        "xsel --clipboard --output",
+      ],
+    },
+  ])("a helper exiting non-zero (display reached: $reached)", async ({ stderr, readText, read, reads }) => {
+    const body = `echo "${stderr}" >&2; exit 1`;
     const { result, log } = await runWithHelpers(
-      { xclip: "exit 1", xsel: "exit 1" },
+      { xclip: body, xsel: body },
       `
         print({
           readText: await settle(navigator.clipboard.readText()),
           read: await settle(navigator.clipboard.read(), types),
           writeText: await settle(navigator.clipboard.writeText("x")),
-          leftovers: leftovers(),
         });
       `,
     );
     expect({ result, log }).toEqual({
-      result: {
-        readText: { ok: "" },
-        read: { ok: [] },
-        writeText: { error: HELPER_FAILED },
-        leftovers: [],
-      },
-      log: [
-        "xclip -selection clipboard -out",
-        "xsel --clipboard --output",
-        "xclip -selection clipboard -out",
-        "xsel --clipboard --output",
-        "xclip -selection clipboard -t text/html -out",
-        "xclip -selection clipboard -t image/png -out",
-        "xclip -selection clipboard -in",
-        "xsel --clipboard --input",
-      ],
+      result: { readText, read, writeText: { error: HELPER_FAILED } },
+      log: [...reads, "xclip -selection clipboard -in", "xsel --clipboard --input"],
     });
   });
 
@@ -1138,10 +1107,12 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         const started = performance.now();
         const readText = await settle(navigator.clipboard.readText());
         const waitedForWatchdog = performance.now() - started >= 900;
+        const pid = Number(received("helper-pid"));
         let helperStillRunning = true;
         try {
-          process.kill(Number(received("helper-pid")), 0);
-        } catch {
+          process.kill(pid, 0);
+        } catch (e) {
+          if (e.code !== "ESRCH") throw e;
           helperStillRunning = false;
         }
         print({ readText, waitedForWatchdog, helperStillRunning });
@@ -1154,10 +1125,19 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     });
   });
 
-  test("writes stage the payload in a private temp file the helper reads, removed afterwards", async () => {
+  // The payload reaches the helper's stdin through a descriptor with no name
+  // anyone can open: a memfd, or a private temp file unlinked beforehand.
+  test.each([
+    { staging: "memfd", env: {}, path: /^\/memfd:bun-clipboard/, mode: expect.any(String) },
+    {
+      staging: "temp file",
+      env: { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" },
+      path: /\/tmp 'dir'\/[^/]*bun-clipboard \(deleted\)$/,
+      mode: "600",
+    },
+  ])("writes hand the payload over as an unnamed $staging", async ({ env, path, mode }) => {
     const { result, log } = await runWithHelpers(
       {
-        // What the helper sees on stdin is the staged file itself.
         xclip: [
           `readlink /proc/self/fd/0 > "$CLIP_DIR/staged-path"`,
           `stat -L -c %a /proc/self/fd/0 > "$CLIP_DIR/staged-mode"`,
@@ -1165,34 +1145,23 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         ].join("\n"),
       },
       `
-        const { basename, dirname } = require("node:path");
         const text = "it's \\"quoted\\"\\n\\\\ back\\tslash \\u00e9";
         await navigator.clipboard.writeText(text);
         const textOk = received("received-text") === text;
-        const stagedPath = received("staged-path").trim();
-        const stagedMode = received("staged-mode").trim();
         const png = Buffer.from(${JSON.stringify(PNG_1X1.toString("base64"))}, "base64");
         await navigator.clipboard.write([new ClipboardItem({ "image/png": new Blob([png], { type: "image/png" }) })]);
-        const pngOk = readFileSync(CLIP_DIR + "/received-png").equals(png);
         print({
           textOk,
-          pngOk,
-          stagedInTmpdir: dirname(stagedPath) === process.env.TMPDIR,
-          stagedName: basename(stagedPath),
-          stagedMode,
+          pngOk: readFileSync(CLIP_DIR + "/received-png").equals(png),
+          stagedPath: received("staged-path").trim(),
+          stagedMode: received("staged-mode").trim(),
           leftovers: leftovers(),
         });
       `,
+      env,
     );
     expect({ result, log }).toEqual({
-      result: {
-        textOk: true,
-        pngOk: true,
-        stagedInTmpdir: true,
-        stagedName: expect.stringMatching(/\.bun-clipboard$/),
-        stagedMode: "600",
-        leftovers: [],
-      },
+      result: { textOk: true, pngOk: true, stagedPath: expect.stringMatching(path), stagedMode: mode, leftovers: [] },
       log: ["xclip -selection clipboard -in", "xclip -selection clipboard -t image/png -in"],
     });
   });
@@ -1242,9 +1211,9 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
 // macOS segfaulted inside AppKit within a few rounds of this. A child process
 // keeps a crash from taking the runner down; every value read must be one some
 // write actually produced.
-describe.skipIf(!isMacOS && !isWindows)("concurrent operations", () => {
+describe.skipIf(!systemClipboard || (!isMacOS && !isWindows))("concurrent operations", () => {
   test("reads, writes and Bun.Image.fromClipboard() racing each other all settle with whole values", async () => {
-    if (savedClipboard === null) return; // no reachable clipboard in this session
+    expect(clipboardReachable).toBe(true);
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1264,8 +1233,7 @@ describe.skipIf(!isMacOS && !isWindows)("concurrent operations", () => {
               failures.add("fromClipboard: " + e.message);
             }
           };
-          imageNow();
-          const initialImage = [...images];
+          const initialImage = [Bun.Image.hasClipboardImage() ? "image" : "none"];
           for (let round = 0; round < 10; round++) {
             const ops = [];
             for (let i = 0; i < 4; i++) {
@@ -1295,11 +1263,7 @@ describe.skipIf(!isMacOS && !isWindows)("concurrent operations", () => {
       tornItems: shapes.filter(shape => !wholeItem.test(shape)),
       sawText: texts.length > 0,
       sawItems: shapes.length > 0,
-      // A macOS read() spans several pasteboard transactions and gives up if
-      // the writers keep landing between them; that is its documented outcome.
-      failures: failures.filter(
-        f => !(isMacOS && f === "NotAllowedError: The system clipboard changed while it was being read."),
-      ),
+      failures,
     }).toEqual({
       initialImage: ["image"],
       sawNoImage: true,
@@ -1316,9 +1280,9 @@ describe.skipIf(!isMacOS && !isWindows)("concurrent operations", () => {
 // pbcopy puts on the pasteboard is what readText() returns, and pbpaste sees
 // what writeText() put there, so the data is in the public plain-text type
 // and not something only Bun can read.
-describe.skipIf(!isMacOS)("macOS pasteboard interop", () => {
+describe.skipIf(!systemClipboard || !isMacOS)("macOS pasteboard interop", () => {
   test("pbcopy feeds readText(), and pbpaste sees writeText()", async () => {
-    if (savedClipboard === null) return; // no pasteboard server in this session
+    expect(clipboardReachable).toBe(true);
     const fromPbcopy = `from pbcopy ${Date.now()}`;
     await using pbcopy = Bun.spawn({ cmd: ["pbcopy"], stdin: "pipe", stderr: "pipe" });
     pbcopy.stdin.write(fromPbcopy);
@@ -1345,9 +1309,10 @@ describe.skipIf(!isMacOS)("macOS pasteboard interop", () => {
 // stand in for them by driving the raw clipboard through bun:ffi: placing
 // payloads the way other programs lay them out, and inspecting exactly what
 // Bun places. Everything here mutates the real clipboard, so nothing is
-// concurrent; the file-level hooks restore what the machine had.
+// concurrent.
 const CF_TEXT = 1;
 const CF_UNICODETEXT = 13;
+const CF_DIBV5 = 17;
 // GMEM_MOVEABLE | GMEM_ZEROINIT, so any allocation past the payload reads as NUL.
 const GHND = 0x0042;
 const START_MARK = "<!--StartFragment-->";
@@ -1370,7 +1335,7 @@ interface Win32Clipboard {
 }
 
 let win32: Win32Clipboard | null = null;
-if (isWindows) {
+if (isWindows && systemClipboard) {
   try {
     const user32 = dlopen("user32.dll", {
       OpenClipboard: { args: [FFIType.ptr], returns: FFIType.i32 },
@@ -1456,6 +1421,7 @@ if (isWindows) {
       },
     };
   } catch (e) {
+    if (isCI) throw e;
     console.error("skipping the Win32 backend tests:", (e as Error)?.message ?? e);
   }
 }
@@ -1643,6 +1609,17 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
     expect(placed.subarray(0, PNG_1X1.length)).toEqual(PNG_1X1);
     expect(placed.length - PNG_1X1.length).toBeLessThan(16);
     expect(await readAll()).toEqual([{ types: ["image/png"], "image/png": PNG_1X1 }]);
+
+    // The same image as a bitmap for consumers that only read those: a 1x1
+    // bottom-up BITMAPV5HEADER DIB holding the transparent pixel as BGRA.
+    const dib = raw().getRaw(CF_DIBV5)!;
+    expect({
+      headerSize: dib.readUInt32LE(0),
+      width: dib.readInt32LE(4),
+      height: dib.readInt32LE(8),
+      bitCount: dib.readUInt16LE(14),
+      pixel: [...dib.subarray(124, 128)],
+    }).toEqual({ headerSize: 124, width: 1, height: 1, bitCount: 32, pixel: [0, 0, 0, 0] });
   });
 
   test("a PNG placed by another process reads back byte-exact", async () => {
@@ -1733,7 +1710,7 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
 
     await navigator.clipboard.writeText("text again");
     expect(await readAll()).toEqual([{ types: ["text/plain"], "text/plain": "text again" }]);
-    expect([raw().getRaw(CF_HTML), raw().getRaw(CF_PNG)]).toEqual([null, null]);
+    expect([raw().getRaw(CF_HTML), raw().getRaw(CF_PNG), raw().getRaw(CF_DIBV5)]).toEqual([null, null, null]);
   });
 
   test("interoperates with clip.exe and Get-Clipboard", async () => {

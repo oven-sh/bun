@@ -54,7 +54,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSClipboardEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSClipboardEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSClipboardEventPrototype>(vm)) JSClipboardEventPrototype(vm, globalObject, structure);
+        JSClipboardEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSClipboardEventPrototype))) JSClipboardEventPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -94,12 +94,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSClipboardEventDOMConst
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    // Bun has no DataTransfer, so a `clipboardData` init member is accepted
-    // (and ignored) like any unknown dictionary member; only the EventInit
-    // members are converted. The attribute itself is always null.
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<EventInit>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+    // `DataTransfer? clipboardData`, read after the inherited members; there is no DataTransfer.
+    if (auto* init = argument1.value().getObject()) {
+        auto clipboardData = init->get(lexicalGlobalObject, Identifier::fromString(vm, "clipboardData"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!clipboardData.isUndefinedOrNull()) [[unlikely]]
+            return throwVMTypeError(lexicalGlobalObject, throwScope, "ClipboardEventInit.clipboardData must be null: DataTransfer is not supported"_s);
+    }
     auto object = ClipboardEvent::create(WTF::move(type), WTF::move(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -122,11 +126,7 @@ template<> JSValue JSClipboardEventDOMConstructor::prototypeForStructure(JSC::VM
 
 template<> void JSClipboardEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "ClipboardEvent"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSClipboardEvent::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "ClipboardEvent"_s, JSClipboardEvent::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -142,7 +142,7 @@ void JSClipboardEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSClipboardEvent::info(), JSClipboardEventPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSClipboardEvent::s_info = { "ClipboardEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClipboardEvent) };
@@ -183,11 +183,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsClipboardEventConstructor, (JSGlobalObject * lexicalG
     return JSValue::encode(JSClipboardEvent::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-static inline JSValue jsClipboardEvent_clipboardDataGetter(JSGlobalObject& lexicalGlobalObject, JSClipboardEvent& thisObject)
+static inline JSValue jsClipboardEvent_clipboardDataGetter(JSGlobalObject&, JSClipboardEvent&)
 {
-    UNUSED_PARAM(lexicalGlobalObject);
-    UNUSED_PARAM(thisObject);
-    // Bun has no DataTransfer; the spec'd attribute is always null.
     return JSC::jsNull();
 }
 

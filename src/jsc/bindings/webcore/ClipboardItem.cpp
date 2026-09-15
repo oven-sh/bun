@@ -28,30 +28,26 @@
 
 #include "BunString.h"
 #include "ClipboardBlob.h"
-#include "ClipboardItemBindingsDataSource.h"
-#include "ClipboardItemDataSource.h"
-#include "ClipboardItemPlatformDataSource.h"
 #include "ClipboardPlatform.h"
 #include "ExceptionCode.h"
 #include "ExceptionOr.h"
 #include "HTTPParsers.h"
-#include "JSDOMExceptionHandling.h"
 #include "JSDOMPromise.h"
+#include "JSDOMPromiseDeferred.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
-#include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
 
-ClipboardItem::ClipboardItem(Vector<KeyValuePair<String, Ref<DOMPromise>>>&& items, const Options& options)
-    : m_dataSource(makeUniqueRef<ClipboardItemBindingsDataSource>(*this, WTF::move(items)))
+ClipboardItem::ClipboardItem(Vector<KeyValuePair<String, Ref<DOMPromise>>>&& promises, const Options& options)
+    : m_promises(WTF::move(promises))
     , m_presentationStyle(options.presentationStyle)
 {
 }
 
 ClipboardItem::ClipboardItem(ClipboardItemData&& data)
-    : m_dataSource(makeUniqueRef<ClipboardItemPlatformDataSource>(*this, WTF::move(data)))
+    : m_data(WTF::move(data))
 {
 }
 
@@ -59,8 +55,7 @@ ClipboardItem::~ClipboardItem() = default;
 
 ExceptionOr<Ref<ClipboardItem>> ClipboardItem::create(Vector<KeyValuePair<String, Ref<DOMPromise>>>&& items, const Options& options)
 {
-    // https://w3c.github.io/clipboard-apis/#dom-clipboarditem-clipboarditem — an
-    // item with no representations is not constructible.
+    // https://w3c.github.io/clipboard-apis/#dom-clipboarditem-clipboarditem
     if (items.isEmpty())
         return Exception { ExceptionCode::TypeError, "ClipboardItem requires at least one representation"_s };
 
@@ -74,31 +69,59 @@ Ref<ClipboardItem> ClipboardItem::create(ClipboardItemData&& data)
 
 Vector<String> ClipboardItem::types() const
 {
-    return m_dataSource->types();
+    if (!m_promises.isEmpty())
+        return m_promises.map([](auto& entry) { return entry.key; });
+    return m_data.map([](auto& entry) { return entry.key; });
+}
+
+// The exact serialization first, so same-essence entries stay reachable.
+template<typename Entries>
+static size_t findType(const Entries& entries, const String& type)
+{
+    auto index = entries.findIf([&](auto& entry) { return entry.key == type; });
+    if (index != notFound)
+        return index;
+    auto essence = ClipboardItem::parseMIMETypeEssence(type);
+    return entries.findIf([&](auto& entry) { return ClipboardItem::essenceMatches(entry.key, essence); });
 }
 
 void ClipboardItem::getType(const String& type, Ref<DeferredPromise>&& promise)
 {
-    m_dataSource->getType(type, WTF::move(promise));
-}
+    auto index = m_promises.isEmpty() ? findType(m_data, type) : findType(m_promises, type);
+    if (index == notFound) {
+        promise->reject(ExceptionCode::NotFoundError, makeString("The type \""_s, type, "\" was not found"_s));
+        return;
+    }
 
-void ClipboardItem::collectDataForWriting(Clipboard& destination, CompletionHandler<void(std::optional<ClipboardItemData>, JSC::JSValue)>&& completion)
-{
-    m_dataSource->collectDataForWriting(destination, WTF::move(completion));
-}
+    if (m_promises.isEmpty()) {
+        promise->resolveWithCallback([&](JSDOMGlobalObject& globalObject) {
+            return clipboardBlobToJS(&globalObject, m_data[index].value.get(), type);
+        });
+        return;
+    }
 
-void ClipboardItem::cancelDataCollection()
-{
-    m_dataSource->cancelCollect();
+    m_promises[index].value->whenSettledWithResult([promise = WTF::move(promise), type](JSDOMGlobalObject* globalObject, bool isFulfilled, JSC::JSValue result) {
+        if (!isFulfilled) {
+            promise->reject(result);
+            return;
+        }
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+        RefPtr blob = blobFromSettledValue(globalObject, result, type);
+        if (auto* exception = catchScope.exception()) [[unlikely]] {
+            JSC::JSValue error = exception->value();
+            if (catchScope.clearExceptionExceptTermination())
+                promise->reject(error);
+            return;
+        }
+        promise->resolveWithCallback([&](JSDOMGlobalObject& promiseGlobalObject) {
+            return clipboardBlobToJS(&promiseGlobalObject, *blob, type);
+        });
+    });
 }
 
 bool ClipboardItem::supports(const String& type)
 {
-    // The spec also answers true for a "web " custom format. Bun does not
-    // implement web custom formats, so it does not claim to support them: a
-    // caller that feature-detects here and then writes one would fail.
-    auto essence = parseMIMETypeEssence(type);
-    return !essence.isEmpty() && clipboardSupportsType(essence);
+    return clipboardMIMETypeFromEssence(parseMIMETypeEssence(type)).has_value();
 }
 
 String ClipboardItem::parseMIMETypeEssence(const String& type)
@@ -115,8 +138,8 @@ String ClipboardItem::parseMIMETypeEssence(const String& type)
     return view.convertToASCIILowercase();
 }
 
-// mimesniff §4.4.4 parameter parsing + §4.5 serialization. `position` is the
-// first character after the ';' that ended the subtype.
+// https://mimesniff.spec.whatwg.org/#parse-a-mime-type step 11 onward and
+// https://mimesniff.spec.whatwg.org/#serialize-a-mime-type
 static void appendSerializedMIMEParameters(StringBuilder& result, StringView view, size_t position)
 {
     auto isQuotedStringToken = [](char16_t c) {
@@ -218,10 +241,10 @@ bool ClipboardItem::essenceMatches(const String& serializedKey, const String& es
     return StringView(serializedKey).left(semicolon) == essence;
 }
 
-Ref<Blob> ClipboardItem::blobFromString(JSC::JSGlobalObject* globalObject, const String& stringData, const String& type)
+static Ref<Blob> blobFromString(JSC::JSGlobalObject* globalObject, const String& string, const String& type)
 {
-    Bun::UTF8View utf8(stringData);
-    return createClipboardBlob(globalObject, utf8.bytes(), type);
+    Bun::UTF8View utf8(string);
+    return Blob::create(utf8.bytes(), type, globalObject).releaseNonNull();
 }
 
 RefPtr<Blob> ClipboardItem::blobFromSettledValue(JSC::JSGlobalObject* globalObject, JSC::JSValue value, const String& type)
@@ -230,25 +253,99 @@ RefPtr<Blob> ClipboardItem::blobFromSettledValue(JSC::JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (RefPtr blob = Blob::create(value)) {
-        // A Blob already declaring the requested type is handed back untouched,
-        // even if its bytes are not resident — getType() callers can read it,
-        // and the write path pulls bytes in before the platform transaction.
-        if (clipboardBlobTypeMatches(clipboardBlobContentType(*blob), type))
+        // A file- or network-backed Blob has no bytes to rewrap: getType()
+        // hands it out lazily and write() reads it in before the transaction.
+        if (clipboardBlobTypeMatches(clipboardBlobContentType(*blob), type) || clipboardBlobNeedsToReadFile(*blob))
             return blob;
-        // Re-wrapping copies bytes a file- or network-backed Blob does not
-        // have in memory; pass it through instead. The write path reads it
-        // under the representation's key, and getType() surfaces it as a lazy
-        // Blob, matching the spec's "resolve p with v".
-        if (clipboardBlobNeedsToReadFile(*blob))
-            return blob;
-        // A Blob declaring some other type still carries the bytes the caller
-        // meant; re-wrap them rather than stringifying the Blob object.
-        return createClipboardBlob(globalObject, clipboardBlobBytes(*blob), type);
+        return Blob::create(clipboardBlobBytes(*blob), type, globalObject);
     }
 
     auto string = value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, ClipboardItem::blobFromString(globalObject, string, type));
+    RELEASE_AND_RETURN(scope, blobFromString(globalObject, string, type));
+}
+
+void ClipboardItem::collectDataForWriting(CollectCompletionHandler&& completion)
+{
+    // One item can be handed to two overlapping write()s; retire the older collect.
+    cancelDataCollection();
+    if (m_promises.isEmpty()) {
+        completion(ClipboardItemData { m_data }, {});
+        return;
+    }
+
+    m_completionHandler = WTF::move(completion);
+    m_collected = Vector<RefPtr<Blob>>(m_promises.size());
+    m_pendingCount = m_promises.size();
+    auto generation = m_collectGeneration;
+    for (size_t index = 0; index < m_promises.size(); ++index) {
+        // WeakPtr: a strong back-edge would let a never-settling promise keep the item alive.
+        auto registered = m_promises[index].value->whenSettledWithResult([weakThis = WeakPtr { *this }, generation, index](JSDOMGlobalObject* globalObject, bool isFulfilled, JSC::JSValue result) {
+            RefPtr protectedThis = weakThis.get();
+            if (protectedThis && generation == protectedThis->m_collectGeneration)
+                protectedThis->didSettle(*globalObject, index, isFulfilled, result);
+        });
+        if (registered == DOMPromise::IsCallbackRegistered::No) {
+            finishCollect(std::nullopt);
+            return;
+        }
+    }
+}
+
+void ClipboardItem::cancelDataCollection()
+{
+    ++m_collectGeneration;
+    finishCollect(std::nullopt);
+}
+
+void ClipboardItem::didSettle(JSC::JSGlobalObject& globalObject, size_t index, bool isFulfilled, JSC::JSValue result)
+{
+    if (!isFulfilled) {
+        finishCollect(std::nullopt, result);
+        return;
+    }
+
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject.vm());
+    auto generation = m_collectGeneration;
+    RefPtr blob = blobFromSettledValue(&globalObject, result, m_promises[index].key);
+    JSC::JSValue error;
+    if (auto* exception = catchScope.exception()) [[unlikely]] {
+        error = exception->value();
+        if (!catchScope.clearExceptionExceptTermination())
+            return;
+    }
+    // The coercion ran user JS, which may have started another write of this item.
+    if (generation != m_collectGeneration)
+        return;
+    if (!blob) {
+        finishCollect(std::nullopt, error);
+        return;
+    }
+
+    m_collected[index] = WTF::move(blob);
+    if (--m_pendingCount)
+        return;
+    ClipboardItemData data;
+    data.reserveInitialCapacity(m_promises.size());
+    for (size_t i = 0; i < m_promises.size(); ++i)
+        data.append({ m_promises[i].key, m_collected[i].releaseNonNull() });
+    finishCollect(WTF::move(data));
+}
+
+void ClipboardItem::finishCollect(std::optional<ClipboardItemData>&& data, JSC::JSValue failureReason)
+{
+    m_collected.clear();
+    m_pendingCount = 0;
+    if (auto completion = std::exchange(m_completionHandler, {}))
+        completion(WTF::move(data), failureReason);
+}
+
+size_t ClipboardItem::memoryCost() const
+{
+    size_t cost = 0;
+    for (auto& entry : m_data)
+        cost += entry.value->memoryCost();
+    return cost;
 }
 
 } // namespace WebCore

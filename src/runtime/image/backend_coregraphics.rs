@@ -302,10 +302,9 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
 }
 
 // ── NSPasteboard ───────────────────────────────────────────────────────────
-// Called synchronously on the JS thread by the static `Bun.Image.fromClipboard()`
-// accessor (the heavy decode still goes to WorkPool). The shim serializes every
-// pasteboard entry point process-wide, so this may overlap the
-// `navigator.clipboard` jobs running on WorkPool threads.
+// The static `Bun.Image.fromClipboard()` accessor calls this synchronously on
+// the JS thread (the heavy decode still goes to WorkPool); the shim serializes
+// it with the `navigator.clipboard` jobs.
 
 unsafe extern "C" {
     #[allow(dead_code)]

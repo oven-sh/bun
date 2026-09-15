@@ -26,7 +26,8 @@
 #pragma once
 
 #include "root.h"
-#include "ClipboardItemData.h"
+#include "ClipboardItem.h"
+#include "ClipboardPlatform.h"
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
 #include "ExceptionCode.h"
@@ -39,14 +40,10 @@
 
 namespace WebCore {
 
-class ClipboardItem;
-class ClipboardRequest;
 class DeferredPromise;
 class ScriptExecutionContext;
 
-// https://w3c.github.io/clipboard-apis/#clipboard-interface — ported from WebCore's Clipboard.
-// Bun diff: no Pasteboard/Document/permissions; the platform transaction is Bun's async Rust
-// backend, so ItemWriter schedules a request and settles on its callback rather than inline.
+// https://w3c.github.io/clipboard-apis/#clipboard-interface
 class Clipboard final : public RefCounted<Clipboard>, public ContextDestructionObserver, public EventTarget {
     WTF_MAKE_TZONE_ALLOCATED(Clipboard);
 
@@ -57,15 +54,7 @@ public:
     void readText(Ref<DeferredPromise>&&);
     void writeText(const String& data, Ref<DeferredPromise>&&);
     void read(Ref<DeferredPromise>&&);
-    // Upstream takes Vector<Ref<ClipboardItem>>; Bun's IDLInterface converter
-    // yields RefPtr, and entries are non-null because the sequence conversion
-    // already rejected anything that was not a ClipboardItem.
     void write(const Vector<RefPtr<ClipboardItem>>& data, Ref<DeferredPromise>&&);
-
-    // The runtime projection of the spec's clipboard events: there is no
-    // document or focused element, so a successful operation fires at this
-    // EventTarget (`navigator.clipboard`).
-    void fireClipboardEvent(const AtomString& type);
 
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     EventTargetInterface eventTargetInterface() const final { return ClipboardEventTargetInterfaceType; }
@@ -80,53 +69,42 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    // Collects every item's representations into refcounted Blobs, then runs one
-    // platform transaction once they have all arrived. Mirrors WebCore's
-    // Clipboard::ItemWriter, pending-item countdown included.
+    // There is no document or focused element: successful operations fire at navigator.clipboard.
+    void fireClipboardEvent(const AtomString& type);
+    ClipboardCompletion writeCompletion(Ref<DeferredPromise>&&);
+
+    // Collects one item into Blobs, then schedules one platform write.
     class ItemWriter : public RefCounted<ItemWriter> {
     public:
-        static Ref<ItemWriter> create(Clipboard& clipboard, Ref<DeferredPromise>&& promise)
+        static Ref<ItemWriter> create(Clipboard& clipboard, Ref<ClipboardItem>&& item, Ref<DeferredPromise>&& promise)
         {
-            return adoptRef(*new ItemWriter(clipboard, WTF::move(promise)));
+            return adoptRef(*new ItemWriter(clipboard, WTF::move(item), WTF::move(promise)));
         }
 
         ~ItemWriter();
 
-        void write(const Vector<RefPtr<ClipboardItem>>&);
+        void write();
         void invalidate();
 
     private:
-        ItemWriter(Clipboard&, Ref<DeferredPromise>&&);
+        ItemWriter(Clipboard&, Ref<ClipboardItem>&&, Ref<DeferredPromise>&&);
 
-        void setData(std::optional<ClipboardItemData>&&, size_t index);
-        void didSetAllData();
-        void didReadBlobForWrite(size_t index, std::span<const uint8_t> bytes, const String& failureMessage);
-        void schedulePlatformWrite(ClipboardItemData&&);
-        void didFinishPlatformWrite(const String& failureMessage);
+        void didCollect(ClipboardItemData&&);
+        void didReadBlob(size_t index, std::span<const uint8_t> bytes, const String& failureMessage);
+        void schedulePlatformWrite();
         void reject(ExceptionCode, const String& message);
-        // Rejects with the value a representation failed with, so the caller
-        // sees its own rejection reason rather than a generic NotAllowedError.
         void rejectWithValue(JSC::JSValue failureReason);
-        void releaseItems();
-        void detachFromClipboard();
+        void detach();
 
         WeakPtr<Clipboard, WeakPtrImplWithEventTargetData> m_clipboard;
-        // The writer is the only strong owner of the items during a write (the reaction holds
-        // a WeakPtr back-edge to avoid a native<->GC cycle); without this, an item collected
-        // mid-write destroys its data source with the collect completion still armed.
-        Vector<RefPtr<ClipboardItem>> m_items;
+        // The only strong owner of the item while it is collected.
+        RefPtr<ClipboardItem> m_item;
         RefPtr<DeferredPromise> m_promise;
-        Vector<std::optional<ClipboardItemData>> m_dataToWrite;
-        unsigned m_pendingItemCount { 0 };
-        // Representations staged for the platform transaction while the bytes
-        // of non-resident Blobs (Bun.file, S3) are read in.
-        ClipboardItemData m_representationsToWrite;
+        ClipboardItemData m_data;
         unsigned m_pendingBlobReads { 0 };
-        // The scheduled platform write, so invalidate() can cancel it before
-        // the backend job commits it to the OS.
-        RefPtr<ClipboardRequest> m_platformWriteRequest;
     };
 
+    // The writer still collecting; a later write supersedes it.
     RefPtr<ItemWriter> m_activeItemWriter;
 };
 

@@ -63,14 +63,8 @@ public:
         return createAdopted(Blob__dupe(ptr));
     }
 
-    // Takes over a fresh impl the caller owns (a `Blob__from*` factory result);
-    // `create(void*)` instead dupes an impl that stays with its owner.
-    static RefPtr<Blob> createAdopted(void* ptr)
-    {
-        if (!ptr)
-            return nullptr;
-        return adoptRef(new Blob(ptr));
-    }
+    // `new Blob([bytes], { type })`.
+    static RefPtr<Blob> create(std::span<const uint8_t> bytes, const String& type, JSC::JSGlobalObject* globalThis);
 
     String fileName()
     {
@@ -90,6 +84,13 @@ private:
               static_cast<BlobImpl*>(impl)))
         , m_fileName(std::move(fileName))
     {
+    }
+
+    static RefPtr<Blob> createAdopted(void* ptr)
+    {
+        if (!ptr)
+            return nullptr;
+        return adoptRef(new Blob(ptr));
     }
 
     BlobRefPtr m_impl;

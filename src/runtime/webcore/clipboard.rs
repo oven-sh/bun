@@ -1,126 +1,72 @@
-//! Native `navigator.clipboard` platform I/O (https://w3c.github.io/clipboard-apis/).
-//! WebCore (`src/jsc/bindings/webcore/Clipboard.cpp`) owns every promise/JS value; this
-//! side takes bytes + an opaque `ClipboardRequest*` to the work pool as a `Job` and hands
-//! the request back once. Operations are not ordered with respect to each other: a caller
-//! that needs one to land before the next awaits it, as with any other process using the
-//! OS clipboard.
+//! `navigator.clipboard` platform I/O: https://w3c.github.io/clipboard-apis/
 
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::ptr;
+use std::borrow::Cow;
 
 use bun_jsc::job::JsAffine;
 use bun_jsc::{Completion, JSGlobalObject, Job, JobContext, JsThread};
 
-/// The job's JS side: the `WebCore::ClipboardRequest` reference that owns the
-/// completion. Consumed exactly once on the JS thread by `complete`/`fail`,
-/// or released there by `Drop` when the job comes back to a VM that has begun
-/// stopping and the carrier drops its completion unrun.
-struct RequestHandle(*mut c_void);
+/// `WebCore::ClipboardRequest`, completed or released on the JS thread.
+struct Request(*mut c_void);
 
-// SAFETY: used and dropped only on the JS thread, which is what the job
-// carrier guarantees for its `Js` side.
-unsafe impl JsAffine for RequestHandle {}
+// SAFETY: used and dropped only on the JS thread, which the job carrier
+// guarantees for its `Js` side.
+unsafe impl JsAffine for Request {}
 
-impl RequestHandle {
-    /// Settles with `items` on the JS thread.
-    fn complete(self, global: &JSGlobalObject, items: &[(Mime, Vec<u8>)]) {
-        let views: Vec<Representation> = items
-            .iter()
-            .map(|(mime, bytes)| Representation {
-                ty: mime.as_str().as_ptr(),
-                ty_len: mime.as_str().len(),
-                bytes: bytes.as_ptr(),
-                len: bytes.len(),
-            })
-            .collect();
-        // SAFETY: JS thread with a live global; the views borrow `items` for
-        // the duration of the call; consumes the leaked ref exactly once.
+impl Request {
+    fn complete(self, global: &JSGlobalObject, outcome: &Outcome) {
+        let request = ManuallyDrop::new(self).0;
+        let (representations, failure) = match outcome {
+            Ok(items) => (
+                items
+                    .iter()
+                    .map(|(mime, bytes)| Representation {
+                        mime: *mime,
+                        bytes: bytes.as_ptr(),
+                        len: bytes.len(),
+                    })
+                    .collect::<Vec<_>>(),
+                None,
+            ),
+            Err(unavailable) => (Vec::new(), Some(unavailable.message())),
+        };
+        let (message, message_len) = failure.as_deref().map_or((ptr::null(), 0), |message| {
+            (message.as_ptr(), message.len())
+        });
+        // SAFETY: JS thread with a live global; the views borrow `outcome` and
+        // `failure` for the call, which consumes the request.
         unsafe {
             Bun__Clipboard__requestComplete(
                 global,
-                self.take(),
-                views.as_ptr(),
-                views.len(),
-                ptr::null(),
-                0,
+                request,
+                representations.as_ptr(),
+                representations.len(),
+                message,
+                message_len,
             )
         };
     }
-
-    /// Rejects with the platform's reason on the JS thread.
-    fn fail(self, global: &JSGlobalObject, unavailable: Unavailable) {
-        let message = unavailable.message();
-        // SAFETY: JS thread with a live global; `message` is 'static;
-        // consumes the leaked ref exactly once.
-        unsafe {
-            Bun__Clipboard__requestComplete(
-                global,
-                self.take(),
-                ptr::null(),
-                0,
-                message.as_ptr(),
-                message.len(),
-            )
-        };
-    }
-
-    /// Hands the raw pointer out without running `Drop`'s abandon.
-    fn take(self) -> *mut c_void {
-        core::mem::ManuallyDrop::new(self).0
-    }
 }
 
-impl Drop for RequestHandle {
+impl Drop for Request {
     fn drop(&mut self) {
-        // SAFETY: JS thread; still the live reference (`complete`/`fail`
-        // bypass Drop via `take`).
-        unsafe { Bun__Clipboard__requestAbandon(self.0) };
+        // SAFETY: JS thread; `complete` bypasses Drop, so the request is live.
+        unsafe { Bun__Clipboard__requestRelease(self.0) };
     }
 }
 
-/// A write's own reference to its request, so the pool thread can read the
-/// supersession flag without touching the JS-affine side.
-struct CancelProbe(*mut c_void);
-
-// SAFETY: holds no VM or JS state, only a ThreadSafeRefCounted request whose
-// flag is atomic (its JS-affine completion is touched solely through
-// `RequestHandle`, on the JS thread); it crosses threads inside the `Job`,
-// which holds the VM's ticket for the trip.
-unsafe impl Send for CancelProbe {}
-
-impl CancelProbe {
-    /// JS thread, at schedule, while the JS side's reference is held.
-    fn new(request: *mut c_void) -> CancelProbe {
-        // SAFETY: `request` is the live reference the JS side holds.
-        unsafe { Bun__Clipboard__requestRef(request) };
-        CancelProbe(request)
-    }
-
-    fn is_cancelled(&self) -> bool {
-        // SAFETY: our own reference keeps the request alive; atomic read.
-        unsafe { Bun__Clipboard__requestIsCancelled(self.0) }
-    }
-}
-
-impl Drop for CancelProbe {
-    fn drop(&mut self) {
-        // SAFETY: releases the reference `new` took; thread-safe by type.
-        unsafe { Bun__Clipboard__requestDeref(self.0) };
-    }
-}
-
-/// Mirrors `WebCore::ClipboardRepresentation`; pointers borrow for the call.
+/// Mirrors `WebCore::ClipboardRepresentation`; the bytes are borrowed for the call.
 #[repr(C)]
 pub struct Representation {
-    ty: *const u8,
-    ty_len: usize,
+    mime: Mime,
     bytes: *const u8,
     len: usize,
 }
 
 unsafe extern "C" {
-    /// Settles the request on the JS thread. A null `failure_message` means the
-    /// operation succeeded.
+    /// A null `failure_message` means the operation succeeded.
     fn Bun__Clipboard__requestComplete(
         global: &JSGlobalObject,
         request: *mut c_void,
@@ -129,21 +75,11 @@ unsafe extern "C" {
         failure_message: *const u8,
         failure_length: usize,
     );
-    /// JS thread: releases the completion of a request the VM tore down under.
-    fn Bun__Clipboard__requestAbandon(request: *mut c_void);
-    /// The off-thread reference (ThreadSafeRefCounted).
-    fn Bun__Clipboard__requestRef(request: *mut c_void);
-    fn Bun__Clipboard__requestDeref(request: *mut c_void);
-    /// Whether the JS thread cancelled this request (atomic; safe off-thread).
-    fn Bun__Clipboard__requestIsCancelled(request: *mut c_void) -> bool;
+    fn Bun__Clipboard__requestRelease(request: *mut c_void);
 }
 
-/// Single source of truth for `ClipboardItem.supports` / `write()` validation.
-const SUPPORTED: &[Mime] = &[Mime::TextPlain, Mime::TextHtml, Mime::ImagePng];
-
-/// The POSIX one-shot helpers own a single representation per invocation.
-const WRITES_SINGLE_REPRESENTATION: bool = cfg!(not(any(target_os = "macos", windows)));
-
+/// Mirrors `WebCore::ClipboardMIMEType`.
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mime {
     TextPlain,
@@ -152,175 +88,63 @@ enum Mime {
 }
 
 impl Mime {
-    fn as_str(self) -> &'static str {
-        match self {
-            Mime::TextPlain => "text/plain",
-            Mime::TextHtml => "text/html",
-            Mime::ImagePng => "image/png",
-        }
-    }
-
-    fn from_bytes(bytes: &[u8]) -> Option<Mime> {
-        // Keys arrive as serialized MIME types; the essence picks the format.
-        let essence = bun_core::strings::split_once_char(bytes, b';')
-            .map_or(bytes, |(essence, _params)| essence);
-        match essence {
-            b"text/plain" => Some(Mime::TextPlain),
-            b"text/html" => Some(Mime::TextHtml),
-            b"image/png" => Some(Mime::ImagePng),
-            _ => None,
-        }
-    }
+    const ALL: [Mime; 3] = [Mime::TextPlain, Mime::TextHtml, Mime::ImagePng];
 }
 
-/// What `run` executes off the JS thread; owned bytes only, no JS values.
+type Outcome = Result<Vec<(Mime, Vec<u8>)>, Unavailable>;
+
 enum Op {
     ReadText,
     Read,
-    Write {
-        items: Vec<(Mime, Vec<u8>)>,
-        probe: CancelProbe,
-    },
-}
-
-enum Outcome {
-    /// Empty means the clipboard held nothing this backend recognizes.
-    Representations(Vec<(Mime, Vec<u8>)>),
-    Failed(Unavailable),
+    Write(Vec<(Mime, Vec<u8>)>),
 }
 
 struct ClipboardOp {
     op: Op,
-    outcome: Option<Outcome>,
-}
-
-/// Held across a write's cancel check and platform transaction. A write()
-/// superseded by a later one has already rejected with AbortError
-/// (https://w3c.github.io/clipboard-apis/#dom-clipboard-write) and its flag
-/// is set before the successor is scheduled, so under this lock it either
-/// commits before the successor's transaction or sees the flag and skips;
-/// on two pool threads without it, the aborted write could land last.
-static WRITE_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
-
-fn write(items: &[(Mime, Vec<u8>)], probe: &CancelProbe) -> Outcome {
-    let _serialized = WRITE_LOCK.lock_guard();
-    if probe.is_cancelled() {
-        return Outcome::Representations(Vec::new());
-    }
-    let borrowed: Vec<(Mime, &[u8])> = items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
-    match platform::write_types(&borrowed) {
-        Ok(()) => Outcome::Representations(Vec::new()),
-        Err(unavailable) => Outcome::Failed(unavailable),
-    }
+    outcome: Outcome,
 }
 
 struct ClipboardJob;
 
 impl JobContext for ClipboardJob {
     type OffThread = ClipboardOp;
-    type Js = RequestHandle;
+    type Js = Request;
 
     fn run(this: &mut ClipboardOp, done: Completion<Self>) -> Option<Completion<Self>> {
-        this.outcome = Some(match &this.op {
-            Op::Write { items, probe } => write(items, probe),
-            Op::ReadText => match platform::read_type(Mime::TextPlain) {
-                Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
-                Ok(None) => Outcome::Representations(Vec::new()),
-                Err(unavailable) => Outcome::Failed(unavailable),
-            },
-            Op::Read => match platform::read_all(SUPPORTED) {
-                Ok(present) => Outcome::Representations(present),
-                Err(unavailable) => Outcome::Failed(unavailable),
-            },
-        });
+        this.outcome = match &this.op {
+            Op::ReadText => platform::read_types(&[Mime::TextPlain]),
+            Op::Read => platform::read_types(&Mime::ALL),
+            Op::Write(items) => platform::write_types(items).map(|()| Vec::new()),
+        };
         Some(done)
     }
 
-    fn then(this: ClipboardOp, request: RequestHandle, cx: &JsThread<'_>) -> bun_jsc::JsResult<()> {
-        let global = cx.global();
-        match this.outcome.expect("run() filled the outcome") {
-            Outcome::Representations(items) => request.complete(global, &items),
-            Outcome::Failed(unavailable) => request.fail(global, unavailable),
-        }
+    fn then(this: ClipboardOp, request: Request, cx: &JsThread<'_>) -> bun_jsc::JsResult<()> {
+        request.complete(cx.global(), &this.outcome);
         Ok(())
     }
 }
 
-fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
-    let off = ClipboardOp { op, outcome: None };
-    Job::<ClipboardJob>::schedule(&global.js_thread(), off, request);
+fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
+    let off = ClipboardOp {
+        op,
+        outcome: Err(Unavailable::Platform),
+    };
+    Job::<ClipboardJob>::schedule(&global.js_thread(), off, Request(request));
 }
 
-fn schedule_write(global: &JSGlobalObject, items: Vec<(Mime, Vec<u8>)>, request: RequestHandle) {
-    let probe = CancelProbe::new(request.0);
-    schedule(global, Op::Write { items, probe }, request);
-}
-
-/// # Safety
-/// `[ptr, ptr+len)` must be a readable range, or `ptr` null with `len` 0.
-unsafe fn copy_bytes(ptr: *const u8, len: usize) -> Vec<u8> {
-    if ptr.is_null() || len == 0 {
-        return Vec::new();
-    }
-    // SAFETY: forwarded from the caller's contract.
-    unsafe { bun_core::ffi::slice(ptr, len) }.to_vec()
-}
-
-// ─── entry points for WebCore ───────────────────────────────────────────────
-
-/// `ClipboardItem.supports()` / `write()` validation.
-/// # Safety
-/// `[mime, mime+len)` must be a readable range of the lowercased MIME type.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__Clipboard__supportsType(mime: *const u8, len: usize) -> bool {
-    if mime.is_null() || len == 0 {
-        return false;
-    }
-    // SAFETY: forwarded from the caller's contract.
-    let bytes = unsafe { bun_core::ffi::slice(mime, len) };
-    Mime::from_bytes(bytes).is_some_and(|mime| SUPPORTED.contains(&mime))
-}
-
-/// Whether the platform backend can only own one representation per write.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Clipboard__writesSingleRepresentation() -> bool {
-    WRITES_SINGLE_REPRESENTATION
-}
-
-/// `Clipboard.prototype.readText`.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Clipboard__scheduleReadText(global: &JSGlobalObject, request: *mut c_void) {
-    schedule(global, Op::ReadText, RequestHandle(request));
+    schedule(global, Op::ReadText, request);
 }
 
-/// `Clipboard.prototype.read`: one job reads every supported representation.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Clipboard__scheduleRead(global: &JSGlobalObject, request: *mut c_void) {
-    schedule(global, Op::Read, RequestHandle(request));
+    schedule(global, Op::Read, request);
 }
 
-/// `Clipboard.prototype.writeText` (bytes already WebIDL `DOMString`-converted).
 /// # Safety
-/// `[text, text+len)` must be a readable range, or `text` null with `len` 0.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__Clipboard__scheduleWriteText(
-    global: &JSGlobalObject,
-    request: *mut c_void,
-    text: *const u8,
-    len: usize,
-) {
-    // SAFETY: forwarded from the caller's contract.
-    let bytes = unsafe { copy_bytes(text, len) };
-    schedule_write(
-        global,
-        vec![(Mime::TextPlain, bytes)],
-        RequestHandle(request),
-    );
-}
-
-/// `Clipboard.prototype.write` (WebCore already collected Blobs + checked support).
-/// # Safety
-/// `representations[0..count]` and each entry's byte ranges must be readable for this call.
+/// `representations[..count]` and each entry's bytes must be readable for this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
     global: &JSGlobalObject,
@@ -328,34 +152,20 @@ pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
     representations: *const Representation,
     count: usize,
 ) {
-    let request = RequestHandle(request);
-    let mut items: Vec<(Mime, Vec<u8>)> = Vec::with_capacity(count);
-    if !representations.is_null() {
-        // SAFETY: forwarded from the caller's contract.
-        let entries = unsafe { core::slice::from_raw_parts(representations, count) };
-        for entry in entries {
-            // SAFETY: same.
-            let (ty, bytes) = unsafe {
-                (
-                    copy_bytes(entry.ty, entry.ty_len),
-                    copy_bytes(entry.bytes, entry.len),
-                )
-            };
-            let Some(mime) = Mime::from_bytes(&ty) else {
-                // Unreachable when WebCore validated support; reject rather
-                // than write a partial item.
-                request.fail(global, Unavailable::Platform);
-                return;
-            };
-            items.push((mime, bytes));
-        }
-    }
-    schedule_write(global, items, request);
+    // SAFETY: forwarded from the caller's contract.
+    let entries = unsafe { bun_core::ffi::slice(representations, count) };
+    let items = entries
+        .iter()
+        .map(|entry| {
+            // SAFETY: forwarded from the caller's contract.
+            let bytes = unsafe { bun_core::ffi::slice(entry.bytes, entry.len) };
+            (entry.mime, bytes.to_vec())
+        })
+        .collect();
+    schedule(global, Op::Write(items), request);
 }
 
-/// Why the platform clipboard is unreachable; carries the message the
-/// `NotAllowedError` rejects with.
-#[derive(Clone, Copy)]
+/// Why the platform clipboard could not be used; the `NotAllowedError` message.
 enum Unavailable {
     Platform,
     #[cfg(target_os = "macos")]
@@ -363,23 +173,19 @@ enum Unavailable {
     #[cfg(not(any(target_os = "macos", windows)))]
     NoDisplay,
     #[cfg(not(any(target_os = "macos", windows)))]
-    MultipleRepresentations,
-    #[cfg(not(any(target_os = "macos", windows)))]
     NoHelper,
     #[cfg(not(any(target_os = "macos", windows)))]
     HelperFailed,
+    #[cfg(not(any(target_os = "macos", windows)))]
+    Spawn(bun_sys::Error),
 }
 
 impl Unavailable {
-    fn message(self) -> &'static [u8] {
-        match self {
-            Unavailable::Platform => b"The system clipboard is not available.",
+    fn message(&self) -> Cow<'static, [u8]> {
+        Cow::Borrowed(match self {
+            Unavailable::Platform => b"The system clipboard is not available.".as_slice(),
             #[cfg(target_os = "macos")]
             Unavailable::Changing => b"The system clipboard changed while it was being read.",
-            #[cfg(not(any(target_os = "macos", windows)))]
-            Unavailable::MultipleRepresentations => {
-                b"Writing more than one representation per item is not supported on this platform."
-            }
             #[cfg(not(any(target_os = "macos", windows)))]
             Unavailable::NoDisplay => {
                 b"The clipboard requires a Wayland or X11 display, but neither $WAYLAND_DISPLAY nor $DISPLAY is set."
@@ -389,30 +195,31 @@ impl Unavailable {
                 b"No clipboard helper was found. Install `wl-clipboard` (Wayland), `xclip`, or `xsel` (X11)."
             }
             #[cfg(not(any(target_os = "macos", windows)))]
-            Unavailable::HelperFailed => {
-                b"The clipboard helper program failed to access the clipboard."
+            Unavailable::HelperFailed => b"The clipboard helper program failed to access the clipboard.",
+            #[cfg(not(any(target_os = "macos", windows)))]
+            Unavailable::Spawn(error) => {
+                return Cow::Owned(format!("The clipboard helper could not be started: {error}").into_bytes());
             }
-        }
+        })
     }
 }
 
 // ─── macOS: NSPasteboard via `image_coregraphics_shim.cpp` ──────────────────
-// NSPasteboard is not thread-safe; the shim holds one process-wide lock across
-// each of these calls (and across `Bun.Image.fromClipboard()`), so a call is
-// atomic but a sequence of them is not.
 #[cfg(target_os = "macos")]
 mod platform {
     use core::ffi::{CStr, c_char, c_void};
 
-    use super::{Mime, Unavailable};
+    use super::{Mime, Outcome, Unavailable};
 
     const CG_OK: i32 = 0;
+    const CG_CLIPBOARD_CHANGED: i32 = 5;
 
     unsafe extern "C" {
-        fn bun_coregraphics_clipboard_read_type(
-            uti: *const c_char,
-            out_data: *mut *mut c_void,
-            out_len: *mut usize,
+        fn bun_coregraphics_clipboard_read_types(
+            utis: *const *const c_char,
+            count: usize,
+            out_datas: *mut *mut c_void,
+            out_lens: *mut usize,
         ) -> i32;
         fn bun_coregraphics_clipboard_take_data(data: *mut c_void, out: *mut u8) -> i32;
         fn bun_coregraphics_clipboard_write_types(
@@ -423,8 +230,6 @@ mod platform {
         ) -> i32;
     }
 
-    use crate::image::backend_coregraphics::clipboard_change_count;
-
     fn uti(mime: Mime) -> &'static CStr {
         match mime {
             Mime::TextPlain => c"public.utf8-plain-text",
@@ -433,86 +238,67 @@ mod platform {
         }
     }
 
-    pub(super) fn read_type(mime: Mime) -> Result<Option<Vec<u8>>, Unavailable> {
-        let uti = uti(mime).as_ptr();
-        let mut data: *mut c_void = core::ptr::null_mut();
-        let mut len: usize = 0;
-        // SAFETY: both are valid out-params and `uti` is a NUL-terminated static.
-        if unsafe { bun_coregraphics_clipboard_read_type(uti, &raw mut data, &raw mut len) }
-            != CG_OK
-        {
-            return Err(Unavailable::Platform);
-        }
-        if data.is_null() {
-            debug_assert_eq!(len, 0);
-            return Ok(None);
-        }
-        let mut buf = vec![0u8; len];
-        // SAFETY: `data` is the retained, exactly-`len`-byte NSData the call above handed
-        // over; this consumes the handle, copying into a buffer of that exact length.
-        if unsafe { bun_coregraphics_clipboard_take_data(data, buf.as_mut_ptr()) } != CG_OK {
-            return Err(Unavailable::Platform);
-        }
-        Ok(Some(buf))
-    }
-
-    /// The per-type reads are separate transactions, so re-read if anything
-    /// (another process, or a write on another pool thread) bumped
-    /// `changeCount` mid-loop; still changing after a few tries fails the read.
-    pub(super) fn read_all(types: &[Mime]) -> Result<Vec<(Mime, Vec<u8>)>, Unavailable> {
-        let mut attempt = 0;
-        loop {
-            let generation = clipboard_change_count();
+    pub(super) fn read_types(types: &[Mime]) -> Outcome {
+        let utis: Vec<*const c_char> = types.iter().map(|&mime| uti(mime).as_ptr()).collect();
+        let mut datas: Vec<*mut c_void> = vec![core::ptr::null_mut(); types.len()];
+        let mut lens = vec![0usize; types.len()];
+        // Another process writing between the per-type reads would tear the item.
+        for _ in 0..4 {
+            // SAFETY: the three arrays are `types.len()` long and the UTIs are static.
+            let status = unsafe {
+                bun_coregraphics_clipboard_read_types(
+                    utis.as_ptr(),
+                    types.len(),
+                    datas.as_mut_ptr(),
+                    lens.as_mut_ptr(),
+                )
+            };
+            if status == CG_CLIPBOARD_CHANGED {
+                continue;
+            }
+            if status != CG_OK {
+                return Err(Unavailable::Platform);
+            }
             let mut present = Vec::new();
-            let mut readable = false;
-            let mut unavailable = Unavailable::Platform;
-            for mime in types {
-                match read_type(*mime) {
-                    Ok(Some(bytes)) => {
-                        readable = true;
-                        present.push((*mime, bytes));
-                    }
-                    Ok(None) => readable = true,
-                    Err(reason) => unavailable = reason,
+            let mut copied = true;
+            for ((&mime, &data), &len) in types.iter().zip(&datas).zip(&lens) {
+                if data.is_null() {
+                    continue;
                 }
+                let mut bytes = vec![0u8; len];
+                // SAFETY: `data` is the retained `len`-byte NSData the call above
+                // handed over; this copies it into `bytes` and releases it.
+                copied &= unsafe { bun_coregraphics_clipboard_take_data(data, bytes.as_mut_ptr()) }
+                    == CG_OK;
+                present.push((mime, bytes));
             }
-            if !readable {
-                return Err(unavailable);
-            }
-            if clipboard_change_count() == generation {
-                return Ok(present);
-            }
-            attempt += 1;
-            if attempt == 4 {
-                return Err(Unavailable::Changing);
-            }
+            return if copied {
+                Ok(present)
+            } else {
+                Err(Unavailable::Platform)
+            };
         }
+        Err(Unavailable::Changing)
     }
 
-    pub(super) fn write_types(items: &[(Mime, &[u8])]) -> Result<(), Unavailable> {
-        // Never `clearContents` with nothing to set.
+    pub(super) fn write_types(items: &[(Mime, Vec<u8>)]) -> Result<(), Unavailable> {
         if items.is_empty() {
             return Ok(());
         }
-        let mut utis: Vec<*const c_char> = Vec::with_capacity(items.len());
-        let mut datas: Vec<*const u8> = Vec::with_capacity(items.len());
-        let mut lens: Vec<usize> = Vec::with_capacity(items.len());
-        for (mime, bytes) in items {
-            utis.push(uti(*mime).as_ptr());
-            datas.push(bytes.as_ptr());
-            lens.push(bytes.len());
-        }
-        // SAFETY: the three arrays are index-aligned and outlive the call;
-        // the shim copies every payload to the pasteboard before returning.
-        let ok = unsafe {
+        let utis: Vec<*const c_char> = items.iter().map(|(mime, _)| uti(*mime).as_ptr()).collect();
+        let datas: Vec<*const u8> = items.iter().map(|(_, bytes)| bytes.as_ptr()).collect();
+        let lens: Vec<usize> = items.iter().map(|(_, bytes)| bytes.len()).collect();
+        // SAFETY: the three arrays are index-aligned and outlive the call, which
+        // copies every payload.
+        let status = unsafe {
             bun_coregraphics_clipboard_write_types(
                 utis.as_ptr(),
                 datas.as_ptr(),
                 lens.as_ptr(),
                 items.len(),
-            ) == CG_OK
+            )
         };
-        if ok {
+        if status == CG_OK {
             Ok(())
         } else {
             Err(Unavailable::Platform)
@@ -521,31 +307,169 @@ mod platform {
 }
 
 // ─── Windows ────────────────────────────────────────────────────────────────
-// `CF_UNICODETEXT` for text, "HTML Format" (CF_HTML) for HTML, and the
-// registered "PNG" / "image/png" formats for PNG. The externs and the
-// open/close guard (one transaction per process) live in
-// `bun_sys::windows::clipboard`, as does the owned HGLOBAL a write prepares;
-// the locked view of a clipboard-owned HGLOBAL below is the only other unsafe
-// user.
+#[cfg(windows)]
+pub(crate) mod win32 {
+    use core::ffi::{CStr, c_uint};
+    use core::marker::PhantomData;
+    use core::mem::ManuallyDrop;
+
+    use bun_sys::windows::{HANDLE, kernel32, user32};
+
+    /// `OpenClipboard(NULL)` does not exclude this process's other threads.
+    static TRANSACTION: bun_threading::Mutex = bun_threading::Mutex::new();
+
+    /// The clipboard, open on this thread until dropped.
+    pub(crate) struct OpenedClipboard {
+        _not_send: PhantomData<*const ()>,
+    }
+
+    impl OpenedClipboard {
+        /// Waits for this process and retries briefly while another one holds the clipboard.
+        pub(crate) fn open() -> Option<Self> {
+            const ATTEMPTS: u32 = 5;
+            TRANSACTION.lock();
+            for attempt in 1..=ATTEMPTS {
+                if let Some(clipboard) = Self::open_locked() {
+                    return Some(clipboard);
+                }
+                if attempt < ATTEMPTS {
+                    kernel32::Sleep(5 * attempt);
+                }
+            }
+            TRANSACTION.unlock();
+            None
+        }
+
+        /// One attempt without waiting, for callers on the JS thread.
+        pub(crate) fn try_open() -> Option<Self> {
+            if !TRANSACTION.try_lock() {
+                return None;
+            }
+            let clipboard = Self::open_locked();
+            if clipboard.is_none() {
+                TRANSACTION.unlock();
+            }
+            clipboard
+        }
+
+        fn open_locked() -> Option<Self> {
+            (user32::OpenClipboard(core::ptr::null_mut()) != 0).then_some(OpenedClipboard {
+                _not_send: PhantomData,
+            })
+        }
+
+        /// `f` sees `format`'s bytes, `GlobalSize` long; `None` when absent or unlockable.
+        pub(crate) fn with_data<R>(
+            &mut self,
+            format: c_uint,
+            f: impl FnOnce(&[u8]) -> R,
+        ) -> Option<R> {
+            let h = user32::GetClipboardData(format);
+            if h.is_null() {
+                return None;
+            }
+            // SAFETY: `h` belongs to the open clipboard, which `&mut self` keeps
+            // unchanged for this call.
+            let p = unsafe { kernel32::GlobalLock(h) };
+            if p.is_null() {
+                return None;
+            }
+            // SAFETY: locked, so `GlobalSize` bytes stay readable until the unlock.
+            let result =
+                f(unsafe { core::slice::from_raw_parts(p.cast::<u8>(), kernel32::GlobalSize(h)) });
+            // SAFETY: balances the lock above.
+            unsafe { kernel32::GlobalUnlock(h) };
+            Some(result)
+        }
+
+        /// Replaces the contents; a failure part-way leaves the clipboard empty.
+        pub(crate) fn replace(&mut self, formats: Vec<(c_uint, OwnedGlobal)>) -> bool {
+            // SAFETY: open on this thread, and `&mut self` rules out a live `with_data` view.
+            if unsafe { user32::EmptyClipboard() } == 0 {
+                return false;
+            }
+            for (format, global) in formats {
+                let global = ManuallyDrop::new(global);
+                // SAFETY: as above; `global` is an unlocked HGLOBAL this process owns.
+                if unsafe { user32::SetClipboardData(format, global.0) }.is_null() {
+                    drop(ManuallyDrop::into_inner(global));
+                    // SAFETY: as above.
+                    unsafe { user32::EmptyClipboard() };
+                    return false;
+                }
+            }
+            true
+        }
+    }
+
+    impl Drop for OpenedClipboard {
+        fn drop(&mut self) {
+            // SAFETY: open on this thread; no `with_data` view outlives `self`.
+            unsafe { user32::CloseClipboard() };
+            TRANSACTION.unlock();
+        }
+    }
+
+    /// 0 on failure; a name always maps to the same id.
+    pub(crate) fn register_format(name: &CStr) -> c_uint {
+        // SAFETY: `&CStr` is a readable NUL-terminated name.
+        unsafe { user32::RegisterClipboardFormatA(name.as_ptr()) }
+    }
+
+    /// A movable HGLOBAL this process owns, freed on drop unless the clipboard takes it.
+    pub(crate) struct OwnedGlobal(HANDLE);
+
+    impl OwnedGlobal {
+        /// Allocates at least one byte: a 0-byte HGLOBAL cannot be locked.
+        pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let h = kernel32::GlobalAlloc(
+                kernel32::GMEM_MOVEABLE | kernel32::GMEM_ZEROINIT,
+                bytes.len().max(1),
+            );
+            if h.is_null() {
+                return None;
+            }
+            let global = OwnedGlobal(h);
+            // SAFETY: a fresh unlocked allocation of at least `bytes.len()` bytes.
+            unsafe {
+                let dst = kernel32::GlobalLock(h);
+                if dst.is_null() {
+                    return None;
+                }
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.cast::<u8>(), bytes.len());
+                kernel32::GlobalUnlock(h);
+            }
+            Some(global)
+        }
+    }
+
+    impl Drop for OwnedGlobal {
+        fn drop(&mut self) {
+            // SAFETY: still ours: `replace` forgets the handles the clipboard takes.
+            unsafe { kernel32::GlobalFree(self.0) };
+        }
+    }
+}
+
 #[cfg(windows)]
 mod platform {
-    use core::ffi::{CStr, c_uint, c_void};
+    use core::ffi::{CStr, c_uint};
 
-    use bun_sys::windows::clipboard::{
-        self as win32, CF_UNICODETEXT, OpenedClipboard, OwnedGlobal,
-    };
+    use bun_sys::windows::user32::CF_UNICODETEXT;
 
-    use super::{Mime, Unavailable};
+    use super::win32::{OpenedClipboard, OwnedGlobal, register_format};
+    use super::{Mime, Outcome, Unavailable};
+
+    const CF_DIBV5: c_uint = 17;
 
     fn register(name: &CStr) -> Option<c_uint> {
-        match win32::register_format(name) {
+        match register_format(name) {
             0 => None,
             id => Some(id),
         }
     }
 
-    /// The formats probed for a read, in preference order. Apps register raw
-    /// PNG bytes under either name, so accept both (like the image reader).
+    /// Producers register PNG under either name.
     fn read_formats(mime: Mime) -> [Option<c_uint>; 2] {
         match mime {
             Mime::TextPlain => [Some(CF_UNICODETEXT), None],
@@ -554,7 +478,6 @@ mod platform {
         }
     }
 
-    /// The single format a representation is written as.
     fn write_format(mime: Mime) -> Option<c_uint> {
         match mime {
             Mime::TextPlain => Some(CF_UNICODETEXT),
@@ -563,9 +486,6 @@ mod platform {
         }
     }
 
-    /// Wraps a UTF-8 HTML fragment in the `CF_HTML` envelope: a fixed-width
-    /// header whose numbers are byte offsets into the payload, which browsers
-    /// NUL-terminate because consumers exist that read it with `strlen`.
     /// https://learn.microsoft.com/en-us/windows/win32/dataxchg/html-clipboard-format
     fn build_cf_html(fragment: &[u8]) -> Vec<u8> {
         const PREFIX: &str = "<html>\r\n<body>\r\n<!--StartFragment-->";
@@ -585,8 +505,6 @@ mod platform {
         out
     }
 
-    /// The `NAME:<digits>` header field of a `CF_HTML` payload, as a byte
-    /// offset into that payload.
     fn cf_html_offset(payload: &[u8], key: &[u8]) -> Option<usize> {
         let at = bun_core::strings::index_of(payload, key)?;
         let digits = &payload[at + key.len()..];
@@ -594,9 +512,7 @@ mod platform {
         core::str::from_utf8(&digits[..end]).ok()?.parse().ok()
     }
 
-    /// Extracts the fragment of a `CF_HTML` payload; other producers wrote
-    /// it, so the offsets are validated rather than trusted, falling back to
-    /// the fragment comment markers some producers get right instead.
+    /// Checks another program's offsets, falling back to the fragment markers.
     fn cf_html_fragment(payload: &[u8]) -> Option<Vec<u8>> {
         if let (Some(start), Some(end)) = (
             cf_html_offset(payload, b"StartFragment:"),
@@ -613,124 +529,55 @@ mod platform {
         Some(payload[start..end].to_vec())
     }
 
-    /// Locked view of an HGLOBAL the open clipboard owns.
-    struct LockedGlobal<'clipboard> {
-        h: *mut c_void,
-        p: *mut c_void,
-        _clipboard: &'clipboard OpenedClipboard,
+    /// Stops at the first NUL without trusting one to exist.
+    fn text_from_utf16(bytes: &[u8]) -> Vec<u8> {
+        let units: Vec<u16> = bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
+            .take_while(|&unit| unit != 0)
+            .collect();
+        String::from_utf16_lossy(&units).into_bytes()
     }
 
-    impl<'clipboard> LockedGlobal<'clipboard> {
-        fn new(clipboard: &'clipboard OpenedClipboard, h: *mut c_void) -> Option<Self> {
-            // SAFETY: `h` is owned by the clipboard, which stays open for 'clipboard.
-            let p = unsafe { win32::GlobalLock(h) };
-            if p.is_null() {
-                return None;
-            }
-            Some(LockedGlobal {
-                h,
-                p,
-                _clipboard: clipboard,
-            })
-        }
-
-        /// `GlobalSize` can over-report by allocation slack; Win32 has no
-        /// exact-length channel.
-        fn bytes(&self) -> &[u8] {
-            // SAFETY: the allocation stays locked while `self` lives.
-            unsafe { core::slice::from_raw_parts(self.p.cast::<u8>(), win32::GlobalSize(self.h)) }
+    /// Cuts `GlobalSize` slack after https://www.w3.org/TR/png-3/#11IEND
+    fn trim_png(bytes: &[u8]) -> &[u8] {
+        const IEND: &[u8] = b"IEND\xAE\x42\x60\x82";
+        match bun_core::strings::last_index_of(bytes, IEND) {
+            Some(at) => &bytes[..at + IEND.len()],
+            None => bytes,
         }
     }
 
-    impl Drop for LockedGlobal<'_> {
-        fn drop(&mut self) {
-            // SAFETY: balances the successful `GlobalLock`.
-            let _ = unsafe { win32::GlobalUnlock(self.h) };
-        }
-    }
-
-    /// Other processes wrote the payload: trim text at the first NUL without
-    /// trusting one to exist.
-    fn copy_global(locked: &LockedGlobal, text: bool) -> Vec<u8> {
-        let bytes = locked.bytes();
-        if text {
-            let wide: Vec<u16> = bytes
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|pair| u16::from_le_bytes(*pair))
-                .take_while(|&unit| unit != 0)
-                .collect();
-            return String::from_utf16_lossy(&wide).into_bytes();
-        }
-        bytes.to_vec()
-    }
-
-    fn read_type_locked(
-        clipboard: &OpenedClipboard,
-        mime: Mime,
-    ) -> Result<Option<Vec<u8>>, Unavailable> {
+    fn read_type(clipboard: &mut OpenedClipboard, mime: Mime) -> Option<Vec<u8>> {
         for format in read_formats(mime).into_iter().flatten() {
-            let h = clipboard.get(format);
-            if h.is_null() {
-                continue;
-            }
-            // A handle another app left unlockable (e.g. discarded) reads as
-            // absent rather than failing the whole operation.
-            let Some(locked) = LockedGlobal::new(clipboard, h) else {
-                continue;
-            };
-            let bytes = copy_global(&locked, mime == Mime::TextPlain);
-            drop(locked);
-            return Ok(match mime {
-                Mime::TextPlain => Some(bytes),
-                Mime::ImagePng => Some(trim_png(bytes)),
+            // Memory another app left unlockable reads as absent.
+            if let Some(bytes) = clipboard.with_data(format, |bytes| match mime {
+                Mime::TextPlain => Some(text_from_utf16(bytes)),
+                Mime::ImagePng => Some(trim_png(bytes).to_vec()),
                 Mime::TextHtml => {
-                    // CF_HTML is NUL-terminated UTF-8; an unparsable envelope
-                    // reads as absent.
                     let end =
-                        bun_core::strings::index_of_char_usize(&bytes, 0).unwrap_or(bytes.len());
+                        bun_core::strings::index_of_char_usize(bytes, 0).unwrap_or(bytes.len());
                     cf_html_fragment(&bytes[..end])
                 }
-            });
-        }
-        Ok(None)
-    }
-
-    /// `GlobalSize` includes the allocator's rounding past the producer's
-    /// bytes. A PNG stream ends with its IEND chunk, whose type and CRC are
-    /// constant (https://www.w3.org/TR/png-3/#11IEND), so cut after it.
-    fn trim_png(mut bytes: Vec<u8>) -> Vec<u8> {
-        const IEND: &[u8] = b"IEND\xAE\x42\x60\x82";
-        if let Some(at) = bun_core::strings::last_index_of(&bytes, IEND) {
-            bytes.truncate(at + IEND.len());
-        }
-        bytes
-    }
-
-    pub(super) fn read_type(mime: Mime) -> Result<Option<Vec<u8>>, Unavailable> {
-        if read_formats(mime).iter().all(Option::is_none) {
-            return Ok(None);
-        }
-        let clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
-        read_type_locked(&clipboard, mime)
-    }
-
-    /// One open/close spans every type, so another process cannot write
-    /// between them and tear the item across two clipboard states.
-    pub(super) fn read_all(types: &[Mime]) -> Result<Vec<(Mime, Vec<u8>)>, Unavailable> {
-        let clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
-        let mut present = Vec::new();
-        for mime in types {
-            if let Some(bytes) = read_type_locked(&clipboard, *mime)? {
-                present.push((*mime, bytes));
+            }) {
+                return bytes;
             }
         }
-        Ok(present)
+        None
     }
 
-    /// Bare `\n` becomes `\r\n`, per the spec's writeText note for Windows:
-    /// https://w3c.github.io/clipboard-apis/#dom-clipboard-writetext
+    /// One open span, so no other process writes between the types.
+    pub(super) fn read_types(types: &[Mime]) -> Outcome {
+        let mut clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
+        Ok(types
+            .iter()
+            .filter_map(|&mime| Some((mime, read_type(&mut clipboard, mime)?)))
+            .collect())
+    }
+
+    /// Bare `\n` becomes `\r\n`: https://w3c.github.io/clipboard-apis/#dom-clipboard-writetext
     fn normalize_to_crlf(bytes: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(bytes.len() + 16);
         let mut prev = 0u8;
@@ -744,166 +591,234 @@ mod platform {
         out
     }
 
-    /// `GMEM_MOVEABLE` HGLOBAL holding `bytes` (NUL-terminated UTF-16 for
-    /// text, the `CF_HTML` envelope for HTML); `None` on allocation failure.
     fn make_global(mime: Mime, bytes: &[u8]) -> Option<OwnedGlobal> {
-        let wide;
-        let enveloped;
-        let converted;
-        let payload: &[u8] = match mime {
+        match mime {
             Mime::TextPlain => {
-                let text: &[u8] = if bun_core::strings::contains_char(bytes, b'\n') {
-                    converted = normalize_to_crlf(bytes);
-                    &converted
+                let crlf;
+                let text = if bun_core::strings::contains_char(bytes, b'\n') {
+                    crlf = normalize_to_crlf(bytes);
+                    &crlf[..]
                 } else {
                     bytes
                 };
-                // Replaces ill-formed sequences; the sentinel appends the NUL
-                // `CF_UNICODETEXT` requires.
-                let w = bun_core::strings::to_utf16_alloc_for_real(text, false, true).ok()?;
-                wide = w;
-                bytemuck::cast_slice::<u16, u8>(&wide)
+                // CF_UNICODETEXT is NUL-terminated UTF-16.
+                let wide = bun_core::strings::to_utf16_alloc_for_real(text, false, true).ok()?;
+                OwnedGlobal::from_bytes(bytemuck::cast_slice::<u16, u8>(&wide))
             }
-            Mime::TextHtml => {
-                enveloped = build_cf_html(bytes);
-                &enveloped
-            }
-            Mime::ImagePng => bytes,
-        };
-        OwnedGlobal::from_bytes(payload)
+            Mime::TextHtml => OwnedGlobal::from_bytes(&build_cf_html(bytes)),
+            Mime::ImagePng => OwnedGlobal::from_bytes(bytes),
+        }
     }
 
-    pub(super) fn write_types(items: &[(Mime, &[u8])]) -> Result<(), Unavailable> {
-        if items.is_empty() {
-            return Ok(());
+    /// https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapv5header
+    fn dibv5_from_png(png: &[u8]) -> Option<Vec<u8>> {
+        const HEADER_SIZE: u32 = 124;
+        const BI_BITFIELDS: u32 = 3;
+        const LCS_SRGB: u32 = u32::from_be_bytes(*b"sRGB");
+        const LCS_GM_IMAGES: u32 = 4;
+        let image =
+            crate::image::backend_wic::decode(png, crate::image::codecs::DEFAULT_MAX_PIXELS)
+                .ok()?;
+        if image.width == 0 || image.height == 0 {
+            return None;
         }
-        // Prepare every HGLOBAL first: `EmptyClipboard` destroys the previous
-        // contents, so nothing fallible may follow it. Any early return frees
-        // the unaccepted handles via OwnedGlobal's Drop.
-        let mut prepared: Vec<(c_uint, OwnedGlobal)> = Vec::with_capacity(items.len());
-        for (mime, bytes) in items {
-            let format = write_format(*mime).ok_or(Unavailable::Platform)?;
-            let global = make_global(*mime, bytes).ok_or(Unavailable::Platform)?;
-            prepared.push((format, global));
+        let size_image = u32::try_from(image.rgba.len()).ok()?;
+        let mut dib = Vec::with_capacity(HEADER_SIZE as usize + image.rgba.len());
+        let mut put = |value: u32| dib.extend_from_slice(&value.to_le_bytes());
+        // Positive height: rows run bottom-up.
+        for value in [HEADER_SIZE, image.width, image.height, 1 | (32 << 16)] {
+            put(value);
         }
-        let clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
-        if !clipboard.empty() {
-            return Err(Unavailable::Platform);
+        for value in [BI_BITFIELDS, size_image, 0, 0, 0, 0] {
+            put(value);
         }
-        for (format, global) in prepared {
-            // The rest of the iterator drops and frees on the way out.
-            if !clipboard.set(format, global) {
-                return Err(Unavailable::Platform);
+        for value in [0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0xFF00_0000, LCS_SRGB] {
+            put(value);
+        }
+        dib.resize(dib.len() + 36 + 12, 0);
+        for value in [LCS_GM_IMAGES, 0, 0, 0] {
+            dib.extend_from_slice(&u32::to_le_bytes(value));
+        }
+        debug_assert_eq!(dib.len(), HEADER_SIZE as usize);
+        for row in image.rgba.chunks_exact(image.width as usize * 4).rev() {
+            for pixel in row.as_chunks::<4>().0 {
+                dib.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
             }
         }
-        Ok(())
+        Some(dib)
+    }
+
+    pub(super) fn write_types(items: &[(Mime, Vec<u8>)]) -> Result<(), Unavailable> {
+        // Everything fallible happens before the clipboard is emptied.
+        let mut formats = Vec::with_capacity(items.len() + 1);
+        for (mime, bytes) in items {
+            let format = write_format(*mime).ok_or(Unavailable::Platform)?;
+            formats.push((
+                format,
+                make_global(*mime, bytes).ok_or(Unavailable::Platform)?,
+            ));
+            if *mime == Mime::ImagePng
+                && let Some(dib) = dibv5_from_png(bytes)
+            {
+                formats.push((
+                    CF_DIBV5,
+                    OwnedGlobal::from_bytes(&dib).ok_or(Unavailable::Platform)?,
+                ));
+            }
+        }
+        let mut clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
+        if clipboard.replace(formats) {
+            Ok(())
+        } else {
+            Err(Unavailable::Platform)
+        }
     }
 }
 
-// ─── everything else (Linux, the BSDs, …) ───────────────────────────────────
-// No in-process API: spawn `wl-paste`/`wl-copy` (Wayland), `xclip`, or `xsel`
-// (text only) on the work pool, gated on `$WAYLAND_DISPLAY` / `$DISPLAY`.
+// ─── everything else: `wl-clipboard`, `xclip`, or `xsel` (text only) ────────
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
-    use bun_core::env_var;
+    use bun_core::{env_var, strings};
     use bun_sys::{Fd, File, O};
 
     use crate::api::bun_process::Status as SpawnStatus;
     use crate::api::bun_process::sync as spawn_sync;
 
-    use super::{Mime, Unavailable};
+    use super::{Mime, Outcome, Unavailable};
 
-    fn has_display(value: Option<&[u8]>) -> bool {
+    fn is_set(value: Option<&[u8]>) -> bool {
         value.is_some_and(|value| !value.is_empty())
     }
 
-    fn wayland() -> bool {
-        has_display(env_var::WAYLAND_DISPLAY::get())
+    #[derive(Clone, Copy)]
+    enum Helper {
+        WlClipboard,
+        Xclip,
+        Xsel,
     }
 
-    fn x11() -> bool {
-        has_display(env_var::DISPLAY::get())
+    /// The helpers for the displays this process can reach, in preference order.
+    fn helpers() -> Result<Vec<Helper>, Unavailable> {
+        let mut list = Vec::with_capacity(3);
+        if is_set(env_var::WAYLAND_DISPLAY::get()) {
+            list.push(Helper::WlClipboard);
+        }
+        if is_set(env_var::DISPLAY::get()) {
+            list.extend([Helper::Xclip, Helper::Xsel]);
+        }
+        if list.is_empty() {
+            return Err(Unavailable::NoDisplay);
+        }
+        Ok(list)
     }
 
-    /// One helper invocation, classified by the watchdog's exit codes
-    /// (127/126 missing, 124 hung); no helper uses those for a real answer.
+    impl Helper {
+        fn read_argv(self, mime: Mime) -> Option<&'static [&'static str]> {
+            Some(match (self, mime) {
+                // `--type text` matches any text flavour; `--no-newline` adds none.
+                (Helper::WlClipboard, Mime::TextPlain) => {
+                    &["wl-paste", "--no-newline", "--type", "text"]
+                }
+                (Helper::WlClipboard, Mime::TextHtml) => {
+                    &["wl-paste", "--no-newline", "--type", "text/html"]
+                }
+                (Helper::WlClipboard, Mime::ImagePng) => {
+                    &["wl-paste", "--no-newline", "--type", "image/png"]
+                }
+                (Helper::Xclip, Mime::TextPlain) => &["xclip", "-selection", "clipboard", "-out"],
+                (Helper::Xclip, Mime::TextHtml) => &[
+                    "xclip",
+                    "-selection",
+                    "clipboard",
+                    "-t",
+                    "text/html",
+                    "-out",
+                ],
+                (Helper::Xclip, Mime::ImagePng) => &[
+                    "xclip",
+                    "-selection",
+                    "clipboard",
+                    "-t",
+                    "image/png",
+                    "-out",
+                ],
+                (Helper::Xsel, Mime::TextPlain) => &["xsel", "--clipboard", "--output"],
+                (Helper::Xsel, _) => return None,
+            })
+        }
+
+        fn write_argv(self, mime: Mime) -> Option<&'static [&'static str]> {
+            Some(match (self, mime) {
+                (Helper::WlClipboard, Mime::TextPlain) => {
+                    &["wl-copy", "--type", "text/plain;charset=utf-8"]
+                }
+                (Helper::WlClipboard, Mime::TextHtml) => &["wl-copy", "--type", "text/html"],
+                (Helper::WlClipboard, Mime::ImagePng) => &["wl-copy", "--type", "image/png"],
+                (Helper::Xclip, Mime::TextPlain) => &["xclip", "-selection", "clipboard", "-in"],
+                (Helper::Xclip, Mime::TextHtml) => {
+                    &["xclip", "-selection", "clipboard", "-t", "text/html", "-in"]
+                }
+                (Helper::Xclip, Mime::ImagePng) => {
+                    &["xclip", "-selection", "clipboard", "-t", "image/png", "-in"]
+                }
+                (Helper::Xsel, Mime::TextPlain) => &["xsel", "--clipboard", "--input"],
+                (Helper::Xsel, _) => return None,
+            })
+        }
+
+        /// Prints the offered types, one per line; xsel has no such mode.
+        fn targets_argv(self) -> Option<&'static [&'static str]> {
+            match self {
+                Helper::WlClipboard => Some(&["wl-paste", "--list-types"]),
+                Helper::Xclip => {
+                    Some(&["xclip", "-selection", "clipboard", "-t", "TARGETS", "-out"])
+                }
+                Helper::Xsel => None,
+            }
+        }
+    }
+
+    fn offers(targets: &[u8], mime: Mime) -> bool {
+        strings::split(targets, b"\n").any(|line| {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            let essence = strings::split_once_char(line, b';').map_or(line, |(essence, _)| essence);
+            match mime {
+                Mime::TextPlain => matches!(
+                    essence,
+                    b"text/plain" | b"UTF8_STRING" | b"STRING" | b"TEXT"
+                ),
+                Mime::TextHtml => essence == b"text/html",
+                Mime::ImagePng => essence == b"image/png",
+            }
+        })
+    }
+
     enum HelperRun {
         NotInstalled,
-        TimedOut,
         Succeeded(Vec<u8>),
-        /// `clean`: the helper itself exited non-zero ("nothing to paste").
+        /// `clean`: the helper reached the display and says nothing is copied.
         Failed {
             clean: bool,
         },
     }
 
+    /// The watchdog's codes (127/126 missing, 124 killed) are ones no helper uses.
     fn classify(result: spawn_sync::Result) -> HelperRun {
-        const EXIT_TIMED_OUT: i64 = 124;
-        const EXIT_CANNOT_RUN: i64 = 126;
-        const EXIT_NOT_FOUND: i64 = 127;
         if result.status.is_ok() {
             return HelperRun::Succeeded(result.stdout);
-        }
-        // A signal-killed helper proves nothing about the clipboard.
-        if result.status.signal_code().is_some() {
-            return HelperRun::Failed { clean: false };
         }
         let SpawnStatus::Exited(exited) = result.status else {
             return HelperRun::Failed { clean: false };
         };
-        match i64::from(exited.code) {
-            EXIT_NOT_FOUND | EXIT_CANNOT_RUN => HelperRun::NotInstalled,
-            EXIT_TIMED_OUT => HelperRun::TimedOut,
-            _ => HelperRun::Failed { clean: true },
+        match exited.code {
+            126 | 127 => HelperRun::NotInstalled,
+            124 => HelperRun::Failed { clean: false },
+            // xclip and xsel: "Can't open display"; wl-paste: "Failed to connect to a Wayland server".
+            _ => HelperRun::Failed {
+                clean: !strings::contains(&result.stderr, b"display")
+                    && !strings::contains(&result.stderr, b"connect"),
+            },
         }
-    }
-
-    /// Reads and writes walk the same candidate list, so both reach the same
-    /// clipboard.
-    fn candidates(write: bool, mime: Mime) -> Vec<Vec<Box<[u8]>>> {
-        let text = mime == Mime::TextPlain;
-        let mime_arg = mime.as_str();
-        let mut list: Vec<Vec<Box<[u8]>>> = Vec::new();
-        let arg = |s: &str| -> Box<[u8]> { Box::from(s.as_bytes()) };
-        if wayland() {
-            // `--type text` matches any text flavour but never dumps binary;
-            // `--no-newline` stops wl-paste appending one never copied.
-            list.push(if write {
-                vec![
-                    arg("wl-copy"),
-                    arg("--type"),
-                    arg(if text {
-                        "text/plain;charset=utf-8"
-                    } else {
-                        mime_arg
-                    }),
-                ]
-            } else {
-                vec![
-                    arg("wl-paste"),
-                    arg("--no-newline"),
-                    arg("--type"),
-                    arg(if text { "text" } else { mime_arg }),
-                ]
-            });
-        }
-        if x11() {
-            let mut xclip = vec![arg("xclip"), arg("-selection"), arg("clipboard")];
-            if !text {
-                xclip.push(arg("-t"));
-                xclip.push(arg(mime_arg));
-            }
-            xclip.push(arg(if write { "-in" } else { "-out" }));
-            list.push(xclip);
-            if text {
-                list.push(vec![
-                    arg("xsel"),
-                    arg("--clipboard"),
-                    arg(if write { "--input" } else { "--output" }),
-                ]);
-            }
-        }
-        list
     }
 
     /// POSIX single-quoting: literal inside `'…'` except `'` -> `'\''`.
@@ -919,174 +834,175 @@ mod platform {
         command.push(b'\'');
     }
 
-    /// Runs one helper through `/bin/sh` under a watchdog (a hung X11 selection owner blocks
-    /// forever; 10s unless the testing hook shortens it): killed → exit 124, missing → 127.
-    /// `None` ⇔ `/bin/sh` unspawnable.
-    fn run_helper(
-        argv: &[Box<[u8]>],
-        redirect_from: Option<&[u8]>,
+    /// Runs a helper under a `/bin/sh` watchdog: a hung X11 selection owner blocks forever.
+    fn run(
+        argv: &[&str],
+        stdin: Option<Fd>,
         capture_stdout: bool,
-    ) -> Option<spawn_sync::Result> {
+    ) -> Result<HelperRun, Unavailable> {
         let mut command = Vec::<u8>::with_capacity(256);
-        for (i, part) in argv.iter().enumerate() {
+        for (i, word) in argv.iter().enumerate() {
             if i > 0 {
                 command.push(b' ');
             }
-            shell_quote_into(&mut command, part);
+            shell_quote_into(&mut command, word.as_bytes());
         }
-        if let Some(path) = redirect_from {
-            command.extend_from_slice(b" < ");
-            shell_quote_into(&mut command, path);
+        // An asynchronous command reads /dev/null unless stdin is redirected explicitly.
+        if stdin.is_some() {
+            command.extend_from_slice(b" <&0");
         }
-        // The watchdog group is fully redirected so nothing holds the helper's
-        // captured stdout open, and its TERM trap means nothing outlives it.
-        // It only kills once `sleep` has actually run to completion: on a PATH
-        // without `sleep`, the helper runs unbounded rather than being killed
-        // at once.
-        let timeout_seconds = env_var::BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT
+        let seconds = env_var::BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT
             .get()
-            .unwrap_or(10);
+            .unwrap_or_default()
+            .max(1);
+        // Fires only after `sleep` completes; redirected so it holds no captured pipe.
         command
             .extend_from_slice(b" & c=$!; { trap 'kill \"$sp\" 2>/dev/null; exit 0' TERM; sleep ");
-        command.extend_from_slice(timeout_seconds.to_string().as_bytes());
+        command.extend_from_slice(seconds.to_string().as_bytes());
         command.extend_from_slice(
             b" & sp=$!; wait \"$sp\" && kill \"$c\" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
         );
-        let stdio = |capture: bool| {
-            if capture {
-                spawn_sync::SyncStdio::Buffer
-            } else {
-                spawn_sync::SyncStdio::Ignore
-            }
-        };
-        spawn_sync::spawn(&spawn_sync::Options {
+        let result = spawn_sync::spawn(&spawn_sync::Options {
             argv: vec![
                 Box::from(b"/bin/sh".as_slice()),
                 Box::from(b"-c".as_slice()),
                 command.into_boxed_slice(),
             ],
             cwd: Box::from(b".".as_slice()),
-            stdin: spawn_sync::SyncStdio::Ignore,
-            stdout: stdio(capture_stdout),
-            stderr: spawn_sync::SyncStdio::Ignore,
+            stdin: stdin.map_or(spawn_sync::SyncStdio::Ignore, spawn_sync::SyncStdio::Fd),
+            stdout: if capture_stdout {
+                spawn_sync::SyncStdio::Buffer
+            } else {
+                spawn_sync::SyncStdio::Ignore
+            },
+            stderr: spawn_sync::SyncStdio::Buffer,
             envp: None,
-            // Work-pool caller: must not arm the process-wide signal forwarder.
+            // A pool thread must not arm the process-wide signal forwarder.
             forward_signals: false,
             ..Default::default()
-        })
-        .ok()
-        .and_then(|result| result.ok())
-    }
-
-    pub(super) fn read_type(mime: Mime) -> Result<Option<Vec<u8>>, Unavailable> {
-        if !wayland() && !x11() {
-            return Err(Unavailable::NoDisplay);
-        }
-        let list = candidates(false, mime);
-        let mut ran = 0usize;
-        let mut clean_failures = 0usize;
-        for argv in list {
-            let Some(result) = run_helper(&argv, None, true) else {
-                continue; // `/bin/sh` unavailable
-            };
-            match classify(result) {
-                // Helpers exit 0 with empty stdout for an absent type; only
-                // `text/plain` is ever deliberately empty.
-                HelperRun::Succeeded(stdout) if stdout.is_empty() && mime != Mime::TextPlain => {
-                    return Ok(None);
-                }
-                HelperRun::Succeeded(stdout) => return Ok(Some(stdout)),
-                HelperRun::NotInstalled => {}
-                HelperRun::TimedOut | HelperRun::Failed { clean: false } => ran += 1,
-                // A clean non-zero exit is "nothing is copied".
-                HelperRun::Failed { clean: true } => {
-                    ran += 1;
-                    clean_failures += 1;
-                }
-            }
-        }
-        if ran == 0 {
-            return Err(Unavailable::NoHelper);
-        }
-        if clean_failures == 0 {
-            return Err(Unavailable::HelperFailed);
-        }
-        Ok(None)
-    }
-
-    /// The one-shot helpers give no way to snapshot every type atomically, so
-    /// this is best-effort: the read fails only when every type does.
-    pub(super) fn read_all(types: &[Mime]) -> Result<Vec<(Mime, Vec<u8>)>, Unavailable> {
-        let mut present = Vec::new();
-        let mut readable = false;
-        let mut unavailable = Unavailable::Platform;
-        for mime in types {
-            match read_type(*mime) {
-                Ok(Some(bytes)) => {
-                    readable = true;
-                    present.push((*mime, bytes));
-                }
-                Ok(None) => readable = true,
-                Err(reason) => unavailable = reason,
-            }
-        }
-        if readable {
-            Ok(present)
-        } else {
-            Err(unavailable)
+        });
+        match result {
+            Ok(Ok(result)) => Ok(classify(result)),
+            Ok(Err(error)) => Err(Unavailable::Spawn(error)),
+            Err(_) => Err(Unavailable::Platform),
         }
     }
 
-    pub(super) fn write_types(items: &[(Mime, &[u8])]) -> Result<(), Unavailable> {
-        // Rejected upstream (`clipboardWritesSingleRepresentation`); never
-        // silently write a subset.
-        if items.len() > 1 {
-            return Err(Unavailable::MultipleRepresentations);
-        }
-        let Some((mime, bytes)) = items.first() else {
-            return Ok(());
+    enum Answer {
+        NotInstalled,
+        Failed,
+        Present(Vec<(Mime, Vec<u8>)>),
+    }
+
+    fn read_one(helper: Helper, mime: Mime) -> Result<Answer, Unavailable> {
+        let Some(argv) = helper.read_argv(mime) else {
+            return Ok(Answer::NotInstalled);
         };
-        if !wayland() && !x11() {
-            return Err(Unavailable::NoDisplay);
+        Ok(match run(argv, None, true)? {
+            HelperRun::NotInstalled => Answer::NotInstalled,
+            HelperRun::Failed { clean: false } => Answer::Failed,
+            HelperRun::Failed { clean: true } => Answer::Present(Vec::new()),
+            // An absent type reads as nothing; only text is ever deliberately empty.
+            HelperRun::Succeeded(bytes) if bytes.is_empty() && mime != Mime::TextPlain => {
+                Answer::Present(Vec::new())
+            }
+            HelperRun::Succeeded(bytes) => Answer::Present(vec![(mime, bytes)]),
+        })
+    }
+
+    /// Asks the selection owner what it offers, then reads only those types.
+    fn read_offered(helper: Helper, types: &[Mime]) -> Result<Answer, Unavailable> {
+        let Some(argv) = helper.targets_argv() else {
+            return read_one(helper, Mime::TextPlain);
+        };
+        let targets = match run(argv, None, true)? {
+            HelperRun::NotInstalled => return Ok(Answer::NotInstalled),
+            HelperRun::Failed { clean: false } => return Ok(Answer::Failed),
+            HelperRun::Failed { clean: true } => return Ok(Answer::Present(Vec::new())),
+            HelperRun::Succeeded(targets) => targets,
+        };
+        let mut present = Vec::new();
+        for &mime in types.iter().filter(|&&mime| offers(&targets, mime)) {
+            // One offered type failing to read leaves the others.
+            if let Answer::Present(mut read) = read_one(helper, mime)? {
+                present.append(&mut read);
+            }
         }
-        let list = candidates(true, *mime);
-        // The sync spawner cannot feed stdin: stage the payload in a private
-        // (0600, O_EXCL) temp file that `sh` redirects into the helper.
-        let Some(temp_path) = write_temp_file(bytes) else {
+        Ok(Answer::Present(present))
+    }
+
+    /// The first helper that reaches the clipboard answers for it.
+    pub(super) fn read_types(types: &[Mime]) -> Outcome {
+        let mut ran = false;
+        for helper in helpers()? {
+            let answer = match types {
+                [mime] => read_one(helper, *mime)?,
+                _ => read_offered(helper, types)?,
+            };
+            match answer {
+                Answer::Present(present) => return Ok(present),
+                Answer::NotInstalled => {}
+                Answer::Failed => ran = true,
+            }
+        }
+        Err(if ran {
+            Unavailable::HelperFailed
+        } else {
+            Unavailable::NoHelper
+        })
+    }
+
+    pub(super) fn write_types(items: &[(Mime, Vec<u8>)]) -> Result<(), Unavailable> {
+        // WebCore passes exactly one representation on this backend.
+        let [(mime, bytes)] = items else {
             return Err(Unavailable::Platform);
         };
-        let mut ran = 0usize;
-        let mut wrote = false;
-        for argv in list {
-            let Some(result) = run_helper(&argv, Some(&temp_path), false) else {
+        let helpers = helpers()?;
+        let payload = payload(bytes).ok_or(Unavailable::Platform)?;
+        let mut ran = false;
+        for helper in helpers {
+            let Some(argv) = helper.write_argv(*mime) else {
                 continue;
             };
-            match classify(result) {
-                HelperRun::Succeeded(_) => {
-                    ran += 1;
-                    wrote = true;
-                    break;
-                }
+            payload.seek_to(0).map_err(|_| Unavailable::Platform)?;
+            match run(argv, Some(payload.handle), false)? {
+                HelperRun::Succeeded(_) => return Ok(()),
                 HelperRun::NotInstalled => {}
-                HelperRun::TimedOut | HelperRun::Failed { .. } => ran += 1,
+                HelperRun::Failed { .. } => ran = true,
             }
         }
-        unlink_temp_file(&temp_path);
-        if wrote {
-            Ok(())
-        } else if ran == 0 {
-            Err(Unavailable::NoHelper)
+        Err(if ran {
+            Unavailable::HelperFailed
         } else {
-            Err(Unavailable::HelperFailed)
-        }
+            Unavailable::NoHelper
+        })
     }
 
-    /// The shared tmpname (random ^ nanoseconds + counter) makes collisions
-    /// impractical; `O_EXCL` still refuses anything pre-planted at the path.
-    fn write_temp_file(bytes: &[u8]) -> Option<Vec<u8>> {
-        let dir = env_var::TMPDIR::get()
-            .filter(|dir| !dir.is_empty())
-            .unwrap_or(b"/tmp");
+    /// The payload behind an fd that has no name anyone else can open.
+    fn payload(bytes: &[u8]) -> Option<File> {
+        let file = open_anonymous()?;
+        file.write_all(bytes).ok()?;
+        Some(file)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn open_anonymous() -> Option<File> {
+        if bun_sys::can_use_memfd()
+            && let Ok(fd) =
+                bun_sys::memfd_create(c"bun-clipboard", bun_sys::MemfdFlags::NonExecutable)
+        {
+            return Some(File::from_fd(fd));
+        }
+        open_unlinked_temp_file()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    fn open_anonymous() -> Option<File> {
+        open_unlinked_temp_file()
+    }
+
+    /// A private temp file, unlinked before any helper runs.
+    fn open_unlinked_temp_file() -> Option<File> {
         let mut name_buf = [0u8; 64];
         let name = bun_paths::fs::FileSystem::tmpname(
             b"bun-clipboard",
@@ -1094,25 +1010,21 @@ mod platform {
             bun_core::fast_random(),
         )
         .ok()?;
-        let mut path = dir.to_vec();
+        let mut path = bun_resolver::fs::RealFS::tmpdir_path().to_vec();
         if path.last() != Some(&b'/') {
             path.push(b'/');
         }
         path.extend_from_slice(name.as_bytes());
-        let Ok(file) = File::openat(Fd::cwd(), &path, O::WRONLY | O::CREAT | O::EXCL, 0o600) else {
-            return None;
-        };
-        if file.write_all(bytes).is_err() {
-            drop(file);
-            unlink_temp_file(&path);
-            return None;
-        }
-        Some(path)
-    }
-
-    fn unlink_temp_file(path: &[u8]) {
-        let mut zpath = path.to_vec();
-        zpath.push(0);
-        let _ = bun_sys::unlink(bun_core::ZStr::from_buf(&zpath, path.len()));
+        let file = File::openat(
+            Fd::cwd(),
+            &path,
+            O::RDWR | O::CREAT | O::EXCL | O::CLOEXEC,
+            0o600,
+        )
+        .ok()?;
+        let len = path.len();
+        path.push(0);
+        bun_sys::unlink(bun_core::ZStr::from_buf(&path, len)).ok()?;
+        Some(file)
     }
 }

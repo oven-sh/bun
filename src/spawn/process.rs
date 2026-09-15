@@ -2360,8 +2360,7 @@ mod spawn_process_body {
             pub use_execve_on_macos: bool,
             pub argv0: Option<*const c_char>,
 
-            /// POSIX: arm the process-wide SIGINT/SIGTERM forwarder. Work-pool
-            /// callers that would race the global handlers and pid opt out.
+            /// POSIX: arm the process-wide SIGINT/SIGTERM forwarder (not from work-pool threads).
             pub forward_signals: bool,
 
             #[cfg(windows)]
@@ -2375,6 +2374,8 @@ mod spawn_process_body {
             Inherit,
             Ignore,
             Buffer,
+            /// The caller's fd, which it keeps open and closes.
+            Fd(Fd),
         }
 
         impl SyncStdio {
@@ -2382,6 +2383,7 @@ mod spawn_process_body {
                 match self {
                     SyncStdio::Inherit => SpawnOptionsStdio::inherit(),
                     SyncStdio::Ignore => SpawnOptionsStdio::ignore(),
+                    SyncStdio::Fd(fd) => SpawnOptionsStdio::Pipe(fd),
                     SyncStdio::Buffer => {
                         #[cfg(windows)]
                         {

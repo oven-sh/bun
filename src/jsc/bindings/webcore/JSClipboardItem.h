@@ -56,18 +56,18 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static size_t estimatedSize(JSCell*, JSC::VM&);
 
     DECLARE_VISIT_CHILDREN;
 
-    // WebIDL FrozenArray [SameObject]: `types` must be the same JSArray on every
-    // get, so it is built once and cached on the wrapper.
+    // [SameObject] `types`: built on the first get.
     JSC::JSValue cachedTypes() const { return m_cachedTypes.get(); }
     void setCachedTypes(JSC::VM& vm, JSC::JSValue value) { m_cachedTypes.set(vm, this, value); }
 
 protected:
     JSClipboardItem(JSC::Structure*, JSDOMGlobalObject&, Ref<ClipboardItem>&&);
 
-    DECLARE_DEFAULT_FINISH_CREATION;
+    void finishCreation(JSC::VM&);
 
 private:
     mutable JSC::WriteBarrier<JSC::Unknown> m_cachedTypes;

@@ -79,7 +79,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSClipboardItemPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSClipboardItemPrototype* ptr = new (NotNull, JSC::allocateCell<JSClipboardItemPrototype>(vm)) JSClipboardItemPrototype(vm, globalObject, structure);
+        JSClipboardItemPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSClipboardItemPrototype))) JSClipboardItemPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -201,11 +201,7 @@ static const HashTableValue JSClipboardItemConstructorTableValues[] = {
 
 template<> void JSClipboardItemDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "ClipboardItem"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSClipboardItem::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "ClipboardItem"_s, JSClipboardItem::prototype(vm, globalObject));
     Bun::reifyStaticPropertyTable(vm, JSClipboardItem::info(), JSClipboardItemConstructorTableValues, *this);
 }
 
@@ -224,7 +220,7 @@ void JSClipboardItemPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSClipboardItem::info(), JSClipboardItemPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSClipboardItem::s_info = { "ClipboardItem"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClipboardItem) };
@@ -232,6 +228,20 @@ const ClassInfo JSClipboardItem::s_info = { "ClipboardItem"_s, &Base::s_info, nu
 JSClipboardItem::JSClipboardItem(Structure* structure, JSDOMGlobalObject& globalObject, Ref<ClipboardItem>&& impl)
     : JSDOMWrapper<ClipboardItem>(structure, globalObject, WTF::move(impl))
 {
+}
+
+void JSClipboardItem::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+    if (auto cost = wrapped().memoryCost())
+        vm.heap.reportExtraMemoryAllocated(this, cost);
+}
+
+size_t JSClipboardItem::estimatedSize(JSCell* cell, VM& vm)
+{
+    auto* thisObject = uncheckedDowncast<JSClipboardItem>(cell);
+    return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
 
 JSObject* JSClipboardItem::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -268,13 +278,8 @@ static inline JSValue jsClipboardItem_typesGetter(JSGlobalObject& lexicalGlobalO
     if (JSValue cached = thisObject.cachedTypes())
         return cached;
 
-    auto& impl = thisObject.wrapped();
-    JSValue types = toJS<IDLSequence<IDLDOMString>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.types());
+    JSValue types = toJS<IDLFrozenArray<IDLDOMString>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, thisObject.wrapped().types());
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (auto* array = types.getObject()) {
-        objectConstructorFreeze(&lexicalGlobalObject, array);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
     thisObject.setCachedTypes(vm, types);
     return types;
 }

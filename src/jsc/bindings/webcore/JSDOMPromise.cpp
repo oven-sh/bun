@@ -26,11 +26,14 @@
 #include "config.h"
 #include "JSDOMPromise.h"
 
+#include "JSDOMGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSPromiseConstructor.h>
+#include <JavaScriptCore/SourceCode.h>
 
 using namespace JSC;
 
@@ -68,28 +71,27 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
     return scope.exception() ? IsCallbackRegistered::No : IsCallbackRegistered::Yes;
 }
 
-auto DOMPromise::whenSettled(Function<void()>&& callback) -> IsCallbackRegistered
+// https://github.com/WebKit/WebKit/blob/main/Source/WebCore/bindings/js/JSDOMPromise.cpp
+auto DOMPromise::whenSettledWithResult(Function<void(JSDOMGlobalObject*, bool, JSC::JSValue)>&& callback) -> IsCallbackRegistered
 {
-    return whenPromiseIsSettled(globalObject(), promise(), WTF::move(callback));
-}
+    auto* globalObject = this->globalObject();
+    if (!globalObject)
+        return IsCallbackRegistered::No;
+    auto& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto* handler = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String {}, [callback = WTF::move(callback)](JSGlobalObject* globalObject, CallFrame* callFrame) mutable {
+        if (auto* promise = dynamicDowncast<JSC::JSPromise>(callFrame->thisValue()))
+            std::exchange(callback, {})(uncheckedDowncast<JSDOMGlobalObject>(globalObject), promise->status() == JSC::JSPromise::Status::Fulfilled, promise->result());
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    });
 
-JSC::JSValue DOMPromise::result() const
-{
-    return promise()->result();
-}
+    auto* promise = this->promise();
+    auto* thisHandler = JSC::JSBoundFunction::create(vm, globalObject, handler, promise, JSC::ArgList {}, 0, jsEmptyString(vm), JSC::makeSource("createWhenPromiseSettledFunction"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
+    if (!thisHandler) [[unlikely]]
+        return IsCallbackRegistered::No;
 
-DOMPromise::Status DOMPromise::status() const
-{
-    switch (promise()->status()) {
-    case JSC::JSPromise::Status::Pending:
-        return Status::Pending;
-    case JSC::JSPromise::Status::Fulfilled:
-        return Status::Fulfilled;
-    case JSC::JSPromise::Status::Rejected:
-        return Status::Rejected;
-    };
-    ASSERT_NOT_REACHED();
-    return Status::Rejected;
+    promise->performPromiseThenExported(vm, globalObject, thisHandler, thisHandler, JSC::jsUndefined());
+    return IsCallbackRegistered::Yes;
 }
 
 }

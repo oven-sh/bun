@@ -55,6 +55,12 @@ declare module "bun" {
     type LibEmptyOrBroadcastChannel = LibDomIsLoaded extends true ? {} : import("node:worker_threads").BroadcastChannel;
     type LibEmptyOrEventSource = LibDomIsLoaded extends true ? {} : import("undici-types").EventSource;
 
+    interface BunClipboardEvent extends Event {
+      /** Always `null`: Bun does not implement `DataTransfer`. */
+      readonly clipboardData: null;
+    }
+    type LibEmptyOrBunClipboardEvent = LibDomIsLoaded extends true ? {} : BunClipboardEvent;
+
     type LibEmptyOrReadableByteStreamController = LibDomIsLoaded extends true
       ? {}
       : import("node:stream/web").ReadableByteStreamController;
@@ -1474,8 +1480,7 @@ interface Navigator {
    * [Clipboard API](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard_API).
    *
    * Supported representations on every platform: `text/plain`,
-   * `text/html`, and `image/png` (use `ClipboardItem.supports()` to
-   * feature-detect).
+   * `text/html`, and `image/png`.
    *
    * On Linux this drives `wl-paste`/`wl-copy` (Wayland), `xclip`, or `xsel`
    * (text only), so one of those must be installed and `$WAYLAND_DISPLAY` or
@@ -1554,6 +1559,9 @@ interface Clipboard extends EventTarget {
    * is unsupported, if more than one item is passed, on Linux/BSD if the
    * item has more than one representation (the helper programs can only own
    * one), or when the platform clipboard cannot be reached.
+   *
+   * Writes are not queued: one that is not awaited can land before or after
+   * a later `write()`/`writeText()`.
    */
   write(data: ClipboardItem[]): Promise<void>;
 }
@@ -1575,7 +1583,7 @@ declare var Clipboard: Bun.__internal.UseLibDomIfAvailable<
  * [MDN](https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem)
  *
  * Bun supports `text/plain`, `text/html`, and `image/png` on every
- * platform; use `ClipboardItem.supports()` to feature-detect.
+ * platform (on Linux, `xsel` handles text only).
  */
 interface ClipboardItem {
   /** The MIME types this item holds, in insertion order (frozen). */
@@ -1607,17 +1615,13 @@ declare var ClipboardItem: Bun.__internal.UseLibDomIfAvailable<
       items: Record<string, string | Blob | PromiseLike<string | Blob>>,
       options?: { presentationStyle?: "unspecified" | "inline" | "attachment" },
     ): ClipboardItem;
-    /** Whether this Bun build can read/write `type` on this platform. */
+    /**
+     * Whether Bun handles `type`. On Linux it does not check which helper
+     * program is installed.
+     */
     supports(type: string): boolean;
   }
 >;
-
-/**
- * Bun does not implement `DataTransfer`. This empty declaration only gives
- * the name a type, so `ClipboardEvent["clipboardData"]` has the same
- * declared type (`DataTransfer | null`) with and without `lib.dom`.
- */
-interface DataTransfer {}
 
 /**
  * The `copy`/`cut`/`paste` event type.
@@ -1630,10 +1634,7 @@ interface DataTransfer {}
  * `EventTarget`. `clipboardData` is always `null` at runtime because Bun
  * does not implement `DataTransfer`.
  */
-interface ClipboardEvent extends Event {
-  /** Always `null` in Bun (no `DataTransfer` implementation). */
-  readonly clipboardData: DataTransfer | null;
-}
+interface ClipboardEvent extends Bun.__internal.LibEmptyOrBunClipboardEvent {}
 declare var ClipboardEvent: Bun.__internal.UseLibDomIfAvailable<
   "ClipboardEvent",
   {
@@ -1644,7 +1645,7 @@ declare var ClipboardEvent: Bun.__internal.UseLibDomIfAvailable<
         bubbles?: boolean;
         cancelable?: boolean;
         composed?: boolean;
-        clipboardData?: DataTransfer | null;
+        clipboardData?: null;
       },
     ): ClipboardEvent;
   }

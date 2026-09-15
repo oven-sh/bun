@@ -8,106 +8,90 @@
 
 namespace WebCore {
 
-// Implemented in src/runtime/webcore/clipboard.rs. Each schedule call consumes
-// the reference it is handed and copies any bytes it needs before returning, so
-// nothing here has to outlive the call.
+// Handed to the backend job, which completes or releases it on the JS thread.
+struct ClipboardRequest {
+    ClipboardCompletion completion;
+};
+
 extern "C" void Bun__Clipboard__scheduleReadText(JSC::JSGlobalObject*, ClipboardRequest*);
 extern "C" void Bun__Clipboard__scheduleRead(JSC::JSGlobalObject*, ClipboardRequest*);
-extern "C" void Bun__Clipboard__scheduleWriteText(JSC::JSGlobalObject*, ClipboardRequest*, const uint8_t* text, size_t length);
+// Copies every byte range before returning.
 extern "C" void Bun__Clipboard__scheduleWrite(JSC::JSGlobalObject*, ClipboardRequest*, const ClipboardRepresentation*, size_t count);
-extern "C" bool Bun__Clipboard__supportsType(const uint8_t* mime, size_t length);
-extern "C" bool Bun__Clipboard__writesSingleRepresentation();
 
-void scheduleClipboardReadText(JSC::JSGlobalObject& globalObject, Ref<ClipboardRequest>&& request)
+static ClipboardRequest* createRequest(ClipboardCompletion&& completion)
 {
-    Bun__Clipboard__scheduleReadText(&globalObject, &request.leakRef());
+    return new ClipboardRequest { WTF::move(completion) };
 }
 
-void scheduleClipboardRead(JSC::JSGlobalObject& globalObject, Ref<ClipboardRequest>&& request)
+std::optional<ClipboardMIMEType> clipboardMIMETypeFromEssence(StringView essence)
 {
-    Bun__Clipboard__scheduleRead(&globalObject, &request.leakRef());
+    if (essence == "text/plain"_s)
+        return ClipboardMIMEType::TextPlain;
+    if (essence == "text/html"_s)
+        return ClipboardMIMEType::TextHtml;
+    if (essence == "image/png"_s)
+        return ClipboardMIMEType::ImagePng;
+    return std::nullopt;
 }
 
-void scheduleClipboardWriteText(JSC::JSGlobalObject& globalObject, Ref<ClipboardRequest>&& request, const String& text)
+ASCIILiteral clipboardMIMETypeString(ClipboardMIMEType type)
+{
+    switch (type) {
+    case ClipboardMIMEType::TextPlain:
+        return "text/plain"_s;
+    case ClipboardMIMEType::TextHtml:
+        return "text/html"_s;
+    case ClipboardMIMEType::ImagePng:
+        return "image/png"_s;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void scheduleClipboardReadText(JSC::JSGlobalObject& globalObject, ClipboardCompletion&& completion)
+{
+    Bun__Clipboard__scheduleReadText(&globalObject, createRequest(WTF::move(completion)));
+}
+
+void scheduleClipboardRead(JSC::JSGlobalObject& globalObject, ClipboardCompletion&& completion)
+{
+    Bun__Clipboard__scheduleRead(&globalObject, createRequest(WTF::move(completion)));
+}
+
+void scheduleClipboardWriteText(JSC::JSGlobalObject& globalObject, const String& text, ClipboardCompletion&& completion)
 {
     Bun::UTF8View utf8(text);
     auto bytes = utf8.bytes();
-    Bun__Clipboard__scheduleWriteText(&globalObject, &request.leakRef(), bytes.data(), bytes.size());
+    ClipboardRepresentation representation { ClipboardMIMEType::TextPlain, bytes.data(), bytes.size() };
+    Bun__Clipboard__scheduleWrite(&globalObject, createRequest(WTF::move(completion)), &representation, 1);
 }
 
-void scheduleClipboardWrite(JSC::JSGlobalObject& globalObject, Ref<ClipboardRequest>&& request, const ClipboardItemData& representations)
+void scheduleClipboardWrite(JSC::JSGlobalObject& globalObject, const ClipboardItemData& data, ClipboardCompletion&& completion)
 {
-    // Flatten to the POD view the backend reads. The type views and the Blobs
-    // both stay alive for the duration of the call, which is all the backend
-    // needs — it snapshots the bytes into its job before returning.
-    Vector<Bun::UTF8View> typeViews;
-    typeViews.reserveInitialCapacity(representations.size());
-    Vector<ClipboardRepresentation> flattened;
-    flattened.reserveInitialCapacity(representations.size());
-
-    for (auto& representation : representations) {
-        typeViews.append(Bun::UTF8View(representation.key));
-        auto typeBytes = typeViews.last().bytes();
-        auto blobBytes = clipboardBlobBytes(representation.value.get());
-        flattened.append(ClipboardRepresentation {
-            typeBytes.data(), typeBytes.size(),
-            blobBytes.data(), blobBytes.size() });
+    Vector<ClipboardRepresentation> representations;
+    representations.reserveInitialCapacity(data.size());
+    for (auto& entry : data) {
+        auto bytes = clipboardBlobBytes(entry.value.get());
+        auto type = clipboardMIMETypeFromEssence(ClipboardItem::parseMIMETypeEssence(entry.key));
+        RELEASE_ASSERT(type);
+        representations.append({ *type, bytes.data(), bytes.size() });
     }
-
-    Bun__Clipboard__scheduleWrite(&globalObject, &request.leakRef(), flattened.span().data(), flattened.size());
-}
-
-bool clipboardSupportsType(const String& type)
-{
-    // MIME types are compared by their lowercased serialization.
-    auto lowered = type.convertToASCIILowercase();
-    Bun::UTF8View utf8(lowered);
-    auto bytes = utf8.bytes();
-    return Bun__Clipboard__supportsType(bytes.data(), bytes.size());
-}
-
-bool clipboardWritesSingleRepresentation()
-{
-    return Bun__Clipboard__writesSingleRepresentation();
+    Bun__Clipboard__scheduleWrite(&globalObject, createRequest(WTF::move(completion)), representations.span().data(), representations.size());
 }
 
 } // namespace WebCore
 
-// JS thread: settles one scheduled operation. Adopts the job's JS-side
-// reference, so completing a request is also what releases that side.
+// JS thread: runs the request's completion once and frees it.
 extern "C" void Bun__Clipboard__requestComplete(JSC::JSGlobalObject* globalObject, WebCore::ClipboardRequest* request, const WebCore::ClipboardRepresentation* representations, size_t count, const uint8_t* failureMessage, size_t failureLength)
 {
-    Ref<WebCore::ClipboardRequest> adopted = adoptRef(*request);
+    std::unique_ptr<WebCore::ClipboardRequest> adopted { request };
     WTF::String message;
     if (failureMessage)
         message = WTF::String::fromUTF8({ failureMessage, failureLength });
-    adopted->complete(*globalObject, { representations, count }, message);
+    adopted->completion(*globalObject, { representations, count }, message);
 }
 
-// JS thread, the job's completion is being dropped unrun (its VM has begun
-// stopping): the captures are released here while their heap is alive. A
-// write's off-thread reference may still hold the (now inert) request.
-extern "C" void Bun__Clipboard__requestAbandon(WebCore::ClipboardRequest* request)
+// JS thread, the VM is stopping: frees the request without running its completion.
+extern "C" void Bun__Clipboard__requestRelease(WebCore::ClipboardRequest* request)
 {
-    Ref<WebCore::ClipboardRequest> adopted = adoptRef(*request);
-    adopted->abandon();
-}
-
-// A write's off-thread reference: taken on the JS thread at schedule, dropped
-// wherever the job's off-thread half ends up being dropped (ThreadSafeRefCounted;
-// by then the completion has been run or released on the JS thread).
-extern "C" void Bun__Clipboard__requestRef(WebCore::ClipboardRequest* request)
-{
-    request->ref();
-}
-
-extern "C" void Bun__Clipboard__requestDeref(WebCore::ClipboardRequest* request)
-{
-    request->deref();
-}
-
-// Read on a pool thread (atomic); the off-thread reference keeps `request` alive.
-extern "C" bool Bun__Clipboard__requestIsCancelled(WebCore::ClipboardRequest* request)
-{
-    return request->isCancelled();
+    delete request;
 }

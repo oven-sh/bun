@@ -1080,10 +1080,7 @@ describe("@types/bun integration test", () => {
   });
 });
 
-// `DataTransfer` is bun-types' deliberate empty fallback so that
-// `ClipboardEvent["clipboardData"]` has the same declared type with and
-// without lib.dom (React's no-DOM types declare the same fallback below).
-const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType", "DataTransfer"]);
+const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType"]);
 
 const expectedEmptyInterfacesThatReactDeclareWhenNoDOM = new Set([
   ...expectedEmptyInterfacesWhenNoDOM,

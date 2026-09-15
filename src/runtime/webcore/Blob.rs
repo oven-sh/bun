@@ -1929,11 +1929,6 @@ impl BlobExt for Blob {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
-        // `Bytes.stored_name` is File identity: a bytes-backed Blob without
-        // the File bit has no name.
-        if !self.is_jsdom_file.get() && !self.needs_to_read_file() && !self.is_s3() {
-            return None;
-        }
         if let Some(path) = self.store_path() {
             self.name.set(BunString::clone_utf8(path));
             return Some(self.name.get());
@@ -5830,7 +5825,7 @@ pub unsafe extern "C" fn Blob__implGetContentType(
     }
 }
 
-/// Like `Blob__fromBytesWithType`, but normalizes `mime` like the `Blob` constructor's `type`.
+/// `new Blob([bytes], { type: mime })` (C++ `WebCore::Blob::create`).
 /// # Safety
 /// `[ptr, ptr+len)` and `[mime, mime+mime_len)` must be readable (or null with length 0).
 #[unsafe(no_mangle)]
@@ -5840,7 +5835,6 @@ pub unsafe extern "C" fn Blob__fromBytesWithNormalizedType(
     len: usize,
     mime: *const u8,
     mime_len: usize,
-    normalize: bool,
 ) -> *mut Blob {
     // SAFETY: forwarded from the caller's contract.
     let blob = unsafe { Blob__fromBytes(global_this, ptr, len) };
@@ -5854,16 +5848,12 @@ pub unsafe extern "C" fn Blob__fromBytesWithNormalizedType(
     }
     // SAFETY: `blob` is a fresh heap allocation we solely own until returned.
     unsafe {
-        // The same lookup `new Blob([...], { type })` performs, so a Blob built
-        // here is indistinguishable from one built in JS.
-        (*blob).content_type.set(if normalize {
-            match global_this.bun_vm().as_mut().mime_type(slice) {
+        (*blob)
+            .content_type
+            .set(match global_this.bun_vm().as_mut().mime_type(slice) {
                 Some(mime) => BlobContentType::from(mime),
                 None => BlobContentType::from_lowercased(slice),
-            }
-        } else {
-            BlobContentType::Owned(slice.into())
-        });
+            });
         (*blob).content_type_was_set.set(true);
     }
     blob
@@ -5886,12 +5876,13 @@ pub(crate) unsafe extern "C" fn Blob__fromBytes(
     Blob::new(Blob::init_with_store(store, global_this))
 }
 
-/// Same as Blob__fromBytes but stamps content_type with a copy of `mime`.
+/// Same as Blob__fromBytes but stamps content_type. `mime` must be a
+/// string literal with process lifetime (not freed by deinit — the caller
+/// passes one of the image/* constants).
 ///
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range and `mime` a
-/// NUL-terminated C string valid for the duration of the call (its bytes are
-/// copied into the Blob's owned content type).
+/// NUL-terminated `'static` C string.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
     global_this: &JSGlobalObject,
@@ -5901,8 +5892,7 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
 ) -> *mut Blob {
     // SAFETY: forwarded from caller's contract.
     let blob = unsafe { Blob__fromBytes(global_this, ptr, len) };
-    // SAFETY: caller guarantees `mime` is a NUL-terminated C string valid for
-    // this call; the bytes are copied below.
+    // SAFETY: caller guarantees `mime` is a NUL-terminated 'static C string.
     let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
     if !mime_slice.is_empty() {
         // SAFETY: `blob` is a fresh heap allocation returned by `Blob__fromBytes`;

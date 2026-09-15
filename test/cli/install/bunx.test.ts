@@ -1085,6 +1085,82 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
       });
     });
 
+    it.each(packageInvocationCases)("$invocation does not reinstall a package with no binary", async invocationCase => {
+      await withTestContext(undefined, async ctx => {
+        const requests: string[] = [];
+        setContextHandler(ctx, request => {
+          requests.push(request.url);
+          return new Response("{}", { status: 404 });
+        });
+        const packageDir = join(ctx.package_dir, "node_modules", "no-bin");
+        await mkdir(packageDir, { recursive: true });
+        await writeFile(join(packageDir, "package.json"), JSON.stringify({ name: "no-bin", version: "1.0.0" }));
+        const proc = spawn({
+          ...packageInvocationCommand(invocationCase, "no-bin", "what-bin"),
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...env, npm_config_registry: ctx.registry_url },
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "",
+          stderr: invocationCase.explicitPackage
+            ? "error: Package no-bin does not provide a binary named what-bin\n"
+            : "error: could not determine executable to run for package no-bin\n",
+          exitCode: 1,
+        });
+        expect(requests).toEqual([]);
+      });
+    });
+
+    describe.each(["local", "cache"])("missing executable in %s installation", location => {
+      it.each(packageInvocationCases)("$invocation installs a usable executable", async invocationCase => {
+        await withTestContext(undefined, async ctx => {
+          const urls: string[] = [];
+          const fixtureDir = join(import.meta.dir, "registry", "packages", "what-bin");
+          setContextHandler(
+            ctx,
+            dummyRegistryForContext(ctx, urls, { "1.0.0": { bin: { "what-bin": "what-bin.js" } } }, 0, fixtureDir),
+          );
+          const run = async () => {
+            const proc = spawn({
+              ...packageInvocationCommand(invocationCase, "what-bin", "what-bin"),
+              cwd: ctx.package_dir,
+              stdout: "pipe",
+              stderr: "pipe",
+              env: { ...env, npm_config_registry: ctx.registry_url },
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            return { stdout, stderr, exitCode };
+          };
+          let packageDir: string;
+          if (location === "cache") {
+            expect(await run()).toMatchObject({ exitCode: 0 });
+            expect(await Bun.file(join(ctx.package_dir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
+            await rm(join(ctx.package_dir, "what-bin.txt"));
+            const entries = (await readdirSorted(env.BUN_TMPDIR)).filter(entry => entry.startsWith("bunx-"));
+            expect(entries).toHaveLength(1);
+            packageDir = join(env.BUN_TMPDIR, entries[0], "node_modules", "what-bin");
+            await rm(join(packageDir, "what-bin.js"));
+          } else {
+            packageDir = join(ctx.package_dir, "node_modules", "what-bin");
+            await mkdir(packageDir, { recursive: true });
+            await writeFile(
+              join(packageDir, "package.json"),
+              JSON.stringify({ name: "what-bin", version: "1.0.0", bin: { "what-bin": "what-bin.js" } }),
+            );
+          }
+          expect(await Bun.file(join(packageDir, "package.json")).exists()).toBe(true);
+          expect(await Bun.file(join(packageDir, "what-bin.js")).exists()).toBe(false);
+
+          const result = await run();
+          expect(result).toMatchObject({ stdout: "", exitCode: 0 });
+          expect(await Bun.file(join(ctx.package_dir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
+        });
+      });
+    });
+
     describe("cold-cache install", () => {
       it.each(packageInvocationCases)("$invocation uses the named package's bin", async invocationCase => {
         await withTestContext(undefined, async ctx => {

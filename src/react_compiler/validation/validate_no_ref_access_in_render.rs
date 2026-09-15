@@ -778,8 +778,7 @@ fn validate_no_ref_access_in_render_impl(
                             ref_env,
                             &mut inner_errors,
                         );
-                        // Not in upstream: the TypeScript original throws this invariant. That ends
-                        // each enclosing fixpoint. If only recorded, each runs 10 passes: 10^depth.
+                        // Not in upstream: the TypeScript original throws this invariant.
                         if inner_errors
                             .iter()
                             .any(|error| error.category == ErrorCategory::Invariant)

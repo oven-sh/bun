@@ -426,6 +426,58 @@ test.concurrent("a moved direct dependency is still followed after its row index
   expect(exitCode).toBe(0);
 });
 
+// one-fixed-dep pins no-deps exactly, so bumping it moves no-deps with it; forward-peer-deps' `*` edge follows the move, the stale root copy is dropped and the new one hoists to the root instead of nesting (#41048). The peer owner sorts ahead of one-fixed-dep, so without the redirect its stale edge wins the root slot.
+test.concurrent("`bun install` after a version bump re-points loose edges at a moved exact child", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "forward-peer-deps": "1.0.0", "one-fixed-dep": "1.0.0" }) });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  await reinstall(dir, pkgJson({ "forward-peer-deps": "1.0.0", "one-fixed-dep": "2.0.0" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+  expect((await lock(dir)).packages["one-fixed-dep/no-deps"]).toBeUndefined();
+  expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  expect(await exists(join(dir, "node_modules", "one-fixed-dep", "node_modules"))).toBe(false);
+  await frozen(dir);
+});
+
+// peer-deps-fixed's `^1.0.0` rejects 2.0.0, so the old copy stays for it, nested under its one dependent.
+test.concurrent("`bun install` after a version bump keeps the old copy for an edge out of range", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "one-fixed-dep": "1.0.0", "peer-deps-fixed": "1.0.0" }) });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  await reinstall(dir, pkgJson({ "one-fixed-dep": "2.0.0", "peer-deps-fixed": "1.0.0" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "2.0.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  expect(await installedVersion(dir, "peer-deps-fixed", "node_modules", "no-deps")).toBe("1.0.0");
+  await frozen(dir);
+});
+
+// The root's own `>=1.0.0` row is the user's pin: bumping the sibling must not drag it along, even though 2.0.0 is in range. The stale-for-the-root copy stays at the root and the bumped pin nests its own.
+test.concurrent("`bun install` after a version bump never moves the root's own locked dependency", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "no-deps": "1.0.0", "one-fixed-dep": "1.0.0" }) });
+  await reinstall(dir, pkgJson({ "no-deps": ">=1.0.0", "one-fixed-dep": "1.0.0" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  await reinstall(dir, pkgJson({ "no-deps": ">=1.0.0", "one-fixed-dep": "2.0.0" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "2.0.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+  expect(await installedVersion(dir, "one-fixed-dep", "node_modules", "no-deps")).toBe("2.0.0");
+  await frozen(dir);
+});
+
+// Two exact-pinned levels move together: parent's bump moves mid, mid's move moves leaf, and holder's peer edge follows the leaf.
+test.concurrent("`bun install` after a version bump follows a moved chain two levels deep", async () => {
+  using server = await serveRegistry({
+    holder: { "1.0.0": { peerDependencies: { leaf: "*" } } },
+    parent: { "1.0.0": { dependencies: { mid: "1.0.0" } }, "2.0.0": { dependencies: { mid: "2.0.0" } } },
+    mid: { "1.0.0": { dependencies: { leaf: "1.0.0" } }, "2.0.0": { dependencies: { leaf: "2.0.0" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {} },
+  });
+  const dir = await installServed(server, "install-moved-chain-", pkgJson({ holder: "1.0.0", parent: "1.0.0" }));
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  await reinstall(dir, pkgJson({ holder: "1.0.0", parent: "2.0.0" }));
+  expect(await lockedVersions(dir, "mid")).toStrictEqual(["2.0.0"]);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.0"]);
+  expect(await installedVersion(dir, "leaf")).toBe("2.0.0");
+  await frozen(dir);
+});
+
 // The plan is the same block a real run prints, with a "would be updated" count line in place of "installed"; nothing is installed and no lockfile dump follows.
 test.concurrent.each([
   ["bare", []],
@@ -1231,7 +1283,10 @@ test.concurrent("in a workspace, `bun update` from one member also re-points a s
   expect(exitCode).toBe(0);
 });
 
-type Manifests = Record<string, Record<string, { dependencies?: Record<string, string> }>>;
+type Manifests = Record<
+  string,
+  Record<string, { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }>
+>;
 type Tags = Record<string, Record<string, string>>;
 
 // Serves one manifest per name from memory; verdaccio has no parent whose newer version keeps a range on the same child, and its dist-tags cannot move mid-test. `tags` is read per request, so a test can move a tag after installing.

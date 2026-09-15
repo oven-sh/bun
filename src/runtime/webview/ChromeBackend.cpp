@@ -798,7 +798,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Page.enable lets us receive frameNavigated / loadEventFired.
         // sessionId now available — the remaining chain goes to the page.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sidSpan(ss.data(), ss.length());
+        std::span<const char> sidSpan(ss.legacyCStringPointer(), ss.length());
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId });
         send(cid, Command(cid, "Page.enable"_s, sidSpan));
@@ -808,7 +808,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Chain into Runtime.enable (for consoleAPICalled later) then
         // Page.navigate to the stashed url.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sidSpan(ss.data(), ss.length());
+        std::span<const char> sidSpan(ss.legacyCStringPointer(), ss.length());
 
         // Runtime.enable — fire-and-forget, untracked. We don't need to
         // wait for its reply before navigating.
@@ -1068,7 +1068,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
         // Chain into dispatchMouseEvent. Same down+up pair as Ops::click.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sid(ss.data(), ss.length());
+        std::span<const char> sid(ss.legacyCStringPointer(), ss.length());
 
         auto btn = cdpButton(view->m_selButton);
         int32_t mods = cdpModifiers(view->m_selModifiers);

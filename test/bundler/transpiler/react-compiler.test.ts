@@ -2633,7 +2633,9 @@ describe("bundler", () => {
   // The value of `i += 2` is the value it stores. When it is lowered to a
   // store and then a new read of `i`, the store prints as a statement ahead of
   // the expression it is part of, and an earlier operand of that expression
-  // that reads `i` prints after it.
+  // that reads `i` prints after it. As a statement, `i += 2` leaves that read
+  // behind as a stray `i;`, which can land after the memo block that declares
+  // `i`: "ReferenceError: i is not defined".
   for (const target of ["bun", "browser"] as const) {
     itBundled(`react-compiler/CompoundAssignmentToALocalStaysInPlace-${target}`, {
       files: {
@@ -2642,7 +2644,8 @@ describe("bundler", () => {
           const lines: string[] = [];
           for (const [name, Form] of Object.entries(forms)) {
             try {
-              lines.push(name + "=" + Form({ n: 1, flag: true, items: [5, 6, 7, 8] }).props.children);
+              const children = Form({ n: 1, flag: true, items: [5, 6, 7, 8] }).props.children;
+              lines.push(name + "=" + (typeof children === "function" ? children() : children));
             } catch (e) {
               lines.push(name + " threw " + e);
             }
@@ -2707,6 +2710,12 @@ describe("bundler", () => {
             const r = list("k" + i, (i += 2), read());
             return <div>{JSON.stringify(r)}</div>;
           }
+          export function CapturedBeforeItsDeclaration(p) {
+            const read = () => i;
+            let i = p.n;
+            i *= 3;
+            return <div>{read}</div>;
+          }
           export function OperandIsATernary(p) {
             let i = p.n;
             const r = list(p.flag ? i : 0, (i += 2));
@@ -2763,6 +2772,7 @@ describe("bundler", () => {
         stdout: `
           Arguments=["k1",1,"k2z",4,"number4"]
           ArrayAndObjectLiterals=[[1,-1],{"a":"k1"},3]
+          CapturedBeforeItsDeclaration=3
           CapturedLocal=["k1",3,3]
           ComputedKey={"k1":3}
           InCallback=[{"k1":3},"k3",6]

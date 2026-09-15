@@ -430,6 +430,133 @@ test("cp with missing callback throws", () => {
   }).toThrow(/"cb"/);
 });
 
+// node runs cpSync's pre-flight in C++ (cpSyncCheckPaths in src/node_file.cc):
+// it classifies src with stat(2) and decides src/dest identity on the resolved
+// paths, so a symlink cannot slip past the existence, recursive, or self-copy
+// guards. The per-entry walk still uses lstat, which the last test here pins.
+describe("fs.cpSync pre-flight resolves symlinks", () => {
+  function cpSyncShouldThrow(...args: Parameters<typeof fs.cpSync>) {
+    try {
+      fs.cpSync(...args);
+    } catch (e: any) {
+      return e;
+    }
+    throw new Error("Expected cpSync() to throw");
+  }
+
+  test("dangling src symlink throws ENOENT", () => {
+    using dir = tempDir("cp-dangling", {});
+    const base = String(dir);
+    fs.symlinkSync("missing", join(base, "link"));
+
+    expect(cpSyncShouldThrow(join(base, "link"), join(base, "out")).code).toBe("ENOENT");
+    expect(fs.readdirSync(base)).toEqual(["link"]);
+  });
+
+  // Windows resolves an unresolvable reparse point to its own error; ELOOP is a
+  // POSIX mapping.
+  test.skipIf(isWindows)("looping src symlink throws ELOOP", () => {
+    using dir = tempDir("cp-loop", {});
+    const base = String(dir);
+    fs.symlinkSync("b", join(base, "a"));
+    fs.symlinkSync("a", join(base, "b"));
+
+    expect(cpSyncShouldThrow(join(base, "a"), join(base, "out")).code).toBe("ELOOP");
+    expect(fs.readdirSync(base).sort()).toEqual(["a", "b"]);
+  });
+
+  test("src symlink to a directory still requires recursive", () => {
+    using dir = tempDir("cp-symlink-dir", { "d/f.txt": "f" });
+    const base = String(dir);
+    fs.symlinkSync(join(base, "d"), join(base, "link"));
+
+    expect(cpSyncShouldThrow(join(base, "link"), join(base, "out")).code).toBe("ERR_FS_EISDIR");
+    expect(fs.readdirSync(base).sort()).toEqual(["d", "link"]);
+
+    // With recursive it is copied as a link, which is what node does.
+    fs.cpSync(join(base, "link"), join(base, "out"), { recursive: true });
+    expect(fs.lstatSync(join(base, "out")).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(join(base, "out"))).toBe(join(base, "d"));
+  });
+
+  test("src symlink to a directory cannot be copied into its own target", () => {
+    using dir = tempDir("cp-symlink-subdir", { "d/f.txt": "f" });
+    const base = String(dir);
+    fs.symlinkSync(join(base, "d"), join(base, "link"));
+
+    // dest under the link itself: caught by the string-prefix check.
+    expect(cpSyncShouldThrow(join(base, "link"), join(base, "link", "sub"), { recursive: true }).code).toBe(
+      "ERR_FS_CP_EINVAL",
+    );
+    // dest under what the link points at: caught by the parent walk.
+    expect(cpSyncShouldThrow(join(base, "link"), join(base, "d", "sub"), { recursive: true }).code).toBe(
+      "ERR_FS_CP_EINVAL",
+    );
+  });
+
+  test.each([{ force: true }, { force: false }])(
+    "dest symlink resolving to src is a self-copy (%o)",
+    (options: object) => {
+      using dir = tempDir("cp-self", { "file.txt": "hello" });
+      const base = String(dir);
+      fs.symlinkSync("file.txt", join(base, "out"));
+
+      expect(cpSyncShouldThrow(join(base, "file.txt"), join(base, "out"), options).code).toBe("ERR_FS_CP_EINVAL");
+      // The link must survive: it used to be replaced by a copy of its own target.
+      expect(fs.lstatSync(join(base, "out")).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(join(base, "out"))).toBe("file.txt");
+    },
+  );
+
+  test("two symlinks to the same file are the same src and dest", () => {
+    using dir = tempDir("cp-same-target", { "file.txt": "hello" });
+    const base = String(dir);
+    fs.symlinkSync("file.txt", join(base, "a"));
+    fs.symlinkSync("file.txt", join(base, "b"));
+
+    expect(cpSyncShouldThrow(join(base, "a"), join(base, "b")).code).toBe("ERR_FS_CP_EINVAL");
+    expect(fs.lstatSync(join(base, "b")).isSymbolicLink()).toBe(true);
+  });
+
+  test("a dangling symlink inside the tree is still copied", () => {
+    using dir = tempDir("cp-tree-dangling", { "from/a.txt": "a" });
+    const base = String(dir);
+    fs.symlinkSync("nope", join(base, "from", "bad"));
+
+    fs.cpSync(join(base, "from"), join(base, "result"), { recursive: true });
+
+    expect(fs.readdirSync(join(base, "result")).sort()).toEqual(["a.txt", "bad"]);
+    expect(fs.lstatSync(join(base, "result", "bad")).isSymbolicLink()).toBe(true);
+  });
+});
+
+// node's async cp is still the lstat-based JS walker (lib/internal/fs/cp/cp.js),
+// so these cases deliberately keep succeeding. Pinned so the sync pre-flight
+// above does not get copied onto the async path.
+describe("fs.promises.cp pre-flight stays on lstat, like node", () => {
+  test("dangling src symlink is copied as a dangling symlink", async () => {
+    using dir = tempDir("cp-async-dangling", {});
+    const base = String(dir);
+    fs.symlinkSync("missing", join(base, "link"));
+
+    await fs.promises.cp(join(base, "link"), join(base, "out"));
+
+    expect(fs.lstatSync(join(base, "out")).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(join(base, "out"))).toBe(join(base, "missing"));
+  });
+
+  test("dest symlink resolving to src is replaced by a copy", async () => {
+    using dir = tempDir("cp-async-self", { "file.txt": "hello" });
+    const base = String(dir);
+    fs.symlinkSync("file.txt", join(base, "out"));
+
+    await fs.promises.cp(join(base, "file.txt"), join(base, "out"));
+
+    expect(fs.lstatSync(join(base, "out")).isFile()).toBe(true);
+    expect(fs.readFileSync(join(base, "out"), "utf8")).toBe("hello");
+  });
+});
+
 // On Windows, _copySingleFileSync's reparse-point branch opens a handle to the
 // source symlink to resolve its target via GetFinalPathNameByHandleW. Previously
 // that handle was never closed, leaking one OS handle per symlink copied. Over a

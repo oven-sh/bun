@@ -23,9 +23,15 @@ pub struct Yes {
     /// out to ~BUFSIZ.
     pub(crate) buffer: Vec<u8>,
     pub(crate) buffer_used: usize,
+    /// Chunks in a row that the `IOWriter` wrote inside `enqueue` (a regular
+    /// file, `/dev/null`), so the event loop has not run since the first one.
+    sync_chunks: usize,
     /// Populated in `start()`.
     pub task: Option<YesTask>,
 }
+
+/// Chunks written back to back before `yes` gives the event loop a turn.
+const CHUNKS_PER_TURN: usize = 4;
 
 impl Yes {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -85,8 +91,16 @@ impl Yes {
         Self::write_no_io_loop(interp, cmd)
     }
 
-    /// Write 4 chunks then bounce to the event loop so we don't hog the main
-    /// thread.
+    /// Where `YesTask` picks up after the event loop has had its turn.
+    fn resume(interp: &Interpreter, cmd: NodeId) -> Yield {
+        match Builtin::of(interp, cmd).stdout.needs_io() {
+            Some(safeguard) => Self::enqueue_chunk(interp, cmd, safeguard),
+            None => Self::write_no_io_loop(interp, cmd),
+        }
+    }
+
+    /// Write `CHUNKS_PER_TURN` chunks then bounce to the event loop so we
+    /// don't hog the main thread.
     fn write_no_io_loop(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Split-borrow the Cmd so the tiled buffer (in `impl_`) and `stdout`
         // are accessible simultaneously — the buffer is written zero-copy,
@@ -100,7 +114,7 @@ impl Yes {
             let (stdout, yes) = Self::split_stdout_state(me);
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
-            for _ in 0..4 {
+            for _ in 0..CHUNKS_PER_TURN {
                 // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
                 if let Err(e) = unsafe { stdout.write_no_io_to(shell, chunk) } {
                     err = Some(e);
@@ -119,7 +133,12 @@ impl Yes {
             .to_vec();
             return Self::write_failing_error(interp, cmd, &buf, 1);
         }
-        // Bounce back via the event loop so we don't block the main thread.
+        Self::bounce(interp, cmd)
+    }
+
+    /// Continue (`resume`) from the next event loop iteration so the endless
+    /// output does not block the main thread.
+    fn bounce(interp: &Interpreter, cmd: NodeId) -> Yield {
         let task: *mut YesTask = Self::state_mut(interp, cmd)
             .task
             .as_mut()
@@ -139,10 +158,22 @@ impl Yes {
         safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-        // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
-        // so the tiled buffer is enqueued zero-copy.
-        let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
-        stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
+        let y = {
+            // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
+            // so the tiled buffer is enqueued zero-copy.
+            let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
+            stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
+        };
+        // A pollable fd suspends here and completes from the event loop. Any
+        // other fd was written inside `enqueue`, and the trampoline delivers
+        // this completion to `on_io_writer_chunk` without leaving the thread.
+        let me = Self::state_mut(interp, cmd);
+        me.sync_chunks = if matches!(y, Yield::OnIoWriterChunk { .. }) {
+            me.sync_chunks + 1
+        } else {
+            0
+        };
+        y
     }
 
     fn write_failing_error(
@@ -169,6 +200,11 @@ impl Yes {
             return Builtin::done(interp, cmd, 1);
         }
         debug_assert!(Builtin::of(interp, cmd).stdout.needs_io().is_some());
+        let me = Self::state_mut(interp, cmd);
+        if me.sync_chunks >= CHUNKS_PER_TURN {
+            me.sync_chunks = 0;
+            return Self::bounce(interp, cmd);
+        }
         Self::enqueue_chunk(interp, cmd, OutputNeedsIOSafeGuard::OutputNeedsIo)
     }
 
@@ -186,8 +222,8 @@ impl Yes {
 // `buffer: Vec<u8>` drops with the owning `Box<Yes>`; no explicit `Drop` impl
 // needed (PORTING.md §Allocators).
 
-/// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
-/// don't block the main thread forever.
+/// Re-queues `yes` onto the event loop after a burst of writes that completed
+/// on the spot so we don't block the main thread forever.
 #[repr(C)]
 pub struct YesTask {
     /// Back-ref to the owning [`Interpreter`].
@@ -242,7 +278,7 @@ impl YesTask {
     pub(crate) fn run_from_main_thread(this: &Self) {
         // SAFETY: `interp` was set in `Yes::start` and outlives the task.
         let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
-        Yes::write_no_io_loop(interp, cmd).run(interp);
+        Yes::resume(interp, cmd).run(interp);
     }
 
     /// Signature matches

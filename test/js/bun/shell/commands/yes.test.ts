@@ -57,4 +57,36 @@ describe("yes", async () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // A write to /dev/null (or to a regular file) completes on the spot, so only
+  // `yes` itself can hand the thread back to the event loop between chunks.
+  // Not concurrent: the runner kills the child of a sequential test that times
+  // out, and a child that never yields would otherwise spin on after the run.
+  test.each([
+    ["a redirect to /dev/null", "$`yes > /dev/null`.quiet()"],
+    ["an inherited stdout that is /dev/null", "$`yes`"],
+  ])("does not block the event loop with %s", async (_, shell) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { $ } from "bun";
+         ${shell}.nothrow().run();
+         console.error("run() returned");
+         let ticks = 0;
+         setInterval(() => {
+           if (++ticks === 3) {
+             console.error("timers fired");
+             process.exit(0);
+           }
+         }, 1);`,
+      ],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("run() returned\ntimers fired\n");
+    expect(exitCode).toBe(0);
+  });
 });

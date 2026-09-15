@@ -181,6 +181,7 @@ pub mod js_fns {
             } else {
                 false
             };
+            let callback = args.callback.map(|cb| cb.with_async_context_if_needed(global_this));
 
             let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
 
@@ -201,7 +202,7 @@ pub mod js_fns {
 
                 let _ = bun_test_root.hook_scope.append_hook(
                     tag.as_hook_tag().unwrap(),
-                    args.callback,
+                    callback,
                     cfg,
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
@@ -219,7 +220,7 @@ pub mod js_fns {
                     }
                     let _ = bun_test.collection.active_scope_mut().append_hook(
                         tag.as_hook_tag().unwrap(),
-                        args.callback,
+                        callback,
                         cfg,
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
@@ -292,7 +293,7 @@ pub mod js_fns {
 
                     let new_item = ExecutionEntry::create(
                         None,
-                        args.callback,
+                        callback,
                         cfg,
                         None,
                         BaseScopeCfg::default(),
@@ -1069,9 +1070,15 @@ impl BunTest {
                 );
                 for seq in &order.sequences[describe_seq_start..describe_seq_end] {
                     let Some(test_entry) = seq.test_entry else { continue };
+                    // SAFETY: live `DescribeScope`-owned entry; read-only access.
+                    let fixture_teardown: Option<*const ExecutionEntry> = unsafe { test_entry.as_ref() }
+                        .fixture_teardown
+                        .as_deref()
+                        .map(core::ptr::from_ref);
                     let mut cur = seq.first_entry;
                     while let Some(p) = cur {
-                        if p != test_entry {
+                        // the fixture teardown entry is owned by the test entry, not a clone
+                        if p != test_entry && fixture_teardown != Some(p.as_ptr().cast_const()) {
                             self.cloned_hook_entries.push(p.as_ptr());
                         }
                         // SAFETY: live linked-list nodes built by `generate_order_test`.
@@ -1804,12 +1811,28 @@ impl DescribeScope {
         &mut self,
         name_not_owned: Option<&[u8]>,
         callback: Option<JSValue>,
+        fixture_teardown: Option<JSValue>,
         cfg: ExecutionEntryCfg,
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
         let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
         let has_cb = entry.callback.is_some();
+        if has_cb {
+            if let Some(teardown) = fixture_teardown {
+                let teardown_entry = ExecutionEntry::create(
+                    None,
+                    Some(teardown),
+                    ExecutionEntryCfg { timeout: cfg.timeout, ..Default::default() },
+                    Some(std::ptr::from_mut(self)),
+                    BaseScopeCfg::default(),
+                    phase,
+                );
+                if teardown_entry.callback.is_some() {
+                    entry.fixture_teardown = Some(teardown_entry);
+                }
+            }
+        }
         entry.base.propagate(has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
         match self.entries.last_mut().unwrap() {
@@ -1888,6 +1911,8 @@ pub struct ExecutionEntry {
     pub(crate) next: Option<*mut ExecutionEntry>,
     /// if this entry fails, go to the entry 'failure_skip_past.next'
     pub(crate) failure_skip_past: Option<*mut ExecutionEntry>,
+    /// Set on `test.extend()` tests; `Order` schedules it after the test's afterEach hooks.
+    pub(crate) fixture_teardown: Option<Box<ExecutionEntry>>,
 }
 
 impl ExecutionEntry {
@@ -1910,6 +1935,7 @@ impl ExecutionEntry {
             timespec: Timespec::EPOCH,
             next: None,
             failure_skip_past: None,
+            fixture_teardown: None,
         });
 
         if let Some(c) = cb {

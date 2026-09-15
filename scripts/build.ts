@@ -24,7 +24,6 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { join } from "node:path";
-import { processAlive, processCommandLine } from "./build/proc.ts";
 import {
   canTraceOrderFile,
   downloadArtifacts,
@@ -49,6 +48,7 @@ import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
 import { createJobserver } from "./build/jobserver.ts";
+import { processAlive, processCommandLine } from "./build/proc.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 

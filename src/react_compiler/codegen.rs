@@ -703,7 +703,7 @@ fn codegen_reactive_scope(
             .any(|id| cx.env.identifiers[id.0 as usize].declaration_id == dep_decl)
         {
             let name = store_str(cx.fresh_temporary_name().as_bytes());
-            let copy_ref = cx.cg.ref_for_name(name);
+            let copy_ref = cx.cg.ref_for_local(name);
             statements.push(Stmt::alloc(
                 S::Local {
                     kind: S::Kind::KConst,
@@ -724,7 +724,7 @@ fn codegen_reactive_scope(
             None
         };
         let dep_expr = |cx: &mut Context| match value_on_entry {
-            Some(name) => Ok(cx.cg.ident_expr(name, loc)),
+            Some(name) => Ok(Expr::init_identifier(cx.cg.ref_for_local(name), loc)),
             None => codegen_dependency(cx, dep),
         };
 

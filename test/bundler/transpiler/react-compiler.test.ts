@@ -2833,12 +2833,14 @@ describe("bundler", () => {
     PlainAssignmentInArray [2,[4,2,2]] [1,[2,1,1]] [1,[2,1,1]]*
     CompoundStatement [2,[2]] [4,[4]] [4,[4]]*
     UpdateInTernaryTest [2,[[1]]] [3,[[1]]] [3,[[1]]]
+    CopyNamedLikeAnExport [1,["imported"]] [2,["imported"]] [2,["imported"]]*
   `;
   for (const reactCompiler of [false, true]) {
     itBundled(`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock-${reactCompiler ? "compiled" : "plain"}`, {
       files: {
         "/entry.jsx": /* jsx */ `
           import { render } from "react";
+          import { t1 as imported } from "./names";
 
           // The else path leaves label with the value it had on entry, so that
           // value is an input of the block although no instruction in it reads it.
@@ -3215,6 +3217,16 @@ describe("bundler", () => {
             return <div label={n} list={outer} />;
           }
 
+          // The copy of label is the first free t<n>, which is t1 here. The bundler
+          // prints the import under the name of its export, which is t1 too.
+          function CopyNamedLikeAnExport(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) label = "flagged";
+            else list.push(imported);
+            return <div label={label} list={list} />;
+          }
+
           function run(Component, ...renders) {
             let previous;
             const results = renders.map(args => {
@@ -3368,7 +3380,9 @@ describe("bundler", () => {
           run(PlainAssignmentInArray, { n: 4 }, { n: 2 }, { n: 2 });
           run(CompoundStatement, { n: 1 }, { n: 2 }, { n: 2 });
           run(UpdateInTernaryTest, { count: 1, f: yes }, { count: 2, f: yes }, { count: 2, f: yes });
+          run(CopyNamedLikeAnExport, { count: 1, flag: false }, { count: 2, flag: false }, { count: 2, flag: false });
         `,
+        "/names.js": `export const t1 = "imported";`,
         // One memo cache per component, kept between renders, as a fiber keeps it.
         "/node_modules/react/index.js": /* js */ `
           const fibers = new Map();

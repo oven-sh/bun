@@ -31,9 +31,17 @@ namespace Bun {
 
 // Store the profiling start time in microseconds since Unix epoch
 static thread_local double s_profilingStartTime = 0.0;
+// The same instant on the monotonic clock; samples are placed on the timeline by their distance from it.
+static thread_local MonotonicTime s_profilingStartMonotonicTime;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
 static thread_local int s_samplingInterval = 1000;
 static thread_local bool s_isProfilerRunning = false;
+
+// A sample's place on the profile's timeline, in microseconds since the Unix epoch.
+static double profileTimestamp(MonotonicTime timestamp)
+{
+    return s_profilingStartTime + (timestamp - s_profilingStartMonotonicTime).microseconds();
+}
 
 void setSamplingInterval(int intervalMicroseconds)
 {
@@ -49,7 +57,8 @@ void startCPUProfiler(JSC::VM& vm)
 {
     // Capture the wall clock time when profiling starts (before creating stopwatch)
     // This will be used as the profile's startTime
-    s_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+    s_profilingStartMonotonicTime = MonotonicTime::now();
+    s_profilingStartTime = WTF::WallTime::now().secondsSinceEpoch().value() * 1000000.0;
 
     // Create a stopwatch and start it
     auto stopwatch = WTF::Stopwatch::create();
@@ -364,7 +373,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             auto& stackTrace = stackTraces[idx];
             if (stackTrace.frames.isEmpty()) {
                 samples.append(1);
-                double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+                double currentTime = profileTimestamp(stackTrace.timestamp);
                 double delta = std::max(0.0, currentTime - lastTime);
                 timeDeltas.append(static_cast<long long>(delta));
                 lastTime = currentTime;
@@ -538,7 +547,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
             samples.append(currentParentId);
 
-            double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+            double currentTime = profileTimestamp(stackTrace.timestamp);
             double delta = std::max(0.0, currentTime - lastTime);
             timeDeltas.append(static_cast<long long>(delta));
             lastTime = currentTime;
@@ -629,7 +638,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         for (size_t idx : sortedIndices) {
             auto& stackTrace = stackTraces[idx];
 
-            double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+            double currentTime = profileTimestamp(stackTrace.timestamp);
             long long deltaUs = static_cast<long long>(std::max(0.0, currentTime - lastTime));
             totalTimeUs += deltaUs;
             lastTime = currentTime;

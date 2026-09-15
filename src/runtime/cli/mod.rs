@@ -310,6 +310,8 @@ pub mod test {
 #[path = "Arguments.rs"]
 pub mod arguments;
 pub use arguments as Arguments;
+#[path = "profiling.rs"]
+pub(crate) mod profiling;
 #[path = "run_command.rs"]
 pub mod run_command;
 

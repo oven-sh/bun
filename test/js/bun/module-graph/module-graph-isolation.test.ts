@@ -142,6 +142,8 @@ const dir = String(
       export const importsInto = (other, specifier) => {
         other.import(specifier).then(() => heard.push("fulfilled"), error => heard.push("rejected: " + error.code));
       };
+      // A module loaded through a graph of its own making that has no context of its own.
+      export const loadsThroughAPlainGraph = specifier => new Bun.ModuleGraph().import(specifier);
       // FileHandles nobody closes and nobody keeps.
       export const forgetsFileHandles = async (path, count) => { for (let i = 0; i < count; i++) await fs.promises.open(path, "r"); };
       // One the host is handed, with a stream over another.
@@ -344,6 +346,23 @@ const dir = String(
       await marker.promise;
       console.log(JSON.stringify({ outcomes, heardByTheHost }));
       process.exit(0);
+    `,
+    "ticks-from-its-top-level.mjs": `
+      globalThis.evaluatedIn = Bun.ModuleGraph.current === undefined ? "the host's context" : "a graph's context";
+      setInterval(() => globalThis.ticks++, 1);
+    `,
+    "plain-graph-made-by-a-graph.mjs": `
+      globalThis.ticks = 0;
+      const tenant = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
+      await tenant.run(() => app.loadsThroughAPlainGraph(import.meta.dir + "/ticks-from-its-top-level.mjs"));
+      while (globalThis.ticks < 3) await new Promise(resolve => setImmediate(resolve));
+      tenant.dispose();
+      const ticks = globalThis.ticks;
+      // Host timers of the same delay, armed after the interval, come due after it would have.
+      for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve, 1));
+      console.log(JSON.stringify({ evaluatedIn: globalThis.evaluatedIn, ticksAfterDispose: globalThis.ticks - ticks }));
+      // (Exits by itself: the interval does not keep the process running either.)
     `,
     "imports-of-a-disposed-graph.mjs": `
       const graph = new Bun.ModuleGraph({ isolateIO: true });
@@ -2752,6 +2771,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("a BroadcastChannel its leftover script makes and posts to says nothing, to it or to the host's listener", async () => {
     expect(await runs("broadcast-channel-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"outcomes":["said nothing","said nothing"],"heardByTheHost":[]}`,
+      exitCode: 0,
+    });
+  });
+  test("what a module opens at its top level is the graph's when the graph loaded it through a plain graph of its own making", async () => {
+    expect(await runs("plain-graph-made-by-a-graph.mjs")).toEqual({
+      stdout: `{"evaluatedIn":"a graph's context","ticksAfterDispose":0}`,
       exitCode: 0,
     });
   });

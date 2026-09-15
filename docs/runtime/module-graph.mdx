@@ -24,7 +24,34 @@ graph.dispose();
 
 ## `isolateIO`
 
-With `isolateIO: true` the graph gets a context of its own for timers and I/O. Everything its code opens belongs to the graph: timers, `Bun.serve` / `Bun.listen` servers, sockets, `fetch()` requests, WebSockets, watchers, child processes (including `Bun.$`), workers, database connections.
+With `isolateIO: true` the graph gets a context of its own for timers and I/O. Everything its code opens belongs to the graph: timers, `Bun.serve` / `Bun.listen` servers, sockets, `fetch()` requests, WebSockets, watchers, child processes (including `Bun.---
+title: ModuleGraph
+description: Run many instances of one app in a single process with Bun.ModuleGraph. Each instance gets fresh module state and its own timers and I/O; compiled code is shared.
+
+---
+
+<Warning>`Bun.ModuleGraph` is experimental.</Warning>
+
+A `Bun.ModuleGraph` loads modules into the current global a second (third, …) time. Each graph has its own module instances, its own `require.cache`, and its own values for the names you pass as `globals`. Parsed code and bytecode are shared between graphs; ES modules share JIT-compiled code too.
+
+```ts host.ts icon="/icons/typescript.svg"
+const graph = new Bun.ModuleGraph({
+  isolateIO: true,
+  globals: { process: tenantProcess }, // free identifiers in the graph's modules
+  onError(error, kind) {
+    console.error("tenant failed", kind, error);
+  },
+});
+
+const app = await graph.import("./app.ts");
+await graph.run(() => app.handle(request));
+
+graph.dispose();
+```
+
+## `isolateIO`
+
+With `isolateIO: true` the graph gets a context of its own for timers and I/O. Everything its code opens belongs to the graph: timers, `Bun.serve` / `Bun.listen` servers, sockets, `fetch()` requests, WebSockets, ), workers, database connections. That includes what is opened by modules the graph's code loads through a graph of its own making: one made with `isolateIO` is disposed with its maker, and one made without it runs its modules in its maker's context.
 
 `graph.dispose()` closes all of it, and from then on the graph hears nothing, like a worker that was terminated: no `close` handler, `onExit` or `'error'` event is called, a `fetch()` or a connection that was in flight does not reject, and a promise waiting on anything (a request, a child's exit, a file read, compression, `crypto.subtle`, a DNS lookup, `Bun.build`, a stream) never settles. That includes what the host still holds of the graph's: do not use a graph's objects (a socket, a worker, a child process, a stream, a `Response`) after `dispose()`. They no longer work, and an operation on one may fail or may never complete: `await worker.terminate()`, `server.close(callback)` or waiting for a child's `'exit'` can wait for ever. `FinalizationRegistry` cleanup callbacks are still called. What the graph had already queued as microtasks or `process.nextTick` callbacks still runs, once; whatever that code starts does not start (a connection is not dialed, a UDP socket is not bound, a server does not announce `'listening'`, `child_process.spawn()` spawns nothing) and its promise stays pending rather than rejecting, so code that retries on failure stops there. Closing is not preventing: a process `Bun.spawn` starts is started and then killed, so a very short command can finish first, and synchronous calls (`Bun.spawnSync`, `fs.writeFileSync`) run to completion. `dispose()` releases what a graph holds; it is not a sandbox. Files its objects had open are closed too: `node:fs` streams, `FileHandle`s, a `Bun.file().writer()`, `bun:sqlite` and `node:sqlite` databases (what is buffered and not yet written is dropped; the host gets `EBADF` or "Database has closed" from one it still holds). A raw descriptor from `fs.openSync()` is only a number and stays open, as it does when a worker is terminated. A graph made by the graph's own code is disposed with it. (Only a graph with `isolateIO` owns anything: what runs inside a graph without it, another graph it creates included, is the host's.)
 

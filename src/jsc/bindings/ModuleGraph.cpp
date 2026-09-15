@@ -987,6 +987,13 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
     JSModuleGraph* graph = isolateIO
         ? JSIsolatedModuleGraph::create(vm, globalObject, structure, loader, onError)
         : JSModuleGraph::create(vm, globalObject, structure, loader, onError);
+    // A graph without a context of its own, made by the script of one that has one: the top-level code of
+    // its modules runs in its maker's context (the loader's pipeline carries none, which would make what
+    // that code opens the host's, out of the reach of the maker's dispose()).
+    if (!isolateIO) {
+        if (auto* maker = currentIsolatedModuleGraph(globalObject))
+            loader->setAsyncContext(vm, createModuleGraphFrame(globalObject, maker, jsUndefined()));
+    }
     graph->setOverlayShape(overlayShape);
     return JSValue::encode(graph);
 }

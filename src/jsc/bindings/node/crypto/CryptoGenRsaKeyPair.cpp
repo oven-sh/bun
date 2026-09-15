@@ -151,9 +151,9 @@ __attribute__((minsize)) std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJ
     if (!hashAlgorithmValue.isUndefined()) {
         V::validateString(scope, globalObject, hashAlgorithmValue, "options.hashAlgorithm"_s);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        hashString = hashAlgorithmValue.toString(globalObject);
+        hashAlgorithmString = hashAlgorithmValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        hashView = hashString->view(globalObject);
+        hashAlgorithmView = hashAlgorithmString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
     if (!mgf1HashAlgorithmValue.isUndefined()) {
@@ -161,7 +161,7 @@ __attribute__((minsize)) std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJ
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         mgf1HashAlgorithmString = mgf1HashAlgorithmValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        mgf1HashView = mgf1HashAlgorithmString->view(globalObject);
+        mgf1HashAlgorithmView = mgf1HashAlgorithmString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
     if (!hashValue.isUndefined()) {
@@ -173,7 +173,7 @@ __attribute__((minsize)) std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJ
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         hashView = hashString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!hashAlgorithmView->isNull() && hashAlgorithmView != hashView) {
+        if (!hashAlgorithmView->isEmpty() && hashAlgorithmView != hashView) {
             ERR::INVALID_ARG_VALUE(scope, globalObject, "options.hash"_s, hashValue);
             return std::nullopt;
         }
@@ -187,14 +187,14 @@ __attribute__((minsize)) std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJ
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         mgf1HashView = mgf1HashString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!mgf1HashAlgorithmView->isNull() && mgf1HashAlgorithmView != mgf1HashView) {
+        if (!mgf1HashAlgorithmView->isEmpty() && mgf1HashAlgorithmView != mgf1HashView) {
             ERR::INVALID_ARG_VALUE(scope, globalObject, "options.mgf1Hash"_s, mgf1HashValue);
             return std::nullopt;
         }
     }
 
-    GCOwnedDataScope<WTF::StringView> hash = hashAlgorithmView->isNull() ? hashView : hashAlgorithmView;
-    GCOwnedDataScope<WTF::StringView> mgf1Hash = mgf1HashAlgorithmView->isNull() ? mgf1HashView : mgf1HashAlgorithmView;
+    GCOwnedDataScope<WTF::StringView> hash = hashAlgorithmView->isEmpty() ? hashView : hashAlgorithmView;
+    GCOwnedDataScope<WTF::StringView> mgf1Hash = mgf1HashAlgorithmView->isEmpty() ? mgf1HashView : mgf1HashAlgorithmView;
 
     ncrypto::Digest md = nullptr;
     ncrypto::Digest mgf1Md = nullptr;

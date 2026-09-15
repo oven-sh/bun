@@ -186,8 +186,7 @@ static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
     // Bun.Terminal calls through here too. See #29592.
     //
     // Marked on every transition, including setRawMode(true)→(false), so
-    // the signal-exit path (which runs only bun_restore_stdio, not the
-    // atexit uv_tty_reset_mode hook) still restores cooked mode on Ctrl-C.
+    // bun_restore_stdio still restores a pipeline producer's stdio on Ctrl-C.
     if (fd >= 0 && fd < 3) {
         bun_stdio_modified[fd] = 1;
     }

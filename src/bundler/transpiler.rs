@@ -691,8 +691,8 @@ impl<'a> Transpiler<'a> {
 
 // ══════════════════════════════════════════════════════════════════════════
 // `configure_linker*` / `run_env_loader` — used by
-// `RunCommand::configure_env_for_run` (runtime/cli/run_command.rs:527),
-// `bun_install::configure_env_for_run`, `JSBundleCompletionTask`,
+// `bun_install::RunCommand::configure_env_for_run` (shared by `bun run` and
+// the package manager's lifecycle scripts), `JSBundleCompletionTask`,
 // `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
 // ══════════════════════════════════════════════════════════════════════════
 

@@ -947,12 +947,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     } else if dependency.behavior.is_peer() {
                                         warn_unmet_peer_dependency(this, name, &version);
                                     } else {
+                                        // A bare specifier has an empty literal.
+                                        let literal = this.lockfile.str(&version.literal);
+                                        let literal: &[u8] = if literal.is_empty() {
+                                            b"latest"
+                                        } else {
+                                            literal
+                                        };
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
                                             None,
                                             bun_ast::Loc::EMPTY,
                                             "No version matching \"{}\" found for specifier \"{}\"<r> <d>(but package exists)<r>",
-                                            bstr::BStr::new(this.lockfile.str(&version.literal)),
+                                            bstr::BStr::new(literal),
                                             bstr::BStr::new(this.lockfile.str(&name)),
                                         );
                                     }
@@ -2716,6 +2723,7 @@ fn get_or_put_resolved_package(
                         .is_dependency_of_workspace_in(t, dependency_id)
                 });
 
+            let mut deprecated_latest_fallback = false;
             let version_result: Npm::FindVersionResult = match version.tag {
                 _ if latest_for_target => manifest.find_by_dist_tag_with_filter(
                     b"latest",
@@ -2723,11 +2731,24 @@ fn get_or_put_resolved_package(
                     this.options.minimum_release_age_excludes,
                 ),
                 // SAFETY: `version.tag` discriminates the union arm.
-                dependency::version::Tag::DistTag => manifest.find_by_dist_tag_with_filter(
-                    this.lockfile.str(&version.dist_tag().tag),
-                    this.options.minimum_release_age_ms,
-                    this.options.minimum_release_age_excludes,
-                ),
+                dependency::version::Tag::DistTag => {
+                    let tag = this.lockfile.str(&version.dist_tag().tag);
+                    if tag == b"latest" {
+                        deprecated_latest_fallback = manifest
+                            .find_by_dist_tag(b"latest")
+                            .is_some_and(|result| result.package.deprecated);
+                        manifest.find_by_latest_tag_with_filter(
+                            this.options.minimum_release_age_ms,
+                            this.options.minimum_release_age_excludes,
+                        )
+                    } else {
+                        manifest.find_by_dist_tag_with_filter(
+                            tag,
+                            this.options.minimum_release_age_ms,
+                            this.options.minimum_release_age_excludes,
+                        )
+                    }
+                }
                 dependency::version::Tag::Npm => manifest.find_best_version_with_filter(
                     &version.npm().version,
                     this.lockfile.buffers.string_bytes.as_slice(),
@@ -2828,6 +2849,10 @@ fn get_or_put_resolved_package(
 
                     return match version.tag {
                         dependency::version::Tag::Npm => Err(crate::Error::NoMatchingVersion),
+                        // The `latest` tag exists but resolved as the range `*`.
+                        dependency::version::Tag::DistTag if deprecated_latest_fallback => {
+                            Err(crate::Error::NoMatchingVersion)
+                        }
                         dependency::version::Tag::DistTag => Err(crate::Error::DistTagNotFound),
                         _ => unreachable!(),
                     };

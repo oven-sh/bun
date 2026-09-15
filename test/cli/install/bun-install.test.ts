@@ -2917,6 +2917,51 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it('should skip a deprecated latest-tagged version for a "latest" dependency', async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": {},
+          "0.0.5": { deprecated: "broken release" },
+          latest: "0.0.5",
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            baz: "latest",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      const out = await stdout.text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ baz@0.0.3",
+        "",
+        "1 package installed",
+      ]);
+      expect(await exited).toBe(0);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+    });
+  });
+
   it("should install latest with prereleases", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

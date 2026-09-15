@@ -3,7 +3,7 @@ use bun_core::Output;
 // here so existing `crate::cli::shell_completions::Shell` paths keep working.
 pub use bun_install::ShellCompletions::Shell;
 
-// The actual files live at `<repo>/completions/bun.{bash,zsh,fish}`.
+// The actual files live at `<repo>/completions/bun.{bash,zsh,fish,ps1}`.
 // The embedded script bodies must stay above the install tier (asset dependency),
 // so `completions()` is an extension trait on the re-exported enum rather than an
 // inherent method.
@@ -26,6 +26,10 @@ impl ShellCompletionsExt for Shell {
             Shell::Fish => bun_zstd::embed_compressed!(
                 "completions/bun.fish",
                 include_bytes!("../../../completions/bun.fish")
+            ),
+            Shell::Pwsh => bun_zstd::embed_compressed!(
+                "completions/bun.ps1",
+                include_bytes!("../../../completions/bun.ps1")
             ),
             _ => b"",
         }

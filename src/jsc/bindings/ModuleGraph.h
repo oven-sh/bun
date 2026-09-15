@@ -35,7 +35,8 @@ public:
     static void destroy(JSC::JSCell*);
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM&);
-    static JSModuleGraph* create(JSC::VM&, Zig::GlobalObject*, JSC::Structure*, JSC::JSModuleLoader*, JSC::JSObject* onError);
+    // `maker`: the graph in whose context this one is being made (null: the host's).
+    static JSModuleGraph* create(JSC::VM&, Zig::GlobalObject*, JSC::Structure*, JSC::JSModuleLoader*, unsigned overlayShape, JSC::JSObject* onError, JSModuleGraph* maker);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -46,13 +47,11 @@ public:
     // Code compiled under one shape must not be shared with another, or with the host
     // (see commonJSSourceForGraph).
     unsigned overlayShape() const { return m_overlayShape; }
-    void setOverlayShape(unsigned shape) { m_overlayShape = shape; }
     JSC::JSMap* requireMap() const { return m_requireMap.get(); }
     JSC::JSObject* onError() const { return m_onError.get(); } // null if the host gave none
     // The graph in whose context this one was made (null: the host's). Errors of a graph that was
     // given no onError go to its maker's.
     JSModuleGraph* maker() const { return m_maker.get(); }
-    void setMaker(JSC::VM& vm, JSModuleGraph* maker) { m_maker.setMayBeNull(vm, this, maker); }
     // Key of the first module import()ed, unless that import failed: import.meta.main /
     // require.main. Undefined before.
     JSC::JSValue mainPath() const
@@ -61,7 +60,7 @@ public:
             return JSC::jsUndefined();
         return m_mainPath.get();
     }
-    bool disposed() const { return m_disposed; }
+    bool disposed() const { return m_context->isStopped(); }
     // Its onError is running. What that throws or rejects, and an error of this graph's code that it
     // causes, is the host's: given to the graph, it would come straight back to the same onError.
     bool inOnError() const { return m_inOnError; }
@@ -77,7 +76,7 @@ public:
     void dispose(Zig::GlobalObject*);
 
 private:
-    JSModuleGraph(JSC::VM&, JSC::Structure*, Ref<WebCore::ScriptExecutionContext>&&, JSC::JSModuleLoader*, JSC::JSObject* onError);
+    JSModuleGraph(JSC::VM&, JSC::Structure*, Ref<WebCore::ScriptExecutionContext>&&, JSC::JSModuleLoader*, unsigned overlayShape, JSC::JSObject* onError, JSModuleGraph* maker);
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     Ref<WebCore::ScriptExecutionContext> m_context;
@@ -89,7 +88,6 @@ private:
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
     // The loader's promise for the import that made m_mainPath main.
     JSC::WriteBarrier<JSC::JSPromise> m_mainImport;
-    bool m_disposed { false };
     bool m_inOnError { false };
     unsigned m_overlayShape { 0 };
 };

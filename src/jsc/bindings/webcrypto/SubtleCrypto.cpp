@@ -733,31 +733,9 @@ static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params,
 
 RefPtr<DeferredPromise> getPromise(DeferredPromise* index, WeakPtr<SubtleCrypto> weakThis)
 {
-    if (!weakThis)
-        return nullptr;
-    auto promise = weakThis->m_pendingPromises.take(index);
-    // Asked by script of a Bun.ModuleGraph that was disposed since: released, never settled.
-    if (auto asking = weakThis->m_pendingPromiseGraphContexts.take(index)) {
-        RefPtr context = ScriptExecutionContext::getScriptExecutionContext(asking);
-        if (!context || context->isStopped())
-            return nullptr;
-    }
-    return promise;
-}
-
-void SubtleCrypto::removePendingPromise(DeferredPromise* index)
-{
-    m_pendingPromises.remove(index);
-    m_pendingPromiseGraphContexts.remove(index);
-}
-
-void SubtleCrypto::addPendingPromise(Ref<DeferredPromise>&& promise)
-{
-    auto* index = promise.ptr();
-    auto* asking = defaultGlobalObject(scriptExecutionContext()->jsGlobalObject())->currentScriptExecutionContext();
-    if (asking->isForModuleGraph())
-        m_pendingPromiseGraphContexts.add(index, asking->identifier());
-    m_pendingPromises.add(index, WTF::move(promise));
+    if (weakThis)
+        return weakThis->m_pendingPromises.take(index);
+    return nullptr;
 }
 
 static std::unique_ptr<CryptoAlgorithmParameters> crossThreadCopyImportParams(const CryptoAlgorithmParameters& importParams)
@@ -812,7 +790,7 @@ void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& cipherText) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -856,7 +834,7 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& plainText) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -903,7 +881,7 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& signature) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -953,7 +931,7 @@ void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](bool result) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -986,7 +964,7 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& digest) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -1017,7 +995,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](KeyOrKeyPair&& keyOrKeyPair) mutable {
         if (auto promise = getPromise(index, weakThis)) {
@@ -1104,7 +1082,7 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& derivedKey) mutable {
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=169395
@@ -1167,7 +1145,7 @@ void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& derivedKey) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -1288,7 +1266,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](CryptoKey& key) mutable {
         if (auto promise = getPromise(index, weakThis)) {
@@ -1331,7 +1309,7 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](SubtleCrypto::KeyFormat format, KeyData&& key) mutable {
         if (auto promise = getPromise(index, weakThis)) {
@@ -1420,7 +1398,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
     auto context = scriptExecutionContext();
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis, wrapAlgorithm, wrappingKey = Ref { wrappingKey }, wrapParams = WTF::move(wrapParams), isEncryption, context, workQueue = m_workQueue](SubtleCrypto::KeyFormat format, KeyData&& key) mutable {
         if (weakThis) {
@@ -1443,13 +1421,13 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                     // FIXME: Converting to JS just to JSON-Stringify seems inefficient. We should find a way to go directly from the struct to JSON.
                     auto jwk = toJS<IDLDictionary<JsonWebKey>>(*(promise->globalObject()), *(promise->globalObject()), WTF::move(std::get<JsonWebKey>(key)));
                     if (scope.exception()) [[unlikely]] {
-                        weakThis->removePendingPromise(index);
+                        weakThis->m_pendingPromises.remove(index);
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
                     String jwkString = JSONStringify(promise->globalObject(), jwk, 0);
                     if (scope.exception()) [[unlikely]] {
-                        weakThis->removePendingPromise(index);
+                        weakThis->m_pendingPromises.remove(index);
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
@@ -1558,7 +1536,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
     }
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis, format, importAlgorithm, unwrappedKeyAlgorithm = crossThreadCopyImportParams(*unwrappedKeyAlgorithm), extractable, keyUsagesBitmap](const Vector<uint8_t>& bytes) mutable {
         if (weakThis) {
@@ -1582,18 +1560,18 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     String jwkString(bytes.span());
                     auto jwkObject = JSONParse(&state, jwkString);
                     if (scope.exception()) [[unlikely]] {
-                        weakThis->removePendingPromise(index);
+                        weakThis->m_pendingPromises.remove(index);
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
                     if (!jwkObject) {
-                        weakThis->removePendingPromise(index);
+                        weakThis->m_pendingPromises.remove(index);
                         promise->reject(DataError, "WrappedKey cannot be converted to a JSON object"_s);
                         return;
                     }
                     auto jwk = convert<IDLDictionary<JsonWebKey>>(state, jwkObject);
                     if (scope.exception()) [[unlikely]] {
-                        weakThis->removePendingPromise(index);
+                        weakThis->m_pendingPromises.remove(index);
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
@@ -1702,7 +1680,7 @@ void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vect
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(identifier);
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](CryptoKey& publicKey) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -1741,7 +1719,7 @@ void SubtleCrypto::encapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifi
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](Vector<uint8_t>&& sharedKey, Vector<uint8_t>&& ciphertext) mutable {
         if (auto promise = getPromise(index, weakThis)) {
@@ -1805,7 +1783,7 @@ void SubtleCrypto::encapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](Vector<uint8_t>&& sharedKeyBytes, Vector<uint8_t>&& ciphertext) mutable {
         KeyData data = WTF::move(sharedKeyBytes);
@@ -1876,7 +1854,7 @@ void SubtleCrypto::decapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifi
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& sharedKey) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -1930,7 +1908,7 @@ void SubtleCrypto::decapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
 
     auto index = promise.ptr();
-    addPendingPromise(WTF::move(promise));
+    m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& sharedKeyBytes) mutable {
         KeyData data = sharedKeyBytes;

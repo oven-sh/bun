@@ -1677,7 +1677,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 {
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(
-            [graph = JSC::Weak<JSModuleGraph>(graph), ofGraph = !!graph](JSC::JSGlobalObject* lexicalGlobalObject,
+            [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
@@ -1686,10 +1686,9 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 auto scope = DECLARE_THROW_SCOPE(vm);
 
                 JSValue keyValue = identifierToJSValue(vm, moduleKey);
-                // The graph's loader, which is evaluating this, keeps the graph alive.
-                RELEASE_ASSERT(!ofGraph || graph.get());
                 // Nothing evaluates in a disposed Bun.ModuleGraph: a module that had not run yet never does.
-                if (ofGraph && graph->disposed()) [[unlikely]] {
+                // (The graph's loader, which is evaluating this, keeps the graph alive.)
+                if (graph && graph->disposed()) [[unlikely]] {
                     throwException(globalObject, scope, Bun::createModuleGraphDisposedError(globalObject));
                     return;
                 }

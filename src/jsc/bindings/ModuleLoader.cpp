@@ -499,8 +499,6 @@ extern "C" void Bun__onFulfillAsyncModule(
     // instead of each round-tripping through the embedder.
 
     if (res->result.value.isCommonJSModule) {
-        if (graph && graph->disposed()) [[unlikely]]
-            RELEASE_AND_RETURN(scope, promise->reject(vm, Bun::createModuleGraphDisposedError(globalObject)));
         auto created = Bun::createCommonJSModule(globalObject, graph, specifierValue, res->result.value);
         EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {

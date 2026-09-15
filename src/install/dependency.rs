@@ -669,11 +669,12 @@ impl VersionExt for Version {
                     true,
                 ) || self.npm().eql(rhs.npm(), lhs_buf, rhs_buf)
             }
-            Tag::Folder | Tag::DistTag => self.literal.eql(rhs.literal, lhs_buf, rhs_buf),
+            Tag::Folder | Tag::DistTag | Tag::Symlink => {
+                self.literal.eql(rhs.literal, lhs_buf, rhs_buf)
+            }
             Tag::Git => Repository::eql(self.git(), rhs.git(), lhs_buf, rhs_buf),
             Tag::Github => Repository::eql(self.github(), rhs.github(), lhs_buf, rhs_buf),
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
-            Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
             Tag::Catalog => self.catalog().eql(*rhs.catalog(), lhs_buf, rhs_buf),
             _ => true,
@@ -1051,6 +1052,46 @@ impl TagExt for Tag {
 // ──────────────────────────────────────────────────────────────────────────
 // Free functions: parse
 // ──────────────────────────────────────────────────────────────────────────
+
+/// A `link:` target is a path unless it is a package name (`bun link <name>`).
+/// Shared with the pnpm-lock.yaml migration so both agree on stored values.
+pub(crate) fn is_link_path(value: &[u8]) -> bool {
+    !value.is_empty() && !strings::is_npm_package_name(value)
+}
+
+/// Stored form of a path-form target (root-relative or absolute): `/`-separated
+/// and `./`-prefixed where needed, so `is_link_path` holds when read back.
+pub(crate) fn link_path_for_lockfile<'a>(
+    relative: &[u8],
+    buf: &'a mut bun_paths::PathBuffer,
+) -> Option<&'a [u8]> {
+    if relative.is_empty() || relative == b"." {
+        return Some(b".");
+    }
+    let already_shaped = relative == b".."
+        || relative.starts_with(b"./")
+        || relative.starts_with(b"../")
+        || (cfg!(windows) && (relative.starts_with(b".\\") || relative.starts_with(b"..\\")))
+        || bun_paths::is_absolute(relative);
+    let prefix_len = if already_shaped { 0 } else { 2 };
+    let total = prefix_len + relative.len();
+    if total > buf.len() {
+        return None;
+    }
+    if prefix_len != 0 {
+        buf[0] = b'.';
+        buf[1] = b'/';
+    }
+    buf[prefix_len..total].copy_from_slice(relative);
+    #[cfg(windows)]
+    bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..total]);
+    Some(&buf[..total])
+}
+
+/// Leaves the project root (`..` or absolute); same rule `file:` uses.
+pub(crate) fn link_path_escapes_root(stored: &[u8]) -> bool {
+    crate::bin::bin_target_escapes_package_dir(stored)
+}
 
 #[cfg(windows)]
 pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {

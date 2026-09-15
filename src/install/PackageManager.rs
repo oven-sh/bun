@@ -2192,6 +2192,7 @@ pub fn init(
             crate::resolvers::folder_resolver::hash(normalized),
             FolderResolutionEntry {
                 abs_path: Box::<[u8]>::from(&*normalized),
+                link: false,
                 resolution: FolderResolution::PackageId(0),
             },
         )?;

@@ -348,8 +348,11 @@ pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [
         dependency::Tag::Symlink => (b"link:", literal.strip_prefix(b"link:")?),
         _ => return None,
     };
-    let is_path = path.starts_with(b".")
-        || (prefix != b"link:" && !path.is_empty() && !strings::contains(path, b"://"));
+    let is_path = if prefix == b"link:" {
+        dependency::is_link_path(path)
+    } else {
+        path.starts_with(b".") || (!path.is_empty() && !strings::contains(path, b"://"))
+    };
     (is_path && !path.starts_with(b"//") && !Platform::AUTO.is_absolute(path))
         .then_some((prefix, path))
 }

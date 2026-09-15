@@ -43,9 +43,12 @@ export function serialize(message, handle, options) {
   throw $ERR_INVALID_HANDLE_TYPE();
 }
 /**
+ * Adopts the descriptor that arrived with a NODE_HANDLE message into the handle type the sender
+ * named. Owns `fd`: when nothing adopted it, it is closed here; when this throws, ipc.rs closes it.
+ *
+ * @param {unknown} target
  * @param {Serialized} serialized
- * @param {unknown} handle
- * @param {(handle: Handle) => void} emit
+ * @param {number} fd
  * @returns {void}
  */
 export function parseHandle(target, serialized, fd) {
@@ -58,6 +61,12 @@ export function parseHandle(target, serialized, fd) {
       server.listen({ fd, exclusive: true }, () => {
         emit(target, serialized.msg, server);
       });
+      if (!server._handle) {
+        // listen({ fd }) adopts synchronously; when it refused the descriptor (the error is emitted
+        // on a later tick) the descriptor is still open and nothing refers to it anymore.
+        const closeRawHandle = $newRustFunction("node_cluster_binding.rs", "clusterCloseHandle", 1);
+        closeRawHandle(fd);
+      }
       return;
     }
     case "net.Socket": {
@@ -73,8 +82,7 @@ export function parseHandle(target, serialized, fd) {
       const wrap = new UDP();
       const err = wrap.open(fd);
       if (err) {
-        // The wrap only owns the descriptor on success; don't leak it.
-        require("node:fs").closeSync(fd);
+        // The wrap only owns the descriptor on success; throwing hands it back to ipc.rs, which closes it.
         throw new Error(`failed to open received dgram handle: ${err}`);
       }
       emit(target, serialized.msg, wrap);

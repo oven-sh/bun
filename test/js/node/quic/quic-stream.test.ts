@@ -1,6 +1,3 @@
-// `destroy()` after the app committed AND ended a response (which, under
-// `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
-// must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { describe, expect, test } from "bun:test";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -11,6 +8,154 @@ const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
 const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
 
+// A client that sets only `ontrailers` (no `onheaders`) must still receive
+// trailing HEADERS: the `wantsHeaders` state flag gates the native dispatch
+// of every HEADERS kind, so tying it to `onheaders` alone drops trailers
+// silently.
+describe("HTTP/3 response trailers", () => {
+  test("are delivered when only ontrailers is set", async () => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 2 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(new TextEncoder().encode("body"));
+          this.writer.endSync();
+        },
+        onwanttrailers(this: any) {
+          this.sendTrailers({ "x-tr-a": "1", "x-tr-b": "two" });
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 2 },
+    });
+    await client.opened;
+
+    const trailers = Promise.withResolvers<Record<string, string>>();
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+    });
+    stream.ontrailers = (t: Record<string, string>) => trailers.resolve(t);
+
+    let body = "";
+    for await (const c of stream) for (const b of [c].flat()) body += Buffer.from(b);
+    // The stream FIN follows the trailing HEADERS on the wire (RFC 9114
+    // §4.1), so by the time the body iterator ends, trailers have been
+    // dispatched or never will be.
+    const result = await Promise.race([trailers.promise, stream.closed.then(() => "dropped")]);
+
+    client.close();
+    expect(body).toBe("body");
+    expect(result).toEqual({ "x-tr-a": "1", "x-tr-b": "two" });
+    // The initial :status block was stashed even without onheaders.
+    expect(stream.headers?.[":status"]).toBe("200");
+  });
+
+  // The response HEADERS + DATA + trailing HEADERS + FIN decoded in a single
+  // on_read callback: lsquic's HQ filter appends the trailer set to
+  // `stream->uh` while draining DATA, and lsquic_stream_read then returns -1
+  // ("header set not claimed") instead of 0 for FIN. The read path has to
+  // claim that set itself and re-read for the FIN behind it.
+  test("are delivered when decoded in the same read callback as the body", async () => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 2 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" });
+          // No DATA: both HEADERS blocks go out in one lsquic write, so the
+          // client's `on_read` sees both in `stream->uh` at once.
+          this.sendTrailers({ "x-tr-a": "1", "x-tr-b": "two" });
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 2 },
+    });
+    await client.opened;
+
+    const trailers = Promise.withResolvers<Record<string, string>>();
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      ontrailers(t: Record<string, string>) {
+        trailers.resolve(t);
+      },
+    });
+
+    for await (const _ of stream) {
+    }
+    const result = await Promise.race([trailers.promise, stream.closed.then(() => "dropped")]);
+
+    client.close();
+    expect(result).toEqual({ "x-tr-a": "1", "x-tr-b": "two" });
+  });
+});
+
+// Same gate: `oninfo` alone must enable HEADERS dispatch for 1xx interim
+// responses (RFC 9114 §4.1).
+test("HTTP/3 1xx interim responses are delivered when only oninfo is set", async () => {
+  await using server = await listen(
+    async serverSession => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+      };
+      await serverSession.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [key], certs: [cert] } },
+      transportParams: { maxIdleTimeout: 2 },
+      onheaders(this: any) {
+        this.sendInformationalHeaders({ ":status": "103", "link": "</a>; rel=preload" });
+        this.sendHeaders({ ":status": "200" }, { terminal: true });
+      },
+    },
+  );
+
+  const client = await connect(server.address, {
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 2 },
+  });
+  await client.opened;
+
+  const hints = Promise.withResolvers<Record<string, string>>();
+  const stream = await client.createBidirectionalStream({
+    headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+  });
+  stream.oninfo = (h: Record<string, string>) => hints.resolve(h);
+
+  for await (const _ of stream) {
+  }
+  const result = await Promise.race([hints.promise, stream.closed.then(() => "dropped")]);
+
+  client.close();
+  expect(result).toEqual({ ":status": "103", "link": "</a>; rel=preload" });
+  expect(stream.headers?.[":status"]).toBe("200");
+});
+
+// `destroy()` after the app committed AND ended a response (which, under
+// `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
+// must deliver it with a FIN, never retract it with a RESET_STREAM.
 describe("QuicStream.destroy after the app ended the send side", () => {
   test("delivers the committed response instead of retracting it with RESET_STREAM", async () => {
     await using server = await listen(

@@ -196,6 +196,77 @@ if (isDockerEnabled()) {
           expect(rawRow[2]).toEqual(new Uint8Array([0xce, 0xff, 0xff])); // -50 as i24 LE
           expect(Buffer.from(rawRow[5]).toString("utf-8")).toBe("alice");
         });
+        test("FLOAT reads the same on the binary and text protocols", async () => {
+          // A prepared statement gets the row in binary, where a FLOAT is the
+          // raw 4-byte float; `.simple()` gets text, where the server prints a
+          // short decimal. Widening the binary f32 with `as f64` gave
+          // 0.10000000149011612 for a stored 0.1. The decoder now takes the
+          // shortest decimal that round-trips to the f32, which is the stored
+          // literal for anything with 7 or fewer significant digits.
+          await using db = new SQL({ ...getOptions(), max: 1 });
+          using sql = await db.reserve();
+          const t = "fl_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, f FLOAT, d DOUBLE)`;
+          await sql`INSERT INTO ${sql(t)} VALUES (1, 0.1, 0.1), (2, 0.3, 0.3), (3, -2.5, -2.5), (4, 3.4e38, 3.4e38), (5, 16384.5, 16384.5), (6, 0.000123, 0.000123)`;
+          const expected = [
+            { f: 0.1, d: 0.1 },
+            { f: 0.3, d: 0.3 },
+            { f: -2.5, d: -2.5 },
+            { f: 3.4e38, d: 3.4e38 },
+            { f: 16384.5, d: 16384.5 },
+            { f: 0.000123, d: 0.000123 },
+          ];
+          expect(await sql`SELECT f, d FROM ${sql(t)} WHERE id > ${0} ORDER BY id`).toEqual(expected);
+          expect(await sql`SELECT f, d FROM ${sql(t)} ORDER BY id`.simple()).toEqual(expected);
+          // More digits than a FLOAT holds: the binary path returns the
+          // nearest f32 at its shortest, never a decimal halfway to the next
+          // f32 (61885352 is exact in a FLOAT and stays 61885352, not
+          // 6.188535e7). The text protocol rounds these to 6 digits instead.
+          await sql`INSERT INTO ${sql(t)} VALUES (7, 123456.789, 0), (8, 16777217, 0), (9, 61885352, 0)`;
+          expect((await sql`SELECT f FROM ${sql(t)} WHERE id >= ${7} ORDER BY id`).map(row => row.f)).toEqual([
+            123456.79, 16777216, 61885352,
+          ]);
+
+          // A wide deterministic sample of normal f32 values through the binary
+          // decoder: each result must parse back to the stored f32, must not sit
+          // exactly halfway to a neighbouring f32, and must have no more digits
+          // than the shortest decimal with those two properties.
+          const f32 = new Float32Array(1);
+          const u32 = new Uint32Array(f32.buffer);
+          const sample: number[] = [];
+          for (let seed = 0x9e3779b9; sample.length < 256; ) {
+            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+            u32[0] = seed;
+            if (Number.isFinite(f32[0]) && Math.abs(f32[0]) >= 1.17549435e-38) sample.push(f32[0]);
+          }
+          const isMidpoint = (v: number, c: number) => {
+            f32[0] = v;
+            const b = u32[0];
+            u32[0] = b + 1;
+            const away = f32[0];
+            u32[0] = b - 1;
+            const toward = f32[0];
+            return c === (v + away) / 2 || c === (v + toward) / 2;
+          };
+          const shortestDigits = (v: number) => {
+            for (let p = 1; p <= 9; p++) {
+              const c = Number(v.toPrecision(p));
+              if (Math.fround(c) === v && !isMidpoint(v, c)) return p;
+            }
+            return 9;
+          };
+          await sql`CREATE TEMPORARY TABLE ${sql(t + "s")} (id INT PRIMARY KEY, f FLOAT)`;
+          await sql.unsafe(
+            "INSERT INTO " + t + "s VALUES " + sample.map((v, i) => `(${i}, ${v.toPrecision(9)})`).join(","),
+          );
+          const read = (await sql`SELECT f FROM ${sql(t + "s")} WHERE id >= ${0} ORDER BY id`).map(row => row.f);
+          const wrong = read.flatMap((x: number, i: number) => {
+            const v = sample[i];
+            const ok = Math.fround(x) === v && !isMidpoint(v, x) && Number(x.toPrecision(shortestDigits(v))) === x;
+            return ok ? [] : [{ stored: v, read: x }];
+          });
+          expect(wrong).toEqual([]);
+        });
         test("YEAR not in the last column reads following columns correctly", async () => {
           // MySQL's binary protocol sends MYSQL_TYPE_YEAR as a fixed 2-byte
           // field, but the column definition reports column_length = 4 (display

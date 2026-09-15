@@ -1,7 +1,7 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc as _, StringJsc};
 
 /// Free-fn aliases of the [`IniTestingAPIs`] associated fns so
 /// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
@@ -82,7 +82,7 @@ impl IniTestingAPIs {
         let mut install = Box::new(BunInstall::default());
         let mut configs: Vec<RegistryAuth> = Vec::new();
         if load_npmrc(&mut install, env, &mut log, &source, &mut configs).is_err() {
-            return bun_ast_jsc::log_to_js(&log, global, b"error");
+            return log.to_js(global, format_args!("error"));
         }
 
         let (
@@ -95,10 +95,10 @@ impl IniTestingAPIs {
             let Some(default_registry) = install.default_registry.as_ref() else {
                 break 'brk (
                     BunString::static_(Registry::DEFAULT_URL),
-                    BunString::empty(),
-                    BunString::empty(),
-                    BunString::empty(),
-                    BunString::empty(),
+                    BunString::EMPTY,
+                    BunString::EMPTY,
+                    BunString::EMPTY,
+                    BunString::EMPTY,
                 );
             };
 

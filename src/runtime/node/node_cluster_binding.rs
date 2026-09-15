@@ -423,10 +423,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let atype: i32;
         if address_type.is_string() {
             is_udp = true;
-            atype = if address_type
-                .to_js_string_view(global)?
-                .eql_comptime(b"udp6")
-            {
+            atype = if address_type.to_js_string_view(global)?.eq_ascii(b"udp6") {
                 6
             } else {
                 4

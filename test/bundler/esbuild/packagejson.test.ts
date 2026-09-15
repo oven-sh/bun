@@ -1568,6 +1568,127 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo/bar". Maybe you need to "bun install"?`],
     },
   });
+  // An `exports`/`imports` target that is not on disk gets the same TypeScript
+  // extension rewrite as a relative import (esbuild's `rewrittenFileExtensions`
+  // in `finalizeImportsExportsResult`), for exact and wildcard keys alike.
+  // Bun also tries `.mts` for a `.js` target.
+  for (const [from, to] of [
+    ["js", "ts"],
+    ["js", "tsx"],
+    ["jsx", "ts"],
+    ["jsx", "tsx"],
+    ["mjs", "mts"],
+    ["cjs", "cts"],
+    ["js", "mts"],
+  ]) {
+    itBundled(`packagejson/ExportsImportsRewrite_${from}_to_${to}`, {
+      files: {
+        "/Users/user/project/src/entry.ts": /* ts */ `
+          import { exportsExact } from 'rewrite-pkg/exact'
+          import { exportsWild } from 'rewrite-pkg/wild/a'
+          import { importsExact } from '#exact'
+          import { importsWild } from '#wild/a'
+          console.log(exportsExact, exportsWild, importsExact, importsWild)
+        `,
+        "/Users/user/project/package.json": /* json */ `
+          {
+            "name": "rewrite-pkg",
+            "type": "module",
+            "exports": {
+              "./exact": "./src/exports-exact.${from}",
+              "./wild/*": "./src/exports-wild/*.${from}"
+            },
+            "imports": {
+              "#exact": "./src/imports-exact.${from}",
+              "#wild/*": "./src/imports-wild/*.${from}"
+            }
+          }
+        `,
+        [`/Users/user/project/src/exports-exact.${to}`]: `export const exportsExact = 'exports-exact.${to}'`,
+        [`/Users/user/project/src/exports-wild/a.${to}`]: `export const exportsWild = 'exports-wild.${to}'`,
+        [`/Users/user/project/src/imports-exact.${to}`]: `export const importsExact = 'imports-exact.${to}'`,
+        [`/Users/user/project/src/imports-wild/a.${to}`]: `export const importsWild = 'imports-wild.${to}'`,
+      },
+      run: {
+        stdout: `exports-exact.${to} exports-wild.${to} imports-exact.${to} imports-wild.${to}`,
+      },
+    });
+  }
+  itBundled("packagejson/ExportsImportsRewriteExactTargetOnDiskWins", {
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import { feature } from 'exact-js-wins/feature'
+        import { feature as feature2 } from '#feature'
+        console.log(feature, feature2)
+      `,
+      "/Users/user/project/package.json": /* json */ `
+        {
+          "name": "exact-js-wins",
+          "type": "module",
+          "exports": { "./feature": "./src/feature.js" },
+          "imports": { "#feature": "./src/feature.js" }
+        }
+      `,
+      "/Users/user/project/src/feature.js": `export const feature = 'js file'`,
+      "/Users/user/project/src/feature.ts": `export const feature = 'ts file'`,
+    },
+    run: {
+      stdout: "js file js file",
+    },
+  });
+  itBundled("packagejson/ExportsImportsRewriteStaysInFamily", {
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import 'family/c'
+        import '#m'
+      `,
+      "/Users/user/project/package.json": /* json */ `
+        {
+          "name": "family",
+          "type": "module",
+          "exports": { "./c": "./src/c.cjs" },
+          "imports": { "#m": "./src/m.mjs" }
+        }
+      `,
+      "/Users/user/project/src/c.ts": ``,
+      "/Users/user/project/src/c.mts": ``,
+      "/Users/user/project/src/m.ts": ``,
+      "/Users/user/project/src/m.cts": ``,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.ts": [
+        `Could not resolve: "family/c". Maybe you need to "bun install"?`,
+        `Could not resolve: "#m". Maybe you need to "bun install"?`,
+      ],
+    },
+  });
+  // Inside node_modules the `.mjs` → `.mts` and `.cjs` → `.cts` rewrites are
+  // off (`DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES`); `.js` → `.ts` stays on.
+  itBundled("packagejson/ExportsRewriteInsideNodeModules", {
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import { j } from 'dep/j'
+        import 'dep/c'
+        import 'dep/m'
+        console.log(j)
+      `,
+      "/Users/user/project/node_modules/dep/package.json": /* json */ `
+        {
+          "name": "dep",
+          "exports": { "./c": "./c.cjs", "./m": "./m.mjs", "./j": "./j.js" }
+        }
+      `,
+      "/Users/user/project/node_modules/dep/c.cts": ``,
+      "/Users/user/project/node_modules/dep/m.mts": ``,
+      "/Users/user/project/node_modules/dep/j.ts": `export const j = 'ts'`,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.ts": [
+        `Could not resolve: "dep/c". Maybe you need to "bun install"?`,
+        `Could not resolve: "dep/m". Maybe you need to "bun install"?`,
+      ],
+    },
+  });
   itBundled("packagejson/ExportsNoConditionsMatch", {
     // GENERATED
     files: {

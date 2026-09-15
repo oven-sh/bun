@@ -1,6 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { once } from "events";
 import { copyFileSync, mkdirSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
@@ -25,7 +26,9 @@ import {
   VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
+import { createServer as createTcpServer, connect as tcpConnect, type Socket } from "net";
 import { join, resolve } from "path";
+import { createServer as createTlsServer } from "tls";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({
@@ -232,6 +235,144 @@ describe("certificate authority", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
+
+  /** A forward proxy that only speaks CONNECT. `targets` holds the `host:port` of each tunnel it opened. */
+  async function startConnectProxy(protocol: "http" | "https") {
+    const targets: string[] = [];
+    const sockets = new Set<Socket>();
+    const onClient = (client: Socket) => {
+      sockets.add(client);
+      client.on("error", () => {});
+      client.on("close", () => sockets.delete(client));
+      let head = "";
+      client.on("data", function onData(chunk: Buffer) {
+        head += chunk.toString("latin1");
+        if (!head.includes("\r\n\r\n")) return;
+        client.off("data", onData);
+        // `pipe()` below resumes the socket once the upstream is connected.
+        client.pause();
+        const target = head.split(" ")[1];
+        targets.push(target);
+        const [host, port] = target.split(":");
+        const upstream = tcpConnect(Number(port), host, () => {
+          client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          client.pipe(upstream);
+          upstream.pipe(client);
+        });
+        sockets.add(upstream);
+        upstream.on("error", () => client.destroy());
+        upstream.on("close", () => sockets.delete(upstream));
+        client.on("close", () => upstream.destroy());
+      });
+    };
+    const server = protocol === "https" ? createTlsServer(tls, onClient) : createTcpServer(onClient);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return {
+      targets,
+      url: `${protocol}://127.0.0.1:${(server.address() as { port: number }).port}`,
+      async [Symbol.asyncDispose]() {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+        await once(server, "close");
+      },
+    };
+  }
+
+  /** Runs `bun install <args>` with `HTTPS_PROXY` set, for a project whose one dependency is a tarball on `server`. */
+  async function installThroughProxy(
+    server: { port: number },
+    proxyUrl: string,
+    args: string[],
+    extraEnv: Record<string, string> = {},
+  ) {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.1.1",
+          dependencies: {
+            "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz`,
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `https://localhost:${server.port}/`,
+          },
+        }),
+      ),
+    ]);
+
+    const proxyEnv = { ...env, ...extraEnv, HTTPS_PROXY: proxyUrl };
+    for (const key of ["https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"]) delete proxyEnv[key];
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env: proxyEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    return { out, err, exitCode };
+  }
+
+  // The TLS handshake with the registry runs inside the CONNECT tunnel, not on the socket to the proxy.
+  test.each([
+    { flag: "--cafile", protocol: "http" },
+    { flag: "--ca", protocol: "http" },
+    { flag: "--cafile", protocol: "https" },
+  ] as const)("valid $flag through an $protocol:// proxy", async ({ flag, protocol }) => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    await using proxy = await startConnectProxy(protocol);
+    await write(join(packageDir, "cafile"), tls.cert);
+
+    const { out, err, exitCode } = await installThroughProxy(server, proxy.url, [
+      flag,
+      flag === "--cafile" ? "cafile" : tls.cert,
+    ]);
+    expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@");
+    expect(proxy.targets).toContain(`localhost:${server.port}`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--cafile replaces the default trust store through a proxy", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    await using proxy = await startConnectProxy("http");
+    // NODE_EXTRA_CA_CERTS puts the registry's certificate in the default trust store.
+    await write(join(packageDir, "extra-ca"), tls.cert);
+    const extraCaEnv = { NODE_EXTRA_CA_CERTS: join(packageDir, "extra-ca"), BUN_CONFIG_HTTP_RETRY_COUNT: "0" };
+
+    // The CA in `--cafile` did not sign the certificate: the install can only succeed if the tunnel ignores `--cafile`.
+    const unrelatedCa = join(import.meta.dir, "../../js/node/test/fixtures/keys/ca1-cert.pem");
+    let { out, err, exitCode } = await installThroughProxy(server, proxy.url, ["--cafile", unrelatedCa], extraCaEnv);
+    expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(out).not.toContain("+ no-deps@");
+    expect(exitCode).toBe(1);
+
+    // now without --cafile: the default trust store does accept the registry
+    ({ out, err, exitCode } = await installThroughProxy(server, proxy.url, [], extraCaEnv));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@");
+    expect(exitCode).toBe(0);
+    expect(proxy.targets).toEqual([`localhost:${server.port}`, `localhost:${server.port}`]);
+  });
+
   test(`non-existent --cafile`, async () => {
     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
 
@@ -9863,6 +10004,233 @@ test("npm manifest cache entries are only reused for the package name they were 
 
   expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
   expect(exitCode).toBe(0);
+});
+
+test("a cached manifest whose name hash disagrees with the name installs with the hash of the name", async () => {
+  const { parseManifest } = npm_manifest_test_helpers;
+  const cacheDir = join(packageDir, ".bun-cache");
+  const lockbPath = join(packageDir, "bun.lockb");
+
+  // bun.lockb stores packages as columns. `name` (8 bytes per package) comes
+  // first, then `name_hash` (8 bytes per package). Package 0 is the root.
+  const nameHashes = async () => {
+    const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+    const count = Number(lockb.readBigUInt64LE(86));
+    const start = Number(lockb.readBigUInt64LE(110)) + count * 8;
+    return Array.from({ length: count }, (_, i) => lockb.readBigUInt64LE(start + i * 8));
+  };
+
+  // The name must be longer than 8 bytes. Shorter names are stored inline and
+  // never touch the string buffer.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "dep-with-tags": "1.0.0",
+      },
+    }),
+  );
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("+ dep-with-tags@1.0.0");
+    expect(exitCode).toBe(0);
+  }
+
+  const hashes = await nameHashes();
+  expect(hashes).toHaveLength(2);
+  const nameHash = hashes[1];
+
+  const manifestFiles = (await readdirSorted(cacheDir)).filter(name => name.endsWith(".npm"));
+  expect(manifestFiles).toHaveLength(1);
+  const manifestPath = join(cacheDir, manifestFiles[0]);
+
+  // The package record starts at byte 72 (the 49-byte header and the registry
+  // hash and length, aligned to 8). Its name is at byte 32 of the record: a
+  // string (8 bytes), then the hash (8 bytes).
+  const hashOffset = 72 + 32 + 8;
+  const manifest = Buffer.from(await file(manifestPath).arrayBuffer());
+  expect(manifest.readBigUInt64LE(hashOffset)).toBe(nameHash);
+  manifest.writeBigUInt64LE(nameHash ^ 0xffffn, hashOffset);
+  await write(manifestPath, manifest);
+  expect(parseManifest(manifestPath, registryUrl()).name).toBe("dep-with-tags");
+
+  await Promise.all([
+    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    rm(lockbPath, { force: true }),
+  ]);
+
+  // The root's dependency had already pooled the name by its bytes, so the
+  // size pass reserved nothing for it. The append looked the name up by the
+  // cached hash, found nothing, and wrote the name past the reserved bytes:
+  // "panic: range end index N out of range for slice of length M".
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--prefer-offline"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(out).toContain("+ dep-with-tags@1.0.0");
+  expect(exitCode).toBe(0);
+
+  expect(await nameHashes()).toEqual(hashes);
+});
+
+// A manifest cache entry is written to a temporary file in the temporary
+// directory and renamed into the cache directory. Every install on the machine
+// shares the temporary directory, so the temporary file name has to be unique
+// per writer. It used to be the package name hash and the current millisecond:
+// two installs that saved the same package in the same millisecond opened one
+// file, and the rename of one moved the other's bytes into its cache (an entry
+// for the wrong registry) or left it with no entry at all. Linux writes the
+// entry with O_TMPFILE and does not use the name.
+describe("manifest cache temporary files", () => {
+  const { parseManifest } = npm_manifest_test_helpers;
+  const name = "shared-temp-name";
+  const tarballPath = `/${name}-1.0.0.tgz`;
+  let tarball: Uint8Array;
+  beforeAll(async () => {
+    tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name, version: "1.0.0" }) },
+      { compress: "gzip" },
+    ).bytes();
+  });
+
+  function cacheDirOf(cwd: string) {
+    return join(cwd, ".bun-cache");
+  }
+
+  async function cacheEntries(cwd: string) {
+    return (await readdirSorted(cacheDirOf(cwd))).filter(entry => entry.endsWith(".npm"));
+  }
+
+  /**
+   * Serves `name` to the project at `cwd`. The manifest response waits for
+   * `hold`. The tarball response waits until the manifest's cache entry exists
+   * (bun install writes it from a thread pool task it does not wait for before
+   * exiting, so this keeps the install alive until the entry is on disk), or
+   * gives up after a few seconds so a lost write still ends as a failed assertion.
+   */
+  function serveRegistry(cwd: string, hold: () => Promise<void> = async () => {}) {
+    return Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname === tarballPath) {
+          const deadline = Date.now() + 5_000;
+          while ((await cacheEntries(cwd)).length === 0 && Date.now() < deadline) await Bun.sleep(10);
+          return new Response(tarball);
+        }
+        if (pathname !== `/${name}`) return new Response("not found", { status: 404 });
+        await hold();
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball: `${origin}${tarballPath}` } } },
+        });
+      },
+    });
+  }
+
+  /** Installs `name` into the project at `cwd`, with its own cache directory, and returns the cache entry it left, by package name. */
+  async function installAndReadCache(cwd: string, registryHref: string) {
+    const cacheDir = cacheDirOf(cwd);
+    mkdirSync(cacheDir, { recursive: true });
+    await Promise.all([
+      write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: { [name]: "1.0.0" } })),
+      write(join(cwd, "bunfig.toml"), `[install]\nregistry = "${registryHref}"\n`),
+    ]);
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`+ ${name}@1.0.0`);
+    expect(exitCode).toBe(0);
+
+    // parseManifest rejects an entry that was saved for another registry.
+    const entries = await cacheEntries(cwd);
+    try {
+      return {
+        entries,
+        cached: entries.length === 1 ? parseManifest(join(cacheDir, entries[0]), registryHref).name : undefined,
+      };
+    } catch (error) {
+      return { entries, cached: String(error) };
+    }
+  }
+
+  test("concurrent installs saving the same manifest keep their own cache entries", async () => {
+    const installs = 4;
+    for (let round = 0; round < 3; round++) {
+      // Every registry holds its manifest response until all of them have been
+      // asked, so the installs parse and save the manifest at the same time.
+      let asked = 0;
+      const { promise: allAsked, resolve: release } = Promise.withResolvers<void>();
+      const projects = Array.from({ length: installs }, (_, i) => join(packageDir, `round-${round}-${i}`));
+      const registries = projects.map(cwd =>
+        serveRegistry(cwd, () => {
+          if (++asked === installs) release();
+          return allAsked;
+        }),
+      );
+      try {
+        const results = await Promise.all(projects.map((cwd, i) => installAndReadCache(cwd, registries[i].url.href)));
+        expect({ round, cached: results.map(result => result.cached) }).toEqual({
+          round,
+          cached: Array(installs).fill(name),
+        });
+      } finally {
+        for (const server of registries) server.stop(true);
+      }
+    }
+  });
+
+  test("the temporary file is not named after the package and the current millisecond", async () => {
+    // A cold install caches the manifest as <hash of name>-<hash of registry url>.npm.
+    const first = join(packageDir, "first");
+    await using registry = serveRegistry(first);
+    const { entries, cached } = await installAndReadCache(first, registry.url.href);
+    expect(cached).toBe(name);
+    const nameHash = entries[0].slice(0, entries[0].indexOf("-"));
+    expect(nameHash).toMatch(/^[0-9a-f]{16}$/);
+
+    // Hold the manifest response until a directory sits at the old temporary
+    // file name of this package for every millisecond of the next seconds. An
+    // install that picks such a name cannot open it (EISDIR) and saves nothing.
+    const second = join(packageDir, "second");
+    const { promise: trapReady, resolve: trapIsReady } = Promise.withResolvers<void>();
+    await using trapped = serveRegistry(second, () => trapReady);
+    const installed = installAndReadCache(second, trapped.url.href);
+    const tmpDir = String(env.BUN_TMPDIR);
+    mkdirSync(tmpDir, { recursive: true });
+    const start = Date.now() - 100;
+    for (let ms = start; ms < Date.now() + 3_000 && ms < start + 10_000; ms++) {
+      mkdirSync(join(tmpDir, `${nameHash}.npm-${ms.toString(16).padStart(16, "0")}`));
+    }
+    trapIsReady();
+    expect((await installed).cached).toBe(name);
+  });
 });
 
 describe("manifest conditional requests", () => {

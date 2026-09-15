@@ -19,6 +19,8 @@ pub struct ResolvedSource {
     pub source_url: BunString,
 
     pub is_commonjs_module: bool,
+    /// `bun build --compile`: `StringImpl::hash()` of `source_code`, computed at build time (0 = not known).
+    pub source_code_hash: u32,
 
     /// When .tag is .common_js_custom_extension, this is special-cased to hold
     /// the JSFunction extension. It is kept alive by
@@ -31,18 +33,20 @@ pub struct ResolvedSource {
     pub tag: Tag,
 
     pub already_bundled: bool,
+    /// An ES module of the executable's pre-resolved module graph: it carries no `module_info`; the loader builds its
+    /// record from the graph.
+    pub is_prelinked_module: bool,
 
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
     pub module_info: Option<Box<ModuleInfoDeserialized>>,
-    /// The file path used as the source origin for bytecode cache validation.
-    /// JSC validates bytecode by checking if the origin URL matches exactly what
-    /// was used at build time. If empty, the origin is derived from source_url.
-    /// This is converted to a file:// URL on the C++ side.
-    pub bytecode_origin_path: BunString,
+    /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
+    /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
+    pub origin_path: BunString,
 }
 
-/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; }`.
+/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; }`
+/// (headers-handwritten.h flattens these into `ResolvedSource`; keep the two in step).
 /// When `owned`, `ptr` is a `heap::into_raw(Box<[u8]>)` freed on drop (or by
 /// the C++ consumer once it `std::exchange`s the pointer out); otherwise it is
 /// borrowed from the standalone module graph or the compile cache.
@@ -51,6 +55,8 @@ pub struct Bytecode {
     ptr: *mut u8,
     len: usize,
     owned: bool,
+    /// The bytes outlive every VM (executable section, retired compile-cache blob), so JSC may alias them instead of copying.
+    persistent: bool,
 }
 
 impl Default for Bytecode {
@@ -59,6 +65,7 @@ impl Default for Bytecode {
             ptr: core::ptr::null_mut(),
             len: 0,
             owned: false,
+            persistent: false,
         }
     }
 }
@@ -72,6 +79,15 @@ impl Bytecode {
             ptr: bytes.as_ptr().cast_mut(),
             len: bytes.len(),
             owned: false,
+            persistent: false,
+        }
+    }
+    /// Borrowed from memory the caller guarantees is never freed or unmapped for the rest of the process
+    /// (the executable's module graph section, NodeCompileCache's retired blobs).
+    pub fn persistent(bytes: &[u8]) -> Self {
+        Self {
+            persistent: !bytes.is_empty(),
+            ..Self::borrowed(bytes)
         }
     }
     pub fn owned(bytes: Box<[u8]>) -> Self {
@@ -83,6 +99,7 @@ impl Bytecode {
             ptr: bun_core::heap::into_raw(bytes).cast::<u8>(),
             len,
             owned: true,
+            persistent: false,
         }
     }
 }
@@ -104,4 +121,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17);

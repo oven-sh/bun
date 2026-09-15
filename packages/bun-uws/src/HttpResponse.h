@@ -75,7 +75,7 @@ public:
 
     /* Write an unsigned 64-bit integer */
     void writeUnsigned64(uint64_t value) {
-        char buf[20];
+        char buf[utils::U64_MAX_DIGITS];
         int length = utils::u64toa(value, buf);
 
         /* For now we do this copy */
@@ -110,12 +110,48 @@ public:
         return false;
     }
 
+    /* Called when a response completes on a corked socket. Returns true when the
+     * caller has to run the close gate now, false when onData runs it.
+     *
+     * The socket onData is parsing gets onData's uncork and close gate once the
+     * read is consumed: false. A Bun.serve response leaves the cork to onData,
+     * so the responses to requests pipelined in one read share one send(). A
+     * node:http response is still sent now: its 'finish' event and end()
+     * callback run before onData gets control back and expect the bytes to be
+     * out.
+     *
+     * Any other socket (an async handler completing, possibly inside another
+     * socket's parse window via a drained microtask) is uncorked here and gets
+     * no later uncork or gate: true. */
+    bool uncorkCompletedResponse() {
+        HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
+        if (httpContext->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
+            this->uncork();
+            return true;
+        }
+        if (httpContext->isNodeHttp()) {
+            this->uncork();
+        }
+        return false;
+    }
+
+    /* Ends the 101 of upgrade(): terminates the header section and marks the
+     * response done. Not internalEnd(), because the socket leaves HTTP right
+     * after: the connection close gate does not apply (Connection: close,
+     * HTTP/1.0 and close-when-idle describe the HTTP connection, not the
+     * WebSocket that takes over the socket), and the cork stays so the
+     * handshake batches with the first frames written from open(). */
+    void endUpgradeHandshake() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        writeMark();
+        Super::write("\r\n", 2);
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+        httpResponseData->markDone(this);
+    }
+
     /* Returns true on success, indicating that it might be feasible to write more data.
-     * Will start timeout if stream reaches totalSize or write failure.
-     * keepCorked: if true, skip the trailing uncork so the caller can batch
-     * more writes (used by upgrade() to batch the handshake with the first
-     * WebSocket frames). */
-    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false, bool keepCorked = false) {
+     * Will start timeout if stream reaches totalSize or write failure. */
+    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false) {
         /* Write status if not already done */
         writeStatus(HTTP_200_OK);
 
@@ -202,21 +238,8 @@ public:
             httpResponseData->markDone(this);
 
             /* We need to check if we should close this socket here now */
-            if (!Super::isCorked()) {
+            if (!Super::isCorked() || uncorkCompletedResponse()) {
                 if (closeIfDoneAndMarked(httpResponseData)) {
-                    return true;
-                }
-            } else if (!keepCorked) {
-                this->uncork();
-                /* That uncork released our cork slot, so the cork() wrapper's
-                 * post-uncork close gate will not run. When THIS socket is the
-                 * one being parsed, onData's post-parse gate closes it once
-                 * the buffer is fully consumed; any other socket (an async
-                 * handler completing, possibly inside another socket's parse
-                 * window via a drained microtask) gets no later gate, so close
-                 * here. */
-                if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this
-                    && closeIfDoneAndMarked(httpResponseData)) {
                     return true;
                 }
             }
@@ -278,16 +301,8 @@ public:
                 httpResponseData->markDone(this);
 
                 /* We need to check if we should close this socket here now */
-                if (!Super::isCorked()) {
+                if (!Super::isCorked() || uncorkCompletedResponse()) {
                     closeIfDoneAndMarked(httpResponseData);
-                }  else if (!keepCorked) {
-                    this->uncork();
-                    /* Same as the chunked arm above: the cork slot is gone, so
-                     * run the close gate here unless THIS socket is the one
-                     * being parsed (then onData's post-parse gate handles it). */
-                    if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
-                        closeIfDoneAndMarked(httpResponseData);
-                    }
                 }
             }
 
@@ -367,9 +382,7 @@ public:
             }
         }
 
-        /* keepCorked so the handshake stays buffered and can batch with the
-         * first WebSocket frames written in the open handler. */
-        internalEnd({nullptr, 0}, 0, false, false, false, true);
+        endUpgradeHandshake();
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);

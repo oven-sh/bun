@@ -1222,7 +1222,7 @@ impl<'a> SelectorParser<'a> {
         // `::View-Transition-Group(..)` fall through to `CustomFunction`,
         // so look up `name` verbatim with no case folding.
         //
-        // PERF: 6 entries with near-unique lengths (3/10/19/19/21/26) —
+        // PERF: 7 entries with near-unique lengths (3/6/10/19/19/21/26) —
         // a length-gated `match` rejects the overwhelmingly-common miss path
         // (unknown `::-webkit-foo(...)` etc.) on a single `usize` compare,
         // versus a hash lookup's hash + table load + slice compare. Only
@@ -1236,6 +1236,11 @@ impl<'a> SelectorParser<'a> {
                     selector: Box::new(Selector::parse(self, input)?),
                 });
             }
+            6 if name == b"picker" => {
+                return Ok(PseudoElement::PickerFunction {
+                    identifier: Ident::parse(input)?,
+                });
+            }
             10 if name == b"cue-region" => {
                 return Ok(PseudoElement::CueRegionFunction {
                     selector: Box::new(Selector::parse(self, input)?),
@@ -1244,24 +1249,24 @@ impl<'a> SelectorParser<'a> {
             19 => match name {
                 b"view-transition-old" => {
                     return Ok(PseudoElement::ViewTransitionOld {
-                        part_name: ViewTransitionPartName::parse(input)?,
+                        part_name: ViewTransitionPartName::parse(self, input)?,
                     });
                 }
                 b"view-transition-new" => {
                     return Ok(PseudoElement::ViewTransitionNew {
-                        part_name: ViewTransitionPartName::parse(input)?,
+                        part_name: ViewTransitionPartName::parse(self, input)?,
                     });
                 }
                 _ => {}
             },
             21 if name == b"view-transition-group" => {
                 return Ok(PseudoElement::ViewTransitionGroup {
-                    part_name: ViewTransitionPartName::parse(input)?,
+                    part_name: ViewTransitionPartName::parse(self, input)?,
                 });
             }
             26 if name == b"view-transition-image-pair" => {
                 return Ok(PseudoElement::ViewTransitionImagePair {
-                    part_name: ViewTransitionPartName::parse(input)?,
+                    part_name: ViewTransitionPartName::parse(self, input)?,
                 });
             }
             _ => {}
@@ -1552,6 +1557,9 @@ fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
         b"-webkit-scrollbar-corner" => PE::WebkitScrollbar(WS::Corner),
         b"-webkit-resizer" => PE::WebkitScrollbar(WS::Resizer),
         b"view-transition" => PE::ViewTransition,
+        b"details-content" => PE::DetailsContent,
+        b"picker-icon" => PE::PickerIcon,
+        b"checkmark" => PE::Checkmark,
         _ => return None,
     } })
 }
@@ -2959,6 +2967,17 @@ pub enum PseudoElement {
         /// A part name selector.
         part_name: ViewTransitionPartName,
     },
+    /// The [::details-content](https://drafts.csswg.org/css-pseudo-4/#details-content-pseudo) pseudo element.
+    DetailsContent,
+    /// The [::picker-icon](https://drafts.csswg.org/css-forms-1/#picker-icon-pseudo) pseudo element.
+    PickerIcon,
+    /// The [::checkmark](https://drafts.csswg.org/css-forms-1/#checkmark-pseudo) pseudo element.
+    Checkmark,
+    /// The [::picker()](https://drafts.csswg.org/css-forms-1/#picker-pseudo) functional pseudo element.
+    PickerFunction {
+        /// The identifier argument, e.g. `select` in `::picker(select)`.
+        identifier: Ident,
+    },
     /// An unknown pseudo element.
     Custom {
         /// The name of the pseudo element.
@@ -3088,6 +3107,10 @@ impl fmt::Display for PseudoElement {
             Self::ViewTransitionImagePair { .. } => "view_transition_image_pair",
             Self::ViewTransitionOld { .. } => "view_transition_old",
             Self::ViewTransitionNew { .. } => "view_transition_new",
+            Self::DetailsContent => "details_content",
+            Self::PickerIcon => "picker_icon",
+            Self::Checkmark => "checkmark",
+            Self::PickerFunction { .. } => "picker_function",
             Self::Custom { .. } => "custom",
             Self::CustomFunction { .. } => "custom_function",
         })
@@ -4123,37 +4146,43 @@ pub enum ViewTransitionPartName {
     /// <custom-ident>
     Name(CustomIdent),
     /// .<custom-ident>
-    Class(CustomIdent),
+    Class(<impl_::Selectors as SelectorImpl>::LocalIdentifier),
 }
 
 impl ViewTransitionPartName {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // `CustomIdentFns::to_css` is CSS-modules-gated via
-        // `Printer::{css_module,write_ident}`; inline the
-        // `write_ident(v, false)` body (CSS-modules custom-ident scoping is a
-        // serializer concern, not a grammar concern — the gated impl just
-        // toggles the second arg).
-        let write_ci = |name: &CustomIdent, dest: &mut Printer| -> Result<(), PrintErr> {
-            dest.serialize_identifier(name.v())
-        };
         match self {
             Self::All => dest.write_str("*"),
-            Self::Name(name) => write_ci(name, dest),
-            Self::Class(name) => {
+            Self::Name(name) => name.to_css(dest),
+            Self::Class(class) => {
                 dest.write_char(b'.')?;
-                write_ci(name, dest)
+                dest.write_ident_or_ref(*class, dest.css_module.is_some())
             }
         }
     }
 
-    pub fn parse(input: &mut CssParser) -> CResult<ViewTransitionPartName> {
+    pub fn parse(
+        parser: &mut SelectorParser<'_>,
+        input: &mut CssParser,
+    ) -> CResult<ViewTransitionPartName> {
         if input.try_parse(|i| i.expect_delim(b'*')).is_ok() {
             return Ok(Self::All);
         }
 
         // Try to parse a class selector (.<custom-ident>)
+        let loc = input.position();
         if input.try_parse(|i| i.expect_delim(b'.')).is_ok() {
-            return Ok(Self::Class(CustomIdent::parse(input)?));
+            let location = input.current_source_location();
+            let ident = input.expect_ident_cloned()?;
+            if crate::values::ident::is_reserved_custom_ident(ident) {
+                return Err(location.new_unexpected_token_error(Token::Ident(ident)));
+            }
+            return Ok(Self::Class(parser.new_local_identifier(
+                input,
+                css::CssRefTag::CLASS,
+                ident,
+                loc,
+            )));
         }
 
         Ok(Self::Name(CustomIdent::parse(input)?))
@@ -4162,7 +4191,8 @@ impl ViewTransitionPartName {
     pub fn eql(&self, rhs: &Self) -> bool {
         match (self, rhs) {
             (Self::All, Self::All) => true,
-            (Self::Name(a), Self::Name(b)) | (Self::Class(a), Self::Class(b)) => a.eql(b),
+            (Self::Name(a), Self::Name(b)) => a.eql(b),
+            (Self::Class(a), Self::Class(b)) => a.eql(b),
             _ => false,
         }
     }

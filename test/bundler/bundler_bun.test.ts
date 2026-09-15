@@ -2,7 +2,46 @@ import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
+const nestedFunctions = /* js */ `
+  export function outer() {
+    function middle() {
+      function inner() {
+        return "world";
+      }
+      return inner();
+    }
+    return middle();
+  }
+  console.log(outer());
+`;
+
 describe("bundler", () => {
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`bun/bytecode-depth-${backend}`, {
+      backend,
+      target: "bun",
+      format: "cjs",
+      bytecode: true,
+      bytecodeDepth: 0,
+      outdir: "/out",
+      files: { "/entry.ts": nestedFunctions },
+      run: { stdout: "world\n" },
+      async onAfterBundle(api) {
+        const shallow = Bun.file(api.join("out/entry.js.jsc")).size;
+        const full = await Bun.build({
+          entrypoints: [api.join("entry.ts")],
+          outdir: api.join("full"),
+          target: "bun",
+          format: "cjs",
+          bytecode: true,
+        });
+        expect(full.outputs[1].kind).toBe("bytecode");
+        expect(shallow).toBeGreaterThan(0);
+        expect(shallow).toBeLessThan(full.outputs[1].size);
+      },
+    });
+  }
+
   // https://github.com/oven-sh/bun/issues/18899
   itBundled("bun/import-bun-format-cjs", {
     target: "bun",

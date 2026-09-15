@@ -385,7 +385,6 @@ impl Drop for ResponseGuard {
     fn drop(&mut self) {
         if let Some(route) = self.route.take() {
             route.on_response_complete(self.resp);
-            route.deref();
         }
     }
 }

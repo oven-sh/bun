@@ -1,6 +1,6 @@
 use core::mem::size_of;
 
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue, bun_string_jsc};
 use bun_core::String as BunString;
 
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
@@ -39,9 +39,8 @@ fn parse_date_time_text(
         return Ok(ms);
     }
     // `date` (date-only ISO form), BC dates and 5+ digit years fall back to `Date.parse`.
-    let str = BunString::init(bytes);
-    crate::jsc::bun_string_jsc::parse_date(&str, global_object)
-        .map_err(crate::jsc::js_error_to_postgres)
+    let str = BunString::from_bytes(bytes);
+    bun_string_jsc::parse_date(&str, global_object).map_err(crate::jsc::js_error_to_postgres)
 }
 
 fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
@@ -348,8 +347,8 @@ fn parse_array(
                         let ms = match crate::postgres::types::date::parse_infinity(element) {
                             Some(inf) => inf,
                             None => {
-                                let str = BunString::init(element);
-                                crate::jsc::bun_string_jsc::parse_date(&str, global_object)
+                                let str = BunString::from_bytes(element);
+                                bun_string_jsc::parse_date(&str, global_object)
                                     .map_err(crate::jsc::js_error_to_postgres)?
                             }
                         };
@@ -1051,8 +1050,18 @@ fn parse_binary_numeric<'a>(
         _ => return Err(crate::Error::InvalidSign),
     }
 
+    // Postgres sends every zero with no digit groups. `dscale` still carries
+    // the display scale, so a numeric(10, 4) zero is "0.0000".
     if ndigits == 0 {
-        return Ok(PGNummericString::Static(b"0"));
+        if dscale <= 0 {
+            return Ok(PGNummericString::Static(b"0"));
+        }
+        result.extend_from_slice(b"0.");
+        result.resize(
+            result.len() + usize::try_from(dscale).expect("int cast"),
+            b'0',
+        );
+        return Ok(PGNummericString::Dynamic(result.as_slice()));
     }
 
     // Add negative sign if needed

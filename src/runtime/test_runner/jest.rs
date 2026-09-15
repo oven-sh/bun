@@ -5,11 +5,11 @@ use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
 };
-use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
 
 pub use super::bun_test;
@@ -480,7 +480,7 @@ pub mod Jest {
             if arguments.len() < 1 || !arguments[0].is_string() {
                 return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
             }
-            let str = arguments[0].to_slice(global_object)?;
+            let str = arguments[0].to_utf8(global_object)?;
             let slice = str.slice();
 
             if !bun_paths::is_absolute(slice) {
@@ -663,7 +663,7 @@ fn consume_arg(
     fallback: &[u8],
 ) -> JsResult<()> {
     if should_write {
-        let owned_slice = arg.to_slice(global_this)?;
+        let owned_slice = arg.to_utf8(global_this)?;
         array_list.extend_from_slice(owned_slice.slice());
     } else {
         array_list.extend_from_slice(fallback);
@@ -718,13 +718,13 @@ pub(crate) fn format_label(
                 let var_path = &label[var_start..var_end];
                 let value = function_args[0].get_if_property_exists_from_path(
                     global_this,
-                    bun_core::String::init(var_path).to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, var_path)?,
                 )?;
                 if !value.is_empty_or_undefined_or_null() {
                     // For primitive strings, use toString() to avoid adding quotes
                     // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)
                     if value.is_string() {
-                        let owned_slice = value.to_slice(global_this)?;
+                        let owned_slice = value.to_utf8(global_this)?;
                         list.extend_from_slice(owned_slice.slice());
                     } else {
                         let mut formatter = crate::test_runner::expect::make_formatter(global_this);

@@ -67,6 +67,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>
+#include <JavaScriptCore/SourceOrigin.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
@@ -379,6 +380,13 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
     options.workerDataAndEnvironmentData = serialized.releaseReturnValue();
     options.dataMessagePorts = WTF::move(transferredPorts);
+
+    if (options.kind == WorkerOptions::Kind::Web) {
+        // The same origin JSC hands `import()`: the nearest JS caller that is not a builtin.
+        auto callerOrigin = callFrame->callerSourceOrigin(vm);
+        if (callerOrigin.url().isValid() && callerOrigin.url().protocolIsFile())
+            options.referrerPath = callerOrigin.url().fileSystemPath();
+    }
 
     auto object = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
     if constexpr (IsExceptionOr<decltype(object)>)

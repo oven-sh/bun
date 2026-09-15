@@ -6329,3 +6329,51 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+// The h2 session consumes the socket natively, so the JS 'data' handler of
+// net.Socket never runs. bytesRead has to come from the handle, like node.
+describe.each(["h2c", "h2"])("%s session.socket.bytesRead", transport => {
+  it("counts the bytes the peer wrote, on the client and on the server", async () => {
+    const secure = transport === "h2";
+    const server = secure ? http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false }) : http2.createServer();
+    let serverSocket;
+    // The client's SETTINGS ack is its last frame. The server has read every byte the client
+    // wrote once it acked the server's settings ('localSettings').
+    const serverAcked = new Promise(resolve => {
+      server.on("session", session => {
+        serverSocket = session.socket;
+        session.once("localSettings", resolve);
+      });
+    });
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("hello world from h2");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const url = `${secure ? "https" : "http"}://127.0.0.1:${server.address().port}`;
+    const client = http2.connect(url, secure ? TLS_OPTIONS : undefined);
+    try {
+      const req = client.request({ ":path": "/" });
+      req.resume();
+      await new Promise((resolve, reject) => {
+        req.on("end", resolve);
+        req.on("error", reject);
+      });
+      await serverAcked;
+      // The response reached 'end', so the client read every byte the server wrote. Under TLS
+      // both counts are of decrypted bytes, which is what node's TLSWrap reports too.
+      expect({
+        clientRead: client.socket.bytesRead,
+        serverRead: serverSocket.bytesRead,
+      }).toEqual({
+        clientRead: serverSocket.bytesWritten,
+        serverRead: client.socket.bytesWritten,
+      });
+      expect(client.socket.bytesRead).toBeGreaterThan(0);
+      expect(serverSocket.bytesRead).toBeGreaterThan(0);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+});

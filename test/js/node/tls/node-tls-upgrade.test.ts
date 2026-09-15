@@ -148,3 +148,75 @@ test("a STARTTLS exchange hands no TLS bytes to the 'data' listeners of the wrap
     server.close();
   }
 });
+
+// node's handle counts a read before TLSWrap consumes it: https://github.com/nodejs/node/blob/v26.3.0/src/stream_base-inl.h#L75-L80
+test.each([
+  ["no reader", {}],
+  ["readable: false", { readable: false }],
+  ["an onread buffer", { onread: { buffer: Buffer.alloc(64), callback() {} } }],
+])(
+  "a net.Socket with %s that tls.connect({ socket }) wraps counts the TLS records in bytesRead",
+  async (_, options) => {
+    const server = tls.createServer(certs, socket => {
+      socket.on("error", () => {});
+      socket.end("banner");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const raw = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1", ...options });
+      await once(raw, "connect");
+      const tlsSocket = tls.connect({ socket: raw, ca: certs.cert, servername: "localhost" });
+      let got = "";
+      tlsSocket.on("data", data => (got += data));
+      await once(tlsSocket, "close");
+      expect(got).toBe("banner");
+      // The TLS socket counts plaintext. The wrapped socket counts the handshake and the records.
+      expect(tlsSocket.bytesRead).toBe(6);
+      expect(raw.bytesRead).toBeGreaterThan(tlsSocket.bytesRead);
+    } finally {
+      server.close();
+    }
+  },
+);
+
+// Values observed under node v26.3.0: the upgrade keeps the handle, so the count goes on.
+test("bytesRead of the wrapped sockets keeps the bytes read before a STARTTLS upgrade", async () => {
+  const serverSide = Promise.withResolvers<{ before: number; after: number; raw: number; tls: number }>();
+  const server = net.createServer(socket => {
+    socket.on("error", serverSide.reject);
+    socket.once("data", () => {
+      socket.write("GO", () => {
+        const before = socket.bytesRead;
+        const tlsSocket = new tls.TLSSocket(socket, { isServer: true, secureContext: tls.createSecureContext(certs) });
+        const after = socket.bytesRead;
+        tlsSocket.on("error", serverSide.reject);
+        tlsSocket.on("data", data => tlsSocket.end("echo:" + data));
+        tlsSocket.on("close", () =>
+          serverSide.resolve({ before, after, raw: socket.bytesRead, tls: tlsSocket.bytesRead }),
+        );
+      });
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const raw = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+    raw.write("STARTTLS");
+    expect(String((await once(raw, "data"))[0])).toBe("GO");
+    const before = raw.bytesRead;
+    const tlsSocket = tls.connect({ socket: raw, ca: certs.cert, servername: "localhost" });
+    const after = raw.bytesRead;
+    tlsSocket.on("secureConnect", () => tlsSocket.write("hi"));
+    let got = "";
+    tlsSocket.on("data", data => (got += data));
+    await once(tlsSocket, "close");
+    expect(got).toBe("echo:hi");
+    expect({ before, after, tls: tlsSocket.bytesRead }).toEqual({ before: 2, after: 2, tls: 7 });
+    expect(raw.bytesRead).toBeGreaterThan(before + tlsSocket.bytesRead);
+
+    const peer = await serverSide.promise;
+    expect({ before: peer.before, after: peer.after, tls: peer.tls }).toEqual({ before: 8, after: 8, tls: 2 });
+    expect(peer.raw).toBeGreaterThan(peer.before + peer.tls);
+  } finally {
+    server.close();
+  }
+});

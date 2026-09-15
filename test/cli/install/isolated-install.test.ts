@@ -3254,6 +3254,96 @@ describe("global virtual store", () => {
     expect(lstatSync(noDepsEntry).isSymbolicLink()).toBe(true);
   });
 
+  test("the dependency closure of a trusted package stays project-local", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-trusted-closure",
+        // depend-on-debug-1 -> debug-1 -> ms-1 pins *transitive* exclusion.
+        dependencies: { "depend-on-debug-1": "1.0.0", "a-dep": "1.0.1" },
+        trustedDependencies: ["depend-on-debug-1"],
+      }),
+    );
+
+    // CI exports BUN_INSTALL_CACHE_DIR, which overrides bunfig's `cache`. Pin
+    // it so the `links/` assertions below look at this test's own store.
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+    await runBunInstall(env, packageDir);
+
+    // A trusted package's lifecycle script can write through the package's
+    // dep symlinks (the npm `bun` wrapper's postinstall renames the platform
+    // binary out of `@oven/bun-<platform>`), so the trusted package's whole
+    // dependency closure must be project-local; otherwise the script mutates
+    // the shared store entry underneath every other project.
+    const closure = ["depend-on-debug-1@1.0.0", "debug-1@4.4.0", "ms-1@2.1.3"];
+    const assertLayout = () => {
+      for (const entry of closure) {
+        const entryPath = join(packageDir, "node_modules", ".bun", entry);
+        expect({ entry, symlink: lstatSync(entryPath).isSymbolicLink() }).toEqual({ entry, symlink: false });
+        expect(lstatSync(entryPath).isDirectory()).toBe(true);
+      }
+      // A dependency outside the trusted closure still shares the global store.
+      const aDepEntry = join(packageDir, "node_modules", ".bun", "a-dep@1.0.1");
+      expect(lstatSync(aDepEntry).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(aDepEntry)).toMatch(/links[\/\\]a-dep@1\.0\.1-[0-9a-f]{16}$/);
+    };
+    assertLayout();
+
+    // Nothing from the closure was materialised in the shared store.
+    const linkEntries = await readdirSorted(join(packageDir, ".bun-cache", "links"));
+    expect(linkEntries.filter(e => !e.startsWith("a-dep@"))).toEqual([]);
+
+    // The transitive dep still resolves through the project-local chain.
+    expect(
+      await file(
+        join(packageDir, "node_modules", ".bun", "debug-1@4.4.0", "node_modules", "ms-1", "package.json"),
+      ).json(),
+    ).toMatchObject({ name: "ms-1", version: "2.1.3" });
+
+    // `meta.hasInstallScript` isn't serialised in `bun.lock`, so a warm
+    // install must reach the same layout from trustedDependencies alone.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    assertLayout();
+  });
+
+  test("the dependency closure of a trusted file: folder dep stays project-local", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      join(packageDir, "local-pkg", "package.json"),
+      JSON.stringify({
+        name: "local-pkg",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-trusted-folder",
+        dependencies: { "local-pkg": "file:./local-pkg", "a-dep": "1.0.1" },
+        trustedDependencies: ["local-pkg"],
+      }),
+    );
+
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+    await runBunInstall(env, packageDir);
+
+    // A trusted folder dep's scripts run, so its deps must not be shared
+    // store symlinks the script could write through.
+    const noDepsEntry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+    expect(lstatSync(noDepsEntry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(noDepsEntry).isDirectory()).toBe(true);
+
+    // A dependency outside the trusted closure still shares the global store.
+    const aDepEntry = join(packageDir, "node_modules", ".bun", "a-dep@1.0.1");
+    expect(lstatSync(aDepEntry).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(aDepEntry)).toMatch(/links[\/\\]a-dep@1\.0\.1-[0-9a-f]{16}$/);
+  });
+
   test("concurrent installs into a cold global store both succeed", async () => {
     // Two `bun install` processes may race to create the same content-addressed
     // global entry; the loser sees EEXIST from clonefile/symlink/bin-link and

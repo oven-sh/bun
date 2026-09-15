@@ -163,6 +163,15 @@ describe.concurrent.each([
     });
   });
 
+  // Dials 127.0.0.1, so it needs no IPv6 loopback: only the TLS name is ::1.
+  test("a bracketed IPv6 literal in tls.serverName is verified against the IP SAN and is not sent as SNI", async () => {
+    await withServer("127.0.0.1", async server => {
+      const url = `${scheme}://u@127.0.0.1:${server.port}/db`;
+      expect(await connect(url, { ca: localhostTls.cert, serverName: "[::1]" })).toEqual(connected);
+      expect(server.servernames).toEqual([false]);
+    });
+  });
+
   test("a DNS name in tls.serverName is still sent as SNI", async () => {
     await withServer("127.0.0.1", async server => {
       const url = `${scheme}://u@127.0.0.1:${server.port}/db`;

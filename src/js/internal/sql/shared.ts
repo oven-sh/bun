@@ -1808,6 +1808,11 @@ function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter 
   }
 }
 
+/** `URL.hostname` keeps the brackets of an IPv6 literal. They are URL syntax, not part of the address. */
+function stripIPv6Brackets<T>(host: T): T | string {
+  return typeof host === "string" && host[0] === "[" && host[host.length - 1] === "]" ? host.slice(1, -1) : host;
+}
+
 function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
@@ -2119,13 +2124,13 @@ function parseOptions(
     }
   }
 
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
-    if (hostname) {
-      // `URL.hostname` keeps the brackets of an IPv6 literal. They are URL syntax, not part of the address.
-      const bracketed = hostname[0] === "[" && hostname[hostname.length - 1] === "]";
-      tls = { ...tls, serverName: bracketed ? hostname.slice(1, -1) : hostname };
-    } else if (tls) {
-      tls = true;
+  if (sslMode !== SSLMode.disable) {
+    const given = tls?.serverName;
+    const serverName = stripIPv6Brackets(given || hostname);
+    if (!serverName) {
+      if (tls) tls = true;
+    } else if (serverName !== given) {
+      tls = { ...tls, serverName };
     }
   }
 

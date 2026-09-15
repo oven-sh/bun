@@ -588,9 +588,14 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.tls).toEqual({ ca: "x", serverName: "::1" });
     });
 
-    test("an explicit tls.serverName is left as given", () => {
+    test("an explicit tls.serverName takes priority over the host", () => {
       const options = new SQL("postgres://u@[::1]:5432/db?sslmode=verify-full", { tls: { serverName: "db.internal" } });
       expect(options.options.tls).toEqual({ serverName: "db.internal" });
+    });
+
+    test("a bracketed tls.serverName loses its brackets too", () => {
+      const options = new SQL("postgres://u@h:5432/db?sslmode=verify-full", { tls: { ca: "x", serverName: "[::1]" } });
+      expect(options.options.tls).toEqual({ ca: "x", serverName: "::1" });
     });
   });
 

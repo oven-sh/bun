@@ -2,8 +2,7 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-#[cfg(not(windows))]
-use bun_core::{Global, fmt as bun_fmt};
+use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
 use bun_paths::{self, OSPathChar, OSPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
@@ -11,13 +10,11 @@ use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skipp
 // u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
 // the platform-native width. The auto separator mode normalizes `/` → `\` on Windows
 // during `from`/`append`, which is load-bearing for the Win32 calls below.
+// Length-checked like the Hardlinker's paths: the walker entries appended on Windows are unbounded.
 type AbsPathAutoOs =
-    bun_paths::AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
-type PathAutoOs = bun_paths::Path<
-    OSPathChar,
-    { bun_paths::path_options::Kind::ANY },
-    { bun_paths::path_options::PathSeparators::AUTO },
->;
+    bun_paths::AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
+type PathAutoOs =
+    bun_paths::Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
 
 pub(crate) struct FileCopier {
     pub(crate) src_path: AbsPathAutoOs,
@@ -110,15 +107,17 @@ impl FileCopier {
 
                 // A `path.save()` ResetScope would hold `&mut Path` and keep
                 // `self.src_path` / `self.dest_subpath` exclusively borrowed
-                // for the rest of the iteration. Capture the saved length and
+                // for the rest of the iteration. Capture the saved lengths and
                 // restore via `set_length` after the body instead.
                 let src_saved_len = self.src_path.len();
-                let _ = self.src_path.append(entry.path.as_slice());
-
                 let dest_saved_len = self.dest_subpath.len();
-                let _ = self.dest_subpath.append(entry.path.as_slice());
+                let appended = self.src_path.append(entry.path.as_slice()).is_ok()
+                    && self.dest_subpath.append(entry.path.as_slice()).is_ok();
 
                 let result: sys::Result<()> = match entry.kind {
+                    _ if !appended => {
+                        sys::Result::Err(sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::copyfile))
+                    }
                     EntryKind::Directory => {
                         // SAFETY: FFI — both `slice_z()` are NUL-terminated WStrs.
                         if unsafe {
@@ -129,12 +128,11 @@ impl FileCopier {
                             )
                         } == 0
                         {
-                            let _ = bun_sys::make_path::make_path::<u16>(
-                                &dest_dir,
-                                entry.path.as_slice(),
-                            );
+                            // Also taken when the directory exists; make_path treats that as success.
+                            bun_sys::make_path::make_path::<u16>(&dest_dir, entry.path.as_slice())
+                        } else {
+                            sys::Result::Ok(())
                         }
-                        sys::Result::Ok(())
                     }
                     EntryKind::File => {
                         match bun_sys::copy_file::copy_file(
@@ -175,9 +173,7 @@ impl FileCopier {
                 self.src_path.set_length(src_saved_len);
                 self.dest_subpath.set_length(dest_saved_len);
 
-                if let sys::Result::Err(err) = result {
-                    return sys::Result::Err(err);
-                }
+                result?;
             }
             #[cfg(not(windows))]
             {
@@ -194,7 +190,7 @@ impl FileCopier {
 
                 let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
                     Ok(f) => f,
-                    Err(_) => 'dest: {
+                    Err(_) => {
                         if let Some(entry_dirname) =
                             bun_paths::Dirname::dirname::<OSPathChar>(entry.path)
                         {
@@ -203,27 +199,13 @@ impl FileCopier {
                                 entry_dirname,
                             );
                         }
-
-                        match dest_dir.create_file_z(entry.path, Default::default()) {
-                            Ok(f) => break 'dest f,
-                            Err(err) => {
-                                bun_core::pretty_errorln!(
-                                    "<r><red>{}<r>: copy file {}",
-                                    bstr::BStr::new(err.name()),
-                                    bun_fmt::fmt_os_path(entry.path, Default::default()),
-                                );
-                                Global::exit(1);
-                            }
-                        }
+                        dest_dir.create_file_z(entry.path, Default::default())?
                     }
                 };
 
                 #[cfg(unix)]
                 {
-                    let stat = match bun_sys::fstat(src.handle()) {
-                        sys::Result::Ok(s) => s,
-                        sys::Result::Err(_) => continue,
-                    };
+                    let stat = bun_sys::fstat(src.handle())?;
                     // SAFETY: fchmod is safe to call with any fd + mode; errors are ignored (`_ =`).
                     unsafe {
                         let _ = bun_sys::c::fchmod(dest.handle().native(), stat.st_mode);

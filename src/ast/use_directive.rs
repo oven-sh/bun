@@ -1,5 +1,7 @@
 use bun_core::strings;
 
+use crate::{Loc, Range};
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UseDirective {
@@ -11,11 +13,14 @@ pub enum UseDirective {
     Server = 2,
 }
 
+/// What `parse` skips before the directive.
+const LEADING: &[u8] = b" \t\n\r;";
+/// A quoted directive and the byte after it. Both directives have this length.
+const DIRECTIVE_LEN: usize = b"'use client';".len();
+
 impl UseDirective {
     pub fn parse(contents: &[u8]) -> Option<UseDirective> {
-        let truncated = strings::trim_left(contents, b" \t\n\r;");
-
-        const DIRECTIVE_LEN: usize = b"'use client';".len();
+        let truncated = strings::trim_left(contents, LEADING);
 
         if truncated.len() < DIRECTIVE_LEN {
             return Some(UseDirective::None);
@@ -42,5 +47,18 @@ impl UseDirective {
         }
 
         None
+    }
+
+    /// Where the quoted directive that `parse` matched sits in `contents`.
+    pub fn range(contents: &[u8]) -> Range {
+        let start = contents.len() - strings::trim_left(contents, LEADING).len();
+        // This runs before a parser rejects a source over `Source::MAX_PARSEABLE_LEN`.
+        match i32::try_from(start) {
+            Ok(start) => Range {
+                loc: Loc { start },
+                len: (DIRECTIVE_LEN - 1) as i32,
+            },
+            Err(_) => Range::NONE,
+        }
     }
 }

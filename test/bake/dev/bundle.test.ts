@@ -412,6 +412,106 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// "use server" modules are not implemented. Such a file must fail to build the
+// way a file with a syntax error does. It used to abort the process at a TODO:
+// in the parser for a module with an export, and in the bundler's boundary
+// bookkeeping for a module without one when separateSSRGraph is on.
+for (const { separateSSRGraph, body } of [
+  { separateSSRGraph: false, body: `export async function save(x) { return "saved " + x; }` },
+  { separateSSRGraph: true, body: `globalThis.sideEffect = true;` },
+]) {
+  const useServer = `
+    "use server";
+    ${body}
+  `;
+  const plain = `
+    export {};
+  `;
+  devTest(`"use server" module is a build error (separateSSRGraph: ${separateSSRGraph})`, {
+    framework: {
+      ...minimalFramework,
+      serverComponents: {
+        ...minimalFramework.serverComponents!,
+        separateSSRGraph,
+      },
+    },
+    files: {
+      "routes/index.ts": `
+        import '../action';
+        export default function (req, meta) {
+          return new Response('index');
+        }
+      `,
+      "routes/other.ts": `
+        export default function (req, meta) {
+          return new Response('other');
+        }
+      `,
+      // Present before the first request.
+      "action.ts": useServer,
+    },
+    async test(dev) {
+      // The route reports the build error. The process and the other route keep working.
+      const expectBuildFailed = async () => {
+        const failed = await dev.fetch("/");
+        expect(await failed.text()).toContain("Build Failed");
+        expect(failed.status).toBe(500);
+        await dev.fetch("/other").equals("other");
+      };
+
+      {
+        await using _ = await dev.client("/", {
+          errors: [`action.ts:1:1: error: "use server" is not supported yet`],
+        });
+      }
+      await expectBuildFailed();
+      await dev.write("action.ts", plain);
+      await dev.fetch("/").equals("index");
+
+      // Saved while the server runs.
+      await dev.write("action.ts", useServer, { errors: null });
+      await expectBuildFailed();
+      await dev.write("action.ts", plain);
+      await dev.fetch("/").equals("index");
+    },
+  });
+}
+// A directive is JavaScript syntax. A file that another loader reads is not a
+// server component boundary, whatever its first bytes are. The "use server"
+// text file used to abort the process at the same TODO in the bundler, and the
+// "use client" one lost its default export to a client reference.
+devTest("text file that starts with a directive is imported as text", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "routes/index.ts": `
+      import server from '../server.txt';
+      import client from '../client.txt';
+      export default function (req, meta) {
+        return Response.json({ server, client });
+      }
+    `,
+    "server.txt": `
+      "use server";
+      server text
+    `,
+    "client.txt": `
+      "use client";
+      client text
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual({
+      server: `"use server";\nserver text`,
+      client: `"use client";\nclient text`,
+    });
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

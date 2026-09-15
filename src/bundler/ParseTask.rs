@@ -2384,11 +2384,12 @@ pub mod parse_worker {
         // disjoint `options` field — never the whole struct — so the raw `resolver`
         // pointer (which targets `(*transpiler).resolver`) remains valid.
         let topts = unsafe { &(*transpiler).options };
-        let use_directive: UseDirective = if !is_empty && topts.server_components {
-            UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
-        } else {
-            UseDirective::None
-        };
+        let use_directive: UseDirective =
+            if !is_empty && topts.server_components && loader.is_javascript_like() {
+                UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
+            } else {
+                UseDirective::None
+            };
 
         if (use_directive == UseDirective::Client
         && task.known_target != options::Target::ServerComponentsSsr
@@ -2667,7 +2668,14 @@ pub mod parse_worker {
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
         let ast_result: core::result::Result<JSAst, AnyError> =
-            if !is_empty || loader.handles_empty_file() {
+            if use_directive == UseDirective::Server {
+                log.add_range_error(
+                    Some(source),
+                    UseDirective::range(entry_contents),
+                    b"\"use server\" is not supported yet",
+                );
+                Err(AnyError::ParserError)
+            } else if !is_empty || loader.handles_empty_file() {
                 get_ast(
                     log,
                     transpiler,

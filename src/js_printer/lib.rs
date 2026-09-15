@@ -3517,10 +3517,15 @@ pub(crate) mod __gated_printer {
                     }
 
                     if has_pure_comment {
-                        let was_stmt_start = self.stmt_start == self.writer.written();
+                        let n = self.writer.written();
+                        let was_stmt_start = self.stmt_start == n;
+                        let was_for_init_start = self.for_init_start == n;
                         self.print_pure();
                         if was_stmt_start {
                             self.stmt_start = self.writer.written();
+                        }
+                        if was_for_init_start {
+                            self.for_init_start = self.writer.written();
                         }
                     }
                     // We only want to generate an unbound eval() in CommonJS

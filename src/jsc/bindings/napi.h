@@ -254,6 +254,9 @@ public:
 
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
+        // The finalizer owns the data now (node-addon-api frees it there). napi_get_instance_data is
+        // ungated and this env can still be reached, so it must not hand out the finalized pointer.
+        instanceData = nullptr;
         clearExceptionsBetweenFinalizers();
     }
 
@@ -500,6 +503,19 @@ public:
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
+
+    // Node's env->can_call_into_js(): false once the VM is stopping or stopped, which includes the
+    // whole of cleanup() (VirtualMachine::on_exit stops the handle before it runs the cleanup hooks).
+    inline bool canCallIntoJS() const
+    {
+        return !WebCore::clientData(m_vm)->isStoppingOrStopped(m_vm);
+    }
+
+    // The status of a call that Node refuses because !can_call_into_js().
+    inline napi_status cannotCallIntoJSStatus() const
+    {
+        return m_napiModule.nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception;
+    }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it

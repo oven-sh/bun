@@ -841,22 +841,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("worker exited with 0\nfinalized=2 call=16 release=0");
     });
 
-    // A finalizer running while a worker's env drains its finalizers can
-    // register another (here: an external buffer with a finalize_cb). Bun runs
-    // that one in the same cleanup rather than leaving it behind the walk. Bun-
-    // only rather than same-output: node hands an external buffer's finalizer to
-    // the BackingStore deleter, not to the env's tracked references, so a buffer
-    // created during teardown dies with the isolate and node prints late=0.
-    it("runs a finalizer that another finalizer registered during env cleanup", async () => {
-      await using proc = spawn({
-        cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_finalizer_registered_during_env_cleanup", "[]"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toContain("worker exited with 0\nlate=1");
-      expect(exitCode).toBe(0);
+    // A finalizer running while a worker's env drains its finalizers tries to
+    // register another (here: an external buffer with a finalize_cb). The env
+    // is torn down with script forbidden, and napi_create_external_buffer is
+    // one of the calls Node refuses there, so the late finalizer never exists
+    // and nothing is left behind the walk: late=0, as in node.
+    it("refuses a finalizer that another finalizer registers during env cleanup", async () => {
+      const result = await checkSameOutput("test_finalizer_registered_during_env_cleanup", []);
+      expect(result).toContain("worker exited with 0\nlate=0");
     });
 
     // A call that reports napi_closing consumes the calling thread's reference
@@ -1370,6 +1362,62 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(bun).toEqual(node);
       expect(bun).toEqual({
         stdout: "napi_throw status=23 error_code=23 error_message=Cannot run JavaScript",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // Node tears the addon envs down with can_call_into_js() false at a natural
+  // exit of the main thread or of a Worker: cleanup hooks, the finalizers of
+  // live wraps and the instance data finalizer all run there, and every
+  // NAPI_PREAMBLE call is refused with napi_cannot_run_js (23, NAPI_VERSION
+  // >= 10) or napi_pending_exception (10, older). The JS callback never runs.
+  // Ungated calls (value constructors, napi_get_instance_data, napi_create_error)
+  // keep working. See #42793.
+  describe.each([
+    [10, 23],
+    [8, 10],
+  ])("env teardown refuses calls into JS (NAPI_VERSION=%d)", (version, status) => {
+    it.each(["the main thread", "a worker"])("like Node when %s exits", async thread => {
+      const setup = `
+        const addon = require(${JSON.stringify(
+          join(__dirname, `napi-app/build/Debug/test_env_teardown_cannot_call_js_v${version}.node`),
+        )});
+        globalThis.keep = addon.setup(() => { console.log("JS ran at teardown"); throw new Error("from js"); });
+      `;
+      const code =
+        thread === "a worker"
+          ? `new (require("worker_threads").Worker)(${JSON.stringify(setup)}, { eval: true });`
+          : setup;
+      const run = async (exe: string) => {
+        await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
+      };
+      const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+      expect(bun).toEqual(node);
+      const gated = [
+        "get_named_property",
+        "set_named_property",
+        "make_callback",
+        "create_promise",
+        "create_external_buffer",
+        "run_script",
+        "throw_error",
+        "strict_equals",
+      ]
+        .map(name => `${name}=${status}`)
+        .join(" ");
+      expect(bun).toEqual({
+        stdout: [
+          `cleanup hook: call_function=${status} pending=0`,
+          `wrap finalizer: call_function=${status} pending=0`,
+          `wrap finalizer: ${gated}`,
+          "wrap finalizer: create_error=0 typeof=0 is_object=1 get_instance_data=0 data=ours pending=0",
+          "instance data finalizer: data=ours",
+          `instance data finalizer: call_function=${status} pending=0`,
+        ],
         stderr: "",
         exitCode: 0,
       });

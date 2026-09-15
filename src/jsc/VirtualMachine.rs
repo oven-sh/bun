@@ -1893,6 +1893,14 @@ impl VirtualMachine {
 
         self.is_shutting_down = true;
 
+        // The 'exit' handlers were the last script. Node's FreeEnvironment sets
+        // `is_stopping` before `RunCleanup`, so `can_call_into_js()` is false for
+        // the whole Node-API env teardown below: every `NAPI_PREAMBLE` call a
+        // cleanup hook or a teardown finalizer makes is refused, and no addon is
+        // re-entered after its instance data is finalized. `teardown` (a worker,
+        // or `BUN_DESTRUCT_VM_ON_EXIT`) forbids script on this same handle.
+        self.handle.stop();
+
         if self.exit_tears_down_napi_envs() {
             self.run_cleanup_hooks();
         }

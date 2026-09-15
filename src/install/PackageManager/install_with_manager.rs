@@ -941,7 +941,8 @@ pub fn install_with_manager(
     // It's unnecessary work to re-save the lockfile if there are no changes.
     // A loaded text lockfile is never re-saved just to bump its version: an
     // existing `bun.lock` keeps the version it was written with.
-    let should_save_lockfile = saves_migrated_lockfile(&load_result, save_format)
+    let should_save_lockfile = (!manager.options.dry_run
+        && saves_migrated_lockfile(&load_result, save_format))
         // check `save_lockfile` after checking if loaded from binary and save format is text
         // because `save_lockfile` is set to false for `--frozen-lockfile`
         || (manager.options.do_.save_lockfile()
@@ -1114,7 +1115,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<false, true>::run_and_wait(this)
 }
-fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
+pub(crate) fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<false, false>::run_and_wait(this)
 }
 fn wait_for_peers(this: &mut PackageManager) -> crate::Result<()> {

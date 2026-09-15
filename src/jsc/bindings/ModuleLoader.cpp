@@ -300,9 +300,10 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject);
             RETURN_IF_EXCEPTION(scope, result);
             if (contentsJSString) {
-                result.value.sourceText.string = Zig::toEncodedSlice(contentsJSString, globalObject);
+                auto contents = contentsJSString->view(globalObject);
                 RETURN_IF_EXCEPTION(scope, result);
-                result.value.sourceText.value = contentsValue;
+                result.value.sourceText.string = Zig::toEncodedSlice(contents.data);
+                result.value.sourceText.value = contents.owner;
             }
         } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
             result.value.sourceText.string = EncodedSlice { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };

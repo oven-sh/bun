@@ -14,7 +14,7 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
 
@@ -921,3 +921,46 @@ test("a version range with hundreds of thousands of '||' or AND-ed comparators e
   expect(JSON.parse(stdout)).toEqual([false, true, true, false]);
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// slice(1) of a flat string is a substring rope: its characters stay in the base string, and only
+// the rope references the base. The native side borrows the version's characters, then calls
+// toString() on the other argument. That toString() makes the rope drop its base, and the GC
+// frees the base. The borrowed characters must stay readable.
+// Malloc=1 makes bmalloc use the system heap, so that ASAN sees a read of the freed characters.
+test.skipIf(!isASAN)("a substring rope version stays readable while the other argument's toString() runs", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const rope = text => Buffer.from("_" + text).toString().slice(1);
+        const other = (dropBase, result) => ({
+          toString() {
+            dropBase();
+            Bun.gc(true);
+            return result;
+          },
+        });
+        const a = rope("1.2.3+build.1234567890.abcdefghijklmnopqr");
+        const b = rope("1.2.3+build.1234567890.abcdefghijklmnopqr");
+        const short = rope("1.2.3");
+        process.stdout.write(
+          JSON.stringify({
+            // A property key atomizes the rope: it copies its characters into an atom.
+            order: Bun.semver.order(a, other(() => ({})[a], "1.2.2")),
+            satisfies: Bun.semver.satisfies(b, other(() => ({})[b], ">=1.0.0")),
+            // A rope of 12 characters or fewer copies its characters when it resolves.
+            short: Bun.semver.order(short, other(() => new Error(short), "1.2.2")),
+          }),
+        );
+      `,
+    ],
+    env: { ...bunEnv, Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ order: 1, satisfies: true, short: 1 });
+  expect(exitCode).toBe(0);
+});

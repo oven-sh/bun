@@ -3360,12 +3360,13 @@ JSC::JSObject* JSC__JSCell__toObject(JSC::JSCell* cell, JSC::JSGlobalObject* glo
 // Throws (and returns empty) when resolving a rope runs out of memory.
 // `JSString::view`: a substring rope is viewed in place; other ropes resolve
 // (and can throw on OOM). The characters belong to `str` (or its base), which
-// the caller keeps alive.
-BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global)
+// the caller keeps alive through `*owner`.
+BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global, const JSC::JSString** owner)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
     auto view = str->view(global);
     RETURN_IF_EXCEPTION(scope, BunStringEmpty);
+    *owner = uncheckedDowncast<JSC::JSString>(view.owner);
     return Bun::toStringView(view.data);
 }
 
@@ -4779,8 +4780,8 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
     return value.toStringOrNull(arg1);
 }
 
-/// `toStringOrNull` + `JSString::view` in one call.
-JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view)
+/// `toStringOrNull` + `JSString::view` in one call. `*owner` is the cell the characters belong to.
+JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view, const JSC::JSString** owner)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
     auto* str = JSC::JSValue::decode(JSValue0).toStringOrNull(global);
@@ -4788,6 +4789,7 @@ JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::J
     auto data = str->view(global);
     RETURN_IF_EXCEPTION(scope, nullptr);
     *view = Bun::toStringView(data.data);
+    *owner = uncheckedDowncast<JSC::JSString>(data.owner);
     return str;
 }
 

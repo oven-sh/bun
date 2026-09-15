@@ -852,15 +852,17 @@ impl JSValue {
             .map(|p| JSString::opaque_ref(p.as_ptr()))
     }
     /// [`to_js_string`] plus a borrowed view of its characters, in one FFI
-    /// call. The returned guard keeps the cell alive while in scope.
+    /// call. The returned guard keeps the characters' owner cell alive while in scope.
     #[track_caller]
     pub fn to_js_string_view<'a>(self, global: &'a JSGlobalObject) -> JsResult<JSStringView<'a>> {
         let mut view = bun_core::StringView::EMPTY;
+        let mut owner: *const JSString = core::ptr::null();
         crate::call_null_is_throw(global, || {
-            JSC__JSValue__toJSStringView(self, global, &mut view)
+            JSC__JSValue__toJSStringView(self, global, &mut view, &mut owner)
         })
         .map(|p| JSStringView {
             cell: JSString::opaque_ref(p.as_ptr()),
+            owner: JSString::opaque_ref(owner),
             view,
         })
     }
@@ -904,7 +906,8 @@ impl JSValue {
     pub fn js_type_string<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
         let cell = JSString::opaque_ref::<'a>(JSC__jsTypeStringForValue(global, self));
         crate::validation_scope!(scope, global);
-        let view = crate::js_string::JSC__JSString__view(cell, global);
+        let mut owner: *const JSString = cell;
+        let view = crate::js_string::JSC__JSString__view(cell, global, &mut owner);
         scope.assert_no_exception();
         view
     }
@@ -2101,6 +2104,7 @@ unsafe extern "C" {
         this: JSValue,
         global: &'a JSGlobalObject,
         view: &mut bun_core::StringView<'a>,
+        owner: &mut *const JSString,
     ) -> *mut JSString;
     safe fn JSC__JSValue__asString(this: JSValue) -> *mut JSString;
     safe fn JSC__jsTypeStringForValue(global: &JSGlobalObject, value: JSValue) -> *mut JSString;

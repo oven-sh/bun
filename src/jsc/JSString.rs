@@ -13,6 +13,7 @@ unsafe extern "C" {
     pub(crate) safe fn JSC__JSString__view<'a>(
         this: &'a JSString,
         global: &JSGlobalObject,
+        owner: &mut *const JSString,
     ) -> StringView<'a>;
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
@@ -33,8 +34,14 @@ impl JSString {
     /// Throws when resolving a rope runs out of memory.
     #[track_caller]
     pub fn view<'a>(&'a self, global: &JSGlobalObject) -> JsResult<JSStringView<'a>> {
-        let view = crate::call_check_slow(global, || JSC__JSString__view(self, global))?;
-        Ok(JSStringView { cell: self, view })
+        let mut owner: *const JSString = self;
+        let view =
+            crate::call_check_slow(global, || JSC__JSString__view(self, global, &mut owner))?;
+        Ok(JSStringView {
+            cell: self,
+            owner: JSString::opaque_ref(owner),
+            view,
+        })
     }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
@@ -59,6 +66,8 @@ impl JSString {
 /// collected while its characters are in use.
 pub struct JSStringView<'a> {
     pub(crate) cell: &'a JSString,
+    /// `GCOwnedDataScope::owner`: `cell`, or its base string when `cell` is a substring rope.
+    pub(crate) owner: &'a JSString,
     pub(crate) view: StringView<'a>,
 }
 
@@ -89,6 +98,7 @@ impl Drop for JSStringView<'_> {
     #[inline]
     fn drop(&mut self) {
         self.cell.ensure_still_alive();
+        self.owner.ensure_still_alive();
     }
 }
 

@@ -799,7 +799,9 @@ const tracksTags = (prefix: string) => {
       }
     },
     close(socket: Bun.Socket<{ tag?: string }>) {
-      if (!socket.data.tag) return;
+      // (A TLS listener without a `handshake` handler is told `open` once the handshake is done: a
+      // client that left before that closes without ever having opened.)
+      if (!socket.data?.tag) return;
       connected.delete(socket.data.tag);
       sockets.delete(socket.data.tag);
     },

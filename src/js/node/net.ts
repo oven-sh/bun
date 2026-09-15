@@ -242,12 +242,14 @@ function failWrite(self, negErrno, callback) {
     }
   }
 }
-function endNT(socket, callback, err) {
+function endNT(self, socket, callback) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
-  socket.shutdown();
-  callback(err);
+  const current = self._handle;
+  // A TLS wrap that adopted the fd since _final ran detached `socket`: the raw half on _handle has the fd now.
+  (current?.[kAdoptedTLSRaw] ? current : socket).shutdown();
+  callback();
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -2288,7 +2290,7 @@ Socket.prototype._final = function _final(callback) {
   if (!socket) return callback();
 
   // emit FIN allowHalfOpen only allow the readable side to close first
-  process.nextTick(endNT, socket, callback);
+  process.nextTick(endNT, this, socket, callback);
 };
 
 Object.defineProperty(Socket.prototype, "localAddress", {

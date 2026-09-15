@@ -125,6 +125,9 @@ pub(crate) fn write_request(
     drop(lower);
     drop(headers);
     client.stats.bytes_written += head_bytes as u64;
+    if client.flags.collect_stats {
+        client.stats.remote_address = session.remote_address();
+    }
 
     if has_inline_body {
         stream.pending_body = req_body;

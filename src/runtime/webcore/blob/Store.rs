@@ -490,10 +490,13 @@ impl BytesExt for Bytes {
         } else {
             // Non-global allocator (e.g. memfd → munmap): copy through the
             // safe `Bytes::slice()` accessor, then free via the owning vtable
-            // — same path `Bytes::drop` takes (`allocator.free(allocated_slice())`).
+            // — same path `Bytes::drop` takes.
             let copy = self.slice().to_vec();
-            self.allocator.free(self.allocated_slice());
-            self.ptr = None;
+            if let Some(p) = self.ptr.take() {
+                // SAFETY: `ptr[..cap]` is owned by `self.allocator` (`from_raw_parts`
+                // contract); `take()` cleared `self.ptr`, so it is freed once.
+                unsafe { self.allocator.free(p.as_ptr(), self.cap as usize) };
+            }
             copy
         };
         self.len = 0;

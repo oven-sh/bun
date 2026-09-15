@@ -198,6 +198,8 @@ pub enum TestingBatchEvents {
     /// a message saying that new files have been seen. Once DevServer receives
     /// that signal, or times out, it will "release" this batch.
     Enabled(TestingBatch),
+    /// Released while a bundle ran; `finalize_bundle_cleanup` starts it after.
+    ReleaseAfterBundle(TestingBatch),
 }
 
 /// There is only ever one bundle executing at the same time, since all bundles
@@ -1151,7 +1153,9 @@ impl Drop for DevServer {
             }
         }
 
-        if let TestingBatchEvents::Enabled(batch) = &mut self.testing_batch_events {
+        if let TestingBatchEvents::Enabled(batch) | TestingBatchEvents::ReleaseAfterBundle(batch) =
+            &mut self.testing_batch_events
+        {
             drop(std::mem::replace(
                 &mut batch.entry_points,
                 EntryPointList::empty(),
@@ -3778,6 +3782,20 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
 
     dev.start_next_bundle_if_present();
 
+    // If the call above started another bundle, its cleanup releases the batch.
+    if matches!(
+        dev.testing_batch_events,
+        TestingBatchEvents::ReleaseAfterBundle(_)
+    ) && dev.current_bundle.is_none()
+    {
+        let TestingBatchEvents::ReleaseAfterBundle(batch) =
+            core::mem::replace(&mut dev.testing_batch_events, TestingBatchEvents::Disabled)
+        else {
+            unreachable!()
+        };
+        dev.release_testing_batch(batch);
+    }
+
     // Unref the ref added in `start_async_bundle`
     if let Some(server) = dev.server.as_mut() {
         server.on_static_request_complete();
@@ -4873,6 +4891,23 @@ pub(super) fn finalize_bundle(
 }
 
 impl DevServer {
+    /// Bundle the files a testing batch collected, or report an empty batch.
+    pub(crate) fn release_testing_batch(&mut self, batch: TestingBatch) {
+        debug_assert!(self.current_bundle.is_none());
+        if batch.entry_points.set.count() == 0 {
+            self.publish(
+                HmrTopic::TestingWatchSynchronization,
+                &[MessageId::TestingWatchSynchronization.char(), 2],
+                Opcode::BINARY,
+            );
+            return;
+        }
+
+        self.start_async_bundle(batch.entry_points, true, Instant::now())
+            // bun.handleOom(err) — Rust aborts on OOM by default
+            .expect("OOM");
+    }
+
     fn start_next_bundle_if_present(&mut self) {
         debug_assert!(self.magic == Magic::Valid);
         // Clear the current bundle

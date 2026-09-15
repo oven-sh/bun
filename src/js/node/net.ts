@@ -1607,6 +1607,12 @@ function Socket(options?) {
   // Bun's native _handle.setKeepAlive takes milliseconds (it is the public
   // Bun.Socket), so store ms here. Node stores seconds because libuv does.
   this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L478-L481
+  const typeOfService = opts.typeOfService;
+  if (typeOfService !== undefined) {
+    validateInt32(typeOfService, "options.typeOfService", 0, 255);
+  }
+  this[kSetTOS] = typeOfService;
 
   this[khandlers] = SocketHandlers2;
   this[kDestroyOnRead] = false;

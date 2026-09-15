@@ -753,12 +753,12 @@ function TLSSocket(socket?, options?) {
 
   this._rejectUnauthorized = !!options.rejectUnauthorized;
 
-  // Never forward readable / writable: node's TLSSocket builds its own net.Socket options. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L590-L600
+  // Never forward readable / writable / typeOfService: node's TLSSocket builds its own net.Socket options. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L590-L600
   NetSocket.$call(
     this,
-    options.readable === undefined && options.writable === undefined
+    options.readable === undefined && options.writable === undefined && options.typeOfService === undefined
       ? options
-      : { ...options, readable: undefined, writable: undefined },
+      : { ...options, readable: undefined, writable: undefined, typeOfService: undefined },
   );
 
   // Node's _init installs this as the first 'error' listener and removes it in

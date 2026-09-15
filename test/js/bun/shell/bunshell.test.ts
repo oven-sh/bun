@@ -3378,6 +3378,173 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
   });
 });
 
+describe("stdin redirect from a Response whose body is not in memory yet", () => {
+  // `< ${response}` used to read the body when the command started. A body
+  // that was still arriving (a `fetch()` that is not finished) or a body that
+  // is a stream gave the command an empty stdin. The command now waits for
+  // the whole body before it starts.
+  const countStdin = `const bytes = await Bun.stdin.bytes();
+    let a = 0;
+    for (const byte of bytes) if (byte === 0x61) a++;
+    console.log(JSON.stringify({ total: bytes.length, a }));`;
+  const echoStdin = "process.stdout.write(await Bun.stdin.text())";
+  const SIZE = 1 << 20;
+
+  function streamResponse(...chunks: string[]) {
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+          controller.close();
+        },
+      }),
+    );
+  }
+
+  describe.concurrent("fetch() response", () => {
+    const cases: Array<[string, (body: Buffer) => Response]> = [
+      ["Content-Length", body => new Response(body)],
+      [
+        "chunked",
+        body =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                for (let i = 0; i < body.length; i += 16 * 1024) controller.enqueue(body.subarray(i, i + 16 * 1024));
+                controller.close();
+              },
+            }),
+          ),
+      ],
+    ];
+    test.each(cases)("%s", async (_name, respond) => {
+      const body = Buffer.alloc(SIZE, "a");
+      await using server = Bun.serve({ port: 0, fetch: () => respond(body) });
+      const response = await fetch(server.url);
+      const result = await $`${BUN} -e ${countStdin} < ${response}`.env(bunEnv).quiet().nothrow();
+      expect({
+        stdout: JSON.parse(result.stdout.toString()),
+        stderr: result.stderr.toString(),
+        exitCode: result.exitCode,
+        bodyUsed: response.bodyUsed,
+      }).toEqual({ stdout: { total: SIZE, a: SIZE }, stderr: "", exitCode: 0, bodyUsed: true });
+    });
+  });
+
+  describe.concurrent("new Response(body)", () => {
+    test("ReadableStream", async () => {
+      const result = await $`${BUN} -e ${echoStdin} < ${streamResponse("hello ", "stream\n")}`
+        .env(bunEnv)
+        .quiet()
+        .nothrow();
+      expect({ stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode }).toEqual(
+        { stdout: "hello stream\n", stderr: "", exitCode: 0 },
+      );
+    });
+
+    test("async iterable", async () => {
+      const body = (async function* () {
+        yield "part1 ";
+        await Bun.sleep(1);
+        yield "part2\n";
+      })();
+      const result = await $`${BUN} -e ${echoStdin} < ${new Response(body as any)}`.env(bunEnv).quiet().nothrow();
+      expect({ stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode }).toEqual(
+        { stdout: "part1 part2\n", stderr: "", exitCode: 0 },
+      );
+    });
+
+    test("empty ReadableStream delivers EOF", async () => {
+      const result = await $`${BUN} -e ${echoStdin} < ${streamResponse()}`.env(bunEnv).quiet().nothrow();
+      expect({ stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode }).toEqual(
+        { stdout: "", stderr: "", exitCode: 0 },
+      );
+    });
+
+    test("command that starts after another command", async () => {
+      const result = await $`true && ${BUN} -e ${echoStdin} < ${streamResponse("second\n")}`
+        .env(bunEnv)
+        .quiet()
+        .nothrow();
+      expect({ stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode }).toEqual(
+        { stdout: "second\n", stderr: "", exitCode: 0 },
+      );
+    });
+
+    test("builtin command", async () => {
+      const script = `
+        import { $ } from "bun";
+        const response = new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("hello builtin\\n"));
+            controller.close();
+          },
+        }));
+        console.log(JSON.stringify(await $\`cat < \${response}\`.text()));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [BUN, "-e", script],
+        env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: '"hello builtin\\n"\n', stderr: "", exitCode: 0 });
+    });
+  });
+
+  describe.concurrent("rejects", () => {
+    test("a body that was already used", async () => {
+      const response = streamResponse("x");
+      await response.text();
+      const error = await runWithErrorPromise(() => $`${BUN} -e ${echoStdin} < ${response}`.env(bunEnv));
+      expect(error).toMatchObject({ code: "ERR_BODY_ALREADY_USED" });
+    });
+
+    test("a body whose stream is locked", async () => {
+      const response = streamResponse("x");
+      const reader = response.body!.getReader();
+      const error = await runWithErrorPromise(() => $`${BUN} -e ${echoStdin} < ${response}`.env(bunEnv));
+      reader.releaseLock();
+      expect(error).toMatchObject({ code: "ERR_INVALID_STATE" });
+    });
+
+    test("a body whose stream errors", async () => {
+      const response = new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.error(new Error("stream failed"));
+          },
+        }),
+      );
+      const error = await runWithErrorPromise(() => $`${BUN} -e ${echoStdin} < ${response}`.env(bunEnv));
+      expect(error).toMatchObject({ message: "stream failed" });
+    });
+  });
+
+  test("a script that fails while the body is pending settles and lets the process exit", async () => {
+    // `> ${new Response("r")}` throws when the second command starts. The
+    // first command is still waiting for a body that never ends. The script
+    // must reject at once, and the pending body must not keep the process alive.
+    const script = `
+      import { $ } from "bun";
+      const never = new Response(new ReadableStream({ start() {} }));
+      try {
+        await $\`\${process.execPath} -e ${JSON.stringify(echoStdin)} < \${never} | \${process.execPath} --version > \${new Response("r")}\`;
+        console.log("resolved");
+      } catch (error) {
+        console.log("rejected:", error.message);
+      }
+    `;
+    await using proc = Bun.spawn({ cmd: [BUN, "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "rejected: Blobs are immutable, and cannot be used for stdout/stderr\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe.skipIf(isWindows)("stdin redirect whose pipe outlives the command's process", () => {
   // `< ${input}` is pumped into the child over a pipe. A command finishes once
   // its exit code and the stdin, stdout and stderr closes are all in, and the

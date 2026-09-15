@@ -410,6 +410,8 @@ public:
         Bun__S3UploadStream__onRejectStream,
         Bun__HTMLRewriter__onResolveInputStream,
         Bun__HTMLRewriter__onRejectInputStream,
+        Bun__ShellCmd__onResolveBody,
+        Bun__ShellCmd__onRejectBody,
         Count_,
     };
     static constexpr size_t promiseFunctionsSize = static_cast<size_t>(PromiseFunctions::Count_);

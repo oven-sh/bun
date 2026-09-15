@@ -735,7 +735,10 @@ impl Builtin {
                         ));
                         return Some(Yield::Failed(cmd));
                     }
-                    let original_blob = body.use_();
+                    let original_blob = match interp.as_cmd_mut(cmd).redirect_body.take() {
+                        Some(buffered) => buffered,
+                        None => body.use_(),
+                    };
                     if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
                         drop(original_blob);
                         return None;

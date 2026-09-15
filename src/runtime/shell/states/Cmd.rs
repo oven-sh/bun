@@ -25,6 +25,9 @@ pub struct Cmd {
     pub args: Vec<Vec<u8>>,
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) redirection_fd: Option<*mut CowFd>,
+    /// The body of a `< ${response}` redirect that was still arriving when
+    /// the command was ready to start, buffered by [`Self::wait_for_redirect_body`].
+    pub(crate) redirect_body: Option<crate::webcore::Blob>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
 }
@@ -41,8 +44,23 @@ pub enum CmdState {
         idx: u32,
     },
     Exec,
+    /// `response.blob()` is pending for the `< ${response}` redirect. The
+    /// promise reactions own the box. The Cmd only marks it cancelled.
+    WaitingBody {
+        wait: *mut BodyWait,
+    },
     WaitingWriteErr,
     Done,
+}
+
+/// Context of the promise reactions registered by
+/// [`Cmd::wait_for_redirect_body`]. The reaction that fires frees it. A
+/// cancelled wait (the script failed, or the interpreter is torn down) makes
+/// the reaction free it and touch nothing else.
+pub struct BodyWait {
+    interp: *mut Interpreter,
+    cmd: NodeId,
+    cancelled: bool,
 }
 
 #[derive(Default)]
@@ -214,6 +232,7 @@ impl Cmd {
             args: Vec::new(),
             redirection_file: Vec::new(),
             redirection_fd: None,
+            redirect_body: None,
             exec: Exec::None,
             exit_code: None,
         }))
@@ -289,9 +308,14 @@ impl Cmd {
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {
+                    if let Some(y) = Self::wait_for_redirect_body(interp, this) {
+                        return y;
+                    }
                     return Self::transition_to_exec(interp, this);
                 }
-                CmdState::WaitingWriteErr => return Yield::suspended(),
+                CmdState::WaitingBody { .. } | CmdState::WaitingWriteErr => {
+                    return Yield::suspended();
+                }
                 CmdState::Done => {
                     let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
                     let parent = interp.as_cmd(this).base.parent;
@@ -419,6 +443,132 @@ impl Cmd {
         }
         interp.deinit_node(child);
         Yield::Next(this)
+    }
+
+    /// A `< ${response}` whose body is not in memory yet (a `fetch()` body
+    /// that is still arriving, or a `ReadableStream` body) is buffered with
+    /// `response.blob()` before the command starts. `None` when the command
+    /// can start now.
+    fn wait_for_redirect_body(interp: &Interpreter, this: NodeId) -> Option<Yield> {
+        use crate::jsc::js_promise::Status;
+        use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
+
+        if interp.as_cmd(this).redirect_body.is_some() {
+            return None;
+        }
+        let node = interp.as_cmd(this).ast_node();
+        let Some(ast::Redirect::JsBuf(val)) = &node.redirect_file else {
+            return None;
+        };
+        if !node.redirect.stdin() {
+            return None;
+        }
+        // A bad index or an unsupported value is reported by the redirect
+        // setup of the builtin or the subprocess.
+        let global = interp.global_this_ref()?;
+        let jsval = *interp.jsobjs.get(val.idx as usize)?;
+        let response = jsval.as_class_ref::<crate::webcore::Response>()?;
+        let body = response.get_body_value();
+        body.to_blob_if_possible();
+        if !matches!(body, BodyValue::Locked(_)) {
+            return None;
+        }
+
+        let promise = match response.get_blob_without_call_frame(global) {
+            Ok(promise) => promise,
+            Err(_) => return Some(Yield::Failed(this)),
+        };
+        let Some(any_promise) = promise.as_any_promise() else {
+            let _ = global.throw(format_args!("Expected response.blob() to return a Promise"));
+            return Some(Yield::Failed(this));
+        };
+        match any_promise.status() {
+            Status::Fulfilled => {
+                let blob = any_promise.result(global.vm());
+                Self::store_redirect_body(interp, this, global, blob)
+                    .err()
+                    .map(|_| Yield::Failed(this))
+            }
+            Status::Rejected => {
+                any_promise.set_handled(global.vm());
+                let _ = global.throw_value(any_promise.result(global.vm()));
+                Some(Yield::Failed(this))
+            }
+            Status::Pending => {
+                let wait = bun_core::heap::into_raw(Box::new(BodyWait {
+                    interp: interp.as_ctx_ptr(),
+                    cmd: this,
+                    cancelled: false,
+                }));
+                interp.as_cmd_mut(this).state = CmdState::WaitingBody { wait };
+                promise.then(global, wait, on_resolve_body_shim, on_reject_body_shim);
+                Some(Yield::suspended())
+            }
+        }
+    }
+
+    /// Keep the Blob that `response.blob()` resolved to.
+    fn store_redirect_body(
+        interp: &Interpreter,
+        this: NodeId,
+        global: &crate::jsc::JSGlobalObject,
+        value: crate::jsc::JSValue,
+    ) -> crate::jsc::JsResult<()> {
+        let Some(blob) = value.as_class_ref::<crate::webcore::Blob>() else {
+            return Err(global.throw(format_args!(
+                "Expected response.blob() to resolve to a Blob"
+            )));
+        };
+        interp.as_cmd_mut(this).redirect_body = Some(blob.dupe());
+        Ok(())
+    }
+
+    /// `response.blob()` settled: resume from `Exec` with the Blob, or fail
+    /// the command with the rejection.
+    fn on_body_settled(
+        global: &crate::jsc::JSGlobalObject,
+        wait: Box<BodyWait>,
+        settled: Result<crate::jsc::JSValue, crate::jsc::JSValue>,
+    ) {
+        if wait.cancelled {
+            return;
+        }
+        // SAFETY: the wait is not cancelled, so the Cmd is still in
+        // `WaitingBody` and the interpreter that owns it is alive (it has
+        // pending activity until every node is done).
+        let interp = unsafe { &*wait.interp };
+        let this = wait.cmd;
+        debug_assert!(matches!(
+            interp.as_cmd(this).state,
+            CmdState::WaitingBody { .. }
+        ));
+        interp.as_cmd_mut(this).state = CmdState::Exec;
+        let y = match settled {
+            Ok(blob) => match Self::store_redirect_body(interp, this, global, blob) {
+                Ok(()) => Yield::Next(this),
+                Err(_) => Yield::Failed(this),
+            },
+            Err(err) => {
+                let _ = global.throw_value(err);
+                Yield::Failed(this)
+            }
+        };
+        y.run(interp);
+    }
+
+    /// The script failed while `response.blob()` was pending: finish the
+    /// command now. The reaction that fires later frees the box and stops.
+    pub(crate) fn cancel_body_wait(interp: &Interpreter, this: NodeId) {
+        let CmdState::WaitingBody { wait } = interp.as_cmd(this).state else {
+            return;
+        };
+        // SAFETY: the box is alive until a reaction frees it, and a reaction
+        // has not fired because the state is still `WaitingBody`.
+        unsafe { (*wait).cancelled = true };
+        let me = interp.as_cmd_mut(this);
+        me.state = CmdState::Done;
+        me.exit_code = Some(1);
+        Yield::Next(this).run(interp);
     }
 
     /// Resolves argv[0] to a builtin or falls through to subprocess spawn
@@ -787,7 +937,10 @@ impl Cmd {
                     let req = unsafe { &*req };
                     req.get_body_value().to_blob_if_possible();
                     if flags.stdin() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = match interp.as_cmd_mut(this).redirect_body.take() {
+                            Some(blob) => crate::webcore::blob::Any::Blob(blob),
+                            None => req.get_body_value().use_as_any_blob(),
+                        };
                         stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
                     }
                     if flags.stdout() {
@@ -915,6 +1068,14 @@ impl Cmd {
                 // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
                 CowFd::deref(fd);
             }
+            if let CmdState::WaitingBody { wait } = me.state {
+                // Torn down with `response.blob()` pending (VM shutdown): the
+                // reaction must not reach into this interpreter.
+                // SAFETY: the box is alive until a reaction frees it.
+                unsafe { (*wait).cancelled = true };
+                me.state = CmdState::Done;
+            }
+            me.redirect_body = None;
             core::mem::take(&mut me.exec)
         };
         // `me`'s borrow ended above: the teardown below re-enters this Cmd
@@ -1095,6 +1256,40 @@ impl Cmd {
         child.close_io(StdioKind::Stderr);
     }
 }
+
+// Reactions of the `response.blob()` promise that `wait_for_redirect_body`
+// registers. The trailing argument is the `BodyWait` box. Exported as function
+// symbols so `Zig::GlobalObject::promiseHandlerID` can match their address.
+
+fn on_resolve_body(
+    global: &crate::jsc::JSGlobalObject,
+    callframe: &crate::jsc::CallFrame,
+) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+    let args = callframe.arguments();
+    // SAFETY: `wait_for_redirect_body` leaked the box into the reaction's
+    // trailing argument. Only one of the two reactions fires.
+    let wait = unsafe { bun_core::heap::take(args[args.len() - 1].as_promise_ptr::<BodyWait>()) };
+    Cmd::on_body_settled(global, wait, Ok(args[0]));
+    Ok(crate::jsc::JSValue::UNDEFINED)
+}
+
+fn on_reject_body(
+    global: &crate::jsc::JSGlobalObject,
+    callframe: &crate::jsc::CallFrame,
+) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+    let args = callframe.arguments();
+    // SAFETY: see `on_resolve_body`.
+    let wait = unsafe { bun_core::heap::take(args[args.len() - 1].as_promise_ptr::<BodyWait>()) };
+    Cmd::on_body_settled(global, wait, Err(args[0]));
+    Ok(crate::jsc::JSValue::UNDEFINED)
+}
+
+bun_jsc::jsc_promise_handler!(
+    fn on_resolve_body_shim = "Bun__ShellCmd__onResolveBody" => on_resolve_body
+);
+bun_jsc::jsc_promise_handler!(
+    fn on_reject_body_shim = "Bun__ShellCmd__onRejectBody" => on_reject_body
+);
 
 /// True when argv0 is the literal word `export`, the only declaration
 /// builtin the Bun shell has.

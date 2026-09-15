@@ -4473,6 +4473,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onResolveInputStream;
     } else if (handler == Bun__HTMLRewriter__onRejectInputStream) {
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream;
+    } else if (handler == Bun__ShellCmd__onResolveBody) {
+        return GlobalObject::PromiseFunctions::Bun__ShellCmd__onResolveBody;
+    } else if (handler == Bun__ShellCmd__onRejectBody) {
+        return GlobalObject::PromiseFunctions::Bun__ShellCmd__onRejectBody;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

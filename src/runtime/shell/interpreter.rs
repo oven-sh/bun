@@ -1345,7 +1345,7 @@ impl Interpreter {
         self.flags.get().failed()
     }
 
-    /// Node `id` threw and holds nothing in flight: kill the subprocesses, wind the tree down, then reject (the rejection runs JS, so it comes last).
+    /// Node `id` threw and holds nothing in flight: kill the subprocesses, stop the body waits, wind the tree down, then reject (the rejection runs JS, so it comes last).
     pub(crate) fn fail(&self, id: NodeId) -> Yield {
         let rejection = self.take_failure();
         if self.failed() {
@@ -1354,6 +1354,7 @@ impl Interpreter {
                 let cmd = NodeId(i as u32);
                 if matches!(self.node(cmd).kind(), StateKind::Cmd) {
                     Cmd::kill_subprocess(self, cmd);
+                    Cmd::cancel_body_wait(self, cmd);
                 }
             }
         }

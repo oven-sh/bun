@@ -738,7 +738,10 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
     static ARENA: std::sync::LazyLock<Arena> = std::sync::LazyLock::new(Arena::new);
     static FED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
     const CSS_BUDGET: usize = 64 * 1024 * 1024;
-    if FED.fetch_add(bytes.len(), core::sync::atomic::Ordering::Relaxed) + bytes.len() > CSS_BUDGET
+    // The CSS tokenizer requires well-formed UTF-8; anything else diffs as text.
+    if !bun_core::strings::is_valid_utf8(bytes)
+        || FED.fetch_add(bytes.len(), core::sync::atomic::Ordering::Relaxed) + bytes.len()
+            > CSS_BUDGET
     {
         return None;
     }

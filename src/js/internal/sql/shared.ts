@@ -342,6 +342,40 @@ function detectCommand(query: string, anyAndAllMeanIn: boolean): SQLCommand {
   return command;
 }
 
+function hasKeywordAt(query: string, start: number, keyword: string): boolean {
+  const len = keyword.length;
+  if (query.length - start < len) return false;
+  for (let i = 0; i < len; i++) {
+    let c = query.charCodeAt(start + i);
+    // ASCII lowercase to uppercase
+    if (c >= 97 && c <= 122) c -= 32;
+    if (c !== keyword.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+// Skips the whitespace the Postgres and MySQL lexers skip: space, \t, \n, \v, \f, \r.
+function skipWhitespace(query: string, start: number): number {
+  const len = query.length;
+  let i = start;
+  while (i < len) {
+    const c = query.charCodeAt(i);
+    if (c === 32 || (c >= 9 && c <= 13)) i++;
+    else break;
+  }
+  return i;
+}
+
+// Reads only the prefix: this runs on every pooled query, and ORM generated queries are long.
+function startsTransaction(query: string): boolean {
+  const i = skipWhitespace(query, 0);
+  if (hasKeywordAt(query, i, "BEGIN")) return true;
+  if (!hasKeywordAt(query, i, "START")) return false;
+  const afterStart = i + 5;
+  const j = skipWhitespace(query, afterStart);
+  return j > afterStart && hasKeywordAt(query, j, "TRANSACTION");
+}
+
 function getHelperCommandFromDetect(query: string, anyAndAllMeanIn: boolean): SQLCommand {
   const command = detectCommand(query, anyAndAllMeanIn);
   // only selectIn, insert, update, updateSet are allowed
@@ -988,11 +1022,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   protected checkUnsafeTransaction(sql: string, flags: number) {
     if (!(flags & SQLQueryFlags.allowUnsafeTransaction)) {
-      if (this.connectionInfo.max !== 1) {
-        const upperCaseSqlString = sql.toUpperCase().trim();
-        if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
-          throw this.unsafeTransactionError();
-        }
+      if (this.connectionInfo.max !== 1 && startsTransaction(sql)) {
+        throw this.unsafeTransactionError();
       }
     }
   }

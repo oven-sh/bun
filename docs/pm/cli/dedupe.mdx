@@ -44,6 +44,27 @@ bun dedupe v1.4.0 (abc12345)
 
 `--lockfile-only` rewrites `bun.lock` without installing.
 
+### `--why`
+
+`--why` adds one level of dependents under each row: the packages whose dependency edges pointed at the removed version or at the version(s) it moved to, grouped by the range they asked for.
+
+```bash terminal icon="terminal"
+bun dedupe --dry-run --why
+```
+
+```
+bun dedupe v1.4.0 (abc12345)
+
+↳ esbuild 0.15.10 → 0.15.11
+    wanted ^0.15.7 by esbuild-loader, tsup, vite +1 more
+    wanted ^0.15.8 by my-app
+
+1 duplicate version can be removed (checked 5 packages in bun.lock) [9.00ms]
+  bun dedupe
+```
+
+This shows at a glance why a version moved where it did: here `my-app`'s `^0.15.8` keeps `0.15.11` alive, and the `^0.15.7` edges are satisfied by it too. When a row ends in `→ (removed)` (the version is dropped because nothing reachable needs it anymore), its listed dependents are themselves removed versions, written as `name@version`. Use [`bun why`](/pm/cli/why) for the full dependency paths of a single package.
+
 ### Notes
 
 - Bun respects overrides and catalogs. It re-points each dependency using its effective range.

@@ -1843,6 +1843,13 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "why",
+          "description": "Also list each version's dependents and the ranges they asked for",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [

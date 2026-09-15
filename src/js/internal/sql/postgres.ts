@@ -30,6 +30,8 @@ const {
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
+const CANCEL_REQUEST_TIMEOUT_MS = 5_000;
+
 const escapeBackslash = /\\/g;
 const escapeQuote = /"/g;
 
@@ -414,6 +416,25 @@ class PostgresAdapter
       throw $ERR_INVALID_ARG_VALUE("name", str, "must not contain null bytes");
     }
     return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
+  }
+
+  /**
+   * Plaintext on purpose: the backend handles CancelRequest before SSL
+   * negotiation, and the packet carries only the pid/secret the server itself
+   * issued. This matches libpq's PQcancel().
+   */
+  sendCancelRequest(request: Uint8Array): void {
+    const { path, hostname, port } = this.connectionInfo;
+    const net = require("node:net");
+
+    // net.connect returns before the handshake, so the timeout covers it too.
+    const socket = net.connect(path ? { path } : { host: hostname, port });
+    socket.setTimeout(CANCEL_REQUEST_TIMEOUT_MS);
+    socket.on("timeout", () => socket.destroy());
+    // Best effort: a cancel that never arrives leaves the query running.
+    socket.on("error", () => {});
+    // A write queued before connect suppresses net.Socket's timeout; write after.
+    socket.on("connect", () => socket.end(request));
   }
 
   connectionClosedError() {

@@ -452,7 +452,10 @@ class Debugger {
         if (typeof message === "string") {
           this.#message(ws, message);
         } else {
-          this.#error(ws, new Error(`Unexpected binary message: ${message.toString()}`));
+          // The inspector protocol is JSON-RPC over text frames only. Closing
+          // with 1003 (unsupported data) lets the client observe the failure;
+          // the `close` handler below tears down the backend.
+          ws.close(1003, "Binary messages are not supported");
         }
       },
       drain: ws => this.#drain(ws),
@@ -600,13 +603,6 @@ class Debugger {
   #close(connection: ConnectionOwner): void {
     const { data } = connection;
     const { backend } = data;
-    backend?.close();
-  }
-
-  #error(connection: ConnectionOwner, error: Error): void {
-    const { data } = connection;
-    const { backend } = data;
-    console.error(error);
     backend?.close();
   }
 }

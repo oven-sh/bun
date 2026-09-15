@@ -2133,7 +2133,7 @@ describe.concurrent("--watch runs a test file that is added later", () => {
     await watcher.waitFor("Ran 1 test across 1 file.");
     writeFileSync(join(String(dir), "b.test.ts"), testFile("b"));
     await watcher.waitFor("Ran 2 tests across 2 files.");
-  }, 30_000);
+  });
 
   test("in a directory that no run loaded a file from", async () => {
     using dir = tempDir("watch-new-test-file-unloaded-dir", {
@@ -2145,7 +2145,7 @@ describe.concurrent("--watch runs a test file that is added later", () => {
     await watcher.waitFor("Ran 1 test across 1 file.");
     writeFileSync(join(String(dir), "lib", "deep", "b.spec.tsx"), testFile("b"));
     await watcher.waitFor("Ran 2 tests across 2 files.");
-  }, 30_000);
+  });
 
   test("in a directory that is created with it", async () => {
     using dir = tempDir("watch-new-test-file-new-dir", { "a.test.ts": testFile("a") });
@@ -2155,7 +2155,7 @@ describe.concurrent("--watch runs a test file that is added later", () => {
     mkdirSync(join(String(dir), "new", "deeper"), { recursive: true });
     writeFileSync(join(String(dir), "new", "deeper", "b_test.js"), testFile("b"));
     await watcher.waitFor("Ran 2 tests across 2 files.");
-  }, 30_000);
+  });
 
   test("while the run that did not find it is still in progress", async () => {
     using dir = tempDir("watch-new-test-file-mid-run", {
@@ -2173,5 +2173,5 @@ describe.concurrent("--watch runs a test file that is added later", () => {
     await using watcher = watchTests(String(dir));
 
     await watcher.waitFor("Ran 2 tests across 2 files.");
-  }, 30_000);
+  });
 });

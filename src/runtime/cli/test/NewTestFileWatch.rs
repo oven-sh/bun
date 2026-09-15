@@ -18,7 +18,7 @@ use bun_ptr::Interned;
 use bun_sys::{Dir, ExistsAtType, Fd, FileKind};
 use bun_threading::Guarded;
 
-use super::scanner::Scanner;
+use super::scanner::TestFileRules;
 
 /// A watched directory costs an inotify watch on Linux and an open descriptor
 /// on kqueue. The walk is breadth first, so the directories past the limit are
@@ -26,8 +26,9 @@ use super::scanner::Scanner;
 const MAX_WATCHED_DIRS: usize = 4096;
 
 pub(crate) struct NewTestFileWatch {
-    /// `scan` has returned. Only the `&self` predicates are used.
-    scanner: Scanner<'static>,
+    rules: TestFileRules,
+    /// The directories `scan` was asked to walk.
+    roots: Vec<Box<[u8]>>,
     /// The test files `scan` found. A new one reloads the process, so this
     /// set never grows.
     known_files: StringSet,
@@ -36,21 +37,21 @@ pub(crate) struct NewTestFileWatch {
     max_watched_dirs: usize,
 }
 
-// SAFETY: the scanner's predicates read its filters, its ignore patterns, and
-// the VM's loader table. Nothing writes those after `scan` returns. The other
-// fields are `Sync`.
-unsafe impl Sync for NewTestFileWatch {}
-
 impl NewTestFileWatch {
     /// The result lives as long as the process: the listener it becomes is
     /// never removed.
-    pub(crate) fn init(scanner: Scanner<'static>, test_files: &[Interned]) -> &'static Self {
+    pub(crate) fn init(
+        rules: TestFileRules,
+        roots: Vec<Box<[u8]>>,
+        test_files: &[Interned],
+    ) -> &'static Self {
         let mut known_files = StringSet::new();
         for path in test_files {
             bun_core::handle_oom(known_files.insert(path.as_bytes()));
         }
         crate::cli::cli_arena().alloc(Self {
-            scanner,
+            rules,
+            roots,
             known_files,
             watched_dirs: Guarded::new(StringSet::new()),
             max_watched_dirs: max_watched_dirs(),
@@ -76,7 +77,7 @@ impl NewTestFileWatch {
             let _ = watcher.add_directory_by_path(dir);
         };
         let mut added = None;
-        for root in &self.scanner.roots {
+        for root in &self.roots {
             let root = without_trailing_slash_windows_path(root);
             if !self.reserve_watch(root) {
                 continue;
@@ -157,10 +158,10 @@ impl NewTestFileWatch {
                 let name = strings::copy_lowercase_if_needed(base, &mut name_buf[..]);
 
                 if is_dir {
-                    if !self.scanner.walks_directory(&dir, base, name) {
+                    if !self.rules.walks_directory(&dir, base, name) {
                         continue;
                     }
-                    let Some(path) = self.scanner.join(&dir, base, &mut path_buf) else {
+                    let Some(path) = self.rules.join(&dir, base, &mut path_buf) else {
                         continue;
                     };
                     if !self.reserve_watch(path) {
@@ -169,12 +170,12 @@ impl NewTestFileWatch {
                     watch_directory(path);
                     queue.push_back(Box::from(path));
                 } else {
-                    if !self.scanner.could_be_test_file::<true>(name) {
+                    if !self.rules.could_be_test_file::<true>(name) {
                         continue;
                     }
-                    let Some(path) =
-                        self.scanner
-                            .filtered_test_file_path(&dir, base, &mut path_buf)
+                    let Some(path) = self
+                        .rules
+                        .filtered_test_file_path(&dir, base, &mut path_buf)
                     else {
                         continue;
                     };

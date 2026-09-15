@@ -2009,7 +2009,7 @@ impl TestCommand {
         vm.ensure_debugger(false)?;
 
         let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
-        scanner.path_ignore_patterns = ctx.test_options.path_ignore_patterns.clone();
+        scanner.rules.path_ignore_patterns = ctx.test_options.path_ignore_patterns.clone();
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)
@@ -2061,7 +2061,7 @@ impl TestCommand {
             }
         } else {
             // Treat arguments as filters and scan the codebase
-            scanner.filter_names = ctx
+            scanner.rules.filter_names = ctx
                 .positionals
                 .iter()
                 .skip(1)
@@ -2119,16 +2119,8 @@ impl TestCommand {
         // so the watcher-enable check below can read it without reborrowing.
         let all_test_files_count = all_test_files.len();
         let search_count = scanner.search_count;
-        let new_test_file_watch = if ctx.debug.hot_reload == jsc::virtual_machine::HotReload::Watch
-        {
-            // SAFETY: the scanner borrows `vm.transpiler.options` and nothing
-            // else, and `vm` is the process-lifetime VM.
-            let scanner = unsafe { core::mem::transmute::<Scanner<'_>, Scanner<'static>>(scanner) };
-            Some(NewTestFileWatch::init(scanner, &all_test_files))
-        } else {
-            drop(scanner);
-            None
-        };
+        let new_test_file_watch = (ctx.debug.hot_reload == jsc::virtual_machine::HotReload::Watch)
+            .then(|| NewTestFileWatch::init(scanner.rules, scanner.roots, &all_test_files));
 
         // When --changed or --shard filters the discovered test files
         // down to zero, the "No tests found!" error path is suppressed

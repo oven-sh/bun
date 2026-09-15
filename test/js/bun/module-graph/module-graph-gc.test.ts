@@ -182,8 +182,31 @@ class Lifetimes {
       );
     }
     const afterRecursing = `after 100 collections from timer callbacks, 3 more from a timer callback that first recursed 256 frames and returned: ${survivors.length - remaining().length} of ${survivors.length} collected`;
+    // The same recursion, but from this function's continuation (a microtask run after a timer
+    // callback returned, not inside one), and no collection there: then collections from timer
+    // callbacks as before. It writes over the depths the timer dispatch's own native frames use.
+    const beforeContinuation = remaining().length;
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    {
+      const recurse = (depth: number): number => (depth ? recurse(depth - 1) + 1 : 0);
+      recurse(256);
+    }
+    for (let i = 0; i < 3 && remaining().length; i++) await collect();
+    const afterContinuation = `then 3 more from timer callbacks after a continuation (not a timer callback) recursed 256 frames: ${beforeContinuation - remaining().length} of ${beforeContinuation} collected`;
+    // A heap snapshot that is thrown away (it collects by itself), then the same collections:
+    // separates what taking the snapshot does from what analysing it (a lot of script) does.
+    const beforeSnapshot = remaining().length;
+    if (beforeSnapshot) void require("bun:jsc").generateHeapSnapshotForDebugging();
+    for (let i = 0; i < 3 && remaining().length; i++) await collect();
+    const afterSnapshot = `then 3 more from timer callbacks after a heap snapshot that was thrown away: ${beforeSnapshot - remaining().length} of ${beforeSnapshot} collected`;
     // Say what keeps them, not just that something does.
-    const report = [...survivors, afterRecursing, ...whatRetainsGraphs()];
+    const report = [
+      ...survivors,
+      afterRecursing,
+      afterContinuation,
+      afterSnapshot,
+      ...(remaining().length ? whatRetainsGraphs() : []),
+    ];
     // When no root reaches a survivor, say from where a collection does get it: only for the
     // failure message (the result is a failure whatever these find).
     const turn = () => new Promise<void>(resolve => setTimeout(resolve, 0));

@@ -146,8 +146,12 @@
   },
   "src/runtime/node/node_fs.rs": {
     "WorkPool::schedule*": 4,
+    "intrusive_work_task!": [
+      "NewAsyncCpTask<IS_SHELL>"
+    ],
     "owned_task!": [
       "AsyncMkdirp",
+      "CpSingleTask<IS_SHELL>",
       "ReaddirSubtask"
     ],
     "unsafe impl Send": [

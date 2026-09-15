@@ -956,7 +956,6 @@ describe.concurrent("fetch-tls", () => {
       // 127.0.0.1, turning the timeout under test into ConnectionRefused.
       hostname: "127.0.0.1",
       port: 0,
-      rejectUnauthorized: false,
       async fetch() {
         async function* body() {
           yield "Hello, ";

@@ -60,7 +60,18 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
+  //
+  // Poll a listening socket with AFD requests that are not exclusive. An
+  // exclusive request completes the exclusive requests of every process on the
+  // socket, so two processes that share a listening socket spin while idle.
+  // Other sockets keep exclusive requests. A request that is not exclusive is
+  // cancelled with CancelIoEx, and that cost grows with the number of polled
+  // sockets. Upstream libuv (v1.x) still submits exclusive requests only.
+  patches: [
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    "patches/libuv/win-poll-abort-with-disconnect.patch",
+    "patches/libuv/win-poll-not-exclusive.patch",
+  ],
 
   build: () => ({
     kind: "direct",

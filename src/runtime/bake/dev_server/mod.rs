@@ -1369,7 +1369,8 @@ impl DirectoryWatchStore {
                 Ok(None) | Err(_) => None,
             };
 
-        let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+        let requires_fds = self.dev_bun_watcher().requires_file_descriptors();
+        let (fd, owned_fd): (bun_sys::Fd, bool) = if requires_fds {
             if let Some(fd) = cache_fd {
                 (fd, false)
             } else {
@@ -1402,7 +1403,7 @@ impl DirectoryWatchStore {
             (bun_sys::Fd::INVALID, false)
         };
         let fd_guard = scopeguard::guard(fd, move |fd| {
-            if bun_watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd {
+            if requires_fds && owned_fd {
                 fd.close();
             }
         });

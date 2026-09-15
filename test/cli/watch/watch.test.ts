@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 let watchee: Subprocess;
 
@@ -259,6 +259,152 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(stdout).not.toContain("unreachable");
   expect(exitCode).not.toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/5841
+// On a Docker bind mount from a Windows host or a WSL /mnt/c path,
+// inotify_add_watch succeeds and the kernel never delivers an event. The shim
+// reproduces that: the native watcher blocks in read() and nothing reloads.
+// BUN_WATCHER_USE_POLLING=1 selects the backend that stats the watched files.
+const INOTIFY_NEVER_FIRES_C = /* c */ `
+static int next_wd = 1;
+int inotify_add_watch(int fd, const char *path, unsigned int mask) {
+  (void)fd; (void)path; (void)mask;
+  return next_wd++;
+}
+`;
+
+// Spawns `bun <mode> watchee.js` in `cwd` with the polling backend on. With
+// `blindInotify`, `cwd` must contain shim.c, and the native watcher gets no event.
+async function spawnPollingWatchee(
+  cwd: string,
+  mode: "--watch" | "--hot",
+  blindInotify: boolean,
+  extraEnv: Record<string, string> = {},
+) {
+  const env: Record<string, string | undefined> = {
+    ...bunEnv,
+    BUN_WATCHER_USE_POLLING: "1",
+    BUN_WATCHER_POLL_INTERVAL: "20",
+    ...extraEnv,
+  };
+  if (blindInotify) {
+    const shimPath = join(cwd, "shim.so");
+    await using ccProc = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(cwd, "shim.c")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+    if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+    env.LD_PRELOAD = bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath;
+  }
+  return spawn({
+    cwd,
+    cmd: [bunExe(), mode, "--no-clear-screen", "watchee.js"],
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+}
+
+async function expectPollingReloads(mode: "--watch" | "--hot", blindInotify: boolean) {
+  // --hot keeps one process, so the script must stay alive. The content
+  // changes length on every write: same-size writes inside one mtime tick
+  // are invisible to stat.
+  const source = (i: number) =>
+    `console.log("tick ${i}");\n//${Buffer.alloc(i, "-").toString()}\n` +
+    (mode === "--hot" ? "setInterval(() => {}, 1 << 30);\n" : "");
+  using dir = tempDir("watch-poll", {
+    ...(blindInotify ? { "shim.c": INOTIFY_NEVER_FIRES_C } : {}),
+    "watchee.js": source(0),
+  });
+  const cwd = String(dir);
+  watchee = await spawnPollingWatchee(cwd, mode, blindInotify);
+  const { waitFor, release, output } = stdoutWaiter(watchee);
+  for (let i = 0; i < 3; i++) {
+    await waitFor(`tick ${i}\n`);
+    await Bun.write(join(cwd, "watchee.js"), source(i + 1));
+  }
+  await waitFor("tick 3\n");
+  release();
+  expect(output()).toContain("tick 3\n");
+  // The child's cwd is `dir`, and Windows cannot remove a directory that is
+  // the cwd of a live process.
+  watchee.kill("SIGKILL");
+  await watchee.exited;
+}
+
+// Consumers use a directory event to look at a directory again: the resolver
+// drops its cached listing, the dev server retries an import that failed. The
+// polling backend reports one when the mtime of a watched directory moves.
+async function expectPollingSeesNewDirectoryEntry(blindInotify: boolean) {
+  using dir = tempDir("watch-poll-dir", {
+    ...(blindInotify ? { "shim.c": INOTIFY_NEVER_FIRES_C } : {}),
+    "watchee.js": `console.log("ready");\nsetInterval(() => {}, 1 << 30);\n`,
+  });
+  // Not inside `dir`: creating the trace file would itself change `dir`.
+  using traceDir = tempDir("watch-poll-trace", {});
+  const trace = join(String(traceDir), "trace.log");
+  const cwd = String(dir);
+  watchee = await spawnPollingWatchee(cwd, "--hot", blindInotify, { BUN_WATCHER_TRACE: trace });
+  const { waitFor, release } = stdoutWaiter(watchee);
+  await waitFor("ready\n");
+  release();
+
+  // Not in the module graph, so only the directory can report it.
+  await Bun.write(join(cwd, "created.js"), "export {};\n");
+
+  // The trace has one JSON line per batch of events, keyed by watched path.
+  // The key of the directory ends with a separator.
+  const isWatchedDir = (path: string) => /[\\/]$/.test(path) && path.replace(/[\\/]+$/, "").endsWith(basename(cwd));
+  let dirEvents: string[] = [];
+  while (dirEvents.length === 0) {
+    const text = await Bun.file(trace)
+      .text()
+      .catch(() => "");
+    // Drop a last line that is still being written.
+    const lines = text
+      .slice(0, text.lastIndexOf("\n") + 1)
+      .split("\n")
+      .filter(Boolean);
+    dirEvents = lines.flatMap(line =>
+      Object.entries(JSON.parse(line).files as Record<string, { events: string[] }>)
+        .filter(([path]) => isWatchedDir(path))
+        .flatMap(([, file]) => file.events),
+    );
+    if (dirEvents.length === 0) await Bun.sleep(20);
+  }
+  expect(dirEvents).toContain("write");
+  watchee.kill("SIGKILL");
+  await watchee.exited;
+}
+
+for (const mode of ["--watch", "--hot"] as const) {
+  it.skipIf(!isLinux || !cc)(
+    `${mode} with BUN_WATCHER_USE_POLLING=1 reloads when inotify never delivers an event`,
+    () => expectPollingReloads(mode, true),
+    30000,
+  );
+
+  // No shim, so this also passes on the native backend. It is here to run the
+  // polling backend on macOS and Windows.
+  it(`${mode} with BUN_WATCHER_USE_POLLING=1 reloads`, () => expectPollingReloads(mode, false), 30000);
+}
+
+it.skipIf(!isLinux || !cc)(
+  "BUN_WATCHER_USE_POLLING=1 reports a new entry in a watched directory when inotify never delivers an event",
+  () => expectPollingSeesNewDirectoryEntry(true),
+  30000,
+);
+
+// No shim: runs the directory poll on macOS and Windows too.
+it(
+  "BUN_WATCHER_USE_POLLING=1 reports a new entry in a watched directory",
+  () => expectPollingSeesNewDirectoryEntry(false),
+  30000,
+);
 
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload

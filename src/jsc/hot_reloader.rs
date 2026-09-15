@@ -32,6 +32,14 @@ pub enum ImportWatcher {
 }
 
 impl ImportWatcher {
+    #[inline]
+    pub fn requires_file_descriptors(&self) -> bool {
+        match self {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.requires_file_descriptors(),
+            ImportWatcher::None => false,
+        }
+    }
+
     /// Look up the `package_json` column for `hash` under the watcher's
     /// mutex.
     ///

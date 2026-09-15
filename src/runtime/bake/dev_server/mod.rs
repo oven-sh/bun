@@ -112,6 +112,11 @@ pub enum IncomingMessageId {
     TestingBatchEvents = b'H',
     ConsoleLog = b'l',
     UnrefSourceMap = b'u',
+    /// The error page lists the owner (`u32`) of every failure it was rendered
+    /// with. Owners that no longer have an entry in `bundling_failures` are
+    /// sent back as removed in a `MessageId::Errors` frame. This covers a
+    /// build that finished before this socket subscribed to `HmrTopic::Errors`.
+    CheckErrors = b'e',
 }
 
 /// `DevServer.HmrTopic`. Discriminants are the HMR wire protocol and MUST

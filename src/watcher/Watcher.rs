@@ -151,6 +151,70 @@ pub trait WatcherContext {
     }
 }
 
+/// Running watchers, stored as `usize` (`*mut Watcher` is not `Send`). Every
+/// access reconstitutes the pointer under this lock plus the watcher's `mutex`.
+static ACTIVE_WATCHERS: bun_core::Mutex<Vec<usize>> = bun_core::Mutex::new(Vec::new());
+
+/// Set by `stop_all_for_exit`. `VirtualMachine::global_exit` stops watchers and
+/// tears the heap down before `Global::exit` sets `IS_EXITING`, so that flag
+/// alone can't gate the exit paths below.
+static STOPPING_FOR_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn stop_all_for_exit_hook() {
+    stop_all_for_exit();
+}
+
+/// Returns `false` if the process is exiting; the caller must not spawn. Runs
+/// under the same lock as `stop_all_for_exit`, so a registered watcher is
+/// always seen by the stop sweep.
+fn register_active(this: *mut Watcher) -> bool {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| bun_core::Global::add_early_exit_callback(stop_all_for_exit_hook));
+
+    let mut list = ACTIVE_WATCHERS.lock();
+    if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire)
+        || bun_core::Global::is_exiting()
+    {
+        return false;
+    }
+    list.push(this as usize);
+    true
+}
+
+fn unregister_active(this: *mut Watcher) {
+    let addr = this as usize;
+    let mut list = ACTIVE_WATCHERS.lock();
+    if let Some(idx) = list.iter().position(|&p| p == addr) {
+        list.swap_remove(idx);
+    }
+}
+
+/// Stop every watcher before exit tears down heap memory the watcher thread
+/// dispatches through (the resolver's process-global `BSSMap` dir cache).
+/// Taking each watcher's `mutex` serialises with `dispatch_file_updates`, so
+/// any in-flight `bust_dir_cache` completes before this returns.
+pub fn stop_all_for_exit() {
+    STOPPING_FOR_EXIT.store(true, std::sync::atomic::Ordering::Release);
+    let list = ACTIVE_WATCHERS.lock();
+    for &addr in list.iter() {
+        let ptr = addr as *const Watcher;
+        // SAFETY: entries are live `Box<Watcher>` allocations; they are removed
+        // (under `ACTIVE_WATCHERS`, held here) before the Box is reclaimed.
+        // Raw-place projections so no `&Watcher` is retagged while the watcher
+        // thread holds a protected `&mut self` in `thread_body`; only the
+        // interior-mutable `mutex` and `running` are touched. `platform` is
+        // left alone: a thread still blocked in its platform wait never
+        // dispatches, and one that wakes sees `running == false` (checked
+        // under `mutex` in `dispatch_file_updates` and in `watch_loop`'s
+        // condition) and exits without touching the freed resolver state.
+        unsafe {
+            (*ptr).mutex.lock();
+            (*ptr).running.store(false);
+            (*ptr).mutex.unlock();
+        }
+    }
+}
+
 impl Watcher {
     /// Initializes a watcher. Each watcher is tied to some context type, which
     /// receives watch callbacks on the watcher thread. This function does not
@@ -233,10 +297,16 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
-        self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
-        let this = std::ptr::from_mut::<Watcher>(self) as usize;
+        let this_ptr = std::ptr::from_mut::<Watcher>(self);
+        // Don't spawn while the process is exiting — the thread would race the
+        // exit-time heap teardown.
+        if !register_active(this_ptr) {
+            return Ok(());
+        }
+        self.watchloop_handle.store(true);
+        let this = this_ptr as usize;
         let spawn = || {
             std::thread::Builder::new()
                 .name("FileWatcher".into())
@@ -256,6 +326,7 @@ impl Watcher {
         });
         self.thread = Some(handle.map_err(|e| {
             self.watchloop_handle.store(false);
+            unregister_active(this_ptr);
             // Windows: raw_os_error() is a Win32 GetLastError() code, so
             // route it through the u32 (Win32Error) mapper rather than
             // from_errno's i64 discriminant-cast path.
@@ -306,6 +377,7 @@ impl Watcher {
             }
         };
         if free {
+            unregister_active(this);
             // watchlist freed by Drop on Box
             // SAFETY: this was heap-allocated by caller of init(); no borrow of it
             // is live here.
@@ -337,6 +409,18 @@ impl Watcher {
 
         Output::flush();
 
+        // Stopped for process exit: the main thread is tearing the heap down,
+        // so don't race it by freeing the Box here — the process reclaims it.
+        // Stay registered so the abandoned Box remains reachable from
+        // `ACTIVE_WATCHERS` (keeps LeakSanitizer from reporting it).
+        if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire)
+            || bun_core::Global::is_exiting()
+        {
+            return Ok(());
+        }
+
+        unregister_active(this);
+
         if !owner_still_alive {
             // SAFETY: `this` is the heap allocation from init(); the watcher thread
             // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
@@ -356,11 +440,17 @@ impl Watcher {
         let owner_still_alive = match self.watch_loop() {
             Err(err) => {
                 self.watchloop_handle.store(false);
+                // `stop_all_for_exit` and `shutdown` write `running` under
+                // `mutex`; hold it across the callback, like
+                // `dispatch_file_updates`, so `ctx` can't be torn down between
+                // the `running` read and the `on_error` call.
+                self.mutex.lock();
                 self.platform.stop();
                 let running = self.running.load();
                 if running {
                     (self.on_error)(self.ctx, err);
                 }
+                self.mutex.unlock();
                 running
             }
             Ok(()) => false,

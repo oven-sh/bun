@@ -2976,7 +2976,8 @@ impl<'a> Resolver<'a> {
                             };
                         }
 
-                        if let Some(id) = manager!().lockfile_resolve(esm.name, &dependency_version)
+                        if let Some(id) =
+                            manager!().lockfile_resolve(esm.name, &dependency_version, string_buf)
                         {
                             resolved_package_id = id;
                         }
@@ -3499,7 +3500,11 @@ impl<'a> Resolver<'a> {
             };
         }
         // we should never be trying to resolve a dependency that is already resolved
-        debug_assert!(pm!().lockfile_resolve(esm.name, &version).is_none());
+        debug_assert!(
+            pm!()
+                .lockfile_resolve(esm.name, &version, version_buf)
+                .is_none()
+        );
 
         // Add the containing package to the lockfile
 

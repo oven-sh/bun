@@ -299,7 +299,7 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
   // at its own mappings in /proc/self/smaps, because the kernel may reclaim clean pages by itself: only a mapping that
   // lost more than half of what it had once the embedded file was read counts. WATCH names the mapping ("text": the
   // executable's code, "graph": the one that holds the module graph); the program reports the first time that one has,
-  // or that it has not by DEADLINE_MS. WORKER=1 keeps a Worker alive meanwhile.
+  // or that it has not by DEADLINE_MS. WORKER=1 keeps a Worker alive meanwhile, for WORKER_MS if that is set.
   const app = `
     import embedded from "./embedded.bin" with { type: "file" };
     const { readFileSync } = require("fs");
@@ -311,13 +311,20 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
       const rss = perms => mine.filter(m => m.split(" ")[1] === perms).map(m => Number(/^Rss:\\s+(\\d+) kB/m.exec(m)[1]));
       return { text: rss("r-xp")[0], graph: rss("rw-p").at(-1) };
     };
-    if (process.env.WORKER) new Worker("data:text/javascript,setInterval(() => {}, 1000)");
+    if (process.env.WORKER) {
+      // In a global: a Worker that nothing refers to goes with the first full collection.
+      const worker = (globalThis.worker = new Worker("data:text/javascript,setInterval(() => {}, 1000)"));
+      if (process.env.WORKER_MS) setTimeout(() => worker.terminate(), Number(process.env.WORKER_MS));
+    }
     setTimeout(async () => { globalThis.read = (await Bun.file(embedded).bytes()).length; }, 300);
     let had, peak = 0;
     const watch = process.env.WATCH;
     const timer = setInterval(() => {
       if (!globalThis.read) return;
-      had ??= mappings();
+      if (!had) {
+        had = mappings();
+        console.error("READY");
+      }
       const resident = fileResident();
       peak = Math.max(peak, resident);
       const gaveUp = performance.now() > Number(process.env.DEADLINE_MS);
@@ -327,6 +334,8 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
       if (has[watch] * 2 > had[watch] && !gaveUp) return;
       clearInterval(timer);
       console.log(JSON.stringify({ had, has, at: Math.round(performance.now()) }));
+      // Tearing the VM down (BUN_DESTRUCT_VM_ON_EXIT, which the ASAN lanes set) collects once more.
+      console.error("EXIT");
       process.exit(0);
     }, 50);
   `;
@@ -377,39 +386,56 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
     expect(had.text).toBeGreaterThan(8 * 1024);
     expect(had.graph).toBeGreaterThan(3 * 1024);
     const still = (name: "text" | "graph") => (has[name] * 2 > had[name] ? "resident" : "gone");
-    return { text: still("text"), graph: still("graph"), at };
+    // The collections between the moment the program took its baseline and its exit.
+    const collections =
+      stderr
+        .slice(stderr.indexOf("READY"))
+        .split("EXIT")[0]
+        .match(/FullCollection/g)?.length ?? 0;
+    return { text: still("text"), graph: still("graph"), at, collections };
   }
 
   test("the module graph goes with the second rung of three", async () => {
-    const { at, ...mappings } = await run("1,1,30", "graph", 3500);
+    const { at, collections, ...mappings } = await run("1,1,30", "graph", 3500);
     expect(mappings).toEqual({ text: "resident", graph: "gone" });
     expect(at).toBeGreaterThan(1800);
   });
 
   test("and of two", async () => {
-    const { at, ...mappings } = await run("1,1", "graph", 3500);
+    const { at, collections, ...mappings } = await run("1,1", "graph", 3500);
     expect(mappings).toEqual({ text: "resident", graph: "gone" });
     expect(at).toBeGreaterThan(1800);
   });
 
   test("with the only rung of a list of one", async () => {
-    const { at, ...mappings } = await run("1", "graph", 2500);
+    const { at, collections, ...mappings } = await run("1", "graph", 2500);
     expect(mappings).toEqual({ text: "resident", graph: "gone" });
   });
 
   test("an entry too large to read is an hour, not the end of the list", async () => {
-    const { at, ...mappings } = await run("1,99999999999", "graph", 2000);
+    const { at, collections, ...mappings } = await run("1,99999999999", "graph", 2000);
     expect(mappings).toEqual({ text: "resident", graph: "resident" });
   });
 
-  // The page-out is for the whole process and the ladder only watches the main thread.
-  test("not while a Worker is alive", async () => {
-    const { at, ...mappings } = await run("1", "graph", 2000, { WORKER: "1" });
+  // The page-out is for the whole process and the ladder only watches the main thread: the rung runs when it is due,
+  // after a second, and its page-out follows when the Worker is gone, without the program having to be busy and idle
+  // again first.
+  test("a Worker that stays alive puts off the page-out, not the collections", async () => {
+    const { at, collections, ...mappings } = await run("1,1,1", "graph", 3700, { WORKER: "1" });
     expect(mappings).toEqual({ text: "resident", graph: "resident" });
+    expect(collections).toBe(3);
+  });
+
+  test("not while a Worker is alive, and once it is gone", async () => {
+    const { at, collections, ...mappings } = await run("1", "graph", 4500, { WORKER: "1", WORKER_MS: "2000" });
+    expect(mappings).toEqual({ text: "resident", graph: "gone" });
+    expect(at).toBeGreaterThan(2000);
   });
 
   test("not with BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1", async () => {
-    const { at, ...mappings } = await run("1", "graph", 2000, { BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: "1" });
+    const { at, collections, ...mappings } = await run("1", "graph", 2000, {
+      BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: "1",
+    });
     expect(mappings).toEqual({ text: "resident", graph: "resident" });
   });
 });

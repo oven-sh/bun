@@ -2,10 +2,12 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, toTOMLString, VerdaccioRegistry } from "harness";
 import { join, sep } from "path";
 
 let verdaccio: VerdaccioRegistry;
+type LinkerCase = { linker: "hoisted" | "isolated" };
+const linkerCases: LinkerCase[] = [{ linker: "hoisted" }, { linker: "isolated" }];
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -36,9 +38,9 @@ function readBinTarget(binDir: string, name: string) {
 }
 
 describe.concurrent("native binlink optimization", () => {
-  for (const linker of ["hoisted", "isolated"]) {
-    test(`uses platform-specific bin instead of main package bin with linker ${linker}`, async () => {
-      let env = { ...bunEnv };
+  describe.each(linkerCases)("with $linker linker", ({ linker }) => {
+    test("uses platform-specific bin instead of main package bin", async () => {
+      const env = { ...bunEnv };
       const { packageDir, packageJson } = await verdaccio.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
@@ -46,7 +48,7 @@ describe.concurrent("native binlink optimization", () => {
       // Create bunfig
       await writeFile(
         join(packageDir, "bunfig.toml"),
-        Bun.TOML.stringify({
+        toTOMLString({
           install: {
             cache: join(packageDir, ".bun-cache"),
             registry: verdaccio.registryUrl(),
@@ -98,9 +100,27 @@ describe.concurrent("native binlink optimization", () => {
         expect(exitCode).toBe(0);
       }
 
+      async function expectBunxPlatformBin() {
+        const proc = spawn({
+          cmd: [bunExe(), "x", "--package", "test-native-binlink", "test-binlink-cmd"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "SUCCESS: Using platform-specific bin (test-native-binlink-target)\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      }
+
       await runInstall();
       expect(readBinTarget(binDir, "test-binlink-cmd")).toContain(join("test-native-binlink-target", "bin", "main.js"));
       await expectPlatformBin();
+      await expectBunxPlatformBin();
 
       // Now delete the node_modules folder, keep the bun.lock, re-install
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -117,20 +137,271 @@ describe.concurrent("native binlink optimization", () => {
       await expectPlatformBin();
     });
 
-    // Regression: a package on the nativeDependencies list whose platform-specific
-    // optionalDependency does NOT contain the bin file at the expected path must
-    // fall back to linking the original package's bin. Previously the `seen` map
-    // was poisoned by the failed redirect attempt, so the retry silently no-op'd
-    // and `.bin/<cmd>` was never created (broke `bunx @anthropic-ai/claude-code`).
-    test(`falls back to main package bin when platform dep has no matching bin file with linker ${linker}`, async () => {
-      let env = { ...bunEnv };
+    // With the isolated linker the platform package is only reachable through the realpath-derived
+    // node_modules candidate, which must strip an extra path component for a scoped package name.
+    test("bunx resolves the platform bin of a scoped native package", async () => {
+      const env = { ...bunEnv };
       const { packageDir, packageJson } = await verdaccio.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 
       await writeFile(
         join(packageDir, "bunfig.toml"),
-        Bun.TOML.stringify({
+        toTOMLString({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: verdaccio.registryUrl(),
+            linker,
+          },
+        }),
+      );
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: { "@binlink-scope/test-native-binlink": "1.0.0" },
+          nativeDependencies: ["@binlink-scope/test-native-binlink"],
+          trustedDependencies: ["@binlink-scope/test-native-binlink"],
+        }),
+      );
+
+      await using install = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [, installStderr, installExitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      expect(installStderr).not.toContain("error:");
+      expect(installExitCode).toBe(0);
+
+      await using bunx = spawn({
+        cmd: [bunExe(), "x", "--package", "@binlink-scope/test-native-binlink", "test-binlink-scoped-cmd"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([bunx.stdout.text(), bunx.stderr.text(), bunx.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "SUCCESS: Using platform-specific bin (test-native-binlink-scoped-target)\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("ignores an installed native package that does not satisfy the optional dependency", async () => {
+      const env = { ...bunEnv };
+      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+      env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+
+      await writeFile(
+        join(packageDir, "bunfig.toml"),
+        toTOMLString({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: verdaccio.registryUrl(),
+            linker,
+          },
+        }),
+      );
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: { "test-native-binlink": "1.0.0" },
+          nativeDependencies: ["test-native-binlink"],
+          trustedDependencies: ["test-native-binlink"],
+        }),
+      );
+
+      await using install = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [, installStderr, installExitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      expect(installStderr).not.toContain("error:");
+      expect(installExitCode).toBe(0);
+
+      const targetPackageJsons = new Set(
+        Array.from(
+          new Bun.Glob("**/test-native-binlink-target/package.json").scanSync({
+            cwd: join(packageDir, "node_modules"),
+            absolute: true,
+            dot: true,
+          }),
+          path => realpathSync(path),
+        ),
+      );
+      expect(targetPackageJsons.size).toBeGreaterThan(0);
+      await Promise.all(
+        Array.from(targetPackageJsons, targetPackageJson =>
+          writeFile(
+            targetPackageJson,
+            JSON.stringify({
+              name: "test-native-binlink-target",
+              version: "2.0.0",
+              os: [process.platform],
+              cpu: [process.arch],
+            }),
+          ),
+        ),
+      );
+
+      await using bunx = spawn({
+        cmd: [bunExe(), "x", "--package", "test-native-binlink", "test-binlink-cmd"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([bunx.stdout.text(), bunx.stderr.text(), bunx.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "ERROR: Using main package bin, not platform-specific!\n",
+        stderr: "",
+        exitCode: 1,
+      });
+    });
+
+    test("resolves an npm-aliased native optional dependency", async () => {
+      const env = { ...bunEnv };
+      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+      env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+
+      await writeFile(
+        join(packageDir, "bunfig.toml"),
+        toTOMLString({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: verdaccio.registryUrl(),
+            linker,
+          },
+        }),
+      );
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: {
+            "test-native-binlink": "1.0.0",
+            "test-native-alias": "npm:test-native-binlink-target@1.0.0",
+          },
+          nativeDependencies: ["test-native-binlink"],
+          trustedDependencies: ["test-native-binlink"],
+        }),
+      );
+
+      await using install = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [, installStderr, installExitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      expect(installStderr).not.toContain("error:");
+      expect(installExitCode).toBe(0);
+
+      const declaringPackageJsons = new Set(
+        Array.from(
+          new Bun.Glob("**/test-native-binlink/package.json").scanSync({
+            cwd: join(packageDir, "node_modules"),
+            absolute: true,
+            dot: true,
+          }),
+          path => realpathSync(path),
+        ),
+      );
+      expect(declaringPackageJsons.size).toBeGreaterThan(0);
+      await Promise.all(
+        Array.from(declaringPackageJsons, declaringPackageJson =>
+          writeFile(
+            declaringPackageJson,
+            JSON.stringify({
+              name: "test-native-binlink",
+              version: "1.0.0",
+              bin: { "test-binlink-cmd": "./bin/main.js" },
+              optionalDependencies: {
+                "test-native-alias": "npm:test-native-binlink-target@1.0.0",
+              },
+            }),
+          ),
+        ),
+      );
+
+      const sharedBinDir = join(packageDir, "node_modules", ".bin");
+      await rm(binEntry(sharedBinDir, "test-binlink-cmd"), { force: true });
+      if (isWindows) {
+        await rm(join(sharedBinDir, "test-binlink-cmd.bunx"), { force: true });
+        await writeFile(
+          join(sharedBinDir, "test-binlink-cmd.cmd"),
+          "@echo ERROR: Using shared bin instead of package-owned alias target!\r\n@exit /b 1\r\n",
+        );
+      } else {
+        const sharedBin = join(sharedBinDir, "test-binlink-cmd");
+        await writeFile(
+          sharedBin,
+          '#!/usr/bin/env bun\nconsole.log("ERROR: Using shared bin instead of package-owned alias target!");\nprocess.exit(1);\n',
+        );
+        chmodSync(sharedBin, 0o755);
+      }
+
+      await using bunx = spawn({
+        cmd: [bunExe(), "x", "--package", "test-native-binlink", "test-binlink-cmd"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([bunx.stdout.text(), bunx.stderr.text(), bunx.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "SUCCESS: Using platform-specific bin (test-native-binlink-target)\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Regression: a package on the nativeDependencies list whose platform-specific
+    // optionalDependency does NOT contain the bin file at the expected path must
+    // fall back to linking the original package's bin. Previously the `seen` map
+    // was poisoned by the failed redirect attempt, so the retry silently no-op'd
+    // and `.bin/<cmd>` was never created (broke `bunx @anthropic-ai/claude-code`).
+    test("falls back to main package bin when platform dep has no matching bin file", async () => {
+      const env = { ...bunEnv };
+      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+      env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+
+      await writeFile(
+        join(packageDir, "bunfig.toml"),
+        toTOMLString({
           install: {
             cache: join(packageDir, ".bun-cache"),
             registry: verdaccio.registryUrl(),
@@ -184,6 +455,25 @@ describe.concurrent("native binlink optimization", () => {
       expect(binStdout).toContain("SUCCESS: Using main package bin");
       expect(binExitCode).toBe(0);
 
+      const bunxProc = spawn({
+        cmd: [bunExe(), "x", "--package", "test-native-binlink-fallback", "fallback-cmd"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [bunxStdout, bunxStderr, bunxExitCode] = await Promise.all([
+        bunxProc.stdout.text(),
+        bunxProc.stderr.text(),
+        bunxProc.exited,
+      ]);
+      expect({ stdout: bunxStdout, stderr: bunxStderr, exitCode: bunxExitCode }).toEqual({
+        stdout: "SUCCESS: Using main package bin (test-native-binlink-fallback)\n",
+        stderr: "",
+        exitCode: 0,
+      });
+
       // Re-install with node_modules removed (lockfile-only path)
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       const installProc2 = spawn({
@@ -208,22 +498,26 @@ describe.concurrent("native binlink optimization", () => {
       expect(binStdout2).toContain("SUCCESS: Using main package bin");
       expect(binExitCode2).toBe(0);
     });
-  }
+  });
 
   // The postinstall skip must apply to every copy of a nativeDependencies
   // package in the tree, not just the hoisted one. Previously a second,
   // differently-versioned esbuild nested under a transitive dependent would
   // still run `node install.js`.
   describe("nested nativeDependencies", () => {
-    async function setup(opts: { linker: "hoisted" | "isolated"; deps: Record<string, string>; extraEnv?: object }) {
-      let env: Record<string, string> = { ...bunEnv, ...(opts.extraEnv ?? {}) };
+    async function setup(opts: {
+      linker: "hoisted" | "isolated";
+      deps: Record<string, string>;
+      extraEnv?: Record<string, string | undefined>;
+    }) {
+      const env = { ...bunEnv, ...opts.extraEnv };
       const { packageDir, packageJson } = await verdaccio.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 
       await writeFile(
         join(packageDir, "bunfig.toml"),
-        Bun.TOML.stringify({
+        toTOMLString({
           install: {
             cache: join(packageDir, ".bun-cache"),
             registry: verdaccio.registryUrl(),
@@ -277,8 +571,9 @@ describe.concurrent("native binlink optimization", () => {
       return Object.fromEntries(Object.entries(dirs).map(([k, d]) => [k, existsSync(join(d, "postinstall-ran"))]));
     }
 
-    for (const linker of ["hoisted", "isolated"] as const) {
-      test(`skips postinstall for nested copies (${linker}, platform dep in child tree)`, async () => {
+    test.each(linkerCases)(
+      "skips postinstall for nested copies ($linker, platform dep in child tree)",
+      async ({ linker }) => {
         const { packageDir, install, runBin } = await setup({
           linker,
           deps: { "test-postinstall-skip": "2.0.0", "test-postinstall-skip-parent": "1.0.0" },
@@ -334,8 +629,8 @@ describe.concurrent("native binlink optimization", () => {
           expect(readBinTarget(nestedBinDir, "skip-test-cmd")).toContain("test-postinstall-skip-native");
           expect(await runBin(nestedBinDir, "skip-test-cmd")).toEqual({ out: "native v1.0.0", err: "", code: 0 });
         }
-      });
-    }
+      },
+    );
 
     test("skips postinstall for nested copies (hoisted, platform dep as sibling)", async () => {
       // parent@2.0.0 also depends on test-postinstall-skip-native@1.0.0 directly,
@@ -444,7 +739,7 @@ describe.concurrent("native binlink optimization", () => {
 // of the fixture exercises one of the alternate-path probes in
 // `bin::Linker::resolve_bin_target`.
 describe.concurrent("native binlink altpath", () => {
-  const shapes = [
+  const shapes: { version: string; targetFile: string; description: string }[] = [
     {
       version: "1.0.0",
       targetFile: "altpath-cmd",
@@ -460,113 +755,111 @@ describe.concurrent("native binlink altpath", () => {
       targetFile: "altpath-cmd.exe",
       description: "<pkg>/<bin_name>.exe (@esbuild/win32 shape)",
     },
-  ] as const;
+  ];
 
-  for (const linker of ["hoisted", "isolated"]) {
-    for (const { version, targetFile, description } of shapes) {
-      test(`finds native bin via ${description} with linker ${linker}`, async () => {
-        let env = { ...bunEnv };
-        const { packageDir, packageJson } = await verdaccio.createTestDir();
-        env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
-        env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+  describe.each(linkerCases)("with $linker linker", ({ linker }) => {
+    test.each(shapes)("finds native bin via $description", async ({ version, targetFile }) => {
+      const env = { ...bunEnv };
+      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+      env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 
-        await writeFile(
-          join(packageDir, "bunfig.toml"),
-          Bun.TOML.stringify({
-            install: {
-              cache: join(packageDir, ".bun-cache"),
-              registry: verdaccio.registryUrl(),
-              linker,
-            },
-          }),
-        );
+      await writeFile(
+        join(packageDir, "bunfig.toml"),
+        toTOMLString({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: verdaccio.registryUrl(),
+            linker,
+          },
+        }),
+      );
 
-        await writeFile(
-          packageJson,
-          JSON.stringify({
-            name: "test-app",
-            version: "1.0.0",
-            dependencies: {
-              "test-native-binlink-altpath": version,
-            },
-            nativeDependencies: ["test-native-binlink-altpath"],
-            trustedDependencies: ["test-native-binlink-altpath"],
-          }),
-        );
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: {
+            "test-native-binlink-altpath": version,
+          },
+          nativeDependencies: ["test-native-binlink-altpath"],
+          trustedDependencies: ["test-native-binlink-altpath"],
+        }),
+      );
 
-        const installProc = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: packageDir,
-          stdout: "pipe",
-          stdin: "ignore",
-          stderr: "pipe",
-          env,
-        });
-        const [, installStderr, installExit] = await Promise.all([
-          installProc.stdout.text(),
-          installProc.stderr.text(),
-          installProc.exited,
-        ]);
-        expect(installStderr).not.toContain("error:");
-        expect(installExit).toBe(0);
-
-        const binDir = join(packageDir, "node_modules", ".bin");
-        const binPath = binEntry(binDir, "altpath-cmd");
-        // The bin must resolve into the platform-specific package, not back into
-        // the parent package's placeholder stub.
-        expect(readBinTarget(binDir, "altpath-cmd")).toContain(join("test-native-binlink-altpath-target", targetFile));
-
-        const binProc = spawn({
-          cmd: [binPath],
-          cwd: packageDir,
-          stdout: "pipe",
-          stdin: "ignore",
-          stderr: "pipe",
-          env,
-        });
-        const [binStdout, binStderr, binExitCode] = await Promise.all([
-          binProc.stdout.text(),
-          binProc.stderr.text(),
-          binProc.exited,
-        ]);
-        expect({ stdout: binStdout, stderr: binStderr }).toEqual({
-          stdout: expect.stringContaining("SUCCESS: Using platform-specific bin at package root"),
-          stderr: "",
-        });
-        expect(binExitCode).toBe(0);
-
-        // Because the redirect succeeded, the postinstall should have been
-        // skipped entirely (that's the point of the optimization).
-        expect(
-          existsSync(join(packageDir, "node_modules", "test-native-binlink-altpath", "postinstall-ran")),
-        ).toBeFalse();
-
-        // Re-install with node_modules removed (lockfile-only path)
-        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-        const installProc2 = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: packageDir,
-          stdout: "inherit",
-          stdin: "ignore",
-          stderr: "inherit",
-          env,
-        });
-        expect(await installProc2.exited).toBe(0);
-
-        const binProc2 = spawn({
-          cmd: [binPath],
-          cwd: packageDir,
-          stdout: "pipe",
-          stdin: "ignore",
-          stderr: "inherit",
-          env,
-        });
-        const [binStdout2, binExitCode2] = await Promise.all([binProc2.stdout.text(), binProc2.exited]);
-        expect(binStdout2).toContain("SUCCESS: Using platform-specific bin at package root");
-        expect(binExitCode2).toBe(0);
+      const installProc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
       });
-    }
-  }
+      const [, installStderr, installExit] = await Promise.all([
+        installProc.stdout.text(),
+        installProc.stderr.text(),
+        installProc.exited,
+      ]);
+      expect(installStderr).not.toContain("error:");
+      expect(installExit).toBe(0);
+
+      const binDir = join(packageDir, "node_modules", ".bin");
+      const binPath = binEntry(binDir, "altpath-cmd");
+      // The bin must resolve into the platform-specific package, not back into
+      // the parent package's placeholder stub.
+      expect(readBinTarget(binDir, "altpath-cmd")).toContain(join("test-native-binlink-altpath-target", targetFile));
+
+      const binProc = spawn({
+        cmd: [binPath],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [binStdout, binStderr, binExitCode] = await Promise.all([
+        binProc.stdout.text(),
+        binProc.stderr.text(),
+        binProc.exited,
+      ]);
+      expect({ stdout: binStdout, stderr: binStderr }).toEqual({
+        stdout: expect.stringContaining("SUCCESS: Using platform-specific bin at package root"),
+        stderr: "",
+      });
+      expect(binExitCode).toBe(0);
+
+      // Because the redirect succeeded, the postinstall should have been
+      // skipped entirely (that's the point of the optimization).
+      expect(
+        existsSync(join(packageDir, "node_modules", "test-native-binlink-altpath", "postinstall-ran")),
+      ).toBeFalse();
+
+      // Re-install with node_modules removed (lockfile-only path)
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      const installProc2 = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "inherit",
+        stdin: "ignore",
+        stderr: "inherit",
+        env,
+      });
+      expect(await installProc2.exited).toBe(0);
+
+      const binProc2 = spawn({
+        cmd: [binPath],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "inherit",
+        env,
+      });
+      const [binStdout2, binExitCode2] = await Promise.all([binProc2.stdout.text(), binProc2.exited]);
+      expect(binStdout2).toContain("SUCCESS: Using platform-specific bin at package root");
+      expect(binExitCode2).toBe(0);
+    });
+  });
 });
 
 // The bin linker must not create a `node_modules/.bin` entry (nor chmod or rewrite the

@@ -3720,15 +3720,12 @@ pub mod args {
             let buffer_value = arguments.next_eat().ok_or_else(||
                 // theoretically impossible, argument has been passed already
                 ctx.throw_invalid_arguments(format_args!("buffer is required")))?;
-            let invalid_buffer = || {
-                ctx.throw_invalid_argument_type_value2(
+            if buffer_value.as_array_buffer(ctx).is_none() {
+                return Err(ctx.throw_invalid_argument_type_value2(
                     b"buffer",
                     b"an instance of Buffer, TypedArray, or DataView",
                     buffer_value,
-                )
-            };
-            if buffer_value.as_array_buffer(ctx).is_none() {
-                return Err(invalid_buffer());
+                ));
             }
 
             let offset_value = arguments.next_eat().unwrap_or(JSValue::NULL);
@@ -3757,9 +3754,13 @@ pub mod args {
                 0.0
             };
             // `to_number` can run JS that detaches the buffer, so the view is read after it.
-            let buffer = buffer_value
-                .as_array_buffer(ctx)
-                .ok_or_else(invalid_buffer)?;
+            let buffer = buffer_value.as_array_buffer(ctx).ok_or_else(|| {
+                ctx.throw_invalid_argument_type_value2(
+                    b"buffer",
+                    b"an instance of Buffer, TypedArray, or DataView",
+                    buffer_value,
+                )
+            })?;
             let buffer = if arguments.will_be_async {
                 ReadBuffer::PinnedBuffer(
                     PinnedArrayBuffer::root(ctx, buffer_value)

@@ -21,7 +21,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { join } from "node:path";
 import {
@@ -47,7 +47,7 @@ import {
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
-import { createJobserver } from "./build/jobserver.ts";
+import { resolveNinja } from "./build/ninja-release.ts";
 import { processAlive, processCommandLine } from "./build/proc.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
@@ -107,38 +107,6 @@ async function main(): Promise<void> {
   // found"). Scrub them for Windows cross builds — they are host-targeted by
   // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
   // every other target keep the environment as provisioned.
-  // What the rustc processes ninja runs get from this process (rust/run.ts), set up once for every ninja pass of
-  // the run: the thread-token pool that used to be cargo's jobserver (jobserver.ts), this process's pid, and a marker
-  // written when this process exits on its own — a pipelined rustc outlives its ninja edge, and its monitor stops it
-  // when the driver disappears *without* the marker (an interrupted build) but lets it finish after an ordinary
-  // failure elsewhere in the graph, so the next build picks the work up.
-  let rustDriverEnv: Record<string, string> | undefined;
-  let ninjaKilled = false; // ninja died by a signal: an interrupted build even though this process exits normally
-  const rustDriver = async (cfg: {
-    buildDir: string;
-    bun: string;
-    host: { os: string };
-  }): Promise<Record<string, string>> => {
-    if (rustDriverEnv !== undefined) return rustDriverEnv;
-    const dir = join(cfg.buildDir, "rust");
-    mkdirSync(dir, { recursive: true });
-    for (const f of readdirSync(dir)) {
-      // previous runs' markers; anything a monitor still cares about is seconds old
-      if (/^driver-\d+\.exited$/.test(f) && Date.now() - statSync(join(dir, f)).mtimeMs > 60_000)
-        rmSync(join(dir, f), { force: true });
-    }
-    const marker = join(dir, `driver-${process.pid}.exited`);
-    const jobserver = await createJobserver(cfg.host.os, cfg.bun);
-    process.on("exit", () => {
-      jobserver?.close();
-      if (!ninjaKilled) writeFileSync(marker, "");
-    });
-    return (rustDriverEnv = {
-      ...jobserver?.env,
-      BUN_BUILD_DRIVER_PID: String(process.pid),
-      BUN_BUILD_DRIVER_EXIT_MARKER: marker,
-    });
-  };
   // One build at a time per build directory (cargo used to serialize the Rust half through its target-dir lock;
   // two ninjas in one directory also race on .ninja_log/.ninja_deps). A second `bun bd` waits for the first.
   // The lock is a pid file (there is no portable advisory file lock in node): a holder that is not a live
@@ -190,12 +158,9 @@ async function main(): Promise<void> {
       if (holderOf() === process.pid) rmSync(lock, { force: true });
     });
   };
-  const ninjaEnv = async (
-    cfg: { windows: boolean; buildDir: string; bun: string; host: { os: string } },
-    env: Record<string, string>,
-  ) => {
+  const ninjaEnv = (cfg: { windows: boolean; buildDir: string; host: { os: string } }, env: Record<string, string>) => {
     lockBuildDir(cfg);
-    const merged: NodeJS.ProcessEnv = { ...process.env, ...env, ...(await rustDriver(cfg)) };
+    const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
     if (cfg.windows && cfg.host.os !== "windows") {
       for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
         delete merged[name];
@@ -239,10 +204,11 @@ async function main(): Promise<void> {
       });
     let inherited = false;
 
-    const runNinja = async (targets: string[] = args.ninjaTargets) =>
-      spawnWithAnnotations("ninja", ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
+    const ninja = await startGroup("Resolve ninja", () => resolveNinja(result.cfg));
+    const runNinja = (targets: string[] = args.ninjaTargets) =>
+      spawnWithAnnotations(ninja as string, ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
         label: "ninja",
-        env: await ninjaEnv(result.cfg, result.env),
+        env: ninjaEnv(result.cfg, result.env),
       });
 
     // rust-and-link: build libbun_runtime.a first so cargo overlaps with the
@@ -356,9 +322,9 @@ async function main(): Promise<void> {
     if (!quiet && interactive) {
       stdio[STREAM_FD] = 2;
     }
-    const ninja = spawnSync("ninja", ninjaArgv(result.cfg), {
+    const ninja = spawnSync(await resolveNinja(result.cfg), ninjaArgv(result.cfg), {
       stdio,
-      env: await ninjaEnv(result.cfg, result.env),
+      env: ninjaEnv(result.cfg, result.env),
       // cargo's compile output (now part of the ninja graph via emitRust) can
       // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
       maxBuffer: 1024 * 1024 * 1024,
@@ -369,8 +335,7 @@ async function main(): Promise<void> {
     }
     if (ninja.signal) {
       // Interrupted (Ctrl-C reaches ninja and us alike; a signal sent to ninja alone lands here): re-raise so the
-      // parent shell sees the signal, and so the Rust driver marker is not written (rustDriver above).
-      ninjaKilled = true;
+      // parent shell sees the signal.
       process.kill(process.pid, ninja.signal);
       process.exit(128 + (osConstants.signals[ninja.signal] ?? 0));
     }

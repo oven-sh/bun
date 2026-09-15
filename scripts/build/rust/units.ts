@@ -79,7 +79,7 @@ export interface RustUnit {
   outDir: string;
   /** The rlib (lib), dylib (proc-macro), archive (staticlib) or executable (build-script); the `output` file for a build-script run. */
   output: string;
-  /** lib units only: the `.rmeta`, produced ahead of `output` by the same rustc process. */
+  /** lib units only: the `.rmeta`, which the same rustc writes well ahead of `output` and dependent libraries compile against. */
   rmeta: string | undefined;
   /** rustc's dep-info, rewritten by run.ts into a depfile for the edge. */
   depInfo: string | undefined;
@@ -106,7 +106,6 @@ export interface RustGraph {
 
 export function buildRustGraph(cfg: Config, plan: RustPlan, targetRustflags: string[]): RustGraph {
   const dir = join(cfg.buildDir, "rust");
-  const triple = plan.target.triple;
   const platDir = (platform: string) => join(dir, platform);
   const g = plan.unitGraph;
   assert(g.roots.length === 1, `rust plan: expected one root unit, got ${g.roots.length}`);
@@ -280,7 +279,14 @@ export function buildRustGraph(cfg: Config, plan: RustPlan, targetRustflags: str
 
   const root = units[g.roots[0]!]!;
   assert(root.kind === "staticlib", `rust plan: root unit ${root.crateName} is ${root.kind}, expected the staticlib`);
-  return { units, root, dir, hostDeps: join(dir, "host", "deps"), targetDeps: join(dir, triple, "deps"), plan };
+  return {
+    units,
+    root,
+    dir,
+    hostDeps: join(dir, "host", "deps"),
+    targetDeps: join(dir, plan.target.triple, "deps"),
+    plan,
+  };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -416,8 +422,8 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   const src = cwd === plan.workspaceRoot && inWorkspace ? relative(plan.workspaceRoot, unit.srcPath) : unit.srcPath;
 
   args.push("--crate-name", unit.crateName, `--edition=${unit.edition}`, src);
-  // Pipelined units report the metadata artifact through rustc's JSON stream (run.ts renders the diagnostics);
-  // the rest print human diagnostics themselves.
+  // Libraries report the moment their `.rmeta` is written through rustc's JSON stream, which run.ts turns into
+  // ninja's early-output announcement (and renders the diagnostics); the rest print human diagnostics themselves.
   if (unit.kind === "lib")
     args.push("--error-format=json", "--json=diagnostic-rendered-ansi,artifacts,future-incompat");
   else args.push("--error-format=human", "--color=always");

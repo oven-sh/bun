@@ -1,74 +1,30 @@
 /**
  * Build-time driver for one Rust unit. ninja runs
  *
- *   run.ts rustc        <unit.json>   compile, one edge (proc-macro, build script, staticlib)
- *   run.ts meta         <unit.json>   pipelined lib, first edge: start rustc, return once the .rmeta exists
- *   run.ts codegen      <unit.json>   pipelined lib, second edge: wait for that rustc, return its status (.rlib)
+ *   run.ts rustc        <unit.json>   compile: a library, a proc-macro, a build script, the staticlib
  *   run.ts build-script <unit.json>   run a compiled build script, record its `cargo:` directives
- *   run.ts monitor      <unit.json>   (internal, detached; started by `meta`) own the rustc process, log its stderr, record its exit
  *
- * `<unit.json>` is the `UnitManifest` configure wrote (units.ts): argv, env, cwd, outputs.
- *
- * ## Pipelining with one rustc process
- *
- * cargo starts a crate's dependents as soon as rustc has written the `.rmeta` (type information) while the same
- * process goes on to generate code for the `.rlib`; for a deep crate graph like bun's that roughly halves the
- * critical path. A ninja edge is done when its process exits, so the lib is two edges backed by one rustc: `meta`
- * starts a detached `monitor` that owns rustc, follows rustc's JSON diagnostics, and exits 0 the moment the
- * metadata artifact is announced — the `.rmeta` edge is complete and dependents start; rustc keeps running.
- * `codegen` (input: the `.rmeta`; output: the `.rlib`) attaches to the same state directory, replays diagnostics
- * emitted since, and exits with rustc's status once the monitor records it. An error before metadata fails `meta`
- * with the diagnostics and leaves nothing behind.
- *
- * The state directory `<rmeta>.state/` holds: `stderr` (rustc's JSON stream, appended by the monitor), `pid`
- * (`<rustc pid> <monitor pid>`), `handoff` (log offset `meta` had rendered up to), and `exit` (rustc's status,
- * written atomically by the monitor; absent while rustc runs).
+ * `<unit.json>` is the `UnitManifest` configure wrote (units.ts): argv, env, cwd, outputs. This process lives
+ * exactly as long as the rustc (or build script) it runs. What it adds around the command is what cargo did around
+ * it: build-script-derived flags and environment, the dynamic-library search path, rustc's dep-info rewritten
+ * into a ninja depfile, and output mtimes ninja can rely on.
  */
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  readSync,
-  rmSync,
-  statSync,
-  utimesSync,
-  writeFileSync,
-  writeSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { availableParallelism, constants as osConstants } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { writeIfChanged } from "../fs.ts";
-import { acquireJobserverToken, jobserverAvailable } from "../jobserver.ts";
-import { processAlive, processCommandLine } from "../proc.ts";
 import { type BuildScriptOutput, type RustcUnitManifest, type UnitManifest, envify } from "./units.ts";
 
 const [mode, manifestPath] = process.argv.slice(2);
-if (!mode || !manifestPath) {
-  process.stderr.write("usage: run.ts rustc|meta|codegen|build-script|monitor <unit.json>\n");
-  process.exit(2);
-}
+if (!mode || !manifestPath) usage("usage: run.ts rustc|build-script <unit.json>");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as UnitManifest;
 
-if (manifest.kind === "build-script-run") {
-  if (mode !== "build-script") usage(`${manifest.crateName} is a build-script run; mode ${mode} does not apply`);
-  runBuildScript(manifest);
-} else if (mode === "rustc") {
-  runRustc(manifest);
-} else if (mode === "meta") {
-  runMeta(manifest);
-} else if (mode === "codegen") {
-  runCodegen(manifest);
-} else if (mode === "monitor") {
-  runMonitor(manifest);
-} else {
-  usage(`unknown mode ${mode}`);
-}
+if (mode === "build-script" && manifest.kind === "build-script-run") runBuildScript(manifest);
+else if (mode === "rustc" && manifest.kind !== "build-script-run") runRustc(manifest);
+else usage(`mode ${mode} does not apply to ${manifest.crateName} (${manifest.kind})`);
 
 function usage(msg: string): never {
   process.stderr.write(`run.ts: ${msg}\n`);
@@ -144,19 +100,120 @@ function spawnableArgv(unit: RustcUnitManifest, argv: string[]): string[] {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// dep-info → ninja depfile
+// rustc
 // ───────────────────────────────────────────────────────────────────────────
 
+function runRustc(unit: RustcUnitManifest): void {
+  // ninja runs commands in the build directory and knows outputs by their path relative to it.
+  const buildDir = process.cwd();
+  for (const o of [unit.output, unit.rmeta]) {
+    if (o === undefined) continue;
+    mkdirSync(dirname(o), { recursive: true });
+    // cargo removes outputs first too: rustc prefers an existing rlib over a newer rmeta of the same name when
+    // resolving a dependency, and some linkers truncate a hard-linked output in place.
+    rmSync(o, { force: true });
+  }
+  const { argv, env } = rustcInvocation(unit);
+  const exitStatus = (status: number | null, signal: NodeJS.Signals | null) =>
+    status ?? 128 + (signal === null ? 0 : (osConstants.signals[signal] ?? 0));
+  const finish = (status: number): never => {
+    if (status === 0) {
+      stampOutput(unit.output);
+      writeDepfile(unit);
+    }
+    process.exit(status);
+  };
+
+  if (unit.rmeta === undefined) {
+    const r = spawnSync(unit.rustc, spawnableArgv(unit, argv), {
+      cwd: unit.cwd,
+      env,
+      stdio: "inherit",
+      windowsHide: true,
+    });
+    if (r.error) throw r.error;
+    finish(exitStatus(r.status, r.signal));
+  }
+
+  // A library: rustc reports on stderr, as JSON lines, its diagnostics and the moment each artifact is written.
+  // A ninja that releases outputs early says so by exporting the edge's `early_output_prefix`; any other ninja
+  // leaves the variable unset, and nothing is announced.
+  const earlyOutputPrefix = process.env.NINJA_EARLY_OUTPUT_PREFIX || undefined;
+  const rmeta = unit.rmeta!;
+  const child = spawn(unit.rustc, spawnableArgv(unit, argv), {
+    cwd: unit.cwd,
+    env,
+    stdio: ["ignore", "inherit", "pipe"],
+    windowsHide: true,
+  });
+  let pending = "";
+  child.stderr!.setEncoding("utf8");
+  child.stderr!.on("data", (chunk: string) => {
+    pending += chunk;
+    let newline: number;
+    while ((newline = pending.indexOf("\n")) >= 0) {
+      const line = pending.slice(0, newline);
+      pending = pending.slice(newline + 1);
+      if (!renderRustcMessage(line)) continue;
+      // The .rmeta is complete: give it a current mtime (see stampOutput) and tell ninja, which starts the
+      // dependents now instead of when this process exits.
+      stampOutput(rmeta);
+      if (earlyOutputPrefix !== undefined) process.stdout.write(`${earlyOutputPrefix}${relative(buildDir, rmeta)}\n`);
+    }
+  });
+  child.on("error", e => {
+    throw e;
+  });
+  // 'close', not 'exit': everything rustc wrote has been rendered by then.
+  child.on("close", (status, signal) => {
+    if (pending !== "") renderRustcMessage(pending);
+    finish(exitStatus(status, signal));
+  });
+}
+
+/** Print one line of rustc's `--error-format=json` stream the way rustc would have; true if it announces the metadata artifact. */
+function renderRustcMessage(line: string): boolean {
+  if (line.trim() === "") return false;
+  let message: { $message_type?: string; emit?: string; rendered?: string };
+  try {
+    message = JSON.parse(line);
+  } catch {
+    process.stderr.write(line + "\n"); // not JSON: an ICE banner, a `-Z time-passes` line, …
+    return false;
+  }
+  if (message.$message_type === "artifact") return message.emit === "metadata";
+  if (message.$message_type === "future_incompat") return false;
+  process.stderr.write(typeof message.rendered === "string" ? message.rendered : line + "\n");
+  return false;
+}
+
 /**
- * rustc's dep-info names every emitted artifact as a target (`x.rmeta: …`, `x.rlib: …`), adds a `file:` line per
- * source (like gcc -MP) and `# env-dep:` / `# checksum` comments. ninja wants the rule(s) for this edge's outputs
- * only, so keep those lines and the per-source phony lines. Paths are as rustc saw them — relative to its cwd for
+ * Give the finished output the current time. Under `-C incremental` rustc can hard-link an unchanged artifact out
+ * of the incremental cache, so it carries the mtime of the build that first produced it and ninja would see the edge
+ * as out of date forever. cargo fingerprints contents and never notices.
+ *
+ * "Current time" is the filesystem's, read back from a file written now — not the process clock: the kernel stamps
+ * files from a coarser clock that trails `Date.now()` by up to a few milliseconds, and a stamp taken from the process
+ * clock can land *after* the mtime of an output a dependent writes moments later.
+ */
+function stampOutput(path: string): void {
+  if (!existsSync(path)) return;
+  const probe = `${path}.stamp`;
+  writeFileSync(probe, "");
+  const now = statSync(probe).mtime;
+  rmSync(probe, { force: true });
+  utimesSync(path, now, now);
+}
+
+/**
+ * rustc's dep-info names every emitted artifact as a target (`x.rlib: …`, `x.d: …`), adds a `file:` line per
+ * source (like gcc -MP) and `# env-dep:` / `# checksum` comments. ninja wants the rule for this edge's output
+ * only, so keep that line and the per-source phony lines. Paths are as rustc saw them — relative to its cwd for
  * workspace sources — while ninja reads depfile paths relative to the build directory, so everything is made
  * absolute. Spaces are `\ `-escaped on both sides (Makefile syntax).
  */
-function writeDepfile(unit: RustcUnitManifest, forOutputs: string[]): void {
+function writeDepfile(unit: RustcUnitManifest): void {
   if (!existsSync(unit.depInfo)) throw new Error(`rustc did not write ${unit.depInfo}`);
-  const keep = new Set(forOutputs);
   const abs = (p: string) => (isAbsolute(p) ? p : resolve(unit.cwd, p.replace(/\\ /g, " ")).replace(/ /g, "\\ "));
   const lines: string[] = [];
   for (const line of readFileSync(unit.depInfo, "utf8").split("\n")) {
@@ -167,404 +224,9 @@ function writeDepfile(unit: RustcUnitManifest, forOutputs: string[]): void {
     const target = abs(m[1]!);
     const deps = (m[2] ?? "").match(/(?:\\ |[^ ])+/g) ?? [];
     if (deps.length === 0) lines.push(`${target}:`);
-    else if (keep.has(target.replace(/\\ /g, " "))) lines.push(`${target}: ${deps.map(abs).join(" ")}`);
+    else if (target.replace(/\\ /g, " ") === unit.output) lines.push(`${target}: ${deps.map(abs).join(" ")}`);
   }
   writeFileSync(unit.depfile, lines.join("\n") + "\n");
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Outputs
-// ───────────────────────────────────────────────────────────────────────────
-
-/**
- * Give finished outputs the current time. Under `-C incremental` rustc hard-links an unchanged artifact (the `.rmeta`
- * in particular) out of the incremental cache, so it carries the mtime of the build that first produced it and ninja
- * would see every dependent as newer than it forever. cargo fingerprints contents and never notices.
- *
- * "Current time" is the filesystem's, read back from a file written now — not the process clock: the kernel stamps
- * files from a coarser clock that trails `Date.now()` by up to a few milliseconds, and a stamp taken from the process
- * clock can land *after* the mtime of an output a dependent writes moments later.
- */
-function stampOutputs(paths: string[]): void {
-  const existing = paths.filter(p => existsSync(p));
-  if (existing.length === 0) return;
-  const probe = `${existing[0]}.stamp`;
-  writeFileSync(probe, "");
-  const now = statSync(probe).mtime;
-  rmSync(probe, { force: true });
-  for (const p of existing) utimesSync(p, now, now);
-}
-
-/** Every file the unit's rustc writes that ninja knows of. */
-function artifacts(unit: RustcUnitManifest): string[] {
-  return unit.rmeta !== undefined ? [unit.rmeta, unit.output] : [unit.output];
-}
-
-function removeArtifacts(unit: RustcUnitManifest): void {
-  for (const o of artifacts(unit)) {
-    mkdirSync(dirname(o), { recursive: true });
-    // cargo: rustc prefers an existing rlib over a newer rmeta of the same name when resolving `--extern x.rmeta`'s
-    // transitive deps, and some linkers truncate hard-linked outputs in place — start from a clean slate.
-    rmSync(o, { force: true });
-  }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// rustc, unpipelined
-// ───────────────────────────────────────────────────────────────────────────
-
-/** Run rustc to completion in this process's ninja slot, holding a jobserver token for its lifetime (jobserver.ts). */
-function rustcSync(unit: RustcUnitManifest, argv: string[], env: Record<string, string>): number {
-  const token = acquireJobserverToken();
-  try {
-    const r = spawnSync(unit.rustc, spawnableArgv(unit, argv), {
-      cwd: unit.cwd,
-      env,
-      stdio: "inherit",
-      windowsHide: true,
-    });
-    if (r.error) throw r.error;
-    return r.status ?? 128 + signalNumber(r.signal);
-  } finally {
-    token?.release();
-  }
-}
-
-function signalNumber(signal: NodeJS.Signals | null): number {
-  return signal === null ? 0 : (osConstants.signals[signal] ?? 0);
-}
-
-function runRustc(unit: RustcUnitManifest): never {
-  removeArtifacts(unit);
-  const { argv, env } = rustcInvocation(unit);
-  const status = rustcSync(unit, argv, env);
-  if (status === 0) {
-    stampOutputs(artifacts(unit));
-    writeDepfile(unit, artifacts(unit));
-  }
-  process.exit(status);
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// rustc, pipelined: meta / monitor / codegen
-// ───────────────────────────────────────────────────────────────────────────
-
-interface PipelineState {
-  dir: string;
-  log: string;
-  pid: string;
-  handoff: string;
-  exit: string;
-}
-
-function pipelineState(unit: RustcUnitManifest): PipelineState {
-  if (unit.rmeta === undefined) usage(`${unit.crateName} is not a pipelined unit`);
-  const dir = `${unit.rmeta}.state`;
-  return {
-    dir,
-    log: join(dir, "stderr"),
-    pid: join(dir, "pid"),
-    handoff: join(dir, "handoff"),
-    exit: join(dir, "exit"),
-  };
-}
-
-/** `<rustc pid> <monitor pid>` as the monitor recorded them, or undefined. */
-function recordedPids(state: PipelineState): { rustc: number; monitor: number } | undefined {
-  if (!existsSync(state.pid)) return undefined;
-  const [rustc, monitor] = readFileSync(state.pid, "utf8").split(" ").map(Number);
-  return rustc! > 0 && monitor! > 0 ? { rustc: rustc!, monitor: monitor! } : undefined;
-}
-
-function recordedExit(state: PipelineState): number | undefined {
-  return existsSync(state.exit) ? Number(readFileSync(state.exit, "utf8")) : undefined;
-}
-
-/**
- * Does `pid` name a live process working on *this* unit (its command line carries the unit's `-C metadata` hash /
- * manifest path)? A recorded pid with no recorded exit may have been recycled since (monitor killed outright,
- * machine reset).
- */
-function isUnitProcess(unit: RustcUnitManifest, pid: number): boolean {
-  if (!processAlive(pid)) return false;
-  const cmdline = processCommandLine(pid);
-  return [unit.args.find(a => a.startsWith("metadata=")) ?? unit.output, manifestPath!].some(n => cmdline.includes(n));
-}
-
-/**
- * A liveness watch on a process once identified as this unit's: `processAlive` per poll (cheap everywhere), the
- * command-line identity re-established every few seconds (it costs a subprocess on macOS/Windows) to catch a pid
- * reused after the process died.
- */
-function unitProcessWatch(unit: RustcUnitManifest, pid: number): () => boolean {
-  let verifiedAt = -Infinity;
-  return () => {
-    if (!processAlive(pid)) return false;
-    if (Date.now() - verifiedAt < 5000) return true;
-    if (!isUnitProcess(unit, pid)) return false;
-    verifiedAt = Date.now();
-    return true;
-  };
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-/** Poll `condition` every `intervalMs` until it holds or `timeoutMs` passed; returns whether it held. */
-function waitFor(condition: () => boolean, timeoutMs: number, intervalMs = 20): boolean {
-  for (const deadline = Date.now() + timeoutMs; ; ) {
-    if (condition()) return true;
-    if (Date.now() >= deadline) return false;
-    sleepSync(intervalMs);
-  }
-}
-
-/**
- * Stop whatever a previous build left running for this unit (a rustc past its metadata whose build was interrupted
- * without a driver to stop it) and wait for its monitor to be gone, so nothing can publish into the state this
- * invocation is about to recreate.
- */
-function stopPrevious(unit: RustcUnitManifest, state: PipelineState): void {
-  const pids = recordedPids(state);
-  if (pids === undefined || recordedExit(state) !== undefined) return;
-  if (isUnitProcess(unit, pids.rustc)) {
-    try {
-      process.kill(pids.rustc, "SIGTERM");
-    } catch {}
-  }
-  waitFor(() => !isUnitProcess(unit, pids.monitor), 10_000);
-}
-
-/** Print rustc `--error-format=json` lines the way rustc would have; returns true if one announced the metadata artifact. */
-function render(line: string): boolean {
-  if (line.trim() === "") return false;
-  let j: { $message_type?: string; artifact?: string; emit?: string; rendered?: string };
-  try {
-    j = JSON.parse(line);
-  } catch {
-    process.stderr.write(line + "\n"); // not JSON: an ICE banner, a `-Ztime-passes` line, …
-    return false;
-  }
-  if (j.$message_type === "artifact" || j.artifact !== undefined) return j.emit === "metadata";
-  if (j.$message_type === "future_incompat") return false;
-  process.stderr.write(typeof j.rendered === "string" ? j.rendered : line + "\n");
-  return false;
-}
-
-/** A reader over the monitor's log from `at`, feeding complete lines to `render`. */
-class LogFollower {
-  private buf = "";
-  sawMetadata = false;
-  constructor(
-    private readonly path: string,
-    public at = 0,
-  ) {}
-  /** Bytes rendered so far (excluding a trailing partial line). */
-  get renderedUpTo(): number {
-    return this.at - Buffer.byteLength(this.buf);
-  }
-  pump(): void {
-    if (!existsSync(this.path)) return;
-    const size = statSync(this.path).size;
-    if (size <= this.at) return;
-    const fd = openSync(this.path, "r");
-    const b = Buffer.alloc(size - this.at);
-    readSync(fd, b, 0, b.length, this.at);
-    closeSync(fd);
-    this.at = size;
-    this.buf += b.toString("utf8");
-    let nl: number;
-    while ((nl = this.buf.indexOf("\n")) >= 0) {
-      if (render(this.buf.slice(0, nl))) this.sawMetadata = true;
-      this.buf = this.buf.slice(nl + 1);
-    }
-  }
-}
-
-function runMeta(unit: RustcUnitManifest): void {
-  const state = pipelineState(unit);
-  // Without a jobserver nothing but ninja's -j bounds live rustc processes, and a pipelined rustc escapes that by
-  // outliving this edge — so compile unpipelined: the .rmeta and .rlib both exist when this edge returns and the
-  // codegen edge finds the recorded status immediately.
-  if (!jobserverAvailable()) {
-    stopPrevious(unit, state);
-    rmSync(state.dir, { recursive: true, force: true });
-    removeArtifacts(unit);
-    const { argv, env } = rustcInvocation(unit);
-    const args = argv.filter(a => !a.startsWith("--error-format=") && !a.startsWith("--json="));
-    const status = rustcSync(unit, args, env);
-    if (status !== 0) process.exit(status);
-    stampOutputs(artifacts(unit));
-    writeDepfile(unit, artifacts(unit));
-    mkdirSync(state.dir, { recursive: true });
-    writeFileSync(state.exit, "0");
-    process.exit(0);
-  }
-
-  stopPrevious(unit, state);
-  rmSync(state.dir, { recursive: true, force: true });
-  mkdirSync(state.dir, { recursive: true });
-  removeArtifacts(unit);
-  writeFileSync(state.log, "");
-  const monitor = spawn(process.execPath, [...process.execArgv, process.argv[1]!, "monitor", manifestPath!], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  if (monitor.pid === undefined) {
-    process.stderr.write(`error: ${unit.crateName}: could not start the rustc monitor process\n`);
-    process.exit(1);
-  }
-  monitor.unref();
-  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-    process.on(sig, () => {
-      const pids = recordedPids(state);
-      if (pids !== undefined) {
-        try {
-          process.kill(pids.rustc, "SIGTERM");
-        } catch {}
-      }
-      process.exit(128 + signalNumber(sig));
-    });
-  }
-  const log = new LogFollower(state.log);
-  const tick = () => {
-    log.pump();
-    if (log.sawMetadata) {
-      stampOutputs([unit.rmeta!]);
-      writeDepfile(unit, artifacts(unit)); // dep-info is emitted before metadata; the depfile belongs to this (first) edge
-      writeFileSync(state.handoff, String(log.renderedUpTo));
-      process.exit(0);
-    }
-    const code = recordedExit(state);
-    if (code !== undefined) {
-      // rustc finished without announcing metadata: an error before metadata (or, never observed, a clean exit).
-      log.pump();
-      if (code === 0) {
-        stampOutputs(artifacts(unit));
-        writeDepfile(unit, artifacts(unit));
-        writeFileSync(state.handoff, String(log.at));
-      }
-      process.exit(code);
-    }
-    if (!processAlive(monitor.pid!)) {
-      // The monitor publishes `exit` for every way rustc can end; if it is gone without having done so (killed
-      // outright, out of disk while logging) nothing ever will.
-      if (waitFor(() => recordedExit(state) !== undefined, 500)) return tick();
-      log.pump();
-      stopPrevious(unit, state);
-      process.stderr.write(`error: ${unit.crateName}: the rustc monitor process died before reporting a result\n`);
-      process.exit(1);
-    }
-    setTimeout(tick, 10);
-  };
-  tick();
-}
-
-/** The detached owner of a pipelined rustc: holds the jobserver token, logs stderr, publishes the exit status. */
-function runMonitor(unit: RustcUnitManifest): void {
-  const state = pipelineState(unit);
-  const log = openSync(state.log, "a");
-  const token = acquireJobserverToken(); // one token per live rustc (jobserver.ts); released in finish()
-  const { argv, env } = rustcInvocation(unit);
-  const child = spawn(unit.rustc, spawnableArgv(unit, argv), {
-    cwd: unit.cwd,
-    stdio: ["ignore", "inherit", "pipe"],
-    env,
-    windowsHide: true, // this process has no console (detached); without CREATE_NO_WINDOW Windows would open one for rustc
-  });
-  writeFileSync(state.pid, `${child.pid ?? 0} ${process.pid}`);
-  child.stderr!.on("data", d => writeSync(log, d));
-  let finished = false;
-  const finish = (code: number) => {
-    if (finished) return;
-    finished = true;
-    token?.release();
-    // A compilation that dies after handing off its .rmeta must not leave it looking finished: the next build has to
-    // rerun the metadata step (dependents wait on it) rather than recompile underneath its readers.
-    if (code !== 0) rmSync(unit.rmeta!, { force: true });
-    if (existsSync(state.dir)) writeIfChanged(state.exit, String(code));
-    process.exit(0);
-  };
-  // 'close', not 'exit': the status is published only once everything rustc wrote to stderr is in the log.
-  child.on("close", (code, signal) => finish(code ?? 128 + signalNumber(signal)));
-  child.on("error", e => {
-    writeSync(log, String(e) + "\n");
-    finish(127);
-  });
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(sig, () => child.kill("SIGTERM"));
-  // An interrupted build takes its compilations down with it, as cargo did. The build driver (scripts/build.ts)
-  // exports its pid and, when it exits on its own — success or an unrelated failed edge — leaves a marker; a driver
-  // that vanished without the marker was killed, and rustc is stopped. After an ordinary failure rustc is left to
-  // finish, so the next build picks the result up instead of recompiling the crate and its dependents. (Watching
-  // ninja through the meta step's ppid would not work: ninja runs commands via `sh -c`, and whether that shell execs
-  // the command or stays as an intermediate parent differs between shells.)
-  const driver = Number(process.env.BUN_BUILD_DRIVER_PID ?? "");
-  const driverExitMarker = process.env.BUN_BUILD_DRIVER_EXIT_MARKER;
-  if (driver > 0) {
-    const watch = setInterval(() => {
-      if (processAlive(driver)) return;
-      clearInterval(watch);
-      if (driverExitMarker === undefined || !existsSync(driverExitMarker)) child.kill("SIGTERM");
-    }, 500);
-    watch.unref();
-  }
-}
-
-function runCodegen(unit: RustcUnitManifest): void {
-  const state = pipelineState(unit);
-  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
-    process.on(sig, () => process.exit(128 + signalNumber(sig)));
-  /**
-   * There is no code generation to wait for — no state (outputs restored from elsewhere, state wiped), the monitor
-   * and rustc gone without a status (reboot, OOM killer), rustc killed by a signal (interrupted build) — so this
-   * edge compiles the crate itself. That rewrites the `.rmeta` dependents may already have been released on; they
-   * rebuild on the next run because its mtime moves.
-   */
-  const compileHere = (why: string): never => {
-    process.stderr.write(`${unit.crateName}: ${why}; compiling it in this step\n`);
-    rmSync(state.dir, { recursive: true, force: true });
-    removeArtifacts(unit);
-    const { argv, env } = rustcInvocation(unit);
-    const args = argv.filter(a => !a.startsWith("--error-format=") && !a.startsWith("--json=")); // human diagnostics
-    const status = rustcSync(unit, args, env);
-    if (status === 0) stampOutputs(artifacts(unit));
-    process.exit(status);
-  };
-  const finish = (code: number, log: LogFollower): never => {
-    log.pump();
-    if (code === 0) {
-      stampOutputs([unit.output]);
-      process.exit(0);
-    }
-    if (code > 128) compileHere(`rustc was killed (signal ${code - 128})`);
-    // A real error after metadata (rare: codegen-time diagnostics). The .rmeta edge is what reruns rustc, so make it
-    // dirty; otherwise ninja would consider it up to date and only retry this edge.
-    process.stderr.write(`error: ${unit.crateName} failed during code generation (exit ${code})\n`);
-    rmSync(unit.rmeta!, { force: true });
-    rmSync(state.dir, { recursive: true, force: true });
-    process.exit(1);
-  };
-
-  if (recordedExit(state) === undefined && recordedPids(state) === undefined)
-    compileHere("no code generation in progress");
-  const log = new LogFollower(state.log, existsSync(state.handoff) ? Number(readFileSync(state.handoff, "utf8")) : 0);
-  const pids = recordedPids(state);
-  const monitorAlive = pids === undefined ? () => false : unitProcessWatch(unit, pids.monitor);
-  const tick = () => {
-    log.pump();
-    const code = recordedExit(state);
-    if (code !== undefined) finish(code, log);
-    // No status yet: the monitor must still be at work on this unit. If it is gone (and stays silent for a moment —
-    // it publishes right after rustc's streams close), nobody will ever report.
-    if (!monitorAlive()) {
-      if (waitFor(() => recordedExit(state) !== undefined, 1000)) return tick();
-      compileHere("the rustc process disappeared without an exit status");
-    }
-    setTimeout(tick, 20);
-  };
-  tick();
 }
 
 // ───────────────────────────────────────────────────────────────────────────

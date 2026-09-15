@@ -2,9 +2,8 @@
  * Ninja rules and edges for the Rust units (`units.ts`), plus the plan edge
  * (`plan.ts`) that feeds configure.
  *
- * Edges per unit kind:
- *   lib               rust_meta  → <hash>.rmeta   (starts rustc; returns at metadata)
- *                     rust_codegen → <hash>.rlib  (same rustc; returns at exit)
+ * Edges per unit kind — each edge is one rustc (or build script) process, start to exit:
+ *   lib               rust_rustc → lib<name>-<hash>.rlib + lib<name>-<hash>.rmeta
  *   proc-macro        rust_rustc → lib<name>-<hash>.so
  *   build-script      rust_rustc → build_script_build-<hash>
  *   build-script-run  rust_build_script → output.json (restat)
@@ -36,38 +35,21 @@ const here = import.meta.dirname;
 const runScript = resolve(here, "run.ts");
 const planScript = resolve(here, "plan.ts");
 /** What each build-time entry point loads: an edit to any of these reruns its edges (the convention for every build-time script in this system). */
-const runScriptDeps = [
-  runScript,
-  resolve(here, "cargo-env.ts"),
-  resolve(here, "..", "jobserver.ts"),
-  resolve(here, "..", "fs.ts"),
-  resolve(here, "..", "proc.ts"),
-];
+const runScriptDeps = [runScript, resolve(here, "cargo-env.ts"), resolve(here, "..", "fs.ts")];
 const planScriptDeps = [planScript, resolve(here, "toml.ts"), resolve(here, "..", "fs.ts")];
 
 export function registerRustUnitRules(n: Ninja, cfg: Config): void {
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
-  // run.ts runs under Bun whatever runs configure: it is started ~3× per crate (meta, its monitor, codegen), so
-  // runtime startup is on the critical path (bun: ~20 ms, node: ~80 ms), and on Windows the jobserver client
-  // needs bun:ffi (jobserver.ts).
+  // run.ts runs under Bun whatever runs configure: it starts once per edge along a dependency chain ~30 crates
+  // deep, so runtime startup is on the critical path (bun: ~20 ms, node: ~80 ms).
   const run = `${q(cfg.bun)} ${q(runScript)}`;
 
   // Depfiles: run.ts rewrites rustc's dep-info (all emitted artifacts as targets, `# env-dep` comments)
   // into `$depfile` with just this edge's outputs. deps=gcc moves it into .ninja_deps.
-  n.rule("rust_meta", {
-    command: `${run} meta $manifest`,
-    description: "rustc $crate (metadata)",
-    depfile: "$depfile",
-    deps: "gcc",
-  });
-  n.rule("rust_codegen", {
-    command: `${run} codegen $manifest`,
-    description: "rustc $crate (codegen)",
-  });
   n.rule("rust_rustc", {
     command: `${run} rustc $manifest`,
-    description: "rustc $crate$what",
+    description: "rustc $crate $what",
     depfile: "$depfile",
     deps: "gcc",
   });
@@ -152,32 +134,36 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
       depfile: manifest.depfile, // a ninja `depfile =` binding, read as a path (never part of a command): no shell quoting
       what: "",
     };
-    // What rebuilds this unit: the artifacts it names with --extern (rmeta for pipelined lib deps, rlib/dylib
-    // otherwise), its build script's output.json, its manifest, the driver scripts; sources and `include!`d files
-    // come from the depfile.
+    // What rebuilds this unit: the artifacts it names with --extern (metadata rlibs for a library, full rlibs and
+    // dylibs for a link), the build-script outputs run.ts reads for it, its manifest, the driver scripts; sources and
+    // `include!`d files come from the depfile.
     const externs = externDeps(unit).map(d => externPath(unit, d.unit));
-    const scriptOut =
-      manifest.kind !== "build-script-run" && manifest.buildScriptOutput !== undefined
-        ? [manifest.buildScriptOutput]
-        : [];
-    const common = [unit.manifestPath, ...scriptOut, ...runScriptDeps, ...(unit.isLocal ? inputs.implicitInputs : [])];
+    const scriptOutputs =
+      manifest.kind === "build-script-run"
+        ? []
+        : [
+            ...(manifest.buildScriptOutput !== undefined ? [manifest.buildScriptOutput] : []),
+            ...manifest.depBuildScriptOutputs,
+          ];
+    const common = [...scriptOutputs, ...runScriptDeps, ...(unit.isLocal ? inputs.implicitInputs : [])];
     const orderOnly = [...inputs.vendorStamps, ...(unit.isLocal ? ["rust-codegen-ready"] : [])];
 
     switch (manifest.kind) {
       case "lib":
+        // One rustc, two outputs. Dependent libraries read only the `.rmeta` (type information), which rustc writes
+        // long before it has generated the `.rlib`'s code. `early_output_prefix` asks ninja to listen for the
+        // command announcing an output early: oven-sh/ninja then exports the prefix to the command
+        // (NINJA_EARLY_OUTPUT_PREFIX), run.ts announces the `.rmeta` when rustc reports it, and dependents start
+        // while this command is still running — cargo's pipelining. A ninja without the feature ignores the
+        // binding (it must sit on the build statement for that) and releases both outputs when rustc exits:
+        // same graph, no pipelining.
         n.build({
-          outputs: [unit.rmeta!],
-          rule: "rust_meta",
+          outputs: [unit.output, unit.rmeta!],
+          rule: "rust_rustc",
           inputs: [],
-          implicitInputs: [...externs, ...common],
+          implicitInputs: [...externs, unit.manifestPath, ...common],
           orderOnlyInputs: orderOnly,
-          vars,
-        });
-        n.build({
-          outputs: [unit.output],
-          rule: "rust_codegen",
-          inputs: [unit.rmeta!],
-          vars: { manifest: vars.manifest, crate: vars.crate },
+          vars: { ...vars, early_output_prefix: "@ninja-early-output@" },
         });
         break;
       case "proc-macro":
@@ -185,14 +171,14 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
       case "staticlib": {
         // These link, so beyond the direct `--extern`ed rlibs they read every transitive rlib through `-L`
         // (cargo: a linking unit gets Artifact::All edges to all of them). A direct dependency's rlib being done
-        // says nothing about *its* dependencies' rlibs: those edges were released on `.rmeta`.
+        // says nothing about *its* dependencies' rlibs: it was compiled against their metadata rlibs.
         const all = transitiveLinkInputs(unit).map(u => u.output);
-        const what = manifest.kind === "staticlib" ? ` → ${cfg.libPrefix}${unit.crateName}${cfg.libSuffix}` : "";
+        const what = manifest.kind === "staticlib" ? `→ ${cfg.libPrefix}${unit.crateName}${cfg.libSuffix}` : "";
         n.build({
           outputs: [unit.output],
           rule: "rust_rustc",
           inputs: [],
-          implicitInputs: [...new Set([...externs, ...all, ...common, ...manifest.depBuildScriptOutputs])],
+          implicitInputs: [...new Set([...externs, ...all, unit.manifestPath, ...common])],
           orderOnlyInputs: orderOnly,
           vars: { ...vars, what },
         });

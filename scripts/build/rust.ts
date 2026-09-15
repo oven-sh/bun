@@ -7,11 +7,12 @@
  *
  * cargo plans, ninja executes: `rust/plan.ts` asks cargo for the unit graph it would build for
  * exactly the arguments computed here (`cargoBuildInvocation`: profile, target, `-Zbuild-std`, the
- * profile overrides) and `rust/emit.ts` turns each unit into rustc edges, `rust/units.ts` holding
+ * profile overrides) and `rust/emit.ts` turns each unit into one rustc edge, `rust/units.ts` holding
  * cargo's rules for the command line. ninja then schedules the rustc invocations together with the
- * C++ ones instead of handing all of Rust to one opaque `cargo build` job, dependents start on a
- * crate's `.rmeta` just as under cargo, and what every crate is compiled with is in `build.ninja` and
- * `rust/units/*.json` to read.
+ * C++ ones instead of handing all of Rust to one opaque `cargo build` job, and what every crate is
+ * compiled with is in `build.ninja` and `rust/units/*.json` to read. Dependents start on a crate's
+ * `.rmeta`, as under cargo, when the build runs under oven-sh/ninja (`ninja-release.ts`), which
+ * releases an output its running command announces; under a stock ninja they wait for rustc to exit.
  *
  * The plan is itself a build edge (`rust/plan.json`, rerun when `Cargo.lock`, a manifest or the
  * toolchain changes) and `build.ninja` depends on it: the first configure of a fresh tree emits only
@@ -367,9 +368,9 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // Parallel frontend: rustc's default is single-threaded for parse / macro
   // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
   // sits on one core while the rest idle. With this, independent compiler
-  // queries run on a rayon pool and the long pole roughly halves. The pool
-  // draws from the build's jobserver (jobserver.ts), so N rustcs × 8 doesn't
-  // oversubscribe — each thread acquires a token before doing work.
+  // queries run on a rayon pool and the long pole roughly halves. These are
+  // threads inside one rustc process; ninja counts the process as one job,
+  // as it does a multi-threaded link.
   //
   // Why 8, not nproc: returns flatten past ~8 (the query DAG has its own
   // serial spine — macro expansion in particular), and `-Zthreads=0` (= nproc)

@@ -1,11 +1,13 @@
 // Tests for installing git dependencies that live in ONE repository as
-// multiple branches (issue #35420), `git+file://` dependencies, and
+// multiple branches (issue #35420), `git+file://` dependencies,
 // tarball-URL / `github:` dependencies that appear both directly and
-// transitively (issues #10915, #8501, #11348, #28284). Everything is local:
+// transitively (issues #10915, #8501, #11348, #28284), and dependencies that
+// resolve to a package another dependency already resolved to (`github:` refs
+// on one commit, a locked tarball URL under a new name). Everything is local:
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -185,14 +187,14 @@ function writeProject(root: string, dependencies: Record<string, string>): strin
   return project;
 }
 
-async function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...args: string[]) {
+async function runBun(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...cmd: string[]) {
   const env = { ...gitEnv, ...extraEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
   // Set on ASAN CI lanes; it arms a subreaper around internal git spawns that
   // SIGKILLs concurrent clone tasks (see #33982). This test exercises install
   // task bookkeeping, not orphan reaping.
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [bunExe(), ...cmd],
     cwd,
     env,
     stdout: "pipe",
@@ -200,6 +202,10 @@ async function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...args: string[]) {
+  return runBun(cwd, cacheDir, extraEnv, "install", ...args);
 }
 
 // What `bun install` printed, as lines: its version header, `+ <name>@<resolution>`
@@ -449,6 +455,364 @@ test.concurrent(
       expect(await lockedPackages(project)).toEqual(locked);
       expect(exitCode).toBe(0);
     }
+  },
+  30_000,
+);
+
+// Each ref of a GitHub repository is its own tarball download, and each
+// extracted tarball became a new package. Refs on one commit gave packages with
+// the same name and resolution, which bun.lock holds as one package. The
+// isolated linker linked all of them into the same store directory at once and
+// failed at random with `EEXIST: File exists: failed to link package`.
+//
+// The fixture serves `testowner/testrepo` (gh-dep) and `testowner/leaf`
+// (gh-leaf, a dependency of gh-dep). Every branch and tag of a repository
+// answers with the tarball of the commit in `heads`, so all of them resolve to
+// that commit: bun reads it from the name of the tarball's root directory.
+async function serveGithub() {
+  const tarballs = {
+    testrepo: {
+      aaaaaaa: await tarballOf("testowner-testrepo-aaaaaaa", {
+        ...packageFiles("gh-dep", "gh-dep", { "gh-leaf": "github:testowner/leaf#main" }),
+        // more files to link widen the window in which the store entries collide
+        ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`file-${i}.js`, indexJs(`file-${i}`)])),
+      }),
+    },
+    leaf: {
+      bbbbbbb: await tarballOf("testowner-leaf-bbbbbbb", packageFiles("gh-leaf", "gh-leaf")),
+      ccccccc: await tarballOf("testowner-leaf-ccccccc", packageFiles("gh-leaf", "gh-leaf-moved")),
+    },
+  } as Record<string, Record<string, Uint8Array>>;
+  const heads: Record<string, string> = { testrepo: "aaaaaaa", leaf: "bbbbbbb" };
+  // `<repo>#<ref>` of every tarball request
+  const downloads: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const match = /^\/repos\/testowner\/(testrepo|leaf)\/tarball\/(\w+)$/.exec(new URL(req.url).pathname);
+      if (!match) return new Response("not found", { status: 404 });
+      const [, repo, ref] = match;
+      downloads.push(`${repo}#${ref}`);
+      return new Response(tarballs[repo][ref] ?? tarballs[repo][heads[repo]]);
+    },
+  });
+  const leafRow = (commit: string) => [
+    `gh-leaf@github:testowner/leaf#${commit}`,
+    {},
+    `testowner-leaf-${commit}`,
+    integrityOf(tarballs.leaf[commit]),
+  ];
+  return {
+    heads,
+    downloads,
+    env: { GITHUB_API_URL: `http://localhost:${server.port}` },
+    // the bun.lock rows of the packages
+    ghDep: [
+      "gh-dep@github:testowner/testrepo#aaaaaaa",
+      { dependencies: { "gh-leaf": "github:testowner/leaf#main" } },
+      "testowner-testrepo-aaaaaaa",
+      integrityOf(tarballs.testrepo.aaaaaaa),
+    ],
+    ghLeaf: leafRow("bbbbbbb"),
+    ghLeafMoved: leafRow("ccccccc"),
+    [Symbol.asyncDispose]: () => server.stop(true),
+  };
+}
+
+const ghDepStoreEntry = "gh-dep@github+testowner+testrepo+aaaaaaa";
+const ghLeafStoreEntry = "gh-leaf@github+testowner+leaf+bbbbbbb";
+// where the isolated linker puts gh-leaf for gh-dep, relative to node_modules
+const ghLeafOfGhDep = join(".bun", ghDepStoreEntry, "node_modules", "gh-leaf");
+
+// What the isolated linker must leave in node_modules: one store entry for
+// gh-dep, with gh-leaf linked next to it, and every alias linked to that entry.
+function expectOneStoreEntry(project: string, aliases: string[]) {
+  const modules = join(project, "node_modules");
+  expect({
+    store: readdirSync(join(modules, ".bun")).sort(),
+    links: Object.fromEntries([...aliases, ghLeafOfGhDep].map(link => [link, readlinkSync(join(modules, link))])),
+  }).toEqual({
+    store: [ghDepStoreEntry, ghLeafStoreEntry, "node_modules"],
+    links: {
+      ...Object.fromEntries(aliases.map(alias => [alias, join(".bun", ghDepStoreEntry, "node_modules", "gh-dep")])),
+      [ghLeafOfGhDep]: join("..", "..", ghLeafStoreEntry, "node_modules", "gh-leaf"),
+    },
+  });
+}
+
+// Not on Windows: the three extracts finish into one cache folder, and there an
+// extract that finds the folder taken moves it away (`move_to_cache_directory`
+// in extract_tarball.rs) while another one still reads its package.json. Now
+// and then that one makes a package with no name and no dependencies.
+for (const linker of ["isolated", "hoisted"] as const) {
+  test.concurrent.skipIf(isWindows)(
+    `${linker} linker installs github: refs on one commit as one package`,
+    async () => {
+      using dir = tempDir(`github-one-commit-${linker}`, {});
+      const root = String(dir);
+      await using github = await serveGithub();
+      const project = writeProject(root, {
+        a: "github:testowner/testrepo#main",
+        b: "github:testowner/testrepo#v1",
+        c: "github:testowner/testrepo#other",
+      });
+      // the hoisted linker puts gh-leaf in the root node_modules
+      const leaf = linker === "isolated" ? ghLeafOfGhDep : "gh-leaf";
+
+      // the collision depends on threadpool scheduling; two fresh-cache attempts
+      // to make the failure reliable on the unfixed code
+      for (let attempt = 0; attempt < 2; attempt++) {
+        rmSync(join(project, "node_modules"), { recursive: true, force: true });
+        rmSync(join(project, "bun.lock"), { force: true });
+        github.downloads.length = 0;
+        const { stdout, stderr, exitCode } = await runInstall(
+          project,
+          join(root, `cache-${attempt}`),
+          github.env,
+          `--linker=${linker}`,
+        );
+        expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+          "Resolving dependencies
+          Resolved, downloaded and extracted [8]
+          Saved lockfile"
+        `);
+        // the two packages are gh-dep and gh-leaf
+        expect(installOutput(stdout)).toEqual([
+          expect.stringContaining("bun install v"),
+          "",
+          "+ a@github:testowner/testrepo#aaaaaaa",
+          "+ b@github:testowner/testrepo#aaaaaaa",
+          "+ c@github:testowner/testrepo#aaaaaaa",
+          "",
+          "2 packages installed",
+        ]);
+        expect(github.downloads.sort()).toEqual(["leaf#main", "testrepo#main", "testrepo#other", "testrepo#v1"]);
+        if (linker === "isolated") expectOneStoreEntry(project, ["a", "b", "c"]);
+        expect(await installedVersions(project, ["a", "b", "c", leaf])).toEqual({
+          a: "gh-dep",
+          b: "gh-dep",
+          c: "gh-dep",
+          [leaf]: "gh-leaf",
+        });
+        expect(await lockedPackages(project)).toEqual({
+          a: github.ghDep,
+          b: github.ghDep,
+          c: github.ghDep,
+          "gh-leaf": github.ghLeaf,
+        });
+        expect(exitCode).toBe(0);
+      }
+    },
+    30_000,
+  );
+}
+
+// The same collision with a lockfile: the locked package and the package of a
+// new ref on its commit were two packages.
+test.concurrent(
+  "isolated linker reuses a locked github: package for a new ref on its commit",
+  async () => {
+    using dir = tempDir("github-one-commit-locked", {});
+    const root = String(dir);
+    await using github = await serveGithub();
+
+    const project = writeProject(root, { a: "github:testowner/testrepo#main" });
+    {
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), github.env, "--linker=isolated");
+      expect(stderr).toContain("Saved lockfile");
+      expect(await lockedPackages(project)).toEqual({ a: github.ghDep, "gh-leaf": github.ghLeaf });
+      expect(exitCode).toBe(0);
+    }
+
+    // a fresh machine that adds a second ref: keep bun.lock, drop node_modules + cache.
+    // The branch of gh-leaf moved in the meantime; bun.lock pins its old commit.
+    writeProject(root, { a: "github:testowner/testrepo#main", b: "github:testowner/testrepo#v1" });
+    rmSync(join(project, "node_modules"), { recursive: true });
+    github.heads.leaf = "ccccccc";
+    github.downloads.length = 0;
+    const { stdout, stderr, exitCode } = await runInstall(
+      project,
+      join(root, "cache-cold"),
+      github.env,
+      "--linker=isolated",
+    );
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [2]
+      Saved lockfile"
+    `);
+    expect(installOutput(stdout)).toEqual([
+      expect.stringContaining("bun install v"),
+      "",
+      "+ a@github:testowner/testrepo#aaaaaaa",
+      "+ b@github:testowner/testrepo#aaaaaaa",
+      "",
+      "2 packages installed",
+    ]);
+    // the tarball of the new ref fills the cache entry of the locked commit,
+    // and gh-leaf installs from the commit that bun.lock pins
+    expect(github.downloads.sort()).toEqual(["leaf#bbbbbbb", "testrepo#v1"]);
+    expectOneStoreEntry(project, ["a", "b"]);
+    expect(await installedVersions(project, [ghLeafOfGhDep])).toEqual({ [ghLeafOfGhDep]: "gh-leaf" });
+    expect(await lockedPackages(project)).toEqual({ a: github.ghDep, b: github.ghDep, "gh-leaf": github.ghLeaf });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// `bun update` fetches the git and `github:` dependencies of the project again.
+// The dependencies of such a package resolve again too, also when its own
+// commit did not move, so a nested branch ref follows its branch.
+for (const parent of ["github:", "git+"] as const) {
+  test.concurrent(
+    `bun update moves a nested github: ref when the commit of its ${parent} parent did not move`,
+    async () => {
+      using dir = tempDir("git-update-nested", {});
+      const root = String(dir);
+      await using github = await serveGithub();
+      let spec = "github:testowner/testrepo#main";
+      let parentRow = github.ghDep;
+      if (parent === "git+") {
+        const dependencies = { "gh-leaf": "github:testowner/leaf#main" };
+        const bare = await makeSharedRepo(root, [{ name: "git-dep", branch: "main", dependencies }], "parent.git");
+        // `bun update` fetches HEAD into the cached clone
+        await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+        const repoUrl = `git+${pathToFileURL(bare)}`;
+        const sha = branchCommits(bare).main;
+        spec = `${repoUrl}#main`;
+        parentRow = [`git-dep@${repoUrl}#${sha}`, { dependencies }, sha];
+      }
+      const project = writeProject(root, { a: spec });
+      {
+        const { stderr, exitCode } = await runInstall(project, join(root, "cache"), github.env);
+        expect(stderr).toContain("Saved lockfile");
+        expect(await lockedPackages(project)).toEqual({ a: parentRow, "gh-leaf": github.ghLeaf });
+        expect(exitCode).toBe(0);
+      }
+
+      github.heads.leaf = "ccccccc";
+      const { stderr, exitCode } = await runBun(project, join(root, "cache"), github.env, "update");
+      expect(stderr).toContain("Saved lockfile");
+      expect(await installedVersionOf(project, "gh-leaf")).toBe("gh-leaf-moved");
+      expect(await lockedPackages(project)).toEqual({ a: parentRow, "gh-leaf": github.ghLeafMoved });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+}
+
+// The `git+` twin: the checkout task is keyed by the resolved commit, so two
+// refs on one commit share one task and one package.
+test.concurrent(
+  "isolated linker reuses a locked git package for a new ref on its commit",
+  async () => {
+    using dir = tempDir("git-one-commit-locked", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [{ name: "git-dep", branch: "main" }], "one-commit.git");
+    await git(bare, "branch", "v1", "main");
+    const repoUrl = `git+${pathToFileURL(bare)}`;
+    const sha = branchCommits(bare).main;
+    const gitDep = [`git-dep@${repoUrl}#${sha}`, {}, sha];
+
+    const project = writeProject(root, { a: `${repoUrl}#main` });
+    {
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), {}, "--linker=isolated");
+      expect(stderr).toContain("Saved lockfile");
+      expect(await lockedPackages(project)).toEqual({ a: gitDep });
+      expect(exitCode).toBe(0);
+    }
+
+    writeProject(root, { a: `${repoUrl}#main`, b: `${repoUrl}#v1` });
+    rmSync(join(project, "node_modules"), { recursive: true });
+    const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, "--linker=isolated");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [2]
+      Saved lockfile"
+    `);
+    expect(installOutput(stdout)).toEqual([
+      expect.stringContaining("bun install v"),
+      "",
+      `+ a@${repoUrl}#${sha}`,
+      `+ b@${repoUrl}#${sha}`,
+      "",
+      "1 package installed",
+    ]);
+    expect(await installedVersions(project, ["a", "b"])).toEqual({ a: "main", b: "main" });
+    expect(await lockedPackages(project)).toEqual({ a: gitDep, b: gitDep });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// The tarball-URL twin. A dependency has no package name before its first
+// extract, so the lookup before the download misses the package that bun.lock
+// holds for the URL, and the extract made a second one. A dependency on the URL
+// that was enqueued after that download had finished bound to the second one.
+test.concurrent(
+  "isolated linker reuses a locked tarball-URL package for a dependency that is enqueued after its download",
+  async () => {
+    using dir = tempDir("tarball-one-url-locked", {});
+    const root = String(dir);
+
+    // the tarballs embed the server's URL, so they are built once it listens
+    let tarballs: Record<string, Uint8Array>;
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const tarball = tarballs[new URL(req.url).pathname];
+        return tarball ? new Response(tarball) : new Response("not found", { status: 404 });
+      },
+    });
+    const urlOf = (name: string) => `http://localhost:${server.port}/${name}.tgz`;
+    tarballs = {
+      "/tb-dep.tgz": await tarballOf("package", packageFiles("tb-dep", "tb-dep")),
+      // q-dep -> r-dep -> tb-dep: bun reads r-dep's package.json two downloads
+      // after it started the download of tb-dep for `b`
+      "/q-dep.tgz": await tarballOf("package", packageFiles("q-dep", "q-dep", { "r-dep": urlOf("r-dep") })),
+      "/r-dep.tgz": await tarballOf("package", packageFiles("r-dep", "r-dep", { c: urlOf("tb-dep") })),
+    };
+    const row = (name: string, dependencies?: Record<string, string>) => [
+      `${name}@${urlOf(name)}`,
+      dependencies ? { dependencies } : {},
+      integrityOf(tarballs[`/${name}.tgz`]),
+    ];
+
+    const project = writeProject(root, { a: urlOf("tb-dep") });
+    {
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), {}, "--linker=isolated");
+      expect(stderr).toContain("Saved lockfile");
+      expect(await lockedPackages(project)).toEqual({ a: row("tb-dep") });
+      expect(exitCode).toBe(0);
+    }
+
+    writeProject(root, { a: urlOf("tb-dep"), b: urlOf("tb-dep"), q: urlOf("q-dep") });
+    rmSync(join(project, "node_modules"), { recursive: true });
+    const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, "--linker=isolated");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [6]
+      Saved lockfile"
+    `);
+    // tb-dep, q-dep and r-dep
+    expect(installOutput(stdout)).toEqual([
+      expect.stringContaining("bun install v"),
+      "",
+      `+ a@${urlOf("tb-dep")}`,
+      `+ b@${urlOf("tb-dep")}`,
+      `+ q@${urlOf("q-dep")}`,
+      "",
+      "3 packages installed",
+    ]);
+    expect(await installedVersions(project, ["a", "b", "q"])).toEqual({ a: "tb-dep", b: "tb-dep", q: "q-dep" });
+    expect(await lockedPackages(project)).toEqual({
+      a: row("tb-dep"),
+      b: row("tb-dep"),
+      c: row("tb-dep"),
+      q: row("q-dep", { "r-dep": urlOf("r-dep") }),
+      "r-dep": row("r-dep", { c: urlOf("tb-dep") }),
+    });
+    expect(exitCode).toBe(0);
   },
   30_000,
 );

@@ -613,6 +613,10 @@ struct HttpResponseData;
          * (method, " HTTP/1.1\r\n", ": ", "\r\n"). Raw bounds get that framing as slack so
          * we don't reject requests Node accepts. Finite: ≤UWS_HTTP_MAX_HEADERS_COUNT*4 + 64. */
         static constexpr size_t MAX_HEADER_FRAMING_SLACK = UWS_HTTP_MAX_HEADERS_COUNT * 4 + 64;
+        /* The raw bound for a non-zero maxHeaderSize. Saturates: node:http passes UINT64_MAX for "no limit". */
+        static constexpr uint64_t maxRawHeaderSize(uint64_t maxHeaderSize) {
+            return maxHeaderSize > UINT64_MAX - MAX_HEADER_FRAMING_SLACK ? UINT64_MAX : maxHeaderSize + MAX_HEADER_FRAMING_SLACK;
+        }
 
         /* Maximum chunk-extension bytes per chunk, matching Node/llhttp's
          * kMaxChunkExtensionsSize (16 KiB). Enforced for every server
@@ -1158,7 +1162,7 @@ struct HttpResponseData;
             consumedTotal += consumed;
 
             /* Even if we could parse it, check for length here as well */
-            const uint64_t maxBufferedHeaderSize = maxHeaderSize ? (maxHeaderSize + MAX_HEADER_FRAMING_SLACK) : MAX_FALLBACK_SIZE;
+            const uint64_t maxBufferedHeaderSize = maxHeaderSize ? maxRawHeaderSize(maxHeaderSize) : MAX_FALLBACK_SIZE;
             if (consumed > maxBufferedHeaderSize) {
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
             }
@@ -1419,7 +1423,7 @@ public:
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
-        const size_t maxFallbackSize = maxHeaderSize ? (size_t) (maxHeaderSize + MAX_HEADER_FRAMING_SLACK) : MAX_FALLBACK_SIZE;
+        const size_t maxFallbackSize = maxHeaderSize ? (size_t) maxRawHeaderSize(maxHeaderSize) : MAX_FALLBACK_SIZE;
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;

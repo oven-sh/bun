@@ -3927,6 +3927,60 @@ it("the over-limit 503 advertises Connection: close, not keep-alive", async () =
   }
 });
 
+it.each([
+  ["res.end(body)", res => res.end("ok")],
+  ["res.write(body) then res.end()", res => (res.write("ok"), res.end())],
+])("Keep-Alive prints a server.keepAliveTimeout assigned after construction as is: %s", async (_, respond) => {
+  // server.keepAliveTimeout is a plain property in Node, so only the constructor option is
+  // validated. _storeHeader prints Math.floor(keepAliveTimeout / 1000) without a range check
+  // (Node v26.3.0 answers with exactly these lines). The first four do not fit the integer the
+  // native header writer takes: -5 used to go out as 4294967291 and 2^31 as 2147483647.
+  const expected = [
+    [-5000, "Keep-Alive: timeout=-5"],
+    [-0.5, "Keep-Alive: timeout=-1"],
+    [2 ** 31 * 1000, "Keep-Alive: timeout=2147483648"],
+    [Infinity, "Keep-Alive: timeout=Infinity"],
+    [(2 ** 31 - 1) * 1000, "Keep-Alive: timeout=2147483647"],
+    [5999, "Keep-Alive: timeout=5"],
+  ];
+  const actual: [number, string | undefined][] = [];
+  for (const [keepAliveTimeout] of expected) {
+    const server = createServer((req, res) => {
+      // The response took its copy when the request arrived. The idle timer reads the server's
+      // value once the response is done, and must not be armed with the numbers above.
+      server.keepAliveTimeout = 1000;
+      respond(res);
+    });
+    server.keepAliveTimeout = keepAliveTimeout as number;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const head = await new Promise<string>((resolve, reject) => {
+        const socket = connect(port, "127.0.0.1");
+        let data = "";
+        socket.on("data", chunk => {
+          data += chunk;
+          const end = data.indexOf("\r\n\r\n");
+          if (end === -1) return;
+          socket.destroy();
+          resolve(data.slice(0, end));
+        });
+        socket.on("close", () =>
+          reject(new Error(`closed before the end of the response head: ${JSON.stringify(data)}`)),
+        );
+        socket.on("error", reject);
+        socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      });
+      actual.push([keepAliveTimeout as number, head.split("\r\n").find(line => line.startsWith("Keep-Alive:"))]);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+  expect(actual).toEqual(expected);
+});
+
 it("a non-200 CONNECT through a proxy that holds the connection open is destroyed client-side", async () => {
   // cleanupAndPropagate deliberately defers destroy to req.onSocket for
   // status-code tunnel failures; oncreate must forward the socket so

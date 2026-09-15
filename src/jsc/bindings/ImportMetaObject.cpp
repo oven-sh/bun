@@ -333,6 +333,22 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     return result;
 }
 
+// `import.meta.url` inside the module that `url` names. For a file that exists this is the URL of the path the
+// module loader loads it under, which is its real path, like `finalizeResolution` in Node.js. Anything else keeps
+// `url`. Every exit of `import.meta.resolve()` that returns a `file:` URL without asking the resolver goes through
+// here.
+static WTF::String urlOfLoadedModule(Zig::GlobalObject* globalObject, const WTF::URL& url)
+{
+    if (url.protocolIsFile()) {
+        auto path = url.fileSystemPath();
+        auto pathString = Bun::toString(path);
+        auto loadedPath = Bun__importMetaResolveRealPath(globalObject, &pathString).transferToWTFString();
+        if (!loadedPath.isEmpty())
+            return makeString(WTF::URL::fileURLWithFileSystemPath(loadedPath).string(), url.queryWithLeadingQuestionMark(), url.fragmentIdentifierWithLeadingNumberSign());
+    }
+    return url.string();
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -410,7 +426,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         }
 
         WTF::URL url(fromURL, specifier);
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, urlOfLoadedModule(globalObject, url))));
     }
 
     // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`

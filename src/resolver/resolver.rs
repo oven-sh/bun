@@ -1685,6 +1685,123 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
+    /// The real path of `entry` in a directory whose real path is `dir_real_path` (empty when
+    /// no symlink is above it): the target of a symlink, else the entry's place in the real
+    /// directory. `None` when no symlink is involved. This is the rule of `finalize_result`.
+    fn real_path_of_entry<'b>(
+        &self,
+        dir_real_path: &[u8],
+        entry: &Fs::file_system::Entry,
+        buf: &'b mut [u8],
+    ) -> Option<&'b [u8]> {
+        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy stat inside
+        // `symlink()` is serialized on the per-entry mutex.
+        let symlink = unsafe { entry.symlink(self.rfs_ptr(), self.store_fd) };
+        if !symlink.is_empty() {
+            return Some(symlink);
+        }
+        if dir_real_path.is_empty() {
+            return None;
+        }
+        self.fs_ref()
+            .abs_buf_checked(&[dir_real_path, entry.base()], buf)
+    }
+
+    /// The path the module loader loads the file at `path` under: its real path by the rule
+    /// of `finalize_result`, or the normalized `path` when no symlink is on the way. `None`
+    /// when `path` is not an existing non-directory, and under `--preserve-symlinks`. Unlike
+    /// `resolve`, the file name must match exactly: no extensions, no index files, and not
+    /// the listing's case-insensitive lookup.
+    pub fn real_path_of_file<'b>(
+        &mut self,
+        path: &[u8],
+        buf: &'b mut PathBuffer,
+    ) -> Option<&'b [u8]> {
+        use bun_sys::FileKind;
+
+        if self.opts.preserve_symlinks
+            || !bun_paths::is_absolute(path)
+            // `resolve` marks such an import as external.
+            || path.starts_with(b"//")
+            || Self::import_path_names_directory(path)
+            || strings::contains_char(path, 0)
+            // Path normalization reads `\` as a separator on every platform, so it cannot
+            // name a POSIX file that has one.
+            || (cfg!(not(windows)) && strings::contains_char(path, b'\\'))
+            || ::bun_options_types::standalone_path::is_bun_standalone_file_path(path)
+        {
+            return None;
+        }
+
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
+        let capacity = abs_buf.len() - 1;
+        let abs_len = self
+            .fs_ref()
+            .abs_buf_checked(&[path], &mut abs_buf[..capacity])?
+            .len();
+        abs_buf[abs_len] = 0;
+        let abs_path = bun_core::ZStr::from_buf(&abs_buf[..], abs_len);
+
+        // The file system says whether the file exists, not the directory cache: a missing
+        // target must not leave a not-found entry in it, and a cached listing can be stale.
+        let stat = bun_sys::lstat(abs_path).ok()?;
+        let file_kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+        if file_kind == FileKind::Directory {
+            return None;
+        }
+        // A directory listing leaves out pipes, sockets and devices.
+        let listed = matches!(file_kind, FileKind::File | FileKind::SymLink);
+        let name = Fs::PathName::init(abs_path.as_bytes());
+
+        let mut retried = false;
+        let (dir, query) = loop {
+            let dir = self.read_dir_info_ignore_error(name.dir)?;
+            let query = dir.get_entry(self.generation, name.filename);
+            if query.is_some() || !listed {
+                break (dir, query);
+            }
+            // The cached listing predates the file. `VirtualMachine::_resolve` recovers an
+            // import the same way.
+            if retried || !self.bust_dir_cache(name.dir) {
+                return None;
+            }
+            retried = true;
+        };
+
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        let real = match query {
+            Some(query) => {
+                let entry = query.entry();
+                if entry.base() != name.filename {
+                    return None;
+                }
+                // SAFETY: as in `real_path_of_entry`.
+                let (kind, symlink) = unsafe {
+                    (
+                        entry.kind(self.rfs_ptr(), self.store_fd),
+                        entry.symlink(self.rfs_ptr(), self.store_fd),
+                    )
+                };
+                // A symlink to a directory, or one that does not resolve.
+                if kind == Fs::file_system::EntryKind::Dir
+                    || (file_kind == FileKind::SymLink && symlink.is_empty())
+                {
+                    return None;
+                }
+                self.real_path_of_entry(dir.abs_real_path, entry, &mut real_buf[..])
+            }
+            None if dir.abs_real_path.is_empty() => None,
+            None => self
+                .fs_ref()
+                .abs_buf_checked(&[dir.abs_real_path, name.filename], &mut real_buf[..]),
+        }
+        .unwrap_or(abs_path.as_bytes());
+
+        let out = buf.get_mut(..real.len())?;
+        out.copy_from_slice(real);
+        Some(out)
+    }
+
     pub(crate) fn resolve_without_symlinks(
         &mut self,
         source_dir: &[u8],

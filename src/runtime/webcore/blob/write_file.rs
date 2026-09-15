@@ -57,7 +57,7 @@ impl bun_jsc::JobContext for WriteFile {
     type OffThread = Self;
     /// Whom the write is reported to. (Dropped with the job when that is released unrun: the
     /// promise then stays pending.)
-    type Js = Box<WriteFilePromise>;
+    type Js = (bun_jsc::virtual_machine::OwnedFdJob, Box<WriteFilePromise>);
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);
@@ -65,7 +65,7 @@ impl bun_jsc::JobContext for WriteFile {
     }
     fn then(
         this: Self,
-        promise: Box<WriteFilePromise>,
+        (_fd_job, promise): Self::Js,
         _: &bun_jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
         WriteFile::then(this, promise)
@@ -87,7 +87,8 @@ impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
     pub fn schedule(this: WriteFile, promise: Box<WriteFilePromise>, cx: &bun_jsc::JsThread<'_>) {
-        bun_jsc::Job::<WriteFile>::schedule(cx, this, promise);
+        let fd_job = cx.vm().owned_fd_job(cx.context(), this.pathlike().fd_use());
+        bun_jsc::Job::<WriteFile>::schedule(cx, this, (fd_job, promise));
     }
 }
 
@@ -560,6 +561,8 @@ mod windows_impl {
         pub(crate) on_complete_ctx: *mut c_void,
         /// The context of the script that asked for the write.
         pub(crate) context: bun_jsc::ContextId,
+        /// For a descriptor another context's script opened: that context's count of requests on it.
+        pub(crate) _fd_job: bun_jsc::virtual_machine::OwnedFdJob,
         pub(crate) mkdirp_if_not_exists: bool,
         pub(crate) uv_bufs: [uv::uv_buf_t; 1],
 
@@ -609,12 +612,25 @@ mod windows_impl {
                     .as_file()
                     .pathlike
                     .is_path();
+            let fd_job = bun_jsc::virtual_machine::VirtualMachine::get().owned_fd_job(
+                script_context,
+                file_blob
+                    .store
+                    .get()
+                    .as_ref()
+                    .unwrap()
+                    .data
+                    .as_file()
+                    .pathlike
+                    .fd_use(),
+            );
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
                 context: script_context.id(),
+                _fd_job: fd_job,
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t {

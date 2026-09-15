@@ -1124,10 +1124,7 @@ mod _async_tasks {
         }
         #[inline]
         fn fd_use(&self) -> FdUse {
-            match &self.path {
-                PathOrFileDescriptor::Fd(fd) => FdUse::Uses(*fd),
-                PathOrFileDescriptor::Path(_) => FdUse::None,
-            }
+            self.path.fd_use()
         }
     }
     impl FsArgument for args::WriteFile<'static> {
@@ -1142,10 +1139,7 @@ mod _async_tasks {
         }
         #[inline]
         fn fd_use(&self) -> FdUse {
-            match &self.file {
-                PathOrFileDescriptor::Fd(fd) => FdUse::Uses(*fd),
-                PathOrFileDescriptor::Path(_) => FdUse::None,
-            }
+            self.file.fd_use()
         }
     }
     impl FsArgument for args::AppendFile<'static> {

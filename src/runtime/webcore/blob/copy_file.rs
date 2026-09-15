@@ -72,14 +72,19 @@ unsafe impl Send for CopyFile {}
 
 impl jsc::JobContext for CopyFile {
     type OffThread = Self;
-    type Js = jsc::JSPromiseStrong;
+    /// (With the counts of whoever else owns the two descriptors, if script named them by number.)
+    type Js = (
+        jsc::virtual_machine::OwnedFdJob,
+        jsc::virtual_machine::OwnedFdJob,
+        jsc::JSPromiseStrong,
+    );
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         this.run_async();
         Some(done)
     }
     fn then(
         mut this: Self,
-        mut promise: jsc::JSPromiseStrong,
+        (_source_fd_job, _destination_fd_job, mut promise): Self::Js,
         cx: &jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
         CopyFile::then(&mut this, promise.swap(), cx.global())
@@ -115,7 +120,13 @@ impl CopyFile {
         };
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        jsc::Job::<CopyFile>::schedule(cx, copy, promise);
+        let fd_jobs = (
+            cx.vm()
+                .owned_fd_job(cx.context(), copy.source_file_store.pathlike.fd_use()),
+            cx.vm()
+                .owned_fd_job(cx.context(), copy.destination_file_store.pathlike.fd_use()),
+        );
+        jsc::Job::<CopyFile>::schedule(cx, copy, (fd_jobs.0, fd_jobs.1, promise));
         value
     }
 
@@ -1070,6 +1081,11 @@ pub struct CopyFileWindows<'a> {
     pub(crate) event_loop: &'a jsc::event_loop::EventLoop,
     /// The context of the script that asked for the copy.
     pub(crate) context: jsc::ContextId,
+    /// For a descriptor another context's script opened: that context's count of requests on it.
+    pub(crate) _fd_jobs: (
+        jsc::virtual_machine::OwnedFdJob,
+        jsc::virtual_machine::OwnedFdJob,
+    ),
 
     pub(crate) size: SizeType,
 
@@ -1370,6 +1386,14 @@ impl<'a> CopyFileWindows<'a> {
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
         let global = event_loop.global_ref();
+        let vm = jsc::virtual_machine::VirtualMachine::get();
+        let fd_jobs = (
+            vm.owned_fd_job(context, source_file_store.data.as_file().pathlike.fd_use()),
+            vm.owned_fd_job(
+                context,
+                destination_file_store.data.as_file().pathlike.fd_use(),
+            ),
+        );
         let result = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
@@ -1378,6 +1402,7 @@ impl<'a> CopyFileWindows<'a> {
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
             context: context.id(),
+            _fd_jobs: fd_jobs,
             mkdirp_if_not_exists,
             destination_mode,
             size: size_,

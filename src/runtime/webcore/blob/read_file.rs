@@ -231,8 +231,9 @@ impl bun_jsc::JobContext for ReadFile {
     const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
     /// Where the bytes go: completed by `then`, or cancelled (its `Drop`) when the job comes
-    /// back to a VM that is no longer running script and is released unrun.
-    type Js = ReadFileCompletionFns;
+    /// back to a VM that is no longer running script and is released unrun. And, for a read of
+    /// a descriptor another context's script opened, that context's count of jobs on it.
+    type Js = (bun_jsc::virtual_machine::OwnedFdJob, ReadFileCompletionFns);
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the read; finishes from the io loop via the token.
         this.run(done);
@@ -240,7 +241,7 @@ impl bun_jsc::JobContext for ReadFile {
     }
     fn then(
         this: Self,
-        completion: ReadFileCompletionFns,
+        (_fd_job, completion): Self::Js,
         cx: &bun_jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
         ReadFile::then(this, completion, cx.global())
@@ -269,7 +270,10 @@ impl ReadFile {
         completion: ReadFileCompletionFns,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        bun_jsc::Job::<ReadFile>::schedule(cx, this, completion);
+        let fd_job = cx
+            .vm()
+            .owned_fd_job(cx.context(), this.file_store.pathlike.fd_use());
+        bun_jsc::Job::<ReadFile>::schedule(cx, this, (fd_job, completion));
     }
 }
 
@@ -954,6 +958,8 @@ pub struct ReadFileUV<'a> {
     pub(crate) is_regular_file: bool,
     /// The context of the script that asked for the read.
     pub(crate) context: jsc::ContextId,
+    /// For a descriptor another context's script opened: that context's count of requests on it.
+    pub(crate) _fd_job: jsc::virtual_machine::OwnedFdJob,
 
     pub(crate) req: libuv::fs_t,
     /// Stash for the open completion callback across the libuv async hop.
@@ -1068,6 +1074,8 @@ impl<'a> ReadFileUV<'a> {
         // async op, which additionally holds a keep-alive on it below.
         let event_loop: &'a EventLoop = unsafe { &*event_loop };
         let file_store = store.data.as_file().clone();
+        let fd_job = jsc::virtual_machine::VirtualMachine::get()
+            .owned_fd_job(context, file_store.pathlike.fd_use());
         let this = Box::new(ReadFileUV {
             // Projected through the helper to avoid materializing a
             // `&VirtualMachine`.
@@ -1090,6 +1098,7 @@ impl<'a> ReadFileUV<'a> {
             completion: Some(completion),
             is_regular_file: false,
             context: context.id(),
+            _fd_job: fd_job,
             req: bun_core::ffi::zeroed(),
             open_callback: Self::on_file_open,
         });

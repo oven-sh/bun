@@ -266,6 +266,10 @@ const dir = String(
         // The host writes through handles the graph opened: the descriptors are still the graph's.
         const data = Buffer.alloc(4 << 20, "T");
         for (const handle of await graph.run(() => app.opensForWriting(dir, 64))) handle.write(data, 0, data.length, 0).catch(() => {});
+      } else if (process.argv[2] === "host, through Bun.file(fd)") {
+        // The same by number: Bun.write() to a descriptor the graph opened.
+        const data = Buffer.alloc(4 << 20, "T");
+        for (const handle of await graph.run(() => app.opensForWriting(dir, 64))) Bun.write(Bun.file(handle.fd), data).catch(() => {});
       } else await graph.run(() => app.queuesWrites(dir, 64));
       graph.dispose();
       // The host's files are given the descriptor numbers the graph's had.
@@ -750,7 +754,9 @@ const dir = String(
       // Turns enough for a stream to have reported (the host, asking the same of such streams, is
       // told EBADF within one: "streams over its FileHandles that the host still holds").
       for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ told }));
+      // The write that found the descriptor gone is not in flight: the host can still destroy the stream.
+      const closed = await new Promise(resolve => streams.writer.on("error", () => {}).on("close", () => resolve(true)).destroy());
+      console.log(JSON.stringify({ told, closed }));
       (await import("node:fs")).rmSync(scratch);
       process.exit(0);
     `,
@@ -3259,6 +3265,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
+  test("nor do Bun.write()s the host had queued to those descriptors by number", async () => {
+    expect(await runsFixture("queued-writes-of-a-disposed-graph.mjs", "host, through Bun.file(fd)")).toEqual({
+      stdout: `{"hostFilesWrittenTo":0}`,
+      exitCode: 0,
+    });
+  });
   test("the host's import() of a module parked in a top-level await is left pending: dispose() settles nothing", async () => {
     expect(await runsFixture("host-import-parked-at-dispose.mjs")).toEqual({
       stdout: `{"settled":"pending"}`,
@@ -3376,9 +3388,9 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("its own leftover script is told nothing of them", async () => {
+  test("its own leftover script is told nothing of them, and the host can still destroy them", async () => {
     expect(await runsFixture("its-own-streams-after-it-was-disposed.mjs")).toEqual({
-      stdout: `{"told":{}}`,
+      stdout: `{"told":{},"closed":true}`,
       exitCode: 0,
     });
   });

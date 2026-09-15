@@ -14,10 +14,19 @@ impl ImmediateObject {
     pub(crate) fn init(
         global: &JSGlobalObject,
         id: i32,
+        async_hooks_id: u64,
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
-        Self::init_with(global, id, Kind::SetImmediate, 0, callback, arguments)
+        Self::init_with(
+            global,
+            id,
+            async_hooks_id,
+            Kind::SetImmediate,
+            0,
+            callback,
+            arguments,
+        )
     }
 
     /// Thin forwarder to

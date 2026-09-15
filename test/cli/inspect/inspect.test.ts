@@ -295,6 +295,49 @@ describe("websocket", () => {
   // FIXME: Depends on https://github.com/oven-sh/bun/pull/4649
   test.todo("bun --inspect=ws+unix:///tmp/inspect.sock");
 
+  test("the --inspect banner also lists the endpoint opened for BUN_INSPECT", async () => {
+    // The editor extension exports BUN_INSPECT and relies on that endpoint even
+    // when a flag is passed too (its test debugger adds --inspect-brk), so both
+    // stay open; the flag's banner names the second one instead of hiding it.
+    const envPath = "/" + Math.random().toString(36).slice(2);
+    const flagPath = "/" + Math.random().toString(36).slice(2);
+    inspectee = spawn({
+      cwd: import.meta.dir,
+      cmd: [bunExe(), "--inspect=ws://127.0.0.1:0" + flagPath, "inspectee.js"],
+      env: { ...bunEnv, BUN_INSPECT: "ws://127.0.0.1:0" + envPath },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let stderr = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of inspectee.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk);
+      // The banner is framed by two "Bun Inspector" rules.
+      if (stderr.split("Bun Inspector").length > 2) break;
+    }
+    const urls = stripAnsi(stderr)
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("ws://"))
+      .map(line => new URL(line));
+    expect(urls.map(url => url.pathname)).toEqual([flagPath, envPath]);
+    expect(stripAnsi(stderr)).toContain("BUN_INSPECT:\n  ws://127.0.0.1:");
+
+    for (const url of urls) {
+      const webSocket = new WebSocket(url);
+      const { promise: reply, resolve, reject } = Promise.withResolvers<unknown>();
+      webSocket.addEventListener("error", cause => reject(new Error(`WebSocket error on ${url}`, { cause })));
+      webSocket.addEventListener("close", () => reject(new Error(`WebSocket to ${url} closed before a reply`)));
+      webSocket.addEventListener("message", ({ data }) => resolve(JSON.parse(data.toString())));
+      webSocket.addEventListener("open", () =>
+        webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } })),
+      );
+      expect(await reply).toMatchObject({ id: 1, result: { result: { type: "number", value: 2 } } });
+      webSocket.close();
+    }
+  });
+
   afterEach(() => {
     inspectee?.kill();
   });

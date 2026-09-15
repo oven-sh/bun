@@ -1006,6 +1006,13 @@ export const linkerFlags: Flag[] = [
       "/delayload:SHELL32.dll",
       "/delayload:OLEAUT32.dll",
       "/delayload:USERENV.dll",
+      // WebGPU (src/webgpu): what the `windows` crates and wgpu's Direct3D 12
+      // backend import. Nothing in them runs before navigator.gpu is used.
+      // d3d12.dll and d3dcompiler_47.dll are not here: wgpu LoadLibrary()s them.
+      "/delayload:dxgi.dll",
+      "/delayload:SETUPAPI.dll",
+      "/delayload:combase.dll",
+      "/delayload:api-ms-win-core-winrt-error-l1-1-0.dll",
     ],
     when: c => c.windows && c.release,
     desc: "Release link opts + delay-load non-critical DLLs (faster startup)",

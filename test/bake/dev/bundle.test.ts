@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import { isWindows } from "harness";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -124,6 +125,24 @@ devTest("unresolved import of a specifier longer than a path buffer", {
       await dev.write("index.ts", `console.log('value: ' + 456);`);
     });
     await c.expectMessage("value: 456");
+  },
+});
+// A CSS url() without "./" skips the resolver's directory cache bust, so this
+// reaches only DirectoryWatchStore.track_resolution_failure. Sized past
+// MAX_PATH_BYTES on every platform (4 KiB posix, ~96 KiB Windows).
+devTest("unresolved css url() longer than a path buffer", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["styles.css"] }),
+    "styles.css": `
+      body {
+        background-image: url(${Buffer.alloc((isWindows ? 96 : 4) * 1024 + 1024, "a").toString()});
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("styles.css", `body { color: blue; }`);
+    expect((await dev.fetch("/")).status).toBe(200);
   },
 });
 devTest("default export same-scope handling", {

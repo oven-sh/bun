@@ -34,6 +34,8 @@ const server = Bun.serve({
 
     setTimeout(() => record("timer"), 0);
     setImmediate(() => record("immediate"));
+    process.nextTick(() => record("nextTick"));
+    Promise.resolve().then(() => record("microtask"));
 
     // Nothing may read the request before the call: a read copies the head
     // out of the receive buffer, and the url below has to come from there.

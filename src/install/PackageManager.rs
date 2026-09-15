@@ -1062,13 +1062,7 @@ impl PackageManager {
         // SAFETY: no `&mut PackageManager` is live before the first `is_done`.
         if matches!(unsafe { &*event_loop }, AnyEventLoop::Js { .. }) {
             // SAFETY: same contract as this fn.
-            unsafe {
-                Self::park_until(
-                    this,
-                    (&raw mut erased).cast::<c_void>(),
-                    trampoline::<C>,
-                )
-            };
+            unsafe { Self::park_until(this, (&raw mut erased).cast::<c_void>(), trampoline::<C>) };
             return;
         }
         // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`

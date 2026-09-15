@@ -556,6 +556,33 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   }, 20_000);
 
+  test("Module._stat ends the path at the first null byte", async () => {
+    using dir = tempDir("module-stat-null-byte", { "file.js": "", "directory": { "x": "" } });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { _stat } = require("node:module");
+         const path = require("node:path");
+         const file = path.join(process.cwd(), "file.js");
+         const directory = path.join(process.cwd(), "directory");
+         console.log(JSON.stringify({
+           file: _stat(file + "\\0ignored"),
+           directory: _stat(directory + "\\0ignored"),
+           missing: _stat(path.join(process.cwd(), "missing\\0file.js")) < 0,
+         }));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // node v26.3.0 prints the same line. It passes the path to uv_fs_stat as a C string.
+    expect(stdout).toBe('{"file":0,"directory":1,"missing":true}\n');
+    expect(exitCode).toBe(0);
+  });
+
   test("Module.wrap", () => {
     var mod = { exports: {} };
     expect(eval(wrap("exports.foo = 1; return 42"))(mod.exports, mod)).toBe(42);

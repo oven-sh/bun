@@ -212,6 +212,7 @@ fn parse_js<'a>(
     options: Options,
 ) -> Option<Box<bun_ast::Ast<'a>>> {
     let mut opts = bun_js_parser::ParserOptions::init(Default::default(), loader);
+    opts.ts_no_ambiguous_less_than = matches!(source.path.name().ext, b".mts" | b".cts");
     // Print what is there: no dead-code removal, no macro execution, no import trimming.
     opts.features.dead_code_elimination = options.dce;
     opts.features.no_macros = true;

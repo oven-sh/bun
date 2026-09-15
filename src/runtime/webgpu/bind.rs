@@ -370,7 +370,7 @@ pub(crate) fn parse_set_bind_group(
         };
         let bytes = view.byte_slice();
         let count = (bytes.len() / 4) as u64;
-        let length = length.map_or(count.saturating_sub(start), u64::from);
+        let length = length.map_or_else(|| count.saturating_sub(start), u64::from);
         if start > count || length > count - start {
             return Err(global.throw_value(global.create_range_error_instance(format_args!(
                 "setBindGroup: dynamicOffsetsDataStart + dynamicOffsetsDataLength is past the end of dynamicOffsetsData"

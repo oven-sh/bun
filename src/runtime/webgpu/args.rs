@@ -56,6 +56,18 @@ pub(crate) fn to_u64(global: &JSGlobalObject, v: JSValue, what: &str) -> JsResul
     Ok(enforce_range(global, v, what, 0.0, MAX_SAFE_INTEGER)? as u64)
 }
 
+/// An optional `[EnforceRange] unsigned long long` argument: `undefined` is `None`.
+pub(crate) fn optional_u64(
+    global: &JSGlobalObject,
+    v: JSValue,
+    what: &str,
+) -> JsResult<Option<u64>> {
+    if v.is_undefined() {
+        return Ok(None);
+    }
+    Ok(Some(to_u64(global, v, what)?))
+}
+
 /// `double` (restricted: NaN and the infinities are a TypeError).
 pub(crate) fn to_f64(global: &JSGlobalObject, v: JSValue, what: &str) -> JsResult<f64> {
     let n = v.to_number(global)?;

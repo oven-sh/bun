@@ -289,14 +289,10 @@ impl GPUBuffer {
         this_value: JSValue,
     ) -> JsResult<JSValue> {
         let mode = args::to_u32(global, callframe.argument(0), "mapAsync: mode")?;
-        let offset = match callframe.argument(1) {
-            v if v.is_undefined() => 0,
-            v => args::to_u64(global, v, "mapAsync: offset")?,
-        };
-        let size = match callframe.argument(2) {
-            v if v.is_undefined() => self.size.saturating_sub(offset),
-            v => args::to_u64(global, v, "mapAsync: size")?,
-        };
+        let offset =
+            args::optional_u64(global, callframe.argument(1), "mapAsync: offset")?.unwrap_or(0);
+        let size = args::optional_u64(global, callframe.argument(2), "mapAsync: size")?
+            .unwrap_or_else(|| self.size.saturating_sub(offset));
 
         let reject = |aborted: bool, message: &str| -> JsResult<JSValue> {
             Ok(
@@ -430,14 +426,10 @@ impl GPUBuffer {
         callframe: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<JSValue> {
-        let offset = match callframe.argument(0) {
-            v if v.is_undefined() => 0,
-            v => args::to_u64(global, v, "getMappedRange: offset")?,
-        };
-        let size = match callframe.argument(1) {
-            v if v.is_undefined() => self.size.saturating_sub(offset),
-            v => args::to_u64(global, v, "getMappedRange: size")?,
-        };
+        let offset = args::optional_u64(global, callframe.argument(0), "getMappedRange: offset")?
+            .unwrap_or(0);
+        let size = args::optional_u64(global, callframe.argument(1), "getMappedRange: size")?
+            .unwrap_or_else(|| self.size.saturating_sub(offset));
         let operation_error = |message: &str| {
             global.throw_dom_exception(
                 bun_jsc::DOMExceptionCode::OperationError,

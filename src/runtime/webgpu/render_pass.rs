@@ -31,13 +31,6 @@ fn parse_store_op(s: &[u8]) -> Option<wgt::StoreOp> {
     }
 }
 
-fn optional_u64(global: &JSGlobalObject, v: JSValue, what: &str) -> JsResult<Option<u64>> {
-    if v.is_undefined() {
-        return Ok(None);
-    }
-    Ok(Some(args::to_u64(global, v, what)?))
-}
-
 /// wgpu-core reads `None` as "to the end of the buffer", so a `size` of 0 binds that too.
 fn binding_size(size: Option<u64>) -> Option<NonZeroU64> {
     size.and_then(NonZeroU64::new)
@@ -108,9 +101,11 @@ macro_rules! render_commands {
                     "GPUIndexFormat",
                     names::parse_index_format,
                 )?;
-                let offset = optional_u64(global, callframe.argument(2), "setIndexBuffer: offset")?
-                    .unwrap_or(0);
-                let size = optional_u64(global, callframe.argument(3), "setIndexBuffer: size")?;
+                let offset =
+                    args::optional_u64(global, callframe.argument(2), "setIndexBuffer: offset")?
+                        .unwrap_or(0);
+                let size =
+                    args::optional_u64(global, callframe.argument(3), "setIndexBuffer: size")?;
                 let result = instance().$set_index_buffer(
                     self.raw.id(),
                     buffer.id(),
@@ -136,9 +131,10 @@ macro_rules! render_commands {
                     ),
                 };
                 let offset =
-                    optional_u64(global, callframe.argument(2), "setVertexBuffer: offset")?
+                    args::optional_u64(global, callframe.argument(2), "setVertexBuffer: offset")?
                         .unwrap_or(0);
-                let size = optional_u64(global, callframe.argument(3), "setVertexBuffer: size")?;
+                let size =
+                    args::optional_u64(global, callframe.argument(3), "setVertexBuffer: size")?;
                 let result = instance().$set_vertex_buffer(
                     self.raw.id(),
                     slot,

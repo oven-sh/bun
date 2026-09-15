@@ -19,13 +19,6 @@ pub struct GPUCommandEncoder {
 
 super::gpu_object!(GPUCommandEncoder, label);
 
-fn optional_u64(global: &JSGlobalObject, v: JSValue, what: &str) -> JsResult<Option<u64>> {
-    if v.is_undefined() {
-        return Ok(None);
-    }
-    Ok(Some(args::to_u64(global, v, what)?))
-}
-
 impl GPUCommandEncoder {
     pub(crate) fn create(
         global: &JSGlobalObject,
@@ -78,7 +71,7 @@ impl GPUCommandEncoder {
                     0,
                     destination,
                     0,
-                    optional_u64(global, callframe.argument(2), "copyBufferToBuffer: size")?,
+                    args::optional_u64(global, callframe.argument(2), "copyBufferToBuffer: size")?,
                 )
             } else {
                 (
@@ -93,7 +86,7 @@ impl GPUCommandEncoder {
                         callframe.argument(3),
                         "copyBufferToBuffer: destinationOffset",
                     )?,
-                    optional_u64(global, callframe.argument(4), "copyBufferToBuffer: size")?,
+                    args::optional_u64(global, callframe.argument(4), "copyBufferToBuffer: size")?,
                 )
             };
         let result = instance().command_encoder_copy_buffer_to_buffer(
@@ -198,8 +191,8 @@ impl GPUCommandEncoder {
         let buffer =
             args::to_class::<GPUBuffer>(global, callframe.argument(0), "clearBuffer", "GPUBuffer")?;
         let offset =
-            optional_u64(global, callframe.argument(1), "clearBuffer: offset")?.unwrap_or(0);
-        let size = optional_u64(global, callframe.argument(2), "clearBuffer: size")?;
+            args::optional_u64(global, callframe.argument(1), "clearBuffer: offset")?.unwrap_or(0);
+        let size = args::optional_u64(global, callframe.argument(2), "clearBuffer: size")?;
         let result =
             instance().command_encoder_clear_buffer(self.raw.id(), buffer.id(), offset, size);
         self.device.check_result(global, result)?;

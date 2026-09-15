@@ -109,14 +109,10 @@ impl GPUQueue {
             args::to_class::<GPUBuffer>(global, callframe.argument(0), "writeBuffer", "GPUBuffer")?;
         let buffer_offset =
             args::to_u64(global, callframe.argument(1), "writeBuffer: bufferOffset")?;
-        let data_offset = match callframe.argument(3) {
-            v if v.is_undefined() => 0,
-            v => args::to_u64(global, v, "writeBuffer: dataOffset")?,
-        };
-        let size = match callframe.argument(4) {
-            v if v.is_undefined() => None,
-            v => Some(args::to_u64(global, v, "writeBuffer: size")?),
-        };
+        let data_offset =
+            args::optional_u64(global, callframe.argument(3), "writeBuffer: dataOffset")?
+                .unwrap_or(0);
+        let size = args::optional_u64(global, callframe.argument(4), "writeBuffer: size")?;
         // Read the bytes last: the conversions above can run script that detaches `data`.
         let source = BufferSource::from_js(global, callframe.argument(2), "writeBuffer: data")?;
 

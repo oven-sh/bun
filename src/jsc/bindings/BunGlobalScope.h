@@ -14,15 +14,9 @@ protected:
     void finishCreation(JSC::VM& vm);
 
 public:
-    GlobalScope(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    GlobalScope(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
-        : Base(vm, structure, methodTable)
-    {
-    }
+    GlobalScope(JSC::VM& vm, JSC::Structure* structure);
+    GlobalScope(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
+    ~GlobalScope();
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

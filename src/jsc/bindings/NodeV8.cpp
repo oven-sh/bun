@@ -2,6 +2,7 @@
 // JavaScriptCore heap directly.
 #include "root.h"
 
+#include "BunClientData.h"
 #include "ErrorCode.h"
 #include "NodeV8.h"
 #include "ZigGlobalObject.h"
@@ -13,9 +14,41 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/StdLibExtras.h>
 
+#include "mimalloc.h"
+
 namespace Bun {
 
 using namespace JSC;
+
+// Returns: [heapSize, heapCapacity, extraMemorySize, globalObjectCount, peakRSS]
+JSC_DEFINE_HOST_FUNCTION(functionGetHeapStatisticsArray, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& heap = vm.heap;
+
+    size_t elapsed_msecs = 0, user_msecs = 0, system_msecs = 0;
+    size_t current_rss = 0, peak_rss = 0;
+    size_t current_commit = 0, peak_commit = 0, page_faults = 0;
+    mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss,
+        &peak_rss, &current_commit, &peak_commit, &page_faults);
+
+    const size_t globalObjectCount = WebCore::clientData(vm)->liveGlobalObjectCount;
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr, 5);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectIndex(globalObject, 0, jsNumber(heap.size()));
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectIndex(globalObject, 1, jsNumber(heap.capacity()));
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectIndex(globalObject, 2, jsNumber(heap.extraMemorySize()));
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectIndex(globalObject, 3, jsNumber(globalObjectCount));
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectIndex(globalObject, 4, jsNumber(peak_rss));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
+}
 
 // v8.isStringOneByteRepresentation() asks whether the engine is storing the
 // string with one byte per character. JSC's JSString::is8Bit() answers exactly
@@ -102,6 +135,7 @@ JSC::JSObject* createNodeV8Binding(JSC::JSGlobalObject* globalObject)
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startGCProfiler"_s), 0, functionStartGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "stopGCProfiler"_s), 1, functionStopGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "discardGCProfiler"_s), 1, functionDiscardGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
+    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getHeapStatisticsArray"_s), 0, functionGetHeapStatisticsArray, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     return object;
 }
 

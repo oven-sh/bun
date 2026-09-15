@@ -623,6 +623,188 @@ it.each([
   expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/helloooo");
 });
 
+// RFC 9112 9.6: a server that receives a "close" connection option MUST NOT
+// process any further requests on that connection. The parser must stop at the
+// close-flagged request even when a well-formed follow-up sits in the same TCP
+// segment; the response to /a is delivered and the socket is then closed.
+describe("does not dispatch a pipelined request after Connection: close", () => {
+  async function roundTrip(port: number, payload: string, expectedResponses: number) {
+    const chunks: Buffer[] = [];
+    // Settle once the server has either closed the socket or written the
+    // expected number of responses; an unfixed server writes one response too
+    // many and never closes, so the second condition keeps the failure fast.
+    const { promise: done, resolve } = Promise.withResolvers<void>();
+    const count = () =>
+      (
+        Buffer.concat(chunks)
+          .toString("latin1")
+          .match(/HTTP\/1\.[01] \d{3} /g) ?? []
+      ).length;
+    const socket = net.connect(port, "127.0.0.1");
+    socket.on("data", c => {
+      chunks.push(c);
+      if (count() >= expectedResponses) resolve();
+    });
+    socket.on("error", () => {});
+    let closed = false;
+    socket.on("close", () => {
+      closed = true;
+      resolve();
+    });
+    await new Promise<void>((ok, fail) => {
+      socket.once("connect", ok);
+      socket.once("error", fail);
+    });
+    socket.write(payload);
+    await done;
+    // True only when the server closed the socket before `expectedResponses`
+    // responses arrived; read before destroy() so it is never our own close.
+    const closedByServer = closed;
+    socket.destroy();
+    const raw = Buffer.concat(chunks).toString("latin1");
+    return { raw, responses: count(), closedByServer };
+  }
+
+  const pipelinedB = "GET /b HTTP/1.1\r\nHost: x\r\n\r\n";
+
+  it.each([
+    ["close", "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"],
+    ["Close (mixed case)", "GET /a HTTP/1.1\r\nHost: x\r\nConnection: Close\r\n\r\n"],
+    ["keep-alive, close", "GET /a HTTP/1.1\r\nHost: x\r\nConnection: keep-alive, close\r\n\r\n"],
+    ["close, TE", "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close, TE\r\n\r\n"],
+    ["HTTP/1.0 (implicit)", "GET /a HTTP/1.0\r\nHost: x\r\n\r\n"],
+  ])("%s", async (_label, requestA) => {
+    const handled: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        handled.push(p);
+        return new Response("body:" + p);
+      },
+    });
+
+    const { raw, responses, closedByServer } = await roundTrip(server.port, requestA + pipelinedB, 2);
+
+    expect(raw).toContain("body:/a");
+    expect(raw).not.toContain("body:/b");
+    expect({ handled, responses, closedByServer }).toEqual({ handled: ["/a"], responses: 1, closedByServer: true });
+  });
+
+  // The close-flagged request is not the first of its read. The requests
+  // before it are answered, the requests behind it are not, and the server
+  // closes after the response to the close-flagged one.
+  it("stops at a close-flagged request in the middle of a read", async () => {
+    const handled: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        handled.push(p);
+        return new Response("body:" + p);
+      },
+    });
+
+    const { raw, responses, closedByServer } = await roundTrip(
+      server.port,
+      "GET /0 HTTP/1.1\r\nHost: x\r\n\r\n" +
+        "GET /1 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" +
+        "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n" +
+        "GET /3 HTTP/1.1\r\nHost: x\r\n\r\n",
+      4,
+    );
+
+    expect(raw).toEndWith("body:/1");
+    expect({ handled, responses, closedByServer }).toEqual({
+      handled: ["/0", "/1"],
+      responses: 2,
+      closedByServer: true,
+    });
+  });
+
+  // The response to /a is still pending when the parser reaches /b. Without
+  // the discard, /b hits the "request behind a pending response" close and the
+  // response to /a is never sent.
+  it("delivers the response of an async handler before it closes", async () => {
+    const handled: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const p = new URL(req.url).pathname;
+        handled.push(p);
+        await new Promise<void>(r => setImmediate(r));
+        return new Response("body:" + p);
+      },
+    });
+
+    const { raw, responses, closedByServer } = await roundTrip(
+      server.port,
+      "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" + pipelinedB,
+      2,
+    );
+
+    expect(raw).toEndWith("body:/a");
+    expect({ handled, responses, closedByServer }).toEqual({ handled: ["/a"], responses: 1, closedByServer: true });
+  });
+
+  it.each([
+    ["five-byte non-close token", "GET /a HTTP/1.1\r\nHost: x\r\nConnection: nope!\r\n\r\n"],
+    ["no Connection header (control)", "GET /a HTTP/1.1\r\nHost: x\r\n\r\n"],
+  ])("still serves both requests: %s", async (_label, requestA) => {
+    const handled: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        handled.push(p);
+        return new Response("body:" + p);
+      },
+    });
+
+    // /a keeps the connection alive; /b carries the close so the server
+    // closes the socket and roundTrip's `done` settles via the close event.
+    const { raw, responses } = await roundTrip(
+      server.port,
+      requestA + "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      2,
+    );
+
+    expect(raw).toContain("body:/a");
+    expect(raw).toContain("body:/b");
+    expect({ handled, responses }).toEqual({ handled: ["/a", "/b"], responses: 2 });
+  });
+
+  it("discards malformed bytes after the close-flagged request without emitting an error response", async () => {
+    const handled: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        handled.push(p);
+        return new Response("body:" + p);
+      },
+    });
+
+    const { raw, responses } = await roundTrip(
+      server.port,
+      "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n@@@ not HTTP\r\n\r\n",
+      2,
+    );
+
+    expect(raw).toContain("body:/a");
+    expect({ handled, responses, has400: raw.includes(" 400 ") }).toEqual({
+      handled: ["/a"],
+      responses: 1,
+      has400: false,
+    });
+  });
+});
+
 describe("streaming", () => {
   describe("error handler", () => {
     // The body source fails before any byte is written. The Response's status

@@ -797,6 +797,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * lexicalGlobalObjec
     auto key = Zig::GlobalObject::moduleLoaderResolve(globalObject, globalObject->moduleLoader(), JSC::jsString(vm, name), JSC::jsUndefined(), nullptr, false);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // A load of this key is in flight, from import() or an earlier runMain: join
+    // it, for the reason importResolvedModule does.
+    if (auto* pending = globalObject->pendingModuleLoad(key, JSC::ScriptFetchParameters::Type::JavaScript)) {
+        Bun__VirtualMachine__setOverrideModuleRunMainPromise(globalObject->bunVM(), pending);
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
     // The tracked promise must settle like an import() promise: with the

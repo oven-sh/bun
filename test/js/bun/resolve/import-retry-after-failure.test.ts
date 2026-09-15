@@ -16,6 +16,7 @@ test("import() of a module that failed to load retries after the file changes", 
     // listed before the file was written, so these exist before bun starts.
     "h3.virt": "",
     "h5.mjs": "export const v = 42;",
+    "h6.virt": "",
     "d.json": '{"v":42}',
     "main.mjs": `
       import fs from "node:fs";
@@ -140,6 +141,15 @@ test("import() of a module that failed to load retries after the file changes", 
         .then(() => import("./h5.mjs"))
         .then(ns => "OK " + ns.v, () => "ERR");
       console.log("H5", h5);
+      // Two runMain calls of one key share the load as well.
+      require("module").runMain("./h6.virt");
+      require("module").runMain("./h6.virt");
+      const h6 = await Promise.resolve()
+        .then(() => import("./h6.virt"))
+        .then(ns => "OK " + ns.v, () => "ERR");
+      console.log("H6", h6);
+      await t("H6b", "./h6.virt");
+      console.log("H6 loads", loads.get("h6.virt"));
       // Loads are keyed by module type too: a typed import() in the same tick
       // does not join the untyped one.
       const d = await Promise.all([import("./d.json"), import("./d.json", { with: { type: "text" } })]);
@@ -191,6 +201,9 @@ test("import() of a module that failed to load retries after the file changes", 
     H3b OK 42
     H3 loads 2
     H5 OK 42
+    H6 ERR
+    H6b OK 42
+    H6 loads 2
     D object 42 string 42
     E1 ERR boom
     E2 ERR boom"

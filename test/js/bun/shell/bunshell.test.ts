@@ -3422,12 +3422,10 @@ describe("stdin redirect from a Response whose body is not in memory yet", () =>
       await using server = Bun.serve({ port: 0, fetch: () => respond(body) });
       const response = await fetch(server.url);
       const result = await $`${BUN} -e ${countStdin} < ${response}`.env(bunEnv).quiet().nothrow();
-      expect({
-        stdout: JSON.parse(result.stdout.toString()),
-        stderr: result.stderr.toString(),
-        exitCode: result.exitCode,
-        bodyUsed: response.bodyUsed,
-      }).toEqual({ stdout: { total: SIZE, a: SIZE }, stderr: "", exitCode: 0, bodyUsed: true });
+      expect(JSON.parse(result.stdout.toString())).toEqual({ total: SIZE, a: SIZE });
+      expect(result.stderr.toString()).toBe("");
+      expect(response.bodyUsed).toBe(true);
+      expect(result.exitCode).toBe(0);
     });
   });
 

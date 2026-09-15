@@ -527,7 +527,7 @@ impl Cmd {
     /// the command with the rejection.
     fn on_body_settled(
         global: &crate::jsc::JSGlobalObject,
-        wait: Box<BodyWait>,
+        wait: &BodyWait,
         settled: Result<crate::jsc::JSValue, crate::jsc::JSValue>,
     ) {
         if wait.cancelled {
@@ -1269,7 +1269,7 @@ fn on_resolve_body(
     // SAFETY: `wait_for_redirect_body` leaked the box into the reaction's
     // trailing argument. Only one of the two reactions fires.
     let wait = unsafe { bun_core::heap::take(args[args.len() - 1].as_promise_ptr::<BodyWait>()) };
-    Cmd::on_body_settled(global, wait, Ok(args[0]));
+    Cmd::on_body_settled(global, &wait, Ok(args[0]));
     Ok(crate::jsc::JSValue::UNDEFINED)
 }
 
@@ -1280,7 +1280,7 @@ fn on_reject_body(
     let args = callframe.arguments();
     // SAFETY: see `on_resolve_body`.
     let wait = unsafe { bun_core::heap::take(args[args.len() - 1].as_promise_ptr::<BodyWait>()) };
-    Cmd::on_body_settled(global, wait, Err(args[0]));
+    Cmd::on_body_settled(global, &wait, Err(args[0]));
     Ok(crate::jsc::JSValue::UNDEFINED)
 }
 

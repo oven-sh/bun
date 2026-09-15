@@ -363,13 +363,7 @@ impl<'a> Writable<'a> {
                     //
                     // The call re-enters via the writer backref, so no `&mut
                     // FileSink` is materialized across it.
-                    // SAFETY: `pipe_ref` keeps the sink live.
-                    unsafe {
-                        FileSink::on_attached_process_exit(
-                            pipe_ref.as_ptr(),
-                            &subprocess.process().status,
-                        )
-                    };
+                    FileSink::attached_process_exited(&pipe_ref, &subprocess.process().status);
                     // The wrapper takes its own ref; `pipe_ref` drops after.
                     Self::pipe_sink_mut(&pipe_ref).to_js(global_this)
                 } else {

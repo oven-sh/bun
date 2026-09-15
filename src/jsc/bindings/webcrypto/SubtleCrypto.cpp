@@ -99,6 +99,13 @@ enum class Operations {
 
 static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAlgorithmParameters(JSGlobalObject&, WebCore::SubtleCrypto::AlgorithmIdentifier, Operations);
 
+// Where an operation's result is posted: the context of the script that is calling, which for
+// a Bun.ModuleGraph is the graph's own, so a graph that has stopped since is not told.
+static ScriptExecutionContext& callingContext(JSGlobalObject& state)
+{
+    return *defaultGlobalObject(&state)->currentScriptExecutionContext();
+}
+
 static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& state, SubtleCrypto::AlgorithmIdentifier algorithmIdentifier)
 {
     auto digestParams = normalizeCryptoAlgorithmParameters(state, algorithmIdentifier, Operations::Digest);
@@ -801,7 +808,7 @@ void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    RELEASE_AND_RETURN(scope, algorithm->encrypt(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
+    RELEASE_AND_RETURN(scope, algorithm->encrypt(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), callingContext(state), m_workQueue));
 }
 
 void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& key, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
@@ -845,7 +852,7 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    RELEASE_AND_RETURN(scope, algorithm->decrypt(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
+    RELEASE_AND_RETURN(scope, algorithm->decrypt(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), callingContext(state), m_workQueue));
 }
 
 void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& key, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
@@ -892,7 +899,7 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    RELEASE_AND_RETURN(scope, algorithm->sign(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
+    RELEASE_AND_RETURN(scope, algorithm->sign(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), callingContext(state), m_workQueue));
 }
 
 void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& key, BufferSource&& signatureBufferSource, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
@@ -942,7 +949,7 @@ void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    RELEASE_AND_RETURN(scope, algorithm->verify(*params, key, WTF::move(*signature), WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
+    RELEASE_AND_RETURN(scope, algorithm->verify(*params, key, WTF::move(*signature), WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), callingContext(state), m_workQueue));
 }
 
 void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
@@ -975,7 +982,7 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    RELEASE_AND_RETURN(scope, algorithm->digest(WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
+    RELEASE_AND_RETURN(scope, algorithm->digest(WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), callingContext(state), m_workQueue));
 }
 
 void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
@@ -1026,7 +1033,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
     // The 26 January 2017 version of the specification suggests we should perform the following task asynchronously
     // regardless what kind of keys it produces: https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-generateKey
     // That's simply not efficient for AES, HMAC and EC keys. Therefore, we perform it as an async task only for RSA keys.
-    RELEASE_AND_RETURN(scope, algorithm->generateKey(*params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext()));
+    RELEASE_AND_RETURN(scope, algorithm->generateKey(*params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback), callingContext(state)));
 }
 
 void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& baseKey, AlgorithmIdentifier&& derivedKeyType, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
@@ -1117,7 +1124,7 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
+    RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), callingContext(state), m_workQueue));
 }
 
 void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& baseKey, std::optional<unsigned> length, Ref<DeferredPromise>&& promise)
@@ -1156,7 +1163,7 @@ void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& 
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
+    RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), callingContext(state), m_workQueue));
 }
 
 // Node's aliasKeyFormat maps raw-secret and raw-public to raw for these
@@ -1395,7 +1402,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
     auto exportAlgorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
     auto wrapAlgorithm = CryptoAlgorithmRegistry::singleton().create(wrappingKey.algorithmIdentifier());
 
-    auto context = scriptExecutionContext();
+    Ref context = callingContext(state);
 
     auto index = promise.ptr();
     m_pendingPromises.add(index, WTF::move(promise));
@@ -1460,7 +1467,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                     RELEASE_AND_RETURN(scope, wrapAlgorithm->wrapKey(wrappingKey.get(), WTF::move(bytes), WTF::move(callback), WTF::move(exceptionCallback)));
                 }
                 // The following operation should be performed asynchronously.
-                RELEASE_AND_RETURN(scope, wrapAlgorithm->encrypt(*wrapParams, WTF::move(wrappingKey), WTF::move(bytes), WTF::move(callback), WTF::move(exceptionCallback), *context, workQueue));
+                RELEASE_AND_RETURN(scope, wrapAlgorithm->encrypt(*wrapParams, WTF::move(wrappingKey), WTF::move(bytes), WTF::move(callback), WTF::move(exceptionCallback), context.get(), workQueue));
             }
         }
     };
@@ -1616,7 +1623,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
         RELEASE_AND_RETURN(scope, unwrapAlgorithm->unwrapKey(unwrappingKey, WTF::move(*wrappedKey), WTF::move(callback), WTF::move(exceptionCallback)));
     }
 
-    RELEASE_AND_RETURN(scope, unwrapAlgorithm->decrypt(*unwrapParams, unwrappingKey, WTF::move(*wrappedKey), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
+    RELEASE_AND_RETURN(scope, unwrapAlgorithm->decrypt(*unwrapParams, unwrappingKey, WTF::move(*wrappedKey), WTF::move(callback), WTF::move(exceptionCallback), callingContext(state), m_workQueue));
 }
 
 static JSC::JSValue toJSArrayBuffer(JSDOMGlobalObject& globalObject, RefPtr<JSC::ArrayBuffer>&& buffer)

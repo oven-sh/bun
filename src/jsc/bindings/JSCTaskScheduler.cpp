@@ -133,7 +133,7 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
     // The Bun.ModuleGraph whose script asked for the work was disposed (or collected) since: like its
     // other callbacks, this one is not called.
     if (graphContext) {
-        auto* context = WebCore::ScriptExecutionContext::getScriptExecutionContext(graphContext);
+        RefPtr context = WebCore::ScriptExecutionContext::getScriptExecutionContext(graphContext);
         if (!context || context->isStopped())
             wasPending = false;
     }

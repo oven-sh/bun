@@ -18,7 +18,7 @@ type Graph = InstanceType<typeof ModuleGraph>;
 type State = {
   tag: string;
   ticks: number;
-  port: number;
+  port: any;
   pid: number;
   settled: string | undefined;
   heard: string[];
@@ -166,6 +166,41 @@ const dir = String(
           const channel = new BroadcastChannel("isolation-" + state.tag);
           channel.onmessage = () => state.ticks++;
           state.close = () => channel.close();
+        },
+        messagePort(state) {
+          // The host keeps the other port and posts to it.
+          const { port1, port2 } = new MessageChannel();
+          port1.onmessage = () => state.ticks++;
+          state.port = port2;
+          state.close = () => port1.close();
+        },
+        eventTargetTimer(state) {
+          // AbortSignal.timeout re-arming itself: a timer the graph never sees the id of.
+          const again = () => AbortSignal.timeout(1).addEventListener("abort", () => { state.ticks++; if (!state.stop) again(); });
+          again();
+          state.close = () => { state.stop = true; };
+        },
+        serveWebSocket(state) {
+          const server = Bun.serve({ port: 0, fetch: (request, server) => server.upgrade(request) ? undefined : new Response("no", { status: 400 }), websocket: {
+            open(socket) { socket.send(state.tag); },
+            message(socket, message) { state.ticks++; socket.send("echo:" + message); },
+          } });
+          state.port = server.port;
+          state.close = () => server.stop(true);
+        },
+        httpKeepAlive(state, hostPort) {
+          // An idle socket in the graph's own agent after its request has finished.
+          const agent = new http.Agent({ keepAlive: true });
+          state.close = () => agent.destroy();
+          return new Promise((resolve, reject) => http.get({ host: "127.0.0.1", port: hostPort, path: "/tag:" + state.tag + "/", agent }, response => {
+            response.resume();
+            response.on("end", resolve);
+          }).on("error", reject));
+        },
+        fsPromisesWatch(state) {
+          const controller = new AbortController();
+          (async () => { for await (const event of fs.promises.watch(state.file, { signal: controller.signal })) state.ticks++; })().catch(() => {});
+          state.close = () => controller.abort();
         },
         unixListen(state, path) {
           const server = Bun.listen({ unix: path, socket: { open(socket) { socket.write(state.tag); }, data() {} } });
@@ -450,6 +485,24 @@ const dir = String(
         "WebAssembly.compile": () => WebAssembly.compile(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
         "WebAssembly.instantiate": () => WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
         "Atomics.waitAsync": () => Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1).value,
+        "new Bun.Archive().bytes()": () => new Bun.Archive({ "a.txt": "hello" }).bytes(),
+        "new Bun.Archive().files()": () => new Bun.Archive({ "a.txt": "hello" }).files(),
+        "Bun.Archive.write": () => Bun.Archive.write(dataFile + ".tar", { "a.txt": "hello" }),
+        // A 1x1 PNG.
+        "new Bun.Image().metadata()": () => new Bun.Image(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64")).metadata(),
+        "new Bun.Image().bytes()": () => new Bun.Image(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64")).bytes(),
+        "crypto.sign callback": () => promisify(crypto.generateKeyPair)("ed25519").then(({ privateKey }) => promisify(crypto.sign)(null, Buffer.from("x"), privateKey)),
+        "crypto.checkPrime": () => promisify(crypto.checkPrime)(7n),
+        "crypto.subtle.encrypt": () => crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]).then(key => crypto.subtle.encrypt({ name: "AES-GCM", iv: new Uint8Array(12) }, key, new Uint8Array(8))),
+        "crypto.subtle.deriveBits": () => crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveBits"]).then(key => crypto.subtle.deriveBits({ name: "PBKDF2", salt: new Uint8Array(8), iterations: 10, hash: "SHA-256" }, key, 128)),
+        "fs.promises.rm": () => fs.promises.rm(dataFile + ".missing", { force: true, recursive: true }),
+        "fs.promises.cp": () => fs.promises.cp(dataFile, dataFile + ".cp"),
+        "fs.promises.realpath": () => fs.promises.realpath(dataFile),
+        "fs.promises.opendir": () => fs.promises.opendir(import.meta.dir).then(async directory => { for await (const entry of directory) break; }),
+        "fs.promises.mkdtemp": () => fs.promises.mkdtemp(dataFile + "-tmp-"),
+        "FileHandle.read": () => fs.promises.open(dataFile).then(handle => handle.read(Buffer.alloc(4), 0, 4, 0).finally(() => handle.close())),
+        "Bun.file().slice().text()": () => Bun.file(dataFile).slice(0, 2).text(),
+        "Bun.file().delete()": () => Bun.write(dataFile + ".deleted", "x").then(() => Bun.file(dataFile + ".deleted").delete()),
         "Bun.spawn().exited": () => Bun.spawn({ cmd: [process.execPath, "-e", "1"], stdio: ["ignore", "ignore", "ignore"] }).exited,
       };
 
@@ -493,7 +546,7 @@ let stateCount = 0;
 function newState(tag: string): State {
   // What fs.watch watches is the state's own file; what a chain stats is just some file.
   let file = appPath;
-  if (/^(watch|shell)/.test(tag)) writeFileSync((file = join(dir, `watched-${++stateCount}.txt`)), "0");
+  if (/^(watch|shell|fsPromisesWatch)/.test(tag)) writeFileSync((file = join(dir, `watched-${++stateCount}.txt`)), "0");
   return {
     tag,
     ticks: 0,
@@ -689,6 +742,7 @@ const hostUnixPath = localSocketPath("host");
 let hostTcp: Bun.TCPSocketListener<{ tag?: string }>;
 let hostTls: Bun.TCPSocketListener<{ tag?: string }>;
 let hostMysql: Bun.TCPSocketListener<{ tag?: string }>;
+let hostKeepAlive: Bun.TCPSocketListener<{ tag?: string }>;
 let hostUnix: Bun.UnixSocketListener<{ tag?: string }>;
 let hostHttp2: http2.Http2Server;
 let hostHttp: Bun.Server;
@@ -701,6 +755,19 @@ beforeAll(async () => {
     socket: tracksTags("tls:"),
   });
   hostUnix = Bun.listen<{ tag?: string }>({ unix: hostUnixPath, socket: tracksTags("unix:") });
+  const keepAliveClients = tracksTags("keepalive:");
+  hostKeepAlive = Bun.listen<{ tag?: string }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      ...keepAliveClients,
+      data(socket, data) {
+        // "GET /tag:<tag>/ HTTP/1.1": answered, and the connection stays open.
+        keepAliveClients.data(socket, Buffer.from(data.toString("latin1").replace("/ HTTP", "\n")));
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok");
+      },
+    },
+  });
   const mysqlClients = tracksTags("mysql:");
   hostMysql = Bun.listen<{ tag?: string }>({
     hostname: "127.0.0.1",
@@ -759,6 +826,7 @@ afterAll(() => {
   hostTcp.stop(true);
   hostTls.stop(true);
   hostMysql.stop(true);
+  hostKeepAlive.stop(true);
   hostUnix.stop(true);
   hostHttp2.close();
   hostHttp.stop(true);
@@ -824,6 +892,23 @@ const kinds: Record<string, Kind> = {
       }
     },
   },
+  messagePort: { alive: state => ticks(state, () => state.port.postMessage(1)) },
+  eventTargetTimer: { alive: state => ticks(state) },
+  serveWebSocket: {
+    alive: async state => {
+      const { promise, resolve } = Promise.withResolvers<boolean>();
+      const socket = new WebSocket(`ws://127.0.0.1:${state.port}/`);
+      socket.onmessage = event => resolve(event.data === state.tag);
+      socket.onerror = socket.onclose = () => resolve(false);
+      try {
+        return await promise;
+      } finally {
+        socket.close();
+      }
+    },
+  },
+  httpKeepAlive: { args: () => [hostKeepAlive.port], alive: async state => connected.has("keepalive:" + state.tag) },
+  fsPromisesWatch: { alive: state => ticks(state, () => writeFileSync(state.file, String(Math.random()))) },
   // (Named pipes on Windows.)
   unixListen: { args: state => [unixPath(state)], alive: state => greetsThrough({ unix: unixPath(state) }, state.tag) },
   netUnixServer: {
@@ -1889,8 +1974,6 @@ test("ModuleGraph isolation: background work of a disposed graph does not settle
   // platform's backend delivers this way varies; none other may.
   const mayStillSettle = [
     "Bun.file().stream()",
-    "crypto.subtle.digest",
-    "Bun.build",
     "fetch(data:)",
     "fetch(blob:)",
     "CompressionStream",

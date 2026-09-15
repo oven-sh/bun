@@ -60,6 +60,10 @@ pub struct JSBundleCompletionTask {
     /// hops reach the VM that called Bun.build, and what makes it wait.
     pub(crate) bundle_ticket: Option<jsc::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
+    /// The context whose script called `Bun.build`. The build cannot be cancelled in a live VM
+    /// (see `arm_owner` below), so one for a `Bun.ModuleGraph` that stopped meanwhile runs to
+    /// its end and its result is dropped.
+    pub(crate) context: jsc::ContextId,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub(crate) env: *mut bun_dotenv::Loader,
@@ -149,6 +153,7 @@ impl JSBundleCompletionTask {
             config,
             bundle_ticket: Some(global_this.bun_vm().ticket()),
             global_this: BackRef::new(global_this),
+            context: global_this.bun_vm().current_context().id(),
             promise: jsc::JSPromiseStrong::default(),
             poll_ref: KeepAlive::init(),
             env: global_this.bun_vm().transpiler.env,
@@ -630,7 +635,9 @@ impl JSBundleCompletionTask {
         // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
         this.poll_ref
             .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
-        if this.cancelled.load(core::sync::atomic::Ordering::Acquire) {
+        if this.cancelled.load(core::sync::atomic::Ordering::Acquire)
+            || !this.global_this.bun_vm().is_context_live(this.context)
+        {
             return Ok(());
         }
 

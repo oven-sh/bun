@@ -26,7 +26,7 @@ graph.dispose();
 
 With `isolateIO: true` the graph gets a context of its own for timers and I/O. Everything its code opens belongs to the graph: timers, `Bun.serve` / `Bun.listen` servers, sockets, `fetch()` requests, WebSockets, watchers, child processes (including `Bun.$`), workers, database connections.
 
-`graph.dispose()` closes all of it. Close handlers (`close`, `onExit`) are still called; other callbacks are not, and promises waiting on them never settle. What the graph had already queued as microtasks or `process.nextTick` callbacks still runs. Whatever a disposed graph opens afterwards is closed at once.
+`graph.dispose()` closes all of it. Close handlers (`close`, `onExit`) and `FinalizationRegistry` cleanup callbacks are still called; other callbacks are not, and promises waiting on them never settle. What the graph had already queued as microtasks or `process.nextTick` callbacks still runs. Whatever a disposed graph opens afterwards is closed at once.
 
 The context follows the code asynchronously, like `AsyncLocalStorage`: through `await`, timers, socket handlers and event listeners.
 

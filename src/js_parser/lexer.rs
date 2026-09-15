@@ -222,9 +222,7 @@ pub struct Lexer<'a> {
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
-    /// A byte sequence that is not UTF-8 was stepped over. Written only by the
-    /// out-of-line multibyte decoder, so ASCII never touches it. Not part of
-    /// `LexerSnapshot`: a rewind must not clear it.
+    /// Set by the multibyte decoder for bytes that are not UTF-8. A `LexerSnapshot` rewind keeps it.
     pub(crate) saw_ill_formed_utf8: bool,
     pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
     pub(crate) code_point: CodePoint,
@@ -3497,8 +3495,7 @@ impl PragmaArg {
         PREFIX as usize + url_len // Correct total length
     }
 
-    /// How far `scan_single_line_comment` jumps over a pragma and its argument. The
-    /// jump stops at a non-ASCII byte so that `step` still decodes every one of them.
+    /// Pragma bytes `scan_single_line_comment` may jump over: ASCII only, `step` decodes the rest.
     pub(crate) fn skip_len(chunk: &[u8], pragma: &[u8], span: &js_ast::Span) -> usize {
         let len = pragma.len() + usize::try_from(span.range.len).unwrap_or(0);
         strings::first_non_ascii(&chunk[..len.min(chunk.len())]).map_or(len, |i| i as usize)

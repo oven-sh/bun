@@ -41,9 +41,7 @@ describe.concurrent("run-unicode", () => {
 }`);
   });
 
-  // Node.js decodes a module as UTF-8 and turns each ill-formed sequence into
-  // U+FFFD before it parses. Bun read a byte that cannot start a sequence as
-  // Latin-1, so "\xA9" was "©" and `v\xFB` was an identifier.
+  // Node.js reads ill-formed UTF-8 as U+FFFD. Bun read a stray byte as Latin-1: "\xA9" was "©".
   describe("a source file that is not UTF-8", () => {
     const latin1 = (s: string) => Buffer.from(s, "latin1");
     const source = latin1(

@@ -4243,13 +4243,9 @@ describe("bundler", () => {
     run: { stdout: "m user" },
   });
 
-  // A source file that is not UTF-8 is decoded the way Node.js decodes it: each
-  // ill-formed sequence becomes U+FFFD. The hashbang line, legal comments, regex
-  // bodies and tagged template raw strings are copied from the source text, so
-  // the bytes of a Latin-1 file used to reach the output as they were.
+  // A source that is not UTF-8 is read as Node.js reads it (U+FFFD); its raw bytes must not reach the output.
   const latin1 = (s: string) => Buffer.from(s, "latin1");
-  // \xA9 and \xFB cannot start a UTF-8 sequence. \xE9 and \xE2\x82 start one
-  // that the next byte does not continue. \xED\xA0\x80 is an encoded surrogate.
+  // Stray bytes (\xA9, \xFB), leads with no continuation (\xE9, \xE2\x82), an encoded surrogate (\xED\xA0\x80).
   const notUtf8Source = latin1(
     [
       "#!/usr/bin/env node caf\xE9",
@@ -4289,8 +4285,7 @@ describe("bundler", () => {
       });
     }
   }
-  // In the Latin-1 reading \xFB is a letter, so it used to become part of the
-  // identifier and was printed raw. Node.js rejects the file.
+  // \xFB is a letter in Latin-1, so it used to join the identifier and print raw. Node.js rejects it.
   itBundled("edgecase/SourceFileNotUtf8Identifier", {
     files: {
       "/entry.js": latin1("export const v\xFB0 = 1;\n"),

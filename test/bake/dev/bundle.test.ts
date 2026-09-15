@@ -919,8 +919,7 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
-// 0xFB is a letter in Latin-1, so the lexer used to make it part of the identifier.
-// The HMR module's export table then carried the raw byte into the client script.
+// 0xFB is a letter in Latin-1: it used to join the identifier and reach the client script raw.
 devTest("an export name with a byte that is not UTF-8 is a syntax error", {
   files: {
     "index.html": emptyHtmlFile({

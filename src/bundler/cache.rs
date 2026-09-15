@@ -69,8 +69,7 @@ impl JavaScript {
     // For now, we're not going to cache JavaScript ASTs.
     // It's probably only relevant when bundling for production.
     //
-    /// When the source is not UTF-8, `*source` is replaced with a copy decoded the way
-    /// Node.js decodes a script. The locations in the returned AST refer to that copy.
+    /// A source that is not UTF-8 is parsed as its decoded copy, which replaces `*source`.
     pub(crate) fn parse<'a>(
         &self,
         bump: &'a Bump,
@@ -82,8 +81,7 @@ impl JavaScript {
         self.parse_impl(bump, opts, defines, log, source, true)
     }
 
-    /// The lexer found bytes that are not UTF-8. It only learns that while it
-    /// decodes them, so a valid file pays nothing and never gets here.
+    /// Only reached when the lexer flagged bytes that are not UTF-8.
     #[cold]
     fn parse_decoded<'a>(
         &self,

@@ -221,9 +221,7 @@ pub mod Runtime {
         /// This comment must never be used manually.
         pub dont_bundle_twice: bool,
 
-        /// Return `Result::NotUtf8` when the lexer steps over bytes that are not
-        /// UTF-8, so the caller can parse the decoded text instead. Off: such
-        /// bytes are read the way they always were.
+        /// Return `Result::NotUtf8` instead of parsing a source whose bytes are not UTF-8.
         pub stop_on_ill_formed_utf8: bool,
 
         /// This is a list of packages which even when require() is used, we will

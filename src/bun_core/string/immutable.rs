@@ -208,8 +208,7 @@ pub mod lexer_step {
     /// the multibyte decode folded in). `cold` parks this in `.text.unlikely`
     /// and survives LTO's IPO inliner.
     ///
-    /// Sets `*ill_formed` when the bytes at `*current` are not UTF-8. The lexer learns that
-    /// nowhere else: each bulk skip it does stops at a non-ASCII byte, so all of them come here.
+    /// Sets `*ill_formed` when these bytes are not UTF-8; every lexer bulk skip stops at non-ASCII.
     #[cold]
     #[inline(never)]
     pub fn next_codepoint_multibyte(

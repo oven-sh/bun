@@ -47,8 +47,7 @@ describe.skipIf(!(isLinux || isMacOS))("Bun.Transpiler.transformSync with trunca
 
 test("Bun.Transpiler reads source bytes that are not UTF-8 the way TextDecoder does", async () => {
   const transpiler = new Bun.Transpiler({ loader: "js" });
-  // \xA9 cannot start a sequence. \xE9 and \xE2\x82 start one that the next byte
-  // does not continue. \xED\xA0\x80 is an encoded surrogate.
+  // A stray byte (\xA9), leads with no continuation (\xE9, \xE2\x82), an encoded surrogate (\xED\xA0\x80).
   const source = Buffer.from(
     '/*! \xA9 */ console.log("s\xA9 caf\xE9", /^r\xA9$/, "\xED\xA0\x80", "p\xE2\x82q");\n',
     "latin1",
@@ -62,13 +61,11 @@ test("Bun.Transpiler reads source bytes that are not UTF-8 the way TextDecoder d
   );
 });
 
-// The lexer is what notices that a file is not UTF-8, so every kind of ill-formed
-// sequence has to be noticed when it is the only one in the file.
+// The lexer is what notices ill-formed UTF-8, so each kind must be noticed when it is alone in a file.
 test("a string literal holds what TextDecoder gives for each kind of byte sequence", () => {
   const transpiler = new Bun.Transpiler({ loader: "js" });
   const decoder = new TextDecoder();
-  // One lead byte from each class: continuation bytes, overlong leads, 2-byte, the
-  // 3-byte leads with a restricted second byte (E0, ED), 4-byte (F0, F4), too big.
+  // A lead byte from each class: continuation, overlong, 2-byte, 3-byte (E0, ED are special), 4-byte, too big.
   const leads = [
     0x80, 0xa9, 0xbf, 0xc0, 0xc1, 0xc2, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5, 0xf7,
     0xf8, 0xff,

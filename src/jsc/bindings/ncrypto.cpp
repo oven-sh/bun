@@ -1633,14 +1633,20 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         }
     }
 
-    auto nameUtf8 = name.utf8();
-    return EVP_get_digestbyname(nameUtf8.data());
+    // `utf8()` asserts that the conversion worked. It fails when the UTF-8 form can pass 2^31 - 1 bytes
+    // (2^30 Latin-1 characters or more). A name that long is not a digest.
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return nullptr;
+    return EVP_get_digestbyname(nameUtf8->characters());
 }
 
 const EVP_CIPHER* getCipherByName(const WTF::StringView name)
 {
-    auto nameUtf8 = name.utf8();
-    return EVP_get_cipherbyname(nameUtf8.data());
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return nullptr;
+    return EVP_get_cipherbyname(nameUtf8->characters());
 }
 
 bool checkHkdfLength(const Digest& md, size_t length)
@@ -2433,8 +2439,7 @@ const Cipher Cipher::FromName(WTF::StringView name)
         if (remain == "256"_s) return Cipher::AES_256_CBC();
     }
 
-    auto nameUtf8 = name.utf8();
-    return Cipher(EVP_get_cipherbyname(nameUtf8.data()));
+    return Cipher(getCipherByName(name));
 }
 
 const Cipher Cipher::FromNid(int nid)
@@ -3413,11 +3418,14 @@ DataPointer Cipher::recover(const EVPKeyPointer& key,
 
 // ============================================================================
 
-int Ec::GetCurveIdFromName(const char* name)
+int Ec::GetCurveIdFromName(WTF::StringView name)
 {
-    int nid = EC_curve_nist2nid(name);
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return NID_undef;
+    int nid = EC_curve_nist2nid(nameUtf8->characters());
     if (nid == NID_undef) {
-        nid = OBJ_sn2nid(name);
+        nid = OBJ_sn2nid(nameUtf8->characters());
     }
     return nid;
 }

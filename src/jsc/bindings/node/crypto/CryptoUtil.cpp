@@ -88,8 +88,10 @@ struct Hasher;
 extern "C" Hasher* Bun__CryptoHasherExtern__getByName(Zig::GlobalObject* globalObject, const char* name, size_t nameLen);
 Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name)
 {
-    auto utf8 = name.utf8();
-    return Bun__CryptoHasherExtern__getByName(globalObject, utf8.data(), utf8.length());
+    auto utf8 = name.tryGetUTF8();
+    if (!utf8) [[unlikely]]
+        return nullptr;
+    return Bun__CryptoHasherExtern__getByName(globalObject, utf8->characters(), utf8->length());
 }
 
 extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Zig::GlobalObject* global, Hasher* hasher);

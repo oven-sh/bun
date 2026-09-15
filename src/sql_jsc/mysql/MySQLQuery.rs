@@ -307,12 +307,6 @@ impl MySQLQuery {
 
             match entry.value_ptr {
                 Some(stmt) => {
-                    if stmt.status == my_sql_statement::Status::Failed {
-                        let error_response = stmt.error_response.to_js(global_object);
-                        // If the statement failed, we need to throw the error
-                        let _ = global_object.throw_value(error_response);
-                        return Err(crate::Error::JSError);
-                    }
                     self.statement = Some(stmt.clone());
                 }
                 slot @ None => {

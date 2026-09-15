@@ -226,11 +226,17 @@ describe("Bun.ModuleGraph", () => {
       Bun.gc(true);
       return heapStats().objectTypeCounts.FunctionExecutable ?? 0;
     };
-    const a = await new ModuleGraphClass({ globals: { marker: "a" } }).import(join(dir, "m.mjs"));
+    // (A module's function is made when its binding is first read: read them all.)
+    const load = async (globals: Record<string, unknown>) => {
+      const m = await new ModuleGraphClass({ globals }).import(join(dir, "m.mjs"));
+      for (let i = 0; i < 50; i++) void m["f" + i];
+      return m;
+    };
+    const a = await load({ marker: "a" });
     const base = count();
-    const b = await new ModuleGraphClass({ globals: { marker: "b" } }).import(join(dir, "m.mjs"));
+    const b = await load({ marker: "b" });
     const afterSameNames = count();
-    const c = await new ModuleGraphClass({ globals: { other: 1 } }).import(join(dir, "m.mjs"));
+    const c = await load({ other: 1 });
     const afterOtherNames = count();
     expect([a.f0(), b.f0(), c.f0(), a.f49 === b.f49]).toEqual(["a", "b", "-", false]);
     expect([afterSameNames - base < 10, afterOtherNames - afterSameNames >= 50]).toEqual([true, true]);

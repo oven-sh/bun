@@ -388,11 +388,8 @@ impl Request {
     pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
         self.throw_if_body_unusable(global_this).ok()?;
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
-        self.clone(
-            global_this,
-            global_this.bun_vm().context_of_caller_no_frame(),
-        )
-        .ok()
+        let context = global_this.bun_vm().context_of_caller_no_frame();
+        self.clone(global_this, context).ok()
     }
 
     /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a

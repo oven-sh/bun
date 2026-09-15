@@ -685,6 +685,15 @@ static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
     settleSlot(g, view, view->m_pendingCdp, false, err);
 }
 
+// A page death the user did not ask for: reject the view's slots and forget the ids Chrome still owes it.
+void Transport::failPendingWork(JSWebView* view, JSValue err)
+{
+    rejectViewSlots(m_global, view, err);
+    uint32_t vid = view->m_viewId;
+    m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
+    updateKeepAlive();
+}
+
 // close() variant of rejectViewSlots: see rejectSlotAsHandled (JSWebView.h).
 static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
 {
@@ -1103,7 +1112,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     auto& vm = g->vm();
 
     // Target.detachedFromTarget — fires when an attached session's target
-    // dies (renderer crash, OOM, kill). params: {sessionId, targetId}.
+    // is destroyed (tab closed from outside, context gone). params: {sessionId, targetId}.
     // Browser-level (no sessionId on the envelope). close() handles user-
     // initiated closes eagerly; this is the only notification for external
     // death. Without it, pending evaluates on the dead view hang forever.
@@ -1119,11 +1128,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         JSWebView* view = viewFor(vid);
         m_views.remove(vid);
         if (!view) return;
-        rejectViewSlots(g, view, createError(g, "page detached (crashed or closed)"_s));
-        // Erase stale m_pending entries — replies won't come.
-        m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
         view->m_closed = true;
-        updateKeepAlive();
+        failPendingWork(view, createError(g, "page detached (crashed or closed)"_s));
         return;
     }
     auto sidStr = WTF::String::fromUTF8(sessionId);
@@ -1147,6 +1153,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
+        // A document committed, so a live renderer exists again.
+        view->m_crashed = false;
 
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
@@ -1271,6 +1279,13 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         scope.release();
         call(g, cb, callData, jsUndefined(), cbArgs);
         return;
+    }
+
+    // Renderer died, session stays attached: the detach path above never fires.
+    if (method.size() == 23 && memcmp(method.data(), "Inspector.targetCrashed", 23) == 0) {
+        view->m_crashed = true;
+        // Settled before the dispatch below, so a listener can reload().
+        failPendingWork(view, createError(g, "page crashed (renderer process died)"_s));
     }
 
     // Unhandled CDP event — dispatch to the view's EventTarget if it has
@@ -1400,6 +1415,20 @@ void Transport::retireGlobal(Zig::GlobalObject* global)
 
 namespace Ops {
 
+static JSPromise* rejectedPromise(JSGlobalObject* g, const WTF::String& message)
+{
+    auto* promise = JSPromise::create(g->vm(), g->promiseStructure());
+    promise->reject(g->vm(), createError(g, message));
+    return promise;
+}
+
+// Chrome holds (or, for Emulation.*, wedges on) a crashed tab's page commands until a navigation recreates the renderer.
+static JSPromise* refuseIfCrashed(JSGlobalObject* g, JSWebView* v)
+{
+    if (!v->m_crashed) return nullptr;
+    return rejectedPromise(g, "page crashed (renderer process died), reload() or navigate() to recover"_s);
+}
+
 // Allocate promise, store in slot, add to Transport pending map, send frame.
 // Caller guarantees the slot is empty and m_closed == false. Command is
 // moved in; t.send() calls finishAndWrite which zero-copies to the pipe
@@ -1410,15 +1439,17 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
 {
     auto& vm = g->vm();
     auto& t = transport();
-    auto* promise = JSPromise::create(vm, g->promiseStructure());
     // Unreachable: the constructor spawned or connected, and the paths that
     // kill or release the transport afterwards (rejectAllAndMarkDead,
     // updateKeepAlive) leave no open view behind. WebSocket mode doesn't need
     // m_wsOpen here — send() queues until onOpen fires.
-    if (t.m_dead || t.m_mode == TransportMode::None) {
-        promise->reject(vm, createError(g, "Chrome connection is not available"_s));
-        return promise;
+    if (t.m_dead || t.m_mode == TransportMode::None)
+        return rejectedPromise(g, "Chrome connection is not available"_s);
+    // Any navigation recovers a crashed view; cdp() keeps Chrome's raw semantics.
+    if (ps != PendingSlot::Navigate && ps != PendingSlot::Cdp) {
+        if (auto* refused = refuseIfCrashed(g, v)) return refused;
     }
+    auto* promise = JSPromise::create(vm, g->promiseStructure());
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
     t.m_pending.add(id, Pending { m, ps, v->m_viewId });
@@ -1537,6 +1568,8 @@ JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat forma
 // Chrome sends a reply we ignore). Both frames go in one write().
 JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
+    // Before the untracked mousePressed below reaches a dead renderer.
+    if (auto* refused = refuseIfCrashed(g, view)) return refused;
     auto& t = transport();
     auto sid = sidSpan(view->m_sessionId);
     auto btn = cdpButton(button);
@@ -1655,6 +1688,8 @@ static const CDPKeyInfo& cdpKeyInfo(uint8_t k)
 
 JSPromise* press(JSGlobalObject* g, JSWebView* view, uint8_t key, uint8_t modifiers, const WTF::String& character)
 {
+    // Before the untracked keyDown below reaches a dead renderer.
+    if (auto* refused = refuseIfCrashed(g, view)) return refused;
     auto& t = transport();
     auto sid = sidSpan(view->m_sessionId);
     int32_t mods = cdpModifiers(modifiers);
@@ -1707,6 +1742,8 @@ JSPromise* scroll(JSGlobalObject* g, JSWebView* view, double dx, double dy)
 
 JSPromise* resize(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t height)
 {
+    // Before the stored size below diverges from a viewport nothing resized.
+    if (auto* refused = refuseIfCrashed(g, view)) return refused;
     auto& t = transport();
     view->m_width = width;
     view->m_height = height;

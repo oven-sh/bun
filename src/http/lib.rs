@@ -192,6 +192,8 @@ pub struct Flags {
     /// pool: what authenticates its peer (a per-request `checkServerIdentity`
     /// closure) has no identity a pool key could compare.
     pub(crate) bypass_pool: bool,
+    /// See `HTTPClient::bypasses_pool`.
+    pub(crate) hop_bypasses_pool: bool,
     /// The owner reads `HTTPClientResult::stats`, so look up the peer address.
     pub(crate) collect_stats: bool,
     pub(crate) disable_decompression: bool,
@@ -219,6 +221,7 @@ impl Default for Flags {
             disable_timeout: false,
             disable_keepalive: false,
             bypass_pool: false,
+            hop_bypasses_pool: false,
             collect_stats: false,
             disable_decompression: false,
             did_have_handshaking_error: false,
@@ -2352,10 +2355,12 @@ impl<'a> HTTPClient<'a> {
         false
     }
 
-    /// `bypass_pool` for this hop: the closure only ever sees an `https:`
-    /// target's certificate, so an `http:` hop pools as usual.
+    /// `bypass_pool` for the hop in progress: the closure only ever sees an
+    /// `https:` target's certificate, so an `http:` hop pools as usual. Decided
+    /// in `start()`, because `url` already names the next hop by the time a
+    /// redirect releases this hop's socket.
     fn bypasses_pool(&self) -> bool {
-        self.flags.bypass_pool && self.url.is_https()
+        self.flags.hop_bypasses_pool
     }
 
     /// Hash of the per-request tunnel discriminators beyond the (proxy, target
@@ -2804,6 +2809,7 @@ impl<'a> HTTPClient<'a> {
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
         self.state = InternalState::init(body);
         self.stats = ConnectionStats::default();
+        self.flags.hop_bypasses_pool = self.flags.bypass_pool && self.url.is_https();
         // Every connection attempt (redirect hop, retry) asks `lookup` again.
         if matches!(self.lookup, LookupState::Resolved(_)) {
             self.lookup = LookupState::Needed;

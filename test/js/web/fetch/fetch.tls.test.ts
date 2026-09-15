@@ -870,6 +870,64 @@ describe.concurrent("fetch-tls", () => {
     expect(ports.size).toBe(1);
   });
 
+  it("a redirect between schemes pools each hop by its own scheme under a per-request checkServerIdentity", async () => {
+    const checked = () => ({ tls: { ca: validTls.cert, checkServerIdentity: () => undefined } });
+    const trusting = { tls: { ca: validTls.cert } };
+
+    // http -> https
+    {
+      using secure = await countingKeepAliveServer();
+      const plainPorts = new Set<number>();
+      using plain = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req, srv) {
+          plainPorts.add(srv.requestIP(req)!.port);
+          return new URL(req.url).pathname === "/go" ? Response.redirect(secure.url, 302) : new Response("plain");
+        },
+      });
+      expect(await (await fetch(`${plain.url}go`, checked())).text()).toBe("ok");
+      // The http hop's socket went back to the pool. (Its key includes the TLS
+      // options, also for a plain socket.)
+      expect(await (await fetch(plain.url, trusting)).text()).toBe("plain");
+      expect(plainPorts.size).toBe(1);
+      // The https hop's, which only the closure vouched for, did not.
+      expect(secure.connections).toBe(1);
+      expect(await (await fetch(secure.url, trusting)).text()).toBe("ok");
+      expect(secure.connections).toBe(2);
+    }
+
+    // https -> http
+    {
+      using plain = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("plain") });
+      let connections = 0;
+      const secure = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+        socket.on("error", () => {});
+        socket.on("data", chunk => {
+          const redirect = chunk.toString().startsWith("GET /go ");
+          socket.write(
+            redirect
+              ? `HTTP/1.1 302 Found\r\nLocation: ${plain.url}\r\nContent-Length: 0\r\n\r\n`
+              : "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+          );
+        });
+      });
+      secure.on("connection", () => connections++);
+      secure.listen(0, "127.0.0.1");
+      await once(secure, "listening");
+      try {
+        const origin = `https://127.0.0.1:${(secure.address() as net.AddressInfo).port}`;
+        expect(await (await fetch(`${origin}/go`, checked())).text()).toBe("plain");
+        expect(connections).toBe(1);
+        // The socket the redirect left is not there for a request the closure never ran for.
+        expect(await (await fetch(`${origin}/`, trusting)).text()).toBe("ok");
+        expect(connections).toBe(2);
+      } finally {
+        secure.close();
+      }
+    }
+  });
+
   it("a per-request checkServerIdentity neither takes nor leaves a pooled connection", async () => {
     using server = await countingKeepAliveServer();
     const plain = () => fetch(server.url, { tls: { ca: validTls.cert } }).then(r => r.text());

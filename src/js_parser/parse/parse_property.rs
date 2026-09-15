@@ -483,6 +483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         // Skip over TypeScript keywords
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
+                                            && !p.lexer.has_newline_before
                                             && PropertyModifierKeyword::find(raw) == Some(keyword)
                                         {
                                             errors = None;

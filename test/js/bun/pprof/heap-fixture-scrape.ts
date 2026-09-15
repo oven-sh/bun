@@ -12,7 +12,9 @@ function duplicates(profile: ReturnType<typeof decode>): number {
   const key = (s: (typeof profile.samples)[number]) =>
     JSON.stringify([
       s.labels,
-      s.stack.map(f => (f.address !== undefined ? String(f.address) : [f.function, f.file, f.line, f.column])),
+      s.stack.map(f =>
+        f.address !== undefined ? String(f.address) : [f.function, f.file, f.startLine, f.line, f.column],
+      ),
     ]);
   return profile.samples.length - new Set(profile.samples.map(key)).size;
 }

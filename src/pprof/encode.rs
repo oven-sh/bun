@@ -209,6 +209,7 @@ mod field {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Location {
     Native {
         address: usize,
@@ -219,6 +220,15 @@ enum Location {
         line: u32,
         column: u32,
     },
+}
+
+/// What a `Sample` message says besides its values.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct SampleKey {
+    ids: Vec<u64>,
+    thread: u64,
+    worker: u32,
+    generated: bool,
 }
 
 fn module_containing(modules: &[LoadedModule], address: usize) -> Option<usize> {
@@ -268,8 +278,14 @@ pub(crate) fn encode(view: &View<'_>) -> Vec<u8> {
     let generated_key = strings.id(b"generated");
     let true_value = strings.id(b"true");
 
+    // Two words of a stack can be one location (positions that a sourcemap maps to the same place), and a word
+    // can be none (JIT code that is not a JavaScript frame), so two buckets can be one sample: a sample is its
+    // locations and labels. Locations are numbered by what they say, and buckets that say the same are added up.
     let mut locations: Vec<Location> = Vec::new();
+    let mut ids_by_location: HashMap<Location, u64> = HashMap::default();
     let mut location_ids: HashMap<usize, u64> = HashMap::default();
+    let mut samples: Vec<(SampleKey, [u64; 4])> = Vec::new();
+    let mut sample_indices: HashMap<SampleKey, usize> = HashMap::default();
     let mut functions: Vec<(u64, u64, u32)> = Vec::new();
     let mut function_ids: HashMap<(u64, u64, u32), u64> = HashMap::default();
     let mut ids: Vec<u64> = Vec::new();
@@ -319,10 +335,10 @@ pub(crate) fn encode(view: &View<'_>) -> Vec<u8> {
                 })
             };
             let id = match location {
-                Some(location) => {
+                Some(location) => *ids_by_location.entry(location).or_insert_with(|| {
                     locations.push(location);
                     locations.len() as u64
-                }
+                }),
                 None => 0,
             };
             location_ids.insert(word, id);
@@ -336,20 +352,46 @@ pub(crate) fn encode(view: &View<'_>) -> Vec<u8> {
             b.alloc_objects.saturating_sub(b.free_objects),
             b.alloc_bytes.saturating_sub(b.free_bytes),
         ];
-        let thread = strings.id(view.string(b.thread));
+        let key = SampleKey {
+            ids: ids.clone(),
+            thread: strings.id(view.string(b.thread)),
+            worker: b.worker,
+            generated,
+        };
+        match sample_indices.get(&key) {
+            Some(&index) => {
+                for (sum, value) in samples[index].1.iter_mut().zip(values) {
+                    *sum = sum.saturating_add(value);
+                }
+            }
+            None => {
+                sample_indices.insert(key.clone(), samples.len());
+                samples.push((key, values));
+            }
+        }
+    }
+
+    for (key, values) in &samples {
+        let SampleKey {
+            ids,
+            thread,
+            worker,
+            generated,
+        } = key;
+        let (thread, worker, generated) = (*thread, *worker, *generated);
         w.message(profile::SAMPLE, |m| {
-            m.packed(field::sample::LOCATION_ID, &ids);
-            m.packed(field::sample::VALUE, &values);
+            m.packed(field::sample::LOCATION_ID, ids);
+            m.packed(field::sample::VALUE, values);
             if thread != 0 {
                 m.message(field::sample::LABEL, |l| {
                     l.uint64(field::label::KEY, thread_key);
                     l.uint64(field::label::STR, thread);
                 });
             }
-            if b.worker != 0 {
+            if worker != 0 {
                 m.message(field::sample::LABEL, |l| {
                     l.uint64(field::label::KEY, worker_key);
-                    l.uint64(field::label::NUM, u64::from(b.worker));
+                    l.uint64(field::label::NUM, u64::from(worker));
                 });
             }
             // Only a VM's own thread can use its sourcemaps: these are positions in the code that ran.

@@ -165,8 +165,38 @@ class Lifetimes {
     for (let i = 0; i < 100 && remaining().length; i++) {
       await collect();
     }
+    if (!remaining().length) return [];
     // Say what keeps them, not just that something does.
-    return remaining().length ? [...remaining(), ...whatRetainsGraphs()] : [];
+    const report = [...remaining(), ...whatRetainsGraphs()];
+    // When no root reaches a survivor, say from where a collection does get it: only for the
+    // failure message (the result is a failure whatever these find).
+    const turn = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+    const probes: [string, () => Promise<void>][] = [
+      ["a setImmediate callback", () => new Promise<void>(resolve => setImmediate(() => (Bun.gc(true), resolve())))],
+      ["a microtask", async () => (await Promise.resolve(), void Bun.gc(true))],
+      [
+        "a timer callback, 64 JS frames deeper",
+        () =>
+          new Promise<void>(resolve =>
+            setTimeout(() => {
+              const deeper = (depth: number): void => (depth ? deeper(depth - 1) : void Bun.gc(true));
+              deeper(64);
+              resolve();
+            }, 0),
+          ),
+      ],
+    ];
+    for (const [where, probe] of probes) {
+      const before = remaining().length;
+      for (let i = 0; i < 3 && remaining().length; i++) {
+        await probe();
+        await turn();
+      }
+      report.push(
+        `after 100 collections from timer callbacks, 3 more from ${where}: ${before - remaining().length} of ${before} collected`,
+      );
+    }
+    return report;
   }
   /** Collects a few times; whether `name` survived all of them. */
   async survives(name: string): Promise<boolean> {

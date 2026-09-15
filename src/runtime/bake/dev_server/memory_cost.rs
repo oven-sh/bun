@@ -2,7 +2,8 @@ use core::mem::size_of;
 
 use crate::api::server::html_bundle::HTMLBundleRoute;
 use crate::bake::dev_server::{
-    DevServer, HmrSocket, IncrementalResult, TestingBatchEvents, deferred_request, packed_map,
+    DevServer, HmrSocket, IncrementalResult, RouteIndexAndRecurseFlag, TestingBatchEvents,
+    deferred_request, packed_map,
 };
 use bun_collections::ArrayHashMap;
 
@@ -233,7 +234,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     other_bytes += memory_cost_array_hash_map(&dev.route_lookup);
     for routes in dev.route_lookup.values() {
         if routes.spilled() {
-            other_bytes += memory_cost_slice(routes);
+            other_bytes += routes.capacity() * size_of::<RouteIndexAndRecurseFlag>();
         }
     }
     // .testing_batch_events

@@ -1115,6 +1115,15 @@ impl FSWatcher {
             }
             s
         };
+        // An empty path is ENOENT in node; joining it below would watch cwd.
+        if slice.is_empty() {
+            return Err(bun_sys::Error {
+                errno: SystemErrno::ENOENT as _,
+                syscall: bun_sys::Tag::watch,
+                path: args.path.slice().into(),
+                ..Default::default()
+            });
+        }
         // SAFETY: `FileSystem::instance()` returns the process-global singleton
         // initialized at startup; never null once init has run.
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;

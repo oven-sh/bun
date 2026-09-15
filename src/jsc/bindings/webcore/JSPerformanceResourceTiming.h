@@ -62,8 +62,6 @@ public:
         return static_cast<PerformanceResourceTiming&>(Base::wrapped());
     }
 
-    Ref<PerformanceResourceTiming> protectedWrapped() const;
-
 protected:
     JSPerformanceResourceTiming(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceResourceTiming>&&);
 

@@ -353,17 +353,18 @@ describe("fetch protocol: http3", () => {
     const { port } = new URL(base);
     expect(collected).toEqual([
       {
-        bytesWritten: expect.any(Number),
+        bytesSent: expect.any(Number),
         requestBodyBytesSent: 5000,
         responseStarted: true,
-        socketReused: false,
+        connectionReused: false,
+        nextHopProtocol: "h3",
         remoteAddress: expect.stringMatching(/^(127\.0\.0\.1|::1)$/),
         remotePort: Number(port),
         remoteFamily: expect.stringMatching(/^IPv[46]$/),
       },
-      { ...collected[0], bytesWritten: expect.any(Number), socketReused: true },
+      { ...collected[0], bytesSent: expect.any(Number), connectionReused: true },
     ]);
-    expect(collected[0].bytesWritten).toBeGreaterThan(5000);
+    expect(collected[0].bytesSent).toBeGreaterThan(5000);
   });
 
   test("a FetchSession has its own connection, and close() closes it once idle", async () => {

@@ -6,11 +6,17 @@ export default [
     construct: true,
     constructNeedsThis: true,
     finalize: true,
+    hasPendingActivity: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",
     values: ["checkServerIdentity", "onStats"],
     proto: {
+      fetch: {
+        getter: "getFetch",
+        cache: true,
+        this: true,
+      },
       close: {
         fn: "close",
         length: 0,

@@ -8774,7 +8774,7 @@ declare module "bun" {
 
   /**
    * What the last connection attempt of a `fetch()` did, as reported to
-   * {@link FetchSessionOptions.onStats | onStats}. The counters restart on every
+   * {@link FetchSessionInit.onStats | onStats}. The counters restart on every
    * redirect hop and on the automatic retry of a request whose reused
    * keep-alive socket turned out to be closed.
    */
@@ -8785,7 +8785,7 @@ declare module "bun" {
      * request through a proxy this counts the tunneled request, not the `CONNECT`
      * exchange. Over HTTP/3 the head is counted before header compression.
      */
-    bytesWritten: number;
+    bytesSent: number;
     /**
      * Request body bytes handed to the socket, as framed on the wire: after
      * `compress`, and including chunked-encoding framing for a streamed body.
@@ -8801,7 +8801,13 @@ declare module "bun" {
      * Whether the request went out on a keep-alive connection an earlier request
      * opened, rather than on a new one.
      */
-    socketReused: boolean;
+    connectionReused: boolean;
+    /**
+     * The protocol that carried the request, as its ALPN id: `"http/1.1"`,
+     * `"h2"` or `"h3"` (the values of `PerformanceResourceTiming.nextHopProtocol`).
+     * `""` when the request failed before any of it was sent.
+     */
+    nextHopProtocol: "http/1.1" | "h2" | "h3" | "";
     /**
      * IP address of the peer the socket connected to (the proxy's, when there is
      * one).
@@ -8854,7 +8860,7 @@ declare module "bun" {
         respectNoProxy?: boolean | undefined;
       };
 
-  interface FetchSessionOptions {
+  interface FetchSessionInit {
     /**
      * TLS options for the connections of this session. A request that passes
      * its own `tls` uses that instead, as a whole.
@@ -8917,11 +8923,25 @@ declare module "bun" {
    *   tls: { ca: await Bun.file("corp-ca.pem").text() },
    * });
    *
-   * const response = await fetch("https://example.com", { session });
+   * const response = await session.fetch("https://example.com");
+   * // the same request, as an option of the global fetch():
+   * await fetch("https://example.com", { session });
    * ```
    */
   class FetchSession {
-    constructor(options?: FetchSessionOptions);
+    constructor(init?: FetchSessionInit);
+    /**
+     * `fetch()` with this session. The function is bound: hand it to anything
+     * that takes a `fetch`. A `session` in `init` does not replace this one.
+     * `session.fetch.preconnect()` opens its connection in this session's pool,
+     * with this session's `tls`.
+     *
+     * @example
+     * ```ts
+     * const client = new SomeClient({ fetch: session.fetch });
+     * ```
+     */
+    readonly fetch: typeof fetch;
     /**
      * Close the idle connections in this session's pool. Requests in flight
      * finish, and the session stays usable.

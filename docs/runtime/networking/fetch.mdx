@@ -471,7 +471,7 @@ Bun automatically reuses connections to the same host. This is called **connecti
 
 #### Fetch sessions
 
-A `Bun.FetchSession` holds connection settings and owns a keep-alive pool. Pass it as `session` to each request that should use it. Bun never shares a connection between two sessions, or between a session and plain `fetch`.
+A `Bun.FetchSession` holds connection settings and owns a keep-alive pool. `session.fetch` is `fetch` with that session, and it is bound, so it works wherever a `fetch` function is accepted (`new SomeClient({ fetch: session.fetch })`). `fetch(url, { session })` does the same through the global `fetch`. `session.fetch.preconnect(url)` opens a connection in the session's pool. Bun never shares a connection between two sessions, or between a session and plain `fetch`.
 
 ```ts
 const session = new Bun.FetchSession({
@@ -480,7 +480,7 @@ const session = new Bun.FetchSession({
   keepAlive: { idleTimeout: 30, maxIdleSockets: 8 },
 });
 
-const response = await fetch("https://example.com", { session });
+const response = await session.fetch("https://example.com");
 session.close(); // closes the idle connections
 ```
 
@@ -534,13 +534,14 @@ try {
 }
 ```
 
-| Field                                         | Description                                                |
-| --------------------------------------------- | ---------------------------------------------------------- |
-| `bytesWritten`                                | Request bytes handed to the socket, before TLS.            |
-| `requestBodyBytesSent`                        | The body's share of `bytesWritten`, as framed on the wire. |
-| `responseStarted`                             | Whether any byte of a response arrived.                    |
-| `socketReused`                                | Whether the request used a pooled connection.              |
-| `remoteAddress`, `remotePort`, `remoteFamily` | The peer the socket connected to, or `null`.               |
+| Field                                         | Description                                               |
+| --------------------------------------------- | --------------------------------------------------------- |
+| `bytesSent`                                   | Request bytes handed to the socket, before TLS.           |
+| `requestBodyBytesSent`                        | The body's share of `bytesSent`, as framed on the wire.   |
+| `responseStarted`                             | Whether any byte of a response arrived.                   |
+| `connectionReused`                            | Whether the request used a pooled connection.             |
+| `nextHopProtocol`                             | `"http/1.1"`, `"h2"` or `"h3"`; `""` if nothing was sent. |
+| `remoteAddress`, `remotePort`, `remoteFamily` | The peer the socket connected to, or `null`.              |
 
 The stats describe the last connection attempt: each redirect hop and each retry starts again from zero.
 

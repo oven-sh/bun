@@ -506,6 +506,8 @@ pub struct ConnectionStats {
     pub response_started: bool,
     pub socket_reused: bool,
     pub remote_address: Option<core::net::SocketAddr>,
+    /// Known once request bytes went out: ALPN has settled by then.
+    pub protocol: Option<Protocol>,
 }
 
 impl ConnectionStats {
@@ -4481,7 +4483,10 @@ impl<'a> HTTPClient<'a> {
     /// HTTP/3 frame the body in their sessions, which count into `stats` directly.
     fn connection_stats(&self) -> ConnectionStats {
         let mut stats = self.stats;
-        if self.flags.collect_stats && self.flags.protocol == Protocol::Http1_1 {
+        if !self.flags.collect_stats {
+            return stats;
+        }
+        if self.flags.protocol == Protocol::Http1_1 {
             let written = self.state.request_sent_len;
             let head = self.state.request_headers_len;
             let sendfile_sent = match &self.state.original_request_body {
@@ -4493,6 +4498,9 @@ impl<'a> HTTPClient<'a> {
             let body = written.saturating_sub(head);
             stats.bytes_written = (written + sendfile_sent) as u64;
             stats.request_body_bytes_sent = (body + sendfile_sent) as u64;
+        }
+        if stats.bytes_written > 0 {
+            stats.protocol = Some(self.flags.protocol);
         }
         stats
     }

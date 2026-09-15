@@ -401,6 +401,57 @@ describe("proxy policy", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // fetch.preconnect() is a no-op on Windows.
+  test.concurrent.todoIf(isWindows)("fetch.preconnect does not dial an origin the environment proxies", async () => {
+    using proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("proxy") });
+    // The origin lives in the subprocess, which has to see its connections.
+    const result = await run(
+      `
+      const net = require("node:net");
+      const { once } = require("node:events");
+      let connections = 0;
+      const origin = net.createServer(socket => {
+        connections++;
+        socket.on("error", () => {});
+        socket.on("data", () => socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 6\\r\\n\\r\\norigin"));
+      });
+      origin.listen(0, "127.0.0.1");
+      await once(origin, "listening");
+      const url = "http://127.0.0.1:" + origin.address().port + "/";
+      const BARRIER = "http://127.0.0.1:${proxy.port}/";
+
+      fetch.preconnect(url);
+      const proxied = await (await fetch(url)).text();
+      const afterProxied = connections;
+
+      // Exempt from the proxy, the preconnected socket is there to use.
+      process.env.NO_PROXY = "127.0.0.1";
+      const accepted = once(origin, "connection");
+      fetch.preconnect(url);
+      await accepted;
+      // The client parks the socket when its HTTP thread sees the connect
+      // complete, which has no JS signal. A request that goes out and comes
+      // back afterwards has been through that thread's event loop.
+      await (await fetch(BARRIER, { proxy: false })).text();
+      let reused;
+      const direct = await (await fetch(url, { onStats: s => (reused = s.connectionReused) })).text();
+      console.log(JSON.stringify({ proxied, afterProxied, direct, reused, connections }));
+      // The pooled connection would keep the origin, and so the process, open.
+      process.exit(0);
+      `,
+      { HTTP_PROXY: `http://127.0.0.1:${proxy.port}` },
+    );
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({
+      proxied: "proxy",
+      afterProxied: 0,
+      direct: "origin",
+      reused: true,
+      connections: 1,
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
   test.concurrent("respectNoProxy: false insists on the proxy over NO_PROXY", async () => {
     using s = servers();
     const proxyUrl = `http://127.0.0.1:${s.proxy.port}`;
@@ -533,6 +584,107 @@ describe("pinning a request to an address", () => {
   });
 });
 
+describe("session.fetch", () => {
+  test("is fetch() with the session, bound so that it can be handed to anything taking a fetch", async () => {
+    const server = connectionCountingServer();
+    const port = await server.listen();
+    try {
+      using session = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
+      const { fetch: bound } = session;
+      expect(bound).toBe(session.fetch);
+      expect(bound.length).toBe(fetch.length);
+      const url = `https://localhost:${port}/`;
+      // A string, a URL and a Request, with and without init.
+      expect(await (await bound(url)).text()).toBe("ok");
+      expect(await (await bound(new URL(url), { method: "POST", body: "x" })).text()).toBe("ok");
+      expect(await (await bound(new Request(url))).text()).toBe("ok");
+      // The same pool as `{ session }` on the global fetch.
+      expect(await (await fetch(url, { session })).text()).toBe("ok");
+      expect(server.connections).toBe(1);
+      // A `session` in the init does not replace the one the function is bound to.
+      using other = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
+      expect(await (await bound(url, { session: other })).text()).toBe("ok");
+      expect(server.connections).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("rejects like fetch() does", async () => {
+    using session = new Bun.FetchSession();
+    expect(await (session.fetch as any)().catch((e: Error) => e.message)).toBe(
+      "fetch() expects a string but received no arguments.",
+    );
+    using dead = await deadPort();
+    expect(await session.fetch(`http://127.0.0.1:${dead.port}/`).catch(e => e.code)).toBe("ECONNREFUSED");
+  });
+
+  // fetch.preconnect() is a no-op on Windows.
+  test.todoIf(isWindows)("preconnect opens its connection in the session's pool, with the session's tls", async () => {
+    const server = connectionCountingServer();
+    const port = await server.listen();
+    try {
+      using session = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
+      const url = `https://localhost:${port}/`;
+      const accepted = once(server.server, "secureConnection");
+      session.fetch.preconnect(url);
+      await accepted;
+      expect(server.connections).toBe(1);
+      // The session's request rides the preconnected socket; one outside the session cannot.
+      let reused: boolean | undefined;
+      expect(await (await session.fetch(url, { onStats: s => (reused = s.connectionReused) })).text()).toBe("ok");
+      expect(server.connections).toBe(1);
+      expect(reused).toBe(true);
+      expect(await (await fetch(url, { tls: { ca: tlsCert.cert } })).text()).toBe("ok");
+      expect(server.connections).toBe(2);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("preconnect dials nothing when the session's requests could not use the connection", async () => {
+    // Counts TCP connections; answers like an origin.
+    let connections = 0;
+    const origin = net.createServer(socket => {
+      connections++;
+      socket.on("error", () => {});
+      socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\norigin"));
+    });
+    origin.listen(0, "127.0.0.1");
+    await once(origin, "listening");
+    const url = `http://127.0.0.1:${(origin.address() as net.AddressInfo).port}/`;
+    using proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("proxy") });
+    using dir = tempDir("fetch-session-preconnect", {});
+    const path = join(String(dir), "s.sock");
+    using unix = Bun.serve({ unix: path, fetch: () => new Response("unix") });
+    try {
+      // Each session answers its request some other way than over a pooled TCP connection to the origin.
+      const cases: [init: Bun.FetchSessionInit, text: string, connectionsAfter: number][] = [
+        [{ proxy: `http://127.0.0.1:${proxy.port}` }, "proxy", 0],
+        [{ unix: path }, "unix", 0],
+        [{ keepAlive: false }, "origin", 1],
+      ];
+      for (const [init, text, connectionsAfter] of cases) {
+        using session = new Bun.FetchSession(init);
+        session.fetch.preconnect(url);
+        expect(await (await session.fetch(url)).text()).toBe(text);
+        expect(connections).toBe(connectionsAfter);
+      }
+    } finally {
+      origin.close();
+    }
+  });
+
+  test("keeps its session alive", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+    const calls: number[] = [];
+    const bound = (() => new Bun.FetchSession({ onStats: s => calls.push(s.bytesSent) }).fetch)();
+    Bun.gc(true);
+    expect(await (await bound(server.url)).text()).toBe("ok");
+    expect(calls.length).toBe(1);
+  });
+});
+
 describe("onStats", () => {
   test("reports the connection of a completed request, and reuse on the next one", async () => {
     using server = Bun.serve({
@@ -552,17 +704,18 @@ describe("onStats", () => {
     expect(collected.length).toBe(2);
     const [first, second] = collected;
     expect(first).toEqual({
-      bytesWritten: expect.any(Number),
+      bytesSent: expect.any(Number),
       requestBodyBytesSent: body.length,
       responseStarted: true,
-      socketReused: false,
+      connectionReused: false,
+      nextHopProtocol: "http/1.1",
       remoteAddress: "127.0.0.1",
       remotePort: server.port,
       remoteFamily: "IPv4",
     });
-    expect(first.bytesWritten).toBeGreaterThan(body.length);
-    expect(first.bytesWritten).toBeLessThan(body.length + 1024);
-    expect(second).toEqual({ ...first, socketReused: true });
+    expect(first.bytesSent).toBeGreaterThan(body.length);
+    expect(first.bytesSent).toBeLessThan(body.length + 1024);
+    expect(second).toEqual({ ...first, connectionReused: true });
   });
 
   test("runs before the rejection and shows an upload that never left", async () => {
@@ -603,10 +756,10 @@ describe("onStats", () => {
       expect(order).toEqual(["stats", "rejected"]);
       expect(stats).toBeDefined();
       expect(stats!.responseStarted).toBe(false);
-      expect(stats!.socketReused).toBe(false);
+      expect(stats!.connectionReused).toBe(false);
       // Windows' send() accepts the whole buffer at once.
       expect(stats!.requestBodyBytesSent)[isWindows ? "toBeLessThanOrEqual" : "toBeLessThan"](body.length);
-      expect(stats!.bytesWritten).toBeGreaterThanOrEqual(stats!.requestBodyBytesSent);
+      expect(stats!.bytesSent).toBeGreaterThanOrEqual(stats!.requestBodyBytesSent);
       expect(stats!.remoteAddress).toBe("127.0.0.1");
     } finally {
       for (const socket of sockets) socket.destroy();
@@ -631,18 +784,19 @@ describe("onStats", () => {
     // Once per request, for the connection that produced the response.
     expect(collected).toEqual([
       {
-        bytesWritten: expect.any(Number),
+        bytesSent: expect.any(Number),
         requestBodyBytesSent: 0,
         responseStarted: true,
-        socketReused: false,
+        connectionReused: false,
+        nextHopProtocol: "http/1.1",
         remoteAddress: expect.stringMatching(/^(127\.0\.0\.1|::1)$/),
         remotePort: target.port,
         remoteFamily: expect.stringMatching(/^IPv[46]$/),
       },
     ]);
     // A request head, not TLS records of a handshake.
-    expect(collected[0].bytesWritten).toBeGreaterThan(40);
-    expect(collected[0].bytesWritten).toBeLessThan(400);
+    expect(collected[0].bytesSent).toBeGreaterThan(40);
+    expect(collected[0].bytesSent).toBeLessThan(400);
   });
 
   test("counts a streamed body with its chunked framing", async () => {
@@ -669,7 +823,7 @@ describe("onStats", () => {
     // 3000 bytes of payload plus chunk sizes, CRLFs and the terminating chunk.
     expect(stats!.requestBodyBytesSent).toBeGreaterThan(3000);
     expect(stats!.requestBodyBytesSent).toBeLessThan(3100);
-    expect(stats!.bytesWritten).toBeGreaterThan(stats!.requestBodyBytesSent);
+    expect(stats!.bytesSent).toBeGreaterThan(stats!.requestBodyBytesSent);
   });
 
   test("is one shape whatever the outcome", async () => {
@@ -681,7 +835,7 @@ describe("onStats", () => {
     await fetch(`http://127.0.0.1:${dead.port}/`, { onStats }).catch(() => {});
     expect(shapes).toEqual(
       Array(2).fill(
-        "bytesWritten,requestBodyBytesSent,responseStarted,socketReused,remoteAddress,remotePort,remoteFamily",
+        "bytesSent,requestBodyBytesSent,responseStarted,connectionReused,nextHopProtocol,remoteAddress,remotePort,remoteFamily",
       ),
     );
   });
@@ -692,10 +846,11 @@ describe("onStats", () => {
     const error = await fetch(`http://127.0.0.1:${dead.port}/`, { onStats: s => (stats = s) }).catch(e => e);
     expect(error.code).toBe("ECONNREFUSED");
     expect(stats).toEqual({
-      bytesWritten: 0,
+      bytesSent: 0,
       requestBodyBytesSent: 0,
       responseStarted: false,
-      socketReused: false,
+      connectionReused: false,
+      nextHopProtocol: "",
       remoteAddress: null,
       remotePort: null,
       remoteFamily: null,

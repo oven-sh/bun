@@ -355,13 +355,19 @@ if (typeof process !== "undefined") {
     proxy: { url: "http://proxy:8080", headers: { "x-proxy": "1" }, respectNoProxy: false },
     keepAlive: { idleTimeout: 30, maxIdleSockets: 4 },
     onStats(stats) {
-      const sent: number = stats.requestBodyBytesSent + stats.bytesWritten;
-      const flags: boolean = stats.responseStarted && stats.socketReused;
+      const sent: number = stats.requestBodyBytesSent + stats.bytesSent;
+      const flags: boolean = stats.responseStarted && stats.connectionReused;
       const where: string | null = stats.remoteAddress;
       (void sent, flags, where);
     },
   });
   fetch("https://example.com", { session });
+  // The shapes libraries declare for a `fetch` they accept.
+  const bound: typeof fetch = session.fetch;
+  const plain: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = session.fetch;
+  plain("https://example.com");
+  session.fetch.preconnect("https://example.com");
+  bound("https://example.com", { method: "POST" }).then(r => r.text());
   fetch("https://example.com", { session, proxy: false });
   fetch("https://example.com", { proxy: false, onStats: () => {} });
   fetch("https://93.184.216.34/", {

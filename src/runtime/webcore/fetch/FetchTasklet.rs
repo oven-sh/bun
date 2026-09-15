@@ -1282,6 +1282,12 @@ impl FetchTasklet {
             stats.request_body_bytes_sent,
             stats.response_started,
             stats.socket_reused,
+            match stats.protocol {
+                None => 0,
+                Some(http::Protocol::Http1_1) => 1,
+                Some(http::Protocol::Http2) => 2,
+                Some(http::Protocol::Http3) => 3,
+            },
             address,
             port,
             is_ipv6,
@@ -2798,10 +2804,12 @@ unsafe extern "C" {
     /// An object on the cached `onStats` structure; `remote_address` is a string or null.
     safe fn JSFetchConnectionStats__create(
         global: &JSGlobalObject,
-        bytes_written: u64,
+        bytes_sent: u64,
         request_body_bytes_sent: u64,
         response_started: bool,
-        socket_reused: bool,
+        connection_reused: bool,
+        // 0 when not known, else 1 + `http::Protocol`
+        next_hop_protocol: u8,
         remote_address: JSValue,
         remote_port: u16,
         is_ipv6: bool,

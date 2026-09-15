@@ -297,6 +297,19 @@ fn handle_path(
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
+    // An interior NUL would truncate the C string (access, BoringSSL loaders) to the prefix path.
+    if bun_core::strings::index_of_char(name.as_bytes(), 0).is_some() {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "TLSOptions.{} must be a path without null bytes. Received {}",
+                    field,
+                    bun_core::fmt::quote(name.as_bytes())
+                ),
+            )
+            .throw());
+    }
     // `bun_sys::access` routes to `access(2)` on POSIX and
     // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the
     // cross-platform existence probe.

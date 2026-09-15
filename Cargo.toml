@@ -27,6 +27,7 @@ members = [
   "src/threading",
   "src/valkey",
   "src/watcher",
+  "src/webgpu",
   "src/cares_sys",
   "src/clap",
   "src/clap_macros",
@@ -441,6 +442,7 @@ bun_mimalloc_sys = { path = "src/mimalloc_sys" }
 bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }
+bun_webgpu = { path = "src/webgpu" }
 bun_wyhash = { path = "src/wyhash" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }

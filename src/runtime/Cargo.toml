@@ -106,6 +106,7 @@ bun_uws.workspace = true
 bun_uws_sys.workspace = true
 bun_valkey.workspace = true
 bun_watcher.workspace = true
+bun_webgpu.workspace = true
 bun_which.workspace = true
 bun_hash.workspace = true
 bun_wyhash.workspace = true

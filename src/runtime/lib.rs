@@ -78,4 +78,5 @@ pub use cli::{
     shell_completions, test_command,
 };
 
+pub mod webgpu;
 pub mod webview;

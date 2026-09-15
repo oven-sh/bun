@@ -663,6 +663,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunObject)                                             \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_cryptoObject)                                          \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_navigatorObject)                                       \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_gpuObject)                                             \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_performanceObject)                                     \
     V(public, LazyPropertyOfGlobalObject<Bun::Process>, m_processObject)                                     \
     V(public, LazyPropertyOfGlobalObject<CustomGetterSetter>, m_lazyStackCustomGetterSetter)                 \

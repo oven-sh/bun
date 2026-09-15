@@ -90,6 +90,24 @@ function systemLibs(cfg: Config): string[] {
     // icucore: system ICU framework.
     // resolv: DNS resolution (getaddrinfo et al).
     libs.push("-licucore", "-lresolv");
+    // WebGPU (src/webgpu): wgpu's Metal backend. libbun_runtime.a is a
+    // staticlib, so the `#[link(kind = "framework")]` attributes of the objc2
+    // crates do not reach this link on their own. The list is what
+    // `cargo rustc -p bun_webgpu --crate-type staticlib -- --print native-static-libs`
+    // reports for the darwin targets.
+    libs.push(
+      "-framework",
+      "Metal",
+      "-framework",
+      "QuartzCore",
+      "-framework",
+      "CoreGraphics",
+      "-framework",
+      "Foundation",
+      "-framework",
+      "CoreFoundation",
+      "-lobjc",
+    );
   }
 
   if (cfg.freebsd) {

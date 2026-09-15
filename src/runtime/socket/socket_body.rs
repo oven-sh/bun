@@ -614,13 +614,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         match self.connection.get() {
             Some(UnixOrHost::Host { host, port }) => {
                 // getaddrinfo doesn't accept bracketed IPv6.
-                let raw: &[u8] = host;
-                let clean = if raw.len() > 1 && raw[0] == b'[' && raw[raw.len() - 1] == b']' {
-                    &raw[1..raw.len() - 1]
-                } else {
-                    raw
-                };
-                let hostz = bun_core::ZBox::from_bytes(clean);
+                let hostz =
+                    bun_core::ZBox::from_bytes(bun_core::ip_address::strip_ipv6_brackets(host));
                 let port = *port;
                 // `host` borrow ends here; `self.connection` no longer borrowed.
                 // `ZBox` guarantees a trailing NUL; host bytes contain no interior NUL.
@@ -1472,7 +1467,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         }
                     } else if let Some(connection) = this.connection.get() {
                         if let super::listener::UnixOrHost::Host { host, .. } = connection {
-                            let host: &[u8] = host.as_ref();
+                            let host = bun_core::ip_address::strip_ipv6_brackets(host.as_ref());
                             if !host.is_empty() {
                                 let host_z = bun_core::ZBox::from_bytes(host);
                                 // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
@@ -1777,7 +1772,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         Some(super::listener::UnixOrHost::Host { host, .. })
                             if !host.is_empty() =>
                         {
-                            &host[..]
+                            bun_core::ip_address::strip_ipv6_brackets(host)
                         }
                         _ => b"localhost",
                     },

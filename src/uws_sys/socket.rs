@@ -765,13 +765,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             0
         };
         // getaddrinfo doesn't understand bracketed IPv6 literals; URL parsing
-        // leaves them in (`[::1]`), so strip here like the old connectAnon did.
-        let host =
-            if raw_host.len() > 1 && raw_host[0] == b'[' && raw_host[raw_host.len() - 1] == b']' {
-                &raw_host[1..raw_host.len() - 1]
-            } else {
-                raw_host
-            };
+        // leaves them in (`[::1]`).
+        let host = bun_core::ip_address::strip_ipv6_brackets(raw_host);
         // SocketGroup.connect needs a NUL-terminated host.
         let mut stack = [0u8; 256];
         let heap: Vec<u8>;

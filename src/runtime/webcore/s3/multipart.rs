@@ -759,7 +759,9 @@ impl MultiPartUpload {
         match result {
             S3CommitResult::Failure(err) => {
                 let mut options = self_.options.get();
-                if options.retry > 0 {
+                // (Retried in the context of the script that uploads: once that has stopped the
+                // request would only be aborted again.)
+                if options.retry > 0 && !self_.context().is_stopped() {
                     options.retry -= 1;
                     self_.options.set(options);
                     // retry commit
@@ -767,14 +769,14 @@ impl MultiPartUpload {
                     return Ok(());
                 }
                 self_.state.set(State::Finished);
-                // The deref must run after the callback:
                 let r = (self_.callback)(
                     self_,
                     S3UploadResult::Failure(err),
                     self_.callback_context.get(),
                 );
-                MultiPartUpload::deref_(this);
-                r
+                // The store still holds the parts. Derefs after the rollback, so after the callback.
+                let rolled_back = self_.rollback_multi_part_request();
+                r.and(rolled_back)
             }
             S3CommitResult::Success => {
                 self_.state.set(State::Finished);

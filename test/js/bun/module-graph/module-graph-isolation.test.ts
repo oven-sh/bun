@@ -3907,12 +3907,15 @@ test("ModuleGraph isolation: work that continues from one thread-pool step to th
   });
 });
 
-test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first request to the last: disposing the graph mid-way sends no later part and no completion, and another graph's upload completes", async () => {
+test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first request to the last: disposing the graph mid-way sends no later part and no completion and rolls the upload back, and another graph's upload completes", async () => {
   // A minimal S3: which requests each key (the state's tag) has made. Part 2 of the upload that gets
-  // disposed is held until the test lets it go.
+  // disposed is held until the test lets it go, and so is the completion of the one that gets
+  // disposed while completing.
   const requests: Record<string, string[]> = {};
   const inFlight = Promise.withResolvers<void>();
   const letGo = Promise.withResolvers<void>();
+  const completing = Promise.withResolvers<void>();
+  const letComplete = Promise.withResolvers<void>();
   using s3 = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -3938,6 +3941,10 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
       }
       if (request.method === "POST" && url.searchParams.has("uploadId")) {
         log.push("complete");
+        if (key === "upload-completing") {
+          completing.resolve();
+          await letComplete.promise;
+        }
         return xml(
           `<CompleteMultipartUploadResult><Bucket>bucket</Bucket><Key>${key}</Key><ETag>"done"</ETag></CompleteMultipartUploadResult>`,
         );
@@ -3952,13 +3959,22 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
   });
   using disposed = await newGraph();
   using kept = await newGraph();
-  const [ofDisposed, ofKept] = [newState("upload-disposed"), newState("upload-kept")];
+  using disposedCompleting = await newGraph();
+  const [ofDisposed, ofKept, ofCompleting] = [
+    newState("upload-disposed"),
+    newState("upload-kept"),
+    newState("upload-completing"),
+  ];
   const endpoint = `http://127.0.0.1:${s3.port}`;
   disposed.graph.run(() => disposed.app.uploadInParts(ofDisposed, endpoint));
   const keptUpload: Promise<void> = kept.graph.run(() => kept.app.uploadInParts(ofKept, endpoint));
+  disposedCompleting.graph.run(() => disposedCompleting.app.uploadInParts(ofCompleting, endpoint));
   await inFlight.promise;
   disposed.graph.dispose();
   letGo.resolve();
+  await completing.promise;
+  disposedCompleting.graph.dispose();
+  letComplete.resolve();
   await keptUpload;
   // The part in flight is aborted, and its script hears nothing of it. (The kept upload's two
   // later parts and its completion went out after that part was let go.)
@@ -3973,5 +3989,12 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
   expect({ settled: ofDisposed.settled, requests: requests[ofDisposed.tag] }).toEqual({
     settled: undefined,
     requests: ["create", "part 1", "part 2", "abort"],
+  });
+  // Disposed while the completion was on its way: whether the store got it is not known, so it is
+  // rolled back too (a store that did complete it has nothing left to drop).
+  await until(() => requests[ofCompleting.tag].includes("abort"));
+  expect({ settled: ofCompleting.settled, requests: requests[ofCompleting.tag] }).toEqual({
+    settled: undefined,
+    requests: ["create", "part 1", "part 2", "part 3", "part 4", "complete", "abort"],
   });
 });

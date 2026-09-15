@@ -765,6 +765,21 @@ mod _async_tasks {
                     let off = (buf.len()).min(args.offset as usize);
                     let buf = &buf[off..];
                     let buf = &buf[..buf.len().min(args.length as usize)];
+                    let pos = args.position.map(|p| p as i64).unwrap_or(-1);
+                    if let Some(ring) = windows::ioring::get(loop_) {
+                        task.req.cb = Some(Self::ioring_callback);
+                        if ring.submit_read(
+                            args.fd.native(),
+                            buf.as_ptr() as *mut u8,
+                            buf.len() as u32,
+                            pos,
+                            &raw mut task.req,
+                        ) {
+                            sys::syslog!("ioring read({}) = scheduled", fd);
+                            return task.promise.value();
+                        }
+                        task.req.cb = None;
+                    }
                     let bufs = [uv::uv_buf_t::init(buf)];
                     // SAFETY: libuv copies the iovec descriptor before return; the
                     // backing Buffer is pinned and rooted (`ReadBuffer::PinnedBuffer`).
@@ -775,7 +790,7 @@ mod _async_tasks {
                             fd,
                             bufs.as_ptr(),
                             1,
-                            args.position.map(|p| p as i64).unwrap_or(-1),
+                            pos,
                             Some(Self::uv_callback),
                         )
                     };
@@ -789,6 +804,21 @@ mod _async_tasks {
                     let off = (buf.len()).min(args.offset as usize);
                     let buf = &buf[off..];
                     let buf = &buf[..buf.len().min(args.length as usize)];
+                    let pos = args.position.map(|p| p as i64).unwrap_or(-1);
+                    if let Some(ring) = windows::ioring::get(loop_) {
+                        task.req.cb = Some(Self::ioring_callback);
+                        if ring.submit_write(
+                            args.fd.native(),
+                            buf.as_ptr(),
+                            buf.len() as u32,
+                            pos,
+                            &raw mut task.req,
+                        ) {
+                            sys::syslog!("ioring write({}) = scheduled", fd);
+                            return task.promise.value();
+                        }
+                        task.req.cb = None;
+                    }
                     let bufs = [uv::uv_buf_t::init(buf)];
                     // SAFETY: see Read arm.
                     let rc = unsafe {
@@ -798,7 +828,7 @@ mod _async_tasks {
                             fd,
                             bufs.as_ptr(),
                             1,
-                            args.position.map(|p| p as i64).unwrap_or(-1),
+                            pos,
                             Some(Self::uv_callback),
                         )
                     };
@@ -900,6 +930,20 @@ mod _async_tasks {
             }
 
             task.promise.value()
+        }
+
+        /// `uv_callback` minus `uv_fs_req_cleanup` (libuv never initialised the request).
+        extern "C" fn ioring_callback(req: *mut uv::fs_t) {
+            // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
+            let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
+            let mut node_fs = NodeFS::default();
+            this.result =
+                NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result.int());
+            let this_ptr: *mut Self = this;
+            this.global_object()
+                .bun_vm()
+                .event_loop_mut()
+                .enqueue_task(Task::init(this_ptr));
         }
 
         extern "C" fn uv_callback(req: *mut uv::fs_t) {

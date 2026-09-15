@@ -8,7 +8,7 @@ use bun_core::ZStr;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
+use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile, bun_lock};
 use crate::package_manager::{PackageManager, WorkspaceFilter};
 use crate::{
     Dependency, DependencyID, PackageID, PackageNameHash, Resolution, invalid_dependency_id,
@@ -487,6 +487,27 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         self.lockfile().buffers.string_bytes.as_slice()
     }
 
+    /// Binds a peer edge the way loading `bun.lock` does, whatever the resolver, a previous
+    /// lockfile or a migration left it bound to, so every tree built from these packages agrees.
+    fn bind_peer(&mut self, dep_id: DependencyID) {
+        let dependency: &Dependency = &self.dependencies[dep_id as usize];
+        if !dependency.behavior.is_peer() {
+            return;
+        }
+        let lockfile_ref = self.lockfile;
+        let lockfile: &Lockfile = lockfile_ref.get();
+        if let Some(pkg_id) = bun_lock::resolve_peer_dep_version_based(
+            dependency,
+            &lockfile.catalogs,
+            &lockfile.package_index,
+            &lockfile.overrides,
+            lockfile.packages.items_resolution(),
+            lockfile.buffers.string_bytes.as_slice(),
+        ) {
+            self.resolutions[dep_id as usize] = pkg_id;
+        }
+    }
+
     /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
     pub(crate) fn clean(&mut self) -> Result<CleanResult, AllocError> {
         let mut total: u32 = 0;
@@ -704,6 +725,7 @@ impl Tree {
         let sort_buf_len = builder.sort_buf.len();
         'dep: for sort_idx in 0..sort_buf_len {
             let dep_id = builder.sort_buf[sort_idx];
+            builder.bind_peer(dep_id);
             let pkg_id = builder.resolutions[dep_id as usize];
 
             // filter out disabled dependencies

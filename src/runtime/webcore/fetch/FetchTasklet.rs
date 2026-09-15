@@ -143,7 +143,7 @@ pub struct FetchTasklet {
     pub(crate) on_stats: StrongOptional,
     /// The `Bun.FetchSession` of this request, kept from being collected (and
     /// closing its pool) while the request can still park a socket there.
-    pub(crate) fetch_session: StrongOptional,
+    pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,
     /// The callback is the session's, which holds it; `fetch_session` holds the session.
     pub(crate) session_check_server_identity: bool,
     pub(crate) session_on_stats: bool,
@@ -500,7 +500,7 @@ impl FetchTasklet {
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
         self.on_stats.deinit();
-        self.fetch_session.deinit();
+        self.fetch_session = None;
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
@@ -1259,9 +1259,7 @@ impl FetchTasklet {
             if !self.session_check_server_identity {
                 return None;
             }
-            self.fetch_session
-                .get()
-                .and_then(super::fetch_session::js::check_server_identity_get_cached)
+            self.fetch_session.as_ref()?.check_server_identity()
         })
     }
 
@@ -1275,9 +1273,7 @@ impl FetchTasklet {
             if !from_session {
                 return None;
             }
-            self.fetch_session
-                .get()
-                .and_then(super::fetch_session::js::on_stats_get_cached)
+            self.fetch_session.as_ref()?.on_stats()
         }) else {
             return;
         };
@@ -2776,7 +2772,7 @@ pub struct FetchOptions {
     pub(crate) pool: http::PoolOptions,
     pub(crate) bypass_pool: bool,
     pub(crate) on_stats: StrongOptional,
-    pub(crate) fetch_session: StrongOptional,
+    pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,
     /// The callback is the session's, which holds it; `fetch_session` holds the session.
     pub(crate) session_check_server_identity: bool,
     pub(crate) session_on_stats: bool,

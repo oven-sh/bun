@@ -9,7 +9,8 @@ use bun_http::{self as http, Headers};
 use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, URLJsc as _,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsClass as _,
+    JsRef, JsResult, URLJsc as _,
 };
 
 use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs as _};
@@ -141,6 +142,11 @@ pub struct FetchSession {
     unix: Box<[u8]>,
     /// Whether a request ever named this session, so its pool can hold sockets.
     used: Cell<bool>,
+    /// The wrapper. Strong while `in_flight` is not zero: a request parks its
+    /// socket in this session's pool, and collecting the session closes the pool.
+    this_value: JsCell<JsRef>,
+    /// Requests that hold a `SessionHold`.
+    in_flight: Cell<u32>,
     /// Preconnects on their way into this session's pool. The session is not
     /// collected before they are parked: collecting it is what closes the pool.
     preconnecting: std::sync::Arc<core::sync::atomic::AtomicUsize>,
@@ -170,8 +176,15 @@ impl<'a> SessionRef<'a> {
         })
     }
 
-    pub(crate) fn wrapper(self) -> JSValue {
-        self.wrapper
+    /// Keep the session alive for a request that is about to go out.
+    pub(crate) fn hold(self, global: &JSGlobalObject) -> SessionHold {
+        let session = self.session;
+        let held = session.in_flight.get();
+        session.in_flight.set(held + 1);
+        if held == 0 {
+            session.this_value.with_mut(|this| this.upgrade(global));
+        }
+        SessionHold(core::ptr::NonNull::from(session))
     }
     pub(crate) fn pool(self) -> http::PoolOptions {
         self.session.pool
@@ -202,6 +215,44 @@ impl<'a> SessionRef<'a> {
     }
 }
 
+/// One in-flight request's hold on its session. JS thread only.
+pub(crate) struct SessionHold(core::ptr::NonNull<FetchSession>);
+
+impl SessionHold {
+    fn session(&self) -> &FetchSession {
+        // SAFETY: this hold is part of `in_flight`, and the box is not freed
+        // while that is not zero: the wrapper is strongly held, and a
+        // `finalize` that runs anyway (VM teardown) leaves the box to the
+        // last hold.
+        unsafe { self.0.as_ref() }
+    }
+
+    pub(crate) fn check_server_identity(&self) -> Option<JSValue> {
+        js::check_server_identity_get_cached(self.session().this_value.try_get()?)
+    }
+
+    pub(crate) fn on_stats(&self) -> Option<JSValue> {
+        js::on_stats_get_cached(self.session().this_value.try_get()?)
+    }
+}
+
+impl Drop for SessionHold {
+    fn drop(&mut self) {
+        let session = self.session();
+        let left = session.in_flight.get() - 1;
+        session.in_flight.set(left);
+        if left != 0 {
+            return;
+        }
+        if session.this_value.get().is_finalized() {
+            // SAFETY: `finalize` ran under this hold and left the box to it.
+            drop(unsafe { bun_core::heap::take(self.0.as_ptr()) });
+        } else {
+            session.this_value.with_mut(|this| this.downgrade());
+        }
+    }
+}
+
 impl FetchSession {
     pub fn constructor(
         global: &JSGlobalObject,
@@ -222,6 +273,8 @@ impl FetchSession {
             proxy: None,
             unix: Box::default(),
             used: Cell::new(false),
+            this_value: JsCell::new(JsRef::init_weak(this_value)),
+            in_flight: Cell::new(0),
             preconnecting: Default::default(),
         });
         if options.is_undefined_or_null() {
@@ -364,8 +417,13 @@ impl FetchSession {
         reason = "reclaim point for the generated finalizer"
     )]
     pub fn finalize(self: Box<Self>) {
-        // Requests keep their session alive, so nothing is left to use these sockets.
+        self.this_value.with_mut(|this| this.finalize());
         self.close_idle_sockets();
+        // Only when the VM is torn down under requests in flight: their holds
+        // still point here, and the last one frees the box.
+        if self.in_flight.get() != 0 {
+            let _ = bun_core::heap::into_raw(self);
+        }
     }
 }
 

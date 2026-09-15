@@ -1507,6 +1507,34 @@ impl Map {
             map: self.map.clone()?,
         })
     }
+
+    /// Removes the variables that select which repository git operates on
+    /// (git(1), "Environment Variables: The Git Repository"). git exports
+    /// `GIT_DIR` and `GIT_INDEX_FILE` to hooks. A git child that names its own
+    /// repository (`-C`, cwd, or the clone target) must not inherit them, or it
+    /// resolves and checks out in the caller's repository instead.
+    pub fn remove_git_repository_vars(&mut self) {
+        const VARS: &[&[u8]] = &[
+            b"GIT_DIR",
+            b"GIT_WORK_TREE",
+            b"GIT_INDEX_FILE",
+            b"GIT_NAMESPACE",
+            b"GIT_OBJECT_DIRECTORY",
+            b"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            b"GIT_COMMON_DIR",
+            b"GIT_PREFIX",
+        ];
+        for key in VARS {
+            self.remove(key);
+        }
+    }
+
+    /// The envp for a git child that operates on a repository bun names itself.
+    pub fn create_git_child_env(&self) -> Result<NullDelimitedEnvMap, AllocError> {
+        let mut map = self.clone_with_allocator()?;
+        map.remove_git_repository_vars();
+        map.create_null_delimited_env_map()
+    }
 }
 
 /// Owns the `K=V\0` strings backing a NULL-terminated envp array.
@@ -1524,6 +1552,10 @@ pub struct NullDelimitedEnvMap {
     _storage: Vec<Box<[u8]>>,
     envp: Box<[*const c_char]>,
 }
+
+// SAFETY: every pointer in `envp` points into `_storage`, which the struct
+// owns and never shares. Moving both together to another thread is sound.
+unsafe impl Send for NullDelimitedEnvMap {}
 
 impl NullDelimitedEnvMap {
     /// `[:null]?[*:0]const u8` — last element is `ptr::null()`.

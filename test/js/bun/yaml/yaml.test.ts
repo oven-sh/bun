@@ -3388,23 +3388,21 @@ config:
         ["indent 4", 4],
       ];
 
-      for (const c of cases) {
-        test(c.name, () => {
-          for (const [label, space] of spaces) {
-            const first = YAML.stringify(c.value, null, space);
-            expect(first).toMatchSnapshot(`${label} stringify`);
-            const parsed = YAML.parse(first);
-            expect(parsed).toMatchSnapshot(`${label} parse`);
-            expect(parsed).toEqual("parsed" in c ? c.parsed : c.value);
-            const second = YAML.stringify(parsed, null, space);
-            expect(second).toBe(first);
-            expect(YAML.parse(second)).toEqual(parsed);
-            for (const line of first.split("\n")) {
-              expect(line).toBe(line.trimEnd());
-            }
+      describe.each(cases)("$name", c => {
+        test.each(spaces)("%s", (label, space) => {
+          const first = YAML.stringify(c.value, null, space);
+          expect(first).toMatchSnapshot("stringify");
+          const parsed = YAML.parse(first);
+          expect(parsed).toMatchSnapshot("parse");
+          expect(parsed).toEqual("parsed" in c ? c.parsed : c.value);
+          const second = YAML.stringify(parsed, null, space);
+          expect(second).toBe(first);
+          expect(YAML.parse(second)).toEqual(parsed);
+          for (const line of first.split("\n")) {
+            expect(line).toBe(line.trimEnd());
           }
         });
-      }
+      });
 
       test("space variants produce the same document", () => {
         const value = { a: { b: [1, { c: "d: e", f: [] }], g: {} }, h: "x" };

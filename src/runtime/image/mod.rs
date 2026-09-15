@@ -3,8 +3,8 @@
 //! The pure-Rust codec dispatch (`codecs.rs`), per-format decoders/encoders
 //! (`codec_*.rs`), EXIF/quantize/thumbhash helpers, and the platform backends
 //! are wired here. The JS-facing `Image` wrapper (`Image.rs`) — constructor,
-//! chainable mutators, `ConcurrentPromiseTask` plumbing — is re-exported as
-//! the public surface of this module.
+//! chainable mutators, pool-job plumbing — is re-exported as the public
+//! surface of this module.
 
 // ─── codec dispatch surface ──────────────────────────────────────────────────
 //
@@ -59,6 +59,5 @@ pub mod thumbhash;
 #[path = "Image.rs"]
 pub mod image_body;
 pub use image_body::{
-    AsyncImageTask, Deliver, Fit, Image, Input, Kind, Modulate, Pipeline, PipelineTask, Resize,
-    Source, TaskResult,
+    Deliver, Fit, Image, Input, Kind, Modulate, Pipeline, PipelineTask, Resize, Source, TaskResult,
 };

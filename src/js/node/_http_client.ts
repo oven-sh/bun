@@ -3,7 +3,6 @@
 // node:tls sockets and the llhttp HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
-const net = require("node:net");
 const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kClientRequestStatistics = Symbol("ClientRequestStatistics");
 const {
@@ -430,7 +429,7 @@ function ClientRequest(input, options, cb) {
       }
     } else {
       $debug("CLIENT use net.createConnection", opts);
-      this.onSocket(net.createConnection(opts));
+      this.onSocket(require("node:net").createConnection(opts));
     }
   }
   if (onClientRequestCreatedChannel.hasSubscribers) {

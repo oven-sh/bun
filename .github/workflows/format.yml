@@ -48,6 +48,18 @@ jobs:
           # failing formatter is invisible to the `wait $PID` checks below.
           set -o pipefail
 
+          # `*.generated.rs` are deterministic outputs of `*.string-map.ts`; the
+          # source `.ts` is the truth. Regenerating here, alongside the
+          # formatters, makes a stale checked-in copy one more fix for the
+          # autofix step below to push back to the PR (it also fails the run
+          # whenever it has something to push, so staleness stays a red check
+          # where it can't push, e.g. the merge queue). Runs before the
+          # formatters start so prettier isn't rewriting a `.string-map.ts`
+          # while the generator imports it.
+          echo "::group::String maps"
+          bun run codegen:string-maps 2>&1 | sed 's/^/[string-maps] /'
+          echo "::endgroup::"
+
           # Start prettier in background with prefixed output
           echo "::group::Prettier"
           (bun run prettier 2>&1 | sed 's/^/[prettier] /') &
@@ -108,11 +120,4 @@ jobs:
           fi
 
           echo "✅ All formatters completed successfully"
-      - name: Verify checked-in codegen
-        # `*.generated.rs` are deterministic outputs of `*.string-map.ts`; the
-        # source `.ts` is the truth. This step regenerates and fails if the
-        # committed `.generated.rs` is stale, so a forgotten regen surfaces in
-        # CI rather than as a confusing behaviour diff later.
-        run: |
-          bun run codegen:verify
       - uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a # v1.3.4

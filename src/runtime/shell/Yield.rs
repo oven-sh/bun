@@ -24,9 +24,6 @@ use crate::shell::states::pipeline::Pipeline;
 pub enum Yield {
     /// Step the node at this id (`Interpreter::next_node`).
     Next(NodeId),
-    /// Start the node at this id (`Interpreter::start_node`). Used when a
-    /// freshly-created child needs starting at top-of-stack.
-    Start(NodeId),
     /// IOWriter completed a chunk synchronously; fire `on_io_writer_chunk` on
     /// the registered child at top-of-stack.
     OnIoWriterChunk {
@@ -40,8 +37,8 @@ pub enum Yield {
     /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
     /// callback will resume by calling `.run()` again later.
     Suspended,
-    /// Threw a JS error.
-    Failed,
+    /// The node threw a JS exception; `Interpreter::fail` winds the script down.
+    Failed(NodeId),
     Done,
 }
 
@@ -53,10 +50,6 @@ impl Yield {
     #[inline]
     pub(crate) const fn done() -> Yield {
         Yield::Done
-    }
-    #[inline]
-    pub(crate) const fn failed() -> Yield {
-        Yield::Failed
     }
 }
 
@@ -129,13 +122,13 @@ impl Yield {
                     }
                     interp.next_node(id)
                 }
-                Yield::Start(id) => interp.start_node(id),
                 Yield::OnIoWriterChunk {
                     child,
                     written,
                     err,
                 } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
-                Yield::Suspended | Yield::Failed | Yield::Done => {
+                Yield::Failed(id) => interp.fail(id),
+                Yield::Suspended | Yield::Done => {
                     if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
                         y
                     } else {

@@ -3,7 +3,7 @@ import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
   return output
-    .replaceAll(/ \[[0-9\.]+ms\]/g, "")
+    .replaceAll(/ \[[0-9\.]+m?s\]/g, "")
     .replaceAll(/at <anonymous> \(.*\)/g, "at <anonymous> (FILE:LINE)")
     .replaceAll(
       "test\\js\\bun\\test\\printing\\diffexample.fixture.ts:",
@@ -14,18 +14,17 @@ function cleanAnsiEscapes(output: string) {
   return output.replaceAll(/\x1B\[[0-9;]*m/g, "");
 }
 
-test("no color", async () => {
+test.concurrent("no color", async () => {
   const noColorSpawn = Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
-    stdio: ["inherit", "pipe", "pipe"],
+    stdio: ["inherit", "ignore", "pipe"],
     env: {
       ...bunEnv,
       FORCE_COLOR: "0",
     },
   });
-  await noColorSpawn.exited;
-  const noColorStderr = cleanOutput(await noColorSpawn.stderr.text());
-  const noColorStdout = await noColorSpawn.stdout.text();
+  const [noColorStderrRaw] = await Promise.all([noColorSpawn.stderr.text(), noColorSpawn.exited]);
+  const noColorStderr = cleanOutput(noColorStderrRaw);
   expect(noColorStderr).toMatchInlineSnapshot(`
     "
     test/js/bun/test/printing/diffexample.fixture.ts:
@@ -86,7 +85,7 @@ test("no color", async () => {
                                   ^
     error: expect(received).toEqual(expected)
 
-    @@ -96,11 +96,11 @@
+    @@ -96,11 +96,10 @@
       line 96
       line 97
       line 98
@@ -98,7 +97,7 @@ test("no color", async () => {
       line 103
       line 104
       line 105
-    @@ -496,11 +496,11 @@
+    @@ -496,11 +495,11 @@
       line 495
       line 496
       line 497
@@ -111,7 +110,7 @@ test("no color", async () => {
       line 503
       line 504
       line 505
-    @@ -747,11 +747,11 @@
+    @@ -747,11 +746,11 @@
       line 746
       line 747
       line 748
@@ -124,7 +123,7 @@ test("no color", async () => {
       line 754
       line 755
       line 756
-    @@ -897,11 +897,11 @@
+    @@ -897,11 +896,11 @@
       line 896
       line 897
       line 898
@@ -366,7 +365,7 @@ test("no color", async () => {
       line 303
       line 304
       line 305
-    @@ -397,11 +397,11 @@
+    @@ -397,10 +397,11 @@
       line 396
       line 397
       line 398
@@ -438,7 +437,7 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    @@ -1,7 +1,7 @@
+    @@ -1,7 +1,6 @@
       Float64Array [
     -   0,
         1,
@@ -446,7 +445,7 @@ test("no color", async () => {
         3,
         4,
         5,
-    @@ -9997,7 +9997,7 @@
+    @@ -9997,6 +9996,7 @@
         9995,
         9996,
         9997,
@@ -724,20 +723,6 @@ test("no color", async () => {
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);
-
-  const colorSpawn = Bun.spawn({
-    cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
-    stdio: ["inherit", "pipe", "pipe"],
-    env: {
-      ...bunEnv,
-      FORCE_COLOR: "0",
-    },
-  });
-  await colorSpawn.exited;
-  const colorStderr = cleanOutput(cleanAnsiEscapes(await colorSpawn.stderr.text()));
-  const colorStdout = cleanAnsiEscapes(await colorSpawn.stdout.text());
-  expect(colorStderr).toEqual(noColorStderr);
-  expect(colorStdout).toEqual(noColorStdout);
 });
 
 function getDiffPart(stderr: string): string {
@@ -748,20 +733,27 @@ function getDiffPart(stderr: string): string {
   return stderr;
 }
 
-test("color", async () => {
-  const spawn = Bun.spawn({
-    cmd: [bunExe(), import.meta.dir + "/diffexample-color.fixture.ts"],
-    stdio: ["inherit", "pipe", "pipe"],
-    env: {
-      ...bunEnv,
-      FORCE_COLOR: "1",
-    },
-  });
-  await spawn.exited;
-  const stderr = await spawn.stderr.text();
+test.concurrent("color", async () => {
+  const spawnFixture = (FORCE_COLOR: string) =>
+    Bun.spawn({
+      cmd: [bunExe(), import.meta.dir + "/diffexample-color.fixture.ts"],
+      stdio: ["inherit", "pipe", "pipe"],
+      env: {
+        ...bunEnv,
+        FORCE_COLOR,
+      },
+    });
+  const spawn = spawnFixture("1");
+  const plainSpawn = spawnFixture("0");
+  const [stdout, stderr] = await Promise.all([spawn.stdout.text(), spawn.stderr.text(), spawn.exited]);
+  const [plainStdout] = await Promise.all([plainSpawn.stdout.text(), plainSpawn.stderr.text(), plainSpawn.exited]);
+
+  // Colour only ever adds escape sequences; the text underneath must be what
+  // the uncoloured renderer prints.
+  expect(cleanAnsiEscapes(stdout)).toEqual(plainStdout);
 
   expect(stderr).toMatchInlineSnapshot(`""`);
-  expect(await spawn.stdout.text()).toMatchInlineSnapshot(`
+  expect(stdout).toMatchInlineSnapshot(`
     "\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
       \x1B[0m\x1B[2m"a\x1B[0m
@@ -802,7 +794,7 @@ test("color", async () => {
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
-    \x1B[33m@@ -1,7 +1,7 @@\x1B[0m
+    \x1B[33m@@ -1,7 +1,6 @@\x1B[0m
       \x1B[0m\x1B[2mInt32Array [\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m  0,\x1B[0m
       \x1B[0m\x1B[2m  1,\x1B[0m
@@ -810,7 +802,7 @@ test("color", async () => {
       \x1B[0m\x1B[2m  3,\x1B[0m
       \x1B[0m\x1B[2m  4,\x1B[0m
       \x1B[0m\x1B[2m  5,\x1B[0m
-    \x1B[33m@@ -99997,7 +99997,7 @@\x1B[0m
+    \x1B[33m@@ -99997,6 +99996,7 @@\x1B[0m
       \x1B[0m\x1B[2m  99995,\x1B[0m
       \x1B[0m\x1B[2m  99996,\x1B[0m
       \x1B[0m\x1B[2m  99997,\x1B[0m
@@ -824,8 +816,8 @@ test("color", async () => {
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
-    Expected: \x1B[0m\x1B[32m"Hello 👋 世界 🌎"\x1B[0m
-    Received: \x1B[0m\x1B[31m"Hello 👋 世界 🌍"\x1B[0m
+    Expected: \x1B[0m\x1B[32m"Hello 👋 世界 \x1B[0m\x1B[32m🌎\x1B[0m\x1B[32m"\x1B[0m
+    Received: \x1B[0m\x1B[31m"Hello 👋 世界 \x1B[0m\x1B[31m🌍\x1B[0m\x1B[31m"\x1B[0m
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
@@ -844,8 +836,8 @@ test("color", async () => {
     \x1B[32m- \x1B[0m\x1B[32m  "chinese": "测试\x1B[0m\x1B[32m文本\x1B[0m\x1B[32m",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m  "chinese": "测试\x1B[0m\x1B[31m字符串\x1B[0m\x1B[31m",\x1B[0m
       \x1B[0m\x1B[2m  "emoji": "🔥💧🌊",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  "mixed": "Hello 世界 🌎",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  "mixed": "Hello 世界 🌍",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  "mixed": "Hello 世界 \x1B[0m\x1B[32m🌎\x1B[0m\x1B[32m",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  "mixed": "Hello 世界 \x1B[0m\x1B[31m🌍\x1B[0m\x1B[31m",\x1B[0m
       \x1B[0m\x1B[2m}\x1B[0m
 
     \x1B[32m- Expected  - 2\x1B[0m
@@ -887,3 +879,24 @@ test("color", async () => {
 issue:
 in inline snapshot diffing, it is printing the color codes
 */
+
+test("large diffs are exact rather than abandoned part-way", () => {
+  // Every 7th element differs. It must report exactly the changed elements
+  // instead of giving up part-way and dumping both arrays wholesale as one
+  // giant -/+ block.
+  const length = 50_000;
+  const expected = Array.from({ length }, (_, i) => i);
+  const received = expected.map((x, i) => (i % 7 === 0 ? x + 1 : x));
+  const changed = Math.ceil(length / 7);
+
+  let message = "";
+  try {
+    expect(received).toEqual(expected);
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  // (slice so a failure doesn't print the whole ~1 MB message)
+  expect(message.slice(0, 120)).toContain("\n  [\n-   0,\n+   1,\n    1,\n");
+  expect(message.slice(-400)).toContain("\n-   49994,\n+   49995,\n    49995,\n");
+  expect(message.slice(-120).trimEnd()).toEndWith(`\n\n- Expected  - ${changed}\n+ Received  + ${changed}`);
+});

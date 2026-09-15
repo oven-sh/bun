@@ -89,6 +89,7 @@ jobs:
           add-paths: |
             src/jsc/bindings/sqlite/sqlite3.c
             src/jsc/bindings/sqlite/sqlite3_local.h
+            src/jsc/bindings/sqlite/NodeSqlite.cpp
           commit-message: "deps: update sqlite to ${{ steps.check-version.outputs.latest }}"
           title: "deps: update sqlite to ${{ steps.check-version.outputs.latest }}"
           delete-branch: true

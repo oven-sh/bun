@@ -22,7 +22,7 @@ const {
 } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
-const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const { kArmHandshakeTimeout, kPreHandshakeWrite, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
@@ -64,64 +64,70 @@ function getValidCiphersSet() {
 }
 
 // OpenSSL cipher-list selector keywords that are not literal suite names.
-const CIPHER_LIST_SELECTORS = new Set([
-  "DEFAULT",
-  "ALL",
-  "COMPLEMENTOFDEFAULT",
-  "COMPLEMENTOFALL",
-  "HIGH",
-  "MEDIUM",
-  "LOW",
-  "PSK",
-  "aNULL",
-  "eNULL",
-  "NULL",
-  "EXPORT",
-  "EXP",
-  "kRSA",
-  "aRSA",
-  "RSA",
-  "kDHE",
-  "kEDH",
-  "DH",
-  "DHE",
-  "EDH",
-  "kECDHE",
-  "kEECDH",
-  "ECDHE",
-  "EECDH",
-  "ECDH",
-  "aECDSA",
-  "ECDSA",
-  "aDSS",
-  "DSS",
-  "kPSK",
-  "aPSK",
-  "AES",
-  "AES128",
-  "AES256",
-  "AESGCM",
-  "AESCCM",
-  "CHACHA20",
-  "3DES",
-  "DES",
-  "RC4",
-  "RC2",
-  "MD5",
-  "SHA",
-  "SHA1",
-  "SHA256",
-  "SHA384",
-  "CAMELLIA",
-  "ARIA",
-  "SRP",
-  "TLSv1",
-  "TLSv1.0",
-  "TLSv1.2",
-  "TLSv1.3",
-  "SSLv3",
-  "FIPS",
-]);
+let _CIPHER_LIST_SELECTORS: Set<string> | undefined;
+function getCipherListSelectors() {
+  if (!_CIPHER_LIST_SELECTORS) {
+    _CIPHER_LIST_SELECTORS = new Set([
+      "DEFAULT",
+      "ALL",
+      "COMPLEMENTOFDEFAULT",
+      "COMPLEMENTOFALL",
+      "HIGH",
+      "MEDIUM",
+      "LOW",
+      "PSK",
+      "aNULL",
+      "eNULL",
+      "NULL",
+      "EXPORT",
+      "EXP",
+      "kRSA",
+      "aRSA",
+      "RSA",
+      "kDHE",
+      "kEDH",
+      "DH",
+      "DHE",
+      "EDH",
+      "kECDHE",
+      "kEECDH",
+      "ECDHE",
+      "EECDH",
+      "ECDH",
+      "aECDSA",
+      "ECDSA",
+      "aDSS",
+      "DSS",
+      "kPSK",
+      "aPSK",
+      "AES",
+      "AES128",
+      "AES256",
+      "AESGCM",
+      "AESCCM",
+      "CHACHA20",
+      "3DES",
+      "DES",
+      "RC4",
+      "RC2",
+      "MD5",
+      "SHA",
+      "SHA1",
+      "SHA256",
+      "SHA384",
+      "CAMELLIA",
+      "ARIA",
+      "SRP",
+      "TLSv1",
+      "TLSv1.0",
+      "TLSv1.2",
+      "TLSv1.3",
+      "SSLv3",
+      "FIPS",
+    ]);
+  }
+  return _CIPHER_LIST_SELECTORS;
+}
 
 function validateCiphers(ciphers: string, name: string = "options") {
   // Set the cipher list and cipher suite before anything else because
@@ -167,7 +173,7 @@ function validateCiphers(ciphers: string, name: string = "options") {
         first === 0x2b /* + */ ||
         first === 0x40 /* @ */ ||
         StringPrototypeIncludes.$call(r, "+") ||
-        CIPHER_LIST_SELECTORS.has(r) ||
+        getCipherListSelectors().has(r) ||
         ciphersSet.has(r)
       ) {
         sawUsableEntry = true;
@@ -190,7 +196,6 @@ const SUPPORTED_ECDH_GROUPS = new Set([
   "secp521r1",
   "X25519",
   "x25519",
-  "X25519Kyber768Draft00",
   "X25519MLKEM768",
   "MLKEM1024",
 ]);
@@ -697,6 +702,7 @@ const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
 
 const buntls = Symbol.for("::buntls::");
+const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
 // (Node's `context.context || context` unwrap accepts both the wrapper and
 // the unwrapped native context).
@@ -734,11 +740,26 @@ function TLSSocket(socket?, options?) {
     throw $ERR_INVALID_ARG_TYPE("socket", "Duplex", socket);
   }
 
-  options = isNetSocketOrDuplex ? { ...options, allowHalfOpen: false } : options || socket || {};
+  // The wrapped socket's allowHalfOpen wins: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592
+  if (isNetSocketOrDuplex) {
+    options = { ...options, allowHalfOpen: socket.allowHalfOpen };
+  } else {
+    options = options || socket || {};
+    const wrapped = options.socket;
+    if (wrapped instanceof Duplex) {
+      options = { ...options, allowHalfOpen: wrapped.allowHalfOpen };
+    }
+  }
 
   this._rejectUnauthorized = !!options.rejectUnauthorized;
 
-  NetSocket.$call(this, options);
+  // Never forward readable / writable: node's TLSSocket builds its own net.Socket options. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L590-L600
+  NetSocket.$call(
+    this,
+    options.readable === undefined && options.writable === undefined
+      ? options
+      : { ...options, readable: undefined, writable: undefined },
+  );
 
   // Node's _init installs this as the first 'error' listener and removes it in
   // _releaseControl: until control is handed to the user it routes errors
@@ -876,23 +897,12 @@ TLSSocket.prototype._start = function _start() {
 };
 
 TLSSocket.prototype._final = function _final(callback) {
-  // Defer the FIN until the TLS handshake completes. net.Socket._final calls
-  // socket.shutdown(), which while SSL is still in init half-closes the write
-  // side before the client's TLS Finished is flushed — the peer then sees a
-  // bare FIN and reports ECONNRESET (e.g. socket.end('') right after
-  // tls.connect()). Node's native TLSWrap.DoShutdown likewise flushes the
-  // handshake output before the underlying stream's FIN.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/src/crypto/crypto_tls.cc#L1203
-  // A never-connected TLSSocket (e.g. new tls.TLSSocket().end(cb)) has no handle
-  // and no handshake to wait for; finish immediately like NetSocket._final's
-  // no-handle fast path, otherwise the deferred callback would never fire.
   if (!this._handle) return callback();
-  if (this.secureConnecting) {
-    // kSecureConnectDone rather than 'secureConnect': server-side sockets
-    // never emit the user event (node parity), but every handshake table
-    // emits the internal signal when secureConnecting clears.
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
+  if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
   }
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
   return NetSocket.prototype._final.$call(this, callback);
 };
 
@@ -1166,7 +1176,10 @@ function Server(options, secureConnectionListener): void {
 
   // tls.createServer(options) requires an object (a function is the connection
   // listener); matches Node throwing ERR_INVALID_ARG_TYPE for e.g. a string.
-  if (options != null && typeof options !== "object" && typeof options !== "function") {
+  if (typeof options === "function") {
+    secureConnectionListener = options;
+    options = {};
+  } else if (options != null && typeof options !== "object") {
     throw $ERR_INVALID_ARG_TYPE("options", "object", options);
   }
   // A custom SNICallback must be a function.
@@ -1188,7 +1201,9 @@ function Server(options, secureConnectionListener): void {
     }
   }
 
-  NetServer.$apply(this, [options, secureConnectionListener]);
+  // The listener belongs on "secureConnection", not "connection": do not let
+  // the net.Server constructor register it.
+  NetServer.$apply(this, [options]);
 
   this.key = undefined;
   this.cert = undefined;
@@ -1486,15 +1501,13 @@ function Server(options, secureConnectionListener): void {
     // TLS layer, like Node's tls.Server wraps any injected duplex
     // (node v26.3.0 lib/_tls_wrap.js, Server's connection listener).
     if (!socket || (socket.encrypted && socket.server === this)) return;
-    let secureContext = this._sharedCreds;
-    if (!secureContext) {
-      try {
-        secureContext = buildSharedCreds(this);
-      } catch (err) {
-        socket.destroy();
-        this.emit("error", err);
-        return;
-      }
+    let secureContext;
+    try {
+      secureContext = this[kSharedCreds]();
+    } catch (err) {
+      socket.destroy();
+      this.emit("error", err);
+      return;
     }
     const wrapped = new TLSSocket(socket, {
       secureContext,
@@ -1510,8 +1523,18 @@ function Server(options, secureConnectionListener): void {
     wrapped._rejectUnauthorized = this._rejectUnauthorized;
     this[kArmHandshakeTimeout](wrapped);
   });
+
+  // Node registers the createServer callback as a plain "secureConnection"
+  // listener, so a manual emit("secureConnection", socket) reaches it.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1408-L1410
+  if (secureConnectionListener) {
+    this.on("secureConnection", secureConnectionListener);
+  }
 }
 $toClass(Server, "Server", NetServer);
+Server.prototype[kSharedCreds] = function () {
+  return this._sharedCreds || buildSharedCreds(this);
+};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

@@ -28,7 +28,7 @@
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering, fence};
 
 use crate::{Futex, WaitGroup};
 use bun_core::Output;
@@ -199,9 +199,6 @@ pub struct ThreadPool {
     join_event: Event,
     run_queue: node::Queue,
     threads: AtomicPtr<Thread>,
-    wait_group: WaitGroup,
-    /// Used by `schedule` to optimize for the case where the thread pool isn't running yet.
-    is_running: AtomicBool,
     stats: PoolStats,
 }
 
@@ -234,8 +231,6 @@ impl ThreadPool {
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             threads: AtomicPtr::new(ptr::null_mut()),
-            wait_group: WaitGroup::init(),
-            is_running: AtomicBool::new(false),
             stats: PoolStats {
                 // Seed wall-clock origin so the first `dump_stats` window is
                 // measured from pool creation. Skip the syscall when stats are
@@ -293,15 +288,7 @@ impl ThreadPool {
 
     pub fn wake_for_idle_events(&self) {
         // Wake all the threads to check for idle events.
-        self.idle_event.wake(Event::NOTIFIED, u32::MAX);
-    }
-}
-
-impl Default for ThreadPool {
-    /// Default-initialised pool with zero `max_threads` (`init()` clamps to
-    /// ≥1 when actually started).
-    fn default() -> Self {
-        Self::init(Config::default())
+        self.idle_event.wake_all();
     }
 }
 
@@ -319,6 +306,54 @@ impl Drop for ThreadPool {
 pub struct Task {
     pub node: Node,
     pub callback: unsafe fn(*mut Task),
+}
+
+/// A [`Task`] that counts itself out of a caller-owned [`WaitGroup`] when it finishes, so a
+/// caller can schedule a batch on a shared pool and wait for *that batch* — not for the pool
+/// to go idle, which on the runtime pool means waiting for every unrelated fs/crypto/etc.
+/// task too (unboundedly, if one of them blocks). Embed this where you would embed `Task`
+/// (it is `repr(C)` with `task` first, so a `*mut Task` handed to `run` is also the
+/// `*mut CountedTask` and container-of over the embedding field still works), schedule
+/// `&raw mut outer.counted.task` — a raw place projection through the *outer* struct, so the
+/// callback's container-of keeps provenance over its sibling fields — then `wait()` on the group.
+#[repr(C)]
+pub struct CountedTask {
+    pub task: Task,
+    run: unsafe fn(*mut Task),
+    group: *const WaitGroup,
+}
+
+// SAFETY: as `Task` (sent to one worker, never shared); `group` is only touched through
+// `WaitGroup::finish_raw`, which any thread may call.
+unsafe impl Send for CountedTask {}
+
+impl CountedTask {
+    /// `group` must already count this task and outlive its completion (`WaitGroup::wait()`
+    /// returning is that completion).
+    pub fn new(run: unsafe fn(*mut Task), group: &WaitGroup) -> Self {
+        Self {
+            task: Task {
+                node: Node::default(),
+                callback: Self::run_and_finish,
+            },
+            run,
+            group: core::ptr::from_ref(group),
+        }
+    }
+
+    unsafe fn run_and_finish(task: *mut Task) {
+        // The cast below and every embedder's container-of over its `CountedTask` field rely on it.
+        const _: () = assert!(core::mem::offset_of!(CountedTask, task) == 0);
+        let this = task.cast::<CountedTask>();
+        // SAFETY: `task` is the `task` field (offset 0) of a live `CountedTask`; read both
+        // fields before `run`, after which the embedding struct is the callee's to consume.
+        let (run, group) = unsafe { ((*this).run, (*this).group) };
+        // SAFETY: the embedder's own callback contract.
+        unsafe { run(task) };
+        // SAFETY: `group` counts this task and is live until this lets `wait()` return; last
+        // access (see `WaitGroup::finish_raw`).
+        unsafe { WaitGroup::finish_raw(group) };
+    }
 }
 
 // SAFETY: `Task` is the unit handed across threads by `ThreadPool::schedule`;
@@ -404,6 +439,11 @@ impl Batch {
     /// Create a batch from a single task.
     pub fn from(task: *mut Task) -> Batch {
         let task = NonNull::new(task);
+        if let Some(task) = task {
+            // A rescheduled task may still carry the link from its last batch.
+            // SAFETY: caller passes a live Task that is not currently queued.
+            unsafe { (*Task::node_of(task).as_ptr()).next = ptr::null_mut() };
+        }
         Batch {
             len: 1,
             head: task,
@@ -510,9 +550,9 @@ impl ThreadPool {
 
         #[repr(C)]
         struct RunnerTask<Ctx, V, F> {
-            task: Task,
+            task: CountedTask,
             // LIFETIMES.tsv row 2144: BORROW_PARAM. The stack-local `WaitContext`
-            // strictly outlives every `RunnerTask` (wait_for_all() blocks until all
+            // strictly outlives every `RunnerTask` (`group.wait()` blocks until all
             // tasks finish), so this is the canonical `BackRef` invariant.
             ctx: bun_ptr::BackRef<WaitContext<Ctx, V, F>>,
             i: usize,
@@ -526,7 +566,7 @@ impl ThreadPool {
                 unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
             let i = runner_task.i;
             let wctx = runner_task.ctx.get();
-            // SAFETY: `values` slice outlives all RunnerTasks (wait_for_all() blocks until
+            // SAFETY: `values` slice outlives all RunnerTasks (`group.wait()` blocks until
             // every task finishes); each task owns a distinct index `i`.
             let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
             // SAFETY: `value` is live and exclusively owned by this task per the index.
@@ -539,6 +579,7 @@ impl ThreadPool {
             run_fn,
         };
 
+        let group = WaitGroup::init_with_count(values.len());
         let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
         let mut batch = Batch::default();
         let mut offset = values.len();
@@ -547,20 +588,17 @@ impl ThreadPool {
             offset -= 1;
             tasks.push(RunnerTask {
                 i: offset,
-                task: Task {
-                    node: Node::default(),
-                    callback: call::<Ctx, V, F>,
-                },
+                task: CountedTask::new(call::<Ctx, V, F>, &group),
                 ctx: bun_ptr::BackRef::new(&wait_context),
             });
         }
         // Push to the Vec first (no realloc: capacity reserved), then take
         // stable addresses.
         for runner_task in tasks.iter_mut() {
-            batch.push(Batch::from(ptr::addr_of_mut!(runner_task.task)));
+            batch.push(Batch::from(&raw mut runner_task.task.task));
         }
         self.schedule(batch);
-        self.wait_for_all();
+        group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
@@ -577,23 +615,6 @@ impl ThreadPool {
             head: Task::node_of(head.unwrap()),
             tail: Task::node_of(tail.unwrap()),
         };
-
-        // .monotonic access is okay because:
-        //
-        // * If the thread pool hasn't started yet, no thread could concurrently set
-        //   `is_running` to true, because thread pool initialization should only
-        //   happen on one thread.
-        //
-        // * If the thread pool is running, the current thread could be one of the threads
-        //   in the thread pool, but `is_running` was necessarily set to true before the
-        //   thread was created.
-        if self.is_running.load(Ordering::Relaxed) {
-            self.wait_group.add(len);
-        } else {
-            // `&self` precludes `&mut WaitGroup` here, so use the relaxed
-            // atomic add even though the pool isn't running yet.
-            self.wait_group.add(len);
-        }
 
         let current: *mut Thread = 'blk: {
             if !try_current {
@@ -635,11 +656,6 @@ impl ThreadPool {
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
         self.schedule_impl(&batch, true);
-    }
-
-    /// Wait for all tasks to complete. This does not shut down or deinit the thread pool.
-    pub fn wait_for_all(&self) {
-        self.wait_group.wait();
     }
 
     fn force_spawn(&self) {
@@ -718,8 +734,7 @@ impl ThreadPool {
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
     pub fn warm(&self, count: u16) {
         // Thread counts are 14-bit fields in `Sync`; truncate to 14 bits.
-        self.is_running.store(true, Ordering::Relaxed);
-        let target = count.min((self.max_threads & 0x3FFF) as u16);
+        let target = count.min((self.max_threads & Sync::IDLE_MASK) as u16);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.spawned() < target {
             let mut new_sync = sync;
@@ -755,7 +770,6 @@ impl ThreadPool {
 
     #[inline(never)]
     fn notify_slow(&self, is_waking: bool) {
-        self.is_running.store(true, Ordering::Relaxed);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.state() != SyncState::Shutdown {
             let can_wake = is_waking || (sync.state() == SyncState::Pending);
@@ -881,18 +895,15 @@ impl ThreadPool {
                     }
                 };
             } else {
-                if let Some(current) = NonNull::new(Thread::current()) {
-                    // `current` is the calling worker's own stack-local
-                    // `Thread`; BackRef invariant (pointee outlives holder)
-                    // holds for the `&self` `drain_idle_events` call.
-                    bun_ptr::BackRef::from(current).drain_idle_events();
-                }
-
                 if stats_enabled() {
                     self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
                 }
 
-                self.idle_event.wait();
+                // `current` is the calling worker's own stack-local `Thread`;
+                // BackRef invariant (pointee outlives holder) holds for the
+                // `&self` `drain_idle_events` calls in `Event::wait`.
+                let current = NonNull::new(Thread::current()).map(bun_ptr::BackRef::from);
+                self.idle_event.wait(current.as_deref());
                 sync = self.sync.load(Ordering::Relaxed);
             }
         }
@@ -980,7 +991,7 @@ impl ThreadPool {
         // — pointee outlives holder — covers the `join_event.wait()` and
         // `.next` reads below.
         let thread = bun_ptr::BackRef::from(thread);
-        thread.join_event.wait();
+        thread.join_event.wait(None);
 
         // After receiving the shutdown signal, shutdown the next thread in the pool.
         // We have to do that without touching the thread pool itself since its memory is invalidated by now.
@@ -998,7 +1009,7 @@ impl ThreadPool {
         // Wait for the thread pool to be shutdown() then for all threads to enter a joinable state
         let mut sync = self.sync.load(Ordering::Relaxed);
         if !(sync.state() == SyncState::Shutdown && sync.spawned() == 0) {
-            self.join_event.wait();
+            self.join_event.wait(None);
             sync = self.sync.load(Ordering::Relaxed);
         }
 
@@ -1202,7 +1213,7 @@ impl Thread {
                     // `shutdown()` raced `wake_for_idle_events()`: the bundler
                     // pushes per-worker `deinit_task`s into `idle_queue`, wakes
                     // us, then immediately drops the (CLI-owned) pool — and
-                    // `wait()` observes `Shutdown` before we loop back to
+                    // `wait()` observes `Shutdown` before it gets to
                     // `drain_idle_events`. Run them once on the way out so the
                     // worker thread tears down its own `Worker`/`WorkerData`
                     // (whose `ThreadLocalArena` is mimalloc thread-local and
@@ -1236,7 +1247,6 @@ impl Thread {
                         .fetch_add(now_ns().wrapping_sub(task_start), Ordering::Relaxed);
                     pool.stats.tasks.fetch_add(1, Ordering::Relaxed);
                 }
-                pool.wait_group.finish();
             }
 
             Output::flush();
@@ -1329,6 +1339,7 @@ impl Thread {
 /// An event which stores 1 semaphore token and is multi-threaded safe.
 /// The event can be shutdown(), waking up all wait()ing threads and
 /// making subsequent wait()'s return immediately.
+/// `wake_all()` sends every waiter back through its idle queue without posting a token.
 struct Event {
     state: AtomicU32,
 }
@@ -1342,24 +1353,36 @@ impl Default for Event {
 }
 
 impl Event {
+    // The low two bits of `state`.
     const EMPTY: u32 = 0;
     const WAITING: u32 = 1;
     const NOTIFIED: u32 = 2;
     const SHUTDOWN: u32 = 3;
+    const STATE_MASK: u32 = 0b11;
+    /// The rest of `state` counts `wake_all()` calls, so one that lands between a waiter's
+    /// last look at its idle queue and its futex wait changes the word the waiter sleeps on.
+    const EPOCH_ONE: u32 = 0b100;
 
     /// Wait for and consume a notification
-    /// or wait for the event to be shutdown entirely
+    /// or wait for the event to be shutdown entirely.
+    ///
+    /// `worker` has its idle queue drained before each sleep: `wake_all()` wakes every
+    /// waiter without handing out a notification, so they all come back here.
     #[inline(never)]
-    fn wait(&self) {
+    fn wait(&self, worker: Option<&Thread>) {
         let mut acquire_with: u32 = Self::EMPTY;
-        let mut state = self.state.load(Ordering::Relaxed);
+        let mut word = self.state.load(Ordering::Relaxed);
         let mut has_swept: bool = false;
 
         loop {
+            let epoch = word & !Self::STATE_MASK;
+            let state = word & Self::STATE_MASK;
+
             // If we're shutdown then exit early.
             // Acquire barrier to ensure operations before the shutdown() are seen after the wait().
             // Shutdown is rare so it's better to have an Acquire barrier here instead of on CAS failure + load which are common.
             if state == Self::SHUTDOWN {
+                fence(Ordering::Acquire);
                 return;
             }
 
@@ -1367,13 +1390,13 @@ impl Event {
             // Acquire barrier to ensure operations before the notify() appear after the wait().
             if state == Self::NOTIFIED {
                 match self.state.compare_exchange_weak(
-                    state,
-                    acquire_with,
+                    word,
+                    epoch | acquire_with,
                     Ordering::Acquire,
                     Ordering::Relaxed,
                 ) {
                     Ok(_) => return,
-                    Err(cur) => state = cur,
+                    Err(cur) => word = cur,
                 }
                 continue;
             }
@@ -1381,8 +1404,8 @@ impl Event {
             // There is no notification to consume, we should wait on the event by ensuring its WAITING.
             if state != Self::WAITING {
                 match self.state.compare_exchange_weak(
-                    state,
-                    Self::WAITING,
+                    word,
+                    epoch | Self::WAITING,
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                 ) {
@@ -1390,10 +1413,17 @@ impl Event {
                         // fall through to futex wait
                     }
                     Err(cur) => {
-                        state = cur;
+                        word = cur;
                         continue;
                     }
                 }
+            }
+
+            if let Some(worker) = worker {
+                // A `wake_all()` from here on changes the word the futex wait below expects. The
+                // fence puts the idle tasks of the one whose epoch `word` has in the queue.
+                fence(Ordering::Acquire);
+                worker.drain_idle_events();
             }
 
             // Wait on the event until a notify() or shutdown().
@@ -1411,11 +1441,11 @@ impl Event {
             } else {
                 None
             };
-            if Futex::wait(&self.state, Self::WAITING, timeout_ns).is_err() {
+            if Futex::wait(&self.state, epoch | Self::WAITING, timeout_ns).is_err() {
                 has_swept = true;
                 bun_alloc::mimalloc::mi_on_thread_idle();
             }
-            state = self.state.load(Ordering::Relaxed);
+            word = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;
         }
     }
@@ -1423,37 +1453,45 @@ impl Event {
     /// Post a notification to the event if it doesn't have one already
     /// then wake up a waiting thread if there is one as well.
     fn notify(&self) {
-        self.wake(Self::NOTIFIED, 1);
+        let mut word = self.state.load(Ordering::Relaxed);
+        loop {
+            if word & Self::STATE_MASK == Self::SHUTDOWN {
+                return;
+            }
+            // Release barrier to ensure any operations before this happen before the wait() in the other threads.
+            match self.state.compare_exchange_weak(
+                word,
+                (word & !Self::STATE_MASK) | Self::NOTIFIED,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(cur) => word = cur,
+            }
+        }
+        // Nobody is parked unless the state was WAITING. A waiter can also be parked while it is
+        // EMPTY or NOTIFIED (a consumer that never parked took a notification and put EMPTY
+        // back); the next notify() re-arms and wakes it.
+        if word & Self::STATE_MASK == Self::WAITING {
+            Futex::wake(&self.state, 1);
+        }
     }
 
     /// Marks the event as shutdown, making all future wait()'s return immediately.
     /// Then wakes up any threads currently waiting on the Event.
     fn shutdown(&self) {
-        self.wake(Self::SHUTDOWN, u32::MAX);
+        // SHUTDOWN is every state bit. It happens once, so it wakes whatever the state was:
+        // a waiter parked under EMPTY or NOTIFIED (see `notify`) has no later wake to count on.
+        self.state.fetch_or(Self::SHUTDOWN, Ordering::Release);
+        Futex::wake(&self.state, u32::MAX);
     }
 
-    fn wake(&self, release_with: u32, wake_threads: u32) {
-        // Update the Event to notify it with the new `release_with` state (either NOTIFIED or SHUTDOWN).
-        // Release barrier to ensure any operations before this are this to happen before the wait() in the other threads.
-        let state = self.state.swap(release_with, Ordering::Release);
-
-        // Normally we only wake futex sleepers when the prior state was WAITING,
-        // which avoids a syscall when there is definitely nobody parked.
-        //
-        // That optimization is unsound for the one-shot "wake everyone" paths
-        // (`shutdown`, `wake_for_idle_events`, both `wake_threads == u32::MAX`).
-        // A worker can be genuinely parked in `Futex::wait(WAITING)` while
-        // `state` is transiently EMPTY or NOTIFIED: a concurrent consumer that
-        // took a notification without ever parking clears `state` back to EMPTY
-        // via the `acquire_with == EMPTY` path (see `wait`). For a normal
-        // single `notify()` that is fine, because a later `notify()` re-arms and
-        // wakes the sleeper. A teardown wake happens once, so a skipped wake
-        // here strands the parked worker: only its first wait has a timeout (the
-        // 100ms idle sweep), later waits are indefinite. Always wake in that
-        // case; the extra syscall is negligible once at teardown.
-        if state == Self::WAITING || wake_threads == u32::MAX {
-            Futex::wake(&self.state, wake_threads);
-        }
+    /// Wakes every waiter to look at its idle queue. Posts no notification: each of them
+    /// goes back to waiting.
+    fn wake_all(&self) {
+        // Release: pairs with the fence in `wait`.
+        self.state.fetch_add(Self::EPOCH_ONE, Ordering::Release);
+        Futex::wake(&self.state, u32::MAX);
     }
 }
 

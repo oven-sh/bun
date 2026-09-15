@@ -56,9 +56,8 @@ pub enum Stdio {
     Ignore,
     Fd(Fd),
     Dup2(Dup2),
-    Path(PathLike),
+    Path(PathLike<'static>),
     Blob(webcore::blob::Any),
-    ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
     Memfd(Fd),
     Pipe,
     /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
@@ -109,7 +108,6 @@ impl Stdio {
             // returned slice borrows `self` and the caller guarantees the
             // Vec<u8> outlives this Stdio.
             Self::Capture(c) => unsafe { (*c.buf).slice() },
-            Self::ArrayBuffer(ab) => ab.array_buffer.byte_slice(),
             Self::Blob(blob) => blob.slice(),
             _ => &[],
         }
@@ -124,7 +122,7 @@ impl Stdio {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
-            Self::Memfd(_) | Self::ArrayBuffer(_) => true,
+            Self::Memfd(_) => true,
             // `Self::Pipe` is never memfd: a memfd has no EOF signal, so a
             // grandchild still writing after the child exits would be lost.
             _ => false,
@@ -174,7 +172,7 @@ impl Stdio {
 
                         bun_core::debug_warn!(
                             "Failed to write to memfd: {}",
-                            <&'static str>::from(err.get_errno()),
+                            bstr::BStr::new(err.name()),
                         );
                         fd.close();
                         return false;
@@ -286,9 +284,7 @@ impl Stdio {
                 out: d.out,
                 to: d.to,
             }),
-            Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
-                buffer()
-            }
+            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => buffer(),
             #[cfg(not(windows))]
             Self::SocketFd => SpawnOptionsStdio::SocketFd,
             // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
@@ -312,11 +308,7 @@ impl Stdio {
 
     pub(crate) fn is_piped(&self) -> bool {
         match self {
-            Self::Capture(_)
-            | Self::ArrayBuffer(_)
-            | Self::Blob(_)
-            | Self::Pipe
-            | Self::ReadableStream(_) => true,
+            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
             Self::Ipc => cfg!(windows),
             _ => false,
         }
@@ -428,14 +420,14 @@ impl Stdio {
         }
 
         if value.is_string() {
-            let str = value.get_zig_string(global)?;
-            if str.eql_comptime(b"inherit") {
+            let str = value.to_js_string_view(global)?;
+            if str.eq_ascii(b"inherit") {
                 *out_stdio = Stdio::Inherit;
-            } else if str.eql_comptime(b"ignore") {
+            } else if str.eq_ascii(b"ignore") {
                 *out_stdio = Stdio::Ignore;
-            } else if str.eql_comptime(b"pipe") || str.eql_comptime(b"overlapped") {
+            } else if str.eq_ascii(b"pipe") || str.eq_ascii(b"overlapped") {
                 *out_stdio = Stdio::Pipe;
-            } else if str.eql_comptime(b"socket-fd") {
+            } else if str.eq_ascii(b"socket-fd") {
                 if i < 3 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "stdio: 'socket-fd' is only supported at indices >= 3"
@@ -449,7 +441,7 @@ impl Stdio {
                     )));
                 }
                 *out_stdio = Stdio::SocketFd;
-            } else if str.eql_comptime(b"ipc") {
+            } else if str.eq_ascii(b"ipc") {
                 *out_stdio = Stdio::Ipc;
             } else {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -569,15 +561,9 @@ impl Stdio {
                 )));
             }
 
-            let copied_value =
-                jsc::array_buffer::ArrayBuffer::create_buffer(global, array_buffer.byte_slice())?;
-            let copied = copied_value
-                .as_array_buffer(global)
-                .expect("create_buffer returns a Uint8Array");
-            *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
-                array_buffer: copied,
-                held: jsc::StrongOptional::create(copied.value, global),
-            });
+            *out_stdio = Stdio::Blob(webcore::blob::Any::from_owned_slice(
+                array_buffer.byte_slice().to_vec(),
+            ));
             return Ok(());
         }
 
@@ -665,12 +651,19 @@ impl Stdio {
     }
 }
 
+impl Stdio {
+    /// Move the memfd out (ownership passes to the caller); `self` becomes `Ignore`.
+    pub fn take_memfd(&mut self) -> Option<Fd> {
+        let Stdio::Memfd(fd) = *self else { return None };
+        // Don't run Drop on the old value: it would close `fd`.
+        let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Stdio::Ignore));
+        Some(fd)
+    }
+}
+
 impl Drop for Stdio {
     fn drop(&mut self) {
         match self {
-            Self::ArrayBuffer(_array_buffer) => {
-                // `array_buffer.deinit()` — handled by field Drop.
-            }
             Self::Blob(blob) => {
                 blob.detach();
             }

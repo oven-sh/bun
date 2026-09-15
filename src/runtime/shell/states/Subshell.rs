@@ -18,9 +18,7 @@ pub struct Subshell {
 pub enum SubshellState {
     #[default]
     Idle,
-    Expanding,
     Exec,
-    WaitWriteErr,
     Done,
 }
 
@@ -96,31 +94,12 @@ impl Subshell {
                 let script = Script::init(interp, shell, script_node, this, io);
                 Script::start(interp, script)
             }
-            SubshellState::Expanding | SubshellState::Exec => Yield::suspended(),
-            SubshellState::WaitWriteErr => Yield::suspended(),
+            SubshellState::Exec => Yield::suspended(),
             SubshellState::Done => {
                 let exit = interp.as_subshell(this).exit_code;
                 interp.child_done(parent, this, exit)
             }
         }
-    }
-
-    pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
-        this: NodeId,
-        _written: usize,
-        _err: Option<bun_sys::SystemError>,
-    ) -> Yield {
-        debug_assert!(matches!(
-            interp.as_subshell(this).state,
-            SubshellState::WaitWriteErr
-        ));
-        let (parent, exit) = {
-            let me = interp.as_subshell_mut(this);
-            me.state = SubshellState::Done;
-            (me.base.parent, me.exit_code)
-        };
-        interp.child_done(parent, this, exit)
     }
 
     pub(crate) fn child_done(
@@ -149,6 +128,5 @@ impl Subshell {
             ShellExecEnv::deinit_impl(me.base.shell);
             me.base.shell = core::ptr::null_mut();
         }
-        me.base.end_scope();
     }
 }

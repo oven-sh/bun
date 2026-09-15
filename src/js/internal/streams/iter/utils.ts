@@ -4,6 +4,12 @@ const { isUint8Array } = require("node:util/types");
 
 const { validateOneOf } = require("internal/validators");
 
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const BufferPrototype = Buffer.prototype;
+// Node pools Buffer allocations smaller than half of Buffer.poolSize
+// (8192 >>> 1 = 4096 by default; see poolSize handling in node lib/buffer.js).
+const kBufferPoolBypassThreshold = Buffer.poolSize >>> 1;
+
 let isError;
 
 // Cached resolved promise to avoid allocating a new one on every sync fast-path.
@@ -112,10 +118,14 @@ function concatBytes(chunks) {
   // otherwise return a copy
   if (chunks.length === 1) {
     const chunk = chunks[0];
-    // If non-zero offset, skip the remaining buffer checks.
+    // Bun's Buffer.from has no shared pool, so emulate Node's split: Buffers below the pool
+    // threshold always copy; anything else covering its backing buffer is returned by identity.
+    // https://github.com/nodejs/node/blob/main/lib/buffer.js (Buffer.poolSize >>> 1)
     if (chunk.byteOffset === 0) {
-      // Works for both ArrayBuffer and SharedArrayBuffer backings.
-      if (chunk.byteLength === chunk.buffer.byteLength) {
+      const isSmallBuffer =
+        chunk.byteLength < kBufferPoolBypassThreshold && ObjectGetPrototypeOf(chunk) === BufferPrototype;
+      if (!isSmallBuffer && chunk.byteLength === chunk.buffer.byteLength) {
+        // Works for both ArrayBuffer and SharedArrayBuffer backings.
         return chunk;
       }
     }

@@ -2,9 +2,7 @@
 // The client portions (Agent, request, get) are a port of Node.js's lib/https.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js
 const http = require("node:http");
-const tls = require("node:tls");
-const { isIP } = require("node:net");
-const net = require("node:net");
+const { isIP } = require("internal/net/isIP");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
@@ -186,7 +184,7 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
         $debug("Propagate free event from tunneled socket to tunnel socket");
         socket.emit("free");
       }
-      tunneledSocket = tls.connect(requestOptions, onTLSHandshakeSuccess);
+      tunneledSocket = require("node:tls").connect(requestOptions, onTLSHandshakeSuccess);
       tunneledSocket.on("free", onTunneledSocketFree);
       tunneledSocket.on("error", onTLSHandshakeError);
       const agentKey = requestOptions._agentKey;
@@ -274,7 +272,7 @@ function createConnection(...args) {
   const tunnelConfig = getTunnelConfigForProxiedHttps(this, options);
 
   if (tunnelConfig === null) {
-    socket = tls.connect(options);
+    socket = require("node:tls").connect(options);
   } else {
     const connectOptions = {
       ...this[kProxyConfig].proxyConnectionOptions,
@@ -314,9 +312,9 @@ function createConnection(...args) {
       establishTunnel(agent, socket, options, tunnelConfig, cleanupAndPropagate);
     }
     if (this[kProxyConfig].protocol === "http:") {
-      socket = net.connect(connectOptions, onProxyConnection);
+      socket = require("node:net").connect(connectOptions, onProxyConnection);
     } else {
-      socket = tls.connect(connectOptions, onProxyConnection);
+      socket = require("node:tls").connect(connectOptions, onProxyConnection);
     }
 
     socket.on("error", onError);
@@ -519,7 +517,7 @@ function createServer(options, requestListener) {
   const server = http.createServer(options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
-    tls.convertALPNProtocols(optionsALPNProtocols, server);
+    require("node:tls").convertALPNProtocols(optionsALPNProtocols, server);
   }
   server.ALPNCallback = options.ALPNCallback;
   return server;

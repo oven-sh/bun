@@ -9,7 +9,9 @@
 use core::mem::offset_of;
 
 use bun_core::RawSlice;
-use bun_sys::{self as sys, Fd, Tag};
+#[cfg(not(target_os = "macos"))]
+use bun_sys::Tag;
+use bun_sys::{self as sys, Fd};
 
 // `Entry.Kind` is `bun_core::FileKind`, re-exported here as
 // `bun_sys::EntryKind` (and as `crate::node::types::DirentKind`).
@@ -109,18 +111,6 @@ mod platform {
         }
 
         fn next_darwin(&mut self) -> Result {
-            unsafe extern "C" {
-                // Private libsystem symbol (`__getdirentries64`).
-                // SAFETY precondition: `buf` must be writable for `nbytes` and
-                // `basep` must point to a valid i64 — raw-pointer contract,
-                // cannot be `safe fn`.
-                fn __getdirentries64(
-                    fd: libc::c_int,
-                    buf: *mut u8,
-                    nbytes: usize,
-                    basep: *mut i64,
-                ) -> isize;
-            }
             'start_over: loop {
                 if self.index >= self.end_index {
                     if self.received_eof {
@@ -130,39 +120,31 @@ mod platform {
                     // getdirentries64() writes to the last 4 bytes of the
                     // buffer to indicate EOF. If that value is not zero, we
                     // have reached the end of the directory and we can skip
-                    // the extra syscall.
+                    // the extra syscall. The wrapper zeroes those bytes
+                    // before each attempt.
                     // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
                     const GETDIRENTRIES64_EXTENDED_BUFSIZE: usize = 1024;
                     const _: () = assert!(8192 >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
                     self.received_eof = false;
-                    // Always zero the bytes where the flag will be written
-                    // so we don't confuse garbage with EOF.
                     let len = self.buf.0.len();
-                    self.buf.0[len - 4..len].copy_from_slice(&[0, 0, 0, 0]);
 
-                    // SAFETY: FFI call into libc __getdirentries64; buf is 8192 bytes
-                    let rc = unsafe {
-                        __getdirentries64(
-                            self.dir.native(),
+                    // SAFETY: buf is 8192 writable bytes; seek is a valid *mut i64.
+                    let n = unsafe {
+                        sys::getdirentries64(
+                            self.dir,
                             self.buf.0.as_mut_ptr(),
-                            self.buf.0.len(),
+                            len,
                             &raw mut self.seek,
                         )
-                    };
+                    }?;
 
-                    if rc < 1 {
-                        if rc == 0 {
-                            self.received_eof = true;
-                            return Ok(None);
-                        }
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdirentries64,
-                        ));
+                    if n == 0 {
+                        self.received_eof = true;
+                        return Ok(None);
                     }
 
                     self.index = 0;
-                    self.end_index = usize::try_from(rc).expect("int cast");
+                    self.end_index = n;
                     let eof_flag = u32::from_ne_bytes(
                         self.buf.0[len - 4..len]
                             .try_into()
@@ -438,7 +420,7 @@ mod platform {
     use bun_sys::windows::ntdll;
     use bun_sys::windows::{
         BOOLEAN, FALSE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING, Win32ErrorExt as _,
+        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING,
     };
 
     // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
@@ -633,13 +615,7 @@ mod platform {
 
                     if rc != w::NTSTATUS::SUCCESS {
                         sys::syslog!("NtQueryDirectoryFile({}) = {:#x}", self.dir, rc.0);
-                        let errno = w::Win32Error::from_nt_status(rc)
-                            .to_system_errno()
-                            .unwrap_or(SystemErrno::EUNKNOWN);
-                        return Err(sys::Error::from_code(
-                            errno.to_e(),
-                            Tag::NtQueryDirectoryFile,
-                        ));
+                        return Err(sys::Error::new(rc, Tag::NtQueryDirectoryFile));
                     }
 
                     if io.Information == 0 {
@@ -741,107 +717,6 @@ mod platform {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// WASI
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(target_os = "wasi")]
-mod platform {
-    use super::*;
-    use bun_sys::wasi as w;
-
-    pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
-        pub dir: Fd,
-        // NOTE: even if this buffer were aligned to align_of::<dirent_t>(), entries after
-        // the first land at `size_of::<dirent_t>() + d_namlen` offsets (arbitrary), so the
-        // header is read via `read_unaligned` below regardless.
-        pub buf: [u8; 8192],
-        pub cookie: u64,
-        pub index: usize,
-        pub end_index: usize,
-    }
-
-    impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
-        /// Memory such as file names referenced in this returned entry becomes invalid
-        /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-        pub fn next(&mut self) -> Result {
-            // We intentinally use fd_readdir even when linked with libc,
-            // since its implementation is exactly the same as below,
-            // and we avoid the code complexity here.
-            'start_over: loop {
-                if self.index >= self.end_index {
-                    let mut bufused: usize = 0;
-                    // SAFETY: FFI fd_readdir
-                    let errno = unsafe {
-                        w::fd_readdir(
-                            self.dir.native(),
-                            self.buf.as_mut_ptr(),
-                            self.buf.len(),
-                            self.cookie,
-                            &mut bufused,
-                        )
-                    };
-                    match errno {
-                        w::Errno::SUCCESS => {}
-                        w::Errno::BADF => unreachable!(), // Dir is invalid or was opened without iteration ability
-                        w::Errno::FAULT => unreachable!(),
-                        w::Errno::NOTDIR => unreachable!(),
-                        w::Errno::INVAL => unreachable!(),
-                        w::Errno::NOTCAPABLE => {
-                            return Err(sys::Error::from_code_int(libc::EACCES, Tag::getdents64));
-                        }
-                        _ => {
-                            return Err(sys::Error::from_code_int(errno as i32, Tag::getdents64));
-                        }
-                    }
-                    if bufused == 0 {
-                        return Ok(None);
-                    }
-                    self.index = 0;
-                    self.end_index = bufused;
-                }
-                // SAFETY: `index < end_index <= buf.len()` and `fd_readdir` guarantees a full
-                // dirent header at this offset. The header is NOT naturally aligned (entries are
-                // packed as `[dirent_t][name bytes][dirent_t]...` with no padding between the
-                // variable-length name and the next header), so we must `read_unaligned` rather
-                // than form a `&dirent_t`.
-                let entry: w::dirent_t = unsafe {
-                    core::ptr::read_unaligned(
-                        self.buf.as_ptr().add(self.index).cast::<w::dirent_t>(),
-                    )
-                };
-                let entry_size = size_of::<w::dirent_t>();
-                let name_index = self.index + entry_size;
-                let name = &self.buf[name_index..name_index + entry.d_namlen as usize];
-
-                let next_index = name_index + entry.d_namlen as usize;
-                self.index = next_index;
-                self.cookie = entry.d_next;
-
-                // skip . and .. entries
-                if name == b"." || name == b".." {
-                    continue 'start_over;
-                }
-
-                let entry_kind = match entry.d_type {
-                    w::Filetype::BLOCK_DEVICE => EntryKind::BlockDevice,
-                    w::Filetype::CHARACTER_DEVICE => EntryKind::CharacterDevice,
-                    w::Filetype::DIRECTORY => EntryKind::Directory,
-                    w::Filetype::SYMBOLIC_LINK => EntryKind::SymLink,
-                    w::Filetype::REGULAR_FILE => EntryKind::File,
-                    w::Filetype::SOCKET_STREAM | w::Filetype::SOCKET_DGRAM => {
-                        EntryKind::UnixDomainSocket
-                    }
-                    _ => EntryKind::Unknown,
-                };
-                return Ok(Some(IteratorResult {
-                    name: RawSlice::new(name),
-                    kind: entry_kind,
-                }));
-            }
-        }
-    }
-}
-
 pub(crate) use platform::NewIterator;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -931,19 +806,6 @@ where
                     // SAFETY: NameData is [u8; 513] or [u16; 257]; zero is a valid bit pattern.
                     name_data: unsafe { bun_core::ffi::zeroed_unchecked() },
                     name_filter: None,
-                },
-            };
-        }
-        #[cfg(target_os = "wasi")]
-        {
-            return Self {
-                iter: NewIterator {
-                    dir,
-                    cookie: 0, // wasi DIRCOOKIE_START
-                    index: 0,
-                    end_index: 0,
-                    // zero-init avoids the invalid_value lint on [u8; N]
-                    buf: [0u8; 8192],
                 },
             };
         }

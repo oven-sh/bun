@@ -32,7 +32,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(InternalFunctionType, StructureFlags), info());
     }
 
     void finishCreation(JSC::VM& vm)
@@ -67,21 +67,20 @@ public:
     {
         auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
         auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         JSObject* newTarget = asObject(callFrame->newTarget());
         auto* constructor = globalObject->JSDOMFileConstructor();
         Structure* structure = globalObject->JSBlobStructure();
         if (constructor != newTarget) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-
-            auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
-                // ShadowRealm functions belong to a different global object.
-                getFunctionRealm(lexicalGlobalObject, newTarget));
+            // ShadowRealm functions belong to a different global object.
+            auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(lexicalGlobalObject, newTarget));
             RETURN_IF_EXCEPTION(scope, {});
             structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->JSBlobStructure());
             RETURN_IF_EXCEPTION(scope, {});
         }
 
         void* ptr = JSDOMFile__construct(lexicalGlobalObject, callFrame);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (!ptr) [[unlikely]] {
             return JSValue::encode(JSC::jsUndefined());

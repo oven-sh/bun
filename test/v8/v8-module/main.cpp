@@ -1828,6 +1828,42 @@ void test_v8_getfunction_memoized(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// Records what the callback saw on `this`, for the JS driver to print.
+static void native_thing_constructor(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> self = info.This();
+  (void)self->Set(context,
+                  String::NewFromUtf8(isolate, "newTarget").ToLocalChecked(),
+                  info.NewTarget());
+  (void)self->Set(
+      context, String::NewFromUtf8(isolate, "isConstructCall").ToLocalChecked(),
+      Boolean::New(isolate, info.IsConstructCall()));
+  // node::ObjectWrap::Wrap asserts that this is > 0.
+  (void)self->Set(
+      context,
+      String::NewFromUtf8(isolate, "internalFieldCount").ToLocalChecked(),
+      Number::New(isolate, self->InternalFieldCount()));
+}
+
+// Returns a FunctionTemplate-backed class, the way nan and node::ObjectWrap
+// addons export one, so that the JS driver can subclass it.
+void create_native_thing_class(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, native_thing_constructor);
+  tmp->SetClassName(
+      String::NewFromUtf8(isolate, "NativeThing").ToLocalChecked());
+  tmp->InstanceTemplate()->SetInternalFieldCount(1);
+  tmp->PrototypeTemplate()->Set(
+      String::NewFromUtf8(isolate, "protoMethod").ToLocalChecked(),
+      FunctionTemplate::New(isolate, proto_method_callback));
+
+  info.GetReturnValue().Set(tmp->GetFunction(context).ToLocalChecked());
+}
+
 void test_v8_map(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -2224,6 +2260,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_function_new_instance);
   NODE_SET_METHOD(exports, "test_v8_getfunction_memoized",
                   test_v8_getfunction_memoized);
+  NODE_SET_METHOD(exports, "create_native_thing_class",
+                  create_native_thing_class);
   NODE_SET_METHOD(exports, "test_v8_map", test_v8_map);
   NODE_SET_METHOD(exports, "test_v8_exception", test_v8_exception);
   NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",

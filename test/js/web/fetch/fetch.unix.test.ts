@@ -503,6 +503,55 @@ it.skipIf(isWindows)("unix keep-alive entries are not evicted by TCP pool pressu
   }
 });
 
+it("rejects a non-string unix option instead of dialing the URL host over TCP", async () => {
+  let requests = 0;
+  using tcp = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      requests++;
+      return new Response("via TCP");
+    },
+  });
+  const url = `http://127.0.0.1:${tcp.port}/x`;
+  // Nothing listens here, so a value coerced to this path would fail to
+  // connect rather than answer "via TCP".
+  const sock = join(tmp_dir, "not-listening.sock");
+  const values = {
+    buffer: Buffer.from(sock),
+    uint8array: new TextEncoder().encode(sock),
+    url: Bun.pathToFileURL(sock),
+    object: { toString: () => sock },
+    number: 42,
+    boolean: true,
+    symbol: Symbol("unix"),
+  };
+  const results: Record<string, string> = {};
+  for (const [name, unix] of Object.entries(values)) {
+    results[name] = await fetch(url, { unix: unix as any }).then(
+      res => res.text(),
+      e => `${e.constructor.name} ${e.code}`,
+    );
+  }
+  expect(results).toEqual(
+    Object.fromEntries(Object.keys(values).map(name => [name, "TypeError ERR_INVALID_ARG_TYPE"])),
+  );
+  expect(async () => await fetch(url, { unix: values.buffer as any })).toThrow(
+    "fetch: 'unix' must be a string. Received an instance of Buffer",
+  );
+  expect(requests).toBe(0);
+});
+
+it("treats a falsy unix option as absent", async () => {
+  using tcp = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("via TCP") });
+  const url = `http://127.0.0.1:${tcp.port}/x`;
+  const bodies: string[] = [];
+  for (const unix of ["", null, undefined, false, 0]) {
+    bodies.push(await (await fetch(url, { unix: unix as any })).text());
+  }
+  expect(bodies).toEqual(Array(5).fill("via TCP"));
+});
+
 it("handle redirect to non-unix", async () => {
   startServer({
     async fetch(req) {

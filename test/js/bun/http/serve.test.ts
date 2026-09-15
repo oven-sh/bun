@@ -5001,9 +5001,12 @@ describe("requests pipelined in one read", () => {
     try {
       const messages = on(worker, "message");
       const [port] = (await messages.next()).value;
-      const reply = await exchange(plain(port), postJson, reply => reply.endsWith("accepted"));
-      Atomics.store(received, 0, 1);
-      Atomics.notify(received, 0);
+      const reply = await exchange(plain(port), postJson, reply => {
+        if (!reply.endsWith("accepted")) return false;
+        Atomics.store(received, 0, 1);
+        Atomics.notify(received, 0);
+        return true;
+      });
       const [outcome] = (await messages.next()).value;
       expect({ responses: parseResponses(reply), outcome }).toEqual({
         responses: [{ status: "HTTP/1.1 202 Accepted", body: "accepted" }],

@@ -1279,7 +1279,7 @@ pub mod parse_worker {
                     let mut parseropts = bun_css::ParserOptions::default(None);
                     parseropts.logger = Some(core::ptr::NonNull::from(&mut temp_log));
                     if enable_css_modules {
-                        parseropts.filename = bun_paths::basename(source.path.pretty);
+                        parseropts.filename = source.path.pretty;
                         parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
                     }
                     parseropts

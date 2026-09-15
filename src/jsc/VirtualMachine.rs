@@ -733,7 +733,7 @@ pub struct ExitHandler {
     pub exit_code: u8,
     /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
     pub skip_exit_listeners: bool,
-    /// `process.exit()` or a fatal error, as opposed to the event loop running dry.
+    /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
     /// See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
 }

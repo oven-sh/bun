@@ -489,17 +489,12 @@ test.each(["sync", "async"])(
     // the body's ref must be gone.
     await stopAndAssertDrained(server);
 
-    // Polled from timer callbacks: an await continuation runs under JSC::runInternalMicrotask, whose frame held a stale pointer to a stream (#42590 has the snapshot and the stack word).
-    const alive = await new Promise<number>(resolve => {
-      let rounds = 0;
-      const poll = () => {
-        Bun.gc(true);
-        const alive = streams.filter(ref => ref.deref() !== undefined).length;
-        if (alive === 0 || ++rounds === 20) resolve(alive);
-        else setTimeout(poll, 1);
-      };
-      setTimeout(poll, 1);
-    });
+    let alive = iterations;
+    for (let i = 0; i < 20 && alive > 0; i++) {
+      Bun.gc(true);
+      await Bun.sleep(1);
+      alive = streams.filter(ref => ref.deref() !== undefined).length;
+    }
     expect(alive).toBe(0);
   },
 );

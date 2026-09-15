@@ -653,6 +653,22 @@ impl AnyRoute {
         methods.insert(Method::GET);
         methods.insert(Method::HEAD);
 
+        // The bundled HTML references this file by its percent-encoded name; the
+        // raw name stays registered for JS `file` loader strings.
+        if let std::borrow::Cow::Owned(encoded) = strings::percent_encode_url_path(&builder) {
+            let same_route = match &route {
+                AnyRoute::Static(r) => AnyRoute::Static(r.clone()),
+                AnyRoute::File(r) => AnyRoute::File(r.clone()),
+                AnyRoute::Directory(_) | AnyRoute::Html(_) | AnyRoute::FrameworkRouter(_) => {
+                    unreachable!("from_options returns a static or file route")
+                }
+            };
+            init_ctx.user_routes.push(server_config::StaticRouteEntry {
+                path: encoded.into_boxed_slice(),
+                route: same_route,
+                method: methods,
+            });
+        }
         init_ctx.user_routes.push(server_config::StaticRouteEntry {
             path: builder.into_boxed_slice(),
             route,

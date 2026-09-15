@@ -2201,6 +2201,37 @@ pub fn percent_encode_write(
     Ok(())
 }
 
+/// Percent-encodes a file path for use as a URL path (an HTML `src`/`href`):
+/// the WHATWG path percent-encode set (C0, space, `"#<>?^`{}`, DEL,
+/// non-ASCII) plus `%` and `\`, which are literal in a file name. `/` and
+/// everything a browser sends unchanged are kept. Borrows when nothing changes.
+pub fn percent_encode_url_path(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    #[inline(always)]
+    fn needs_escape(byte: u8) -> bool {
+        byte <= b' '
+            || byte >= 0x7F
+            || matches!(
+                byte,
+                b'"' | b'#' | b'%' | b'<' | b'>' | b'?' | b'\\' | b'^' | b'`' | b'{' | b'}'
+            )
+    }
+
+    let Some(first) = path.iter().position(|&byte| needs_escape(byte)) else {
+        return std::borrow::Cow::Borrowed(path);
+    };
+    let mut out = Vec::with_capacity(path.len() + 2 * (path.len() - first));
+    out.extend_from_slice(&path[..first]);
+    for &byte in &path[first..] {
+        if needs_escape(byte) {
+            let hex = crate::fmt::hex2_upper(byte);
+            out.extend_from_slice(&[b'%', hex[0], hex[1]]);
+        } else {
+            out.push(byte);
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 // ───────────── re-exports from sibling modules ─────────────
 
 // Unicode core is re-exported at the top of the file. Further transcoding

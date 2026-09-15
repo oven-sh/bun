@@ -72,7 +72,6 @@ public:
 
     JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);
     void queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& args);
-    void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue);
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue, JSValue);
 
     template<size_t NumArgs>

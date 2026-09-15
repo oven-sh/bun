@@ -20,12 +20,6 @@ pub enum ErrorCase {
     LeakFdOnFail,
 }
 
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum MakeCrtOwnedError {
-    #[error("SystemFdQuotaExceeded")]
-    SystemFdQuotaExceeded,
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // FdExt — syscall-touching methods on `bun_core::Fd`.
 //
@@ -54,8 +48,9 @@ pub trait FdExt: Copy + Sized {
     /// Use fd API to implement `node:fs` close: stdio must actually close and
     /// EBADF must surface to the caller. Consider fd the raw close method.
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error>;
-    /// Assumes given a valid file descriptor. If error, the handle has not been closed.
-    fn make_crt_owned(self) -> Result<Fd, MakeCrtOwnedError>;
+    /// Give a HANDLE a slot in the C runtime's fd table, for an fd that JS
+    /// gets to see. `EMFILE` when the table is full; `error_case` says whether
+    /// the HANDLE is closed then.
     fn make_crt_owned_for_syscall(
         self,
         syscall_tag: sys::Tag,
@@ -213,28 +208,6 @@ impl FdExt for Fd {
         result
     }
 
-    fn make_crt_owned(self) -> Result<Fd, MakeCrtOwnedError> {
-        debug_assert!(self.is_valid());
-        #[cfg(not(windows))]
-        {
-            Ok(self)
-        }
-        #[cfg(windows)]
-        {
-            match self.kind() {
-                FdKind::System => {
-                    let n = bun_core::fd::crt_open_osfhandle(self.native());
-                    debug_assert!(n >= -1);
-                    if n == -1 {
-                        return Err(MakeCrtOwnedError::SystemFdQuotaExceeded);
-                    }
-                    Ok(Fd::from_crt(n))
-                }
-                FdKind::Crt => Ok(self),
-            }
-        }
-    }
-
     fn make_crt_owned_for_syscall(
         self,
         syscall_tag: sys::Tag,
@@ -247,9 +220,15 @@ impl FdExt for Fd {
         }
         #[cfg(windows)]
         {
-            match self.make_crt_owned() {
-                Ok(fd) => Ok(fd),
-                Err(MakeCrtOwnedError::SystemFdQuotaExceeded) => {
+            debug_assert!(self.is_valid());
+            match self.kind() {
+                FdKind::Crt => Ok(self),
+                FdKind::System => {
+                    let n = bun_core::fd::crt_open_osfhandle(self.native());
+                    debug_assert!(n >= -1);
+                    if n != -1 {
+                        return Ok(Fd::from_crt(n));
+                    }
                     if matches!(error_case, ErrorCase::CloseOnFail) {
                         self.close();
                     }

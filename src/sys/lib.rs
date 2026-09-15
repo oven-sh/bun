@@ -14,7 +14,7 @@
 #[cfg(windows)]
 pub extern crate bun_core as bun_str;
 pub mod fd;
-pub use fd::{ErrorCase, FdExt, MakeCrtOwnedError, RawFd};
+pub use fd::{ErrorCase, FdExt, RawFd};
 #[path = "Error.rs"]
 mod error;
 pub use error::Error;

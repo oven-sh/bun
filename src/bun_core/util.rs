@@ -915,7 +915,7 @@ impl Fd {
     /// maps stdio handles to 0/1/2 (checking both the cached statics and the
     /// live `GetStdHandle` result) and **panics** otherwise — converting an
     /// arbitrary HANDLE to a CRT fd makes closing impossible. The supplier
-    /// should call `make_crt_owned()` near where `open()` was called.
+    /// should call `make_crt_owned_for_syscall()` near where `open()` was called.
     #[cfg(not(windows))]
     #[inline]
     pub const fn crt(self) -> i32 {
@@ -952,7 +952,7 @@ impl Fd {
                 }
                 panic!(
                     "Fd::crt({}) on a HANDLE makes closing impossible!\n\n\
-                     The supplier of the fd should call `make_crt_owned()`,\n\
+                     The supplier of the fd should call `make_crt_owned_for_syscall()`,\n\
                      probably where open() was called.",
                     self,
                 );

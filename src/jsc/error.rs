@@ -63,8 +63,6 @@ pub enum Error {
     #[error(transparent)]
     Resolver(#[from] bun_resolver::Error),
     #[error(transparent)]
-    MakeCrtOwned(#[from] bun_sys::MakeCrtOwnedError),
-    #[error(transparent)]
     Path(#[from] bun_paths::path_options::Error),
     #[error(transparent)]
     Bundler(#[from] bun_bundler::Error),
@@ -121,7 +119,6 @@ impl Error {
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
             Self::Resolver(e) => e.name(),
-            Self::MakeCrtOwned(e) => <&'static str>::from(e),
             Self::Path(e) => <&'static str>::from(e),
             Self::Bundler(e) => e.name(),
             Self::Watcher(e) => e.name(),

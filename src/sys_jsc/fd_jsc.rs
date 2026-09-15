@@ -89,7 +89,7 @@ impl FdJsc for Fd {
     }
 
     /// Convert an FD to a JavaScript number without transferring ownership to the C runtime.
-    /// Unlike to_js(), this does not call make_crt_owned() on Windows, so the caller
+    /// Unlike to_js(), this does not give the HANDLE a C runtime fd on Windows, so the caller
     /// retains ownership and must close the FD themselves.
     /// Returns -1 for invalid file descriptors.
     /// On Windows: returns Uint64 for system handles, Int32 for CRT file descriptors.

@@ -618,6 +618,7 @@ impl Interpreter {
     /// Full teardown for the standalone (`MiniEventLoop`) path. Drops root IO
     /// refcounts, frees the root shell env, and consumes the box. Through the
     /// box: readers and writers point back at the interpreter where it is.
+    #[allow(clippy::boxed_local)]
     fn deinit_from_exec(self: Box<Self>) {
         log!("deinit interpreter");
         self.this_jsvalue.set(crate::jsc::JSValue::ZERO);

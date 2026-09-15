@@ -1,7 +1,7 @@
 //! A heap-profile session as a pprof `Profile` message.
 //! <https://github.com/google/pprof/blob/main/proto/profile.proto>
 
-use bun_collections::HashMap;
+use bun_collections::{ArrayHashMap, HashMap};
 
 use bun_sys::loaded_modules::{self, LoadedModule};
 
@@ -223,7 +223,7 @@ enum Location {
 }
 
 /// What a `Sample` message says besides its values.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash)]
 struct SampleKey {
     ids: Vec<u64>,
     thread: u64,
@@ -278,14 +278,11 @@ pub(crate) fn encode(view: &View<'_>) -> Vec<u8> {
     let generated_key = strings.id(b"generated");
     let true_value = strings.id(b"true");
 
-    // Two words of a stack can be one location (positions that a sourcemap maps to the same place), and a word
-    // can be none (JIT code that is not a JavaScript frame), so two buckets can be one sample: a sample is its
-    // locations and labels. Locations are numbered by what they say, and buckets that say the same are added up.
+    // Words in no module are left out and sourcemaps fold positions together: distinct buckets can be one `Sample`.
     let mut locations: Vec<Location> = Vec::new();
     let mut ids_by_location: HashMap<Location, u64> = HashMap::default();
     let mut location_ids: HashMap<usize, u64> = HashMap::default();
-    let mut samples: Vec<(SampleKey, [u64; 4])> = Vec::new();
-    let mut sample_indices: HashMap<SampleKey, usize> = HashMap::default();
+    let mut samples: ArrayHashMap<SampleKey, [u64; 4]> = ArrayHashMap::default();
     let mut functions: Vec<(u64, u64, u32)> = Vec::new();
     let mut function_ids: HashMap<(u64, u64, u32), u64> = HashMap::default();
     let mut ids: Vec<u64> = Vec::new();
@@ -353,32 +350,31 @@ pub(crate) fn encode(view: &View<'_>) -> Vec<u8> {
             b.alloc_bytes.saturating_sub(b.free_bytes),
         ];
         let key = SampleKey {
-            ids: ids.clone(),
+            ids: core::mem::take(&mut ids),
             thread: strings.id(view.string(b.thread)),
             worker: b.worker,
             generated,
         };
-        match sample_indices.get(&key) {
-            Some(&index) => {
-                for (sum, value) in samples[index].1.iter_mut().zip(values) {
+        match samples.get_mut(&key) {
+            Some(sums) => {
+                for (sum, value) in sums.iter_mut().zip(values) {
                     *sum = sum.saturating_add(value);
                 }
+                ids = key.ids;
             }
             None => {
-                sample_indices.insert(key.clone(), samples.len());
-                samples.push((key, values));
+                samples.insert(key, values);
             }
         }
     }
 
-    for (key, values) in &samples {
-        let SampleKey {
-            ids,
+    for (key, values) in samples.iter() {
+        let &SampleKey {
+            ref ids,
             thread,
             worker,
             generated,
         } = key;
-        let (thread, worker, generated) = (*thread, *worker, *generated);
         w.message(profile::SAMPLE, |m| {
             m.packed(field::sample::LOCATION_ID, ids);
             m.packed(field::sample::VALUE, values);

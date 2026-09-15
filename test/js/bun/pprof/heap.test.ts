@@ -274,6 +274,20 @@ describe.concurrent("Bun.pprof.heap", () => {
     for (const labels of result.laterLabels) expect(labels.generated).toBeUndefined();
   });
 
+  test.skipIf(!quantitative)("call sites that a sourcemap maps to one position are one sample", async () => {
+    const { stdout, stderr, exitCode } = await runFixture("heap-fixture-folded.ts");
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const result = JSON.parse(stdout);
+    expect({ files: result.files, lines: result.lines, startLines: result.startLines }).toEqual({
+      files: ["folded-original.ts"],
+      lines: [10],
+      startLines: [9],
+    });
+    // One sample for both, with what both allocated: 32 blocks of 2 MiB.
+    expect(result.repeated).toBe(0);
+    expect(Math.abs(result.allocSpace - 64 * MiB)).toBeLessThan(8 * MiB);
+  });
+
   test.skipIf(!quantitative)("a sample inside the lazy decode of a bytecode cache does not deadlock", async () => {
     // Code from a bytecode cache decodes names and source positions on first use, under a
     // lock, and allocates while it holds it. An Error's stack is such a first use.

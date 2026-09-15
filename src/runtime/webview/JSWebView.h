@@ -83,6 +83,8 @@ public:
     // does Target.createTarget. WebKit: held in the child.
     uint32_t m_width = 0, m_height = 0;
     bool m_closed = false;
+    // Why the transport closed the view; empty when the user closed it.
+    WTF::String m_closedReason;
     // Updated from NavDone replies / Page.frameNavigated — the getters are
     // synchronous but the real values live in the child.
     WTF::String m_url;
@@ -189,14 +191,14 @@ public:
     // Target.createTarget that the first navigate() sends. path overrides
     // auto-detection; extraArgv appends to the built-in flags. Works on
     // all platforms where Chrome runs (not just Darwin). Returns nullptr
-    // if Chrome spawn failed.
+    // if Chrome spawn failed (errorOut may then hold the reason).
     // wsUrl: connect to an existing Chrome's WebSocket debugger endpoint
     // instead of spawning. Empty → spawn with --remote-debugging-pipe.
     static JSWebView* createChrome(JSC::JSGlobalObject*, JSC::Structure*,
         uint32_t width, uint32_t height, const WTF::String& userDataDir,
         const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
-        bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl = {},
-        bool skipAutoDetect = false);
+        bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl,
+        bool skipAutoDetect, JSC::JSValue& errorOut);
 
     void finishCreation(JSC::VM&);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);

@@ -333,6 +333,21 @@ console.log(client.connected); // boolean indicating connection status
 console.log(client.bufferedAmount);
 ```
 
+### Connection Target
+
+A client exposes the URL and the options it was constructed with. Use them to build a second client for the same server:
+
+```ts redis.ts icon="/icons/typescript.svg"
+const client = new RedisClient("redis://localhost:6380/2", { maxRetries: 5 });
+
+console.log(client.url); // "redis://localhost:6380/2"
+console.log(client.options.maxRetries); // 5
+
+const rebuilt = new RedisClient(client.url, client.options);
+```
+
+`url` is the string the constructor got, credentials included (`console.log(client)` prints the password as `[REDACTED]`). When the constructor got no URL, `url` is the value it fell back to (`REDIS_URL`, `VALKEY_URL`, or `valkey://localhost:6379`). `options.tls` is the object passed to the constructor when one was given, otherwise a boolean. `duplicate()` copies both.
+
 ### Type Conversion
 
 The client automatically converts Redis responses to JavaScript values:

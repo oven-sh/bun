@@ -603,6 +603,23 @@ const dir = String(
         const server = http2.createServer((request, response) => response.end(state.tag));
         return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
       }
+      // What script can make happen with something it opens before anybody could close it: a
+      // datagram sent, a server announced.
+      export function effects(state, hostUdpPort, tls) {
+        const note = what => state.heard.push(what);
+        const datagram = "effect:" + state.tag;
+        // (Made in the turn that disposes, it is closed by the time its promise's reaction runs: send() throws.)
+        Bun.udpSocket({ hostname: "127.0.0.1", port: 0 }).then(socket => { socket.send(datagram, hostUdpPort, "127.0.0.1"); note("Bun.udpSocket sent"); }).catch(() => {});
+        const socket = dgram.createSocket("udp4");
+        socket.on("error", () => {});
+        socket.bind(0, "127.0.0.1", () => { note("dgram bound"); socket.send(datagram, hostUdpPort, "127.0.0.1"); });
+        const servers = { net: net.createServer(), tls: nodeTls.createServer(tls), http: http.createServer(), https: https.createServer(tls), http2: http2.createServer() };
+        for (const [name, server] of Object.entries(servers)) {
+          server.on("error", () => {});
+          server.listen(0, "127.0.0.1", () => note(name + " listening"));
+        }
+        state.close = () => { socket.close(); for (const server of Object.values(servers)) server.close(); };
+      }
       // Several of one kind of background work; the first to settle calls dispose(). What had
       // settled by then (its handlers are queued microtasks, which still run) is recorded.
       export function race(name, count, state, dispose) {
@@ -885,6 +902,8 @@ function servesTagOverHttp2(state: State): Promise<boolean> {
 }
 /** Whether the UDP socket on the state's port counts the datagrams it is sent. */
 async function countsDatagrams(state: State): Promise<boolean> {
+  // (Never bound: what a disposed graph opens.)
+  if (!state.port) return false;
   // (A datagram to a closed port comes back as an error on the sender.)
   const sender = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { error() {} } });
   try {
@@ -1247,6 +1266,58 @@ describe.concurrent("ModuleGraph isolation: what a disposed graph opens is close
         await until(async () => !(await kinds[kind].alive(state)));
       } finally {
         state.close?.();
+      }
+    });
+  }
+});
+
+describe.concurrent("ModuleGraph isolation: a disposed graph sends nothing and announces nothing", () => {
+  // What it opens is closed from the event loop, a moment later: nothing may happen in between.
+  for (const order of ["disposed in the turn that opens", "opens after it was disposed"] as const) {
+    test(order, async () => {
+      const received: string[] = [];
+      const hostUdp = await Bun.udpSocket({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { data: (socket, data) => void received.push(data.toString()) },
+      });
+      try {
+        // The same from the host: everything does happen when nobody is disposed.
+        const hostState = newState("effects-host");
+        hostApp.effects(hostState, hostUdp.port, tlsCertificate);
+        try {
+          await until(() => hostState.heard.length === 7 && received.length === 2);
+        } finally {
+          hostState.close?.();
+        }
+
+        using made = await newGraph();
+        const state = newState("effects");
+        made.graph.run(() => {
+          if (order === "disposed in the turn that opens") made.app.effects(state, hostUdp.port, tlsCertificate);
+          else made.app.call(() => queueMicrotask(() => made.app.effects(state, hostUdp.port, tlsCertificate)));
+        });
+        made.graph.dispose();
+        // A datagram of the host's own, sent afterwards, has arrived: the graph's would have too.
+        const sender = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+        try {
+          await until(() => {
+            sender.send("marker", hostUdp.port, "127.0.0.1");
+            return received.includes("marker");
+          });
+        } finally {
+          sender.close();
+        }
+        await hostTimerTurns();
+        expect({
+          heard: state.heard,
+          datagrams: received.filter(datagram => datagram === "effect:" + state.tag),
+        }).toEqual({
+          heard: [],
+          datagrams: [],
+        });
+      } finally {
+        hostUdp.close();
       }
     });
   }

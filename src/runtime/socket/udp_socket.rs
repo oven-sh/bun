@@ -579,6 +579,12 @@ impl UDPSocket {
     pub(crate) fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
+        // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
+        // A socket that is closed from the queue can send before that: it is not bound at all.
+        if global_this.bun_vm().current_context().is_stopped() {
+            return Ok(bun_jsc::JSPromise::create(global_this).to_js());
+        }
+
         let this_ptr = Self::new(Self {
             socket: Cell::new(None),
             config: JsCell::new(UDPSocketConfig::default()),

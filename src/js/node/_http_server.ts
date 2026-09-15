@@ -17,7 +17,14 @@ const {
   validateFunction,
   validateOneOf,
 } = require("internal/validators");
-const { ConnResetException, hasObserver, startPerf, stopPerf, kInternalSendOptions } = require("internal/shared");
+const {
+  ConnResetException,
+  hasObserver,
+  startPerf,
+  stopPerf,
+  kInternalSendOptions,
+  isStoppedModuleGraphRunning,
+} = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -225,11 +232,9 @@ function onNodeHTTPServerSocketTimeout() {
 }
 
 function emitListeningNextTick(self, hostname, port) {
-  // Nothing to announce if close() ran in the same tick as listen(), or the listener is gone
-  // without it (the Bun.ModuleGraph that made the server was disposed in that tick: a TCP
-  // server without a listener has no address).
-  const server = self[serverSymbol];
-  if (!server || server.address === null) return;
+  // Nothing to announce if close() ran in the same tick as listen(), or the Bun.ModuleGraph
+  // whose script listened has been disposed (its listener was closed with it).
+  if (!self[serverSymbol] || isStoppedModuleGraphRunning()) return;
   // Node passes no arguments. The extra ones are a Bun extension.
   self.emit("listening", null, hostname, port);
 }

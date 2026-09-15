@@ -324,6 +324,10 @@ function stopPerf(target, key, context) {
  * wrapper in node:perf_hooks owns one of these when it observes such a type.
  */
 const isFrameOfStoppedModuleGraph = $newCppFunction("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph", 1);
+/** Whether the script that is running is a disposed `Bun.ModuleGraph`'s (what it had queued still runs). */
+function isStoppedModuleGraphRunning() {
+  return isFrameOfStoppedModuleGraph(require("internal/async_context_frame").current());
+}
 
 class NodeEntryObserver {
   callback;
@@ -415,6 +419,7 @@ const kInternalAssertionSuffix =
 //
 
 export default {
+  isStoppedModuleGraphRunning,
   kInternalAssertionSuffix,
   throwNotImplemented,
   hideFromStack,

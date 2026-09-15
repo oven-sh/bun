@@ -2432,6 +2432,13 @@ impl JSValue {
     pub fn is_iterable(self, global: &JSGlobalObject) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__isIterable(self, global))
     }
+    /// True when the first iterator step reports done. Closes an iterator that has more.
+    pub fn is_iterable_empty(self, global: &JSGlobalObject) -> JsResult<bool> {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isIterableEmpty(this: JSValue, global: &JSGlobalObject) -> bool;
+        }
+        host_fn::from_js_host_call_generic(global, || JSC__JSValue__isIterableEmpty(self, global))
+    }
     /// `JSValue.forEach` — invoke `callback` for each iterable element.
     pub fn for_each(
         self,

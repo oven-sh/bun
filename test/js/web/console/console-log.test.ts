@@ -109,7 +109,16 @@ null
   Inside unicode group
   Tab\tNewline
 Quote"Backslash
-    Special chars"
+    Special chars
+Custom inspect
+  X {
+    y: 1
+  }
+  {
+    c: X {
+      y: 1
+    },
+  }"
 `);
   expect(stderr).toMatchInlineSnapshot(`
 "Warning log

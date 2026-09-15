@@ -1038,6 +1038,52 @@ describe("bundler", () => {
     },
   });
 
+  // Regression: constant propagation marked the result temporary of a store
+  // (`x = 10`) or an update (`x++`) as constant. When a consumer folded that
+  // temporary away (`-(x = 10)` -> `-10`), the store lost its lvalue and codegen
+  // printed it as a statement ahead of an earlier store that was still inlined
+  // at its use (`x = 10; return [x = 5, -10, x++]`). See #42628.
+  itBundled("react-compiler/StoreOrderInSameExpression", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const Stub = () => null;
+        function InCallback() {
+          const f = () => {
+            let x;
+            return [(x = 5), -(x = 10), x++];
+          };
+          return <Stub run={f} />;
+        }
+        function InBody() {
+          let x;
+          const v = [(x = 5), -(x = 10)];
+          return <Stub v={v} x={x++} />;
+        }
+        function UpdateInCallback({ cond }) {
+          const f = () => {
+            let x = 1;
+            const a = [(x = 5), -(x++)];
+            if (cond) x = 100;
+            return [a, x];
+          };
+          return <Stub run={f} />;
+        }
+        console.log(
+          JSON.stringify([
+            InCallback().p.run(),
+            InBody().p,
+            UpdateInCallback({ cond: false }).p.run(),
+          ]),
+        );
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
+  });
+
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1262,6 +1308,109 @@ describe("bundler", () => {
         "SpreadThenAttr",
       ]);
       expect(body("Getter")).toContain("get g()");
+    },
+  });
+
+  // prune_non_escaping_scopes does not visit the test of a `?:`. A reactive
+  // scope that only the test reaches gets no node, but the local that scope
+  // reassigns still refers to it. Once that local has to be memoized, Babel
+  // raises `Invariant: Expected a node for all scopes` and skips that one
+  // function. The last two functions are the controls.
+  //
+  // A compiled function calls the fake `c` once per render, so the second
+  // number of each pair is 1 for a compiled function and 0 for a skipped one.
+  itBundled("react-compiler/AssignmentInConditionalTestSkipsOnlyThatFunction", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { calls } from "react/compiler-runtime";
+
+        function CallInTest(p) {
+          let m;
+          const r = (m = p.f()) ? 1 : 0;
+          return <div data-v={[m, r]} />;
+        }
+        function ArrayInTest(p) {
+          let m;
+          const r = (m = [p.a]) ? 1 : 0;
+          return <div data-v={[m]} data-r={r} />;
+        }
+        function ObjectInTest(p) {
+          let m = null;
+          const r = (m = { a: p.a }) ? p.b : p.c;
+          return <div data-v={{ m, r }} />;
+        }
+        function useInHook(p) {
+          "use memo";
+          let m;
+          const r = ((m = p.f()) ? 1 : 0) + 1;
+          return [m, r];
+        }
+        // https://github.com/facebook/react/issues/37228: the same invariant
+        // with no assignment, from a \`?:\` in a \`try\` in an inlined IIFE.
+        const check = v => v.ok;
+        function useValue() {
+          return { ok: true };
+        }
+        function ConditionalInTryInIife() {
+          const raw = useValue();
+          return (() => {
+            try {
+              return check(raw) ? raw : null;
+            } catch {
+              return null;
+            }
+          })();
+        }
+        function AssignedLocalNotMemoized(p) {
+          let m;
+          const r = (m = p.f()) ? 1 : 0;
+          return <div data-m={m} data-r={r} />;
+        }
+        function Plain({ name }) {
+          return <div>Hello {name}</div>;
+        }
+
+        function render(fn, props) {
+          const before = calls();
+          const result = fn(props);
+          return [result.props ?? result, calls() - before];
+        }
+        console.log(JSON.stringify({
+          CallInTest: render(CallInTest, { f: () => "x" }),
+          ArrayInTest: render(ArrayInTest, { a: 1 }),
+          ObjectInTest: render(ObjectInTest, { a: 1, b: 2, c: 3 }),
+          useInHook: render(useInHook, { f: () => "y" }),
+          ConditionalInTryInIife: render(ConditionalInTryInIife),
+          AssignedLocalNotMemoized: render(AssignedLocalNotMemoized, { f: () => "z" }),
+          Plain: render(Plain, { name: "bun" }),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        let count = 0;
+        exports.c = size => {
+          count++;
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.calls = () => count;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        CallInTest: [{ "data-v": ["x", 1] }, 0],
+        ArrayInTest: [{ "data-v": [[1]], "data-r": 1 }, 0],
+        ObjectInTest: [{ "data-v": { m: { a: 1 }, r: 2 } }, 0],
+        useInHook: [["y", 2], 0],
+        ConditionalInTryInIife: [{ ok: true }, 0],
+        AssignedLocalNotMemoized: [{ "data-m": "z", "data-r": 1 }, 1],
+        Plain: [{ children: ["Hello ", "bun"] }, 1],
+      }),
     },
   });
 
@@ -2476,6 +2625,167 @@ describe("bundler", () => {
           KeyIsIncrementedOnTheRight=[[0,1],2]
           KeyIsReassignedOnTheRight=[{"a":"b"},"b"]
           MemberAssignmentOnTheRight=0,1,2,3
+        `,
+      },
+    });
+  }
+
+  // The value of `i += 2` is the value it stores. When it is lowered to a
+  // store and then a new read of `i`, the store prints as a statement ahead of
+  // the expression it is part of, and an earlier operand of that expression
+  // that reads `i` prints after it. As a statement, `i += 2` leaves that read
+  // behind as a stray `i;`, which can land after the memo block that declares
+  // `i`: "ReferenceError: i is not defined".
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/CompoundAssignmentToALocalStaysInPlace-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              const children = Form({ n: 1, flag: true, items: [5, 6, 7, 8] }).props.children;
+              lines.push(name + "=" + (typeof children === "function" ? children() : children));
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          const list = (...values) => values;
+
+          export function ComputedKey(p) {
+            const o = {};
+            let i = p.n;
+            o["k" + i] = i += 2;
+            return <div>{JSON.stringify(o)}</div>;
+          }
+          export function TemplateKey(p) {
+            const o = {};
+            let i = p.n;
+            o[\`k\${i}\`] = i += 2;
+            return <div>{JSON.stringify(o)}</div>;
+          }
+          export function Arguments(p) {
+            let i = p.n;
+            const r = list(\`k\${i}\`, i++, "k" + i + "z", (i += 2), typeof i + i);
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function ArrayAndObjectLiterals(p) {
+            let i = p.n;
+            const r = [[i, -i], { a: "k" + i }, (i += 2)];
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function JsxAttribute(p) {
+            let i = p.n;
+            const el = <a title={"k" + i} id={(i += 2)} />;
+            return <div>{JSON.stringify(el.props)}</div>;
+          }
+          export function InLoop(p) {
+            let i = p.n;
+            const out = [];
+            for (const x of [1, 2]) {
+              out.push(list("k" + i, (i += x)));
+            }
+            return <div>{JSON.stringify(out)}</div>;
+          }
+          export function InTernaryBranch(p) {
+            let i = p.n;
+            const r = p.flag ? list("k" + i, (i += 2)) : null;
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function InCallback(p) {
+            const run = n => {
+              const o = {};
+              let i = n;
+              o["k" + i] = i += 2;
+              return list(o, "k" + i, (i *= 2));
+            };
+            return <div>{JSON.stringify(run(p.n))}</div>;
+          }
+          export function CapturedLocal(p) {
+            let i = p.n;
+            const read = () => i;
+            const r = list("k" + i, (i += 2), read());
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function CapturedBeforeItsDeclaration(p) {
+            const read = () => i;
+            let i = p.n;
+            i *= 3;
+            return <div>{read}</div>;
+          }
+          export function OperandIsATernary(p) {
+            let i = p.n;
+            const r = list(p.flag ? i : 0, (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsALogical(p) {
+            let i = p.n;
+            const r = list(p.flag && i, (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsAnOptionalChain(p) {
+            let i = p.n;
+            const r = list(p.items?.[i], (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsAComma(p) {
+            let i = p.n;
+            const r = list((0, "k" + i), (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          // An operand that updates \`i\` stays ahead of the operand that reads it.
+          export function UpdateInAnEarlierTernary(p) {
+            let i = p.n;
+            let j = p.n;
+            const r = list(p.flag ? i++ : 0, "k" + i, i, (j += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function Statements(p) {
+            let i = p.n;
+            i += 2;
+            for (let j = 0; j < 2; j += 1) i *= 2;
+            return <div>{i}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          Arguments=["k1",1,"k2z",4,"number4"]
+          ArrayAndObjectLiterals=[[1,-1],{"a":"k1"},3]
+          CapturedBeforeItsDeclaration=3
+          CapturedLocal=["k1",3,3]
+          ComputedKey={"k1":3}
+          InCallback=[{"k1":3},"k3",6]
+          InLoop=[["k1",2],["k2",4]]
+          InTernaryBranch=["k1",3]
+          JsxAttribute={"title":"k1","id":3}
+          OperandIsAComma=["k1",3]
+          OperandIsALogical=[1,3]
+          OperandIsATernary=[1,3]
+          OperandIsAnOptionalChain=[6,3]
+          Statements=12
+          TemplateKey={"k1":3}
+          UpdateInAnEarlierTernary=[1,"k2",2,3]
         `,
       },
     });

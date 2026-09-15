@@ -1222,7 +1222,7 @@ impl<'a> SelectorParser<'a> {
         // `::View-Transition-Group(..)` fall through to `CustomFunction`,
         // so look up `name` verbatim with no case folding.
         //
-        // PERF: 7 entries with near-unique lengths (3/6/10/19/19/21/26) —
+        // PERF: 8 entries with near-unique lengths (3/6/10/19/19/21/26/30) —
         // a length-gated `match` rejects the overwhelmingly-common miss path
         // (unknown `::-webkit-foo(...)` etc.) on a single `usize` compare,
         // versus a hash lookup's hash + table load + slice compare. Only
@@ -1267,6 +1267,11 @@ impl<'a> SelectorParser<'a> {
             26 if name == b"view-transition-image-pair" => {
                 return Ok(PseudoElement::ViewTransitionImagePair {
                     part: ViewTransitionPartSelector::parse(self, input)?,
+                });
+            }
+            30 if name == b"view-transition-group-children" => {
+                return Ok(PseudoElement::ViewTransitionGroupChildren {
+                    part_name: ViewTransitionPartName::parse(self, input)?,
                 });
             }
             _ => {}
@@ -2967,6 +2972,11 @@ pub enum PseudoElement {
         /// A part selector.
         part: ViewTransitionPartSelector,
     },
+    /// The [::view-transition-group-children()](https://drafts.csswg.org/css-view-transitions-2/#::view-transition-group-children) functional pseudo element.
+    ViewTransitionGroupChildren {
+        /// A part name selector.
+        part_name: ViewTransitionPartName,
+    },
     /// The [::details-content](https://drafts.csswg.org/css-pseudo-4/#details-content-pseudo) pseudo element.
     DetailsContent,
     /// The [::picker-icon](https://drafts.csswg.org/css-forms-1/#picker-icon-pseudo) pseudo element.
@@ -3075,6 +3085,7 @@ impl PseudoElement {
                 | PE::ViewTransitionImagePair { .. }
                 | PE::ViewTransitionNew { .. }
                 | PE::ViewTransitionOld { .. }
+                | PE::ViewTransitionGroupChildren { .. }
         )
     }
 
@@ -3107,6 +3118,7 @@ impl fmt::Display for PseudoElement {
             Self::ViewTransitionImagePair { .. } => "view_transition_image_pair",
             Self::ViewTransitionOld { .. } => "view_transition_old",
             Self::ViewTransitionNew { .. } => "view_transition_new",
+            Self::ViewTransitionGroupChildren { .. } => "view_transition_group_children",
             Self::DetailsContent => "details_content",
             Self::PickerIcon => "picker_icon",
             Self::Checkmark => "checkmark",

@@ -1310,7 +1310,7 @@ pub mod parse_worker {
                 if let Err(e) = css_ast.minify(
                     bump,
                     &bun_css::MinifyOptions {
-                        targets: bun_css::Targets::for_bundler_target(topts.target),
+                        targets: bun_css::Targets::for_bundler_target(topts.css_target()),
                         unused_symbols: Default::default(),
                     },
                     &extra,
@@ -2403,8 +2403,7 @@ pub mod parse_worker {
             .separate_ssr_graph)
         ||
         // set the target to the client when bundling client-side files
-        ((topts.server_components || topts.has_dev_server())
-            && task.known_target == options::Target::Browser)
+        (topts.is_bake_build() && task.known_target == options::Target::Browser)
         {
             // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
             // this is not done when there is one server graph because it is easier for plugins to deal with.

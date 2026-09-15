@@ -1673,15 +1673,15 @@ pub(crate) mod __gated_printer {
         pub(crate) import_records: &'a [ImportRecord],
 
         pub(crate) needs_semicolon: bool,
-        pub(crate) stmt_start: isize,
+        pub(crate) stmt_start: i32,
         pub(crate) options: Options<'a>,
-        pub(crate) export_default_start: isize,
-        pub(crate) arrow_expr_start: isize,
-        pub(crate) for_of_init_start: isize,
+        pub(crate) export_default_start: i32,
+        pub(crate) arrow_expr_start: i32,
+        pub(crate) for_of_init_start: i32,
         pub(crate) prev_op: Op::Code,
-        pub(crate) prev_op_end: isize,
-        pub(crate) prev_num_end: isize,
-        pub(crate) prev_reg_exp_end: isize,
+        pub(crate) prev_op_end: i32,
+        pub(crate) prev_num_end: i32,
+        pub(crate) prev_reg_exp_end: i32,
         pub(crate) call_target: Option<ExprData>,
         pub(crate) writer: W,
 
@@ -7283,7 +7283,7 @@ pub trait WriterContext {
 
 /// Abstracted writer interface used by `Printer` (the methods Printer calls on `p.writer`).
 pub trait WriterTrait {
-    fn written(&self) -> isize;
+    fn written(&self) -> i32;
     fn prev_char(&self) -> u8;
     fn prev_prev_char(&self) -> u8;
     fn print_byte(&mut self, b: u8);
@@ -7414,8 +7414,8 @@ impl<C: WriterContext> Writer<C> {
 impl<C: WriterContext> WriterTrait for Writer<C> {
     /// Index of the last byte in `ctx`'s buffer, -1 when it is empty.
     #[inline]
-    fn written(&self) -> isize {
-        self.ctx.slice().len() as isize - 1
+    fn written(&self) -> i32 {
+        self.ctx.slice().len() as i32 - 1
     }
     #[inline]
     fn prev_char(&self) -> u8 {
@@ -7462,7 +7462,7 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
 // `&mut W` forwards to `W` so `printWithWriter(*BufferPrinter, ...)` works.
 impl<W: WriterTrait> WriterTrait for &mut W {
     #[inline]
-    fn written(&self) -> isize {
+    fn written(&self) -> i32 {
         (**self).written()
     }
     #[inline]

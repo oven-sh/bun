@@ -50,8 +50,7 @@ function echoBin(label: string): string {
  * `/repos/<owner>/<repo>/tarball/<ref>` request gets the one fixture repository.
  * `requests` lets a case prove that a second run came from the bunx cache.
  */
-async function localGithub(owner: string, repo: string, files: Record<string, string>) {
-  const bytes = await githubTarball(`${owner}-${repo}-0123abc`, files);
+function localGithub(owner: string, repo: string, bytes: Uint8Array) {
   const requests: string[] = [];
   const server = Bun.serve({
     port: 0,
@@ -270,14 +269,15 @@ console.log(
 
 // `bunx github:<owner>/<repo>` guesses the bin from the repository name, so the
 // fixture repository is named after its bin, like piuccio/cowsay -> `cowsay`.
-const cowsayRepo = {
+// Both cases below serve this one tarball.
+const cowsayTarball = githubTarball("bunx-fixture-cowsay-0123abc", {
   "package.json": JSON.stringify({ name: "cowsay", version: "1.0.0", bin: { cowsay: "cli.js" } }),
   "cli.js": echoBin("cowsay from github"),
-};
+});
 
 it.concurrent("should work for github repository", async () => {
   const { x_dir, env } = setup();
-  using github = await localGithub("bunx-fixture", "cowsay", cowsayRepo);
+  using github = localGithub("bunx-fixture", "cowsay", await cowsayTarball);
   const run = () => {
     const subprocess = spawn({
       cmd: [bunExe(), "x", "github:bunx-fixture/cowsay", "--help"],
@@ -311,7 +311,7 @@ it.concurrent("should work for github repository", async () => {
 
 it.concurrent("should work for github repository with committish", async () => {
   const { x_dir, env } = setup();
-  using github = await localGithub("bunx-fixture", "cowsay", cowsayRepo);
+  using github = localGithub("bunx-fixture", "cowsay", await cowsayTarball);
   const run = (...flags: string[]) => {
     const subprocess = spawn({
       cmd: [bunExe(), "x", ...flags, "github:bunx-fixture/cowsay#HEAD", "hello bun!"],

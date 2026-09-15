@@ -6,6 +6,7 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  githubTarball,
   isWindows,
   joinP,
   normalizeBunSnapshot,
@@ -155,23 +156,18 @@ function serveDirectory(root: string) {
  * server), so the returned `env` instead points the install's `http_proxy` at this server. A proxied plain-http
  * request arrives in absolute form, so `request.url` is the dependency URL itself and the specifiers keep the real
  * hosts bun classifies them by. The dependencies must use `http://`: `https://` would be tunneled (CONNECT) to the
- * real host. Every URL seen is pushed to `urls`. A URL registered with a file map is answered with a gzipped tarball of
- * those files, one registered with a `Response` (e.g. a redirect) with that response, anything else with a 404. The
- * context's registry bypasses the proxy, so its `urls`/`requested` are unaffected.
+ * real host. Every URL seen is pushed to `urls`. A URL registered with tarball bytes is answered with them, one
+ * registered with a `Response` (e.g. a redirect) with that response, anything else with a 404. The context's registry
+ * bypasses the proxy, so its `urls`/`requested` are unaffected.
  */
-function urlTarballProxy(
-  ctx: TestContext,
-  urls: string[],
-  responses: Record<string, Record<string, string> | Response>,
-) {
+function urlTarballProxy(ctx: TestContext, urls: string[], responses: Record<string, Uint8Array | Response>) {
   const server = Bun.serve({
     port: 0,
-    async fetch(request) {
+    fetch(request) {
       urls.push(request.url);
       const registered = responses[request.url];
       if (!registered) return new Response(`nothing registered for ${request.url}`, { status: 404 });
-      if (registered instanceof Response) return registered.clone();
-      return new Response(await new Bun.Archive(registered, { compress: "gzip" }).bytes());
+      return registered instanceof Response ? registered.clone() : new Response(registered);
     },
   });
   const proxy_url = server.url.href.replace(/\/+$/, "");
@@ -4669,6 +4665,23 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // github.com answers /tarball/ URLs with a redirect to codeload.github.com, whose tarballs have a single
+  // `<user>-<repo>-<short commit>` root directory. Both variants below serve this one tarball.
+  const when_tarball = githubTarball("cujojs-when-1a2b3c4", {
+    ".gitignore": "",
+    ".gitmodules": "",
+    "LICENSE.txt": "",
+    "README.md": "",
+    "apply.js": "",
+    "cancelable.js": "",
+    "delay.js": "",
+    "package.json": JSON.stringify({ name: "when", version: "1.0.2" }),
+    "test/when-test.js": "",
+    "timed.js": "",
+    "timeout.js": "",
+    "when.js": "",
+  });
+
   // The second variant also sets GITHUB_API_URL: it only applies to `github:` dependencies, so the tarball URL
   // must still be fetched verbatim (any request reaching the local stand-in would show up in `urls`).
   for (const with_github_api_url of [false, true]) {
@@ -4680,26 +4693,11 @@ describe.concurrent("bun-install", () => {
           const urls: string[] = [];
           setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
           const tarball_url = "http://github.com/cujojs/when/tarball/1.0.2";
-          // github.com answers /tarball/ URLs with a redirect to codeload.github.com, whose tarballs have a single
-          // `<user>-<repo>-<short commit>` root directory.
           const codeload_url = "http://codeload.github.com/cujojs/when/legacy.tar.gz/refs/tags/1.0.2";
           const proxied_urls: string[] = [];
           await using proxy = urlTarballProxy(ctx, proxied_urls, {
             [tarball_url]: new Response(null, { status: 302, headers: { Location: codeload_url } }),
-            [codeload_url]: {
-              "cujojs-when-1a2b3c4/.gitignore": "",
-              "cujojs-when-1a2b3c4/.gitmodules": "",
-              "cujojs-when-1a2b3c4/LICENSE.txt": "",
-              "cujojs-when-1a2b3c4/README.md": "",
-              "cujojs-when-1a2b3c4/apply.js": "",
-              "cujojs-when-1a2b3c4/cancelable.js": "",
-              "cujojs-when-1a2b3c4/delay.js": "",
-              "cujojs-when-1a2b3c4/package.json": JSON.stringify({ name: "when", version: "1.0.2" }),
-              "cujojs-when-1a2b3c4/test/when-test.js": "",
-              "cujojs-when-1a2b3c4/timed.js": "",
-              "cujojs-when-1a2b3c4/timeout.js": "",
-              "cujojs-when-1a2b3c4/when.js": "",
-            },
+            [codeload_url]: await when_tarball,
           });
           await writeFile(
             join(ctx.package_dir, "package.json"),
@@ -4770,15 +4768,18 @@ describe.concurrent("bun-install", () => {
       const tarball_url = "http://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2";
       const proxied_urls: string[] = [];
       await using proxy = urlTarballProxy(ctx, proxied_urls, {
-        [tarball_url]: {
-          "package/package.json": JSON.stringify({
-            name: "@vercel/turbopack-node",
-            version: "0.0.0",
-            dependencies: { "loader-runner": "^4.3.0" },
-          }),
-          "package/src/index.ts": "",
-          "package/tsconfig.json": "{}",
-        },
+        [tarball_url]: await new Bun.Archive(
+          {
+            "package/package.json": JSON.stringify({
+              name: "@vercel/turbopack-node",
+              version: "0.0.0",
+              dependencies: { "loader-runner": "^4.3.0" },
+            }),
+            "package/src/index.ts": "",
+            "package/tsconfig.json": "{}",
+          },
+          { compress: "gzip" },
+        ).bytes(),
       });
       await writeFile(
         join(ctx.package_dir, "package.json"),

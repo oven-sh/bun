@@ -743,6 +743,11 @@ fn lower_one_date_time_literal<'a>(
 impl<'a> Parser<'a> {
     #[cold]
     fn not_utf8(options: &mut Options<'a>) -> crate::Result<'a> {
+        // `cache.get` below may have keyed the entry on the undecoded bytes; the next parse keys it again.
+        if let Some(cache) = options.features.runtime_transpiler_cache_mut() {
+            cache.input_hash = None;
+            cache.input_byte_length = None;
+        }
         crate::Result::NotUtf8(Box::new(core::mem::take(options)))
     }
 
@@ -768,7 +773,8 @@ impl<'a> Parser<'a> {
         } = self;
 
         if lexer.saw_ill_formed_utf8 && options.features.stop_on_ill_formed_utf8 {
-            return Ok(crate::Result::NotUtf8(Box::new(options)));
+            let mut options = options;
+            return Ok(Self::not_utf8(&mut options));
         }
 
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync } from "fs";
+import { mkdirSync, readdirSync, realpathSync, statSync } from "fs";
 import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -85,6 +85,34 @@ describe.concurrent("run-unicode", () => {
       expect(text).toContain("/*! (c) Soci\uFFFDt\uFFFD */");
       expect(text).toContain("/^r\uFFFD$/");
       expect(exitCode).toBe(0);
+    });
+
+    test("the runtime transpiler cache keeps one entry for it and uses it", async () => {
+      // Over the 4 KiB cache minimum. The parser asks the cache after the first token (`0`), before it lexes the rest.
+      const padded = Buffer.concat([Buffer.from("0;\n// " + Buffer.alloc(8 * 1024, "-").toString() + "\n"), source]);
+      using dir = tempDir("cache-not-utf8", { "latin1.js": padded });
+      const cacheDir = join(String(dir), "cache");
+      const env = {
+        ...bunEnv,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+      };
+      const entries = () => readdirSync(cacheDir).map(name => [name, statSync(join(cacheDir, name)).mtimeMs]);
+      const runs = [];
+      for (let i = 0; i < 3; i++) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "latin1.js"],
+          cwd: String(dir),
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        runs.push({ stdout, stderr, exitCode, entries: entries() });
+      }
+      const written = runs[0].entries;
+      expect(written).toHaveLength(1);
+      expect(runs).toEqual([0, 1, 2].map(() => ({ stdout: decoded, stderr: "", exitCode: 0, entries: written })));
     });
 
     test("a byte that is a letter in Latin-1 does not start an identifier", async () => {

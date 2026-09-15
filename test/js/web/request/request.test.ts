@@ -76,6 +76,108 @@ test("clone() does not lock original body when body was accessed before clone", 
   expect(clonedText).toBe("Hello, world!");
 });
 
+// https://github.com/oven-sh/bun/issues/42499
+describe("new Request() with a GET/HEAD method and a body", () => {
+  const message = "Request with GET/HEAD method cannot have body.";
+
+  test.each(["GET", "HEAD", "get", "head"])("method %s with a string body throws TypeError", method => {
+    expect(() => new Request("http://example.com/", { method, body: "x" })).toThrow(new TypeError(message));
+  });
+
+  test("default method with a body throws TypeError", () => {
+    expect(() => new Request("http://example.com/", { body: "x" })).toThrow(new TypeError(message));
+  });
+
+  test.each([
+    ["Uint8Array", () => new Uint8Array([1])],
+    ["Blob", () => new Blob(["x"])],
+    ["ReadableStream", () => new ReadableStream()],
+    ["URLSearchParams", () => new URLSearchParams("a=1")],
+    [
+      "FormData",
+      () => {
+        const fd = new FormData();
+        fd.set("a", "1");
+        return fd;
+      },
+    ],
+  ])("GET with a %s body throws TypeError", (_name, body) => {
+    expect(() => new Request("http://example.com/", { method: "GET", body: body() })).toThrow(new TypeError(message));
+  });
+
+  test("a POST input Request combined with method GET throws TypeError", () => {
+    const post = new Request("http://example.com/", { method: "POST", body: "x" });
+    expect(() => new Request(post, { method: "GET" })).toThrow(new TypeError(message));
+    // The failed construction does not consume the input body.
+    expect(post.bodyUsed).toBe(false);
+  });
+
+  test("an invalid URL wins over the body check", () => {
+    expect(() => new Request("not a url", { method: "GET", body: "x" })).toThrow(/Invalid URL/);
+  });
+
+  test("a null, undefined or empty body is accepted", async () => {
+    expect(new Request("http://example.com/", { method: "GET", body: null }).body).toBeNull();
+    expect(new Request("http://example.com/", { method: "HEAD", body: undefined }).body).toBeNull();
+    // fetch() treats an empty string as no body. The constructor does the same.
+    expect(await new Request("http://example.com/", { method: "GET", body: "" }).text()).toBe("");
+  });
+
+  test.each([
+    ["Uint8Array(0)", () => new Uint8Array(0)],
+    ["Blob([])", () => new Blob([])],
+    ["URLSearchParams()", () => new URLSearchParams()],
+  ])("a zero-byte %s body is accepted, matching fetch()", async (_name, body) => {
+    // fetch_impl only rejects a GET/HEAD body with size > 0; the constructor uses the same rule.
+    expect(await new Request("http://example.com/", { method: "GET", body: body() }).text()).toBe("");
+  });
+
+  test.each(["Get", "Head", "gEt"])("mixed-case %s with a body throws TypeError", method => {
+    expect(() => new Request("http://example.com/", { method, body: "x" })).toThrow(new TypeError(message));
+  });
+
+  test.each(["Post", "LIST", "Purge"])("a method token Bun does not know (%s) keeps its body", async method => {
+    const request = new Request("http://example.com/", { method, body: "x" });
+    expect(await request.text()).toBe("x");
+  });
+
+  test("init.method is read once, so a getter cannot change the answer", () => {
+    let reads = 0;
+    const init = {
+      get method() {
+        return reads++ === 0 ? "GET" : "LIST";
+      },
+      body: "x",
+    };
+    expect(() => new Request("http://example.com/", init)).toThrow(new TypeError(message));
+    expect(reads).toBe(1);
+  });
+
+  test("a Request built under an exemption can be wrapped again with an init", async () => {
+    // @ts-expect-error Bun accepts a Response as init
+    const fromResponse = new Request("http://example.com/", new Response("from response"));
+    expect(await new Request(fromResponse, { headers: { "x-a": "1" } }).text()).toBe("from response");
+    const unknownMethod = new Request("http://example.com/", { method: "LIST", body: "x" });
+    expect(await new Request(unknownMethod, {}).text()).toBe("x");
+    // An explicit GET in the init still applies the check.
+    expect(() => new Request(unknownMethod, { method: "GET" })).toThrow(new TypeError(message));
+  });
+
+  test("a body taken from a Response init is kept (Bun extension)", async () => {
+    // @ts-expect-error Bun accepts a Response as init
+    const request = new Request("http://example.com/", new Response("from response"));
+    expect(request.method).toBe("GET");
+    expect(await request.text()).toBe("from response");
+  });
+
+  test("other methods keep their body", async () => {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+      const request = new Request("http://example.com/", { method, body: "x" });
+      expect(await request.text()).toBe("x");
+    }
+  });
+});
+
 describe("RequestInit signal presence", () => {
   // Fetch spec step 27: "If init['signal'] exists, then set signal to it."
   // A present `signal: null` must replace (detach from) the input Request's signal.

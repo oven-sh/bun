@@ -1037,6 +1037,7 @@ impl Request {
         let url_or_object = arguments[0];
         let url_or_object_type = url_or_object.js_type();
         let mut fields: EnumSet<Fields> = EnumSet::empty();
+        let mut skip_body_check = false;
 
         let is_first_argument_a_url =
             // fastest path:
@@ -1101,7 +1102,8 @@ impl Request {
                         return Ok(req);
                     }
 
-                    if !fields.contains(Fields::Method) {
+                    let method_from_input = !fields.contains(Fields::Method);
+                    if method_from_input {
                         req.method = request.method;
                         fields.insert(Fields::Method);
                     }
@@ -1143,6 +1145,10 @@ impl Request {
                                     Err(e) => bail!(Err(e)),
                                 }
                                 fields.insert(Fields::Body);
+                                // The input passed this check when it was built.
+                                if method_from_input {
+                                    skip_body_check = true;
+                                }
                             }
                         }
                     }
@@ -1191,6 +1197,7 @@ impl Request {
                                     Err(e) => bail!(Err(e)),
                                 }
                                 fields.insert(Fields::Body);
+                                skip_body_check = true;
                             }
                         }
                     }
@@ -1298,7 +1305,7 @@ impl Request {
             }
 
             if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(global_this, value) {
+                match crate::webcore::response::Init::init::<false>(global_this, value) {
                     Ok(Some(response_init)) => {
                         let header_check = !explicit_check
                             || (explicit_check
@@ -1328,6 +1335,9 @@ impl Request {
                             if !fields.contains(Fields::Method) {
                                 req.method = response_init.method;
                                 fields.insert(Fields::Method);
+                                if response_init.method_unknown {
+                                    skip_body_check = true;
+                                }
                             }
                         }
                     }
@@ -1397,6 +1407,16 @@ impl Request {
         // decrement it to be perfectly balanced.
 
         req.url.set(href);
+
+        // Fetch spec `new Request()` step 36. A Response init body is a Bun extension.
+        if !skip_body_check
+            && matches!(req.method, Method::GET | Method::HEAD)
+            && req.body_value_mut().has_request_body()
+        {
+            bail!(Err(global_this.throw_type_error(format_args!(
+                "Request with GET/HEAD method cannot have body."
+            ))));
+        }
 
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {

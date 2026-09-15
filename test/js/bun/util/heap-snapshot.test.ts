@@ -34,6 +34,7 @@ describe("Native types report their size correctly", () => {
 
   it("Request", () => {
     var request = new Request("https://example.com", {
+      method: "POST",
       body: Buffer.alloc(1024 * 1024 * 2, "yoo"),
     });
     globalThis.request = request;

@@ -157,6 +157,7 @@
               "/runtime/jsonl",
               "/runtime/html-rewriter",
               "/runtime/image",
+              "/runtime/qr",
               "/runtime/hashing",
               "/runtime/glob",
               "/runtime/semver",

@@ -29,7 +29,7 @@ use bun_collections::VecExt;
 use bun_jsc::JsCell;
 use core::cell::Cell;
 use core::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use bun_sys::{self, Fd};
 
@@ -292,7 +292,6 @@ pub struct Interpreter {
     pub(crate) root_io: JsCell<IO>,
 
     pub(crate) has_pending_activity: AtomicU32,
-    pub(crate) started: AtomicBool,
     pub(crate) keep_alive: JsCell<bun_io::KeepAlive>,
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
     /// child the script spawns belongs to it, and once it stops the script runs no further.
@@ -579,7 +578,6 @@ impl Interpreter {
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
             has_pending_activity: AtomicU32::new(0),
-            started: AtomicBool::new(false),
             keep_alive: JsCell::new(bun_io::KeepAlive::default()),
             context: Cell::new(None),
             async_commands_executing: Cell::new(0),
@@ -1254,7 +1252,6 @@ impl Interpreter {
         let ast = &raw const self.args.get().script_ast;
         let io = self.root_io.get().clone();
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
-        self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
         Ok(())
     }
@@ -1471,7 +1468,6 @@ impl Interpreter {
         let ast = &raw const self.args.get().script_ast;
         let io = self.root_io.get().clone();
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
-        self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
         if global_this.has_exception() {
             return Err(crate::jsc::JsError::Thrown);
@@ -1607,24 +1603,6 @@ impl Interpreter {
         }
 
         this.keep_alive.with_mut(|k| k.disable());
-    }
-
-    pub(crate) fn is_running(
-        &self,
-        _: &crate::jsc::JSGlobalObject,
-        _: &crate::jsc::CallFrame,
-    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-        Ok(crate::jsc::JSValue::js_boolean(self.has_pending_activity()))
-    }
-
-    pub(crate) fn get_started(
-        &self,
-        _: &crate::jsc::JSGlobalObject,
-        _: &crate::jsc::CallFrame,
-    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-        Ok(crate::jsc::JSValue::js_boolean(
-            self.started.load(Ordering::SeqCst),
-        ))
     }
 
     pub(crate) fn get_buffered_stdout(

@@ -136,6 +136,8 @@ const dir = String(
       // A module loaded through a graph of its own making.
       export const loadsThroughAPlainGraph = specifier => new Bun.ModuleGraph().import(specifier);
       export const makesAGraph = options => new Bun.ModuleGraph(options);
+      // (hostMakesAGraph: a function of the host's, passed in globals.)
+      export const hasTheHostMakeAGraph = () => hostMakesAGraph();
       // FileHandles nobody closes and nobody keeps.
       export const forgetsFileHandles = async (path, count) => { for (let i = 0; i < count; i++) await fs.promises.open(path, "r"); };
       // One the host is handed, with a stream over another.
@@ -369,10 +371,11 @@ const dir = String(
       const hostSaw = [], tenantSaw = [];
       process.on("uncaughtException", error => hostSaw.push(error.message));
       process.on("unhandledRejection", error => hostSaw.push(error.message));
-      const tenant = new Bun.ModuleGraph({ onError: error => tenantSaw.push(error.message) });
+      const tenant = new Bun.ModuleGraph({ globals: { hostMakesAGraph: () => new Bun.ModuleGraph() }, onError: error => tenantSaw.push(error.message) });
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
-      // A graph of the tenant's making that was given no onError of its own.
-      const inner = tenant.run(() => app.makesAGraph());
+      // A graph made in the tenant's context that was given no onError of its own: by the tenant's
+      // code, or by a function of the host's that the tenant called.
+      const inner = tenant.run(() => (process.argv[2] === "by a host function it called" ? app.hasTheHostMakeAGraph() : app.makesAGraph()));
       await inner.import(import.meta.dir + "/throws-later.mjs");
       while (hostSaw.length + tenantSaw.length < 2) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ hostSaw, tenantSaw: tenantSaw.sort() }));
@@ -2761,12 +2764,15 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("errors of a graph its script made without an onError go to its own onError, not to the host", async () => {
-    expect(await runs("errors-of-a-graph-made-by-a-graph.mjs")).toEqual({
-      stdout: `{"hostSaw":[],"tenantSaw":["rejected and unhandled","thrown from a timer"]}`,
-      exitCode: 0,
-    });
-  });
+  test.each(["by its script", "by a host function it called"])(
+    "errors of a graph made in its context (%s) without an onError go to its onError, not to the host",
+    async how => {
+      expect(await runs("errors-of-a-graph-made-by-a-graph.mjs", how)).toEqual({
+        stdout: `{"hostSaw":[],"tenantSaw":["rejected and unhandled","thrown from a timer"]}`,
+        exitCode: 0,
+      });
+    },
+  );
   test("a rejection its onError causes in the code of a graph it made goes to the host, not back to that onError", async () => {
     expect(await runs("on-error-that-causes-an-inner-rejection.mjs")).toEqual({
       stdout: `{"callsOfTheTenantsOnError":1,"hostSaw":["rejected by the inner graph's code"]}`,

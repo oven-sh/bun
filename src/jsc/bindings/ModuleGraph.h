@@ -49,8 +49,8 @@ public:
     void setOverlayShape(unsigned shape) { m_overlayShape = shape; }
     JSC::JSMap* requireMap() const { return m_requireMap.get(); }
     JSC::JSObject* onError() const { return m_onError.get(); } // null if the host gave none
-    // The graph whose code made this one (null: the host's did). Errors of a graph that was given
-    // no onError go to its maker's.
+    // The graph in whose context this one was made (null: the host's). Errors of a graph that was
+    // given no onError go to its maker's.
     JSModuleGraph* maker() const { return m_maker.get(); }
     void setMaker(JSC::VM& vm, JSModuleGraph* maker) { m_maker.setMayBeNull(vm, this, maker); }
     // Key of the first module import()ed: import.meta.main / require.main. Undefined before.

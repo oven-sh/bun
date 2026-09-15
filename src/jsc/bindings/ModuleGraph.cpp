@@ -902,9 +902,9 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
     JSModuleLoader* loader = createModuleGraphLoader(globalObject, globals, overlayShape);
     RETURN_IF_EXCEPTION(scope, {});
     JSModuleGraph* graph = JSModuleGraph::create(vm, globalObject, structure, loader, onError);
-    // (Whose code this is, as for an error: by the stack, else by the context.)
-    auto makerByStack = moduleGraphOwningCurrentStack(globalObject);
-    graph->setMaker(vm, makerByStack ? *makerByStack : moduleGraphOfCurrentContext(globalObject));
+    // Made in a graph's context it is that graph's, like everything else opened there: disposed with it
+    // (JSModuleGraph::create), and its maker for errors.
+    graph->setMaker(vm, currentModuleGraph(globalObject));
     graph->setOverlayShape(overlayShape);
     return JSValue::encode(graph);
 }

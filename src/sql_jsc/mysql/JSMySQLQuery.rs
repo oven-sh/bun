@@ -379,7 +379,6 @@ impl JSMySQLQuery {
         // success path below.
         let errguard = scopeguard::guard(self, |s| {
             s.this_value.with_mut(|v| v.downgrade());
-            let _ = s.query.with_mut(|q| q.fail());
         });
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);

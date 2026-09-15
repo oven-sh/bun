@@ -4182,8 +4182,7 @@ impl ViewTransitionPartName {
     }
 }
 
-/// A [view transition part selector](https://w3c.github.io/csswg-drafts/css-view-transitions-2/#typedef-pt-name-and-class-selector):
-/// `<pt-name-selector> <pt-class-selector>? | <pt-class-selector>`.
+/// A [view transition part selector](https://w3c.github.io/csswg-drafts/css-view-transitions-2/#typedef-pt-name-and-class-selector).
 #[derive(Clone)]
 pub struct ViewTransitionPartSelector {
     /// The view transition part name.

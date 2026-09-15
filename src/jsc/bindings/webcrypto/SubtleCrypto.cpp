@@ -1557,8 +1557,15 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     keyData = bytes;
                     break;
                 case SubtleCrypto::KeyFormat::Jwk: {
-                    String jwkString(bytes.span());
-                    auto jwkObject = JSONParse(&state, jwkString);
+                    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk: the bytes go through UTF-8 decode,
+                    // which skips a leading byte order mark. Invalid UTF-8 yields a null string and so a
+                    // DataError below, as in Node and Chromium.
+                    static constexpr std::array<uint8_t, 3> utf8ByteOrderMark { 0xEF, 0xBB, 0xBF };
+                    auto jwkBytes = bytes.span();
+                    if (spanHasPrefix(jwkBytes, std::span { utf8ByteOrderMark }))
+                        jwkBytes = jwkBytes.subspan(utf8ByteOrderMark.size());
+                    String jwkString = String::fromUTF8(jwkBytes);
+                    auto jwkObject = jwkString.isNull() ? JSValue() : JSONParse(&state, jwkString);
                     if (scope.exception()) [[unlikely]] {
                         weakThis->m_pendingPromises.remove(index);
                         promise->reject(Exception { ExistingExceptionError });

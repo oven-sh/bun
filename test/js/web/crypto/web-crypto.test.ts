@@ -123,6 +123,38 @@ describe("Web Crypto", () => {
       return { key, iv, wrapped };
     }
 
+    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk runs the bytes through UTF-8
+    // decode, which drops a leading byte order mark; the bytes used to be read as Latin-1.
+    // Invalid UTF-8 is a DataError, as in Node and Chromium.
+    it("decodes the wrapped bytes as UTF-8 and skips a byte order mark", async () => {
+      const jwk = (kid: string) => `{"kty":"oct","k":"AAECAwQFBgcICQoLDA0ODw","alg":"A128GCM","kid":"${kid}"}`;
+      const encode = (s: string) => new TextEncoder().encode(s);
+      const unwrap = async (payload: Uint8Array) => {
+        const { key, iv, wrapped } = await setup(payload);
+        return crypto.subtle
+          .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
+          .then(
+            async k => Buffer.from(await crypto.subtle.exportKey("raw", k)).toString("hex"),
+            e => `${e.name}: ${e.message}`,
+          );
+      };
+      expect({
+        plain: await unwrap(encode(jwk("a"))),
+        bom: await unwrap(encode("\uFEFF" + jwk("a"))),
+        "bom twice": await unwrap(encode("\uFEFF\uFEFF" + jwk("a"))),
+        "non-ASCII member": await unwrap(encode(jwk("ключ"))),
+        "invalid UTF-8": await unwrap(
+          Buffer.concat([encode(jwk("a").slice(0, -2)), Buffer.from([0xff, 0xfe]), encode('"}')]),
+        ),
+      }).toEqual({
+        plain: "000102030405060708090a0b0c0d0e0f",
+        bom: "000102030405060708090a0b0c0d0e0f",
+        "bom twice": "DataError: WrappedKey cannot be converted to a JSON object",
+        "non-ASCII member": "000102030405060708090a0b0c0d0e0f",
+        "invalid UTF-8": "DataError: WrappedKey cannot be converted to a JSON object",
+      });
+    });
+
     it("rejects when wrapped bytes are not valid JSON", async () => {
       const { key, iv, wrapped } = await setup(new TextEncoder().encode("not json {{{"));
       const err = await crypto.subtle

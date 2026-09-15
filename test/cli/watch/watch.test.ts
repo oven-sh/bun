@@ -522,3 +522,48 @@ setInterval(() => {}, 1e6);
     await proc.exited;
   });
 }
+
+// The same state needs no failed lookup. A program that writes a file next to
+// its sources (a pid file, a log, a sqlite db) causes a directory event, and
+// the watcher busts the directory cache for it. A module the program imports
+// lazily after that re-reads the directory.
+it.skipIf(isWindows)(
+  "--watch sees a rename over save after the program wrote into its own directory and then imported lazily",
+  async () => {
+    using dir = tempDir("watch-dir-event-after-own-write", {
+      "trace.log": "",
+      "src/a.js": `export const a = 1;`,
+      "src/lazy.js": `export const lazy = "lazy";`,
+      "src/entry.js": `import { a } from "./a.js";
+import { readFileSync, writeFileSync } from "node:fs";
+const pidFile = "app." + crypto.randomUUID() + ".pid";
+writeFileSync(pidFile, String(process.pid));
+// The watcher thread logs the directory event for the write, then busts the cache.
+while (!readFileSync(process.env.BUN_WATCHER_TRACE, "utf8").includes(pidFile)) await Bun.sleep(1);
+const { lazy } = await import("./lazy.js");
+console.log("EVAL a =", a, lazy);
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = join(String(dir), "src");
+    const proc = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      // The trace file is outside the watched directory so that writes to it cause no events.
+      env: { ...bunEnv, BUN_WATCHER_TRACE: join(String(dir), "trace.log") },
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    watchee = proc;
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    await waitFor("EVAL a = 1 lazy\n");
+    await replaceFile["rename over"](join(cwd, "a.js"), `export const a = 2;`);
+    await waitFor("EVAL a = 2 lazy\n");
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+);

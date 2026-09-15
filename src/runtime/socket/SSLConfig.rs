@@ -11,10 +11,11 @@
 //! rule on a foreign type), so they're provided via the [`SSLConfigFromJs`]
 //! extension trait. Import that trait to call `SSLConfig::from_js(..)`.
 
-use core::ffi::c_char;
+use core::ffi::{CStr, c_char};
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
+use bun_uws_sys::socket_context::c;
 
 use crate::node::fs as node_fs;
 use crate::webcore::Blob;
@@ -154,10 +155,35 @@ impl SSLConfigFromJs for SSLConfig {
         // `result` cleanup handled by Drop on error-path `?`
         let mut any = false;
 
-        if let Some(passphrase) = generated.passphrase.as_ref() {
-            result.passphrase = zbox_into_raw(&passphrase.to_owned_slice_z());
-            any = true;
+        let has_pfx = ssl_config_file_is_present(&generated.pfx);
+        if has_pfx
+            && (ssl_config_file_is_present(&generated.key)
+                || ssl_config_file_is_present(&generated.cert)
+                || generated.key_file.as_ref().is_some()
+                || generated.cert_file.as_ref().is_some())
+        {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "TLSOptions.pfx cannot be combined with TLSOptions.key, TLSOptions.cert, TLSOptions.keyFile, or TLSOptions.certFile"
+            )));
         }
+
+        let pfx_passphrase = if has_pfx {
+            generated
+                .passphrase
+                .as_ref()
+                .map(|passphrase| zbox_into_raw(&passphrase.to_owned_slice_z()))
+        } else {
+            if let Some(passphrase) = generated.passphrase.as_ref() {
+                result.passphrase = zbox_into_raw(&passphrase.to_owned_slice_z());
+                any = true;
+            }
+            None
+        };
+        let pfx_passphrase = scopeguard::guard(pfx_passphrase, |passphrase| {
+            if let Some(passphrase) = passphrase {
+                unsafe { bun_core::free_sensitive(passphrase) };
+            }
+        });
         if let Some(dh_params_file) = generated.dh_params_file.as_ref() {
             result.dh_params_file_name = handle_path(global, "dhParamsFile", dh_params_file)?;
             any = true;
@@ -203,8 +229,14 @@ impl SSLConfigFromJs for SSLConfig {
             || result.allow_partial_trust_chain;
 
         result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
-        result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
-        result.key = handle_file_for_field(global, "key", &generated.key)?;
+        if has_pfx {
+            (result.key, result.cert) =
+                handle_pfx_for_field(global, &generated.pfx, pfx_passphrase.as_ref().copied())?;
+            any = true;
+        } else {
+            result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
+            result.key = handle_file_for_field(global, "key", &generated.key)?;
+        }
         result.crl = handle_file_for_field(global, "crl", &generated.crl)?;
         result.requires_custom_request_ctx = result.requires_custom_request_ctx
             || result.ca.is_some()
@@ -309,6 +341,234 @@ fn handle_path(
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
     }
     Ok(zbox_into_raw(&name))
+}
+
+fn ssl_config_file_is_present(file: &jsc::generated::SSLConfigFile) -> bool {
+    !matches!(file, jsc::generated::SSLConfigFile::None)
+}
+
+fn handle_pfx_for_field(
+    global: &JSGlobalObject,
+    file: &jsc::generated::SSLConfigFile,
+    passphrase: Option<*const c_char>,
+) -> JsResult<(CStrSlice, CStrSlice)> {
+    let values = match handle_binary_file(global, file) {
+        Ok(Some(values)) => values,
+        Ok(None) => return Ok((None, None)),
+        Err(ReadFromBlobError::Js(e)) => return Err(e),
+        Err(ReadFromBlobError::EmptyFile) => {
+            return Err(
+                global.throw_invalid_arguments(format_args!("TLSOptions.pfx is an empty file"))
+            );
+        }
+        Err(ReadFromBlobError::NullStore) | Err(ReadFromBlobError::NotAFile) => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "TLSOptions.pfx is not a valid BunFile (non-BunFile `Blob`s are not supported)"
+            )));
+        }
+    };
+
+    let mut parsed = scopeguard::guard(
+        (
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+        ),
+        |(keys, certs)| {
+            for value in keys.into_iter().chain(certs) {
+                unsafe { bun_core::free_sensitive(value) };
+            }
+        },
+    );
+    for value in values {
+        let (key, cert) = parse_pkcs12(global, &value, passphrase)?;
+        parsed.0.push(key);
+        parsed.1.push(cert);
+    }
+    let (keys, certs) = scopeguard::ScopeGuard::into_inner(parsed);
+    Ok((
+        Some(keys.into_boxed_slice()),
+        Some(certs.into_boxed_slice()),
+    ))
+}
+
+fn parse_pkcs12(
+    global: &JSGlobalObject,
+    pfx: &[u8],
+    passphrase: Option<*const c_char>,
+) -> JsResult<(*const c_char, *const c_char)> {
+    let mut out_key: *mut c_char = core::ptr::null_mut();
+    let mut out_cert: *mut c_char = core::ptr::null_mut();
+    let mut out_ca: *mut c_char = core::ptr::null_mut();
+    let mut key_len = 0usize;
+    let mut cert_len = 0usize;
+    let mut ca_len = 0usize;
+    let mut err_reason: *const c_char = core::ptr::null();
+    // SAFETY: `pfx` stays live for this call, `passphrase` is either null or an
+    // owned NUL-terminated buffer, and every out-parameter points to initialized storage.
+    let ok = unsafe {
+        c::us_ssl_parse_pkcs12(
+            pfx.as_ptr().cast(),
+            pfx.len(),
+            passphrase.unwrap_or(core::ptr::null()),
+            &raw mut out_key,
+            &raw mut key_len,
+            &raw mut out_cert,
+            &raw mut cert_len,
+            &raw mut out_ca,
+            &raw mut ca_len,
+            &raw mut err_reason,
+        )
+    };
+    unsafe extern "C" {
+        fn free(ptr: *mut core::ffi::c_void);
+    }
+    // SAFETY: the C parser returned these buffers through exclusive malloc-owned
+    // out-parameters; their lengths remain valid until the matching libc free.
+    let _free = scopeguard::guard(
+        (out_key, key_len, out_cert, out_ca),
+        |(key, key_len, cert, ca)| unsafe {
+            if !key.is_null() {
+                bun_core::secure_zero(key.cast(), key_len);
+                free(key.cast());
+            }
+            if !cert.is_null() {
+                free(cert.cast());
+            }
+            if !ca.is_null() {
+                free(ca.cast());
+            }
+        },
+    );
+    if ok == 0 {
+        let reason = if err_reason.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(err_reason) }.to_str().unwrap_or("")
+        };
+        let message = match reason {
+            "key" => "Unable to load private key from PFX data",
+            "cert" => "Unable to load certificate from PFX data",
+            "mac" => "PFX MAC verification failed - is the passphrase correct?",
+            _ => "Unable to load PFX certificate",
+        };
+        return Err(global.throw_invalid_arguments(format_args!("{message}")));
+    }
+
+    let key = dupe_z(unsafe { core::slice::from_raw_parts(out_key.cast::<u8>(), key_len) });
+    let cert = if out_ca.is_null() || ca_len == 0 {
+        dupe_z(unsafe { core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len) })
+    } else {
+        let mut chain = Vec::with_capacity(cert_len + ca_len);
+        chain.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len)
+        });
+        chain
+            .extend_from_slice(unsafe { core::slice::from_raw_parts(out_ca.cast::<u8>(), ca_len) });
+        dupe_z(&chain)
+    };
+    Ok((key, cert))
+}
+
+struct SensitiveBytes(Vec<u8>);
+
+impl core::ops::Deref for SensitiveBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for SensitiveBytes {
+    fn drop(&mut self) {
+        // SAFETY: `self` exclusively owns every initialized byte in the vector.
+        unsafe { bun_core::secure_zero(self.0.as_mut_ptr(), self.0.len()) };
+    }
+}
+
+fn invalid_pfx_type(global: &JSGlobalObject) -> ReadFromBlobError {
+    ReadFromBlobError::Js(global.throw_invalid_arguments(format_args!(
+        "TLSOptions.pfx must be an ArrayBufferView, ArrayBuffer, BunFile, or an array of those"
+    )))
+}
+
+fn handle_binary_file(
+    global: &JSGlobalObject,
+    file: &jsc::generated::SSLConfigFile,
+) -> Result<Option<Vec<SensitiveBytes>>, ReadFromBlobError> {
+    let values = match file {
+        jsc::generated::SSLConfigFile::None => return Ok(None),
+        jsc::generated::SSLConfigFile::String(_) => return Err(invalid_pfx_type(global)),
+        jsc::generated::SSLConfigFile::Buffer(value) => {
+            let buffer: jsc::ArrayBuffer = unsafe { (*value.get()).as_array_buffer() };
+            vec![SensitiveBytes(buffer.byte_slice().to_vec())]
+        }
+        jsc::generated::SSLConfigFile::File(value) => {
+            vec![SensitiveBytes(read_binary_from_blob(global, unsafe {
+                &mut *value.get().cast::<crate::webcore::Blob>()
+            })?)]
+        }
+        jsc::generated::SSLConfigFile::Array(values) => {
+            let mut result = Vec::with_capacity(values.items().len());
+            for value in values.items() {
+                result.push(match value {
+                    jsc::generated::SSLConfigSingleFile::String(_) => {
+                        return Err(invalid_pfx_type(global));
+                    }
+                    jsc::generated::SSLConfigSingleFile::Buffer(value) => {
+                        let buffer: jsc::ArrayBuffer = unsafe { (*value.get()).as_array_buffer() };
+                        SensitiveBytes(buffer.byte_slice().to_vec())
+                    }
+                    jsc::generated::SSLConfigSingleFile::File(value) => {
+                        SensitiveBytes(read_binary_from_blob(global, unsafe {
+                            &mut *value.get().cast::<crate::webcore::Blob>()
+                        })?)
+                    }
+                });
+            }
+            result
+        }
+    };
+    if values.is_empty() || values.iter().any(|value| value.is_empty()) {
+        return Err(ReadFromBlobError::EmptyFile);
+    }
+    Ok((!values.is_empty()).then_some(values))
+}
+
+fn read_binary_from_blob(
+    global: &JSGlobalObject,
+    blob: &Blob,
+) -> Result<Vec<u8>, ReadFromBlobError> {
+    let store = blob
+        .store
+        .get()
+        .as_ref()
+        .ok_or(ReadFromBlobError::NullStore)?;
+    let file = match &store.data {
+        StoreData::File(file) => file,
+        _ => return Err(ReadFromBlobError::NotAFile),
+    };
+    let mut fs = node_fs::NodeFS::default();
+    let mut read_args = node_fs::args::ReadFile::default();
+    read_args.encoding = crate::node::types::Encoding::Buffer;
+    read_args.path = file.pathlike.clone();
+    let mut result = fs
+        .read_file(&read_args, node_fs::Flavor::Sync)
+        .map_err(|err| ReadFromBlobError::Js(global.throw_value(err.to_js(global)).into()))?;
+    let bytes = result.slice().to_vec();
+    if let crate::node::types::StringOrBuffer::Buffer(buffer) = &mut result {
+        debug_assert!(buffer.owns_buffer);
+        if buffer.owns_buffer {
+            let source = buffer.buffer.byte_slice_mut();
+            // SAFETY: this synchronous read result exclusively owns `source` until destroy.
+            unsafe { bun_core::secure_zero(source.as_mut_ptr(), source.len()) };
+        }
+        buffer.destroy();
+    }
+    if bytes.is_empty() {
+        return Err(ReadFromBlobError::EmptyFile);
+    }
+    Ok(bytes)
 }
 
 fn handle_file_for_field(

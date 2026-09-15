@@ -348,3 +348,14 @@ if (typeof process !== "undefined") {
   // @ts-expect-error - Not a protocol the runtime accepts
   fetch("https://example.com", { protocol: "spdy" });
 }
+
+// TLS PKCS#12 option types
+{
+  fetch("https://example.com", { tls: { pfx: Buffer.from("pfx"), passphrase: "secret" } });
+  fetch("https://example.com", { tls: { pfx: new Uint8Array([1, 2, 3]) } });
+  fetch("https://example.com", { tls: { pfx: Bun.file("client.p12") } });
+  fetch("https://example.com", { tls: { pfx: [Bun.file("client.p12"), Buffer.from("pfx")] } });
+
+  // @ts-expect-error - PFX data must be binary or a BunFile
+  fetch("https://example.com", { tls: { pfx: "client.p12" } });
+}

@@ -205,17 +205,35 @@ const response = await fetch("https://hostname/a/path", {
 
 ### TLS
 
-To use a client certificate, use the `tls` option:
+To use a PEM client certificate, pass its private key and certificate chain in the `tls` option:
 
 ```ts
 await fetch("https://example.com", {
   tls: {
-    key: Bun.file("/path/to/key.pem"),
-    cert: Bun.file("/path/to/cert.pem"),
-    // ca: [Bun.file("/path/to/ca.pem")],
+    key: Bun.file("/path/to/client-key.pem"),
+    cert: Bun.file("/path/to/client-cert-chain.pem"),
+    ca: Bun.file("/path/to/server-ca.pem"),
+    serverName: "example.com",
   },
 });
 ```
+
+The `cert` value should contain the client certificate followed by any intermediate certificates. The `ca` value controls which certificates Bun trusts when verifying the server.
+
+You can instead provide the client identity as a PKCS#12 (`.p12` or `.pfx`) archive. Use `passphrase` when the archive is encrypted. Every archive in a `pfx` array uses the same passphrase.
+
+```ts
+await fetch("https://example.com", {
+  tls: {
+    pfx: Bun.file("/path/to/client.p12"),
+    passphrase: process.env.CLIENT_CERT_PASSPHRASE,
+    ca: Bun.file("/path/to/server-ca.pem"),
+    serverName: "example.com",
+  },
+});
+```
+
+Choose either `pfx` or the PEM options `key`, `cert`, `keyFile`, and `certFile`. Pass Bun-specific options such as `tls` directly to `fetch`. The `Request` constructor does not preserve these options.
 
 #### Custom TLS Validation
 

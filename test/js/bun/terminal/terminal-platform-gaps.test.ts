@@ -8,7 +8,9 @@
 // "SAME" tests assert identical behaviour and exist to lock that in.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 /** Spawn a child attached to a fresh terminal, collect all PTY output until
  *  `done()` returns true or the child exits, then close the terminal. */
@@ -199,14 +201,16 @@ describe("Bun.Terminal platform behaviour", () => {
     // line is already pending in the parent when the child that inherits the terminal starts.
     const child = `
       process.stdout.write("CHILD-READY\\n");
-      process.stdin.once("data", d => {
-        process.stdout.write("CHILD-GOT:" + JSON.stringify(d.toString()) + "\\n");
+      let lines = 0;
+      process.stdin.on("data", d => {
+        process.stdout.write("CHILD-GOT#" + ++lines + ":" + JSON.stringify(d.toString()) + "\\n");
         process.exit(0);
       });`;
     const { output } = await runInTerminal(
       `let spawned = false;
+       let lines = 0;
        process.stdin.on("data", d => {
-         process.stdout.write("PARENT-GOT:" + JSON.stringify(d.toString()) + "\\n");
+         process.stdout.write("PARENT-GOT#" + ++lines + ":" + JSON.stringify(d.toString()) + "\\n");
          if (spawned) return;
          spawned = true;
          setImmediate(() => setImmediate(() => {
@@ -222,7 +226,7 @@ describe("Bun.Terminal platform behaviour", () => {
        });
        process.stdout.write("READY\\n");`,
       {
-        done: o => o.includes('-GOT:"second'),
+        done: o => /-GOT#\d+:"second/.test(o),
         afterReady: async (t, _output, waitFor) => {
           t.write("first\r");
           await waitFor("CHILD-READY");
@@ -231,11 +235,59 @@ describe("Bun.Terminal platform behaviour", () => {
       },
     );
     // The line ends in CRLF under ConPTY and in LF on POSIX (ICRNL), so only its start is matched.
-    expect(Bun.stripANSI(output).match(/(?:PARENT|CHILD)-GOT:"(?:first|second)/g)).toEqual([
-      'PARENT-GOT:"first',
-      'CHILD-GOT:"second',
-    ]);
+    // conhost 17763 (Server 2019) repaints the whole screen when a process puts the console mode
+    // back on exit (#38054), so a row can come through twice. Each delivery has its own number:
+    // a row painted again is the same text, a line delivered again is not.
+    const deliveries = Bun.stripANSI(output).match(/(?:PARENT|CHILD)-GOT#\d+:"(?:first|second)/g) ?? [];
+    expect([...new Set(deliveries)]).toEqual(['PARENT-GOT#1:"first', 'CHILD-GOT#1:"second']);
   });
+
+  // The console's line editor has a cursor; a POSIX terminal in canonical mode has none, so the
+  // arrow keys would be part of the line there.
+  for (const [where, typed, echoed] of [
+    ["at the end of", "wx", "wx"],
+    ["inside", "wxyz\x1b[D\x1b[D", "wxyz"],
+  ] as const) {
+    test.skipIf(!isWindows)(
+      `GAP: text typed before pause() is carried into the next line read (cursor ${where} the text)`,
+      async () => {
+        using dir = tempDir("terminal-stdin-carry", {});
+        const flag = join(String(dir), "pause-now");
+        const { output } = await runInTerminal(
+          `import { existsSync } from "node:fs";
+           let lines = 0;
+           process.stdin.on("data", d => {
+             process.stdout.write("GOT#" + ++lines + ":" + JSON.stringify(d.toString()) + "\\n");
+           });
+           const poll = setInterval(() => {
+             if (!existsSync(${JSON.stringify(flag)})) return;
+             clearInterval(poll);
+             process.stdin.pause();
+             setImmediate(() => setImmediate(() => {
+               process.stdin.resume();
+               process.stdout.write("RESUMED\\n");
+             }));
+           }, 5);
+           process.stdout.write("READY\\n");`,
+          {
+            done: o => /GOT#\d+:"(?:[^"\\]|\\.)*"/.test(o),
+            afterReady: async (t, _output, waitFor) => {
+              t.write(typed);
+              // The line editor echoes: the pending read has taken all of it.
+              await waitFor(echoed);
+              writeFileSync(flag, "");
+              await waitFor("RESUMED");
+              t.write("q!\r");
+            },
+          },
+        );
+        // What was left of the cursor is the line so far; nothing else reaches the program, least
+        // of all the key that ended the read.
+        const deliveries = Bun.stripANSI(output).match(/GOT#\d+:"(?:[^"\\]|\\.)*"/g) ?? [];
+        expect([...new Set(deliveries)]).toEqual(['GOT#1:"wxq!\\r\\n"']);
+      },
+    );
+  }
 
   // System conhost's ConPTY does not translate \x03 input to CTRL_C_EVENT.
   test.todoIf(isWindows)("SAME: Ctrl+C input interrupts the child", async () => {
@@ -279,6 +331,26 @@ describe("Bun.Terminal platform behaviour", () => {
     });
     expect(Bun.stripANSI(output)).toMatch(/READY *\r\nLINE2/);
     if (!isWindows) expect(output).toContain("READY\r\nLINE2");
+  });
+
+  test("SAME: output LF is translated to CRLF in a string with non-Latin-1 characters", async () => {
+    const { output } = await runInTerminal(`process.stdout.write('READY \u4e16\\nLINE2')`, {
+      done: o => o.includes("LINE2"),
+    });
+    // ConPTY may pad after a wide character.
+    expect(Bun.stripANSI(output)).toMatch(/READY \u4e16 *\r\nLINE2/);
+    if (!isWindows) expect(output).toContain("READY \u4e16\r\nLINE2");
+  });
+
+  test("SAME: a UTF-8 sequence split between two byte writes is joined, and one cut short by a string is replaced", async () => {
+    const { output } = await runInTerminal(
+      `process.stdout.write(Buffer.from([0xe4, 0xb8]));
+       process.stdout.write(Buffer.from([0x96]));
+       process.stdout.write(Buffer.from([0xe4, 0xb8]));
+       process.stdout.write("\u754c READY");`,
+      { done: o => o.includes("READY") },
+    );
+    expect(Bun.stripANSI(output)).toMatch(/\u4e16 *\ufffd *\u754c/);
   });
 
   test("GAP: ANSI escape sequences", async () => {

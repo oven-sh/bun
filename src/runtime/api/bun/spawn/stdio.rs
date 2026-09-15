@@ -52,12 +52,13 @@ pub enum Stdio {
     Blob(webcore::blob::Any),
     Memfd(Fd),
     Pipe,
-    /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
-    /// stored as `ExtraPipe::UnownedFd` so `Subprocess::finalize_streams`
-    /// never closes it; the caller reads the fd from `.stdio[i]` and is
-    /// responsible for closing it. Used by `node:child_process` which wraps
-    /// extra `"pipe"` slots in `net.connect({fd})` (usockets then owns the
-    /// fd). Only valid at indices >= 3.
+    /// Like `Pipe` at indices >= 3, but the parent end of the socketpair (a
+    /// duplex pipe on Windows) is stored as `ExtraPipe::UnownedFd` so
+    /// `Subprocess::finalize_streams` never closes it; the caller reads the fd
+    /// from `.stdio[i]` and is responsible for closing it. Used by
+    /// `node:child_process` which wraps extra `"pipe"` slots in
+    /// `net.connect({fd})` (the socket then owns the fd). Only valid at
+    /// indices >= 3.
     SocketFd,
     Ipc,
     ReadableStream(webcore::ReadableStream),
@@ -268,10 +269,10 @@ impl Stdio {
     }
 
     pub(crate) fn is_piped(&self) -> bool {
-        match self {
-            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_)
+        )
     }
 
     pub fn borrows_caller_fd(&self) -> bool {

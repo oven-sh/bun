@@ -41,10 +41,8 @@ mod darwin_spawn_np {
     }
 }
 
-// `bun_sys::posix` currently exposes only `mode_t`/`S`/`E`/`errno()` (the
-// MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
-// is self-contained; delete in favour of `bun_sys::posix::*` once that module
-// widens.
+// `bun_sys::posix` exposes only `mode_t`/`S`/`E`/`errno()`; the rest of what
+// this file needs is shimmed locally.
 use self::posix_compat::pid_t;
 #[cfg(unix)]
 use self::posix_compat::{Errno, errno};
@@ -118,10 +116,6 @@ mod posix_compat {
         CString::new(path).map_err(|_| crate::Error::Unexpected)
     }
 }
-
-// MOVE_DOWN: this file was `src/runtime/api/bun/spawn.rs`; the `stdio`
-// submodule (which depends on the JSC-tier `Subprocess`) stays in
-// `bun_runtime::api::bun_spawn` and is not declared here.
 
 pub mod bun_spawn {
     #[cfg(unix)]

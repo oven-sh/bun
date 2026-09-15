@@ -838,7 +838,7 @@ impl FileReader {
             return out;
         }
 
-        if self.reader().has_pending_read() {
+        if self.reader().buffer_is_awaiting_read() {
             return Vec::<u8>::default();
         }
 

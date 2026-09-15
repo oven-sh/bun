@@ -922,7 +922,8 @@ pub fn get_module_name_w(module: HMODULE, buf: &mut [u16]) -> Option<&[u16]> {
             u32::try_from(buf.len()).expect("int cast"),
         )
     };
-    if rc == 0 {
+    // A path that did not fit is cut off and reported as `buf.len()` units.
+    if rc == 0 || rc as usize >= buf.len() {
         return None;
     }
     Some(&buf[0..(rc as usize)])

@@ -635,6 +635,58 @@ describe("spawn()", () => {
       expect(stdout).toBe("ok\n");
       expect(status).toBe(0);
     });
+
+    // 'overlapped' is 'pipe' whose child end is opened with FILE_FLAG_OVERLAPPED.
+    describe.skipIf(!isWindows)("the child's ends of 'pipe' and 'overlapped' stdio", () => {
+      // Whether each of the child's standard handles is a synchronous file
+      // object: FileModeInformation has FILE_SYNCHRONOUS_IO_ALERT (0x10) or
+      // FILE_SYNCHRONOUS_IO_NONALERT (0x20) set for one.
+      const reportStdHandles = /* js */ `
+        const { dlopen } = require("bun:ffi");
+        const k32 = dlopen("kernel32.dll", { GetStdHandle: { args: ["u32"], returns: "ptr" } }).symbols;
+        const nt = dlopen("ntdll.dll", {
+          NtQueryInformationFile: { args: ["ptr", "ptr", "ptr", "u32", "i32"], returns: "i32" },
+        }).symbols;
+        const FileModeInformation = 16;
+        const report = [0xfffffff6, 0xfffffff5, 0xfffffff4].map(which => {
+          const mode = new Uint32Array(1);
+          const status = nt.NtQueryInformationFile(
+            k32.GetStdHandle(which),
+            new BigUint64Array(2),
+            mode,
+            mode.byteLength,
+            FileModeInformation,
+          );
+          return { status, synchronous: (mode[0] & 0x30) !== 0 };
+        });
+        console.log(JSON.stringify(report));
+      `;
+      const kinds = [
+        ["pipe", { status: 0, synchronous: true }],
+        ["overlapped", { status: 0, synchronous: false }],
+      ] as const;
+
+      it.each(kinds)("%s", async (kind, expected) => {
+        const child = spawn(bunExe(), ["-e", reportStdHandles], { env: bunEnv, stdio: kind });
+        child.stderr!.resume();
+        let out = "";
+        child.stdout!.setEncoding("utf8").on("data", chunk => (out += chunk));
+        const [code] = await once(child, "close");
+        expect(JSON.parse(out)).toEqual([expected, expected, expected]);
+        expect(code).toBe(0);
+      });
+
+      // An unfed stdin pipe of a synchronous spawn is not a pipe at all.
+      it.each(kinds)("%s with spawnSync", (kind, expected) => {
+        const { stdout, status } = spawnSync(bunExe(), ["-e", reportStdHandles], {
+          env: bunEnv,
+          stdio: kind,
+          encoding: "utf8",
+        });
+        expect(JSON.parse(stdout).slice(1)).toEqual([expected, expected]);
+        expect(status).toBe(0);
+      });
+    });
   });
 
   it.skipIf(isWindows)(

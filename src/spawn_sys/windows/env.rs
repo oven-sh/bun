@@ -3,44 +3,28 @@
 
 use core::cmp::Ordering;
 
-const fn widen<const N: usize>(s: &str) -> [u16; N] {
-    let bytes = s.as_bytes();
-    let mut out = [0u16; N];
-    let mut i = 0;
-    while i < bytes.len() {
-        out[i] = bytes[i] as u16;
-        i += 1;
-    }
-    out
-}
-
-macro_rules! wide_z {
-    ($s:literal) => {{
-        const W: [u16; $s.len() + 1] = widen($s);
-        &W
-    }};
-}
+use bun_core::wstr;
 
 /// Variables a child gets from this process when its environment does not
 /// define them: Winsock and the legacy CryptoAPI fail to initialize without
 /// `SYSTEMROOT`, several APIs read `TEMP`, and Cygwin-based programs need the
 /// rest. NUL-terminated, sorted.
 pub static REQUIRED_VARS: [&[u16]; 11] = [
-    wide_z!("HOMEDRIVE"),
-    wide_z!("HOMEPATH"),
-    wide_z!("LOGONSERVER"),
-    wide_z!("PATH"),
-    wide_z!("SYSTEMDRIVE"),
-    wide_z!("SYSTEMROOT"),
-    wide_z!("TEMP"),
-    wide_z!("USERDOMAIN"),
-    wide_z!("USERNAME"),
-    wide_z!("USERPROFILE"),
-    wide_z!("WINDIR"),
+    wstr!("HOMEDRIVE"),
+    wstr!("HOMEPATH"),
+    wstr!("LOGONSERVER"),
+    wstr!("PATH"),
+    wstr!("SYSTEMDRIVE"),
+    wstr!("SYSTEMROOT"),
+    wstr!("TEMP"),
+    wstr!("USERDOMAIN"),
+    wstr!("USERNAME"),
+    wstr!("USERPROFILE"),
+    wstr!("WINDIR"),
 ];
 
 /// `PATH`, NUL-terminated.
-pub static PATH: &[u16] = wide_z!("PATH");
+pub static PATH: &[u16] = wstr!("PATH");
 
 struct Entry {
     start: usize,

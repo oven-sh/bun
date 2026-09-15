@@ -658,7 +658,8 @@ describe("bunshell", () => {
       });
     });
 
-    test.concurrent("several file arguments into a redirect", async () => {
+    // Windows only: the POSIX builtin cat cannot read a regular file (its reader polls the fd: EPERM from epoll, no event at EOF from kqueue).
+    test.concurrent.skipIf(!isWindows)("several file arguments into a redirect", async () => {
       const files = {
         "a.bin": Buffer.alloc(5 * pieceSize + 1, "a"),
         "empty.bin": Buffer.alloc(0),
@@ -679,7 +680,8 @@ describe("bunshell", () => {
       });
     });
 
-    test.concurrent("a file through a pipeline of cats", async () => {
+    // Windows only, for the same reason.
+    test.concurrent.skipIf(!isWindows)("a file through a pipeline of cats", async () => {
       const big = Buffer.concat(Array.from({ length: pieceCount }, (_, i) => Buffer.alloc(pieceSize + 1, 97 + i)));
       using dir = tempDir("builtin-cat-pipeline", { "big.bin": big });
       const script = /* ts */ `
@@ -706,6 +708,117 @@ describe("bunshell", () => {
         stderr: "",
         exitCode: 0,
       });
+    });
+  });
+
+  describe("builtin cat", () => {
+    // Runs one command in a child with the builtin cat on, feeding `stdin` to the child's own
+    // stdin, which is what a cat without file arguments reads.
+    const script = /* ts */ `
+      import { $ } from "bun";
+      import { existsSync, readFileSync } from "node:fs";
+      const r = await $\`\${{ raw: process.env.COMMAND }}\`.nothrow().quiet();
+      const files = {};
+      for (const file of ["out.txt", "err.txt"]) if (existsSync(file)) files[file] = readFileSync(file, "utf8");
+      console.log(JSON.stringify({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode, ...files }));
+    `;
+    const run = async (command: string, stdin: string, files: Record<string, string> = {}) => {
+      using dir = tempDir("builtin-cat", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1", COMMAND: command },
+        cwd: String(dir),
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (stdin) proc.stdin.write(stdin);
+      await proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
+    };
+
+    // Every `$` has one stdin reader, which each cat without file arguments listens to in turn.
+    // Once the first has read it to its end, the later ones find it at its end too, wherever they
+    // sit in the script.
+    describe("after a cat that read the same stdin to its end", () => {
+      for (const [command, stdin] of [
+        ["cat; cat", "hi\n"],
+        ["cat; cat", ""],
+        ["cat; cat; cat", "hi\n"],
+        ["cat && cat", "hi\n"],
+        ["cat; true && cat", "hi\n"],
+        ["cat; echo between; cat", "hi\n"],
+        ["if cat; then cat; fi", "hi\n"],
+        ["cat | cat; cat", "hi\n"],
+      ] as const) {
+        test.concurrent(`${command}, stdin ${JSON.stringify(stdin)}`, async () => {
+          expect(await run(command, stdin)).toEqual({
+            stdout: { stdout: command.includes("echo") ? stdin + "between\n" : stdin, stderr: "", exitCode: 0 },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+      }
+    });
+
+    // Like cat: say which input failed, carry on with the next, exit 1 at the end.
+    describe("with an input it cannot read", () => {
+      // The message carries the absolute path on Windows and the argument as written on POSIX.
+      const missing = (name: string) => `cat: (.*[\\\\/])?${name}\\.txt: No such file or directory\\n`;
+
+      for (const [command, expected] of [
+        [
+          "cat missing1.txt missing2.txt",
+          { stdout: "", stderr: expect.stringMatching(new RegExp(`^${missing("missing1")}${missing("missing2")}$`)) },
+        ],
+        [
+          "cat missing1.txt missing2.txt 2> err.txt",
+          {
+            stdout: "",
+            stderr: "",
+            "err.txt": expect.stringMatching(new RegExp(`^${missing("missing1")}${missing("missing2")}$`)),
+          },
+        ],
+      ] as const) {
+        test.concurrent(command, async () => {
+          expect(await run(command, "")).toEqual({ stdout: { ...expected, exitCode: 1 }, stderr: "", exitCode: 0 });
+        });
+      }
+
+      // Windows only: the POSIX builtin cat cannot read a regular file (its reader polls the fd: EPERM from epoll, no event at EOF from kqueue).
+      for (const [command, expected] of [
+        [
+          "cat a.txt missing.txt b.txt",
+          { stdout: "a\nb\n", stderr: expect.stringMatching(new RegExp(`^${missing("missing")}$`)) },
+        ],
+        [
+          "cat missing.txt a.txt",
+          { stdout: "a\n", stderr: expect.stringMatching(new RegExp(`^${missing("missing")}$`)) },
+        ],
+        [
+          "cat a.txt missing.txt",
+          { stdout: "a\n", stderr: expect.stringMatching(new RegExp(`^${missing("missing")}$`)) },
+        ],
+        [
+          "cat a.txt missing.txt b.txt > out.txt",
+          { stdout: "", stderr: expect.stringMatching(new RegExp(`^${missing("missing")}$`)), "out.txt": "a\nb\n" },
+        ],
+        [
+          "cat a.txt missing.txt b.txt 2> err.txt",
+          { stdout: "a\nb\n", stderr: "", "err.txt": expect.stringMatching(new RegExp(`^${missing("missing")}$`)) },
+        ],
+        ["cat .", { stdout: "", stderr: "cat: .: Is a directory\n" }],
+        ["cat a.txt . b.txt", { stdout: "a\nb\n", stderr: "cat: .: Is a directory\n" }],
+      ] as const) {
+        test.concurrent.skipIf(!isWindows)(command, async () => {
+          expect(await run(command, "", { "a.txt": "a\n", "b.txt": "b\n" })).toEqual({
+            stdout: { ...expected, exitCode: 1 },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+      }
     });
   });
 

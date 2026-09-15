@@ -1,18 +1,8 @@
-//! Wrapper that provides a socket-like API for Windows Named Pipes.
-//!
-//! This allows us to use the same networking interface and event handling
-//! patterns across platforms, treating Named Pipes as if they were regular
-//! sockets. The wrapper translates between µWebSockets' socket-based API
-//! and Windows Named Pipe operations, enabling seamless cross-platform
-//! IPC without requiring separate code paths for Windows vs Unix domain sockets.
-//!
-//! Integration with µWebSockets/uSockets:
-//! - Uses the same event loop and timer mechanisms as other socket types
-//! - Implements compatible handlers (onOpen, onData, onClose, etc.) that match uSockets callbacks
-//! - Supports SSL/TLS wrapping through the same BoringSSL integration used by TCP sockets
-//! - Provides streaming writer interface that mirrors uSockets' write operations
-//! - Maintains the same connection lifecycle and state management as network sockets
-//! - Enables transparent use of Named Pipes in contexts expecting standard socket APIs
+//! A socket-like interface over a Windows named pipe, so that a pipe path can
+//! be connected to and listened on like a Unix domain socket path. The owner
+//! supplies the same set of handlers a socket has (open, data, handshake,
+//! timeout, error, close…); TLS goes through `SSLWrapper`, timeouts through
+//! the VM's timer heap, and writes through a `StreamingWriter`.
 //!
 //! A named pipe cannot be polled for readiness the way a socket can, so it is
 //! not a uSockets socket: reads and writes are overlapped operations on a
@@ -490,11 +480,12 @@ impl WindowsNamedPipe {
         this.deref();
     }
 
-    /// No pipe was opened, so `on_error → close` has nothing to close and
-    /// reports no `on_close`; the owner (`handlers.on_close`) releases its
-    /// ref from there.
+    /// No pipe was opened, so there is nothing to close: the owner hears the
+    /// error and then the close, where it (`handlers.on_close`) releases its
+    /// ref.
     fn on_connect_error(&self, err: bun_sys::Error) {
-        self.on_error(err);
+        let _keep_alive = self.keep_alive();
+        (self.handlers.on_error)(self.handlers.ctx, err);
         self.on_close();
     }
 
@@ -548,18 +539,26 @@ impl WindowsNamedPipe {
         bun_sys::Result::Ok(())
     }
 
-    /// Adopt a pipe end somebody else opened. `fd` is closed with the socket;
-    /// on `Err` it is still the caller's.
+    /// Adopt an open pipe end. `created_here` says whose it is: the overlapped
+    /// end `Bun.spawn` made for a child's stdio and nothing has opened since, or
+    /// one somebody else opened. `fd` is closed with the socket; on `Err` it is
+    /// still the caller's.
     pub(crate) fn open(
         &self,
         fd: Fd,
+        created_here: bool,
         ssl_options: Option<SSLConfig>,
         owned_ctx: Option<boringssl::OwnedSslCtx>,
     ) -> bun_sys::Result<()> {
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
             result?;
         }
-        let pipe = Pipe::open_foreign(self.vm.uws_loop(), fd, true)?;
+        let loop_ = self.vm.uws_loop();
+        let pipe = if created_here {
+            Pipe::open_owned(loop_, fd, true)?
+        } else {
+            Pipe::open_foreign(loop_, fd, true)?
+        };
 
         let _keep_alive = self.keep_alive();
         self.on_connected(pipe);

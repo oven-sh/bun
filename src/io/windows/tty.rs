@@ -9,10 +9,18 @@
 //! The input mode belongs to the console, not to a handle, so it is
 //! process-wide state here too: every reader picks its mechanism from it when
 //! it arms, and a mode change wakes the readers so they re-arm.
+//!
+//! The console cannot abandon a line read, but it returns from one when a
+//! chosen control character is entered (`dwCtrlWakeupMask`). Ending a read
+//! therefore means typing that key into the console's input queue, which every
+//! reader of the console shares. [`LINE_LOCK`] keeps the key addressed: one
+//! `ReadConsoleW` of this process at a time, the key typed only while that call
+//! is out and once per call, and the console's mode changed only between calls
+//! so the call is always a cooked one.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use bun_sys::{self as sys, E, Fd, FdExt as _, Tag};
@@ -41,17 +49,33 @@ pub enum Mode {
 static INPUT_MODE: AtomicU8 = AtomicU8::new(Mode::Normal as u8);
 /// The console's input mode before the first change; `u32::MAX` until then.
 static ORIGINAL_INPUT_MODE: AtomicU32 = AtomicU32::new(u32::MAX);
-static ORIGINAL_INPUT_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static RAW_WAITERS: AtomicU32 = AtomicU32::new(0);
-static LINE_READERS: AtomicU32 = AtomicU32::new(0);
 static ON_RESIZE: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
 
-/// Ends a blocked line read without touching the screen or the typed text:
-/// the console returns from `ReadConsoleW` when this control character is
-/// entered (`dwCtrlWakeupMask`), with the character last in the buffer.
+/// Held to change anything below, to change the console's mode, and to type
+/// the wake key.
+static LINE_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
+/// A helper thread waits here for [`LINE_READER`] to become free, or to be
+/// told that its read is not wanted any more.
+static LINE_TURN: bun_threading::Condition = bun_threading::Condition::new();
+/// The read whose helper thread is inside `ReadConsoleW`.
+static LINE_READER: AtomicPtr<LineOp> = AtomicPtr::new(ptr::null_mut());
+/// The wake key has been typed for [`LINE_READER`]'s call.
+static WAKE_TYPED: AtomicBool = AtomicBool::new(false);
+/// Console mode flags (wanted in the high half, fallback in the low half) that
+/// [`LINE_READER`]'s helper sets when its call returns; `u64::MAX` for none.
+static PENDING_FLAGS: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Ends a blocked line read without touching the screen: the console returns
+/// from `ReadConsoleW` when this control character is entered
+/// (`dwCtrlWakeupMask`) and stores it where the cursor was. What was typed left
+/// of the cursor is in front of it; what follows it is not the text right of
+/// the cursor on every console host.
 const WAKE_CHAR: u16 = 0x1d;
-const WAKE_VIRTUAL_KEY: u16 = 0xDD;
-const WAKE_SCAN_CODE: u16 = 0x1B;
+/// No keyboard produces this virtual key, so the record below is never a key
+/// the user pressed (Ctrl+] is the same character). The line editor only looks
+/// at the character.
+const WAKE_VIRTUAL_KEY: u16 = 0xFF;
 
 /// UTF-16 units asked of one line read. Converted to UTF-8 they stay within
 /// the 8 KiB the console handles well.
@@ -65,46 +89,76 @@ fn current_mode() -> Mode {
     }
 }
 
+/// `SetConsoleMode` flags for `mode`: the ones wanted, and the ones to settle
+/// for on a console that refuses those.
+fn mode_flags(mode: Mode) -> (u32, u32) {
+    match mode {
+        Mode::Normal => {
+            let flags =
+                win::ENABLE_ECHO_INPUT | win::ENABLE_LINE_INPUT | win::ENABLE_PROCESSED_INPUT;
+            (flags, flags)
+        }
+        Mode::Raw => (win::ENABLE_WINDOW_INPUT, win::ENABLE_WINDOW_INPUT),
+        // A console without VT input: the key table does the translation.
+        Mode::RawVt => (
+            win::ENABLE_WINDOW_INPUT | win::ENABLE_VIRTUAL_TERMINAL_INPUT,
+            win::ENABLE_WINDOW_INPUT,
+        ),
+    }
+}
+
+/// # Safety
+/// `input` is a console input handle.
+unsafe fn apply_flags(input: HANDLE, wanted: u32, fallback: u32) -> Result<(), Win32Error> {
+    // SAFETY: plain Win32 calls on the caller's console handle.
+    unsafe {
+        if win::SetConsoleMode(input, wanted) != 0
+            || (fallback != wanted && win::SetConsoleMode(input, fallback) != 0)
+        {
+            return Ok(());
+        }
+    }
+    Err(win::last_error())
+}
+
 /// Set the input mode of the console `input` belongs to. Readers on any thread
 /// switch between the line and raw mechanisms on their own.
 pub fn set_console_mode(input: HANDLE, mode: Mode) -> sys::Result<()> {
     let fail = |err: Win32Error| sys::Error::from_win32(err, Tag::uv_tty_set_mode);
-    {
-        // Console writes must not interleave with the mode change.
-        let _output = tty_output::lock_output();
-        let mut previous: u32 = 0;
-        // SAFETY: `previous` is a live local.
-        if unsafe { win::GetConsoleMode(input, &raw mut previous) } == 0 {
-            return Err(fail(win::last_error()));
-        }
-        if ORIGINAL_INPUT_MODE
-            .compare_exchange(u32::MAX, previous, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            ORIGINAL_INPUT_HANDLE.store(input, Ordering::Release);
-            bun_core::add_exit_callback(Bun__Windows__resetConsoleMode);
-        }
-        let flags = match mode {
-            Mode::Normal => {
-                win::ENABLE_ECHO_INPUT | win::ENABLE_LINE_INPUT | win::ENABLE_PROCESSED_INPUT
-            }
-            Mode::Raw => win::ENABLE_WINDOW_INPUT,
-            Mode::RawVt => win::ENABLE_WINDOW_INPUT | win::ENABLE_VIRTUAL_TERMINAL_INPUT,
-        };
-        // SAFETY: plain Win32 calls on the caller's console handle.
-        unsafe {
-            if win::SetConsoleMode(input, flags) == 0 {
-                // A console without VT input: the key table does the translation.
-                if mode != Mode::RawVt || win::SetConsoleMode(input, win::ENABLE_WINDOW_INPUT) == 0
-                {
-                    return Err(fail(win::last_error()));
-                }
-            }
-        }
+    let (wanted, fallback) = mode_flags(mode);
+    let _lock = LINE_LOCK.lock_guard();
+    let mut previous: u32 = 0;
+    // SAFETY: `previous` is a live local.
+    if unsafe { win::GetConsoleMode(input, &raw mut previous) } == 0 {
+        return Err(fail(win::last_error()));
     }
-    let was = INPUT_MODE.swap(mode as u8, Ordering::AcqRel);
-    if (was == Mode::Normal as u8) != (mode == Mode::Normal) {
-        wake_readers(input);
+    if ORIGINAL_INPUT_MODE
+        .compare_exchange(u32::MAX, previous, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        bun_core::add_exit_callback(Bun__Windows__resetConsoleMode);
+    }
+    if mode == Mode::Normal || LINE_READER.load(Ordering::Acquire).is_null() {
+        // SAFETY: `GetConsoleMode` accepted `input`.
+        unsafe { apply_flags(input, wanted, fallback) }.map_err(fail)?;
+        PENDING_FLAGS.store(u64::MAX, Ordering::Release);
+    } else {
+        // A `ReadConsoleW` that finds the console out of line mode hands back
+        // whatever is queued, the wake key anywhere among it. The helper makes
+        // the change when its call, woken here, has returned.
+        PENDING_FLAGS.store(
+            u64::from(wanted) << 32 | u64::from(fallback),
+            Ordering::Release,
+        );
+        type_wake_key();
+    }
+    let was = current_mode();
+    INPUT_MODE.store(mode as u8, Ordering::Release);
+    if was != Mode::Normal && mode == Mode::Normal {
+        wake_raw_waiters(input);
+    } else if was == Mode::Normal && mode != Mode::Normal {
+        // Helpers still waiting for their turn have nothing to wait for.
+        LINE_TURN.broadcast();
     }
     Ok(())
 }
@@ -117,15 +171,11 @@ pub fn reset_console_mode() {
     if original == u32::MAX {
         return;
     }
-    let handle = ORIGINAL_INPUT_HANDLE.load(Ordering::Acquire);
-    // SAFETY: plain Win32 calls. The handle the mode was first changed through
-    // may have been closed since (the call then fails harmlessly); the console
-    // itself is still reachable by name.
-    unsafe {
-        if win::SetConsoleMode(handle, original) != 0 {
-            return;
-        }
-        let console = win::CreateFileW(
+    // By name: a handle the mode was changed through may have been closed
+    // since, and its value reused for something else.
+    // SAFETY: plain Win32 call; the name is NUL-terminated.
+    let console = unsafe {
+        win::CreateFileW(
             bun_core::w!("CONIN$\0").as_ptr(),
             win::GENERIC_READ | win::GENERIC_WRITE,
             bun_sys::windows::FILE_SHARE_READ | bun_sys::windows::FILE_SHARE_WRITE,
@@ -133,12 +183,26 @@ pub fn reset_console_mode() {
             win::OPEN_EXISTING,
             0,
             ptr::null_mut(),
-        );
-        if console != INVALID_HANDLE_VALUE {
-            win::SetConsoleMode(console, original);
-            win::CloseHandle(console);
+        )
+    };
+    if console == INVALID_HANDLE_VALUE {
+        return;
+    }
+    {
+        let _lock = LINE_LOCK.lock_guard();
+        // A line read that is out wants the console in line mode, which is
+        // what this is about to be: nothing to wait for.
+        PENDING_FLAGS.store(u64::MAX, Ordering::Release);
+        // SAFETY: `console` is the console's input.
+        let _ = unsafe { apply_flags(console, original, original) };
+        let was = current_mode();
+        INPUT_MODE.store(Mode::Normal as u8, Ordering::Release);
+        if was != Mode::Normal {
+            wake_raw_waiters(console);
         }
     }
+    // SAFETY: opened above.
+    unsafe { win::CloseHandle(console) };
 }
 
 /// [`set_console_mode`] for C++, in libuv's terms: `mode` is a `uv_tty_mode_t`
@@ -178,29 +242,38 @@ pub fn set_resize_listener(listener: Option<fn()>) {
     );
 }
 
-/// Get every reader out of the mechanism that the mode change made wrong.
-fn wake_readers(input: HANDLE) {
-    // SAFETY: an all-zero `INPUT_RECORD` is a valid (empty) record.
-    let mut records: [win::INPUT_RECORD; 2] = unsafe { bun_core::ffi::zeroed_unchecked() };
-    let mut count = 0usize;
-    if RAW_WAITERS.load(Ordering::Acquire) > 0 {
-        // Any record signals the handle; this one means nothing to anybody.
-        records[count].EventType = win::FOCUS_EVENT;
-        count += 1;
-    }
-    if LINE_READERS.load(Ordering::Acquire) > 0 {
-        records[count] = wake_record();
-        count += 1;
-    }
-    if count == 0 {
+/// The console is in line mode again: get the raw readers to re-arm.
+fn wake_raw_waiters(input: HANDLE) {
+    if RAW_WAITERS.load(Ordering::Acquire) == 0 {
         return;
     }
+    // Any record signals the handle; this one means nothing to anybody.
+    // SAFETY: an all-zero `INPUT_RECORD` is a valid (empty) record.
+    let mut record: win::INPUT_RECORD = unsafe { bun_core::ffi::zeroed_unchecked() };
+    record.EventType = win::FOCUS_EVENT;
     let mut written: u32 = 0;
-    // SAFETY: `records[..count]` is initialized; `written` is a live local.
-    unsafe { win::WriteConsoleInputW(input, records.as_ptr(), count as u32, &raw mut written) };
+    // SAFETY: `record` is initialized; `written` is a live local.
+    unsafe { win::WriteConsoleInputW(input, &raw const record, 1, &raw mut written) };
 }
 
-fn wake_record() -> win::INPUT_RECORD {
+/// End [`LINE_READER`]'s `ReadConsoleW`. With [`LINE_LOCK`] held.
+fn type_wake_key() {
+    let reader = LINE_READER.load(Ordering::Acquire);
+    if reader.is_null() || WAKE_TYPED.load(Ordering::Acquire) {
+        return;
+    }
+    let record = wake_record();
+    let mut written: u32 = 0;
+    // SAFETY: `reader` stays allocated while it is `LINE_READER`, which only
+    // changes under the lock the caller holds; `written` is a live local.
+    let typed = unsafe {
+        win::WriteConsoleInputW((*reader).handle, &raw const record, 1, &raw mut written)
+    } != 0
+        && written == 1;
+    WAKE_TYPED.store(typed, Ordering::Release);
+}
+
+pub(super) fn wake_record() -> win::INPUT_RECORD {
     // SAFETY: an all-zero `INPUT_RECORD` is a valid (empty) record.
     let mut record: win::INPUT_RECORD = unsafe { bun_core::ffi::zeroed_unchecked() };
     record.EventType = win::KEY_EVENT;
@@ -208,13 +281,19 @@ fn wake_record() -> win::INPUT_RECORD {
         bKeyDown: 1,
         wRepeatCount: 1,
         wVirtualKeyCode: WAKE_VIRTUAL_KEY,
-        wVirtualScanCode: WAKE_SCAN_CODE,
+        wVirtualScanCode: 0,
         uChar: bun_windows_sys::KEY_EVENT_RECORD_uChar {
             UnicodeChar: WAKE_CHAR,
         },
         dwControlKeyState: win::LEFT_CTRL_PRESSED,
     };
     record
+}
+
+/// Whether `key` is [`wake_record`] as the console hands it to a raw reader.
+pub(super) fn is_wake_key(key: &bun_windows_sys::KEY_EVENT_RECORD) -> bool {
+    // SAFETY: both members of the union are plain integers.
+    key.wVirtualKeyCode == WAKE_VIRTUAL_KEY && unsafe { key.uChar.UnicodeChar } == WAKE_CHAR
 }
 
 /// Whether `handle` is a console (input or screen buffer).
@@ -294,13 +373,9 @@ struct LineOp {
     in_flight: bool,
     /// The owner wants this read over: it is closing (`cancel`) or stopped
     /// reading (`stop`). A mode change is seen through `INPUT_MODE` instead.
+    /// Raised with [`LINE_LOCK`] held.
     cancel: AtomicBool,
     stop: AtomicBool,
-    /// Held to set `cancel`/`stop` and look at `in_call`, and by the reader to
-    /// look at them and set `in_call`: the wake key is only typed for a
-    /// `ReadConsoleW` that will take it out of the queue again.
-    wake_lock: bun_threading::Mutex,
-    in_call: AtomicBool,
     /// `chars[..carry]` is what the user had typed when a read was woken. The
     /// console took it out of its line editor, so the next read hands it back
     /// through `nInitialChars`.
@@ -524,7 +599,8 @@ impl Tty {
     }
 
     /// Write `data` to the screen buffer now, then call `on_write(ctx, ..)`
-    /// from the loop. Nothing needs to outlive this call but `ctx`.
+    /// from the loop. Nothing needs to outlive this call but `ctx`. On `Err`
+    /// nothing was written and `on_write` is not called.
     pub fn write<T>(
         &mut self,
         data: &[u8],
@@ -532,16 +608,17 @@ impl Tty {
         on_write: unsafe fn(*mut T, sys::Result<usize>),
     ) -> sys::Result<()> {
         let this = self.raw();
-        let result = self.try_write(data);
         // SAFETY: `inner` is live while the owner's `Tty` is.
         unsafe {
-            if (*this).flags.contains(Flags::DETACHED) {
-                return result.map(|_| ());
+            if (*this).flags.intersects(Flags::DETACHED | Flags::READABLE) {
+                return Err(sys::Error::from_code(E::EBADF, Tag::write));
             }
+            // The packet first: once the text is on the screen there has to
+            // be a way to say so.
             let op = bun_core::heap::into_raw(Box::new(PostedOp {
                 op: Op::new(PostedOp::complete),
                 tty: this,
-                write: Some((Callback::new(ctx, on_write), result)),
+                write: Some((Callback::new(ctx, on_write), Ok(0))),
             }));
             if !super::post_to_loop((*this).link.loop_, &raw mut (*op).op) {
                 drop(bun_core::heap::take(op));
@@ -550,21 +627,52 @@ impl Tty {
             (*this).pending += 1;
             (*this).writes_in_flight += 1;
             Inner::update_keep_alive(this);
+            // This thread is the one that dequeues the packet: `op` is still there.
+            if let Some((_, result)) = &mut (*op).write {
+                *result = self.try_write(data);
+            }
         }
         Ok(())
     }
 
-    /// Write `data` to the screen buffer now.
+    /// Write UTF-8 `data` to the screen buffer now.
     pub fn try_write(&mut self, data: &[u8]) -> sys::Result<usize> {
+        self.write_now(data.len(), |handle, output| {
+            tty_output::write(handle, output, data)
+        })
+    }
+
+    /// Write UTF-16 `data` to the screen buffer now. The count is the length
+    /// of the text as UTF-8, as [`try_write`](Self::try_write) would report it.
+    pub fn try_write_utf16(&mut self, data: &[u16]) -> sys::Result<usize> {
+        self.write_now(
+            bun_core::strings::element_length_utf16_into_utf8(data),
+            |handle, output| tty_output::write_utf16(handle, output, data),
+        )
+    }
+
+    /// As [`try_write_utf16`](Self::try_write_utf16) for Latin-1 `data`.
+    pub fn try_write_latin1(&mut self, data: &[u8]) -> sys::Result<usize> {
+        self.write_now(
+            bun_core::strings::element_length_latin1_into_utf8(data),
+            |handle, output| tty_output::write_latin1(handle, output, data),
+        )
+    }
+
+    fn write_now(
+        &mut self,
+        utf8_len: usize,
+        write: impl FnOnce(HANDLE, &mut OutputState) -> Result<(), u32>,
+    ) -> sys::Result<usize> {
         let this = self.raw();
         // SAFETY: `inner` is live while the owner's `Tty` is; the console lock
-        // inside `write` serializes every writer in the process.
+        // inside `tty_output` serializes every writer in the process.
         unsafe {
             if (*this).flags.intersects(Flags::DETACHED | Flags::READABLE) {
                 return Err(sys::Error::from_code(E::EBADF, Tag::write));
             }
-            match tty_output::write((*this).handle, &mut (*this).output, data) {
-                Ok(()) => Ok(data.len()),
+            match write((*this).handle, &mut (*this).output) {
+                Ok(()) => Ok(utf8_len),
                 Err(code) => Err(sys::Error::from_win32(
                     Win32Error::from_u32(code),
                     Tag::write,
@@ -671,8 +779,6 @@ impl Inner {
                         in_flight: false,
                         cancel: AtomicBool::new(false),
                         stop: AtomicBool::new(false),
-                        wake_lock: bun_threading::Mutex::new(),
-                        in_call: AtomicBool::new(false),
                         chars: Vec::new(),
                         carry: 0,
                         bytes: Vec::new(),
@@ -690,10 +796,8 @@ impl Inner {
                 (*op).bytes.clear();
                 (*op).cancel.store(false, Ordering::Release);
                 (*op).stop.store(false, Ordering::Release);
-                LINE_READERS.fetch_add(1, Ordering::AcqRel);
                 if !super::queue_blocking_work(LineOp::read_thread, op.cast()) {
                     let err = win::last_error();
-                    LINE_READERS.fetch_sub(1, Ordering::AcqRel);
                     (*op).port = None;
                     return Err(err);
                 }
@@ -726,8 +830,29 @@ impl Inner {
         }
     }
 
+    /// Every call out to the owner goes through here: the owner may close or
+    /// drop its `Tty` from inside one. Returns whether `this` is still open;
+    /// when it is not, it may be freed already.
+    ///
     /// # Safety
-    /// `this` is live, pinned, reading and has a reader.
+    /// `this` is live.
+    #[must_use]
+    unsafe fn with_owner(this: *mut Inner, call: impl FnOnce()) -> bool {
+        // SAFETY: caller contract; `pins` keeps `this` allocated across `call`.
+        unsafe {
+            (*this).pins += 1;
+            call();
+            (*this).pins -= 1;
+            if (*this).gone() {
+                Self::maybe_finish(this);
+                return false;
+            }
+        }
+        true
+    }
+
+    /// # Safety
+    /// `this` is live, inside [`with_owner`](Self::with_owner), and reading.
     unsafe fn deliver(this: *mut Inner, event: ReadEvent<'_>) {
         // SAFETY: caller contract.
         unsafe {
@@ -738,6 +863,7 @@ impl Inner {
     }
 
     /// After a read finished: report an arming failure like a read error.
+    /// `this` may be freed when this returns.
     ///
     /// # Safety
     /// `this` is live and not closing.
@@ -750,9 +876,9 @@ impl Inner {
             if let Err(err) = Self::arm(this) {
                 (*this).flags.remove(Flags::READING);
                 Self::update_keep_alive(this);
-                (*this).pins += 1;
-                Self::deliver(this, ReadEvent::Err(sys::Error::from_win32(err, Tag::read)));
-                (*this).pins -= 1;
+                let _ = Self::with_owner(this, || {
+                    Self::deliver(this, ReadEvent::Err(sys::Error::from_win32(err, Tag::read)));
+                });
             }
         }
     }
@@ -875,31 +1001,38 @@ impl RawOp {
             (*raw).buf.clear();
             let result =
                 tty_input::read_raw((*this).handle, &mut (*this).raw_state, &mut (*raw).buf);
-            (*this).pins += 1;
+            if matches!(&result, Ok(read) if read.wake_key) {
+                // If a line read is waiting for that key, this read got to
+                // the queue ahead of it.
+                let _lock = LINE_LOCK.lock_guard();
+                if WAKE_TYPED.swap(false, Ordering::AcqRel) {
+                    type_wake_key();
+                }
+            }
             if matches!(&result, Ok(read) if read.resized) {
                 let listener = ON_RESIZE.load(Ordering::Acquire);
                 if !listener.is_null() {
                     core::mem::transmute::<*mut (), fn()>(listener)();
                 }
             }
-            if !(*raw).buf.is_empty() && (*this).flags.contains(Flags::READING) {
-                Inner::deliver(this, ReadEvent::Data(&mut (*raw).buf));
-            }
-            if let Err(code) = result
-                && (*this).flags.contains(Flags::READING)
-            {
-                (*this).flags.remove(Flags::READING);
-                Inner::deliver(
-                    this,
-                    ReadEvent::Err(sys::Error::from_win32(
-                        Win32Error::from_u32(code),
-                        Tag::read,
-                    )),
-                );
-            }
-            (*this).pins -= 1;
-            if (*this).gone() {
-                Inner::maybe_finish(this);
+            let open = Inner::with_owner(this, || {
+                if !(*raw).buf.is_empty() && (*this).flags.contains(Flags::READING) {
+                    Inner::deliver(this, ReadEvent::Data(&mut (*raw).buf));
+                }
+                if let Err(code) = result
+                    && (*this).flags.contains(Flags::READING)
+                {
+                    (*this).flags.remove(Flags::READING);
+                    Inner::deliver(
+                        this,
+                        ReadEvent::Err(sys::Error::from_win32(
+                            Win32Error::from_u32(code),
+                            Tag::read,
+                        )),
+                    );
+                }
+            });
+            if !open {
                 return;
             }
             Inner::update_keep_alive(this);
@@ -914,16 +1047,59 @@ impl LineOp {
     /// # Safety
     /// `line` is live with its read in flight; `why` is its `cancel` or `stop`.
     unsafe fn wake(line: *mut LineOp, why: &AtomicBool) {
+        let _lock = LINE_LOCK.lock_guard();
+        why.store(true, Ordering::Release);
+        if LINE_READER.load(Ordering::Acquire) == line {
+            type_wake_key();
+        } else {
+            // Not in the call: its helper looks at `why` before it enters.
+            LINE_TURN.broadcast();
+        }
+    }
+
+    /// Wait until no other `ReadConsoleW` of this process is out, then claim
+    /// the console for `op`'s. `false` if the read stopped being wanted first.
+    ///
+    /// # Safety
+    /// `op` is live; called from its helper thread.
+    unsafe fn enter_call(op: *mut LineOp) -> bool {
+        let _lock = LINE_LOCK.lock_guard();
+        loop {
+            // SAFETY: caller contract.
+            let unwanted = unsafe {
+                (*op).cancel.load(Ordering::Acquire) || (*op).stop.load(Ordering::Acquire)
+            };
+            if unwanted || current_mode() != Mode::Normal {
+                return false;
+            }
+            if LINE_READER.load(Ordering::Acquire).is_null() {
+                LINE_READER.store(op, Ordering::Release);
+                WAKE_TYPED.store(false, Ordering::Release);
+                return true;
+            }
+            LINE_TURN.wait(&LINE_LOCK);
+        }
+    }
+
+    /// The call returned. `true` if somebody wants this read over.
+    ///
+    /// # Safety
+    /// `op` is live and is [`LINE_READER`]; called from its helper thread.
+    unsafe fn leave_call(op: *mut LineOp) -> bool {
+        let _lock = LINE_LOCK.lock_guard();
+        LINE_READER.store(ptr::null_mut(), Ordering::Release);
+        let pending = PENDING_FLAGS.swap(u64::MAX, Ordering::AcqRel);
+        if pending != u64::MAX {
+            // SAFETY: caller contract; `handle` is this console's input. The
+            // mode was accepted as far as `set_console_mode` could tell.
+            let _ = unsafe { apply_flags((*op).handle, (pending >> 32) as u32, pending as u32) };
+        }
+        LINE_TURN.broadcast();
         // SAFETY: caller contract.
         unsafe {
-            (*line).wake_lock.lock();
-            why.store(true, Ordering::Release);
-            if (*line).in_call.load(Ordering::Acquire) {
-                let record = wake_record();
-                let mut written: u32 = 0;
-                win::WriteConsoleInputW((*line).handle, &raw const record, 1, &raw mut written);
-            }
-            (*line).wake_lock.unlock();
+            (*op).cancel.load(Ordering::Acquire)
+                || (*op).stop.load(Ordering::Acquire)
+                || current_mode() != Mode::Normal
         }
     }
 
@@ -931,19 +1107,14 @@ impl LineOp {
         let op = context.cast::<LineOp>();
         // SAFETY: `context` is the `LineOp` submitted by `arm`, which stays
         // allocated until the packet posted below is dequeued; the loop thread
-        // touches only `cancel` (atomic) in the meantime.
+        // touches only `cancel` and `stop` (atomic) in the meantime.
         unsafe {
             let chars = &mut (*op).chars;
             let mut kept = (*op).carry.min(LINE_READ_CHARS - 1);
             chars.truncate(kept);
             chars.reserve(LINE_READ_CHARS);
             loop {
-                (*op).wake_lock.lock();
-                let wanted =
-                    !(*op).cancel.load(Ordering::Acquire) && !(*op).stop.load(Ordering::Acquire);
-                (*op).in_call.store(wanted, Ordering::Release);
-                (*op).wake_lock.unlock();
-                if !wanted {
+                if !Self::enter_call(op) {
                     (*op).woken = true;
                     break;
                 }
@@ -954,7 +1125,7 @@ impl LineOp {
                     dwControlKeyState: 0,
                 };
                 let mut read: u32 = 0;
-                if win::ReadConsoleW(
+                let error = if win::ReadConsoleW(
                     (*op).handle,
                     chars.as_mut_ptr().cast(),
                     LINE_READ_CHARS as u32,
@@ -962,33 +1133,34 @@ impl LineOp {
                     &raw mut control,
                 ) == 0
                 {
-                    (*op).in_call.store(false, Ordering::Release);
-                    (*op).error = win::last_error().int().into();
+                    u32::from(win::last_error().int())
+                } else {
+                    0
+                };
+                let unwanted = Self::leave_call(op);
+                if error != 0 {
+                    (*op).error = error;
                     break;
                 }
-                (*op).in_call.store(false, Ordering::Release);
                 // The count covers the characters carried in through
                 // `nInitialChars` as well.
                 let total = (read as usize).min(LINE_READ_CHARS);
                 chars.set_len(total);
-                if total > 0 && chars[total - 1] == WAKE_CHAR {
-                    kept = total - 1;
-                    if (*op).cancel.load(Ordering::Acquire)
-                        || (*op).stop.load(Ordering::Acquire)
-                        || current_mode() != Mode::Normal
-                    {
-                        (*op).woken = true;
-                        break;
-                    }
-                    // The user typed the wake key (or another reader's wake-up
-                    // landed here): carry on editing the same line.
-                    if kept + 1 >= LINE_READ_CHARS {
-                        chars.set_len(kept);
-                        break;
-                    }
-                    continue;
+                let Some(wake_at) = bun_core::strings::index_of_any16(chars, &[WAKE_CHAR]) else {
+                    break;
+                };
+                // Entered with the cursor inside the line, the key is not
+                // last: only what is in front of it is the line so far.
+                kept = wake_at;
+                if unwanted {
+                    (*op).woken = true;
+                    break;
                 }
-                break;
+                // The user entered it: carry on editing the same line.
+                if kept + 1 >= LINE_READ_CHARS {
+                    chars.set_len(kept);
+                    break;
+                }
             }
             if (*op).woken {
                 chars.truncate(kept);
@@ -999,7 +1171,6 @@ impl LineOp {
                     (*op).bytes = bun_core::strings::to_utf8_alloc_with_type(chars);
                 }
             }
-            LINE_READERS.fetch_sub(1, Ordering::AcqRel);
             if let Some(port) = (*op).port.take() {
                 port.post(&raw mut (*op).op);
             }
@@ -1043,20 +1214,19 @@ impl Inner {
             if !(*this).flags.contains(Flags::READING) {
                 return;
             }
-            (*this).pins += 1;
-            if !(*this).held.is_empty() {
-                let mut data = core::mem::take(&mut (*this).held);
-                Self::deliver(this, ReadEvent::Data(&mut data));
-            }
-            if let Some(err) = (*this).held_error.take()
-                && (*this).flags.contains(Flags::READING)
-            {
-                (*this).flags.remove(Flags::READING);
-                Self::deliver(this, ReadEvent::Err(sys::Error::from_win32(err, Tag::read)));
-            }
-            (*this).pins -= 1;
-            if (*this).gone() {
-                Self::maybe_finish(this);
+            let open = Self::with_owner(this, || {
+                if !(*this).held.is_empty() {
+                    let mut data = core::mem::take(&mut (*this).held);
+                    Self::deliver(this, ReadEvent::Data(&mut data));
+                }
+                if let Some(err) = (*this).held_error.take()
+                    && (*this).flags.contains(Flags::READING)
+                {
+                    (*this).flags.remove(Flags::READING);
+                    Self::deliver(this, ReadEvent::Err(sys::Error::from_win32(err, Tag::read)));
+                }
+            });
+            if !open {
                 return;
             }
             Self::update_keep_alive(this);
@@ -1077,14 +1247,12 @@ impl PostedOp {
 
             if let Some((callback, result)) = posted.write {
                 (*this).writes_in_flight -= 1;
-                if !(*this).flags.contains(Flags::SILENT) {
-                    (*this).pins += 1;
-                    callback.invoke(result);
-                    (*this).pins -= 1;
-                }
-                if (*this).gone() {
-                    Inner::maybe_finish(this);
-                } else {
+                let open = Inner::with_owner(this, || {
+                    if !(*this).flags.contains(Flags::SILENT) {
+                        callback.invoke(result);
+                    }
+                });
+                if open {
                     Inner::update_keep_alive(this);
                 }
                 return;

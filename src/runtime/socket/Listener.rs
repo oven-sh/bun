@@ -1073,13 +1073,21 @@ impl Listener {
 
         vm.event_loop_ref().ensure_waker();
 
+        // `fd` is the HANDLE of a pipe end `Bun.spawn` made for a child's stdio
+        // and nothing has opened yet (node:child_process's extra stdio pipes).
+        #[cfg(windows)]
+        let fd_is_spawned_pipe = opts
+            .get_truthy(global, "fdIsSpawnedPipe")?
+            .is_some_and(|v| v.to_boolean());
+
         let connection: UnixOrHost = 'blk: {
             if let Some(fd_) = opts.get_truthy(global, "fd")? {
                 if fd_.is_number() {
                     #[cfg(windows)]
-                    let fd = if opts
-                        .get_truthy(global, "fdIsRawSocket")?
-                        .is_some_and(|v| v.to_boolean())
+                    let fd = if fd_is_spawned_pipe
+                        || opts
+                            .get_truthy(global, "fdIsRawSocket")?
+                            .is_some_and(|v| v.to_boolean())
                     {
                         Fd::from_system(fd_.to_int32() as u32 as usize as *mut c_void)
                     } else {
@@ -1167,6 +1175,7 @@ impl Listener {
                     }
                     None => false,
                 },
+                UnixOrHost::Fd(_) if fd_is_spawned_pipe => true,
                 UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => false,
                 UnixOrHost::Fd(fd) => match bun_sys::windows::GetFileType(fd.native()) {
                     bun_sys::windows::FILE_TYPE_PIPE => true,
@@ -1274,6 +1283,7 @@ impl Listener {
                         UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
                             global,
                             *fd,
+                            fd_is_spawned_pipe,
                             ssl_taken.take(),
                             ctx_for_pipe,
                             PipeSocketType::Tls(tls_ref),
@@ -1359,6 +1369,7 @@ impl Listener {
                         UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
                             global,
                             *fd,
+                            fd_is_spawned_pipe,
                             None,
                             None,
                             PipeSocketType::Tcp(tcp_ref),

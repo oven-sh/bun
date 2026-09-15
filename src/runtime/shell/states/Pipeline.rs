@@ -134,9 +134,9 @@ impl Pipeline {
     /// failed pipe or dup finishes the pipeline (`Some(yield)`) while no child
     /// runs a subtree that `deinit` cannot reach.
     fn setup_commands(interp: &Interpreter, this: NodeId) -> Option<Yield> {
-        let (node, parent_shell, evtloop) = {
+        let (node, parent_shell) = {
             let me = interp.as_pipeline(this);
-            (me.node, me.base.shell, interp.event_loop)
+            (me.node, me.base.shell)
         };
         let items: &[ast::PipelineItem] = node.items;
         let cmd_count = items
@@ -178,7 +178,6 @@ impl Pipeline {
             }
         }
 
-        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let mut cmds: Vec<CmdOrResult> = Vec::with_capacity(cmd_count);
         for item in items {
             if matches!(item, ast::PipelineItem::Assigns(_)) {
@@ -192,9 +191,7 @@ impl Pipeline {
                 let stdin = if cmd_idx == 0 {
                     me.io.stdin.clone()
                 } else {
-                    let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
-                    r.set_interp(interp_ptr);
-                    InKind::Fd(r)
+                    InKind::Fd(IOReader::init(pipes[cmd_idx - 1][0], interp))
                 };
                 let stdout = if cmd_idx == cmd_count - 1 {
                     me.io.stdout.clone()
@@ -210,9 +207,8 @@ impl Pipeline {
                             is_socket: true,
                             ..Default::default()
                         },
-                        evtloop,
+                        interp,
                     );
-                    w.set_interp(interp_ptr);
                     OutKind::Fd(crate::shell::io::OutFd {
                         writer: w,
                         captured: None,
@@ -294,7 +290,7 @@ impl Pipeline {
             // Only the fd arm transitions state.
             interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
-            return writer.enqueue(child, captured, &buf);
+            return writer.enqueue_owned(child, captured, buf);
         }
         if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's

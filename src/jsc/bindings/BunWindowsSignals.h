@@ -10,16 +10,18 @@
 // SIGSEGV (11), SIGTERM (15), SIGBREAK (21) and SIGABRT (22). Node has these
 // four on Windows as well, with the numbers Linux and Darwin use. They are
 // JS-visible: os.constants.signals, process.kill(), process.on().
+#ifndef SIGHUP
 #define SIGHUP 1
+#endif
+#ifndef SIGQUIT
 #define SIGQUIT 3
+#endif
+#ifndef SIGKILL
 #define SIGKILL 9
+#endif
+#ifndef SIGWINCH
 #define SIGWINCH 28
-
-#if defined(NSIG) && NSIG <= SIGWINCH
-#undef NSIG
 #endif
-#ifndef NSIG
-#define NSIG (SIGWINCH + 1)
-#endif
+static_assert(SIGHUP == 1 && SIGQUIT == 3 && SIGKILL == 9 && SIGWINCH == 28, "another header defines these with different numbers");
 
 #endif // OS(WINDOWS)

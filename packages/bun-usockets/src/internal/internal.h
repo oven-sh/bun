@@ -206,8 +206,9 @@ void us_internal_async_wakeup(struct us_internal_async *a);
 /* Eventing related */
 size_t us_internal_accept_poll_event(struct us_poll_t *p);
 /* Start reporting the connections of the listening socket `p` as readable
- * events; us_internal_accept takes them. Returns like us_poll_start_rc. */
-int us_internal_poll_start_accepting(struct us_poll_t *p, struct us_loop_t *loop);
+ * events; us_internal_accept takes them. `foreign`: the descriptor was handed
+ * in, not created by the listen call. Returns like us_poll_start_rc. */
+int us_internal_poll_start_accepting(struct us_poll_t *p, struct us_loop_t *loop, int foreign);
 /* The next connection of the listening socket `p`, or LIBUS_SOCKET_ERROR when
  * there is none right now. */
 LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_t *addr);

@@ -59,7 +59,7 @@ describe("spawnSync", () => {
     expect(await bunRun(join(import.meta.dir, "spawnSync-memfd-fixture.ts"))).toSpawn();
   });
 
-  it.skipIf(!isPosix)("should use spawnSync optimizations when possible", async () => {
+  it("should use spawnSync optimizations when possible", async () => {
     expect(await bunRun(join(import.meta.dir, "spawnSync-counters-fixture.ts"))).toSpawn();
   });
 

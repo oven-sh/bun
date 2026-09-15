@@ -54,7 +54,7 @@ impl Pwd {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stdout
-                .enqueue(child, &cwd, safeguard);
+                .enqueue_owned(child, cwd, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &cwd);
         Self::state_mut(interp, cmd).state = State::Done;

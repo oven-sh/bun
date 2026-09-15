@@ -118,5 +118,5 @@ unsafe extern "C" {
     pub fn us_iocp_poll_socket_stop(loop_: *mut Loop, poll: *mut SocketPoll);
 
     /// `WSAStartup`, once. Anything that reaches ws2_32 without going through uSockets calls it first.
-    pub fn us_internal_winsock_ensure();
+    pub safe fn us_internal_winsock_ensure();
 }

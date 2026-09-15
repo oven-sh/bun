@@ -178,10 +178,6 @@ unsafe extern "system" {
     ) -> BOOL;
 }
 
-fn wide_z(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(core::iter::once(0)).collect()
-}
-
 fn until_nul(s: &[u16]) -> &[u16] {
     &s[..bun_core::strings::index_of_any16(s, &[0]).unwrap_or(s.len())]
 }
@@ -193,7 +189,7 @@ fn until_nul(s: &[u16]) -> &[u16] {
 /// Every failure is ignored; the caller ends the process either way.
 fn write_minidump(process: HANDLE) {
     let mut key: HKEY = ptr::null_mut();
-    let subkey = wide_z(r"SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps");
+    let subkey = bun_core::wstr!(r"SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps");
     // SAFETY: `subkey` is NUL-terminated; `key` is a valid out-pointer.
     if unsafe {
         RegOpenKeyExW(
@@ -223,7 +219,7 @@ fn write_minidump(process: HANDLE) {
     let mut folder_buf = [0u16; win32::MAX_PATH];
     let mut folder_bytes = size_of_val(&folder_buf) as DWORD;
     let mut value_type: DWORD = 0;
-    let value_name = wide_z("DumpFolder");
+    let value_name = bun_core::wstr!("DumpFolder");
     // SAFETY: `folder_buf` holds `folder_bytes` bytes; the other pointers are
     // valid for the call.
     let status = unsafe {
@@ -287,7 +283,8 @@ fn write_minidump(process: HANDLE) {
     let file = unsafe {
         win32::CreateFileW(
             dump_name.as_ptr(),
-            win32::GENERIC_WRITE,
+            // DELETE is what lets the disposition below be set.
+            win32::GENERIC_WRITE | bun_windows_sys::externs::DELETE,
             0,
             ptr::null_mut(),
             CREATE_NEW,

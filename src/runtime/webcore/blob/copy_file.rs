@@ -571,8 +571,8 @@ impl CopyFile {
     }
 
     pub(crate) fn run_async(&mut self) {
-        // `BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE` makes the handle-to-handle
-        // loop below testable.
+        // `BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE` skips `CopyFileW`, so that
+        // the handle-to-handle loop below can be tested with two paths.
         #[cfg(windows)]
         if !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
             .get()
@@ -736,13 +736,6 @@ impl CopyFile {
 
         debug_assert!(self.destination_fd.is_valid());
         debug_assert!(self.source_fd.is_valid());
-
-        if matches!(
-            self.destination_file_store.pathlike,
-            PathOrFileDescriptor::Fd(_)
-        ) {
-            // nothing to do for the Fd case
-        }
 
         let stat: Stat = match stat_ {
             Some(s) => s,

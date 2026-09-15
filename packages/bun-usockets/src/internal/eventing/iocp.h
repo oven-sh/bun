@@ -42,6 +42,10 @@ struct us_internal_acceptor;
 
 /* Same leading fields, in the same order, as the epoll/kqueue us_loop_t: the
  * Rust mirror in src/uws_sys/Loop.rs and the shared C code use them by name. */
+/* Packets taken per GetQueuedCompletionStatusEx call. The call's cost grows
+ * with the size of the array it is given, also when the port is empty. */
+#define US_IOCP_MAX_ENTRIES 128
+
 struct us_loop_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct us_internal_loop_data_t data;
 
@@ -81,6 +85,9 @@ struct us_loop_t {
     struct us_internal_acceptor *acceptors;
     /* A poll cancelled to widen its mask was dequeued and waits for the flush. */
     unsigned char afd_saw_cancelled;
+    /* A connection was taken and its AcceptEx started again: with more
+     * connections queued, that one's packet is on the port already. */
+    unsigned char accept_rearmed;
     /* us_loop_free is collecting what is still in flight: nothing is reported or re-armed. */
     unsigned char closing;
 
@@ -95,11 +102,11 @@ struct us_loop_t {
      * the port by a wait completion packet. NULL where either is unavailable. */
     HANDLE hrtimer;
     HANDLE hrtimer_packet;
-    /* When the armed timer is due, on the clock of the tick's `now_ns`; 0 while
-     * it is not armed or that is unknown. */
+    /* When the armed timer is due, on the clock of us_internal_monotonic_ns
+     * (which the tick's `now_ns` is a reading of); 0 while it is not armed. */
     uint64_t hrtimer_deadline_ns;
 
-    alignas(LIBUS_EXT_ALIGNMENT) OVERLAPPED_ENTRY ready_polls[LIBUS_MAX_READY_POLLS];
+    alignas(LIBUS_EXT_ALIGNMENT) OVERLAPPED_ENTRY ready_polls[US_IOCP_MAX_ENTRIES];
 };
 
 struct us_poll_t {

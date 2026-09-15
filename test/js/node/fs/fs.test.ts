@@ -5806,6 +5806,179 @@ it.skipIf(!isWindows)("utimes, lutimes and futimes round-trip a millisecond time
   }
 });
 
+// A FILETIME counts 100 ns ticks from 1601 in a signed 64-bit integer, so it ends 910692730085.4775807 s
+// after 1970. Node fails with EINVAL outside that range. The seconds used here are multiples of 8, which
+// keeps the tick count exact in a double.
+it.skipIf(!isWindows)("utimes, lutimes and futimes fail with EINVAL for a time a FILETIME cannot hold", () => {
+  using dir = tempDir("utimes-range", { "f.txt": "x" });
+  const f = join(String(dir), "f.txt");
+  const fd = openSync(f, "r+");
+  try {
+    const setters = (time: number | string | Date) =>
+      [
+        ["utime", () => fs.utimesSync(f, time, time)],
+        ["lutime", () => fs.lutimesSync(f, time, time)],
+        ["futime", () => fs.futimesSync(fd, time, time)],
+      ] as const;
+    const attempt = (set: () => void) => {
+      fs.utimesSync(f, 1000, 1000);
+      let error: { code?: string; syscall?: string } = {};
+      try {
+        set();
+      } catch (e: any) {
+        error = { code: e.code, syscall: e.syscall };
+      }
+      const st = statSync(f);
+      return { ...error, atimeMs: st.atimeMs, mtimeMs: st.mtimeMs };
+    };
+
+    for (const time of [
+      new Date(8.64e15),
+      new Date(-8.64e15),
+      "1e30",
+      "-1e30",
+      1e30,
+      910692730088,
+      "910692730088",
+      new Date(910692730088000),
+      "-11644473608",
+      new Date(-11644473608000),
+    ]) {
+      for (const [syscall, set] of setters(time)) {
+        expect({ time, ...attempt(set) }).toEqual({
+          time,
+          code: "EINVAL",
+          syscall,
+          atimeMs: 1000000,
+          mtimeMs: 1000000,
+        });
+      }
+    }
+
+    for (const [time, ms] of [
+      [910692730080, 910692730080000],
+      ["910692730080", 910692730080000],
+      [new Date(910692730080000), 910692730080000],
+      ["-11644473592", -11644473592000],
+      [new Date(-11644473592000), -11644473592000],
+    ] as const) {
+      for (const [, set] of setters(time)) {
+        expect({ time, ...attempt(set) }).toEqual({ time, atimeMs: ms, mtimeMs: ms });
+      }
+    }
+  } finally {
+    closeSync(fd);
+  }
+});
+
+// What libuv does with the number Node hands it: NaN leaves the time as it is, an infinity is the
+// current time. Only a Date or a string can carry those past Node's argument validation.
+it("utimes, lutimes and futimes take an invalid Date as 'unchanged' and an infinite string as 'now'", () => {
+  using dir = tempDir("utimes-omit-now", { "f.txt": "x" });
+  const f = join(String(dir), "f.txt");
+  const fd = openSync(f, "r+");
+  try {
+    const setters = (atime: number | string | Date, mtime: number | string | Date) => [
+      () => fs.utimesSync(f, atime, mtime),
+      () => fs.lutimesSync(f, atime, mtime),
+      () => fs.futimesSync(fd, atime, mtime),
+    ];
+    const invalid = new Date(NaN);
+
+    for (const set of setters(invalid, invalid)) {
+      fs.utimesSync(f, 1000, 2000);
+      set();
+      const st = statSync(f);
+      expect({ atimeMs: st.atimeMs, mtimeMs: st.mtimeMs }).toEqual({ atimeMs: 1000000, mtimeMs: 2000000 });
+    }
+    for (const set of setters(invalid, 3000)) {
+      fs.utimesSync(f, 1000, 2000);
+      set();
+      const st = statSync(f);
+      expect({ atimeMs: st.atimeMs, mtimeMs: st.mtimeMs }).toEqual({ atimeMs: 1000000, mtimeMs: 3000000 });
+    }
+
+    for (const infinite of ["Infinity", "-Infinity"]) {
+      for (const set of setters(infinite, infinite)) {
+        fs.utimesSync(f, 1000, 2000);
+        const before = Date.now();
+        set();
+        const after = Date.now();
+        const st = statSync(f);
+        // One second either way for the file system's resolution and the clock `Date.now()` reads.
+        for (const ms of [st.atimeMs, st.mtimeMs]) {
+          expect(ms).toBeGreaterThanOrEqual(before - 1000);
+          expect(ms).toBeLessThanOrEqual(after + 1000);
+        }
+      }
+    }
+
+    for (const time of [Infinity, -Infinity, NaN, "NaN", "not a number"]) {
+      for (const set of setters(time, time)) {
+        fs.utimesSync(f, 1000, 2000);
+        expect(set).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+        const st = statSync(f);
+        expect({ atimeMs: st.atimeMs, mtimeMs: st.mtimeMs }).toEqual({ atimeMs: 1000000, mtimeMs: 2000000 });
+      }
+    }
+  } finally {
+    closeSync(fd);
+  }
+});
+
+// The fds `fs.open` hands to JS are C runtime fds on Windows, and the runtime has 8192 of them.
+it.skipIf(!isWindows)("open fails with Node's EMFILE error when the C runtime is out of fds", async () => {
+  using dir = tempDir("fs-open-emfile", {
+    "fixture.js": `
+      const fs = require("node:fs");
+      const shape = e => ({ code: e.code, errno: e.errno, syscall: e.syscall, path: e.path, message: e.message });
+      const fds = [];
+      let sync;
+      try {
+        while (fds.length < 100_000) fds.push(fs.openSync(__filename, "r"));
+      } catch (e) {
+        sync = shape(e);
+      }
+      const opened = fds.length;
+      (async () => {
+        let promise;
+        try {
+          const handle = await fs.promises.open(__filename, "r");
+          await handle.close();
+        } catch (e) {
+          promise = shape(e);
+        }
+        // One fd fewer is enough for the next open.
+        fs.closeSync(fds.pop());
+        fds.push(fs.openSync(__filename, "r"));
+        const reachedLimit = opened > 4096 && opened < 8192;
+        console.log(JSON.stringify({ file: __filename, reachedLimit, sync, promise, reopened: fds.length === opened }));
+        for (const fd of fds) fs.closeSync(fd);
+      })();
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const result = JSON.parse(stdout);
+  const file: string = result.file;
+  const error = {
+    code: "EMFILE",
+    errno: -4066,
+    syscall: "open",
+    path: file,
+    message: `EMFILE: too many open files, open '${file}'`,
+  };
+  expect(result).toEqual({ file, reachedLimit: true, sync: error, promise: error, reopened: true });
+  expect(path.basename(file)).toBe("fixture.js");
+  expect(exitCode).toBe(0);
+});
+
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
   expect(() => openSync(path, "r")).toThrow("no such file or directory");
@@ -6130,6 +6303,32 @@ it("fs.statfs on a missing path fails with ENOENT and syscall statfs", async () 
   expect(() => statfsSync(missing)).toThrow(expected);
   await expect(promisify(fs.statfs)(missing)).rejects.toThrow(expected);
   await expect(fs.promises.statfs(missing)).rejects.toThrow(expected);
+});
+
+// An absolute path is opened in another spelling on Windows (`\\?\C:\…`); the error names the caller's.
+it("statfs, appendFile and chown errors carry the path that was passed", async () => {
+  using dir = tempDir("fs-error-path", {});
+  const missing = join(String(dir), "does-not-exist", "f.txt");
+  const expected = (syscall: string) =>
+    expect.objectContaining({
+      code: "ENOENT",
+      syscall,
+      path: missing,
+      message: `ENOENT: no such file or directory, ${syscall} '${missing}'`,
+    });
+  expect(() => statfsSync(missing)).toThrow(expected("statfs"));
+  await expect(promisify(fs.statfs)(missing)).rejects.toThrow(expected("statfs"));
+  await expect(fs.promises.statfs(missing)).rejects.toThrow(expected("statfs"));
+
+  expect(() => fs.appendFileSync(missing, "x")).toThrow(expected("open"));
+  await expect(promisify(fs.appendFile)(missing, "x")).rejects.toThrow(expected("open"));
+  await expect(fs.promises.appendFile(missing, "x")).rejects.toThrow(expected("open"));
+
+  // chown succeeds without looking at the path on Windows, as in Node.
+  if (!isWindows) {
+    expect(() => fs.chownSync(missing, process.getuid!(), process.getgid!())).toThrow(expected("chown"));
+    await expect(fs.promises.chown(missing, process.getuid!(), process.getgid!())).rejects.toThrow(expected("chown"));
+  }
 });
 
 it("fs.statfsSync should work", () => {
@@ -6615,6 +6814,34 @@ describe.skipIf(!isWindows)("relative paths past MAX_PATH", () => {
     );
     expect({ stdout, stderr }).toEqual({
       stdout: JSON.stringify({ exists: true, entries: ["f.txt", "renamed.txt"] }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.each(lengths)("Dirent.parentPath and Dir.path are the relative path (%s)", async (_, components) => {
+    const { stdout, stderr, exitCode } = await run(
+      components,
+      `
+        fs.writeFileSync(path.join(rel, "f.txt"), "x");
+        const dirents = list => list.map(dirent => [dirent.name, dirent.parentPath]);
+        const dir = fs.opendirSync(rel);
+        const read = dir.readSync();
+        dir.closeSync();
+        console.log(JSON.stringify({
+          readdir: dirents(fs.readdirSync(rel, { withFileTypes: true })),
+          recursive: dirents(fs.readdirSync(rel, { withFileTypes: true, recursive: true })),
+          opendir: [dir.path, read.name, read.parentPath],
+        }));
+      `,
+    );
+    const rel = Array(components).fill(Buffer.alloc(20, "d").toString()).join(path.sep);
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({
+        readdir: [["f.txt", rel]],
+        recursive: [["f.txt", rel]],
+        opendir: [rel, "f.txt", rel],
+      }),
       stderr: "",
     });
     expect(exitCode).toBe(0);

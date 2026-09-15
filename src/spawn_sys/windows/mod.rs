@@ -47,6 +47,8 @@ impl Default for WindowsOptions {
 }
 
 /// The handles the child inherits, and the parent ends of the pipes made for it.
+/// Every fd of the child has a handle of its own: its C runtime closes them one
+/// by one, and a value in two slots would be closed twice.
 struct ChildStdio {
     fds: Vec<ChildFd>,
     /// Child-side handles this spawn made, closed once the child has its copies
@@ -54,8 +56,6 @@ struct ChildStdio {
     to_close: Vec<HANDLE>,
     parent_ends: Vec<HANDLE>,
     keep_parent_ends: bool,
-    nul_in: HANDLE,
-    nul_out: HANDLE,
 }
 
 impl Drop for ChildStdio {
@@ -75,19 +75,25 @@ impl Drop for ChildStdio {
 
 impl ChildStdio {
     fn nul(&mut self, writable: bool) -> Result<ChildFd, DWORD> {
-        let slot = if writable {
-            &mut self.nul_out
-        } else {
-            &mut self.nul_in
-        };
-        if *slot == INVALID_HANDLE_VALUE {
-            *slot = stdio::open_nul(writable)?;
-            let handle = *slot;
-            self.to_close.push(handle);
-        }
+        let handle = stdio::open_nul(writable)?;
+        self.to_close.push(handle);
         Ok(ChildFd {
-            handle: *slot,
+            handle,
             crt_flags: stdio::FOPEN | stdio::FDEV,
+        })
+    }
+
+    /// Another fd for what `fd` is open on (`2>&1`): a second handle to the
+    /// same file object, so the two share its position.
+    fn alias(&mut self, fd: ChildFd) -> Result<ChildFd, DWORD> {
+        if fd.handle == INVALID_HANDLE_VALUE {
+            return Ok(fd);
+        }
+        let handle = stdio::duplicate_inheritable(fd.handle)?;
+        self.to_close.push(handle);
+        Ok(ChildFd {
+            handle,
+            crt_flags: fd.crt_flags,
         })
     }
 
@@ -421,8 +427,6 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
         to_close: Vec::new(),
         parent_ends: Vec::new(),
         keep_parent_ends: false,
-        nul_in: INVALID_HANDLE_VALUE,
-        nul_out: INVALID_HANDLE_VALUE,
     };
     // A child on a pseudoconsole gets its std handles from it and nothing else.
     let use_stdio = options.pseudoconsole.is_none();
@@ -445,11 +449,11 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
                 }
             }
         }
-        // `2>&1`: the fd shares the handle of the one it is redirected to.
         for (i, &option) in std_options.iter().enumerate() {
             if let Stdio::Dup2(dup2) = option {
                 let to = dup2.to as usize;
-                child_stdio.fds[i] = child_stdio.fds[to];
+                let target = child_stdio.fds[to];
+                child_stdio.fds[i] = child_stdio.alias(target).map_err(spawn_error)?;
                 inherited[i] = inherited[to];
             }
         }

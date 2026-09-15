@@ -341,7 +341,6 @@ type PathInt = u32;
 
 /// `Syscall.mkdirOSPath` / `Syscall.openatOSPath` — on POSIX `OSPathSliceZ` is
 /// `&ZStr`, so these are pure forwarders to the byte-path entry points.
-/// Windows is handled by `#[cfg(windows)]` branches at the call sites.
 #[cfg(not(windows))]
 #[inline]
 fn mkdir_os_path(path: &OSPathSliceZ, mode: Mode) -> Maybe<()> {
@@ -3978,7 +3977,8 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(path, args.flag.as_int(), args.mode)?;
+                let fd = Syscall::open(path, args.flag.as_int(), args.mode)
+                    .map_err(|err| err.with_path(path_.slice()))?;
                 let _close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
                     let written = Syscall::write(fd, data)?;
@@ -4640,7 +4640,7 @@ impl NodeFS {
 
     pub(crate) fn chown(&mut self, args: &args::Chown, _: Flavor) -> Maybe<ret::Chown> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        Syscall::chown(path, args.uid, args.gid)
+        Syscall::chown(path, args.uid, args.gid).map_err(|err| err.with_path(args.path.slice()))
     }
 
     pub(crate) fn chmod(&mut self, args: &args::Chmod, _: Flavor) -> Maybe<ret::Chmod> {
@@ -5172,10 +5172,13 @@ impl NodeFS {
         } else {
             args.path.slice_z(&mut self.sync_error_buf)
         };
-        match Syscall::open(path, args.flags.as_int(), args.mode) {
-            Err(err) => Err(err.with_path(args.path.slice())),
-            Ok(fd) => Ok(fd),
-        }
+        // JS sees a CRT fd on Windows. Running out of those is this call's
+        // `EMFILE`, so the conversion happens where the path is known.
+        Syscall::open(path, args.flags.as_int(), args.mode)
+            .and_then(|fd| {
+                fd.make_crt_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
+            })
+            .map_err(|err| err.with_path(args.path.slice()))
     }
 
     fn read_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
@@ -6811,7 +6814,7 @@ impl NodeFS {
     pub(crate) fn statfs(&mut self, args: &args::StatFS, _: Flavor) -> Maybe<ret::StatFS> {
         match Syscall::statfs(args.path.slice_z(&mut self.sync_error_buf)) {
             Ok(result) => Ok(ret::StatFS::init(&result, args.big_int)),
-            Err(err) => Err(err),
+            Err(err) => Err(err.with_path(args.path.slice())),
         }
     }
 
@@ -8551,11 +8554,7 @@ fn dt_delete_dir(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
     path_buf[len] = 0;
     // SAFETY: NUL written at [len].
     let z = ZStr::from_buf(&path_buf[..], len);
-    #[cfg(unix)]
-    let flags: i32 = libc::AT_REMOVEDIR;
-    #[cfg(not(unix))]
-    let flags = 0x200; // AT_REMOVEDIR, as `bun_sys::unlinkat_with_flags` defines it on Windows.
-    match Syscall::unlinkat_with_flags(parent.fd, z, flags) {
+    match Syscall::unlinkat_with_flags(parent.fd, z, sys::AT_REMOVEDIR) {
         Ok(()) => Ok(()),
         Err(e) => Err(e.get_errno()),
     }

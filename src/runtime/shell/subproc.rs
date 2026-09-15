@@ -1588,7 +1588,7 @@ impl PipeReader {
         // self.ref();
         self.process = Some(process);
         self.event_loop = event_loop;
-        // `reader` owns the fd from here; `Drop` closes an un-started one.
+        // On `Ok` the reader owns the fd; `Drop` closes an un-started one.
         let fd = self.stdio_result.take().unwrap();
         match self.reader.start(fd, true) {
             bun_sys::Result::Err(err) => {

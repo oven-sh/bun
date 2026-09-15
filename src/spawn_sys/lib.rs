@@ -80,9 +80,8 @@ const _: () = assert!(
 );
 
 // ──────────────────────────────────────────────────────────────────────────
-// Signal-forwarding / no-orphans FFI surface — moved down from
-// `bun_spawn::process::sync` so the decls live next to `posix_spawn_bun`.
-// `bun_spawn::sync` consumes these via `bun_spawn_sys::ffi::*`.
+// Signal-forwarding / no-orphans FFI surface, declared next to
+// `posix_spawn_bun`; `bun_spawn::sync` consumes it as `bun_spawn_sys::ffi::*`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ffi {
     use core::ffi::c_int;

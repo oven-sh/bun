@@ -17,9 +17,10 @@ pub const WRONLY: i32 = 0x0001;
 pub const DIRECT: i32 = 0x0200_0000;
 pub const DSYNC: i32 = 0x0400_0000;
 pub const SYNC: i32 = 0x0800_0000;
+/// Opens with a share mode of 0.
+pub const EXLOCK: i32 = 0x1000_0000;
 // No-ops on Windows.
 pub const DIRECTORY: i32 = 0;
-pub const EXLOCK: i32 = 0x1000_0000;
 pub const NOATIME: i32 = 0;
 pub const NOCTTY: i32 = 0;
 pub const NOFOLLOW: i32 = 0;

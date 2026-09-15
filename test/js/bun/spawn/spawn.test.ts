@@ -1426,6 +1426,56 @@ describe("close handling", () => {
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: 'read "hi" until EOF\n', stderr: "", exitCode: 0 });
       });
     });
+
+    // The child copies fd 3 to fd 4 until EOF on fd 3.
+    const copy3to4 = /* js */ `
+      const fs = require("node:fs");
+      const chunk = Buffer.alloc(4096);
+      for (let n; (n = fs.readSync(3, chunk)) > 0; ) fs.writeSync(4, chunk.subarray(0, n));
+    `;
+    const lines = Array.from({ length: 32 }, (_, i) => `line ${i}\n`);
+
+    it("child_process.spawn: extra 'pipe' slots carry data both ways, writes queued back to back", async () => {
+      const child = nodeSpawn(bunExe(), ["-e", copy3to4], {
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"],
+      });
+      const { promise, resolve, reject } = Promise.withResolvers<number | null>();
+      child.on("error", reject);
+      child.on("close", resolve);
+      let echoed = "";
+      const output = child.stdio[4] as NodeJS.ReadableStream;
+      output.on("data", chunk => (echoed += chunk));
+      const ended = new Promise<void>(resolve => output.on("end", resolve));
+      const input = child.stdio[3] as Writable;
+      for (const line of lines) input.write(line);
+      input.end();
+      const [exitCode] = await Promise.all([promise, ended]);
+      expect({ echoed, exitCode }).toEqual({ echoed: lines.join(""), exitCode: 0 });
+    });
+
+    // The child sees EOF on fd 3 only once the handle .stdio[3] exposed is closed, which is the socket's to do.
+    it.if(isWindows)("'socket-fd' at index >= 3 exposes a handle the caller's socket owns and closes", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", copy3to4],
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit", "socket-fd", "socket-fd"],
+      });
+      const [toChild, fromChild] = [proc.stdio[3], proc.stdio[4]] as number[];
+      expect([toChild, fromChild]).toEqual([expect.any(Number), expect.any(Number)]);
+      const input = connect({ fd: toChild });
+      const output = connect({ fd: fromChild });
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      input.on("error", reject);
+      output.on("error", reject);
+      output.on("close", () => resolve());
+      let echoed = "";
+      output.on("data", chunk => (echoed += chunk));
+      for (const line of lines) input.write(line);
+      input.end();
+      const [exitCode] = await Promise.all([proc.exited, promise]);
+      expect({ echoed, exitCode }).toEqual({ echoed: lines.join(""), exitCode: 0 });
+    });
   });
 });
 

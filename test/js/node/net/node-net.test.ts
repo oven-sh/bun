@@ -1267,6 +1267,43 @@ describe.concurrent.skipIf(!isWindows)("closing a named pipe server frees the na
   });
 });
 
+// A pipe server keeps 4 instances waiting for clients. Clients beyond that find the pipe busy and
+// wait on other threads (WaitNamedPipeW); the instance the server creates next wakes all of them
+// before the server has started to wait on it, so one of them is usually connected already by then.
+describe.concurrent.skipIf(!isWindows)("a named pipe server under a burst of connects", () => {
+  function connectAll(name: string, count: number) {
+    return Promise.all(
+      Array.from({ length: count }, () => {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        let received = "";
+        const client = connect(name);
+        client.setEncoding("utf8");
+        client.on("data", chunk => (received += chunk));
+        client.on("error", reject);
+        client.on("close", () => resolve(received));
+        return promise;
+      }),
+    );
+  }
+
+  // One client, as many as there are waiting instances, one more than that, and many more.
+  it.each([1, 4, 5, 64])("every one of %d clients connecting at once gets its greeting", async count => {
+    const name = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    let accepted = 0;
+    await using server = createServer(conn => {
+      accepted++;
+      conn.end("hello");
+    });
+    await once(server.listen(name), "listening");
+
+    const rounds = 4;
+    for (let round = 0; round < rounds; round++) {
+      expect(await connectAll(name, count)).toEqual(Array(count).fill("hello"));
+    }
+    expect(accepted).toBe(rounds * count);
+  });
+});
+
 // A server that identifies its client (an ssh agent, anything using RunAsClient) only
 // can if the client did not open the pipe with SECURITY_ANONYMOUS.
 it.skipIf(!isWindows || !Bun.which("powershell.exe"))(

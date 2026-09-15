@@ -29,7 +29,7 @@ describe("uv stubs", () => {
           "typescript": "^5.0.0",
         },
         "scripts": {
-          "build:napi": "node-gyp configure && node-gyp build",
+          "build:napi": "bun --bun node-gyp configure && bun --bun node-gyp build",
         },
         "dependencies": {
           "node-gyp": "10.2.0",

@@ -71,6 +71,8 @@ pub(crate) unsafe fn op_dequeued(loop_: *mut Loop) {
 
 /// Queue `op` on the loop's own thread so its `complete` runs from the loop
 /// rather than re-entrantly. Returns `false` if the port refused the packet.
+/// No kernel I/O stands behind such a packet: `complete` learns how the
+/// operation went from what the caller stored in it, not from its OVERLAPPED.
 ///
 /// # Safety
 /// `loop_` is the live loop of the calling thread; `op` stays allocated until

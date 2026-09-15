@@ -4662,7 +4662,8 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
     }
 
     WCHAR buffer[maxConsoleTitleLength];
-    DWORD length = GetConsoleTitleW(buffer, static_cast<DWORD>(std::size(buffer)));
+    // The return value is the title's length, also when only part of it fit.
+    DWORD length = std::min<DWORD>(GetConsoleTitleW(buffer, static_cast<DWORD>(std::size(buffer))), static_cast<DWORD>(std::size(buffer) - 1));
     if (!length)
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String("bun"_s))));
 

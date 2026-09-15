@@ -20,6 +20,17 @@ const SIGWINCH: c_int = 28;
 unsafe extern "system" {
     safe fn Sleep(dwMilliseconds: win::DWORD);
     safe fn GetTickCount64() -> u64;
+    fn CreateThreadpoolTimer(
+        pfnti: extern "system" fn(*mut c_void, *mut c_void, *mut c_void),
+        pv: *mut c_void,
+        pcbe: *mut c_void,
+    ) -> *mut c_void;
+    fn SetThreadpoolTimer(
+        pti: *mut c_void,
+        pftDueTime: *const win::FILETIME,
+        msPeriod: win::DWORD,
+        msWindowLength: win::DWORD,
+    );
 }
 
 /// Bit `n` is set while signal `n`, one a console control event stands for,
@@ -85,8 +96,8 @@ pub extern "C" fn Bun__unwatchWindowsSignal(signum: c_int) {
 
 /// `CONOUT$`, opened by the first SIGWINCH listener and kept.
 static CONSOLE_OUTPUT: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
-/// The size SIGWINCH was last raised for: columns of the screen buffer in the
-/// high half, rows of the window in the low half.
+/// The window size SIGWINCH was last raised for, as `process.stdout.columns`
+/// and `rows` report it: columns in the high half, rows in the low half.
 static CONSOLE_SIZE: AtomicU64 = AtomicU64::new(0);
 
 fn console_output() -> Option<win::HANDLE> {
@@ -109,8 +120,19 @@ fn console_output() -> Option<win::HANDLE> {
     if console == win::INVALID_HANDLE_VALUE {
         return None;
     }
-    CONSOLE_OUTPUT.store(console, Ordering::Release);
-    Some(console)
+    match CONSOLE_OUTPUT.compare_exchange(
+        core::ptr::null_mut(),
+        console,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => Some(console),
+        Err(theirs) => {
+            // SAFETY: opened above and handed to nobody.
+            unsafe { win::CloseHandle(console) };
+            Some(theirs)
+        }
+    }
 }
 
 fn console_size() -> Option<u64> {
@@ -120,14 +142,15 @@ fn console_size() -> Option<u64> {
     if unsafe { win::kernel32::GetConsoleScreenBufferInfo(console, &raw mut info) } == 0 {
         return None;
     }
-    let columns = info.dwSize.X as u16;
+    let columns = (info.srWindow.Right - info.srWindow.Left + 1) as u16;
     let rows = (info.srWindow.Bottom - info.srWindow.Top + 1) as u16;
     Some(u64::from(columns) << 32 | u64::from(rows))
 }
 
 /// Raise SIGWINCH if the console is not the size it was last raised for. Any
-/// thread: the main thread after a wake-up, and whichever loop reads raw
-/// console input when the console reports a resize there.
+/// thread: the main thread after a wake-up, a pool thread for a comparison
+/// that was put off, and whichever loop reads raw console input when the
+/// console reports a resize there.
 fn raise_if_console_resized() {
     let Some(size) = console_size() else {
         return;
@@ -141,6 +164,13 @@ fn raise_if_console_resized() {
 static CONSOLE_SIZE_WATCHED: AtomicBool = AtomicBool::new(false);
 /// `GetTickCount64` of the last comparison made after a wake-up.
 static CONSOLE_SIZE_CHECKED_MS: AtomicU64 = AtomicU64::new(0);
+/// A comparison that a wake-up put off is on its way.
+static CONSOLE_SIZE_CHECK_DEFERRED: AtomicBool = AtomicBool::new(false);
+static DEFERRED_CHECK_TIMER: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+
+/// A comparison is a round trip to the console host, so wake-ups make one at
+/// most this often.
+const CONSOLE_SIZE_INTERVAL_MS: u64 = 100;
 
 fn watch_console_size() {
     // No console, nothing to watch.
@@ -159,17 +189,68 @@ fn unwatch_console_size() {
 
 /// The console reports a resize only to whoever is reading its input in raw
 /// mode. For everyone else the main thread compares the size when its loop has
-/// woken for something, at most every `INTERVAL_MS`; an idle process is not
-/// woken for it.
+/// woken for something. A wake-up that comes too soon after a comparison has
+/// its own made when the interval is over, so what changed before a wake-up is
+/// always compared; an idle process is not woken for it.
 pub(crate) fn check_console_size_after_wake() {
-    const INTERVAL_MS: u64 = 100;
     if !CONSOLE_SIZE_WATCHED.load(Ordering::Relaxed) {
         return;
     }
     let now = GetTickCount64();
-    if now.wrapping_sub(CONSOLE_SIZE_CHECKED_MS.load(Ordering::Relaxed)) < INTERVAL_MS {
+    let since = now.wrapping_sub(CONSOLE_SIZE_CHECKED_MS.load(Ordering::Relaxed));
+    if since >= CONSOLE_SIZE_INTERVAL_MS {
+        CONSOLE_SIZE_CHECKED_MS.store(now, Ordering::Relaxed);
+        raise_if_console_resized();
+    } else if !CONSOLE_SIZE_CHECK_DEFERRED.swap(true, Ordering::AcqRel)
+        && !compare_in(CONSOLE_SIZE_INTERVAL_MS - since)
+    {
+        CONSOLE_SIZE_CHECK_DEFERRED.store(false, Ordering::Release);
+        raise_if_console_resized();
+    }
+}
+
+/// Have a pool thread make one comparison `ms` from now. `false` if the system
+/// has no timer to give.
+fn compare_in(ms: u64) -> bool {
+    let mut timer = DEFERRED_CHECK_TIMER.load(Ordering::Acquire);
+    if timer.is_null() {
+        // SAFETY: the callback takes no context; a null environment is the
+        // process's default pool.
+        timer = unsafe {
+            CreateThreadpoolTimer(
+                deferred_console_size_check,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        };
+        if timer.is_null() {
+            return false;
+        }
+        // Only the main thread gets here.
+        DEFERRED_CHECK_TIMER.store(timer, Ordering::Release);
+    }
+    // Negative: relative, in 100 ns units.
+    let due = -((ms * 10_000) as i64);
+    let due = win::FILETIME {
+        dwLowDateTime: due as u32,
+        dwHighDateTime: (due >> 32) as u32,
+    };
+    // SAFETY: `timer` is the live timer made above; `due` is a live local,
+    // copied by the call.
+    unsafe { SetThreadpoolTimer(timer, &raw const due, 0, 0) };
+    true
+}
+
+extern "system" fn deferred_console_size_check(
+    _instance: *mut c_void,
+    _context: *mut c_void,
+    _timer: *mut c_void,
+) {
+    // Before the comparison: a wake-up during it asks for the next one.
+    CONSOLE_SIZE_CHECK_DEFERRED.store(false, Ordering::Release);
+    if !CONSOLE_SIZE_WATCHED.load(Ordering::Acquire) {
         return;
     }
-    CONSOLE_SIZE_CHECKED_MS.store(now, Ordering::Relaxed);
+    CONSOLE_SIZE_CHECKED_MS.store(GetTickCount64(), Ordering::Relaxed);
     raise_if_console_resized();
 }

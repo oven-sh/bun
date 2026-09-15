@@ -148,22 +148,32 @@ impl Worker {
                 coord.vm.event_loop().cast(),
             )),
         );
+        // The parent ends nothing has taken yet, closed when a step below fails.
+        let mut unadopted = scopeguard::guard(
+            [stdout, stderr, extra_pipes.first().map(|pipe| pipe.fd())],
+            |fds| {
+                use bun_sys::FdExt as _;
+                for fd in fds.into_iter().flatten() {
+                    fd.close();
+                }
+            },
+        );
         {
             let worker: &mut Worker = &mut **this;
-            for (fd, pipe) in [(stdout, &mut worker.out), (stderr, &mut worker.err)] {
-                let Some(fd) = fd else { continue };
+            for (i, pipe) in [&mut worker.out, &mut worker.err].into_iter().enumerate() {
+                let Some(fd) = unadopted[i] else { continue };
+                // A reader that fails to start (Windows only) has not taken the fd.
                 if pipe.reader.start(fd, true).is_err() {
-                    // A reader that fails to start (Windows only) has not taken the fd.
-                    use bun_sys::FdExt as _;
-                    fd.close();
                     return Err(crate::Error::PipeStartFailed);
                 }
+                unadopted[i] = None;
             }
         }
-        if !extra_pipes.is_empty() {
+        // `adopt` closes the fd when it fails.
+        if let Some(ipc_fd) = unadopted[2].take() {
             // coord.vm backref valid for worker lifetime; adopt() mutates the
             // loop's socket context via interior mutability on the C side.
-            if !Channel::adopt(&raw mut this.ipc, coord.vm, extra_pipes[0].fd(), false) {
+            if !Channel::adopt(&raw mut this.ipc, coord.vm, ipc_fd, false) {
                 return Err(crate::Error::ChannelAdoptFailed);
             }
         } else {

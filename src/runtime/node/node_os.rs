@@ -952,18 +952,14 @@ mod _impl {
         if ok == 0 {
             return Err(Error::from_win32(err, Tag::uv_os_homedir));
         }
-        // `size` counts the terminating NUL.
-        Ok(BunString::clone_utf16(
-            &buf[..(size as usize).saturating_sub(1)],
-        ))
+        Ok(BunString::clone_utf16(slice_to_nul_u16(&buf)))
     }
 
     pub(crate) fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
         #[cfg(windows)]
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
-            // SAFETY: idempotent Winsock init.
-            unsafe { bun_uws_sys::iocp::us_internal_winsock_ensure() };
+            bun_uws_sys::iocp::us_internal_winsock_ensure();
             // SAFETY: valid buffer
             if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                 return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);

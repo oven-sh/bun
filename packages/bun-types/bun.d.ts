@@ -7547,12 +7547,12 @@ declare module "bun" {
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
        * - `number`: The process writes to the file descriptor
        *
-       * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
-       * creates a socketpair like `"pipe"`, but the parent-end fd exposed
-       * via {@link Subprocess.stdio} is owned by the caller and is never
-       * closed by the subprocess. Use this when you wrap the fd in
+       * At indices >= 3, `"socket-fd"` is also accepted: creates a
+       * socketpair (a duplex named pipe on Windows) like `"pipe"`, but the
+       * parent end exposed via {@link Subprocess.stdio} (a file descriptor;
+       * on Windows the pipe's `HANDLE` value) is owned by the caller and is
+       * never closed by the subprocess. Use this when you wrap it in
        * something that will close it itself (e.g. `net.connect({fd})`).
-       * On Windows it behaves the same as `"pipe"`.
        *
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`

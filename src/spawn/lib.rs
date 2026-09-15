@@ -4,9 +4,9 @@
 //! `bun_runtime` (cycle: `bun_runtime → bun_install`/`bun_jsc`).
 //!
 //! LAYERING: this crate **owns** the spawn implementation (not just data
-//! shapes). `Process`, `Poller`, `WaiterThread`, `spawn_process`, and
-//! `sync::spawn` were MOVED DOWN here from `bun_runtime::api::bun::process`;
-//! `bun_runtime` re-exports them. The only non-leaf dependencies are
+//! shapes): `Process`, `Poller`, `WaiterThread`, `spawn_process`, and
+//! `sync::spawn`. `bun_runtime::api::bun::process` re-exports them. The only
+//! non-leaf dependencies are
 //! `bun_io` (`FilePoll`/`KeepAlive`/`EventLoopCtx`), `bun_ptr`
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
 //! `bun_threading`, and `bun_crash_handler` — none of which depend back on
@@ -16,11 +16,9 @@
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
 
-/// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4).
-/// MOVE_DOWN: implementation now lives in `bun_spawn_sys`; re-exported here
-/// with the higher-tier `process::*` glue (`Process`/`Status`/`spawn_process`/
-/// `sync`) restored so existing `bun_spawn::posix_spawn::bun_spawn::*` paths
-/// keep resolving.
+/// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4) of
+/// `bun_spawn_sys`, with this crate's `process::*` glue (`Process`/`Status`/
+/// `spawn_process`/`sync`) beside them under `bun_spawn::posix_spawn::bun_spawn`.
 pub mod posix_spawn {
     pub use bun_spawn_sys::posix_spawn::*;
 
@@ -103,7 +101,7 @@ pub mod sync {
 // `bun.jsc.Subprocess` cross-tier shapes — `Source`, `StdioResult`,
 // `StaticPipeWriter<P>`.
 //
-// MOVE_DOWN from `bun_runtime::api::bun::subprocess`: `bun_install::
+// They live below `bun_runtime::api::bun::subprocess` because `bun_install::
 // security_scanner` constructs a `StaticPipeWriter<SecurityScanSubprocess>` to
 // stream a JSON blob to the scanner's stdin. The `Source` enum here carries a
 // `Box<dyn SourceData>` arm (§Dispatch cold path — vtable travels with the

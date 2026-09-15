@@ -13,6 +13,9 @@ const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
 // Node.js docs:
 // > Values can be either numbers representing Unix epoch time in seconds, Dates, or a numeric string like '123456789.0'.
 // > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
+//
+// A `Date` or a string goes to libuv as the number it converts to, and there a
+// NaN is `UV_FS_UTIME_OMIT` and an infinity is `UV_FS_UTIME_NOW`.
 pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Option<TimeLike>> {
     // Number is most common case
     if value.is_number() {
@@ -28,14 +31,18 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Optio
         match value.js_type() {
             JsType::JSDate => {
                 let milliseconds = value.get_unix_timestamp();
-                if milliseconds.is_finite() {
-                    return Ok(Some(from_milliseconds(milliseconds)));
+                if milliseconds.is_nan() {
+                    return Ok(Some(omit()));
                 }
+                return Ok(Some(from_milliseconds(milliseconds)));
             }
             JsType::String => {
                 let seconds = value.to_number(global_object)?;
                 if seconds.is_finite() {
                     return Ok(Some(from_seconds(seconds)));
+                }
+                if seconds.is_infinite() {
+                    return Ok(Some(from_now()));
                 }
             }
             _ => {}
@@ -44,16 +51,23 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Optio
     Ok(None)
 }
 
-/// Node on Windows stores the time libuv's `TIME_T_TO_FILETIME` computes: the
-/// FILETIME tick count is `seconds * 1e7 + <1601 offset>` evaluated as a double,
-/// which at today's dates rounds to 16 ticks. `utimes(p, 1713037251.36)` reads
-/// back as 1713037251360 ms only with that rounding.
+/// The time Node on Windows stores: libuv's `TIME_T_TO_FILETIME` evaluates the
+/// FILETIME, `seconds * 1e7 + <ticks from 1601 to 1970>`, as a double.
 #[cfg(windows)]
 fn from_seconds(seconds: f64) -> TimeLike {
     const TICKS_PER_S: i64 = 10_000_000;
     const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
-    // `as` saturates on overflow/NaN.
-    let ticks = (seconds * TICKS_PER_S as f64 + UNIX_EPOCH_TICKS as f64) as i64 - UNIX_EPOCH_TICKS;
+    const I64_LIMIT: f64 = 9_223_372_036_854_775_808.0;
+    let filetime = seconds * TICKS_PER_S as f64 + UNIX_EPOCH_TICKS as f64;
+    if !(0.0..I64_LIMIT).contains(&filetime) {
+        // Not a FILETIME. Saturated, so that `bun_sys` fails the conversion
+        // with `EINVAL`, which is what `SetFileTime` gives Node.
+        return TimeLike {
+            sec: if filetime < 0.0 { i64::MIN } else { i64::MAX },
+            nsec: 0,
+        };
+    }
+    let ticks = filetime as i64 - UNIX_EPOCH_TICKS;
     TimeLike {
         sec: ticks.div_euclid(TICKS_PER_S),
         nsec: ticks.rem_euclid(TICKS_PER_S) * 100,
@@ -88,6 +102,13 @@ fn from_milliseconds(milliseconds: f64) -> TimeLike {
     TimeLike {
         sec: milliseconds.div_euclid(MS_PER_S) as i64,
         nsec: (milliseconds.rem_euclid(MS_PER_S) * NS_PER_MS) as i64,
+    }
+}
+
+fn omit() -> TimeLike {
+    TimeLike {
+        sec: 0,
+        nsec: bun_sys::UTIME_OMIT,
     }
 }
 

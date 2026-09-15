@@ -1989,16 +1989,21 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         let Some(source) = self.source.as_mut() else {
             return WriteResult::Err(sys::Error::from_code(sys::E::PIPE, sys::Tag::pipe));
         };
-        let result = match self.outgoing.write_or_fallback(buffer_u8, buffer_u16, kind) {
-            Err(_) => WriteResult::Err(sys::Error::oom()),
-            Ok(bytes) => match write_blocking(source, bytes) {
-                sys::Result::Err(err) => WriteResult::Err(err),
-                sys::Result::Ok(0) => WriteResult::Done(0),
-                sys::Result::Ok(wrote) => WriteResult::Wrote(wrote),
+        let written = match (source, kind) {
+            // A console takes UTF-16: no detour through UTF-8.
+            (Source::Tty(tty), WriteKind::Utf16) => tty.try_write_utf16(buffer_u16.unwrap()),
+            (Source::Tty(tty), WriteKind::Latin1) => tty.try_write_latin1(buffer_u8.unwrap()),
+            (source, _) => match self.outgoing.write_or_fallback(buffer_u8, buffer_u16, kind) {
+                Err(_) => sys::Result::Err(sys::Error::oom()),
+                Ok(bytes) => write_blocking(source, bytes),
             },
         };
         self.outgoing.reset();
-        result
+        match written {
+            sys::Result::Err(err) => WriteResult::Err(err),
+            sys::Result::Ok(0) => WriteResult::Done(0),
+            sys::Result::Ok(wrote) => WriteResult::Wrote(wrote),
+        }
     }
 
     fn write_internal_u8(&mut self, buffer: &[u8], kind: WriteKind) -> WriteResult {

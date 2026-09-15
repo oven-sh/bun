@@ -10,8 +10,8 @@ pub const FOPEN: u8 = 0x01;
 pub const FPIPE: u8 = 0x08;
 pub const FDEV: u8 = 0x40;
 
-/// The CRT's limit is 8192 and `cbReserved2` would allow 7281; this is the cap
-/// children have been spawned with so far.
+/// The CRT's limit is 8192 and `cbReserved2` would allow 7281; this is libuv's
+/// cap, kept.
 pub const MAX_STDIO: usize = 255;
 
 /// One fd of the child: the handle it inherits (`INVALID_HANDLE_VALUE` for a

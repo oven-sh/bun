@@ -45,7 +45,9 @@ struct AcceptOp {
     op: Op,
     server: *mut Inner,
     handle: HANDLE,
-    posted_error: Option<Win32Error>,
+    /// How the wait ended, when `arm` queued the packet itself. `None` while
+    /// the packet out is the kernel's: the OVERLAPPED has the status then.
+    posted: Option<Win32Error>,
     in_flight: bool,
 }
 
@@ -110,7 +112,7 @@ impl PipeServer {
                     } else {
                         INVALID_HANDLE_VALUE
                     },
-                    posted_error: None,
+                    posted: None,
                     in_flight: false,
                 }));
                 (*inner).slots.push(slot);
@@ -226,36 +228,39 @@ impl Inner {
         // freed only from its own completion.
         unsafe {
             let loop_ = (*this).link.loop_;
-            (*slot).posted_error = None;
             (*slot).op.overlapped.internal = 0;
             (*slot).op.overlapped.internal_high = 0;
-            if (*slot).handle == INVALID_HANDLE_VALUE {
-                match create_instance(loop_, &(*this).name, false) {
-                    Ok(handle) => (*slot).handle = handle,
-                    Err(err) => (*slot).posted_error = Some(err),
+            // `None`: the kernel queues the packet. `Some`: the call said how
+            // the wait ended and nothing is queued.
+            let ended: Option<Win32Error> = 'ended: {
+                if (*slot).handle == INVALID_HANDLE_VALUE {
+                    match create_instance(loop_, &(*this).name, false) {
+                        Ok(handle) => (*slot).handle = handle,
+                        Err(err) => break 'ended Some(err),
+                    }
                 }
-            }
-            let mut queued = false;
-            if (*slot).posted_error.is_none() {
-                let ok = win::ConnectNamedPipe((*slot).handle, (&raw mut (*slot).op).cast());
-                let err = if ok != 0 {
-                    Win32Error::SUCCESS
-                } else {
-                    win::last_error()
-                };
                 // A call that succeeded at once queues its packet like one that pends.
-                if ok != 0 || err == win::IO_PENDING {
-                    super::op_submitted(loop_);
-                    queued = true;
-                } else if err != Win32Error::PIPE_CONNECTED {
-                    // PIPE_CONNECTED is a client that got in between the
-                    // instance's creation and this call; anything else failed.
-                    (*slot).posted_error = Some(err);
+                if win::ConnectNamedPipe((*slot).handle, (&raw mut (*slot).op).cast()) != 0 {
+                    break 'ended None;
                 }
-            }
-            // Outcomes that produce no packet travel through the port too, so
-            // the owner hears of every client from the loop.
-            if !queued && !super::post_to_loop(loop_, &raw mut (*slot).op) {
+                match win::last_error() {
+                    win::IO_PENDING => None,
+                    // A client got in between the instance's creation and this call.
+                    Win32Error::PIPE_CONNECTED => Some(Win32Error::SUCCESS),
+                    err => Some(err),
+                }
+            };
+            (*slot).posted = ended;
+            // What the call decided goes through the port too, so the owner
+            // hears of every client from the loop.
+            let queued = match ended {
+                None => {
+                    super::op_submitted(loop_);
+                    true
+                }
+                Some(_) => super::post_to_loop(loop_, &raw mut (*slot).op),
+            };
+            if !queued {
                 if (*slot).handle != INVALID_HANDLE_VALUE {
                     win::CloseHandle((*slot).handle);
                     (*slot).handle = INVALID_HANDLE_VALUE;
@@ -358,10 +363,10 @@ impl AcceptOp {
                 Inner::maybe_finish(this);
                 return;
             }
-            let err = (*slot)
-                .posted_error
-                .take()
-                .unwrap_or_else(|| win::status_to_win32((*slot).op.status()));
+            let err = match (*slot).posted.take() {
+                Some(ended) => ended,
+                None => win::status_to_win32((*slot).op.status()),
+            };
             if err != Win32Error::SUCCESS {
                 // Nothing the owner can act on: replace the instance.
                 if (*slot).handle != INVALID_HANDLE_VALUE {

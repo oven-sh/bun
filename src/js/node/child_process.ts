@@ -1274,16 +1274,16 @@ class ChildProcess extends EventEmitter {
         }
       }
       default:
-        switch (io) {
-          case "pipe":
-          case "socket-fd":
-            if (!NetModule) NetModule = require("node:net");
-            // #spawn mapped "pipe" at i>=3 to "socket-fd", so the parent-end
-            // fd in handle.stdio[i] is UnownedFd: we own it and
-            // net.connect({fd}) -> usockets will close it on socket close.
-            const fd = handle && handle.stdio[i];
-            if (fd == null) return null;
-            return NetModule.connect({ fd });
+        if (io === "socket-fd") {
+          if (!NetModule) NetModule = require("node:net");
+          // #spawn mapped "pipe" at i>=3 to "socket-fd", so the parent-end
+          // fd in handle.stdio[i] is UnownedFd: we own it and the socket
+          // net.connect({fd}) makes closes it when it closes. On Windows the
+          // number is the HANDLE of a pipe end Bun.spawn made and nothing has
+          // opened yet, which fdIsSpawnedPipe tells the socket.
+          const fd = handle && handle.stdio[i];
+          if (fd == null) return null;
+          return NetModule.connect(process.platform === "win32" ? { fd, fdIsSpawnedPipe: true } : { fd });
         }
         return null;
     }
@@ -1362,16 +1362,23 @@ class ChildProcess extends EventEmitter {
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
     // Extra "pipe" slots (i >= 3) are wrapped in a net.Socket by
-    // #getBunSpawnIo, which hands the fd to usockets (usockets closes it on
+    // #getBunSpawnIo, which hands the fd to the socket (it closes it on
     // socket close). Use Bun.spawn's "socket-fd" so the parent end is stored
     // as UnownedFd from the start and Subprocess.finalize_streams never
     // double-closes it. Async path only: spawnSync never wraps extra fds in
     // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
-    // them OwnedFd so finalize_streams still closes them. On Windows extra
-    // stdio is a named pipe, not a socket usockets adopts, so leave as "pipe".
-    if (process.platform !== "win32") {
-      for (let i = 3; i < bunStdio.length; i++) {
-        if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";
+    // them OwnedFd so finalize_streams still closes them. The child's end of
+    // a pipe at i >= 3 is overlapped on Windows whichever of the two was asked for.
+    for (let i = 3; i < bunStdio.length; i++) {
+      const option = bunStdio[i];
+      if (option === "pipe" || option === "overlapped") bunStdio[i] = "socket-fd";
+    }
+    // This side of an "overlapped" pipe is a pipe like any other.
+    let stdioOptions = bunStdio;
+    if (process.platform === "win32") {
+      stdioOptions = ArrayPrototypeSlice.$call(bunStdio);
+      for (let i = 0; i < 3; i++) {
+        if (stdioOptions[i] === "overlapped") stdioOptions[i] = "pipe";
       }
     }
 
@@ -1388,7 +1395,7 @@ class ChildProcess extends EventEmitter {
     var env = options[kBunEnv] || parseEnvPairs(envPairs) || process.env;
 
     const detachedOption = options.detached;
-    this.#stdioOptions = bunStdio;
+    this.#stdioOptions = stdioOptions;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
@@ -1678,7 +1685,8 @@ class ChildProcess extends EventEmitter {
 const nodeToBunLookup = {
   ignore: null,
   pipe: "pipe",
-  overlapped: "pipe", // TODO: this may need to work differently for Windows
+  // A pipe whose child end is opened for overlapped I/O, which only Windows has.
+  overlapped: process.platform === "win32" ? "overlapped" : "pipe",
   inherit: "inherit",
   ipc: "ipc",
 };
@@ -1785,7 +1793,7 @@ function getBunStdioFromOptions(stdio) {
   // Node options:
   // pipe: just a pipe
   // ipc = can only be one in array
-  // overlapped -- same as pipe on Unix based systems
+  // overlapped -- same as pipe on Unix based systems; on Windows the child's end is opened for overlapped I/O
   // inherit -- 'inherit': equivalent to ['inherit', 'inherit', 'inherit'] or [0, 1, 2]
   // ignore -- > /dev/null, more or less same as null option for Bun.spawn stdio
   // TODO: Stream -- use this stream
@@ -1800,7 +1808,7 @@ function getBunStdioFromOptions(stdio) {
 
   // Translations: node -> bun
   // pipe -> pipe
-  // overlapped -> pipe
+  // overlapped -> overlapped on Windows, pipe elsewhere
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now

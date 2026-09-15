@@ -4,9 +4,9 @@ use core::ffi::c_int;
 
 #[cfg(windows)]
 use bun_sys::FdKind;
-use bun_sys::{Fd, FdExt};
+use bun_sys::{ErrorCase, Fd, FdExt, Tag};
 
-use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions};
+use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, SystemErrorJsc as _};
 
 /// Extension trait wiring `to_js` / `from_js` onto `bun_sys::Fd`;
 /// the `*_jsc` crate provides them as trait methods.
@@ -77,17 +77,11 @@ impl FdJsc for Fd {
         if !self.is_valid() {
             return JSValue::js_number_from_int32(-1);
         }
-        let crt_owned_fd = match self.make_crt_owned() {
+        let crt_owned_fd = match self.make_crt_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)
+        {
             Ok(fd) => fd,
-            Err(_) => {
-                self.close();
-                let err_instance = (bun_jsc::SystemError {
-                    message: bun_core::String::static_("EMFILE, too many open files"),
-                    code: bun_core::String::static_("EMFILE"),
-                    ..Default::default()
-                })
-                .to_error_instance(global);
-                let _ = global.vm().throw_error(global, err_instance);
+            Err(err) => {
+                let _ = global.throw_value(err.to_system_error().to_error_instance(global));
                 return JSValue::ZERO;
             }
         };

@@ -35,7 +35,7 @@ describe("uv stubs", () => {
           "typescript": "^5.0.0",
         },
         "scripts": {
-          "build:napi": "node-gyp configure && node-gyp build",
+          "build:napi": "bun --bun node-gyp configure && bun --bun node-gyp build",
         },
         "dependencies": {
           "node-gyp": "10.2.0",
@@ -73,7 +73,7 @@ describe("uv stubs", () => {
 
     const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
-    await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
+    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
     console.log("tempdir:", tempdir);
     // Installs node-gyp and compiles an addon: far past the default 5s hook timeout.
   }, 300_000);

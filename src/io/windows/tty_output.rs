@@ -1,4 +1,4 @@
-//! Console output. Bytes are decoded as UTF-8 and written with `WriteConsoleW`, with `\n`
+//! Console output. Text (UTF-8, UTF-16 or Latin-1) is written with `WriteConsoleW`, with `\n`
 //! converted to `\r\n`. On a console that cannot do virtual-terminal processing (pre-1511
 //! Windows 10, "legacy console mode"), ANSI escape sequences are interpreted here and applied
 //! through the classic console API instead.
@@ -150,8 +150,8 @@ pub(crate) struct OutputLock {
     _not_send: PhantomData<*const ()>,
 }
 
-/// The process-wide console output lock. Every console write, `SetConsoleMode` on an input
-/// handle, and all of the emulator's shared state are serialized by it. Not re-entrant.
+/// The process-wide console output lock. Every console write and all of the emulator's shared
+/// state are serialized by it. Not re-entrant.
 #[must_use = "the console output lock is released when the guard is dropped"]
 pub(crate) fn lock_output() -> OutputLock {
     OutputLock {
@@ -174,9 +174,35 @@ pub(crate) fn init_output_handle(handle: HANDLE) -> Result<(), u32> {
     Ok(())
 }
 
-/// All of `data` is always parsed, so `state` stays consistent; after the first console API
-/// failure (the returned error) no further console calls are made.
+/// UTF-8 in. All of `data` is always parsed, so `state` stays consistent; after the first
+/// console API failure (the returned error) no further console calls are made.
 pub(crate) fn write(handle: HANDLE, state: &mut OutputState, data: &[u8]) -> Result<(), u32> {
+    with_writer(handle, state, |writer| writer.write(data))
+}
+
+/// As [`write`] for text that is UTF-16 already. Unpaired surrogates are let through.
+pub(crate) fn write_utf16(
+    handle: HANDLE,
+    state: &mut OutputState,
+    data: &[u16],
+) -> Result<(), u32> {
+    with_writer(handle, state, |writer| writer.write_utf16(data))
+}
+
+/// As [`write`] for Latin-1: every byte is the code point of that value.
+pub(crate) fn write_latin1(
+    handle: HANDLE,
+    state: &mut OutputState,
+    data: &[u8],
+) -> Result<(), u32> {
+    with_writer(handle, state, |writer| writer.write_latin1(data))
+}
+
+fn with_writer(
+    handle: HANDLE,
+    state: &mut OutputState,
+    write: impl FnOnce(&mut Writer<'_>),
+) -> Result<(), u32> {
     let mut lock = lock_output();
     let console = &mut *lock.console;
     let mut writer = Writer {
@@ -188,7 +214,8 @@ pub(crate) fn write(handle: HANDLE, state: &mut OutputState, data: &[u8]) -> Res
         used: 0,
         buf: [const { MaybeUninit::uninit() }; MAX_CONSOLE_CHARS],
     };
-    writer.write(data);
+    write(&mut writer);
+    writer.flush_text();
     if writer.error == ERROR_SUCCESS {
         Ok(())
     } else {
@@ -232,12 +259,27 @@ fn set_text_attribute(handle: HANDLE, attributes: WORD) -> Result<(), DWORD> {
     Ok(())
 }
 
+/// What a coordinate is checked against. A console call that fails with
+/// `ERROR_INVALID_PARAMETER` is tried again only while this differs from the failed attempt's:
+/// the console was resized after the screen buffer info was read.
+fn geometry(info: &CONSOLE_SCREEN_BUFFER_INFO) -> [i16; 6] {
+    [
+        info.dwSize.X,
+        info.dwSize.Y,
+        info.srWindow.Left,
+        info.srWindow.Top,
+        info.srWindow.Right,
+        info.srWindow.Bottom,
+    ]
+}
+
 /// Blanks the run of cells `region` selects (start, cell count, attributes). `region` is asked
 /// again with fresh screen buffer info when the console is resized underneath the call.
 fn blank_cells(
     handle: HANDLE,
     mut region: impl FnMut(&CONSOLE_SCREEN_BUFFER_INFO) -> (COORD, DWORD, WORD),
 ) -> Result<CONSOLE_SCREEN_BUFFER_INFO, DWORD> {
+    let mut failed_with = None;
     loop {
         let info = screen_buffer_info(handle)?;
         let (start, count, attributes) = region(&info);
@@ -253,10 +295,19 @@ fn blank_cells(
             return Ok(info);
         }
         let err = GetLastError();
-        if err != ERROR_INVALID_PARAMETER {
+        if err != ERROR_INVALID_PARAMETER || failed_with == Some(geometry(&info)) {
             return Err(err);
         }
+        failed_with = Some(geometry(&info));
     }
+}
+
+fn is_high_surrogate(unit: u16) -> bool {
+    (0xD800..0xDC00).contains(&unit)
+}
+
+fn is_low_surrogate(unit: u16) -> bool {
+    (0xDC00..0xE000).contains(&unit)
 }
 
 fn ansi_color(attributes: WORD, red: WORD, green: WORD, blue: WORD) -> u8 {
@@ -496,7 +547,88 @@ impl Writer<'_> {
                 }
             }
         }
-        self.flush_text();
+    }
+
+    /// A UTF-8 sequence that an earlier [`write`](Self::write) left unfinished cannot be
+    /// continued by text in another encoding.
+    fn abandon_utf8_sequence(&mut self) {
+        if self.state.utf8_bytes_left != 0 {
+            self.state.utf8_bytes_left = 0;
+            self.put_codepoint(REPLACEMENT_CHARACTER);
+        }
+    }
+
+    fn write_utf16(&mut self, data: &[u16]) {
+        self.abandon_utf8_sequence();
+        if !self.passthrough {
+            let mut units = data.iter().copied().peekable();
+            while let Some(unit) = units.next() {
+                let low = units
+                    .peek()
+                    .copied()
+                    .filter(|low| is_high_surrogate(unit) && is_low_surrogate(*low));
+                let Some(low) = low else {
+                    self.put_codepoint(u32::from(unit));
+                    continue;
+                };
+                units.next();
+                self.put_codepoint(
+                    0x10000 + ((u32::from(unit) - 0xD800) << 10) + (u32::from(low) - 0xDC00),
+                );
+            }
+            return;
+        }
+
+        // Only line ends need a look; what is between them is copied as it is.
+        let mut rest = data;
+        while !rest.is_empty() {
+            let run = bun_core::strings::index_of_any16(rest, &[0x0A, 0x0D]).unwrap_or(rest.len());
+            if run == 0 {
+                self.put_codepoint(u32::from(rest[0]));
+                rest = &rest[1..];
+                continue;
+            }
+            self.push_run(&rest[..run]);
+            self.state.previous_eol = 0;
+            rest = &rest[run..];
+        }
+    }
+
+    fn write_latin1(&mut self, data: &[u8]) {
+        self.abandon_utf8_sequence();
+        for &c in data {
+            self.put_codepoint(u32::from(c));
+        }
+    }
+
+    /// Text without line ends. Both halves of a surrogate pair go out in the same
+    /// `WriteConsoleW` call.
+    fn push_run(&mut self, mut run: &[u16]) {
+        while !run.is_empty() {
+            let mut take = run.len().min(MAX_CONSOLE_CHARS - self.used);
+            if take > 0
+                && take < run.len()
+                && is_high_surrogate(run[take - 1])
+                && is_low_surrogate(run[take])
+            {
+                take -= 1;
+            }
+            if take == 0 {
+                self.flush_text();
+                continue;
+            }
+            // SAFETY: `take` units fit behind `used`, `MaybeUninit<u16>` has the layout of
+            // `u16`, and `run` is not part of `buf`.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    run.as_ptr(),
+                    self.buf.as_mut_ptr().add(self.used).cast::<u16>(),
+                    take,
+                );
+            }
+            self.used += take;
+            run = &run[take..];
+        }
     }
 
     fn put_codepoint(&mut self, codepoint: u32) {
@@ -802,6 +934,7 @@ impl Writer<'_> {
         y: i32,
         y_relative: bool,
     ) -> Result<(), DWORD> {
+        let mut failed_with = None;
         loop {
             let info = screen_buffer_info(self.handle)?;
             let position = self
@@ -812,10 +945,10 @@ impl Writer<'_> {
                 return Ok(());
             }
             let err = GetLastError();
-            // The console may have been resized since `info` was read.
-            if err != ERROR_INVALID_PARAMETER {
+            if err != ERROR_INVALID_PARAMETER || failed_with == Some(geometry(&info)) {
                 return Err(err);
             }
+            failed_with = Some(geometry(&info));
         }
     }
 

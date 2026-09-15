@@ -3580,10 +3580,8 @@ mod windows_impl {
         }
         Ok(bytes_written as usize)
     }
-    /// A negative `off` reads at the file pointer. On a synchronous handle a
-    /// positioned read also leaves the file pointer after the bytes read.
-    /// A positioned `ReadFile`/`WriteFile` on a synchronous handle also moves
-    /// its file pointer. `fs.read(fd, .., position)` must leave it alone, so it
+    /// A positioned `ReadFile`/`WriteFile` on a synchronous handle moves its
+    /// file pointer too. `fs.read(fd, .., position)` must leave it alone, so it
     /// is put back for the fds JS can see (CRT fds). HANDLE-kind callers never
     /// mix positioned and sequential I/O on one handle and skip the two calls.
     pub(crate) struct RestoreFilePointer {
@@ -3592,12 +3590,27 @@ mod windows_impl {
     }
     impl RestoreFilePointer {
         pub(crate) fn new(fd: Fd) -> Self {
+            const FILE_POSITION_INFORMATION: bun_windows_sys::FILE_INFORMATION_CLASS =
+                bun_windows_sys::FILE_INFORMATION_CLASS(14);
             let handle = fd.native();
             let mut saved = None;
             if fd.kind() == FdKind::Crt {
+                let mut io: bun_windows_sys::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
                 let mut current: i64 = 0;
-                // SAFETY: FFI; `handle` is the fd's HANDLE, `current` valid for write.
-                if unsafe { w::SetFilePointerEx(handle, 0, &mut current, w::FILE_CURRENT) } != 0 {
+                // One system call; `SetFilePointerEx(FILE_CURRENT)` is this
+                // query followed by a set.
+                // SAFETY: FFI; `handle` is the fd's HANDLE, and the class
+                // writes one `LARGE_INTEGER` into `current`.
+                let status = unsafe {
+                    bun_windows_sys::ntdll::NtQueryInformationFile(
+                        handle,
+                        &mut io,
+                        core::ptr::from_mut(&mut current).cast(),
+                        core::mem::size_of::<i64>() as u32,
+                        FILE_POSITION_INFORMATION,
+                    )
+                };
+                if bun_windows_sys::NT_SUCCESS(status) {
                     saved = Some(current);
                 }
             }
@@ -3615,6 +3628,7 @@ mod windows_impl {
         }
     }
 
+    /// A negative `off` reads at the file pointer.
     pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
         if off < 0 {
             return read(fd, buf);
@@ -3791,8 +3805,6 @@ mod windows_impl {
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         // Convert to NT path and call `DeleteFileBun`;
         // `remove_dir = flags & AT_REMOVEDIR != 0`.
-        // AT_REMOVEDIR on Windows = 0x200.
-        const AT_REMOVEDIR: i32 = 0x200;
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
         super::windows::DeleteFileBun(
@@ -3989,8 +4001,12 @@ mod windows_impl {
             return Err(Error::new(E::ENAMETOOLONG, Tag::access).with_path(path.as_bytes()));
         }
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
-        let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
+        let len = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes()).len();
+        if let Err(e) = w::fs::lengthen_path_in_place(&mut wbuf[..], len) {
+            return Err(Error::from_win32(e, Tag::access).with_path(path.as_bytes()));
+        }
+        // SAFETY: `wbuf` holds a NUL-terminated wide path.
+        let attrs = unsafe { w::kernel32::GetFileAttributesW(wbuf.as_ptr()) };
         if attrs == w::INVALID_FILE_ATTRIBUTES {
             return Err(
                 Error::from_win32(w::Win32Error::get(), Tag::access).with_path(path.as_bytes())
@@ -5979,9 +5995,7 @@ pub fn open_dir_no_renaming_or_deleting_windows(dir: Fd, path: &[u8]) -> Maybe<F
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-const FILE_SHARE: u32 = bun_windows_sys::FILE_SHARE_READ
-    | bun_windows_sys::FILE_SHARE_WRITE
-    | bun_windows_sys::FILE_SHARE_DELETE;
+use windows::fs::SHARE_ALL;
 
 #[cfg(windows)]
 #[derive(Clone, Copy, Default)]
@@ -6017,7 +6031,7 @@ impl Default for NtCreateFileOptions {
             disposition: 0,
             options: 0,
             attributes: bun_windows_sys::FILE_ATTRIBUTE_NORMAL,
-            sharing_mode: FILE_SHARE,
+            sharing_mode: SHARE_ALL,
         }
     }
 }
@@ -6097,7 +6111,9 @@ fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<(usize, bool)> {
 
 /// `normalizePathWindows` — convert a (possibly relative) path into an NT
 /// object name for `NtCreateFile` against `dir_fd`: absolute inputs become
-/// `\??\C:\…`, dirfd-relative inputs resolve to absolute `\Device\…` names.
+/// `\??\C:\…`, a single name (other than `.` and `..`) stays as it is for
+/// `RootDirectory = dir_fd`, other dirfd-relative inputs resolve to absolute
+/// `\Device\…` names.
 #[cfg(windows)]
 pub fn normalize_path_windows<'a>(
     dir_fd: Fd,
@@ -6111,6 +6127,11 @@ pub fn normalize_path_windows<'a>(
 /// output Win32-consumable: absolute inputs lose `\??\`, dotted or
 /// multi-component relatives become `\\?\GLOBALROOT\Device\…`, and bare names
 /// pass through verbatim (Win32 resolves those against the cwd).
+///
+/// Names reach `NtCreateFile` as written: `aux.js`, `nul`, `name.` and `name `
+/// are files, as they are for Node, which prefixes every path with `\\?\`.
+/// None of Win32's DOS-device or trailing dot/space rules are applied, apart
+/// from the absolute `…\nul` below.
 #[cfg(windows)]
 pub fn normalize_path_windows_opts<'a>(
     dir_fd: Fd,
@@ -6233,14 +6254,16 @@ pub fn normalize_path_windows_opts<'a>(
         path
     };
 
-    // Routing = any separator or `.`; clamp relevance = `..` resolving above
-    // the dirfd. One pass via the shared classifier.
+    // Clamp relevance = `..` resolving above the dirfd. One pass via the
+    // shared classifier.
     let facts = bun_paths::classify_rel_t(rel, bun_paths::PathFormat::Windows);
-    let saw_sep_or_dot = facts.has_sep || facts.has_dot;
+    const DOT: u16 = b'.' as u16;
+    let is_single_name = !facts.has_sep && !matches!(rel, [DOT] | [DOT, DOT]);
 
-    // Relative path with no separators or `.` can be passed straight through
-    // to `NtCreateFile` against `RootDirectory`.
-    if !saw_sep_or_dot {
+    // A single name other than `.` and `..` can be passed straight through to
+    // `NtCreateFile` against `RootDirectory`. Win32 output does that for
+    // dotless names only (see `NormalizePathWindowsOpts`).
+    if is_single_name && (opts.add_nt_prefix || !facts.has_dot) {
         if path.len() >= buf.len() {
             return Err(too_long());
         }
@@ -6405,7 +6428,7 @@ fn open_windows_device_path(
         w::CreateFileW(
             path.as_ptr(),
             desired_access,
-            FILE_SHARE,
+            SHARE_ALL,
             core::ptr::null_mut(),
             creation_disposition,
             flags_and_attributes,
@@ -6516,7 +6539,7 @@ pub(crate) fn open_dir_at_windows_nt_path(
             &mut io,
             core::ptr::null_mut(),
             0,
-            FILE_SHARE,
+            SHARE_ALL,
             match options.op {
                 WindowsOpenDirOp::OnlyOpen => w::FILE_OPEN,
                 WindowsOpenDirOp::OnlyCreate => w::FILE_CREATE,
@@ -9234,7 +9257,7 @@ mod normalize_path_windows_tests {
             w::CreateFileW(
                 wp.as_ptr(),
                 w::GENERIC_READ,
-                FILE_SHARE,
+                SHARE_ALL,
                 core::ptr::null_mut(),
                 w::OPEN_EXISTING,
                 w::FILE_FLAG_BACKUP_SEMANTICS,
@@ -9440,7 +9463,7 @@ mod normalize_path_windows_tests {
         // debug_assertions, these ARE the no-panic proof; the invalid stream
         // spelling is NtCreateFile's to reject at open time.
         assert_eq!(normalize(*dir, ":\\x"), format!("{base}\\:\\x"));
-        assert_eq!(normalize(*dir, ":a.b"), format!("{base}\\:a.b"));
+        assert_eq!(normalize(*dir, ":a.b"), ":a.b");
         assert_eq!(normalize(*dir, ".\\:\\x"), format!("{base}\\:\\x"));
         assert_eq!(normalize(*dir, "a\\:\\x"), format!("{base}\\a\\:\\x"));
         // `..` collapse promoting `:` toward the front of the output.
@@ -9473,18 +9496,20 @@ mod normalize_path_windows_tests {
     }
 
     #[test]
-    fn dot_in_name_resolves_under_base() {
+    fn dot_in_name_passes_through() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_dotname");
         let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
             let _ = close(fd);
         });
-        // Dot without separator routes to fd resolution (not the bare
-        // passthrough) and needs no `..` clamp.
-        assert_eq!(
-            normalize(*dir, "a.b"),
-            format!("{}\\a.b", normalize(*dir, "."))
-        );
+        // A dot inside a single name is part of the name: `NtCreateFile`
+        // resolves it against `RootDirectory`.
+        for name in ["a.b", ".a", "a.", "...", "a..b"] {
+            assert_eq!(normalize(*dir, name), name);
+        }
+        // Win32 output resolves a dotted name against the handle.
+        let base = normalize_opts(*dir, ".", false);
+        assert_eq!(normalize_opts(*dir, "a.b", false), format!("{base}\\a.b"));
     }
 
     #[test]

@@ -102,7 +102,10 @@ impl Error {
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
         debug_assert!((0..=c_int::from(u16::MAX)).contains(&errno));
         Error {
-            errno: errno as Int,
+            // The kernel is not bound to the table (FUSE, drivers): what it
+            // does not declare is stored as EUNKNOWN, so the code and message
+            // lookups agree with `get_errno`.
+            errno: u16::try_from(errno).map_or(E::EUNKNOWN, E::from_raw) as Int,
             syscall: syscall_tag,
             ..Default::default()
         }

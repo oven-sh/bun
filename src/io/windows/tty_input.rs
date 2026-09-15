@@ -6,6 +6,9 @@ use core::mem::MaybeUninit;
 
 use bun_windows_sys::{DWORD, GetLastError, HANDLE, INPUT_RECORD, KEY_EVENT_RECORD, WORD};
 
+use super::sys::GetNumberOfConsoleInputEvents;
+use super::tty::is_wake_key;
+
 /// Translation state that must survive between calls: a pending UTF-16 high surrogate.
 pub(crate) struct RawInputState {
     /// 0 when none is pending.
@@ -18,10 +21,13 @@ impl RawInputState {
     }
 }
 
+#[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct RawInputResult {
     /// A `WINDOW_BUFFER_SIZE_EVENT` record was seen. Its `dwSize` is the screen buffer, not
     /// the window, in a classic console, so the caller re-reads the real size.
     pub resized: bool,
+    /// The key that ends a line read was in the queue. It is not input.
+    pub wake_key: bool,
 }
 
 const BATCH_RECORDS: usize = 128;
@@ -36,11 +42,11 @@ pub(crate) fn read_raw(
 ) -> Result<RawInputResult, u32> {
     let mut available: DWORD = 0;
     // SAFETY: `available` is a valid out-pointer; a bad `handle` makes the call fail.
-    if unsafe { ffi::GetNumberOfConsoleInputEvents(handle, &raw mut available) } == 0 {
+    if unsafe { GetNumberOfConsoleInputEvents(handle, &raw mut available) } == 0 {
         return Err(GetLastError());
     }
 
-    let mut resized = false;
+    let mut result = RawInputResult::default();
     let mut records = [const { MaybeUninit::<INPUT_RECORD>::uninit() }; BATCH_RECORDS];
     while available > 0 {
         // `ReadConsoleInputW` waits for the first record only, so asking for no more than
@@ -59,30 +65,32 @@ pub(crate) fn read_raw(
         }
         // SAFETY: the call initialized the first `read` (<= `want`) records.
         let batch = unsafe { core::slice::from_raw_parts(records.as_ptr().cast(), read as usize) };
-        resized |= translate_all(state, batch, out);
+        translate_all(state, batch, out, &mut result);
         available = available.saturating_sub(read);
     }
-    Ok(RawInputResult { resized })
+    Ok(result)
 }
 
-fn translate_all(state: &mut RawInputState, records: &[INPUT_RECORD], out: &mut Vec<u8>) -> bool {
-    let mut resized = false;
+fn translate_all(
+    state: &mut RawInputState,
+    records: &[INPUT_RECORD],
+    out: &mut Vec<u8>,
+    result: &mut RawInputResult,
+) {
     for record in records {
-        resized |= translate(state, record, out);
-    }
-    resized
-}
-
-/// Appends the bytes for one record to `out`; returns whether it was a resize record.
-fn translate(state: &mut RawInputState, record: &INPUT_RECORD, out: &mut Vec<u8>) -> bool {
-    match record.EventType {
-        ffi::WINDOW_BUFFER_SIZE_EVENT => true,
-        ffi::KEY_EVENT => {
-            // SAFETY: `EventType == KEY_EVENT` selects the `KeyEvent` member.
-            translate_key(state, unsafe { &record.Event.KeyEvent }, out);
-            false
+        match record.EventType {
+            ffi::WINDOW_BUFFER_SIZE_EVENT => result.resized = true,
+            ffi::KEY_EVENT => {
+                // SAFETY: `EventType == KEY_EVENT` selects the `KeyEvent` member.
+                let key = unsafe { &record.Event.KeyEvent };
+                if is_wake_key(key) {
+                    result.wake_key = true;
+                } else {
+                    translate_key(state, key, out);
+                }
+            }
+            _ => {}
         }
-        _ => false,
     }
 }
 
@@ -285,10 +293,6 @@ mod ffi {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        pub(super) fn GetNumberOfConsoleInputEvents(
-            hConsoleInput: HANDLE,
-            lpNumberOfEvents: *mut DWORD,
-        ) -> BOOL;
         pub(super) fn ReadConsoleInputW(
             hConsoleInput: HANDLE,
             lpBuffer: *mut INPUT_RECORD,
@@ -357,8 +361,9 @@ mod tests {
     fn run(records: &[INPUT_RECORD]) -> (Vec<u8>, bool) {
         let mut state = RawInputState::new();
         let mut out = Vec::new();
-        let resized = translate_all(&mut state, records, &mut out);
-        (out, resized)
+        let mut result = RawInputResult::default();
+        translate_all(&mut state, records, &mut out, &mut result);
+        (out, result.resized)
     }
 
     fn bytes(records: &[INPUT_RECORD]) -> Vec<u8> {
@@ -421,18 +426,30 @@ mod tests {
     #[test]
     fn surrogate_pair_across_calls() {
         let mut state = RawInputState::new();
+        let mut result = RawInputResult::default();
         let mut first = Vec::new();
-        assert!(!translate(&mut state, &char_down(0xD83D, 0), &mut first));
+        translate_all(&mut state, &[char_down(0xD83D, 0)], &mut first, &mut result);
         assert!(first.is_empty());
 
         let mut second = Vec::new();
-        assert!(!translate(&mut state, &char_down(0xDE00, 0), &mut second));
+        translate_all(
+            &mut state,
+            &[char_down(0xDE00, 0)],
+            &mut second,
+            &mut result,
+        );
         assert_eq!(second, "😀".as_bytes());
 
         // The pending unit was consumed.
         let mut third = Vec::new();
-        translate(&mut state, &char_down(u16::from(b'a'), 0), &mut third);
+        translate_all(
+            &mut state,
+            &[char_down(u16::from(b'a'), 0)],
+            &mut third,
+            &mut result,
+        );
         assert_eq!(third, b"a");
+        assert_eq!(result, RawInputResult::default());
     }
 
     #[test]
@@ -688,6 +705,33 @@ mod tests {
                 char_down(u16::from(b'b'), 0),
             ]),
             (b"ab".to_vec(), true)
+        );
+    }
+
+    #[test]
+    fn the_wake_key_is_not_input() {
+        let mut state = RawInputState::new();
+        let mut out = Vec::new();
+        let mut result = RawInputResult::default();
+        translate_all(
+            &mut state,
+            &[
+                char_down(u16::from(b'a'), 0),
+                super::super::tty::wake_record(),
+                // Ctrl+] as a keyboard sends it.
+                key_record(true, 1, 0xDD, 0x1D, CTRL_L),
+                char_down(u16::from(b'b'), 0),
+            ],
+            &mut out,
+            &mut result,
+        );
+        assert_eq!(out, b"ab");
+        assert_eq!(
+            result,
+            RawInputResult {
+                resized: false,
+                wake_key: true
+            }
         );
     }
 

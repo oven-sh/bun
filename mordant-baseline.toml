@@ -133,6 +133,7 @@
 "unused_pub:src/collections/vec_ext.rs" = 2
 "unused_pub:src/dotenv/env_loader.rs" = 1
 "unused_pub:src/errno/lib.rs" = 1
+"unused_pub:src/errno/uv_codes.rs" = 3
 "unused_pub:src/event_loop/AnyEventLoop.rs" = 3
 "unused_pub:src/event_loop/SpawnSyncEventLoop.rs" = 1
 "unused_pub:src/glob/GlobWalker.rs" = 1
@@ -163,10 +164,10 @@
 "unused_pub:src/sys/copy_file.rs" = 1
 "unused_pub:src/sys/dir.rs" = 1
 "unused_pub:src/sys/file.rs" = 2
-"unused_pub:src/sys/lib.rs" = 43
+"unused_pub:src/sys/lib.rs" = 45
 "unused_pub:src/threading/WaitGroup.rs" = 3
 "unused_pub:src/uws/lib.rs" = 1
-"unused_pub:src/windows_sys/externs.rs" = 258
+"unused_pub:src/windows_sys/externs.rs" = 290
 "unused_pub:src/windows_sys/lib.rs" = 7
 "unused_pub:src/wyhash/lib.rs" = 1
 "unused_pub:src/zstd/lib.rs" = 2

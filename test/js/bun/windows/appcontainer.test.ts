@@ -247,14 +247,13 @@ async function main() {
   r.tempRewritten = /\\\\AC\\\\Temp/i.test(process.env.TEMP || "");
 
   // stdin must be inherit here: the NUL device ACL denies AppContainers
-  // ("ignore" opens NUL), and a piped fd 0 currently also fails uv_spawn
-  // inside a container.
+  // ("ignore" opens NUL).
   const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"], stdio: ["inherit", "pipe", "pipe"] });
   r.spawnPiped = s.exitCode === 0 && s.stdout.toString().includes("SPAWN_OK");
 
-  // User-facing fs.realpath stays Node-parity: the component walk lstats the
-  // drive root (denied), and uv_fs_realpath's mount-manager query is denied.
-  // Bun internals go through get_fd_path, not these.
+  // fs.realpath walks the components and lstats the drive root, which a
+  // container is denied, as in Node. fs.realpath.native asks the kernel for the
+  // path of the open handle and does not need the mount manager.
   r.realpath = (() => {
     const errno = fn => { try { fn(); return "OK"; } catch (e) { return e.code || e.name; } };
     return { sync: errno(() => fs.realpathSync(".")), native: errno(() => fs.realpathSync.native(".")) };
@@ -339,7 +338,7 @@ main().then(
       // AppContainer children to the package's AC\Temp.
       expect(r.tempRewritten).toBe(true);
       expect(r.spawnPiped).toBe(true);
-      expect(r.realpath).toEqual({ sync: "EPERM", native: "EPERM" });
+      expect(r.realpath).toEqual({ sync: "EPERM", native: "OK" });
       // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED;
       // PipeServer::listen maps that to EADDRINUSE. Tighten to EACCES once
       // it tells the two apart.

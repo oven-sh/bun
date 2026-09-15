@@ -17,7 +17,8 @@ use crate::{E, Error, Fd, Maybe, Mode, PlatformIoVec, PlatformIoVecConst, Tag, T
 
 type Win32Result<T> = core::result::Result<T, Win32Error>;
 
-const SHARE_ALL: u32 = win32::FILE_SHARE_READ | win32::FILE_SHARE_WRITE | win32::FILE_SHARE_DELETE;
+pub(crate) const SHARE_ALL: u32 =
+    win32::FILE_SHARE_READ | win32::FILE_SHARE_WRITE | win32::FILE_SHARE_DELETE;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Types
@@ -91,13 +92,10 @@ const WIN_TO_UNIX_TICK_OFFSET: i64 = super::EPOCH_DIFFERENCE_100NS;
 const TICKS_PER_SEC: i64 = 10_000_000;
 
 fn filetime_to_timespec(filetime: i64) -> StatTimespec {
-    let t = filetime - WIN_TO_UNIX_TICK_OFFSET;
-    let mut sec = t / TICKS_PER_SEC;
-    let mut nsec = (t % TICKS_PER_SEC) * 100;
-    if nsec < 0 {
-        sec -= 1;
-        nsec += 1_000_000_000;
-    }
+    // Split before moving the epoch: the subtraction cannot overflow then,
+    // whatever the volume has stored.
+    let sec = filetime.div_euclid(TICKS_PER_SEC) - WIN_TO_UNIX_TICK_OFFSET / TICKS_PER_SEC;
+    let nsec = filetime.rem_euclid(TICKS_PER_SEC) * 100;
     StatTimespec { sec, nsec }
 }
 
@@ -199,6 +197,94 @@ fn create_file(
 /// `LongPathsEnabled` policy is also on.
 const LONG_PATH_THRESHOLD: usize = 248;
 
+/// `\\?\…` and `\\.\…`.
+fn is_device_path(path: &[u16]) -> bool {
+    path.len() >= 4
+        && is_slash(path[0])
+        && is_slash(path[1])
+        && (path[2] == b'?' as u16 || path[2] == b'.' as u16)
+        && is_slash(path[3])
+}
+
+/// Whether Win32 holds `path` to `MAX_PATH`. A relative path counts with the
+/// directory Win32 resolves it against.
+fn exceeds_max_path(path: &[u16]) -> bool {
+    if is_device_path(path) {
+        return false;
+    }
+    if path.len() >= LONG_PATH_THRESHOLD {
+        return true;
+    }
+    let is_absolute = path.len() >= 3 && path[1] == b':' as u16 && is_slash(path[2])
+        || path.len() >= 2 && is_slash(path[0]) && is_slash(path[1]);
+    if is_absolute {
+        return false;
+    }
+    // SAFETY: a zero-length query writes nothing and returns the length of
+    // the current directory, NUL included.
+    let cwd_len =
+        unsafe { bun_windows_sys::externs::GetCurrentDirectoryW(0, ptr::null_mut()) } as usize;
+    path.len() + cwd_len >= LONG_PATH_THRESHOLD
+}
+
+/// Writes the NUL-terminated `path` into `full`, resolved by
+/// `GetFullPathNameW` and `\\?\`-prefixed. Returns where in `full` it starts
+/// and its length.
+fn write_long_path(path: *const u16, full: &mut [u16]) -> Win32Result<(usize, usize)> {
+    // Room in front of the resolved path for `\\?\UNC\`.
+    const RESERVE: usize = 8;
+    let capacity = full.len() - RESERVE;
+    // SAFETY: the caller passes a NUL-terminated `path`; `full[RESERVE..]` is
+    // writable for `capacity` units.
+    let n = unsafe {
+        win32::GetFullPathNameW(
+            path,
+            capacity as u32,
+            full[RESERVE..].as_mut_ptr(),
+            ptr::null_mut(),
+        )
+    } as usize;
+    if n == 0 {
+        return Err(Win32Error::get());
+    }
+    if n >= capacity {
+        return Err(Win32Error::FILENAME_EXCED_RANGE);
+    }
+    let resolved = &full[RESERVE..RESERVE + n];
+    Ok(if is_device_path(resolved) {
+        // A device name resolved to `\\.\NAME`.
+        (RESERVE, n)
+    } else if n >= 2 && is_slash(resolved[0]) && is_slash(resolved[1]) {
+        // `\\server\share\…` → `\\?\UNC\server\share\…`
+        let start = RESERVE + 1 - 7;
+        for (dst, src) in full[start..start + 7].iter_mut().zip(b"\\\\?\\UNC") {
+            *dst = u16::from(*src);
+        }
+        (start, n - 1 + 7)
+    } else {
+        let start = RESERVE - 4;
+        full[start..RESERVE].copy_from_slice(&super::LONG_PATH_PREFIX);
+        (start, n + 4)
+    })
+}
+
+/// For a wide path that goes to a Win32 call without a [`WPath`]: puts the
+/// NUL-terminated `buf[..len]` into the form Win32 takes past `MAX_PATH` when
+/// it needs that, and returns its length.
+pub fn lengthen_path_in_place(buf: &mut [u16], len: usize) -> Win32Result<usize> {
+    if !exceeds_max_path(&buf[..len]) {
+        return Ok(len);
+    }
+    let mut full = bun_paths::w_path_buffer_pool::get();
+    let (start, len) = write_long_path(buf.as_ptr(), &mut full[..])?;
+    if len >= buf.len() {
+        return Err(Win32Error::FILENAME_EXCED_RANGE);
+    }
+    buf[..len].copy_from_slice(&full[start..start + len]);
+    buf[len] = 0;
+    Ok(len)
+}
+
 /// A NUL-terminated UTF-16 path for a Win32 call.
 ///
 /// Short paths are passed through as given, so Win32 resolves relative paths,
@@ -223,65 +309,11 @@ impl WPath {
             buf[1] = b'\\' as u16;
         }
 
-        let is_device_path = len >= 4
-            && buf[0] == b'\\' as u16
-            && buf[1] == b'\\' as u16
-            && (buf[2] == b'?' as u16 || buf[2] == b'.' as u16)
-            && buf[3] == b'\\' as u16;
-        // A relative path counts with the directory Win32 resolves it against.
-        let is_absolute = len >= 3 && buf[1] == b':' as u16 && is_slash(buf[2])
-            || len >= 2 && is_slash(buf[0]) && is_slash(buf[1]);
-        let resolved_len = if is_absolute || is_device_path {
-            len
-        } else {
-            // SAFETY: a zero-length query writes nothing and returns the
-            // length of the current directory, NUL included.
-            len + unsafe { bun_windows_sys::externs::GetCurrentDirectoryW(0, ptr::null_mut()) }
-                as usize
-        };
-        if resolved_len < LONG_PATH_THRESHOLD || is_device_path {
+        if !exceeds_max_path(&buf[..len]) {
             return Ok(WPath { buf, start: 0, len });
         }
-
-        // Room in front of the resolved path for `\\?\UNC\`.
-        const RESERVE: usize = 8;
         let mut full = bun_paths::w_path_buffer_pool::get();
-        let capacity = full.len() - RESERVE;
-        // SAFETY: `buf` is NUL-terminated; `full[RESERVE..]` is writable for
-        // `capacity` units.
-        let n = unsafe {
-            win32::GetFullPathNameW(
-                buf.as_ptr(),
-                capacity as u32,
-                full[RESERVE..].as_mut_ptr(),
-                ptr::null_mut(),
-            )
-        } as usize;
-        if n == 0 {
-            return Err(Win32Error::get());
-        }
-        if n >= capacity {
-            return Err(Win32Error::FILENAME_EXCED_RANGE);
-        }
-        let resolved = &full[RESERVE..RESERVE + n];
-        let (start, len) = if is_slash(resolved[0])
-            && is_slash(resolved[1])
-            && (resolved[2] == b'?' as u16 || resolved[2] == b'.' as u16)
-        {
-            // A device name resolved to `\\.\NAME`.
-            (RESERVE, n)
-        } else if is_slash(resolved[0]) && is_slash(resolved[1]) {
-            // `\\server\share\…` → `\\?\UNC\server\share\…`
-            let start = RESERVE + 1 - 7;
-            for (dst, src) in full[start..start + 7].iter_mut().zip(b"\\\\?\\UNC") {
-                *dst = u16::from(*src);
-            }
-            (start, n - 1 + 7)
-        } else {
-            let start = RESERVE - 4;
-            full[start..RESERVE].copy_from_slice(&super::LONG_PATH_PREFIX);
-            (start, n + 4)
-        };
+        let (start, len) = write_long_path(buf.as_ptr(), &mut full[..])?;
         Ok(WPath {
             buf: full,
             start,
@@ -558,7 +590,9 @@ fn fstat_handle(handle: HANDLE) -> Win32Result<Stat> {
         }
         // A character device that is not a console (NUL, COM1) is statted
         // like a disk file; `stat_handle` special-cases NUL.
-        super::FILE_TYPE_CHAR | super::FILE_TYPE_DISK => stat_handle(handle, false),
+        super::FILE_TYPE_CHAR => stat_handle(handle, false),
+        // `GetFileType` has read the device type: it is not NUL's.
+        super::FILE_TYPE_DISK => stat_file_handle(handle, false),
         super::FILE_TYPE_PIPE => Ok(synthetic(S::IFIFO, win32::FILE_DEVICE_NAMED_PIPE)),
         _ => Err(Win32Error::INVALID_HANDLE),
     }
@@ -702,11 +736,16 @@ fn stat_handle(handle: HANDLE, do_lstat: bool) -> Win32Result<Stat> {
     if device_info.DeviceType == win32::FILE_DEVICE_NULL {
         return Ok(null_device_stat());
     }
+    stat_file_handle(handle, do_lstat)
+}
 
+/// [`stat_handle`] for a handle that is known not to be the null device's.
+fn stat_file_handle(handle: HANDLE, do_lstat: bool) -> Win32Result<Stat> {
+    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     let mut file_info: win32::FILE_ALL_INFORMATION = bun_core::ffi::zeroed();
     // The file name does not fit the fixed-size struct, so the expected
     // status is the STATUS_BUFFER_OVERFLOW warning, which NT_ERROR excludes.
-    // SAFETY: as above.
+    // SAFETY: `handle` is live; the out-buffers are writable for their size.
     let status = unsafe {
         win32::ntdll::NtQueryInformationFile(
             handle,
@@ -745,7 +784,7 @@ fn stat_handle(handle: HANDLE, do_lstat: bool) -> Win32Result<Stat> {
             FileAttributes: attributes,
             ReparseTag: 0,
             NumberOfLinks: file_info.StandardInformation.NumberOfLinks,
-            DeviceType: device_info.DeviceType,
+            DeviceType: 0,
             DeviceCharacteristics: 0,
             Reserved: 0,
             VolumeSerialNumber: i64::from(volume_serial),
@@ -759,7 +798,7 @@ fn stat_handle(handle: HANDLE, do_lstat: bool) -> Win32Result<Stat> {
 fn volume_serial_number(handle: HANDLE) -> Win32Result<u32> {
     let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     let mut volume_info: win32::FILE_FS_VOLUME_INFORMATION = bun_core::ffi::zeroed();
-    // The volume label does not fit the fixed-size struct; see `stat_handle`.
+    // The volume label does not fit the fixed-size struct; see `stat_file_handle`.
     // SAFETY: `handle` is live; the out-buffers are writable for their size.
     let status = unsafe {
         win32::ntdll::NtQueryVolumeInformationFile(
@@ -944,21 +983,6 @@ fn stat_from_directory_listing(
 
         let volume_serial = volume_serial_number(dir_handle.0)?;
 
-        let mut device_info: win32::FILE_FS_DEVICE_INFORMATION = bun_core::ffi::zeroed();
-        // SAFETY: `dir_handle` is live; the out-buffers are writable.
-        let status = unsafe {
-            win32::ntdll::NtQueryVolumeInformationFile(
-                dir_handle.0,
-                &mut io,
-                ptr::from_mut(&mut device_info).cast(),
-                core::mem::size_of::<win32::FILE_FS_DEVICE_INFORMATION>() as u32,
-                win32::FS_INFORMATION_CLASS::FileFsDeviceInformation,
-            )
-        };
-        if win32::NT_ERROR(status) {
-            return Err(nt_error(status));
-        }
-
         Ok(stat_from_info(
             &win32::FILE_STAT_BASIC_INFORMATION {
                 FileId: dir_info.FileId,
@@ -981,7 +1005,7 @@ fn stat_from_directory_listing(
                 ReparseTag: 0,
                 // Not part of a directory listing.
                 NumberOfLinks: 1,
-                DeviceType: device_info.DeviceType,
+                DeviceType: 0,
                 DeviceCharacteristics: 0,
                 Reserved: 0,
                 VolumeSerialNumber: i64::from(volume_serial),
@@ -1202,12 +1226,22 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
     )
     .map_err(to_e)?;
 
-    let mut info: win32::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
-    // SAFETY: `handle` is live; `info` is writable.
-    if unsafe { win32::GetFileInformationByHandle(handle.0, &mut info) } == 0 {
-        return Err(Win32Error::get().to_e());
+    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut info: win32::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: `handle` is live; `info` is writable for its size.
+    let status = unsafe {
+        win32::ntdll::NtQueryInformationFile(
+            handle.0,
+            &mut io,
+            ptr::from_mut(&mut info).cast(),
+            core::mem::size_of::<win32::FILE_BASIC_INFORMATION>() as u32,
+            win32::FILE_INFORMATION_CLASS::FileBasicInformation,
+        )
+    };
+    if !win32::NT_SUCCESS(status) {
+        return Err(nt_error(status).to_e());
     }
-    let attributes = info.dwFileAttributes;
+    let attributes = info.FileAttributes;
     let is_directory = attributes & win32::FILE_ATTRIBUTE_DIRECTORY != 0;
 
     if is_rmdir && !is_directory {
@@ -1230,8 +1264,6 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
         }
     }
 
-    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-
     // POSIX delete: the name disappears at once even while other handles are
     // open, and a read-only file needs no attribute change.
     let mut disposition_ex = win32::FILE_DISPOSITION_INFORMATION_EX {
@@ -1253,8 +1285,8 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
         return Ok(());
     }
     let error = nt_error(status);
-    // The filesystem (FAT, exFAT, most network redirectors) or the OS
-    // (before Windows 10 1709) does not support POSIX delete.
+    // The errors libuv takes to mean that the file system or the OS has no
+    // POSIX delete.
     if !matches!(
         error,
         Win32Error::NOT_SUPPORTED | Win32Error::INVALID_PARAMETER | Win32Error::INVALID_FUNCTION
@@ -1865,16 +1897,17 @@ fn statfs_impl(path: &[u8]) -> Win32Result<StatFS> {
 // utimes
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `None` leaves the timestamp unchanged.
+/// `None` leaves the timestamp unchanged. A time outside what a FILETIME can
+/// hold is `ERROR_INVALID_PARAMETER`, the error `SetFileTime` has for one.
 fn time_like_to_filetime(
     time: TimeLike,
     now: &mut Option<win32::FILETIME>,
-) -> Option<win32::FILETIME> {
+) -> Win32Result<Option<win32::FILETIME>> {
     if time.nsec == crate::UTIME_OMIT {
-        return None;
+        return Ok(None);
     }
     if time.nsec == crate::UTIME_NOW {
-        return Some(*now.get_or_insert_with(|| {
+        return Ok(Some(*now.get_or_insert_with(|| {
             let mut ft = win32::FILETIME {
                 dwLowDateTime: 0,
                 dwHighDateTime: 0,
@@ -1882,24 +1915,28 @@ fn time_like_to_filetime(
             // SAFETY: `ft` is a valid out-pointer.
             unsafe { win32::GetSystemTimeAsFileTime(&mut ft) };
             ft
-        }));
+        })));
     }
+    // Negative values are not times to `SetFileTime`: -1 and -2 switch the
+    // handle's own timestamp updates off and on, the rest are rejected.
     let ticks = time
         .sec
-        .saturating_mul(TICKS_PER_SEC)
-        .saturating_add(time.nsec / 100)
-        .saturating_add(WIN_TO_UNIX_TICK_OFFSET) as u64;
-    Some(win32::FILETIME {
+        .checked_mul(TICKS_PER_SEC)
+        .and_then(|ticks| ticks.checked_add(time.nsec / 100))
+        .and_then(|ticks| ticks.checked_add(WIN_TO_UNIX_TICK_OFFSET))
+        .and_then(|ticks| u64::try_from(ticks).ok())
+        .ok_or(Win32Error::INVALID_PARAMETER)?;
+    Ok(Some(win32::FILETIME {
         dwLowDateTime: ticks as u32,
         dwHighDateTime: (ticks >> 32) as u32,
-    })
+    }))
 }
 
 /// Sets the access and modification times; the creation time is left alone.
 fn utime_handle(handle: HANDLE, atime: TimeLike, mtime: TimeLike) -> Win32Result<()> {
     let mut now = None;
-    let atime = time_like_to_filetime(atime, &mut now);
-    let mtime = time_like_to_filetime(mtime, &mut now);
+    let atime = time_like_to_filetime(atime, &mut now)?;
+    let mtime = time_like_to_filetime(mtime, &mut now)?;
     // SAFETY: `handle` is live; each pointer is null or a valid FILETIME.
     if unsafe {
         win32::SetFileTime(

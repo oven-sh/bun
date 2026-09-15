@@ -796,6 +796,74 @@ describe("pause() inside a 'data' handler, then a child inherits stdin", () => {
   test.concurrent.skipIf(!isWindows)("stdin is an overlapped pipe", () => run("overlapped"));
 });
 
+// stdin stays flowing in the parent. What arrives while its thread is inside a synchronous spawn belongs to
+// the child that inherited the pipe.
+describe("a synchronous spawn that inherits a flowing stdin gets the input that arrives while it runs", () => {
+  async function run(stdin: "pipe" | "overlapped") {
+    using dir = tempDir("stdin-spawn-sync-inherit", {
+      "child.js": `
+        const fs = require("fs");
+        fs.writeSync(1, "CHILD-READY\\n");
+        const buf = Buffer.alloc(64);
+        const n = fs.readSync(0, buf, 0, 64);
+        fs.writeSync(1, "CHILD-GOT:" + JSON.stringify(buf.toString("utf8", 0, n)) + "\\n");`,
+      "parent.js": `
+        const fs = require("fs");
+        process.stdin.on("data", d => {
+          fs.writeSync(1, "PARENT-GOT:" + JSON.stringify(d.toString()) + "\\n");
+        });
+        // From a later turn of the loop, so the read of the next chunk is already out.
+        process.stdin.once("data", () => setImmediate(() => {
+          const child = Bun.spawnSync({ cmd: [process.execPath, "child.js"], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+          fs.writeSync(1, "CHILD-EXITED:" + child.exitCode + "\\n");
+        }));
+        fs.writeSync(1, "PARENT-READY\\n");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      // @ts-expect-error "overlapped" is Windows-only and not in the types
+      stdin,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let output = "";
+    const decoder = new TextDecoder();
+    const reader = proc.stdout.getReader();
+    async function until(marker: string) {
+      while (!output.includes(marker)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("stdout ended before " + marker + ": " + JSON.stringify(output));
+        output += decoder.decode(value, { stream: true });
+      }
+    }
+    await until("PARENT-READY");
+    proc.stdin.write("first\n");
+    await proc.stdin.flush();
+    await until("CHILD-READY");
+    proc.stdin.write("second\n");
+    await proc.stdin.flush();
+    await until("CHILD-EXITED");
+    proc.stdin.write("third\n");
+    await proc.stdin.flush();
+    await until('PARENT-GOT:"third');
+    await proc.stdin.end();
+    expect(output.trim().split("\n")).toEqual([
+      "PARENT-READY",
+      'PARENT-GOT:"first\\n"',
+      "CHILD-READY",
+      'CHILD-GOT:"second\\n"',
+      "CHILD-EXITED:0",
+      'PARENT-GOT:"third\\n"',
+    ]);
+    expect(await proc.exited).toBe(0);
+  }
+
+  test.concurrent("stdin is a pipe", () => run("pipe"));
+  test.concurrent.skipIf(!isWindows)("stdin is an overlapped pipe", () => run("overlapped"));
+});
+
 // On Windows a chunk of a child's stdin pipe can be taken while the 'data' event for the one before it is
 // still running: it has to come out after resume(), in order.
 test.concurrent("pause() and resume() around chunks of a bulk transfer lose and reorder nothing", async () => {

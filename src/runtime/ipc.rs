@@ -900,6 +900,9 @@ pub struct SendQueue {
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
+    /// This side is done with the channel (disconnect(), a broken stream) and
+    /// the close itself comes later: what the peer sends meanwhile is dropped.
+    input_stopped: Cell<bool>,
 
     #[cfg(windows)]
     incoming_frames: JsCell<IncomingFrames>,
@@ -1025,6 +1028,7 @@ impl SendQueue {
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
+            input_stopped: Cell::new(false),
             #[cfg(windows)]
             incoming_frames: JsCell::new(IncomingFrames::default()),
         });
@@ -1051,7 +1055,31 @@ impl SendQueue {
         self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
     }
 
-    fn close_socket(&self, reason: CloseReason, from: CloseFrom) {
+    /// Whether what the peer sends is still decoded and delivered.
+    #[inline]
+    fn accepts_input(&self) -> bool {
+        self.socket_is_open() && !self.input_stopped.get()
+    }
+
+    /// Take nothing more from the peer. The socket stays open for a close that
+    /// comes later (the deferred task, the end of the write in flight).
+    fn stop_input(&self) {
+        self.input_stopped.set(true);
+        // What a read already handed to the kernel produces stays with the pipe.
+        #[cfg(windows)]
+        self.socket.with_mut(|socket| {
+            if let SocketUnion::Open(pipe) = socket {
+                pipe.read_stop();
+            }
+        });
+    }
+
+    fn close_socket(
+        &self,
+        // A pipe has no close code.
+        #[cfg_attr(windows, allow(unused_variables))] reason: CloseReason,
+        from: CloseFrom,
+    ) {
         log!(
             "SendQueue#closeSocket {}",
             match from {
@@ -1059,16 +1087,14 @@ impl SendQueue {
                 CloseFrom::Deinit => "deinit",
             }
         );
+        // Closing the pipe cancels a write the kernel still holds, and the
+        // peer would lose a message this side already reported as sent.
         #[cfg(windows)]
-        {
-            let _ = reason;
-            // Closing the pipe cancels a write the kernel still holds, and the
-            // peer would lose a message this side already reported as sent.
-            if self.socket_is_open() && self.write_in_progress.get() && from != CloseFrom::Deinit {
-                log!("SendQueue#closeSocket -> close after the write");
-                self.pending_close.set(true);
-                return;
-            }
+        if self.socket_is_open() && self.write_in_progress.get() && from != CloseFrom::Deinit {
+            log!("SendQueue#closeSocket -> close after the write");
+            self.pending_close.set(true);
+            self.stop_input();
+            return;
         }
         #[cfg(not(windows))]
         if let SocketUnion::Open(s) = *self.socket.get() {
@@ -1165,7 +1191,9 @@ impl SendQueue {
             return;
         }
         // Peer-gone and exit paths land here too: a postponed disconnect never outranks them.
-        self.close_after_flush.set(false);
+        if self.close_after_flush.replace(false) {
+            self.stop_input();
+        }
         if self.pending_close.get() {
             return; // close already requested
         }
@@ -1186,6 +1214,7 @@ impl SendQueue {
             self.close_after_flush.set(true);
             return;
         }
+        self.stop_input();
         self.close_socket_next_tick(true);
     }
 
@@ -1685,8 +1714,9 @@ impl SendQueue {
 
     /// Make `fd` this queue's channel and start reading from it. `created_here`
     /// says whose pipe end it is: the overlapped end spawn made for a child, or
-    /// the end this process inherited as `NODE_CHANNEL_FD`. The channel closes
-    /// `fd` either way. On `Err` the caller still owns `fd`.
+    /// the end this process inherited as `NODE_CHANNEL_FD`, which whoever
+    /// spawned it opened as it saw fit and handed to this process alone. The
+    /// channel closes `fd` either way. On `Err` the caller still owns `fd`.
     ///
     /// # Safety
     /// `this` must be the root pointer of a live `SendQueue`
@@ -1702,7 +1732,7 @@ impl SendQueue {
         let mut pipe = if created_here {
             Pipe::open_owned(loop_, fd, true)?
         } else {
-            Pipe::open_foreign(loop_, fd, true)?
+            Pipe::open_inherited_unshared(loop_, fd, true)?
         };
         // The loop is kept alive by `keep_alive`, not by the pending read.
         pipe.unref();
@@ -1759,7 +1789,7 @@ impl SendQueue {
         let _scope = global_this.bun_vm().enter_event_loop_scope();
         for event in events.drain(..) {
             match event {
-                FrameEvent::Data(range) if this.socket_is_open() => on_data2(this, &chunk[range]),
+                FrameEvent::Data(range) if this.accepts_input() => on_data2(this, &chunk[range]),
                 FrameEvent::Data(_) => {}
                 // As an fd received over a POSIX channel: the `NODE_HANDLE`
                 // message that follows in the same frame takes it.
@@ -1946,6 +1976,25 @@ enum IPCCommand {
     Nack,
 }
 
+/// A message nobody will be given: close the descriptor that came with it.
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn discard_ipc_message(
+    send_queue: &SendQueue,
+    message: &DecodedIPCMessage,
+    global_this: &JSGlobalObject,
+) -> JsResult<()> {
+    #[cfg(windows)]
+    if let DecodedIPCMessage::Data(data) | DecodedIPCMessage::Internal(data) = message
+        && data.is_object()
+    {
+        take_windows_socket_payload(send_queue, global_this, *data)?;
+    }
+    if let Some(fd) = send_queue.incoming_fd.take() {
+        let _ = fd.close_allowing_standard_io(None);
+    }
+    Ok(())
+}
+
 /// One decoded message's delivery. A JS exception raised while inspecting or delivering it is this message's
 /// failure; the on-data callers fold it (reported as uncaught) and go on to the next message.
 fn handle_ipc_message(
@@ -1953,6 +2002,10 @@ fn handle_ipc_message(
     message: DecodedIPCMessage,
     global_this: &JSGlobalObject,
 ) -> JsResult<()> {
+    // An earlier message of the same chunk ended the conversation.
+    if !send_queue.accepts_input() {
+        return discard_ipc_message(send_queue, &message, global_this);
+    }
     #[cfg(debug_assertions)]
     {
         // The `Formatter` runs its deinit in `Drop`.
@@ -1995,6 +2048,14 @@ fn handle_ipc_message(
                 }
             }
         }
+    }
+
+    // disconnect() ran and the close waits for a handle's ack: that ack is the
+    // only thing still wanted from the peer.
+    if send_queue.close_after_flush.get()
+        && !matches!(internal_command, Some(IPCCommand::Ack | IPCCommand::Nack))
+    {
+        return discard_ipc_message(send_queue, &message, global_this);
     }
 
     if let Some(icmd) = internal_command {
@@ -2305,6 +2366,9 @@ pub mod IPCHandlers {
         }
 
         pub fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
+            if !send_queue.accepts_input() {
+                return;
+            }
             let global_this = send_queue.get_global_this();
             // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
             // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.

@@ -179,6 +179,17 @@ impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
 
+    /// Record `err` as why the write failed. The error names the destination
+    /// the way the caller did: by path, or by the fd it passed.
+    fn fail(&mut self, err: &sys::Error) {
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+        let err = match self.pathlike() {
+            PathOrFileDescriptor::Path(path) => err.with_path(path.slice()),
+            PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd),
+        };
+        self.system_error = Some(err.to_system_error().into());
+    }
+
     pub fn on_ready(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
         #[cfg(not(windows))]
@@ -200,8 +211,7 @@ impl WriteFile {
         if !this.io_parking.fire() {
             return;
         }
-        this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-        this.system_error = Some(err.to_system_error().into());
+        this.fail(err);
         this.task = WorkPoolTask {
             node: Default::default(),
             callback: Self::do_write_loop_task,
@@ -236,9 +246,7 @@ impl WriteFile {
     /// See `ReadFile::fail_cancelled`.
     #[cfg(not(windows))]
     fn fail_cancelled(&mut self) {
-        let err = sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write);
-        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-        self.system_error = Some(err.to_system_error().into());
+        self.fail(&sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write));
         self.state
             .store(ClosingState::Closing as u8, Ordering::SeqCst);
     }
@@ -337,8 +345,7 @@ impl WriteFile {
                 #[cfg(not(windows))]
                 Err(err) if err.get_errno() == io::RETRY => return WriteStep::WouldBlock,
                 Err(err) => {
-                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                    self.system_error = Some(err.to_system_error().into());
+                    self.fail(&err);
                     return WriteStep::Failed;
                 }
             }

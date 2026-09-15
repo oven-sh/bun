@@ -562,6 +562,12 @@ impl PosixBufferedReader {
         self.limit = ReadLimit(len);
     }
 
+    /// Whether `buffer()` has to be left alone because a read is on its way
+    /// into it.
+    pub fn buffer_is_awaiting_read(&self) -> bool {
+        self.has_pending_read()
+    }
+
     // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
         // `is_watching()` (registered && !needs-rearm) rather than
@@ -1097,8 +1103,16 @@ impl WindowsBufferedReader {
         source.is_active()
     }
 
+    /// A read was asked for and its result has not been reported yet.
     pub fn has_pending_read(&self) -> bool {
         self.source.as_ref().is_some_and(Source::is_reading)
+    }
+
+    /// Whether `buffer()` has to be left alone because a read is on its way
+    /// into it. Never: a read completes into a buffer of its own, which
+    /// `on_source_read` moves or copies into `buffer()` on the loop thread.
+    pub fn buffer_is_awaiting_read(&self) -> bool {
+        false
     }
 
     /// Charges `bytes_read` against the `maxBuffer` budget, returning `true`
@@ -1207,7 +1221,9 @@ impl WindowsBufferedReader {
         }
         self.source = Some(source);
         self.buffer().clear();
-        self.flags.remove(PosixFlags::IS_DONE);
+        // What the source before this one ended with says nothing about this one.
+        self.flags
+            .remove(PosixFlags::IS_DONE | PosixFlags::RECEIVED_EOF);
         // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts:
         // a real failure to start reading a freshly-spawned stdio pipe cannot be
         // triggered from JS, so the test exercises the consumer's error path this way.
@@ -1389,11 +1405,10 @@ impl WindowsBufferedReader {
     fn close_impl<const CALL_DONE: bool>(&mut self) {
         // Dropping the source cancels what it has in flight and releases the
         // handle once that has been collected; nothing reports here again.
-        if self.source.take().is_some() {
-            self.flags.insert(PosixFlags::IS_PAUSED);
-            if CALL_DONE {
-                self.done();
-            }
+        // `IS_PAUSED` stays the owner's: a reader started again reads unless
+        // the owner paused it.
+        if self.source.take().is_some() && CALL_DONE {
+            self.done();
         }
     }
 

@@ -388,6 +388,19 @@ impl BuiltinIO {
         }
     }
 
+    /// [`enqueue`](Self::enqueue) for bytes the caller is done with.
+    pub(crate) fn enqueue_owned(
+        &mut self,
+        child: io_writer::ChildPtr,
+        buf: Vec<u8>,
+        _safeguard: OutputNeedsIOSafeGuard,
+    ) -> Yield {
+        match self {
+            BuiltinIO::Fd(fd) => fd.writer.enqueue_owned(child, fd.captured, buf),
+            _ => unreachable!("enqueue_owned() on non-fd output; caller must check needs_io()"),
+        }
+    }
+
     /// Format with the optional `"{kind}: "` prefix and enqueue on the
     /// underlying IOWriter.
     pub(crate) fn enqueue_fmt(
@@ -411,11 +424,6 @@ impl BuiltinInput {
             InKind::Fd(r) => BuiltinInput::Fd(Arc::clone(r)),
             InKind::Ignore => BuiltinInput::Ignore,
         }
-    }
-
-    #[inline]
-    pub(crate) fn needs_io(&self) -> bool {
-        matches!(self, BuiltinInput::Fd(_))
     }
 }
 
@@ -552,7 +560,6 @@ impl Builtin {
                 let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
-                let evtloop = interp.event_loop;
 
                 let mut pollable = false;
                 let mut is_socket = false;
@@ -606,11 +613,9 @@ impl Builtin {
                     }
                 };
 
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if redirect.stdin() {
-                    let r = IOReader::init(redirfd, evtloop);
-                    r.set_interp(interp_ptr);
-                    Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
+                    Self::of_mut(interp, cmd).stdin =
+                        BuiltinInput::Fd(IOReader::init(redirfd, interp));
                 }
 
                 if !redirect.stdout() && !redirect.stderr() {
@@ -631,9 +636,8 @@ impl Builtin {
                         is_socket,
                         ..Default::default()
                     },
-                    evtloop,
+                    interp,
                 );
-                redirect_writer.set_interp(interp_ptr);
 
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);
@@ -791,7 +795,7 @@ impl Builtin {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
             // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
             if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
+                return fd.writer.enqueue_owned(child, fd.captured, buf);
             }
             unreachable!()
         }
@@ -817,6 +821,23 @@ impl Builtin {
     pub(crate) fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
         // Output is written through immediately in `write_no_io`, so there
         // is nothing to flush here.
+        //
+        // A queued chunk calls back into this Cmd by `NodeId`, which is free
+        // for reuse after this.
+        #[cfg(debug_assertions)]
+        {
+            let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
+            let me = Self::of(interp, cmd);
+            for out in [&me.stdout, &me.stderr] {
+                if let BuiltinIO::Fd(fd) = out {
+                    debug_assert!(
+                        !fd.writer.has_live_chunks(child),
+                        "builtin {} finished with a chunk still queued",
+                        me.kind.as_str(),
+                    );
+                }
+            }
+        }
         Cmd::on_exec_done(interp, cmd, exit_code)
     }
 
@@ -1052,12 +1073,10 @@ impl Builtin {
     ) -> Yield {
         if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
-            // Clone buf so the &mut on
-            // `stderr` doesn't overlap a borrow into `err_buf`.
-            let owned = buf.to_vec();
+            // `buf` may borrow `err_buf`, next to the `stderr` borrowed here.
             return Self::of_mut(interp, cmd)
                 .stderr
-                .enqueue(child, &owned, safeguard);
+                .enqueue_owned(child, buf.to_vec(), safeguard);
         }
         let _ = Self::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Self::done(interp, cmd, exit_code)

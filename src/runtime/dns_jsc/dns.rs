@@ -958,7 +958,7 @@ pub mod get_addr_info_request {
                 // SAFETY: `a` was returned by the call above (non-null per the check above).
                 #[cfg(windows)]
                 unsafe {
-                    FreeAddrInfoW(a.cast())
+                    FreeAddrInfoW(a)
                 };
                 // SAFETY: as above.
                 #[cfg(not(windows))]
@@ -1007,8 +1007,7 @@ pub mod get_addr_info_request {
         const WSANO_RECOVERY: c_int = 11003;
         const WSA_NOT_ENOUGH_MEMORY: c_int = 8;
 
-        // SAFETY: no preconditions.
-        unsafe { bun_uws_sys::iocp::us_internal_winsock_ensure() };
+        bun_uws_sys::iocp::us_internal_winsock_ensure();
 
         let mut host_buf = bun_paths::w_path_buffer_pool::get();
         let mut service_buf = [0u16; 8];

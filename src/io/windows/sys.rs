@@ -23,6 +23,7 @@ pub(crate) const MORE_DATA: Win32Error = Win32Error(234);
 pub(crate) const PIPE_ACCESS_DUPLEX: DWORD = 0x0000_0003;
 pub(crate) const PIPE_UNLIMITED_INSTANCES: DWORD = 255;
 pub(crate) const PIPE_NOWAIT: DWORD = 0x0000_0001;
+pub(crate) const PIPE_READMODE_MESSAGE: DWORD = 0x0000_0002;
 pub(crate) const FILE_READ_ATTRIBUTES: DWORD = 0x0080;
 pub(crate) const FILE_WRITE_ATTRIBUTES: DWORD = 0x0100;
 pub(crate) const WT_EXECUTELONGFUNCTION: u32 = 0x0000_0010;

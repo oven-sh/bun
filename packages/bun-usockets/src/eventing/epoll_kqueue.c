@@ -776,7 +776,8 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     us_internal_loop_update_pending_ready_polls(loop, p, 0, old_events, new_events);
 }
 
-int us_internal_poll_start_accepting(struct us_poll_t *p, struct us_loop_t *loop) {
+int us_internal_poll_start_accepting(struct us_poll_t *p, struct us_loop_t *loop, int foreign) {
+    (void) foreign;
     return us_poll_start_rc(p, loop, LIBUS_SOCKET_READABLE);
 }
 

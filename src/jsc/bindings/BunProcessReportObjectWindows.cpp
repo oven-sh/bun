@@ -42,6 +42,24 @@ using namespace JSC;
 // External functions
 extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
 
+// Calls `fill(buffer, capacity)` with a growing buffer until the string fits. `fill` returns the
+// string's length without the terminator, 0 when it fails, and at least `capacity` when the
+// buffer is too small.
+template<typename Fill>
+static String stringFromWin32(const Fill& fill)
+{
+    Vector<WCHAR, MAX_PATH> buffer(MAX_PATH);
+    for (;;) {
+        DWORD capacity = static_cast<DWORD>(buffer.size());
+        DWORD length = fill(buffer.mutableSpan().data(), capacity);
+        if (!length)
+            return String();
+        if (length < capacity)
+            return String(std::span { reinterpret_cast<const char16_t*>(buffer.span().data()), static_cast<size_t>(length) });
+        buffer.grow(std::max<size_t>(length, static_cast<size_t>(capacity) * 2));
+    }
+}
+
 JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -73,13 +91,8 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
         // Working directory
         {
-            WCHAR cwd[MAX_PATH];
-            DWORD len = GetCurrentDirectoryW(MAX_PATH, cwd);
-            if (len > 0 && len < MAX_PATH) {
-                Bun::putDirectNamed(vm, header, "cwd"_s, jsString(vm, String({ reinterpret_cast<const char16_t*>(cwd), static_cast<size_t>(len) })));
-            } else {
-                Bun::putDirectNamed(vm, header, "cwd"_s, jsString(vm, String("."_s)));
-            }
+            String cwd = stringFromWin32([](WCHAR* buffer, DWORD capacity) { return GetCurrentDirectoryW(capacity, buffer); });
+            Bun::putDirectNamed(vm, header, "cwd"_s, jsString(vm, cwd.isNull() ? String("."_s) : cwd));
         }
 
         // Command line
@@ -375,10 +388,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
             DWORD bytes = std::min(needed, static_cast<DWORD>(sizeof(modules)));
             int count = static_cast<int>(bytes / sizeof(HMODULE));
             for (int i = 0; i < count; i++) {
-                WCHAR modName[MAX_PATH];
-                DWORD len = GetModuleFileNameExW(GetCurrentProcess(), modules[i], modName, static_cast<DWORD>(std::size(modName)));
-                if (len > 0) {
-                    sharedObjects->push(globalObject, jsString(vm, String({ reinterpret_cast<const char16_t*>(modName), static_cast<size_t>(len) })));
+                String name = stringFromWin32([&](WCHAR* buffer, DWORD capacity) { return GetModuleFileNameExW(GetCurrentProcess(), modules[i], buffer, capacity); });
+                if (!name.isNull()) {
+                    sharedObjects->push(globalObject, jsString(vm, name));
                     RETURN_IF_EXCEPTION(scope, {});
                 }
             }

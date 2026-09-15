@@ -131,10 +131,12 @@ static size_t utf8Length(const WCHAR* string, int length)
 }
 
 // Writes `length` UTF-16 code units as NUL-terminated UTF-8 and returns the
-// number of bytes written, terminator included.
+// number of bytes written, terminator included. `capacity` is at least 1.
 static size_t writeUTF8(const WCHAR* string, int length, char* out, size_t capacity)
 {
-    int written = length == 0 ? 0 : WideCharToMultiByte(CP_UTF8, 0, string, length, out, static_cast<int>(capacity - 1), nullptr, nullptr);
+    // Given a size of 0, WideCharToMultiByte writes nothing and returns the size needed.
+    int room = static_cast<int>(capacity - 1);
+    int written = length == 0 || room == 0 ? 0 : WideCharToMultiByte(CP_UTF8, 0, string, length, out, room, nullptr, nullptr);
     out[written] = '\0';
     return static_cast<size_t>(written) + 1;
 }
@@ -150,7 +152,7 @@ struct ProcessorPerformanceInformation {
     ULONG InterruptCount;
 };
 
-// Port of libuv's uv_cpu_info() (src/win/util.c).
+// Port of libuv's uv_cpu_info() (src/win/util.c), MIT.
 extern "C" int Bun__Os__cpuInfo(BunCpuInfo** cpuInfos, int* count)
 {
     *cpuInfos = nullptr;
@@ -195,7 +197,8 @@ extern "C" int Bun__Os__cpuInfo(BunCpuInfo** cpuInfos, int* count)
         if (error != ERROR_SUCCESS)
             goto fail;
 
-        DWORD speed;
+        // A value shorter than a DWORD leaves the rest of `speed` unwritten.
+        DWORD speed = 0;
         DWORD speedSize = sizeof(speed);
         error = RegQueryValueExW(processorKey, L"~MHz", nullptr, nullptr, reinterpret_cast<BYTE*>(&speed), &speedSize);
         if (error != ERROR_SUCCESS) {
@@ -242,7 +245,7 @@ static bool isReported(const IP_ADAPTER_ADDRESSES* adapter)
     return adapter->OperStatus == IfOperStatusUp && adapter->FirstUnicastAddress;
 }
 
-// Port of libuv's uv_interface_addresses() (src/win/util.c).
+// Port of libuv's uv_interface_addresses() (src/win/util.c), MIT.
 extern "C" int Bun__Os__interfaceAddresses(BunInterfaceAddress** addresses, int* count)
 {
     *addresses = nullptr;

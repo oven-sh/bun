@@ -4,9 +4,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use crate::ipc as IPC;
-#[cfg(not(windows))]
-use bun_core::StackCheck;
-use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
+use bun_core::{Output, StackCheck, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
@@ -302,15 +300,9 @@ fn spawn_maybe_sync(
     secondary_args_value: Option<JSValue>,
     bun_test_deadline: &mut Option<Timespec>,
 ) -> JsResult<JSValue> {
-    if is_sync {
-        // We skip this on Windows due to test failures.
-        #[cfg(not(windows))]
-        {
-            // Since the event loop is recursively called, we need to check if it's safe to recurse.
-            if !StackCheck::init().is_safe_to_recurse() {
-                return Err(global_this.throw_stack_overflow());
-            }
-        }
+    // Since the event loop is recursively called, we need to check if it's safe to recurse.
+    if is_sync && !StackCheck::init().is_safe_to_recurse() {
+        return Err(global_this.throw_stack_overflow());
     }
 
     // PERF: argv/env strings are allocated per-iteration; profile if hot.
@@ -1039,7 +1031,7 @@ fn spawn_maybe_sync(
     // - No auto killer (for tests)
     // - No IPC
     // - No inspector (since they might want to press pause or step)
-    let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (cfg!(unix) && is_sync)
+    let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = is_sync
         && abort_signal.is_none()
         && timeout.is_none()
         && max_buffer.is_none()
@@ -1140,7 +1132,7 @@ fn spawn_maybe_sync(
         extra_fds: {
             // Record which extra-stdio slots are 'socket-fd' so we can
             // downgrade them from OwnedFd to UnownedFd after all fallible
-            // init below succeeds. spawn_process_posix pushes OwnedFd for
+            // init below succeeds. spawn_process pushes OwnedFd for
             // SocketFd so every error path's finalize_streams still closes
             // the bun-created fd; the caller-owns-it contract only begins
             // once the Subprocess is returned and .stdio[i] is readable.
@@ -1510,40 +1502,40 @@ fn spawn_maybe_sync(
         }
     }
 
-    if let Some(ipc_data) = subprocess.ipc() {
+    // A channel that could not be opened is reported further down, once the
+    // wrapper and the exit watch exist: they are what releases a started child.
+    let ipc_open_err: Option<sys::Error> = subprocess.ipc().and_then(|ipc_data| {
         #[cfg(unix)]
-        {
-            if let Some(posix_ipc_info) = posix_ipc_info {
-                if let Some(ctx) = posix_ipc_info.ext::<*mut IPC::SendQueue>() {
-                    // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
-                    // it stays valid for the socket's lifetime.
-                    unsafe { *ctx = ipc_data.as_ctx_ptr() };
-                    ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
-                }
+        if let Some(posix_ipc_info) = posix_ipc_info {
+            if let Some(ctx) = posix_ipc_info.ext::<*mut IPC::SendQueue>() {
+                // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
+                // it stays valid for the socket's lifetime.
+                unsafe { *ctx = ipc_data.as_ctx_ptr() };
+                ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
             }
-            // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
-            subprocess.stdio_pipes.with_mut(|v| {
-                v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
-            });
         }
+        // SAFETY: `as_ctx_ptr` is the root pointer of the live SendQueue
+        // owned by `subprocess`; `ipc_fd` is the overlapped pipe end spawn
+        // created for the channel.
         #[cfg(windows)]
-        {
-            // SAFETY: `as_ctx_ptr` is the root pointer of the live SendQueue
-            // owned by `subprocess`; `ipc_fd` is the overlapped pipe end spawn
-            // created for the channel.
-            if let Err(err) = unsafe {
-                IPC::SendQueue::open_pipe(ipc_data.as_ctx_ptr(), loop_handle.loop_(), ipc_fd, true)
-            } {
-                let err_js = err.to_js(global_this);
-                subprocess.deref();
-                return Err(global_this.throw_value(err_js));
-            }
-            // The channel owns the pipe end now; neutralize the slot so finalizeStreams doesn't double-close.
-            subprocess.stdio_pipes.with_mut(|v| {
-                v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
-            });
+        if let Err(err) = unsafe {
+            IPC::SendQueue::open_pipe(ipc_data.as_ctx_ptr(), loop_handle.loop_(), ipc_fd, true)
+        } {
+            return Some(err);
         }
+        // The channel (uws, or the pipe on Windows) owns the fd now; neutralize
+        // the slot so finalizeStreams doesn't double-close.
+        subprocess.stdio_pipes.with_mut(|v| {
+            v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
+        });
         ipc_data.write_version_packet(global_this);
+        None
+    });
+    if ipc_open_err.is_some() {
+        // Nothing was opened: the pipe end is still the `stdio_pipes` slot's to close.
+        if let Some(queue) = subprocess.ipc_data.take() {
+            queue.detach();
+        }
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
@@ -1695,6 +1687,10 @@ fn spawn_maybe_sync(
     if let Some(err) = stdin_start_err {
         // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
         subprocess.on_close_io(Subprocess::StdioKind::Stdin);
+        let _ = subprocess.try_kill(subprocess.kill_signal);
+        return Err(global_this.throw_value(err.to_js(global_this)));
+    }
+    if let Some(err) = ipc_open_err {
         let _ = subprocess.try_kill(subprocess.kill_signal);
         return Err(global_this.throw_value(err.to_js(global_this)));
     }

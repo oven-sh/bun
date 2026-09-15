@@ -300,6 +300,8 @@ pub struct SpawnOptions {
     pub stdin: Stdio,
     pub stdout: Stdio,
     pub stderr: Stdio,
+    /// POSIX: an fd of this process the child keeps as is (the IPC channel a
+    /// parent gave this process, passed on).
     pub ipc: Option<Fd>,
     pub extra_fds: Box<[Stdio]>,
     pub cwd: Box<[u8]>,
@@ -311,8 +313,10 @@ pub struct SpawnOptions {
     #[cfg(windows)]
     pub windows: crate::windows::WindowsOptions,
     pub argv0: Option<*const c_char>,
+    /// Linux: when false, a `Buffer` stdout/stderr may be a memfd instead of a
+    /// pipe.
     pub stream: bool,
-    pub sync: bool,
+    /// Linux: the caller blocks in `wait4` for this child, so no pidfd is opened.
     pub can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool,
     /// Apple Extension: If this bit is set, rather
     /// than returning to the caller, posix_spawn(2)
@@ -365,7 +369,6 @@ impl Default for SpawnOptions {
             windows: Default::default(),
             argv0: None,
             stream: true,
-            sync: false,
             can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: false,
             use_execve_on_macos: false,
             no_sigpipe: true,
@@ -856,10 +859,8 @@ pub unsafe fn spawn_process_posix(
                 cleanup.to_close_at_end.push(fds[1]);
                 cleanup.to_close_on_error.push(fds[0]);
 
-                if !options.sync {
-                    if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
-                        return Ok(Err(e));
-                    }
+                if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
+                    return Ok(Err(e));
                 }
 
                 actions.dup2(fds[1], fileno)?;
@@ -919,7 +920,7 @@ pub unsafe fn spawn_process_posix(
                         Err(e) => return Ok(Err(e)),
                     };
 
-                if !options.sync && !is_ipc {
+                if !is_ipc {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
                         return Ok(Err(e));
                     }

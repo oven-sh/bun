@@ -38,10 +38,13 @@ pub struct FileSink {
 
     // TODO: these fields are duplicated on writer()
     // we should not duplicate these fields...
+    #[cfg(unix)]
     pub(crate) pollable: Cell<bool>,
+    #[cfg(unix)]
     pub(crate) nonblocking: Cell<bool>,
     pub(crate) force_sync: Cell<bool>,
 
+    #[cfg(unix)]
     pub(crate) is_socket: Cell<bool>,
     pub(crate) fd: Cell<Fd>,
 
@@ -88,19 +91,11 @@ pub mod testing_apis {
 pub use testing_apis as testing_ap_is;
 
 /// `bun_sys` does not yet export
-/// an isPollable helper, so re-derive it locally from `S_IFMT`. Windows always
-/// returns `false`.
+/// an isPollable helper, so re-derive it locally from `S_IFMT`.
+#[cfg(unix)]
 fn is_pollable(mode: sys::Mode) -> bool {
-    #[cfg(windows)]
-    {
-        let _ = mode;
-        false
-    }
-    #[cfg(unix)]
-    {
-        let fmt = mode & (libc::S_IFMT as sys::Mode);
-        fmt == (libc::S_IFIFO as sys::Mode) || fmt == (libc::S_IFSOCK as sys::Mode)
-    }
+    let fmt = mode & (libc::S_IFMT as sys::Mode);
+    fmt == (libc::S_IFIFO as sys::Mode) || fmt == (libc::S_IFSOCK as sys::Mode)
 }
 
 /// Streaming-writer vtable wiring: the
@@ -319,8 +314,6 @@ impl FileSink {
 
             (*this).written.set((*this).written.get() + amount);
 
-            // TODO: on windows done means ended (no pending data on the buffer) on unix we can still have pending data on the buffer
-            // we should unify the behaviors to simplify this
             let has_pending_data = (*this).writer.get().has_pending_data();
             // Only keep the event loop ref'd while there's a pending write in progress.
             // If there's no pending write, no need to keep the event loop ref'd.
@@ -554,6 +547,72 @@ impl FileSink {
         Self::init(fd, event_loop_)
     }
 
+    /// What the writer is started on: a HANDLE of its own for a path or an fd,
+    /// the fd itself for a standard handle.
+    #[cfg(windows)]
+    fn open_input(&self, options: &Options) -> sys::Result<Fd> {
+        match &options.input_path {
+            // Whatever a standard handle is, the writer's source leaves it
+            // open: a pipe or a console takes a duplicate, a file is not
+            // closed (`Fd::close` skips it). Given the handle itself, a pipe
+            // knows which standard stream it is and what it learned about it
+            // the first time (`Pipe::open_foreign`).
+            PathOrFileDescriptor::Fd(fd) if fd.stdio_tag().is_some() => Ok(*fd),
+            PathOrFileDescriptor::Fd(fd) => sys::dup(*fd),
+            // `sys::open` applies Win32's name rules (`NUL`, `CON`, a trailing
+            // dot or space), as every other way of opening a `Bun.file` does;
+            // `sys::openat` hands the name to NT as written.
+            PathOrFileDescriptor::Path(path) => {
+                let path = path.slice();
+                let mut buf = bun_paths::path_buffer_pool::get();
+                if path.len() >= buf.len() {
+                    return Err(
+                        sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(path)
+                    );
+                }
+                buf[..path.len()].copy_from_slice(path);
+                buf[path.len()] = 0;
+                sys::open(
+                    bun_core::ZStr::from_buf(&buf[..], path.len()),
+                    options.flags(),
+                    options.mode,
+                )
+            }
+        }
+    }
+
+    /// An fd of the writer's own for what `options.input_path` names, and
+    /// what kind of fd it is.
+    #[cfg(unix)]
+    fn open_input(&self, options: &Options) -> sys::Result<Fd> {
+        let io_path = match &options.input_path {
+            PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
+            PathOrFileDescriptor::Path(slice) => bun_io::PathOrFileDescriptor::Path(slice.slice()),
+        };
+        let mut force_sync = self.force_sync.get();
+        let mut pollable = self.pollable.get();
+        let mut is_socket = self.is_socket.get();
+        let mut nonblocking = self.nonblocking.get();
+        let result = bun_io::open_for_writing(
+            Fd::cwd(),
+            &io_path,
+            options.flags(),
+            options.mode,
+            &mut pollable,
+            &mut is_socket,
+            self.force_sync.get(),
+            &mut nonblocking,
+            &mut force_sync,
+            |force_sync: &mut bool| *force_sync = true,
+            is_pollable,
+        );
+        self.pollable.set(pollable);
+        self.is_socket.set(is_socket);
+        self.nonblocking.set(nonblocking);
+        self.force_sync.set(force_sync);
+        result
+    }
+
     pub(crate) fn setup(&self, options: &Options) -> sys::Result<()> {
         if self.pipe.get().has_stream() {
             // Already started.
@@ -573,71 +632,16 @@ impl FileSink {
             self.force_sync.set(true);
         }
 
-        // reshaped for borrowck — split into a local capture and apply after.
-        // R-2: out-params for `bun_io::open_for_writing` are local then `Cell::set`.
-        let mut force_sync_out = self.force_sync.get();
-        let mut pollable_out = self.pollable.get();
-        let mut is_socket_out = self.is_socket.get();
-        let mut nonblocking_out = self.nonblocking.get();
-        // `OpenForWritingInput` is impl'd for
-        // `bun_io::PathOrFileDescriptor`, not `webcore::PathOrFileDescriptor`;
-        // bridge by-value here. The borrowed slice is valid for the duration of
-        // `open_for_writing` (the call only needs it for `openat_a`).
-        let io_path = match &options.input_path {
-            PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
-            PathOrFileDescriptor::Path(slice) => bun_io::PathOrFileDescriptor::Path(slice.slice()),
-        };
-        let open = |pollable_out: &mut bool,
-                    is_socket_out: &mut bool,
-                    nonblocking_out: &mut bool,
-                    force_sync_out: &mut bool| {
-            bun_io::open_for_writing(
-                Fd::cwd(),
-                &io_path,
-                options.flags(),
-                options.mode,
-                pollable_out,
-                is_socket_out,
-                self.force_sync.get(),
-                nonblocking_out,
-                force_sync_out,
-                |_fs: &mut bool| {
-                    #[cfg(unix)]
-                    {
-                        *_fs = true;
-                    }
-                },
-                is_pollable,
-            )
-        };
-        let mut result = open(
-            &mut pollable_out,
-            &mut is_socket_out,
-            &mut nonblocking_out,
-            &mut force_sync_out,
-        );
-        if options.mkdirp {
-            if let (sys::Result::Err(err), bun_io::PathOrFileDescriptor::Path(path)) =
-                (&result, &io_path)
-            {
-                if err.get_errno() == sys::E::ENOENT {
-                    result = match webcore::blob::mkdirp_parent(path) {
-                        Ok(()) => open(
-                            &mut pollable_out,
-                            &mut is_socket_out,
-                            &mut nonblocking_out,
-                            &mut force_sync_out,
-                        ),
-                        Err(err) => Err(err),
-                    };
-                }
-            }
+        let mut result = self.open_input(options);
+        if options.mkdirp
+            && let (sys::Result::Err(err), PathOrFileDescriptor::Path(path)) =
+                (&result, &options.input_path)
+            && err.get_errno() == sys::E::ENOENT
+        {
+            result =
+                webcore::blob::mkdirp_parent(path.slice()).and_then(|()| self.open_input(options));
         }
-        self.pollable.set(pollable_out);
-        self.is_socket.set(is_socket_out);
-        self.nonblocking.set(nonblocking_out);
-        if force_sync_out {
-            self.force_sync.set(true);
+        if self.force_sync.get() {
             // SAFETY(JsCell): single-field write; does not call into JS.
             self.writer.with_mut(|w| w.force_sync = true);
         }
@@ -649,8 +653,14 @@ impl FileSink {
             sys::Result::Ok(fd) => fd,
         };
 
+        // On Windows "pollable" is an overlapped pipe end Bun created, which
+        // nothing opened here is.
+        #[cfg(windows)]
+        let pollable = false;
+        #[cfg(unix)]
+        let pollable = self.pollable.get();
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
-        match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
+        match self.writer.with_mut(|w| w.start(fd, pollable)) {
             sys::Result::Err(err) => {
                 fd.close();
                 return sys::Result::Err(err);
@@ -1446,9 +1456,12 @@ impl FileSink {
             started: Cell::new(false),
             must_be_kept_alive_until_eof: Cell::new(false),
             source_pending_pull: Cell::new(false),
+            #[cfg(unix)]
             pollable: Cell::new(false),
+            #[cfg(unix)]
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),
+            #[cfg(unix)]
             is_socket: Cell::new(false),
             fd: Cell::new(fd),
             auto_flusher: JsCell::new(AutoFlusher::default()),

@@ -877,47 +877,25 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
-/// Win32 resolves a relative path against the current directory and then
-/// applies `MAX_PATH`, which only the `\\?\` form lifts. For a relative `path`
-/// that long once resolved, writes it resolved, normalized and prefixed into
-/// `buf`, NUL-terminated, and returns where it starts and its length.
+/// `normal` as a wide path in `buf`, in the form a Win32 call takes it past
+/// `MAX_PATH` when it (or, for a relative path, it and the current directory)
+/// is that long.
 #[cfg(windows)]
-fn long_relative_path(path: &[u8], buf: &mut PathBuffer) -> Option<(usize, usize)> {
-    // `CreateDirectoryW`'s limit, the smallest of the `MAX_PATH`-derived ones.
-    const THRESHOLD: usize = 248;
-    // Rooted, UNC and device paths, and `C:` forms, are not resolved against the cwd alone.
-    if path.is_empty() || bun_paths::is_sep_any(path[0]) || (path.len() >= 2 && path[1] == b':') {
-        return None;
-    }
-    // SAFETY: a zero-length query writes nothing and returns the length of
-    // the current directory, NUL included.
-    let cwd_len =
-        unsafe { bun_sys::windows::kernel32::GetCurrentDirectoryW(0, core::ptr::null_mut()) }
-            as usize;
-    if path.len() + cwd_len < THRESHOLD || !strings::fits_in_wide_path_buffer(path) {
-        return None;
-    }
-    let mut cwd_buf = bun_paths::path_buffer_pool::get();
-    let cwd = bun_sys::getcwd_z(&mut cwd_buf).ok()?.as_bytes();
-    // Room in front of the joined path for `\\?\UNC\`.
-    const RESERVE: usize = 8;
-    let joined_len = bun_paths::resolve_path::join_abs_string_buf_checked::<
-        bun_paths::platform::Windows,
-    >(cwd, &mut buf[RESERVE..MAX_PATH_BYTES - 1], &[path])?
-    .len();
-    let is_unc = bun_paths::is_sep_any(buf[RESERVE]) && bun_paths::is_sep_any(buf[RESERVE + 1]);
-    let (start, len) = if is_unc {
-        // `\\server\share\…` → `\\?\UNC\server\share\…`
-        let start = RESERVE + 1 - 7;
-        buf[start..start + 7].copy_from_slice(b"\\\\?\\UNC");
-        (start, joined_len - 1 + 7)
-    } else {
-        let start = RESERVE - 4;
-        buf[start..RESERVE].copy_from_slice(&bun_sys::windows::LONG_PATH_PREFIX_U8);
-        (start, joined_len + 4)
+fn kernel32_path_past_max_path<'a>(
+    buf: &'a mut PathBuffer,
+    normal: &[u8],
+) -> Result<&'a OSPathSliceZ, NameTooLong> {
+    // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte alignment
+    // is runtime-asserted inside `bytes_as_slice_mut`.
+    let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+    let len = strings::to_kernel32_path(buf_u16, normal).len();
+    let len = match bun_sys::windows::fs::lengthen_path_in_place(buf_u16, len) {
+        Ok(len) => len,
+        Err(bun_sys::windows::Win32Error::FILENAME_EXCED_RANGE) => return Err(NameTooLong),
+        // `GetFullPathNameW` rejected the path; the call it goes to does too.
+        Err(_) => len,
     };
-    buf[start + len] = 0;
-    Some((start, len))
+    Ok(WStr::from_buf(buf_u16, len))
 }
 
 impl PathLikeExt for PathLike<'_> {
@@ -977,9 +955,6 @@ impl PathLikeExt for PathLike<'_> {
                     // at `buf[len]`.
                     return ZStr::from_buf(&buf[..], len);
                 }
-            } else if let Some((start, len)) = long_relative_path(sliced, buf) {
-                // SAFETY: `long_relative_path` wrote the NUL at `buf[start + len]`.
-                return ZStr::from_buf(&buf[start..], len);
             }
         }
 
@@ -1105,20 +1080,11 @@ impl PathLikeExt for PathLike<'_> {
                     return Err(NameTooLong);
                 }
                 // `resolve`'s borrow of `buf` ended at the line above (NLL).
-                // SAFETY: same alignment note as above.
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return Ok(strings::to_kernel32_path(buf_u16, normal));
-            }
-            if let Some((start, len)) = long_relative_path(s, &mut b) {
-                // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return Ok(strings::to_kernel32_path(buf_u16, &b[start..start + len]));
+                return kernel32_path_past_max_path(buf, normal);
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
-                // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return Ok(strings::to_kernel32_path(buf_u16, b"."));
+                return kernel32_path_past_max_path(buf, b".");
             }
             let normal = bun_paths::resolve_path::normalize_string_buf::<
                 true,
@@ -1128,9 +1094,7 @@ impl PathLikeExt for PathLike<'_> {
             if !strings::fits_in_wide_path_buffer(normal) {
                 return Err(NameTooLong);
             }
-            // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-            let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-            return Ok(strings::to_kernel32_path(buf_u16, normal));
+            return kernel32_path_past_max_path(buf, normal);
         }
 
         #[cfg(not(windows))]

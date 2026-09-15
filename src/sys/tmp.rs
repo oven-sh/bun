@@ -1,6 +1,6 @@
 use bun_core::ZStr;
 
-use crate::{ErrorCase, Fd, FdExt, Mode, O, Tag};
+use crate::{Fd, Mode, O};
 
 // To be used with files
 // not folders!
@@ -26,8 +26,7 @@ impl<'a> Tmpfile<'a> {
             tmpfilename,
             O::CREAT | O::EXCL | O::CLOEXEC | O::WRONLY,
             perm,
-        )?
-        .make_crt_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
+        )?;
 
         Ok(Tmpfile {
             destination_dir,

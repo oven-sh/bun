@@ -3862,7 +3862,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
             }
             bun_sys::Result::Err(err2) => {
                 this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
-                this.set_system_error(err.with_path(err_path).to_system_error());
+                this.set_system_error(err2.with_path(err_path).to_system_error());
                 this.set_opened_fd_if_present(Fd::INVALID);
                 return Retry::Fail;
             }

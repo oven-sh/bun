@@ -19,7 +19,7 @@ use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback,
-    PlatformEventLoop, ResolvedSource, VM, ZigException,
+    ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -176,7 +176,7 @@ pub struct VirtualMachine {
     /// both types are owned by `bun_runtime` (forward dep). Access goes through
     /// [`RuntimeHooks::timer_insert`] / [`RuntimeHooks::body_value_hive_ref`].
     pub runtime_state: *mut c_void,
-    pub event_loop_handle: Option<*mut PlatformEventLoop>,
+    pub event_loop_handle: Option<*mut uws::Loop>,
     /// Pending `unref` count drained by the event-loop thread. Atomic because
     /// `KeepAlive::unref_on_next_tick` increments it from OTHER threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
@@ -1216,17 +1216,16 @@ impl VirtualMachine {
         unsafe { &mut *self.uws_loop() }
     }
 
-    /// Safe `&mut PlatformEventLoop` accessor for `event_loop_handle` (the
-    /// uws loop). `None` only before `ensure_waker()` runs. Consolidates the open-coded raw deref of
+    /// Safe `&mut uws::Loop` accessor for `event_loop_handle`. `None` only before `ensure_waker()` runs. Consolidates the open-coded raw deref of
     /// `self.event_loop_handle.unwrap()` at the `EventLoop::tick*` /
     /// `update_counts` call sites into one SAFETY block.
     ///
     /// Same single-JS-thread soundness contract as [`Self::uws_loop_mut`] —
-    /// the `PlatformEventLoop` is a separate heap allocation (uws-owned),
+    /// the loop is a separate heap allocation (uws-owned),
     /// so the returned `&mut` cannot alias any field of `self`.
     #[inline(always)]
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn platform_loop_opt(&self) -> Option<&mut PlatformEventLoop> {
+    pub(crate) fn platform_loop_opt(&self) -> Option<&mut uws::Loop> {
         // SAFETY: when `Some`, `event_loop_handle` was set in `init()` /
         // `ensure_waker()` to the live per-VM uws loop and remains valid
         // for the VM lifetime. Single-JS-thread invariant per `unsafe impl

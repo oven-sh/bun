@@ -792,6 +792,104 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     });
   });
 
+  describe("a rejection names the file and the call that failed", () => {
+    // libuv's numbers on Windows, the OS's elsewhere.
+    const errnoOf = {
+      ENOENT: isWindows ? -4058 : -2,
+      ENOTDIR: isWindows ? -4052 : -20,
+      EISDIR: isWindows ? -4068 : -21,
+      ENOSPC: -28,
+    };
+    const descriptionOf = {
+      ENOENT: "no such file or directory",
+      ENOTDIR: "not a directory",
+      EISDIR: "illegal operation on a directory",
+      ENOSPC: "no space left on device",
+    };
+    const systemError = (code, syscall, path) => ({
+      name: "Error",
+      code,
+      errno: errnoOf[code],
+      syscall,
+      path,
+      dest: undefined,
+      fd: undefined,
+      message: `${code}: ${descriptionOf[code]}, ${syscall} '${path}'`,
+    });
+    const rejectionOf = promise =>
+      promise.then(
+        value => ({ resolved: value }),
+        e => ({
+          name: e.name,
+          code: e.code,
+          errno: e.errno,
+          syscall: e.syscall,
+          path: e.path,
+          dest: e.dest,
+          fd: e.fd,
+          message: e.message,
+        }),
+      );
+
+    describe.each([
+      ["a short string", () => "x"],
+      // More than POSIX writes before Bun.write() returns.
+      ["300 KiB of bytes", () => new Uint8Array(300 * 1024)],
+    ])("Bun.write(path, %s)", (_, data) => {
+      it("onto a directory", async () => {
+        using dir = tempDir("bun-write-error-shape", {});
+        const dest = String(dir);
+        expect(await rejectionOf(Bun.write(dest, data()))).toEqual(systemError("EISDIR", "open", dest));
+      });
+
+      it("into a missing directory with createPath: false", async () => {
+        using dir = tempDir("bun-write-error-shape", {});
+        const dest = join(String(dir), "missing", "f.txt");
+        expect(await rejectionOf(Bun.write(dest, data(), { createPath: false }))).toEqual(
+          systemError("ENOENT", "open", dest),
+        );
+        expect(fs.existsSync(join(String(dir), "missing"))).toBe(false);
+      });
+
+      it("into a directory that cannot be created because a file is in the way", async () => {
+        using dir = tempDir("bun-write-error-shape", { "file.txt": "file" });
+        const dest = join(String(dir), "file.txt", "sub", "f.txt");
+        // Windows finds out from mkdir: opening a path through a file is ENOENT there.
+        expect(await rejectionOf(Bun.write(dest, data()))).toEqual(
+          systemError("ENOTDIR", isWindows ? "mkdir" : "open", dest),
+        );
+        expect(fs.readFileSync(join(String(dir), "file.txt"), "utf8")).toBe("file");
+      });
+    });
+
+    it("Bun.file(missing).text()", async () => {
+      using dir = tempDir("bun-write-error-shape", {});
+      const missing = join(String(dir), "missing.txt");
+      expect(await rejectionOf(Bun.file(missing).text())).toEqual(systemError("ENOENT", "open", missing));
+    });
+
+    it("Bun.write(Bun.file(directory), Bun.file(source))", async () => {
+      using dir = tempDir("bun-write-error-shape", { "source.txt": "source", "dest": {} });
+      const dest = join(String(dir), "dest");
+      const copied = rejectionOf(Bun.write(Bun.file(dest), Bun.file(join(String(dir), "source.txt"))));
+      // CopyFileW refuses a directory with ERROR_ACCESS_DENIED, which is reported as ENOENT (#6336).
+      expect(await copied).toEqual(
+        isWindows && !IS_UV_FS_COPYFILE_DISABLED
+          ? systemError("ENOENT", "copyfile", dest)
+          : systemError("EISDIR", "open", dest),
+      );
+      expect(fs.readdirSync(dest)).toEqual([]);
+    });
+
+    // Opening /dev/full succeeds; every write to it fails.
+    it.skipIf(!fs.existsSync("/dev/full")).each([
+      ["a short string", () => "x"],
+      ["300 KiB of bytes", () => new Uint8Array(300 * 1024)],
+    ])("Bun.write(path, %s) when the write itself fails", async (_, data) => {
+      expect(await rejectionOf(Bun.write("/dev/full", data()))).toEqual(systemError("ENOSPC", "write", "/dev/full"));
+    });
+  });
+
   test("timed output should work", async () => {
     const producer_file = path.join(import.meta.dir, "timed-stderr-output.js");
 
@@ -821,7 +919,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       });
 
       expect(await exited).toBe(0);
-    }, 10000);
+      // A whole run of this file; a debug build takes longer than 10 s for it.
+    }, 60000);
   }
 
   it("BunFile.name survives multiple file.write() calls + GC", async () => {

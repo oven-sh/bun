@@ -29,10 +29,8 @@ use bun_spawn_sys::posix_spawn::posix_spawn;
 #[cfg(unix)]
 pub use posix_spawn::WaitPidResult;
 
-/// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
-/// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
-/// higher-tier callers (`bun_runtime::api::bun_spawn::stdio`, `Terminal`)
-/// keep their `bun_spawn::process::spawn_sys::*` import path.
+/// The fd / memfd helpers of `bun_sys` that spawning uses, under the path
+/// `bun_runtime::api::bun_spawn::stdio` and `Terminal` import them from.
 pub mod spawn_sys {
     // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
     // (`can_use_memfd` is always-false there and `set_close_on_exec` is a
@@ -101,11 +99,9 @@ fn call_exit_handler(
     h.on_process_exit(process, status, rusage);
 }
 
-// bun.ptr.ThreadSafeRefCount → intrusive (a raw `*mut Process` travels through
-// the event loop's poll/wait callbacks and the waiter thread). Per PORTING.md
-// §Pointers, keep the embedded count; the derive emits `ThreadSafeRefCounted` +
-// `AnyRefCounted`. Default `destructor` (`heap::take`) applies — `Drop` below
-// handles `poller.deinit()`.
+// The count is intrusive and atomic: a raw `*mut Process` travels through the
+// event loop's poll/wait callbacks and the waiter thread. The derive's default
+// destructor frees the box (`heap::take`), which runs `Drop` below.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct Process {
     pub pid: PidT,
@@ -270,40 +266,33 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
 
 // ─── spawn-result / exit-watch Process methods ───────────────────────────────
 impl Process {
-    #[cfg(unix)]
-    pub(crate) fn init_posix(posix: &SpawnResult, event_loop: EventLoopHandle) -> *mut Process {
+    /// Heap-allocates the `Process` for a spawned child with its initial ref.
+    pub(crate) fn init(spawned: &SpawnResult, event_loop: EventLoopHandle) -> *mut Process {
+        #[cfg(unix)]
         let status = 'brk: {
-            if posix.has_exited {
+            if spawned.has_exited {
                 let mut rusage = rusage_zeroed();
-                let waitpid_result = posix_spawn::wait4(posix.pid, 0, Some(&mut rusage));
-                break 'brk Status::from(posix.pid, &waitpid_result).unwrap_or(Status::Running);
+                let waitpid_result = posix_spawn::wait4(spawned.pid, 0, Some(&mut rusage));
+                break 'brk Status::from(spawned.pid, &waitpid_result).unwrap_or(Status::Running);
             }
             Status::Running
         };
-        // bun.new → heap::alloc (pointer crosses FFI / intrusive refcount)
+        #[cfg(windows)]
+        let status = Status::Running;
         bun_core::heap::into_raw(Box::new(Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            pid: posix.pid,
+            pid: spawned.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            pidfd: posix.pidfd.unwrap_or(0),
+            pidfd: spawned.pidfd.unwrap_or(0),
+            #[cfg(windows)]
+            process_handle: spawned.process_handle,
+            #[cfg(windows)]
+            exit_signal: 0,
+            #[cfg(unix)]
             js_poster: event_loop.js_poster(),
             event_loop,
             poller: Poller::Detached,
             status,
-            exit_handler: ProcessExitHandler::default(),
-        }))
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn init_windows(spawned: &SpawnResult, event_loop: EventLoopHandle) -> *mut Process {
-        bun_core::heap::into_raw(Box::new(Process {
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            pid: spawned.pid,
-            process_handle: spawned.process_handle,
-            exit_signal: 0,
-            event_loop,
-            poller: Poller::Detached,
-            status: Status::Running,
             exit_handler: ProcessExitHandler::default(),
         }))
     }
@@ -765,6 +754,8 @@ impl Process {
                 return Ok(());
             }
             match bun_spawn_sys::windows::kill(self.process_handle, c_int::from(signal)) {
+                // Signal 0 only probes: it ends nothing, so it is not how the process ended.
+                Ok(()) if signal == 0 => {}
                 Ok(()) => self.exit_signal = signal,
                 // if the process was already killed don't throw
                 Err(err) if err.get_errno() == bun_sys::E::ESRCH => {}
@@ -1631,8 +1622,7 @@ impl WaiterThread {
 
 /// Event-loop-aware extension on the raw [`SpawnResult`] from
 /// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no
-/// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
-/// trait method so callers keep the `.to_process(loop_, sync)` spelling.
+/// `Process`/`EventLoopHandle` dependency), so `to_process` is a trait method.
 pub trait SpawnResultExt: Sized {
     fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process>;
 
@@ -1644,12 +1634,8 @@ pub trait SpawnResultExt: Sized {
 
 impl SpawnResultExt for SpawnResult {
     fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process> {
-        #[cfg(unix)]
-        let process = Process::init_posix(&self, event_loop);
-        #[cfg(windows)]
-        let process = Process::init_windows(&self, event_loop);
-        // SAFETY: both heap-allocate the `Process` with its initial ref.
-        unsafe { RefPtr::from_raw(process) }
+        // SAFETY: `init` heap-allocates the `Process` with its initial ref.
+        unsafe { RefPtr::from_raw(Process::init(&self, event_loop)) }
     }
 }
 

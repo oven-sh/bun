@@ -32,13 +32,22 @@ losing anything, where cancelling an N-byte read can; and a pending N-byte read
 is charged against the writer's `WriteQuotaAvailable`, which has made
 Cygwin/MSYS writers believe the pipe is full.
 
+A request is answered in two steps: the thread reports that the pipe is
+readable, and takes the bytes only when the loop asks again. Input therefore
+leaves the pipe only after the loop thread has run with it waiting, as with a
+readiness poll. While the loop is blocked (a synchronous spawn whose child
+inherits the handle), it stays for the child. libuv does the same: its pool
+thread only ever does the zero-byte read.
+
 While the owner handles a chunk, the thread takes the next one only if it was
-already in the pipe when that chunk was read. Reading the next chunk during the
-owner's callback is where the throughput comes from (waiting ahead without
-taking gains nothing); in a bulk stream the pipe has more data after a read
-more than 99% of the time. What arrives later stays in the pipe until the loop
-asks, so `pause()` from a `data` handler leaves it for a child that inherits the
-handle, as on POSIX.
+already in the pipe when that chunk was read, and skips the first step for it.
+Reading the next chunk during the owner's callback is where the throughput of a
+bulk stream comes from (waiting ahead without taking gains nothing). What
+arrives later goes through both steps, so `pause()` from a `data` handler
+leaves it for a child that inherits the handle, as on POSIX.
+
+A chunk that was taken ahead and not yet asked for when the pipe is closed is
+dropped with it.
 
 ## Follow-ups
 

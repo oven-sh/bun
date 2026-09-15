@@ -291,6 +291,11 @@ pub struct Interpreter {
     pub(crate) root_shell: JsCell<ShellExecEnv>,
     pub(crate) root_io: JsCell<IO>,
 
+    /// Every live `IOWriter` made for this interpreter; each points back at it.
+    /// A Windows write in flight keeps its writer alive on its own, so `Drop`
+    /// orphans the ones still listed.
+    io_writers: JsCell<Vec<*const IOWriter>>,
+
     pub(crate) has_pending_activity: AtomicU32,
     pub(crate) keep_alive: JsCell<bun_io::KeepAlive>,
 
@@ -313,6 +318,16 @@ pub struct Interpreter {
     /// `bun run` CLI context for `$N` expansion on the mini event loop.
     /// Null when constructed from JS (no `ContextData` is reachable).
     pub(crate) command_ctx: *mut bun_options_types::context::ContextData,
+}
+
+impl Drop for Interpreter {
+    fn drop(&mut self) {
+        for writer in self.io_writers.take() {
+            // SAFETY: a listed writer is live: it takes itself off the list
+            // when it drops.
+            unsafe { (*writer).orphan() };
+        }
+    }
 }
 
 #[repr(transparent)]
@@ -523,18 +538,7 @@ impl Interpreter {
         // ── stdin ──────────────────────────────────────────────────────────
         log!("Duping stdin");
         let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
-            #[cfg(unix)]
-            {
-                bun_sys::open(
-                    bun_core::ZStr::from_static(b"/dev/null\0"),
-                    bun_sys::O::RDONLY,
-                    0,
-                )
-            }
-            #[cfg(windows)]
-            {
-                bun_sys::open(bun_core::ZStr::from_static(b"NUL\0"), bun_sys::O::RDONLY, 0)
-            }
+            open_null_device()
         } else {
             bun_sys::dup(Fd::stdin())
         };
@@ -545,8 +549,6 @@ impl Interpreter {
                 return Err(ShellErr::new_sys(&e));
             }
         };
-
-        let stdin_reader = IOReader::init(stdin_fd, event_loop);
 
         // ── assemble ───────────────────────────────────────────────────────
         let interpreter = Box::new(Interpreter {
@@ -566,7 +568,8 @@ impl Interpreter {
                 cwd_fd,
             }),
             root_io: JsCell::new(IO {
-                stdin: crate::shell::io::InKind::Fd(stdin_reader),
+                // Filled in below: the reader points back at the interpreter.
+                stdin: crate::shell::io::InKind::Ignore,
                 // By default stdout/stderr should be IOWriters on dup'd
                 // stdout/stderr, but if the user later calls `.setQuiet(true)`
                 // that work is wasted. So they start as `.pipe` and `run()`
@@ -574,6 +577,7 @@ impl Interpreter {
                 stdout: crate::shell::io::OutKind::Pipe,
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
+            io_writers: JsCell::new(Vec::new()),
             has_pending_activity: AtomicU32::new(0),
             keep_alive: JsCell::new(bun_io::KeepAlive::default()),
             async_commands_executing: Cell::new(0),
@@ -588,13 +592,10 @@ impl Interpreter {
             vm_args_utf8: JsCell::new(Vec::new()),
             command_ctx: ctx,
         });
-        // Wire the interpreter backref into root stdin so async poll
-        // callbacks can drive `Yield::run`.
-        let interp_ptr: *mut Interpreter = Interpreter::as_ctx_ptr(&interpreter);
-        if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.get().stdin {
-            // SAFETY: `interp_ptr` is the live `Interpreter` just constructed.
-            r.set_interp(interp_ptr);
-        }
+        let stdin_reader = IOReader::init(stdin_fd, &interpreter);
+        interpreter
+            .root_io
+            .with_mut(|io| io.stdin = crate::shell::io::InKind::Fd(stdin_reader));
 
         // ── optional cwd override ───────────────────────────────────────────
         if let Some(c) = cwd_ {
@@ -615,8 +616,9 @@ impl Interpreter {
     }
 
     /// Full teardown for the standalone (`MiniEventLoop`) path. Drops root IO
-    /// refcounts, frees the root shell env, and consumes the box.
-    fn deinit_from_exec(self) {
+    /// refcounts, frees the root shell env, and consumes the box. Through the
+    /// box: readers and writers point back at the interpreter where it is.
+    fn deinit_from_exec(self: Box<Self>) {
         log!("deinit interpreter");
         self.this_jsvalue.set(crate::jsc::JSValue::ZERO);
         // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
@@ -834,6 +836,20 @@ impl Interpreter {
     #[inline]
     pub(crate) fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
+    }
+
+    /// `IOWriter::init`: `writer` points back at this interpreter from here on.
+    pub(crate) fn register_io_writer(&self, writer: *const IOWriter) {
+        self.io_writers.with_mut(|writers| writers.push(writer));
+    }
+
+    /// `IOWriter::drop`.
+    pub(crate) fn forget_io_writer(&self, writer: *const IOWriter) {
+        self.io_writers.with_mut(|writers| {
+            if let Some(idx) = writers.iter().position(|w| core::ptr::eq(*w, writer)) {
+                writers.swap_remove(idx);
+            }
+        });
     }
 
     /// Read-modify-write the packed `Cell<InterpreterFlags>` through `&self`.
@@ -1185,7 +1201,6 @@ impl Interpreter {
             }
         };
 
-        let interp_ptr: *mut Interpreter = self.as_ctx_ptr();
         let stdout_writer = IOWriter::init(
             stdout_fd,
             crate::shell::io_writer::Flags {
@@ -1193,10 +1208,8 @@ impl Interpreter {
                 pollable: is_pollable(stdout_fd),
                 ..Default::default()
             },
-            event_loop,
+            self,
         );
-        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        stdout_writer.set_interp(interp_ptr);
         let stderr_writer = IOWriter::init(
             stderr_fd,
             crate::shell::io_writer::Flags {
@@ -1204,10 +1217,8 @@ impl Interpreter {
                 pollable: is_pollable(stderr_fd),
                 ..Default::default()
             },
-            event_loop,
+            self,
         );
-        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        stderr_writer.set_interp(interp_ptr);
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path

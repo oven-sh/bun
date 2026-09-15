@@ -2575,17 +2575,23 @@ impl RunCommand {
                 )
             } as usize;
             'try_bunx_file: {
-                if cwd_len == 0 {
+                let prefix = bun_core::w!("\\node_modules\\.bin\\");
+                let ext = bun_core::w!(".bunx");
+                // 0 is failure, and a directory that did not fit is reported as
+                // the length it needs. `target_name` is at most one UTF-16 unit
+                // per byte; the last unit is for the terminator.
+                if cwd_len == 0
+                    || root.len() + cwd_len + prefix.len() + target_name.len() + ext.len()
+                        >= buf.len()
+                {
                     break 'try_bunx_file;
                 }
                 let mut ptr = root.len() + cwd_len;
-                let prefix = bun_core::w!("\\node_modules\\.bin\\");
                 buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
                 ptr += prefix.len();
                 let encoded =
                     strings::convert_utf8_to_utf16_in_buffer(&mut buf[ptr..], target_name);
                 ptr += encoded.len();
-                let ext = bun_core::w!(".bunx");
                 buf[ptr..ptr + ext.len()].copy_from_slice(ext);
                 ptr += ext.len();
                 buf[ptr] = 0;

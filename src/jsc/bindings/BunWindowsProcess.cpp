@@ -19,6 +19,9 @@ extern "C" int32_t Bun__getParentProcessId()
 
 namespace Bun {
 
+// The priority and resource usage functions are ports of libuv's uv_os_getpriority(),
+// uv_os_setpriority() and uv_getrusage() (src/win/util.c), MIT.
+
 static int openProcess(int pid, DWORD access, HANDLE* handle)
 {
     *handle = pid == 0 ? GetCurrentProcess() : OpenProcess(access, FALSE, static_cast<DWORD>(pid));

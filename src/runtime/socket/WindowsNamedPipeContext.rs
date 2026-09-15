@@ -417,10 +417,11 @@ impl WindowsNamedPipeContext {
     /// `owned_ctx` is moved into `named_pipe.open`. Prefer it over `ssl_config` so a
     /// memoised `tls.createSecureContext` reaches this path with its trust store intact —
     /// on this branch `[buntls]` returns `{secureContext}` only, so `ssl_config`
-    /// alone would be empty.
+    /// alone would be empty. `created_here`: see [`WindowsNamedPipe::open`].
     pub(crate) fn open(
         global_this: &JSGlobalObject,
         fd: Fd,
+        created_here: bool,
         ssl_config: Option<SSLConfig>,
         owned_ctx: Option<boringssl::OwnedSslCtx>,
         socket: SocketType,
@@ -433,7 +434,11 @@ impl WindowsNamedPipeContext {
         let mut guard = Self::armed(this);
 
         // SAFETY: `this` is live and exclusively accessed here
-        unsafe { (*guard.get()).named_pipe.open(fd, ssl_config, owned_ctx) }?;
+        unsafe {
+            (*guard.get())
+                .named_pipe
+                .open(fd, created_here, ssl_config, owned_ctx)
+        }?;
 
         let this = guard.disarm();
         // SAFETY: `this` is live; returning interior pointer to heap-allocated field (BACKREF)

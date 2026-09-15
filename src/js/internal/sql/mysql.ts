@@ -120,13 +120,6 @@ export interface MySQLDotZig {
 }
 
 class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.MySQLConnection> {
-  protected handleConnected(err: any, connection?: $ZigGeneratedClasses.MySQLConnection) {
-    if (!err) {
-      this.connection = connection!;
-    }
-    super.handleConnected(err);
-  }
-
   protected async startConnection() {
     // store the handle right away (not only in handleConnected) so a forced
     // pool close can tear down a connection whose handshake is in flight

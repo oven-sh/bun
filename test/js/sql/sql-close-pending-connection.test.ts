@@ -18,7 +18,18 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
-import { listeningServer, neverAnsweringServer, pgAuthenticationOk, pgReadyForQuery } from "./wire-frames";
+import {
+  listeningServer,
+  mysqlAckSessionSetup,
+  mysqlErrPacket,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
+  mysqlReadPackets,
+  neverAnsweringServer,
+  pgAuthenticationOk,
+  pgErrorResponse,
+  pgReadyForQuery,
+} from "./wire-frames";
 
 const drivers = [
   ["postgres", "postgres://postgres@", "ERR_POSTGRES_CONNECTION_CLOSED"],
@@ -179,3 +190,82 @@ test("pool scans tolerate unassigned connection slots during pool start", async 
     server.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/42804
+//
+// The native handle queues onconnect as a microtask but fires onclose
+// synchronously. When the server completes the handshake and then terminates
+// the connection in the same read (pg_terminate_backend on a sibling
+// connection), handleClose runs first and closes the slot, then the stale
+// connect notification put the slot back in the `connected` state with no
+// native handle. A graceful close() then waited forever for an onclose that
+// could never fire, and a later query could be assigned to the dead slot.
+for (const [name, code, terminatedServer] of [
+  [
+    "postgres",
+    "ERR_POSTGRES_EXPECTED_REQUEST",
+    () =>
+      listeningServer(socket => {
+        socket.once("data", () => {
+          socket.end(
+            Buffer.concat([
+              pgAuthenticationOk(),
+              pgReadyForQuery(),
+              pgErrorResponse({ S: "FATAL", C: "57P01", M: "terminating connection due to administrator command" }),
+            ]),
+          );
+        });
+      }),
+  ],
+  [
+    "mysql",
+    "ERR_MYSQL_UNEXPECTED_PACKET",
+    () =>
+      listeningServer(socket => {
+        let buffered = Buffer.alloc(0);
+        let authenticated = false;
+        socket.write(mysqlHandshakeV10());
+        socket.on("error", () => {});
+        socket.on("data", chunk => {
+          buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+            if (!authenticated) {
+              authenticated = true;
+              socket.write(mysqlOkPacket(seq + 1));
+            } else if (mysqlAckSessionSetup({ write: () => {} }, payload)) {
+              // the OK that completes the handshake and the server-side
+              // termination arrive in one read
+              socket.end(Buffer.concat([mysqlOkPacket(1), mysqlErrPacket(2, 1927, "70100", "Connection was killed")]));
+            }
+          });
+        });
+      }),
+  ],
+] as const) {
+  test(`${name}: graceful close() resolves after the server terminated the connection as it connected`, async () => {
+    const { port, server } = await terminatedServer();
+    try {
+      const onconnect = mock();
+      const onclose = mock();
+      const sql = new SQL({
+        url: `${name}://u:pw@127.0.0.1:${port}/db`,
+        max: 1,
+        onconnect,
+        onclose,
+      });
+      const firstError = await sql`SELECT 1`.catch(e => e);
+      expect(firstError.code).toBe(code);
+      expect(onclose).toHaveBeenCalledTimes(1);
+      // the closed slot redials instead of being handed out with no native
+      // handle (which rejected with "connection must be a ...Connection")
+      const secondError = await sql`SELECT 2`.catch(e => e);
+      expect(secondError.code).toBe(code);
+      await sql.close();
+      // the connection was never usable, so it counts as a failed connect:
+      // onclose fires once per dial and onconnect does not fire
+      expect(onconnect).not.toHaveBeenCalled();
+      expect(onclose).toHaveBeenCalledTimes(2);
+    } finally {
+      server.close();
+    }
+  });
+}

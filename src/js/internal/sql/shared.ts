@@ -655,7 +655,16 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     }
   }
 
-  protected handleConnected(err: any) {
+  protected handleConnected(err: any, connection: ConnectionHandle | null = null) {
+    // The native handle queues onconnect as a microtask but fires onclose
+    // synchronously. When the server closes the connection in the same read
+    // that completed the handshake, handleClose already ran for this handle
+    // (or a retry replaced it). Dropping the stale notification keeps a
+    // closed slot from going back to `connected` with no native handle,
+    // which close() would then wait on forever.
+    if (!err && connection !== this.connection) {
+      return;
+    }
     if (err) {
       err = this.wrapError(err);
     }

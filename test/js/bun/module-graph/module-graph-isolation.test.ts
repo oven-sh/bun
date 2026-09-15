@@ -1560,6 +1560,55 @@ test("ModuleGraph isolation: a disposed graph hears nothing of what it had open"
   });
 });
 
+test("ModuleGraph isolation: a server a disposed graph was stopping says nothing: not stop()'s promise, not node:http's 'close'", async () => {
+  using made = await newGraph();
+  const state = newState("stopping");
+  await made.graph.run(() =>
+    made.app.call(async () => {
+      // A request in flight keeps stop() waiting.
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Promise<Response>(() => {}) });
+      fetch(`http://127.0.0.1:${server.port}/`).catch(() => {});
+      const nodeServer = http.createServer(() => {});
+      await new Promise<void>(resolve => nodeServer.listen(0, "127.0.0.1", resolve));
+      nodeServer.on("close", () => state.heard.push("node:http close"));
+      await until(() => server.pendingRequests === 1);
+      server.stop().then(
+        () => state.heard.push("stop() fulfilled"),
+        () => state.heard.push("stop() rejected"),
+      );
+      state.port = server.port;
+    }),
+  );
+  made.graph.dispose();
+  await until(async () => !(await accepts(state.port!)));
+  await hostTimerTurns();
+  expect(state.heard).toEqual([]);
+});
+
+test("ModuleGraph isolation: a Bun.SQL query of a disposed graph reports nothing, in flight or started by its leftover code", async () => {
+  // (The host's server never answers the startup message.)
+  const query = (state: State) => {
+    const sql = new Bun.SQL(`postgres://tag%3A${state.tag}@127.0.0.1:${hostTcp.port}/db?sslmode=disable`, {
+      max: 1,
+      connectionTimeout: 60,
+    });
+    sql`select 1`.then(
+      () => state.heard.push("fulfilled"),
+      error => state.heard.push("rejected: " + error?.code),
+    );
+  };
+  using made = await newGraph();
+  const [inFlight, startedAfter] = [newState("sql-in-flight"), newState("sql-started-after")];
+  made.graph.run(() => made.app.call(() => query(inFlight)));
+  await until(() => connected.has("tcp:" + inFlight.tag));
+  // Queued inside the graph: runs after the dispose() below, as what a graph had queued does.
+  made.graph.run(() => made.app.call(() => queueMicrotask(() => query(startedAfter))));
+  made.graph.dispose();
+  await until(() => !connected.has("tcp:" + inFlight.tag));
+  await hostTimerTurns();
+  expect({ inFlight: inFlight.heard, startedAfter: startedAfter.heard }).toEqual({ inFlight: [], startedAfter: [] });
+});
+
 test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts nothing and announces nothing", async () => {
   using made = await newGraph();
   const state = newState("late-spawn");

@@ -391,6 +391,9 @@ pub struct VirtualMachine {
         bun_collections::ArrayHashMap<crate::ContextId, NonNull<crate::ScriptExecutionContext>>,
     /// The off-thread jobs of graph contexts that have not come back, by context (JS thread).
     /// A job may be inside a syscall on a descriptor its context owns.
+    /// The context the innermost live [`ContextScope`] entered: whose script the native code that
+    /// is running continues.
+    pub(crate) innermost_scope: Cell<Option<crate::ContextId>>,
     pub(crate) graph_jobs:
         crate::JsCell<bun_collections::ArrayHashMap<crate::ContextId, GraphJobs>>,
     pub test_isolation_enabled: bool,
@@ -1144,6 +1147,18 @@ impl VirtualMachine {
             .is_some_and(|context| context.is_stopped())
     }
 
+    /// As [`reports_to_nobody`](Self::reports_to_nobody), for a call into script: the native
+    /// code that is running entered the context of a `Bun.ModuleGraph` that was disposed (or is
+    /// gone) — a completion, a handler run while the context is being stopped. `JSValue::call`
+    /// makes such a call a no-op, as the same boundary does for a VM that forbids script. Not
+    /// what a disposed graph's leftover script calls synchronously (a comparator, a handler of a
+    /// synchronous transform): that is still its script running, which no scope entered.
+    pub fn calls_nobody(&self) -> bool {
+        self.innermost_scope
+            .get()
+            .is_some_and(|context| !self.is_context_live(context))
+    }
+
     /// An off-thread job (a pool job, a libuv fs request) was handed off for `context`'s script.
     pub fn graph_job_started(&self, context: crate::ContextId) {
         if self.graph_context(context).is_some() {
@@ -1236,6 +1251,7 @@ impl VirtualMachine {
         let mut scope = ContextScope {
             vm: self,
             previous: JSValue::ZERO,
+            previous_scope: self.innermost_scope.replace(Some(context)),
             gone: false,
         };
         if context == self.root_context.id() || context == self.vm_context.id() {
@@ -3226,6 +3242,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).context_scopes).write(Cell::new(0));
             addr_of_mut!((*vm).context_ids).write(Default::default());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
+            addr_of_mut!((*vm).innermost_scope).write(Cell::new(None));
             addr_of_mut!((*vm).graph_jobs).write(crate::JsCell::new(Default::default()));
             (*vm).root_context.renew((*vm).context_ids.next());
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead(
@@ -7654,11 +7671,13 @@ pub struct ContextScope<'a> {
     /// The async context to restore; empty when entering changed nothing. (On the stack: kept
     /// alive by the conservative scan.)
     previous: JSValue,
+    previous_scope: Option<crate::ContextId>,
     gone: bool,
 }
 
 impl Drop for ContextScope<'_> {
     fn drop(&mut self) {
+        self.vm.innermost_scope.set(self.previous_scope);
         #[cfg(debug_assertions)]
         self.vm.context_scopes.set(self.vm.context_scopes.get() - 1);
         if self.gone {

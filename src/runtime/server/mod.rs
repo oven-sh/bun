@@ -1888,6 +1888,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         global,
                     ),
                     tracker: jsc::AsyncTaskTracker::init(vm_ref),
+                    context: self.context.get(),
                 },
                 vm_ref,
             );
@@ -4265,6 +4266,9 @@ pub struct ServerAllConnectionsClosedTask {
     pub(crate) global_object: *const jsc::JSGlobalObject,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) tracker: jsc::AsyncTaskTracker,
+    /// The context of the script that made the server: `stop()`'s promise (and node:http's
+    /// `'close'`, which waits on it) is settled for that script.
+    pub(crate) context: jsc::ContextId,
 }
 
 impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
@@ -4275,9 +4279,9 @@ impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
         // SAFETY: fn contract — the box `schedule` queued.
         drop(unsafe { bun_core::heap::take(this) });
     }
-    /// The server's own notification that it has closed.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+        // SAFETY: fn contract.
+        bun_event_loop::TaskContext::Of(unsafe { (*this).context })
     }
 }
 

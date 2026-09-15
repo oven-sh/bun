@@ -99,6 +99,38 @@ describe("fetch data urls", () => {
       await fetch(url);
     }).toThrow("failed to fetch the data URL");
   });
+  // https://fetch.spec.whatwg.org/#data-url-processor (step 11): the marker is
+  // `;`, zero or more spaces, then an ASCII case-insensitive "base64".
+  it.each(["BASE64", "Base64", " base64", "base64 ", "  bAsE64  "])(";base64 marker %j", async marker => {
+    const res = await fetch("data:text/plain;" + marker + ",aGk=");
+    const blob = await res.blob();
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(await blob.text()).toBe("hi");
+
+    const binary = await fetch("data:application/octet-stream;" + marker + ",AAEC");
+    const binaryBlob = await binary.blob();
+    expect(binaryBlob.type).toBe("application/octet-stream");
+    expect(new Uint8Array(await binaryBlob.arrayBuffer())).toEqual(new Uint8Array([0, 1, 2]));
+  });
+  it.each(["base64x", "charset=base64", "base 64"])("not a ;base64 marker %j", async marker => {
+    const res = await fetch("data:text/plain;" + marker + ",aGk=");
+    expect(await res.text()).toBe("aGk=");
+  });
+  // https://infra.spec.whatwg.org/#forgiving-base64-decode: ASCII whitespace is
+  // removed first and padding is optional; anything else outside the alphabet fails
+  it.each([
+    ["aGVs\nbG8g\r\nd29y bGQ=\t\n", "hello world"],
+    ["aGVsbG8gd29ybGQ", "hello world"],
+    [" a G k = ", "hi"],
+  ])("forgiving base64 body %j", async (body, expected) => {
+    const res = await fetch("data:text/plain;base64," + body);
+    expect(await res.text()).toBe(expected);
+  });
+  it.each(["aGk-", "aGk_", "aGk=!", "a", "aGk=="])("invalid base64 body %j", async body => {
+    expect(async () => {
+      await fetch("data:text/plain;base64," + body);
+    }).toThrow("failed to fetch the data URL");
+  });
   it("plain text", async () => {
     var url = "data:,Hello%2C%20World!";
     var res = await fetch(url);

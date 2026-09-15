@@ -4684,10 +4684,7 @@ pub(super) fn finalize_bundle(
     if dev.bundling_failures.is_empty() {
         if current_bundle!().had_reload_event {
             let clear_terminal = !bun_output::scope_is_visible!(DevServer)
-                && !dev
-                    .vm()
-                    .env_loader()
-                    .has_set_no_clear_terminal_on_reload(false);
+                && !dev.vm().env_loader().has_set_no_clear_terminal_on_reload();
             if clear_terminal {
                 Output::disable_buffering();
                 Output::reset_terminal_all();

@@ -147,16 +147,22 @@ impl GarbageCollectionController {
             return (false, Some(u64::from(at) - idle_ms));
         }
         let next = rungs.get(done + 1).copied().filter(|&at| at != 0);
+        // The module graph goes with the second rung (or the only one): after a pause of a few seconds the user is likely
+        // to come straight back, and those file-backed pages would just fault in again. The page-out is for the whole
+        // process and the ladder only watches this thread: while a Worker is alive the rung waits for a tick that finds
+        // none, or it would count as run and the graph would stay until the program has been busy and idle again.
+        #[cfg(target_os = "linux")]
+        let graph = vm
+            .standalone_module_graph
+            .filter(|_| done == 1 || (done == 0 && next.is_none()));
+        #[cfg(target_os = "linux")]
+        if graph.is_some() && !vm.child_workers.is_empty() {
+            return (false, None);
+        }
         self.idle_rungs_done.set(done as u8 + 1);
         vm.jsc_vm().collect_async_idle();
-        // The module graph goes with the second rung (or the only one): after a pause of a few seconds the user is likely
-        // to come straight back, and those file-backed pages would just fault in again. Not while a Worker is alive: the
-        // page-out is for the whole process and the ladder only watches this thread.
         #[cfg(target_os = "linux")]
-        if let Some(graph) = vm
-            .standalone_module_graph
-            .filter(|_| (done == 1 || (done == 0 && next.is_none())) && vm.child_workers.is_empty())
-        {
+        if let Some(graph) = graph {
             // SAFETY: VM-free — `graph` is the process-lifetime, immutable embedded module graph; the thread only
             // madvise()s its pages and touches no VM or JS state.
             let _ = std::thread::Builder::new()

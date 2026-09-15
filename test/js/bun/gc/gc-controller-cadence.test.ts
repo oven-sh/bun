@@ -299,7 +299,7 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
   // at its own mappings in /proc/self/smaps, because the kernel may reclaim clean pages by itself: only a mapping that
   // lost more than half of what it had once the embedded file was read counts. WATCH names the mapping ("text": the
   // executable's code, "graph": the one that holds the module graph); the program reports the first time that one has,
-  // or that it has not by DEADLINE_MS. WORKER=1 keeps a Worker alive meanwhile.
+  // or that it has not by DEADLINE_MS. WORKER=1 keeps a Worker alive meanwhile, for WORKER_MS if that is set.
   const app = `
     import embedded from "./embedded.bin" with { type: "file" };
     const { readFileSync } = require("fs");
@@ -311,7 +311,10 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
       const rss = perms => mine.filter(m => m.split(" ")[1] === perms).map(m => Number(/^Rss:\\s+(\\d+) kB/m.exec(m)[1]));
       return { text: rss("r-xp")[0], graph: rss("rw-p").at(-1) };
     };
-    if (process.env.WORKER) new Worker("data:text/javascript,setInterval(() => {}, 1000)");
+    if (process.env.WORKER) {
+      const worker = new Worker("data:text/javascript,setInterval(() => {}, 1000)");
+      if (process.env.WORKER_MS) setTimeout(() => worker.terminate(), Number(process.env.WORKER_MS));
+    }
     setTimeout(async () => { globalThis.read = (await Bun.file(embedded).bytes()).length; }, 300);
     let had, peak = 0;
     const watch = process.env.WATCH;
@@ -402,10 +405,13 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the module graph",
     expect(mappings).toEqual({ text: "resident", graph: "resident" });
   });
 
-  // The page-out is for the whole process and the ladder only watches the main thread.
-  test("not while a Worker is alive", async () => {
-    const { at, ...mappings } = await run("1", "graph", 2000, { WORKER: "1" });
-    expect(mappings).toEqual({ text: "resident", graph: "resident" });
+  // The page-out is for the whole process and the ladder only watches the main thread: the rung, due after a second,
+  // waits for the Worker to be gone. It is not counted as run meanwhile, which would leave the graph where it is until
+  // the program has been busy and idle again.
+  test("not while a Worker is alive, and once it is gone", async () => {
+    const { at, ...mappings } = await run("1", "graph", 4500, { WORKER: "1", WORKER_MS: "2000" });
+    expect(mappings).toEqual({ text: "resident", graph: "gone" });
+    expect(at).toBeGreaterThan(2000);
   });
 
   test("not with BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1", async () => {

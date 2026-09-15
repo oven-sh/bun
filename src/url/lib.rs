@@ -475,6 +475,27 @@ impl<'a> URL<'a> {
         buf.into_boxed_slice()
     }
 
+    /// `href` with `user:password@` cut out of its authority.
+    pub fn href_without_userinfo(&self) -> std::borrow::Cow<'a, [u8]> {
+        use std::borrow::Cow;
+        if self.username.is_empty() && self.password.is_empty() {
+            return Cow::Borrowed(self.href);
+        }
+        // The userinfo ends at the last `@` of the authority, as `parse` reads it.
+        let Some(authority) = strings::index_of(self.href, b"://").map(|i| i + 3) else {
+            return Cow::Borrowed(self.href);
+        };
+        let rest = &self.href[authority..];
+        let end = strings::index_of_any(rest, b"/?#").unwrap_or(rest.len());
+        let Some(at) = strings::last_index_of_char(&rest[..end], b'@') else {
+            return Cow::Borrowed(self.href);
+        };
+        let mut out = Vec::with_capacity(self.href.len() - at - 1);
+        out.extend_from_slice(&self.href[..authority]);
+        out.extend_from_slice(&rest[at + 1..]);
+        Cow::Owned(out)
+    }
+
     pub fn has_http_like_protocol(&self) -> bool {
         self.is_http() || self.is_https()
     }

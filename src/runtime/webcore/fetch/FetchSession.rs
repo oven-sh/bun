@@ -87,7 +87,16 @@ pub(crate) fn parse_proxy(
     proxy_arg: JSValue,
 ) -> JsResult<Option<ProxyOption>> {
     if proxy_arg.is_boolean() {
-        return Ok((!proxy_arg.as_boolean()).then_some(ProxyOption::Direct));
+        // `true` names no proxy; treating it as "inherit" would go direct
+        // wherever the environment has none.
+        if proxy_arg.as_boolean() {
+            return Err(global.throw_invalid_argument_type_value2(
+                "proxy",
+                "a string, a URL, an object with a \"url\", or false",
+                proxy_arg,
+            ));
+        }
+        return Ok(Some(ProxyOption::Direct));
     }
     // A URL instance has no `.url` own property; treat it as its href.
     let is_url_instance = bun_jsc::DOMURL::cast_(proxy_arg, global.vm()).is_some();
@@ -149,70 +158,30 @@ pub struct FetchSession {
     in_flight: Cell<u32>,
 }
 
-/// The `session` option of one `fetch()` call. The wrapper is an argument of
-/// that call, which keeps the session and its callbacks alive.
-#[derive(Clone, Copy)]
-pub(crate) struct SessionRef<'a> {
-    session: &'a FetchSession,
-    wrapper: JSValue,
-}
+/// One request's hold on its session, from the moment `fetch()` reads the
+/// `session` option: the option is a property of `init`, so nothing else keeps
+/// the wrapper alive while the rest of `init` is read. JS thread only.
+pub(crate) struct SessionHold(core::ptr::NonNull<FetchSession>);
 
-impl<'a> SessionRef<'a> {
-    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<SessionRef<'a>> {
+impl SessionHold {
+    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<SessionHold> {
         let Some(session) = FetchSession::from_js(value) else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "fetch: 'session' must be a Bun.FetchSession"
             )));
         };
-        // SAFETY: `from_js` returned the live `m_ctx` of the wrapper `value` roots.
+        // SAFETY: `from_js` returned the live `m_ctx` of the wrapper, which
+        // `value` keeps alive across this function.
         let session = unsafe { &*session };
         session.used.set(true);
-        Ok(SessionRef {
-            session,
-            wrapper: value,
-        })
-    }
-
-    /// Keep the session alive for a request that is about to go out.
-    pub(crate) fn hold(self, global: &JSGlobalObject) -> SessionHold {
-        let session = self.session;
         let held = session.in_flight.get();
         session.in_flight.set(held + 1);
         if held == 0 {
             session.this_value.with_mut(|this| this.upgrade(global));
         }
-        SessionHold(core::ptr::NonNull::from(session))
+        Ok(SessionHold(core::ptr::NonNull::from(session)))
     }
-    pub(crate) fn pool(self) -> http::PoolOptions {
-        self.session.pool
-    }
-    pub(crate) fn keep_alive(self) -> bool {
-        self.session.keep_alive
-    }
-    pub(crate) fn ssl_config(self) -> Option<http::ssl_config::SharedPtr> {
-        self.session.ssl_config.clone()
-    }
-    pub(crate) fn reject_unauthorized(self) -> Option<bool> {
-        self.session.reject_unauthorized
-    }
-    pub(crate) fn check_server_identity(self) -> Option<JSValue> {
-        js::check_server_identity_get_cached(self.wrapper)
-    }
-    pub(crate) fn proxy(self) -> Option<&'a ProxyOption> {
-        self.session.proxy.as_ref()
-    }
-    pub(crate) fn unix(self) -> &'a [u8] {
-        &self.session.unix
-    }
-    pub(crate) fn on_stats(self) -> Option<JSValue> {
-        js::on_stats_get_cached(self.wrapper)
-    }
-}
 
-/// One in-flight request's hold on its session. JS thread only.
-pub(crate) struct SessionHold(core::ptr::NonNull<FetchSession>);
-
-impl SessionHold {
     fn session(&self) -> &FetchSession {
         // SAFETY: this hold is part of `in_flight`, and the box is not freed
         // while that is not zero: the wrapper is strongly held, and a
@@ -221,10 +190,27 @@ impl SessionHold {
         unsafe { self.0.as_ref() }
     }
 
+    pub(crate) fn pool(&self) -> http::PoolOptions {
+        self.session().pool
+    }
+    pub(crate) fn keep_alive(&self) -> bool {
+        self.session().keep_alive
+    }
+    pub(crate) fn ssl_config(&self) -> Option<http::ssl_config::SharedPtr> {
+        self.session().ssl_config.clone()
+    }
+    pub(crate) fn reject_unauthorized(&self) -> Option<bool> {
+        self.session().reject_unauthorized
+    }
+    pub(crate) fn proxy(&self) -> Option<&ProxyOption> {
+        self.session().proxy.as_ref()
+    }
+    pub(crate) fn unix(&self) -> &[u8] {
+        &self.session().unix
+    }
     pub(crate) fn check_server_identity(&self) -> Option<JSValue> {
         js::check_server_identity_get_cached(self.session().this_value.try_get()?)
     }
-
     pub(crate) fn on_stats(&self) -> Option<JSValue> {
         js::on_stats_get_cached(self.session().this_value.try_get()?)
     }

@@ -364,38 +364,29 @@ impl Loader {
     }
 
     /// `ALL_PROXY` commonly names a SOCKS proxy, which the HTTP client cannot
-    /// speak; only an `http:` / `https:` (or scheme-less) value is used.
+    /// speak, and a bare `host:1080` there is usually one too: only a value
+    /// that says `http:` or `https:` is used.
     fn all_proxy(&self) -> Option<&[u8]> {
         let value = self
             .get_lower_then_upper(b"all_proxy", b"ALL_PROXY")
             .filter(|p| !Self::is_emptyish(p))?;
         let url = URL::parse(value);
-        (url.protocol.is_empty() || url.has_http_like_protocol()).then_some(value)
+        url.has_http_like_protocol().then_some(value)
     }
 
-    /// The `no_proxy` and `NO_PROXY` values. A host listed in either one
-    /// bypasses the proxy.
-    pub fn no_proxy_lists(&self) -> [&[u8]; 2] {
-        let read = |name: &[u8]| {
-            self.get(name)
-                .filter(|v| !Self::is_emptyish(v))
-                .unwrap_or(b"")
-        };
-        let lower = read(b"no_proxy");
-        let upper = read(b"NO_PROXY");
-        // Windows env names are case-insensitive: both reads return one value.
-        if lower == upper {
-            return [lower, b""];
-        }
-        [lower, upper]
+    /// `no_proxy`, else `NO_PROXY`: one list, the lowercase name first, as curl,
+    /// node and undici read it.
+    pub fn no_proxy_list(&self) -> &[u8] {
+        let read = |name: &[u8]| self.get(name).filter(|v| !Self::is_emptyish(v));
+        read(b"no_proxy")
+            .or_else(|| read(b"NO_PROXY"))
+            .unwrap_or(b"")
     }
 
     /// Returns true if `hostname` on `port` should bypass the proxy according
-    /// to the NO_PROXY / no_proxy environment variables.
+    /// to the no_proxy / NO_PROXY environment variable.
     pub fn is_no_proxy(&self, hostname: &[u8], port: u16) -> bool {
-        self.no_proxy_lists()
-            .iter()
-            .any(|list| crate::no_proxy::matches(list, hostname, port))
+        crate::no_proxy::matches(self.no_proxy_list(), hostname, port)
     }
 
     pub fn load_ccache_path(&mut self, fs: &bun_paths::fs::FileSystem) {

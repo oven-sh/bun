@@ -1808,6 +1808,21 @@ it("fetch() file:// rejects a host that is not this machine", async () => {
     (isWindows ? ": fetch() does not read UNC paths" : ` on ${process.platform}`);
   expect(await outcome(`file://any.host${pathname}`)).toBe(rejected);
   expect(await outcome(`file://127.0.0.1${pathname}`)).toBe(rejected);
+  // fileURLToPath's other rule: an encoded separator would become a real one.
+  const encoded =
+    "TypeError ERR_INVALID_FILE_URL_PATH: File URL path must not include encoded " +
+    (isWindows ? "\\ or / characters" : "/ characters");
+  expect(await outcome(`file://${pathname.replace(/\/([^/]*)$/, "%2F$1")}`)).toBe(encoded);
+  expect(await outcome(`file://${pathname.replace(/\/([^/]*)$/, "/sub/..%2f$1")}`)).toBe(encoded);
+});
+
+it("proxy: true is rejected, since it names no proxy", async () => {
+  expect(await fetch("http://example.invalid/", { proxy: true } as any).catch(e => e.code)).toBe(
+    "ERR_INVALID_ARG_TYPE",
+  );
+  expect(() => new Bun.FetchSession({ proxy: true } as any)).toThrow(
+    'The "proxy" argument must be a string, a URL, an object with a "url", or false. Received type boolean (true)',
+  );
 });
 
 it("URL userinfo is sent as Basic credentials unless an Authorization header is given", async () => {
@@ -1900,6 +1915,13 @@ it("connection failures reject with an errno-style code that the message starts 
     code: "ECONNREFUSED",
     message: "ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
   });
+
+  // A name with several addresses, none of which accepts: the path Windows reports differently.
+  const viaName = await fetch(`http://localhost:${dead.port}/`).catch(e => e);
+  expect(viaName.code).toBe("ECONNREFUSED");
+  // The URL an error names does not carry the URL's credentials.
+  const withUserinfo = await fetch(`http://user:secret@127.0.0.1:${dead.port}/x`).catch(e => e);
+  expect(withUserinfo.path).toBe(`http://127.0.0.1:${dead.port}/x`);
 
   const resetter = net.createServer(socket => socket.once("data", () => socket.destroy()));
   resetter.listen(0, "127.0.0.1");

@@ -2193,6 +2193,36 @@ describe.concurrent("a CONNECT tunnel", () => {
     expect(proxy.connectCount()).toBe(2);
   });
 
+  test("stats of a request that fails inside the tunnel count what it sent", async () => {
+    // Reads the whole request through the tunnel, then resets.
+    const origin = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket => {
+      socket.on("error", () => {});
+      let received = 0;
+      socket.on("data", chunk => {
+        received += chunk.length;
+        if (received > 5000) socket.destroy();
+      });
+    });
+    await once(origin.listen(0, "127.0.0.1"), "listening");
+    await using proxy = await createAdversarialProxy();
+    try {
+      let stats: Bun.FetchConnectionStats | undefined;
+      const error = await fetch(`https://localhost:${(origin.address() as net.AddressInfo).port}/`, {
+        proxy: `http://127.0.0.1:${proxy.port}`,
+        tls: { ca: tlsCert.cert },
+        keepalive: false,
+        method: "POST",
+        body: Buffer.alloc(5000, "x"),
+        onStats: s => (stats = s),
+      }).catch(e => e);
+      expect(error.code).toBe("ECONNRESET");
+      expect(stats).toMatchObject({ requestBodyBytesSent: 5000, responseStarted: false, nextHopProtocol: "http/1.1" });
+      expect(stats!.bytesSent).toBeGreaterThan(5000);
+    } finally {
+      origin.close();
+    }
+  });
+
   test("stats name the proxy as the peer and leave the CONNECT exchange out", async () => {
     using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
     await using proxy = await createAdversarialProxy();
@@ -2287,6 +2317,10 @@ describe("proxy resolution", () => {
       ["example.test:http", "example.test", 80, false],
       ["example.test:65536", "example.test", 80, false],
       ["example.test:-1", "example.test", 80, false],
+      // digits only
+      ["example.test:+80", "example.test", 80, false],
+      ["example.test:8_0", "example.test", 80, false],
+      ["example.test: 80", "example.test", 80, false],
       ["*.example.test:443", "api.example.test", 443, true],
       ["*.example.test:443", "api.example.test", 8443, false],
       ["example.test", "example.test", 8080, true],
@@ -2352,6 +2386,8 @@ describe("proxy resolution", () => {
       ["127.0.0.0/-1", "127.0.0.1", 80, false],
       ["127.0.0.0/", "127.0.0.1", 80, false],
       ["127.0.0.0/8/8", "127.0.0.1", 80, false],
+      ["127.0.0.0/+8", "127.0.0.1", 80, false],
+      ["127.0.0.0/0_8", "127.0.0.1", 80, false],
       ["/8", "127.0.0.1", 80, false],
       ["example.test/8", "example.test", 80, false],
       ["127.0.0.0/8", "example.test", 80, false],
@@ -2412,7 +2448,9 @@ describe("proxy resolution", () => {
       [{ ALL_PROXY: P, HTTP_PROXY: Q }, "http://example.test/", Q],
       [{ ALL_PROXY: P, HTTP_PROXY: Q }, "https://example.test/", P],
       [{ ALL_PROXY: P, HTTP_PROXY: "" }, "http://example.test/", P],
-      [{ ALL_PROXY: "proxy.test:3128" }, "http://example.test/", "proxy.test:3128"],
+      // a bare host:port in ALL_PROXY is as likely a SOCKS port
+      [{ ALL_PROXY: "proxy.test:3128" }, "http://example.test/", null],
+      [{ HTTP_PROXY: "proxy.test:3128" }, "http://example.test/", "proxy.test:3128"],
       // ...unless it names a proxy the client cannot speak to
       [{ ALL_PROXY: "socks5://proxy.test:1080" }, "http://example.test/", null],
       [{ ALL_PROXY: "socks5h://proxy.test:1080" }, "https://example.test/", null],
@@ -2426,13 +2464,13 @@ describe("proxy resolution", () => {
       [{ HTTP_PROXY: P, NO_PROXY: "*" }, "http://example.test/", null],
       [{ HTTP_PROXY: P, NO_PROXY: "" }, "http://example.test/", P],
       [{ HTTP_PROXY: P, NO_PROXY: '""' }, "http://example.test/", P],
-      // either casing of NO_PROXY exempts a host
+      // one list: no_proxy, and NO_PROXY only when that is unset or empty (curl, node, undici)
       ...(isWindows
         ? []
         : ([
             [{ HTTP_PROXY: P, no_proxy: "lower.test", NO_PROXY: "upper.test" }, "http://lower.test/", null],
-            [{ HTTP_PROXY: P, no_proxy: "lower.test", NO_PROXY: "upper.test" }, "http://upper.test/", null],
-            [{ HTTP_PROXY: P, no_proxy: "lower.test", NO_PROXY: "upper.test" }, "http://other.test/", P],
+            [{ HTTP_PROXY: P, no_proxy: "lower.test", NO_PROXY: "upper.test" }, "http://upper.test/", P],
+            [{ HTTP_PROXY: P, no_proxy: "lower.test", NO_PROXY: "*" }, "http://other.test/", P],
             [{ HTTP_PROXY: P, no_proxy: "", NO_PROXY: "upper.test" }, "http://upper.test/", null],
           ] as typeof cases)),
       // the port NO_PROXY compares is the one the URL implies
@@ -2611,15 +2649,21 @@ describe.concurrent("proxy environment", () => {
   });
 
   // On Windows the two names are one variable.
-  test.skipIf(isWindows)("both no_proxy and NO_PROXY are honoured", async () => {
+  test.skipIf(isWindows)("no_proxy is the list, and NO_PROXY only when it is unset or empty", async () => {
     const results = await run(
-      () => ({ no_proxy: "localhost", NO_PROXY: "127.0.0.1" }),
+      () => ({ no_proxy: "localhost", NO_PROXY: "*" }),
       `
       process.env.HTTP_PROXY = PROXY;
-      console.log(JSON.stringify([await via("localhost"), await via("127.0.0.1"), await via("other.test")]));
+      const out = [await via("localhost"), await via("127.0.0.1")];
+      process.env.no_proxy = "";
+      out.push(await via("127.0.0.1"));
+      delete process.env.no_proxy;
+      out.push(await via("127.0.0.1"));
+      console.log(JSON.stringify(out));
       `,
     );
-    expect(results).toEqual(["origin", "origin", "proxy"]);
+    // A stale NO_PROXY does not widen what no_proxy exempts.
+    expect(results).toEqual(["origin", "proxy", "origin", "origin"]);
   });
 
   test("ALL_PROXY is the fallback for an http(s) proxy, and a socks one is left alone", async () => {
@@ -3042,6 +3086,8 @@ test("a proxy's own reply to CONNECT never resolves as the https origin's respon
     'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="corp"\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
     'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
     'HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
+    // Not a tunnel, and not an upgrade anyone asked for.
+    "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
   ];
   const outcomes = [];
   for (const reply of replies) {
@@ -3054,27 +3100,66 @@ test("a proxy's own reply to CONNECT never resolves as the https origin's respon
       });
     });
     await once(proxy.listen(0, "127.0.0.1"), "listening");
+    let stats: Bun.FetchConnectionStats | undefined;
     try {
       outcomes.push({
         ...(await fetch("https://origin.invalid/secret", {
           proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
           keepalive: false,
+          onStats: s => (stats = s),
         }).then(
           async response => ({ resolved: response.status, body: await response.text() }),
           e => ({ code: e.code, status: e.status, authenticate: e.headers?.get("proxy-authenticate") }),
         )),
         connects,
+        // The CONNECT request is not the request the stats count.
+        sent: [stats?.bytesSent, stats?.requestBodyBytesSent, stats?.responseStarted],
       });
     } finally {
       proxy.close();
     }
   }
+  const nothingSent = [0, 0, false];
   expect(outcomes).toEqual([
-    { code: "ERR_PROXY_TUNNEL", status: 407, authenticate: 'Basic realm="corp"', connects: ["CONNECT"] },
+    {
+      code: "ERR_PROXY_TUNNEL",
+      status: 407,
+      authenticate: 'Basic realm="corp"',
+      connects: ["CONNECT"],
+      sent: nothingSent,
+    },
     // The JSON is not a TLS ServerHello: the handshake inside the "tunnel" fails.
-    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"] },
-    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"] },
+    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"], sent: nothingSent },
+    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"], sent: nothingSent },
+    { code: "ERR_PROXY_TUNNEL", status: 101, authenticate: null, connects: ["CONNECT"], sent: nothingSent },
   ]);
+});
+
+test("invalid TLS options are reported the same through a proxy as directly", async () => {
+  // Says the tunnel is up; the TLS options are what fails next.
+  const proxy = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => socket.write("HTTP/1.1 200 Connection Established\r\n\r\n"));
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  using dead = await deadPort();
+  const tls = { ca: "not a pem" };
+  const code = (url: string, init: BunFetchRequestInit) =>
+    fetch(url, init).then(
+      r => r.status,
+      e => e.code,
+    );
+  try {
+    expect([
+      await code("https://origin.invalid/", {
+        proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+        tls,
+      }),
+      await code(`https://127.0.0.1:${dead.port}/`, { tls }),
+    ]).toEqual(["FailedToOpenSocket", "FailedToOpenSocket"]);
+  } finally {
+    proxy.close();
+  }
 });
 
 // RFC 3986 §3.1: the URL scheme is case-insensitive. The explicit

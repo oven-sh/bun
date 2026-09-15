@@ -183,8 +183,54 @@ describe("Bun.FetchSession", () => {
       Bun.gc(true);
       await new Promise(resolve => setImmediate(resolve));
     }
-    await server.closed;
+    // The close crosses two threads after the collection; give it until a
+    // deadline, and fail with a message instead of hanging.
+    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline; ) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    expect(done).toBe(true);
   });
+
+  test.concurrent("a session the init object drops while fetch() reads the rest of it stays alive", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+    // `session` is a property of init, not an argument: a getter read after it
+    // can drop the last reference and collect.
+    for (let i = 0; i < 20; i++) {
+      const init = {
+        session: new Bun.FetchSession(),
+        get signal() {
+          delete (this as any).session;
+          Bun.gc(true);
+          return undefined;
+        },
+      };
+      expect(await (await fetch(server.url, init)).text()).toBe("ok");
+    }
+  });
+
+  test.concurrent(
+    "a request with its own tls does not reuse a connection the session's checkServerIdentity approved",
+    async () => {
+      const server = connectionCountingServer();
+      const port = await server.listen();
+      try {
+        let approved = 0;
+        using session = new Bun.FetchSession({
+          tls: { ca: tlsCert.cert, checkServerIdentity: () => void approved++ },
+        });
+        const url = `https://localhost:${port}/`;
+        expect(await (await fetch(url, { session })).text()).toBe("ok");
+        expect(await (await fetch(url, { session })).text()).toBe("ok");
+        expect([approved, server.connections]).toEqual([1, 1]);
+        // Its `tls` replaces the session's, callback included: the session's
+        // verdict does not cover this request.
+        expect(await (await fetch(url, { session, tls: { ca: tlsCert.cert } })).text()).toBe("ok");
+        expect([approved, server.connections]).toEqual([1, 2]);
+      } finally {
+        server.close();
+      }
+    },
+  );
 
   test.concurrent("concurrent requests of a session share its pool afterwards", async () => {
     const counting = connectionCountingServer();

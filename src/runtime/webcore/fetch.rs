@@ -668,9 +668,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // "session: Bun.FetchSession"
-    let session: Option<fetch_session::SessionRef<'_>> = 'extract_session: {
+    let session_hold: Option<fetch_session::SessionHold> = 'extract_session: {
         if let Some(bound) = bound_session {
-            break 'extract_session Some(fetch_session::SessionRef::from_js(global_this, bound)?);
+            break 'extract_session Some(fetch_session::SessionHold::from_js(global_this, bound)?);
         }
         let objects_to_try = [
             options_object.unwrap_or_default(),
@@ -682,7 +682,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     obj.get_fetch_option(global_this, jsc::FetchOptionName::Session)?
                 {
                     if !value.is_undefined_or_null() {
-                        break 'extract_session Some(fetch_session::SessionRef::from_js(
+                        break 'extract_session Some(fetch_session::SessionHold::from_js(
                             global_this,
                             value,
                         )?);
@@ -692,6 +692,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
         break 'extract_session None;
     };
+    let session = session_hold.as_ref();
 
     // "tls: TLSConfig". A request's `tls` replaces its session's as a whole.
     let mut request_has_tls = false;
@@ -1253,6 +1254,35 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 )
             };
             return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+        }
+        // As `fileURLToPath` does: an encoded separator would become a real
+        // one below, and walk out of whatever the caller checked `pathname` against.
+        if url_type == URLType::File {
+            let mut encoded_separator = false;
+            let mut rest = url.path;
+            while let Some(percent) = bun_core::strings::index_of_char(rest, b'%') {
+                rest = &rest[percent as usize + 1..];
+                encoded_separator = match rest {
+                    [b'2', b'f' | b'F', ..] => true,
+                    [b'5', b'c' | b'C', ..] => cfg!(windows),
+                    _ => false,
+                };
+                if encoded_separator {
+                    break;
+                }
+            }
+            if encoded_separator {
+                let message = if cfg!(windows) {
+                    "File URL path must not include encoded \\ or / characters"
+                } else {
+                    "File URL path must not include encoded / characters"
+                };
+                let err = global_this.to_type_error(
+                    jsc::ErrorCode::INVALID_FILE_URL_PATH,
+                    format_args!("{message}"),
+                );
+                return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+            }
         }
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut path_buf2 = bun_paths::path_buffer_pool::get();
@@ -1908,7 +1938,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         unix_socket_path: core::mem::take(&mut unix_socket_path),
         pool,
         bypass_pool,
-        fetch_session: session.map(|session| session.hold(global_this)),
+        fetch_session: session_hold,
         on_stats: match on_stats {
             Some(callback) => jsc::strong::Optional::create(callback, global_this),
             None => jsc::strong::Optional::empty(),

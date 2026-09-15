@@ -1691,6 +1691,22 @@ const constants = {
   HTTP_STATUS_NOT_EXTENDED: 510,
   HTTP_STATUS_NETWORK_AUTHENTICATION_REQUIRED: 511,
 };
+// Node defines these with NODE_DEFINE_HIDDEN_CONSTANT: read-only and not enumerable.
+Object.defineProperties(constants, {
+  NGHTTP2_HCAT_REQUEST: { value: 0 },
+  NGHTTP2_HCAT_RESPONSE: { value: 1 },
+  NGHTTP2_HCAT_PUSH_RESPONSE: { value: 2 },
+  NGHTTP2_HCAT_HEADERS: { value: 3 },
+  NGHTTP2_NV_FLAG_NONE: { value: 0 },
+  NGHTTP2_NV_FLAG_NO_INDEX: { value: 1 },
+  NGHTTP2_ERR_DEFERRED: { value: -508 },
+  NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE: { value: -509 },
+  NGHTTP2_ERR_INVALID_ARGUMENT: { value: -501 },
+  NGHTTP2_ERR_STREAM_CLOSED: { value: -510 },
+  NGHTTP2_ERR_NOMEM: { value: -901 },
+  STREAM_OPTION_EMPTY_PAYLOAD: { value: 1 },
+  STREAM_OPTION_GET_TRAILERS: { value: 2 },
+});
 const {
   NGHTTP2_SESSION_SERVER,
   NGHTTP2_SESSION_CLIENT,

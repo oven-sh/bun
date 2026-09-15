@@ -33,6 +33,10 @@ pub(crate) mod js_bindings {
                 "raiseIgnoringPanicHandler",
                 __jsc_host_js_raise_ignoring_panic_handler,
             ),
+            (
+                "boundedArrayResizeGrowReturnsErr",
+                __jsc_host_js_bounded_array_resize_grow_returns_err,
+            ),
         ];
         let obj = JSValue::create_empty_object(global, ENTRIES.len());
         for &(name, func) in ENTRIES {
@@ -261,5 +265,17 @@ pub(crate) mod js_bindings {
             JSValue::js_number_from_int64(bun_core::time::milli_timestamp().max(0)),
         );
         Ok(obj)
+    }
+
+    /// Regression probe for #30861: returns `true` iff `resize(grow)` is refused.
+    #[bun_jsc::host_fn]
+    fn js_bounded_array_resize_grow_returns_err(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let mut a = BoundedArray::<u8, 8>::default();
+        a.append(1).expect("capacity 8 > 1");
+        let refused = a.resize(4).is_err();
+        Ok(JSValue::js_boolean(refused))
     }
 }

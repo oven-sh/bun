@@ -313,8 +313,10 @@ When a parameter has the type `json` or `jsonb`, Bun serializes an object or an 
 await sql`INSERT INTO settings (data) VALUES (${{ theme: "dark" }})`;
 await sql`INSERT INTO settings (data) VALUES (${JSON.stringify({ theme: "dark" })})`;
 
-// To store a string, a number, or a boolean, pass it through JSON.stringify
+// To store a string, a number, a boolean, or null, pass it through JSON.stringify.
+// A bare null binds as SQL NULL, not as the JSON value null.
 await sql`INSERT INTO settings (data) VALUES (${JSON.stringify("dark")})`;
+await sql`INSERT INTO settings (data) VALUES (${JSON.stringify(null)})`;
 ```
 
 A string that is not JSON text, such as `${"dark"}`, fails with `invalid input syntax for type json`.

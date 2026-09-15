@@ -678,6 +678,36 @@ extern "C" void BunDebugger__willHotReload()
     });
 }
 
+// Appended by the debugger thread (one per --inspect / BUN_INSPECT ws+unix:// URL), walked by
+// whichever thread reloads the process, possibly the crash handler; entries are never freed.
+struct InspectorUnixSocket {
+    CString path;
+    InspectorUnixSocket* next;
+};
+static std::atomic<InspectorUnixSocket*> inspectorUnixSockets { nullptr };
+
+extern "C" void Bun__unlink(const char*, size_t);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_addInspectorUnixSocketPath, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String path = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    inspectorUnixSockets.store(new InspectorUnixSocket { path.utf8(), inspectorUnixSockets.load() });
+    return JSValue::encode(jsUndefined());
+}
+
+// exec closes the sockets but leaves their files, and the reloaded process binds the same paths.
+// A bind still in flight on the debugger thread is not waited for; that reload fails as before.
+extern "C" void BunDebugger__willReloadProcess()
+{
+    for (auto* socket = inspectorUnixSockets.load(); socket; socket = socket->next)
+        Bun__unlink(socket->path.data(), socket->path.length());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* debuggerGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);

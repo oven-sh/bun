@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows, randomPort, tempDir } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -455,6 +455,108 @@ describe("unix domain socket without websocket", () => {
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
     });
   }
+});
+
+// The debug adapter (packages/bun-debug-adapter-protocol) launches `bun --watch` with
+// BUN_INSPECT=ws+unix://<socket> and BUN_INSPECT_NOTIFY=unix://<socket> on POSIX. A watch
+// reload execs over the process with the same argv and environment, so every incarnation
+// has to bind the same socket path and connect to the notify socket again. On Windows the
+// adapter uses TCP and --watch restarts through a parent process instead of exec.
+describe.skipIf(isWindows).concurrent("ws+unix:// inspector under --watch", () => {
+  // stdout only closes because the process is gone, and `exited` rejects with the exit code
+  // and stderr when it is, which is the useful failure to report.
+  function stdoutWaiter(stream: ReadableStream<Uint8Array>, exited: Promise<never>) {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    return async (needle: string) => {
+      while (!output.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) return exited;
+        output += decoder.decode(value, { stream: true });
+      }
+    };
+  }
+
+  // `sockets` are the paths the inspector must be listening on; each case names them relative
+  // to the temporary directory.
+  test.each([
+    [
+      "BUN_INSPECT=ws+unix://",
+      (dir: string) => ({ args: [], env: { BUN_INSPECT: `ws+unix://${dir}/env.sock` }, sockets: ["env.sock"] }),
+    ],
+    [
+      "--inspect=ws+unix://",
+      (dir: string) => ({ args: [`--inspect=ws+unix://${dir}/flag.sock`], env: {}, sockets: ["flag.sock"] }),
+    ],
+    [
+      "BUN_INSPECT=ws+unix:// together with --inspect=ws+unix://",
+      (dir: string) => ({
+        args: [`--inspect=ws+unix://${dir}/flag.sock`],
+        env: { BUN_INSPECT: `ws+unix://${dir}/env.sock` },
+        sockets: ["env.sock", "flag.sock"],
+      }),
+    ],
+  ])("%s listens on the same socket again after a reload", async (_, configure) => {
+    const script = (generation: number) => `console.log("generation ${generation}");\nsetInterval(() => {}, 1000);\n`;
+    using dir = tempDir("inspect-watch", { "watchee.js": script(1) });
+    const notifySocket = join(String(dir), "notify.sock");
+    const { args, env, sockets } = configure(String(dir));
+
+    // One connection per incarnation: the first inspector to come up notifies and clears the
+    // variable for the second one.
+    const listening = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    let incarnation = 0;
+    using notify = Bun.listen({
+      unix: notifySocket,
+      socket: {
+        open(socket) {
+          listening[incarnation++]?.resolve();
+          socket.end();
+        },
+        data() {},
+      },
+    });
+
+    await using watchee = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", ...args, "watchee.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, ...env, BUN_INSPECT_NOTIFY: `unix://${notifySocket}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = watchee.stderr.text();
+    const exited = watchee.exited.then(async code => {
+      throw new Error(`bun --watch exited with code ${code}:\n${await stderr}`);
+    });
+    exited.catch(() => {});
+    const stdoutIncludes = stdoutWaiter(watchee.stdout, exited);
+    // The notify connection is made as soon as an incarnation's first inspector is listening,
+    // so with two inspectors the second one may still be binding: retry until each accepts.
+    async function inspectorStatus(socket: string): Promise<number> {
+      while (true) {
+        try {
+          return (await fetch("http://localhost/json/version", { unix: join(String(dir), socket) })).status;
+        } catch (error) {
+          if ((error as { code?: string }).code !== "FailedToOpenSocket") throw error;
+        }
+        await Promise.race([Bun.sleep(10), exited]);
+      }
+    }
+    const inspectorStatuses = () => Promise.all(sockets.map(inspectorStatus));
+
+    await Promise.race([Promise.all([stdoutIncludes("generation 1"), listening[0].promise]), exited]);
+    const beforeReload = await inspectorStatuses();
+
+    // The reload unlinks the old socket files before exec, so once the new incarnation has
+    // notified, anything answering on these paths was bound by the new incarnation.
+    await Bun.write(join(String(dir), "watchee.js"), script(2));
+    await Promise.race([Promise.all([stdoutIncludes("generation 2"), listening[1].promise]), exited]);
+    const afterReload = await inspectorStatuses();
+
+    const allListening = sockets.map(() => 200);
+    expect({ beforeReload, afterReload }).toEqual({ beforeReload: allListening, afterReload: allListening });
+  });
 });
 
 /// TODO: this test is flaky because the inspect may not send all messages before the process exit

@@ -4562,6 +4562,26 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     return JSValue::encode(slotValue);
 }
 
+// Own data property lookup that never runs user code: an accessor, a Proxy trap
+// or a module namespace export yields empty.
+extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnNonObservable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, BunString* propertyName)
+{
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
+    if (!object) return {};
+    WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::emptyString() : propertyName->toWTFString(BunString::ZeroCopy);
+    auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
+    auto property = JSC::PropertyName(identifier);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool hasSlot = object->methodTable()->getOwnPropertySlot(object, globalObject, property, slot);
+    scope.assertNoExceptionExceptTermination();
+    if (!hasSlot || !slot.isValue()) return {};
+    return JSValue::encode(slot.getValue(globalObject, property));
+}
+
 JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);

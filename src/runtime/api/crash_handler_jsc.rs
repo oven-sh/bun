@@ -26,6 +26,7 @@ pub(crate) mod js_bindings {
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
+            ("allocError", __jsc_host_js_alloc_error),
             ("abort", __jsc_host_js_abort),
             ("fastfail", __jsc_host_js_fastfail),
             ("trap", __jsc_host_js_trap),
@@ -206,6 +207,21 @@ pub(crate) mod js_bindings {
     fn js_out_of_memory(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         bun_core::out_of_memory();
+    }
+
+    /// Fails a real infallible allocation; `outOfMemory` covers the explicit `AllocError` path.
+    #[bun_jsc::host_fn]
+    fn js_alloc_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        // Above any 64-bit address space (null even with overcommit), below `isize::MAX` (no capacity panic).
+        const SIZE: usize = 1 << 62;
+        // ASAN's allocator aborts on an oversized request instead of returning null.
+        if Environment::ENABLE_ASAN {
+            std::alloc::handle_alloc_error(core::alloc::Layout::from_size_align(SIZE, 1).unwrap());
+        }
+        let buf: Vec<u8> = Vec::with_capacity(SIZE);
+        core::hint::black_box(buf);
+        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]

@@ -87,7 +87,7 @@ test("test without timeout", async () => {
 
 ### Unhandled Errors
 
-`bun test` tracks unhandled promise rejections and errors that occur between tests. If any occur, `bun test` exits with a non-zero code even when no test failed. In both examples below the error happens while the file is being loaded, so the file's tests are not run at all.
+`bun test` tracks unhandled promise rejections and errors that occur between tests. If any occur, `bun test` exits with a non-zero code even when no test failed. In both examples below the error happens while the file is being loaded: it is reported as an unhandled error and the file's tests still run.
 
 This helps catch errors in asynchronous code that might otherwise go unnoticed:
 
@@ -107,8 +107,8 @@ test("test 2", () => {
   expect(true).toBe(true);
 });
 
-// bun test reports this as "Unhandled error between tests", does not run
-// this file's tests (0 pass, 1 error), and exits with code 1
+// bun test reports this as "Unhandled error between tests", still runs both
+// tests (2 pass, 1 error), and exits with code 1
 ```
 
 ### Promise Rejections
@@ -122,8 +122,8 @@ test("test 1", () => {
   expect(1).toBe(1);
 });
 
-// bun test reports this as "Unhandled error between tests", does not run
-// this file's tests, and exits with code 1
+// bun test reports this as "Unhandled error between tests", still runs
+// "test 1" (1 pass, 1 error), and exits with code 1
 Promise.reject(new Error("Unhandled rejection"));
 ```
 

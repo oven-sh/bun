@@ -737,7 +737,10 @@ pub struct PackageVersion {
 
     /// `hasInstallScript` field in registry API.
     pub(crate) has_install_script: bool,
-    pub(crate) _padding_tail: [u8; 2],
+
+    /// `deprecated` field in registry API (presence of a deprecation message).
+    pub(crate) deprecated: bool,
+    pub(crate) _padding_tail: [u8; 1],
 
     /// Unix timestamp when this version was published (0 if unknown)
     pub(crate) publish_timestamp_ms: f64,
@@ -765,7 +768,8 @@ impl Default for PackageVersion {
             cpu: Architecture::ALL,
             libc: Libc::NONE,
             has_install_script: false,
-            _padding_tail: [0; 2],
+            deprecated: false,
+            _padding_tail: [0; 1],
             publish_timestamp_ms: 0.0,
         }
     }
@@ -823,14 +827,18 @@ const _: () = {
         offset_of!(PackageVersion, man_dir)
             == offset_of!(PackageVersion, _padding_before_man_dir) + 4
     );
-    // gap between `has_install_script` (bool, ends at 230) and `publish_timestamp_ms` (align 8 → 232)
+    // gap between `deprecated` (bool, ends at 231) and `publish_timestamp_ms` (align 8 → 232)
     assert!(
-        offset_of!(PackageVersion, _padding_tail)
+        offset_of!(PackageVersion, deprecated)
             == offset_of!(PackageVersion, has_install_script) + size_of::<bool>()
     );
     assert!(
+        offset_of!(PackageVersion, _padding_tail)
+            == offset_of!(PackageVersion, deprecated) + size_of::<bool>()
+    );
+    assert!(
         offset_of!(PackageVersion, publish_timestamp_ms)
-            == offset_of!(PackageVersion, _padding_tail) + 2
+            == offset_of!(PackageVersion, _padding_tail) + 1
     );
 };
 
@@ -933,8 +941,9 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
+        // - v0.0.8: added per-version `deprecated` flag (used to avoid deprecated versions)
         const HEADER_BYTES: &'static str =
-            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
+            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.8\n");
 
         // Field order is hardcoded (descending alignment). Re-verify if the
         // layout changes.
@@ -1458,12 +1467,14 @@ pub mod package_manifest {
                 let bin_tag_at =
                     core::mem::offset_of!(PackageVersion, bin) + core::mem::offset_of!(Bin, tag);
                 let install_script_at = core::mem::offset_of!(PackageVersion, has_install_script);
+                let deprecated_at = core::mem::offset_of!(PackageVersion, deprecated);
                 for raw_pkg in raw
                     .as_chunks::<{ core::mem::size_of::<PackageVersion>() }>()
                     .0
                 {
                     if !matches!(raw_pkg[bin_tag_at], 0..=4)
                         || !matches!(raw_pkg[install_script_at], 0 | 1)
+                        || !matches!(raw_pkg[deprecated_at], 0 | 1)
                     {
                         return Ok(None);
                     }
@@ -1586,6 +1597,7 @@ impl PackageManifest {
         group_buf: &[u8],
         minimum_release_age_ms: f64,
         newest_filtered: &mut Option<Semver::Version>,
+        deprecated_fallback: &mut Option<FindResult<'a>>,
     ) -> Option<FindVersionResult<'a>> {
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = None;
         let mut best_version: Option<FindResult<'a>> = None;
@@ -1601,6 +1613,16 @@ impl PackageManifest {
             let version = versions[i];
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
+                if package.deprecated {
+                    if Self::is_package_version_too_recent(package, minimum_release_age_ms) {
+                        if newest_filtered.is_none() {
+                            *newest_filtered = Some(version);
+                        }
+                    } else if deprecated_fallback.is_none() {
+                        *deprecated_fallback = Some(FindResult { version, package });
+                    }
+                    continue;
+                }
                 if Self::is_package_version_too_recent(package, minimum_release_age_ms) {
                     if newest_filtered.is_none() {
                         *newest_filtered = Some(version);
@@ -1742,6 +1764,7 @@ impl PackageManifest {
         let packages = list.values.get(&self.package_versions);
 
         let mut best_version: Option<FindResult<'_>> = None;
+        let mut deprecated_fallback: Option<FindResult<'_>> = None;
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = Some(dist_result.package);
 
         let mut i: usize = versions.len();
@@ -1767,6 +1790,15 @@ impl PackageManifest {
                 if actual_tag != expected_tag {
                     continue;
                 }
+            }
+
+            if package.deprecated {
+                if deprecated_fallback.is_none()
+                    && !Self::is_package_version_too_recent(package, min_age_ms)
+                {
+                    deprecated_fallback = Some(FindResult { version, package });
+                }
+                continue;
             }
 
             if Self::is_package_version_too_recent(package, min_age_ms) {
@@ -1806,7 +1838,7 @@ impl PackageManifest {
             break;
         }
 
-        if let Some(result) = best_version {
+        if let Some(result) = best_version.or(deprecated_fallback) {
             return FindVersionResult::FoundWithFilter {
                 result,
                 newest_filtered: Some(dist_result.version),
@@ -1857,7 +1889,7 @@ impl PackageManifest {
                 if Self::is_package_version_too_recent(result.package, min_age_ms) {
                     newest_filtered = Some(result.version);
                 }
-                if newest_filtered.is_none() {
+                if newest_filtered.is_none() && !result.package.deprecated {
                     if group.flags.is_set(Semver::query::Flags::PRE) {
                         if left
                             .version
@@ -1873,6 +1905,8 @@ impl PackageManifest {
             }
         }
 
+        let mut deprecated_fallback: Option<FindResult<'_>> = None;
+
         if let Some(result) = self.search_version_list(
             self.pkg.releases.keys.get(&self.versions),
             self.pkg.releases.values.get(&self.package_versions),
@@ -1880,6 +1914,7 @@ impl PackageManifest {
             group_buf,
             min_age_ms,
             &mut newest_filtered,
+            &mut deprecated_fallback,
         ) {
             return result;
         }
@@ -1892,9 +1927,21 @@ impl PackageManifest {
                 group_buf,
                 min_age_ms,
                 &mut newest_filtered,
+                &mut deprecated_fallback,
             ) {
                 return result;
             }
+        }
+
+        if let Some(result) = deprecated_fallback {
+            return if newest_filtered.is_some() {
+                FindVersionResult::FoundWithFilter {
+                    result,
+                    newest_filtered,
+                }
+            } else {
+                FindVersionResult::Found(result)
+            };
         }
 
         if newest_filtered.is_some() {
@@ -1916,7 +1963,9 @@ impl PackageManifest {
         }
 
         if let Some(result) = self.find_by_dist_tag(b"latest") {
-            if group.satisfies(result.version, group_buf, &self.string_buf) {
+            if !result.package.deprecated
+                && group.satisfies(result.version, group_buf, &self.string_buf)
+            {
                 if group.flags.is_set(Semver::query::Flags::PRE) {
                     if left
                         .version
@@ -1932,19 +1981,26 @@ impl PackageManifest {
             }
         }
 
+        // npm compat: prefer non-deprecated matches; fall back only if none exist.
+        let mut deprecated_fallback: Option<FindResult<'_>> = None;
+
         {
             // This list is sorted at serialization time.
             let releases = self.pkg.releases.keys.get(&self.versions);
+            let packages = self.pkg.releases.values.get(&self.package_versions);
             let mut i = releases.len();
 
             while i > 0 {
                 let version = releases[i - 1];
 
                 if group.satisfies(version, group_buf, &self.string_buf) {
-                    return Some(FindResult {
-                        version,
-                        package: &self.pkg.releases.values.get(&self.package_versions)[i - 1],
-                    });
+                    let package = &packages[i - 1];
+                    if !package.deprecated {
+                        return Some(FindResult { version, package });
+                    }
+                    if deprecated_fallback.is_none() {
+                        deprecated_fallback = Some(FindResult { version, package });
+                    }
                 }
                 i -= 1;
             }
@@ -1952,23 +2008,26 @@ impl PackageManifest {
 
         if group.flags.is_set(Semver::query::Flags::PRE) {
             let prereleases = self.pkg.prereleases.keys.get(&self.versions);
+            let packages = self.pkg.prereleases.values.get(&self.package_versions);
             let mut i = prereleases.len();
             while i > 0 {
                 let version = prereleases[i - 1];
 
                 // This list is sorted at serialization time.
                 if group.satisfies(version, group_buf, &self.string_buf) {
-                    let packages = self.pkg.prereleases.values.get(&self.package_versions);
-                    return Some(FindResult {
-                        version,
-                        package: &packages[i - 1],
-                    });
+                    let package = &packages[i - 1];
+                    if !package.deprecated {
+                        return Some(FindResult { version, package });
+                    }
+                    if deprecated_fallback.is_none() {
+                        deprecated_fallback = Some(FindResult { version, package });
+                    }
                 }
                 i -= 1;
             }
         }
 
-        None
+        deprecated_fallback
     }
 }
 
@@ -2425,6 +2484,12 @@ impl PackageManifest {
                 {
                     package_version.has_install_script = *val;
                 }
+
+                package_version.deprecated = match version_obj.and_then(|o| o.get(b"deprecated")) {
+                    Some(JSON::E::JsonValue::String(s)) => !s.slice().is_empty(),
+                    Some(JSON::E::JsonValue::Boolean(b)) => *b,
+                    _ => false,
+                };
 
                 'bin: {
                     // bins are extremely repetitive

@@ -825,3 +825,283 @@ test.each([
   const blob = new Blob(["abc"], { type });
   expect(blob.slice(0, 1).type).toBe(expected);
 });
+
+// https://github.com/oven-sh/bun/issues/25422
+// https://github.com/oven-sh/bun/issues/26899
+describe("File prototype chain", () => {
+  test("File.prototype is distinct from Blob.prototype and inherits from it", () => {
+    expect(File.prototype).not.toBe(Blob.prototype);
+    expect(Object.getPrototypeOf(File.prototype)).toBe(Blob.prototype);
+  });
+
+  test("new File(...).constructor is File", () => {
+    const file = new File(["hello"], "hello.txt");
+    expect(file.constructor).toBe(File);
+    expect(file.constructor.name).toBe("File");
+  });
+
+  test("File.prototype[Symbol.toStringTag] is 'File'", () => {
+    const file = new File(["hello"], "hello.txt");
+    expect(Object.prototype.toString.call(file)).toBe("[object File]");
+    expect(Object.getOwnPropertyDescriptor(File.prototype, Symbol.toStringTag)).toEqual({
+      value: "File",
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  test("real File and Blob instances", () => {
+    const file = new File(["hi"], "f.txt");
+    const blob = new Blob(["hi"]);
+    expect(file instanceof File).toBe(true);
+    expect(file instanceof Blob).toBe(true);
+    expect(blob instanceof File).toBe(false);
+    expect(blob instanceof Blob).toBe(true);
+  });
+
+  test("Proxy getPrototypeOf trap returning File.prototype", () => {
+    class Foo {}
+    const proxy = new Proxy(new Foo(), {
+      getPrototypeOf() {
+        return File.prototype;
+      },
+    });
+    expect(proxy instanceof Foo).toBe(false);
+    expect(proxy instanceof File).toBe(true);
+    expect(proxy instanceof Blob).toBe(true);
+  });
+
+  test("Object.create(File.prototype) is instanceof File", () => {
+    const o = Object.create(File.prototype);
+    expect(o instanceof File).toBe(true);
+    expect(o instanceof Blob).toBe(true);
+  });
+
+  test("Object.create(Blob.prototype) is not instanceof File", () => {
+    const o = Object.create(Blob.prototype);
+    expect(o instanceof File).toBe(false);
+    expect(o instanceof Blob).toBe(true);
+  });
+
+  test("transparent Proxy around a File is instanceof File", () => {
+    const file = new File(["hi"], "a.txt");
+    const proxy = new Proxy(file, {});
+    expect(proxy instanceof File).toBe(true);
+    expect(proxy instanceof Blob).toBe(true);
+    const nested = new Proxy(new Proxy(file, {}), {});
+    expect(nested instanceof File).toBe(true);
+  });
+
+  test("transparent Proxy around a Blob is not instanceof File", () => {
+    const blob = new Blob(["hi"]);
+    const proxy = new Proxy(blob, {});
+    expect(proxy instanceof File).toBe(false);
+    expect(proxy instanceof Blob).toBe(true);
+    const nested = new Proxy(new Proxy(blob, {}), {});
+    expect(nested instanceof File).toBe(false);
+  });
+
+  test("Object.create(blob) is not instanceof File", () => {
+    const blob = new Blob(["hi"]);
+    expect(Object.create(blob) instanceof File).toBe(false);
+    expect(Object.create(blob) instanceof Blob).toBe(true);
+    expect({ __proto__: blob } instanceof File).toBe(false);
+  });
+
+  test("File whose prototype has been set to null", () => {
+    const f = new File(["hi"], "x.txt");
+    Object.setPrototypeOf(f, null);
+    expect(f instanceof File).toBe(false);
+    expect(f instanceof Blob).toBe(false);
+  });
+
+  test("Proxy around File with getPrototypeOf returning Object.prototype", () => {
+    const file = new File(["hi"], "a.txt");
+    const proxy = new Proxy(file, {
+      getPrototypeOf() {
+        return Object.prototype;
+      },
+    });
+    expect(proxy instanceof File).toBe(false);
+  });
+
+  test("subclass of File", () => {
+    class MyFile extends File {}
+    const f = new MyFile(["hi"], "x.txt");
+    expect(f instanceof MyFile).toBe(true);
+    expect(f instanceof File).toBe(true);
+    expect(f instanceof Blob).toBe(true);
+    expect(Object.getPrototypeOf(Object.getPrototypeOf(f))).toBe(File.prototype);
+  });
+
+  test("non-objects", () => {
+    expect((null as any) instanceof File).toBe(false);
+    expect((undefined as any) instanceof File).toBe(false);
+    expect((42 as any) instanceof File).toBe(false);
+    expect(("hi" as any) instanceof File).toBe(false);
+    expect({} instanceof File).toBe(false);
+  });
+
+  test("File instances have Blob methods via inheritance", async () => {
+    const file = new File(["hello"], "hello.txt", { lastModified: 12345 });
+    expect(file.name).toBe("hello.txt");
+    expect(file.lastModified).toBe(12345);
+    expect(await file.text()).toBe("hello");
+    expect(file.size).toBe(5);
+    expect(await file.slice(1, 3).text()).toBe("el");
+  });
+
+  test("structuredClone preserves File prototype", () => {
+    const file = new File(["hello"], "hello.txt", { lastModified: 12345 });
+    const cloned = structuredClone(file);
+    expect(cloned instanceof File).toBe(true);
+    expect(cloned instanceof Blob).toBe(true);
+    expect(cloned.constructor).toBe(File);
+    expect(cloned.name).toBe("hello.txt");
+    expect(cloned.lastModified).toBe(12345);
+  });
+
+  test("structuredClone of Blob stays a Blob", () => {
+    const blob = new Blob(["hello"]);
+    const cloned = structuredClone(blob);
+    expect(cloned instanceof Blob).toBe(true);
+    expect(cloned instanceof File).toBe(false);
+  });
+
+  test("FormData.get returns a File", () => {
+    const fd = new FormData();
+    fd.append("f", new Blob(["hi"]), "x.txt");
+    const got = fd.get("f");
+    expect(got instanceof File).toBe(true);
+    expect((got as File).name).toBe("x.txt");
+  });
+
+  test("FormData.get returns a File for empty or omitted filename", () => {
+    const fd = new FormData();
+    fd.append("a", new Blob(["x"]), "");
+    fd.append("b", new File(["x"], ""));
+    fd.append("c", new Blob(["x"]));
+    fd.set("d", new Blob(["x"]), "");
+    fd.set("e", new File(["x"], ""));
+    fd.set("f", new Blob(["x"]));
+    for (const k of ["a", "b", "c", "d", "e", "f"]) {
+      const v = fd.get(k);
+      expect(v instanceof File).toBe(true);
+      expect((v as File).constructor).toBe(File);
+    }
+  });
+
+  test('multipart part with filename="" round-trips as a File', async () => {
+    const body = '--b\r\nContent-Disposition: form-data; name="f"; filename=""\r\n\r\nhi\r\n--b--\r\n';
+    const fd = await new Response(body, {
+      headers: { "content-type": "multipart/form-data; boundary=b" },
+    }).formData();
+    const v = fd.get("f");
+    expect(v instanceof File).toBe(true);
+    expect((v as File).constructor).toBe(File);
+    expect(await (v as File).text()).toBe("hi");
+  });
+
+  test("Object.getPrototypeOf(File) is Blob", () => {
+    expect(Object.getPrototypeOf(File)).toBe(Blob);
+  });
+
+  test("file.slice() returns a plain Blob", async () => {
+    const f = new File(["hello"], "x.txt", { lastModified: 123 });
+    const s = f.slice(1, 3);
+    expect(s instanceof File).toBe(false);
+    expect(s instanceof Blob).toBe(true);
+    expect(s.constructor).toBe(Blob);
+    expect(Object.prototype.toString.call(s)).toBe("[object Blob]");
+    expect(Object.getPrototypeOf(s)).toBe(Blob.prototype);
+    expect(await s.text()).toBe("el");
+  });
+
+  test("new Response(file).blob() returns a plain Blob", async () => {
+    const f = new File(["hi"], "x.txt", { type: "text/plain" });
+    const b = await new Response(f).blob();
+    expect(b instanceof File).toBe(false);
+    expect(b.constructor).toBe(Blob);
+    expect(Object.prototype.toString.call(b)).toBe("[object Blob]");
+    expect(await b.text()).toBe("hi");
+  });
+
+  test("new Blob([file]) is a plain Blob and stays one through structuredClone", () => {
+    const b = new Blob([new File(["hi"], "x.txt")]);
+    expect(Object.getPrototypeOf(b)).toBe(Blob.prototype);
+    expect(b instanceof File).toBe(false);
+    const c = structuredClone(b);
+    expect(c instanceof File).toBe(false);
+    expect(c.constructor).toBe(Blob);
+    expect(Object.prototype.toString.call(c)).toBe("[object Blob]");
+  });
+
+  test("WebSocket binaryType 'blob' delivers a plain Blob", async () => {
+    using server = Bun.serve({
+      port: 0,
+      websocket: {
+        open(ws) {
+          ws.sendBinary(new Uint8Array([1, 2, 3]));
+        },
+        message() {},
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response();
+      },
+    });
+    const ws = new WebSocket(`ws://localhost:${server.port}`);
+    ws.binaryType = "blob";
+    const { promise, resolve, reject } = Promise.withResolvers<Blob>();
+    ws.onmessage = e => resolve(e.data);
+    ws.onerror = reject;
+    ws.onclose = () => reject(new Error("closed before message"));
+    try {
+      const data = await promise;
+      expect(data instanceof Blob).toBe(true);
+      expect(data instanceof File).toBe(false);
+      expect(data.constructor).toBe(Blob);
+      expect(Object.prototype.toString.call(data)).toBe("[object Blob]");
+      expect(new Uint8Array(await data.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    } finally {
+      ws.close();
+    }
+  });
+
+  test("name and lastModified are own accessors on File.prototype", () => {
+    expect(Object.getOwnPropertyNames(File.prototype).sort()).toEqual(["constructor", "lastModified", "name"]);
+    const name = Object.getOwnPropertyDescriptor(File.prototype, "name");
+    const lastModified = Object.getOwnPropertyDescriptor(File.prototype, "lastModified");
+    expect(typeof name!.get).toBe("function");
+    expect(typeof lastModified!.get).toBe("function");
+  });
+
+  test("File posted to a Worker has the File prototype before globalThis.File is touched", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const w = new Worker(URL.createObjectURL(new Blob([
+            "self.onmessage = e => postMessage({ctor: e.data.constructor.name, isFile: e.data instanceof File});",
+          ], { type: "text/javascript" })));
+          const { promise, resolve, reject } = Promise.withResolvers();
+          w.onmessage = e => resolve(e.data);
+          w.onerror = reject;
+          w.onmessageerror = reject;
+          w.postMessage(new File(["hi"], "x.txt"));
+          const r = await promise;
+          console.log(JSON.stringify(r));
+          w.terminate();
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ ctor: "File", isFile: true });
+    expect(exitCode).toBe(0);
+  });
+});

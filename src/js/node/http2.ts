@@ -425,10 +425,19 @@ const {
   validateAbortSignal,
 } = require("internal/validators");
 
+// The `date` header, formatted once per second. Keyed by the second rather than reset by a timer:
+// a timer belongs to whoever happened to be running when it was set, and if that was a
+// Bun.ModuleGraph disposed within the second, nothing would ever clear the cache again.
 let utcCache;
+let utcCacheSecond = -1;
 
 function utcDate() {
-  if (!utcCache) cache();
+  const now = Date.now();
+  const second = Math.floor(now / 1000);
+  if (second !== utcCacheSecond) {
+    utcCacheSecond = second;
+    utcCache = new Date(now).toUTCString();
+  }
   return utcCache;
 }
 function emitEventNT(self: any, event: string, ...args: any[]) {
@@ -459,16 +468,6 @@ function emitErrorNT(self: any, error: any, destroy: boolean) {
 function emitOutofStreamErrorNT(self: any) {
   self.destroy($ERR_HTTP2_OUT_OF_STREAMS());
 }
-function cache() {
-  const d = new Date();
-  utcCache = d.toUTCString();
-  setTimeout(resetCache, 1000 - d.getMilliseconds()).unref();
-}
-
-function resetCache() {
-  utcCache = undefined;
-}
-
 function getAuthority(headers) {
   // For non-CONNECT requests, HTTP/2 allows either :authority
   // or Host to be used equivalently. The first is preferred

@@ -329,10 +329,15 @@ class NodeEntryObserver {
   types = new Set();
   buffer = [];
   scheduled = false;
+  // Entries are delivered in the context the observer was made in, not the one of whatever
+  // produced the entry: set from a Bun.ModuleGraph that is then disposed, the immediate would be
+  // cancelled with `scheduled` left true, and this observer would never be called again.
+  frame;
 
   constructor(callback, owner) {
     this.callback = callback;
     this.owner = owner;
+    this.frame = require("internal/async_context_frame").current();
   }
 
   observe(types) {
@@ -362,7 +367,7 @@ class NodeEntryObserver {
     this.buffer.push(entry);
     if (!this.scheduled) {
       this.scheduled = true;
-      setImmediate(() => {
+      require("internal/async_context_frame").run(this.frame, setImmediate, undefined, () => {
         this.scheduled = false;
         const entries = this.buffer;
         if (entries.length === 0) {

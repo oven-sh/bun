@@ -364,19 +364,19 @@ const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
 
 // Cached HTTP Date header value, refreshed once a second like Node.js does.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js
+// The `date` header, formatted once per second. Keyed by the second rather than reset by a timer:
+// a timer belongs to whoever happened to be running when it was set, and if that was a
+// Bun.ModuleGraph disposed within the second, nothing would ever clear the cache again.
 let utcCache;
+let utcCacheSecond = -1;
 function utcDate() {
-  if (!utcCache) cacheUTCDate();
+  const now = Date.now();
+  const second = Math.floor(now / 1000);
+  if (second !== utcCacheSecond) {
+    utcCacheSecond = second;
+    utcCache = new Date(now).toUTCString();
+  }
   return utcCache;
-}
-function cacheUTCDate() {
-  const d = new Date();
-  utcCache = d.toUTCString();
-  const timer = setTimeout(resetUTCCache, 1000 - d.getMilliseconds());
-  if (typeof timer.unref === "function") timer.unref();
-}
-function resetUTCCache() {
-  utcCache = undefined;
 }
 
 function ipToInt(ip) {

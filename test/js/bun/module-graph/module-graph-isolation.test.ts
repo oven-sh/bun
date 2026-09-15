@@ -1,13 +1,15 @@
 // Bun.ModuleGraph({ isolateIO: true }): graphs are isolated from each other and from the
 // host. What one opens is its own: disposing it closes that and nothing else, whoever's code
 // happened to be running when it was opened.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCertificate } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
+import http from "node:http";
 import http2 from "node:http2";
 import { builtinModules } from "node:module";
+import { PerformanceObserver } from "node:perf_hooks";
 import { join } from "path";
 
 const ModuleGraph = Bun.ModuleGraph;
@@ -458,6 +460,12 @@ const dir = String(
         "Bun.udpSocket": () => Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data() {} } }).then(socket => new Promise(resolve => setTimeout(() => { socket.close(); resolve(); }, 1))),
         "child_process.exec": () => promisify(childProcess.exec)("exit 0"),
       };
+      // Things of the host's, or of the realm's, that a graph's code only uses.
+      export const getThrough = (agent, port, path) => new Promise((resolve, reject) => http.get({ host: "127.0.0.1", port, path, agent }, response => { response.resume(); response.on("end", resolve); }).on("error", reject));
+      export function serveHttp2Once(state) {
+        const server = http2.createServer((request, response) => response.end(state.tag));
+        return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      }
       export function retryForever(name, state, ports) {
         (async () => { for (;;) { try { await steps[name](ports); } catch {} state.ticks++; } })();
       }
@@ -1122,6 +1130,65 @@ describe.concurrent("ModuleGraph isolation: fs.watchFile of one path by several 
       }
     });
   }
+});
+
+describe("ModuleGraph isolation: what is the host's, or the realm's, survives a graph that used it", () => {
+  test("a keep-alive http.Agent of the host's: a request the host queued behind the graph's is served after dispose()", async () => {
+    // One socket: the host's request waits for the graph's, which is in flight when the graph is disposed.
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      using made = await newGraph();
+      made.graph.run(() => made.app.getThrough(agent, hostHttp.port, "/hang?tag=agent-of-the-host")).catch(() => {});
+      await until(() => connected.has("http:agent-of-the-host"));
+      const hosts = hostApp.getThrough(agent, hostHttp.port, "/release?tag=nobody");
+      made.graph.dispose();
+      await hosts;
+    } finally {
+      agent.destroy();
+    }
+  });
+
+  test("node:http2's cached `date` header: the second still turns over after the graph that rendered it first is gone", async () => {
+    const dateOf = (port: number) =>
+      new Promise<string>((resolve, reject) => {
+        const session = http2.connect(`http://127.0.0.1:${port}`);
+        session.on("error", reject);
+        const request = session.request({ ":path": "/" });
+        request.on("response", headers => resolve(String(headers.date)));
+        request.on("close", () => session.close());
+        request.end();
+      });
+    const hostPort = await hostApp.serveHttp2Once(newState("http2-date-host"));
+    try {
+      {
+        using made = await newGraph();
+        const graphPort = await made.graph.run(() => made.app.serveHttp2Once(newState("http2-date-graph")));
+        await dateOf(graphPort); // renders, and caches, the header for this second
+      }
+      const now = Date.now();
+      setSystemTime(new Date(now + 60_000));
+      expect(Math.abs(Date.parse(await dateOf(hostPort)) - (now + 60_000))).toBeLessThan(5_000);
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test("a PerformanceObserver of the host's keeps being called after a graph produced an entry and was disposed in the same turn", async () => {
+    let entries = 0;
+    const observer = new PerformanceObserver(list => void (entries += list.getEntries().length));
+    observer.observe({ entryTypes: ["http"] });
+    try {
+      {
+        using made = await newGraph();
+        await made.graph.run(() => made.app.getThrough(undefined, hostHttp.port, "/release?tag=nobody"));
+      }
+      const afterTheGraph = entries;
+      await hostApp.getThrough(undefined, hostHttp.port, "/release?tag=nobody");
+      await until(() => entries > afterTheGraph);
+    } finally {
+      observer.disconnect();
+    }
+  });
 });
 
 describe.concurrent("ModuleGraph isolation: whose context a call runs in", () => {

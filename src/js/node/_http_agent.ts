@@ -240,10 +240,12 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
   const freeSockets = this.freeSockets[name];
   let socket;
   if (freeSockets) {
-    while (freeSockets.length && freeSockets[0].destroyed) {
-      freeSockets.shift();
-    }
-    socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
+    // node:net hears of a native close a tick after it happened, so a socket can be gone while
+    // `destroyed` still says otherwise: one opened by a Bun.ModuleGraph that was just disposed
+    // must not be handed to a request made in the same turn.
+    do {
+      socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
+    } while (socket && (socket.destroyed || socket._handle?.readyState < 0));
     if (!freeSockets.length) delete this.freeSockets[name];
   }
 
@@ -432,7 +434,16 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
 
   if (req && options) {
     req[kRequestOptions] = undefined;
-    this.createSocket(req, options, onSocketCreatedForPending.bind(undefined, req));
+    // In the context the request was made in, not in that of the socket that just went away: if
+    // that socket was a disposed Bun.ModuleGraph's, a socket opened from its close handler
+    // would be closed at once, and the request it was for would wait for ever.
+    req[kRequestAsyncResource].runInAsyncScope(
+      this.createSocket,
+      this,
+      req,
+      options,
+      onSocketCreatedForPending.bind(undefined, req),
+    );
   }
 };
 

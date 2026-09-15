@@ -234,15 +234,22 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
     }
 
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
-        // `bun_core::argv()` includes argv[0]; skip it and collect into a
-        // borrowed-slice Vec so `&[&[u8]]` callers (TrustCommand/UntrustedCommand,
-        // `left_has_any_in_right`) keep their shape.
-        let args_vec: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
+        // `bun_core::argv()` includes argv[0]; skip it plus the
+        // NODE_OPTIONS-injected window and collect into a borrowed-slice Vec
+        // so `&[&[u8]]` callers (TrustCommand/UntrustedCommand,
+        // `left_has_any_in_right`) keep their shape: TrustCommand indexes
+        // `args[2..]` assuming `args` starts at the `pm` keyword.
+        let args_vec: Vec<&'static [u8]> = bun_core::argv()
+            .into_iter()
+            .skip(1 + bun_core::node_options_argc())
+            .collect();
         let args: &[&[u8]] = &args_vec;
 
-        // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
+        // Check if we're being invoked directly as "bun whoami" instead of
+        // "bun pm whoami". The keyword sits after the NODE_OPTIONS-injected
+        // window.
         let is_direct_whoami = bun_core::argv()
-            .get(1)
+            .get(1 + bun_core::node_options_argc())
             .is_some_and(|arg| strings::eql_comptime(arg.as_bytes(), b"whoami"));
 
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;

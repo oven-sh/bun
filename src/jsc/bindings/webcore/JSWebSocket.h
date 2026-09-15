@@ -43,6 +43,7 @@ public:
     static WebSocket* toWrapped(JSC::VM&, JSC::JSValue);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

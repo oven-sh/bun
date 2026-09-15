@@ -750,6 +750,29 @@ describe.concurrent("async compression of a resizable ArrayBuffer that shrinks a
       "same\n",
     );
   });
+
+  // A view allocated by length owns its bytes directly: it has no ArrayBuffer
+  // until JS asks for one. The borrow adopts one so it has something to pin,
+  // and the pin makes the transfer below copy. Without it the transfer moves
+  // the storage to an owner nothing references and the pool thread reads the
+  // freed block.
+  it("a by-length typed array keeps its bytes when the caller transfers them mid-compress", async () => {
+    await runInChild(
+      /* js */ `
+      const N = 256 * 1024;
+      const u8 = new Uint8Array(N).fill(0x41);
+      const promise = Bun.zstdCompress(u8);
+      u8.buffer.transfer(0);
+      const out = Buffer.from(Bun.zstdDecompressSync(await promise));
+      console.log(JSON.stringify({
+        byteLength: u8.byteLength,
+        decompressed: out.length,
+        allA: out.every(b => b === 0x41),
+      }));
+    `,
+      JSON.stringify({ byteLength: 256 * 1024, decompressed: 256 * 1024, allA: true }) + "\n",
+    );
+  });
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

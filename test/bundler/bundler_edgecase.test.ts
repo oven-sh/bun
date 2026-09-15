@@ -2772,6 +2772,91 @@ describe("bundler", () => {
     },
   });
 
+  // ${configDir} inside an extended base expands to the directory of the
+  // config that started the extends chain (the leaf), not the base's own
+  // directory. This is what tsc and esbuild do.
+  itBundled("edgecase/TSConfigPathsConfigDirViaExtends", {
+    files: {
+      "/packages/app/src/entry.ts": /* ts */ `
+        import { where } from "~/lib/util";
+        console.log(where);
+      `,
+      "/packages/app/src/lib/util.ts": `export const where = "app";`,
+      "/packages/tsconfig-base/src/lib/util.ts": `export const where = "base";`,
+      "/packages/tsconfig-base/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "paths": { "~/*": ["\${configDir}/src/*"] }
+        }
+      }`,
+      "/packages/app/tsconfig.json": /* json */ `{ "extends": "../tsconfig-base/tsconfig.json" }`,
+    },
+    run: {
+      stdout: "app",
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirViaExtendsTargetOnlyInLeaf", {
+    files: {
+      "/packages/app/src/entry.ts": /* ts */ `
+        import { where } from "~/lib/util";
+        console.log(where);
+      `,
+      "/packages/app/src/lib/util.ts": `export const where = "app";`,
+      "/configs/tsconfig.base.json": /* json */ `{
+        "compilerOptions": {
+          "paths": { "~/*": ["\${configDir}/src/*"] }
+        }
+      }`,
+      "/packages/app/tsconfig.json": /* json */ `{ "extends": "../../configs/tsconfig.base.json" }`,
+    },
+    run: {
+      stdout: "app",
+    },
+  });
+
+  itBundled("edgecase/TSConfigBaseUrlConfigDirViaExtends", {
+    files: {
+      "/packages/app/src/entry.ts": /* ts */ `
+        import { where } from "lib/util";
+        console.log(where);
+      `,
+      "/packages/app/src/lib/util.ts": `export const where = "app";`,
+      "/packages/tsconfig-base/src/lib/util.ts": `export const where = "base";`,
+      "/packages/tsconfig-base/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}/src"
+        }
+      }`,
+      "/packages/app/tsconfig.json": /* json */ `{ "extends": "../tsconfig-base/tsconfig.json" }`,
+    },
+    run: {
+      stdout: "app",
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirViaExtendsChain", {
+    // Two levels of extends. ${configDir} still anchors at the leaf.
+    files: {
+      "/packages/app/src/entry.ts": /* ts */ `
+        import { where } from "~/lib/util";
+        console.log(where);
+      `,
+      "/packages/app/src/lib/util.ts": `export const where = "app";`,
+      "/packages/mid/src/lib/util.ts": `export const where = "mid";`,
+      "/packages/root/src/lib/util.ts": `export const where = "root";`,
+      "/packages/root/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "paths": { "~/*": ["\${configDir}/src/*"] }
+        }
+      }`,
+      "/packages/mid/tsconfig.json": /* json */ `{ "extends": "../root/tsconfig.json" }`,
+      "/packages/app/tsconfig.json": /* json */ `{ "extends": "../mid/tsconfig.json" }`,
+    },
+    run: {
+      stdout: "app",
+    },
+  });
+
   itBundled("edgecase/TSPublicFieldMinification", {
     files: {
       "/entry.ts": /* ts */ `

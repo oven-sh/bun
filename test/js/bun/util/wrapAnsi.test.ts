@@ -953,7 +953,8 @@ describe("Bun.wrapAnsi", () => {
     const outOfMemory = "RangeError: Out of memory";
 
     // `cases` is the source of an object { name: [input, columns, options?] }. The child wraps
-    // each input and reports the length of the result, or the error.
+    // each input and reports the length of the result, or the error. It builds the inputs with
+    // repeat(), which does not depend on the limit the child runs under.
     async function wrapWithSyntheticLimit(cases: string) {
       await using proc = Bun.spawn({
         cmd: [
@@ -978,45 +979,59 @@ describe("Bun.wrapAnsi", () => {
       return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
     }
 
-    test.concurrent("the list of rows", async () => {
-      // At columns 1 every letter is a row of its own: 1000 rows fit, 3000 do not. Each option
-      // set starts its rows from a different place in the code.
+    test.concurrent("throws when the list of rows cannot grow", async () => {
+      // 1000 rows fit and 3000 do not. In each case a different statement of wrapAnsi.cpp
+      // starts the row that does not fit.
       const result = await wrapWithSyntheticLimit(`{
         fits: ["a ".repeat(1000), 1],
+        // placeWord(): the word does not fit in the row.
         words: ["a ".repeat(3000), 1],
-        wordsNoTrim: ["a ".repeat(3000), 1, { trim: false }],
+        // placeWord(): the row is full and wordWrap is off.
+        wordsNoWordWrap: ["a ".repeat(3000), 1, { wordWrap: false }],
+        // placeWord(): a hard-wrapped word starts on a row of its own.
+        hardWords: ["bb ".repeat(1500), 1, { hard: true }],
+        // wrapWord(): the row is full and the word goes on.
         hardWord: ["a".repeat(3000), 1, { hard: true }],
-        hardWordsAfterText: ["a bb ".repeat(1000), 1, { hard: true }],
+        // wrapWord(): a wide character does not fit in the row.
         wideHardWord: ["あ".repeat(3000), 1, { hard: true }],
+        // The other two callers of wrapWord().
         wordNoWordWrap: ["a".repeat(3000), 1, { wordWrap: false }],
+        wordNoWordWrapAfterText: ["a " + "b".repeat(7000), 3, { wordWrap: false }],
       }`);
       expect(result).toEqual({
         stdout: {
           fits: 1999,
           words: outOfMemory,
-          wordsNoTrim: outOfMemory,
+          wordsNoWordWrap: outOfMemory,
+          hardWords: outOfMemory,
           hardWord: outOfMemory,
-          hardWordsAfterText: outOfMemory,
           wideHardWord: outOfMemory,
           wordNoWordWrap: outOfMemory,
+          wordNoWordWrapAfterText: outOfMemory,
         },
         stderr: "",
         exitCode: 0,
       });
     });
 
-    test.concurrent("one row", async () => {
-      // No text here is wider than columns until a row is over the bound, so one row takes all
-      // of it. Each case grows the row from a different place in the code.
+    test.concurrent("throws when one row cannot grow", async () => {
+      // No text here is wider than columns before a row passes the bound, so one row takes all
+      // of it. In each case a different statement of wrapAnsi.cpp adds the text that does not
+      // fit.
       const result = await wrapWithSyntheticLimit(`{
         fits: ["ab ".repeat(20000), 100000],
         fitsWide: ["あ ".repeat(15000), 100000],
+        // placeWord(): the word.
         word: ["a".repeat(70000), 100000],
         wideWord: ["あ".repeat(40000), 100000],
         words: ["ab ".repeat(30000), 100000],
+        // placeWord(): the space before a word. The row holds 65,536 characters at that point.
         separatorSpace: ["aa" + " a".repeat(40000), 100000],
+        // wrapWord(): one character of a hard-wrapped word.
         hardWord: ["a".repeat(70000), 69999, { hard: true }],
+        // wrapWord(): an escape sequence in a hard-wrapped word.
         escapesInHardWord: ["\\x1b[31m".repeat(14000) + "a".repeat(11), 10, { hard: true }],
+        // wrapWord(): a last row of only escape sequences goes back into the row before it.
         trailingEscapeFoldedBack: ["a".repeat(2 * 65534) + "\\x1b[39m", 65534, { hard: true }],
       }`);
       expect(result).toEqual({

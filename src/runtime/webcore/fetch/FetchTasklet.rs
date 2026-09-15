@@ -883,8 +883,9 @@ impl FetchTasklet {
         let is_done = !self.result.has_more;
 
         let vm = self.global_this.bun_vm();
-        // teardown forbade script: we cannot touch JS
-        if !vm.script_allowed() {
+        // teardown forbade script: we cannot touch JS. A fetch() made by script of a graph that
+        // had already been disposed is aborted the same way: nothing of it is reported.
+        if !vm.script_allowed() || self.abort_handle.opened_after_stop() {
             // The certificate will never be checked; release the parked
             // HTTP-thread socket instead of leaving it occupying an active
             // request slot until the idle timeout.

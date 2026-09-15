@@ -103,6 +103,15 @@ void BroadcastChannel::close()
     BunBroadcastChannelRegistry::singleton().unsubscribe(m_name, *this);
 }
 
+// Its context stopped (a worker's, or a disposed Bun.ModuleGraph's): nobody is left to close() it,
+// so what it holds of the event loop goes too.
+void BroadcastChannel::stop()
+{
+    close();
+    if (auto* context = scriptExecutionContext())
+        jsUnref(context->jsGlobalObject());
+}
+
 void BroadcastChannel::contextDestroyed()
 {
     close();

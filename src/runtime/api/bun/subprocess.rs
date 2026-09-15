@@ -1106,7 +1106,9 @@ impl Subprocess<'_> {
         // `&mut`-taking methods without tripping borrowck.
         let event_loop = (*jsc_vm).event_loop();
 
-        if !is_sync {
+        // A child spawned by script of a graph that had already been disposed was killed at
+        // once, and its exit is not reported.
+        if !is_sync && !self.abort_handle.opened_after_stop() {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
                     // SAFETY: event_loop points into the live VM and outlives this scope.

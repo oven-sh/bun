@@ -349,7 +349,8 @@ Ref<MessagePort> MessagePort::entangle(ScriptExecutionContext& context, Transfer
 
 void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWithMessagePorts&& message)
 {
-    if (m_isDetached || !context.globalObject())
+    // (A disposed Bun.ModuleGraph's port is closed from a task queued behind the batch being delivered.)
+    if (m_isDetached || !context.globalObject() || context.isStopped())
         return;
 
     SetForScope dispatching { m_isDispatching, true };

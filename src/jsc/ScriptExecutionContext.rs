@@ -347,6 +347,8 @@ pub struct AbortHandle {
     context: JsCell<*const ScriptExecutionContext>,
     on_abort: AbortFn,
     signal: JsCell<Option<AbortSignalRef>>,
+    /// Armed in a context that had already stopped: script of a disposed graph opened it.
+    opened_after_stop: core::cell::Cell<bool>,
 }
 
 impl AbortHandle {
@@ -358,12 +360,21 @@ impl AbortHandle {
             context: JsCell::new(ptr::null()),
             on_abort: Self::owner_aborted::<O>,
             signal: JsCell::new(None),
+            opened_after_stop: core::cell::Cell::new(false),
         }
     }
 
     #[inline]
     fn is_armed(&self) -> bool {
         !self.context.get().is_null()
+    }
+
+    /// What was open when its graph was disposed tells the graph's script once that it closed
+    /// (a rejection, `onExit`). What that script opens afterwards is closed without a word: a
+    /// notification would run it again, and it could open the next one, for as long as it likes.
+    #[inline]
+    pub fn opened_after_stop(&self) -> bool {
+        self.opened_after_stop.get()
     }
 
     #[inline]
@@ -389,6 +400,7 @@ impl AbortHandle {
             }
             context.push(this);
             if context.is_stopped() {
+                (*this).opened_after_stop.set(true);
                 // Script of a disposed graph is still opening things: they go on
                 // the next turn of the loop, not under the caller that is arming.
                 crate::VirtualMachineRef::get()

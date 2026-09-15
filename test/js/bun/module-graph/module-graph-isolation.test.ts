@@ -3,7 +3,7 @@
 // happened to be running when it was opened.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunExe, isWindows, tempDir, tls as tlsCertificate } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCertificate } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 import http2 from "node:http2";
@@ -37,6 +37,17 @@ const dir = String(
     "data.txt": "0123456789",
     "entry.js": "export const a = 1;",
     "ticker.mjs": `setInterval(() => state.ticks++, 1);`,
+    // Opens one kind of thing in a graph, disposes the graph, and is done: the process has to be too.
+    "opens-then-disposes.mjs": `
+      const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/app.mjs");
+      await graph.run(() => app.open[kind](state, ...args));
+      graph.dispose();
+      console.log("disposed");
+      // Does not keep the process running; says so if something else does.
+      setTimeout(() => { console.log("and the process is still running"); process.exit(1); }, 3000).unref();
+    `,
     "app.mjs": `
       import net from "node:net";
       import http from "node:http";
@@ -423,6 +434,33 @@ const dir = String(
 
       // Work whose result the event loop delivers later, by what starts it.
       const dataFile = import.meta.dir + "/data.txt";
+      // One step of a loop that starts the next as soon as the last has settled, either way. Every
+      // step waits for the event loop (none settles from a microtask alone).
+      export const steps = {
+        "fetch a server that never answers": ({ http }) => fetch("http://127.0.0.1:" + http + "/hang?tag=retry"),
+        "fetch a refused port": () => fetch("http://127.0.0.1:1/"),
+        "Bun.spawn().exited": () => Bun.spawn({ cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e6)"], stdio: ["ignore", "ignore", "ignore"] }).exited,
+        "Bun.connect to a server that accepts": ({ tcp }) => Bun.connect({ hostname: "127.0.0.1", port: tcp, socket: { data() {} } }).then(socket => new Promise(resolve => setTimeout(resolve, 1e6))),
+        "WebSocket": ({ http }) => new Promise((resolve, reject) => { const socket = new WebSocket("ws://127.0.0.1:" + http + "/hang"); socket.onerror = socket.onclose = reject; }),
+        "node:http request": ({ http: port }) => new Promise((resolve, reject) => http.get({ host: "127.0.0.1", port, path: "/hang?tag=retry-http" }).on("error", reject)),
+        "node:net connect": ({ tcp }) => new Promise((resolve, reject) => net.connect(tcp, "127.0.0.1").on("error", reject).on("close", reject)),
+        "Bun.SQL query": ({ tcp }) => new Bun.SQL("postgres://u@127.0.0.1:" + tcp + "/db?sslmode=disable", { max: 1 })\`select 1\`,
+        "crypto.subtle.digest": () => crypto.subtle.digest("SHA-256", new Uint8Array(8)),
+        "Bun.build": () => Bun.build({ entrypoints: [import.meta.path] }),
+        "WebAssembly.compile": () => WebAssembly.compile(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
+        "fs.promises.readFile": () => fs.promises.readFile(import.meta.path),
+        "Bun.file().text()": () => Bun.file(import.meta.path).text(),
+        "zlib.gzip": () => promisify(zlib.gzip)("hello"),
+        "dns.lookup": () => dns.promises.lookup("localhost"),
+        "setTimeout": () => new Promise(resolve => setTimeout(resolve, 1)),
+        "setImmediate": () => new Promise(resolve => setImmediate(resolve)),
+        "MessageChannel": () => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(1); }),
+        "Bun.udpSocket": () => Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data() {} } }).then(socket => new Promise(resolve => setTimeout(() => { socket.close(); resolve(); }, 1))),
+        "child_process.exec": () => promisify(childProcess.exec)("exit 0"),
+      };
+      export function retryForever(name, state, ports) {
+        (async () => { for (;;) { try { await steps[name](ports); } catch {} state.ticks++; } })();
+      }
       export const background = {
         "fs.promises.readFile": () => fs.promises.readFile(dataFile, "utf8"),
         "fs.readFile callback": () => new Promise(resolve => fs.readFile(dataFile, resolve)),
@@ -1656,6 +1694,49 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
       viaHost.close?.();
     }
   });
+});
+
+describe.concurrent("ModuleGraph isolation: what a disposed graph had open does not keep the process running", () => {
+  for (const kind of Object.keys(kinds)) {
+    test(kind, async () => {
+      const state = newState(kind + "-exits");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          join(dir, "opens-then-disposes.mjs"),
+          kind,
+          JSON.stringify(state),
+          JSON.stringify(kinds[kind].args?.(state) ?? []),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("disposed\n");
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
+describe.concurrent("ModuleGraph isolation: a disposed graph cannot keep itself running", () => {
+  // What was open at dispose() may tell the graph once that it closed, and that handler may start
+  // the next thing. If that one reported back too, a loop that retries on failure would go on for
+  // ever inside a disposed graph (and a spawn loop would go on launching processes).
+  for (const name of Object.keys(hostApp.steps)) {
+    test(name, async () => {
+      using made = await newGraph();
+      const state = newState("retry");
+      made.graph.run(() => made.app.retryForever(name, state, { http: hostHttp.port, tcp: hostTcp.port }));
+      await hostTimerTurns(10);
+      made.graph.dispose();
+      // The step that was under way settles (or not), and its continuation starts one more.
+      await hostTimerTurns(30);
+      const settledDown = state.ticks;
+      await hostTimerTurns(60);
+      expect(state.ticks - settledDown).toBe(0);
+    });
+  }
 });
 
 // A forcing function: whoever adds something to `Bun` has to say here what a graph's dispose() does

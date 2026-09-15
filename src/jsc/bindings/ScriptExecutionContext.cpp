@@ -265,18 +265,19 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
         if (!context || context->isTerminating())
             return false;
         retained = Bun__VmHandle__retainRef(context->m_vmHandle);
-        // A Bun.ModuleGraph's context: the task is its script's, and is not run once the graph
-        // was disposed or collected, whenever that happens before the task's turn.
-        if (context->isForModuleGraph()) {
-            task = [identifier, task = WTF::move(task)](ScriptExecutionContext&) mutable {
-                RefPtr graphContext = getScriptExecutionContext(identifier);
-                if (graphContext && !graphContext->isStopped())
-                    task(*graphContext);
-            };
-        }
     }
     Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), loopKind);
     return true;
+}
+
+bool ScriptExecutionContext::postResultTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& result)
+{
+    return postTaskTo(identifier, loopKind, [identifier, result = WTF::move(result)](ScriptExecutionContext& realm) mutable {
+        RefPtr context = getScriptExecutionContext(identifier);
+        if (!context || (context->isForModuleGraph() && context->isStopped()))
+            return;
+        result(realm);
+    });
 }
 
 void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)

@@ -1601,12 +1601,16 @@ impl JSValkeyClient {
         // This is a mess beyond belief and it is incredibly fragile.
         let has_pending_commands = self.client.get().has_any_pending_commands();
 
-        let has_activity = has_pending_commands
-            || self.has_subscriptions()
-            || self.client.get().flags.is_reconnecting;
+        // Nothing of a client whose Bun.ModuleGraph was disposed will happen any more (it does not
+        // reconnect, so what it had queued stays queued): it is not a reason to keep running.
+        let has_activity = self.vm().is_context_live(self.context)
+            && (has_pending_commands
+                || self.has_subscriptions()
+                || self.client.get().flags.is_reconnecting
+                || self.client.get().status == valkey::Status::Connecting);
 
         // There's a couple cases to handle here:
-        if has_activity || self.client.get().status == valkey::Status::Connecting {
+        if has_activity {
             // If we currently have pending activity or we are connecting, we need to keep the
             // event loop alive.
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));

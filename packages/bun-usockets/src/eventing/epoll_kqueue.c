@@ -240,8 +240,17 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 #else
     loop->fd = kqueue();
 #endif
+    /* EMFILE/ENFILE: the caller decides whether this is fatal. */
+    if (loop->fd == -1) {
+        us_free(loop);
+        return NULL;
+    }
 
-    us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
+    if (us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb) != 0) {
+        close(loop->fd);
+        us_free(loop);
+        return NULL;
+    }
     return loop;
 }
 
@@ -461,7 +470,7 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
+extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -496,7 +505,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
      * if it had none to share. Nothing measures a deadline against it. */
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
+        (void) Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
 
     /* The scavenger sweeps our heaps while we are in the kernel. Must come after
      * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
@@ -790,10 +799,12 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 
     int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (efd == -1) {
-        // eventfd only fails on EMFILE/ENFILE — the loop is unusable without
-        // wakeup_async, and the sole caller doesn't NULL-check. Crash loudly
-        // rather than NULL-deref or store -1 as a poll fd.
-        BUN_PANIC("eventfd() failed during loop init (out of file descriptors?)");
+        /* EMFILE/ENFILE: us_create_loop unwinds and returns NULL. */
+        if (!fallthrough) {
+            loop->num_polls--;
+        }
+        us_free(p);
+        return NULL;
     }
     us_poll_init(p, efd, POLL_TYPE_CALLBACK);
 
@@ -867,26 +878,32 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     mach_port_t self = mach_task_self();
     kern_return_t kr = mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &cb->port);
 
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
+    if (kr == KERN_SUCCESS) {
+        // Insert a send right into the port since we also use this to send
+        kr = mach_port_insert_right(self, cb->port, cb->port, MACH_MSG_TYPE_MAKE_SEND);
+        if (kr == KERN_SUCCESS) {
+            // Modify the port queue size to be 1 because we are only
+            // using it for notifications and not for any other purpose.
+            mach_port_limits_t limits = { .mpl_qlimit = 1 };
+            kr = mach_port_set_attributes(self, cb->port, MACH_PORT_LIMITS_INFO, (mach_port_info_t)&limits, MACH_PORT_LIMITS_INFO_COUNT);
+            if (kr == KERN_SUCCESS) {
+                return (struct us_internal_async *) cb;
+            }
+        }
+        /* Dropping the receive right destroys the port; release the send
+         * right (now a dead name) so the port-name-table entry is freed too.
+         * mach_port_deallocate is a harmless KERN_INVALID_RIGHT no-op when
+         * insert_right failed and no send right exists. */
+        mach_port_mod_refs(self, cb->port, MACH_PORT_RIGHT_RECEIVE, -1);
+        mach_port_deallocate(self, cb->port);
     }
 
-    // Insert a send right into the port since we also use this to send
-    kr = mach_port_insert_right(self, cb->port, cb->port, MACH_MSG_TYPE_MAKE_SEND);
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
+    if (!fallthrough) {
+        loop->num_polls--;
     }
-
-    // Modify the port queue size to be 1 because we are only
-    // using it for notifications and not for any other purpose.
-    mach_port_limits_t limits = { .mpl_qlimit = 1 };
-    kr = mach_port_set_attributes(self, cb->port, MACH_PORT_LIMITS_INFO, (mach_port_info_t)&limits, MACH_PORT_LIMITS_INFO_COUNT);
-
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
-    }
-
-    return (struct us_internal_async *) cb;
+    us_free(cb->machport_buf);
+    us_free(cb);
+    return NULL;
 }
 
 // identical code as for timer, make it shared for "callback types"

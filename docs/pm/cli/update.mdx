@@ -30,7 +30,8 @@ Updated packages appear in the install summary as `↑ name old → new`, with `
 
 - `^1.1.0` → `^1.2.0`, `~1.1.0` → `~1.1.5`. Bun preserves the operator. With [`install.exact`](/runtime/bunfig#install-exact) or `--exact`, Bun writes an exact version instead.
 - Exact pins, dist-tags (`"latest"`, `"next"`), and other range forms (`*`, `1.x`, `>=1.0.0`) are left as written; only `bun.lock` moves. `--latest` rewrites them.
-- Bun never rewrites `catalog:` references; it updates the catalog entry in the root `package.json` instead.
+- Bun never rewrites `catalog:` references. A plain `bun update` also rewrites the [catalog](/pm/catalogs) entries in the root `package.json` by the rules above, even when you run it inside a workspace package. `--latest` moves them past their ranges.
+- Once you narrow the update, with package names, patterns, `--dev`, `--prod`, or `--no-optional`, Bun leaves catalog entries as written. The packages behind them still move in `bun.lock` within the entry's range, and `--latest` does not apply to them. To move one catalog entry past its range, select it in [`bun update -i -r --latest`](#--interactive), or edit the entry and run `bun install`.
 - `--no-save` updates `node_modules` only, leaving `package.json` and `bun.lock` untouched.
 
 ### What is held back
@@ -49,6 +50,8 @@ bun update -i
 ```
 
 `--interactive` opens a terminal interface listing every outdated direct dependency. Bun updates the packages you select as if you had run `bun update <name> ...`; everything else keeps its locked version.
+
+The list includes dependencies a workspace takes from a [catalog](/pm/catalogs). Selecting one rewrites the catalog entry in the root `package.json`. From the root of a monorepo, pass `-r` so that the workspaces using the catalog are included.
 
 ### Interactive Interface
 
@@ -121,10 +124,10 @@ Within each section, individual packages may have a suffix (` dev`, ` peer`, ` o
 
 ## `--recursive` and `--filter`
 
-In a monorepo, `bun update` only rewrites the `package.json` of the workspace you run it in. From the root, it still updates the transitive dependencies of every workspace in `bun.lock`.
+In a monorepo, `bun update` only rewrites the `package.json` of the workspace you run it in. A plain run also rewrites the root's catalog entries. From the root, `bun update` still updates the transitive dependencies of every workspace in `bun.lock`.
 
 - `--recursive` (`-r`) updates every workspace's `package.json`.
-- `--filter <pattern>` (`-F`) updates only the matching workspaces, using the [filter syntax](/pm/filter). As with `bun install --filter`, Bun links only the selected workspaces afterwards.
+- `--filter <pattern>` (`-F`) updates only the matching workspaces, using the [filter syntax](/pm/filter). Bun rewrites catalog entries only when the root is among the selected workspaces. As with `bun install --filter`, Bun links only the selected workspaces afterwards.
 
 Both combine with package names, `--latest`, `--dry-run`, and `--interactive` (which adds a "Workspace" column).
 
@@ -168,7 +171,7 @@ bun update -g typescript
 
 By default, `bun update` updates each dependency to the latest version that satisfies the version range in your `package.json`.
 
-To update direct dependencies to the latest version regardless of the declared range, use `--latest` (`-L`). Bun rewrites the `package.json` entry to a range of the same style on the new version. Transitive dependencies still respect the ranges their dependents declare. Bun does not downgrade a dependency that is already ahead of `latest` (e.g. a prerelease).
+To update direct dependencies to the latest version regardless of the declared range, use `--latest` (`-L`). Bun rewrites the `package.json` entry to a range of the same style on the new version. A plain `bun update --latest` also moves catalog entries past their ranges. Once you narrow the update to particular packages, Bun leaves catalog entries as written. Transitive dependencies still respect the ranges their dependents declare. Bun does not downgrade a dependency that is already ahead of `latest` (e.g. a prerelease).
 
 ```sh terminal icon="terminal"
 bun update --latest

@@ -386,6 +386,16 @@ function parseBuildScriptOutput(stdout: string): BuildScriptOutput {
       case "rustc-link-arg":
         out.linkArgs.push(["all", value]);
         break;
+      case "rustc-link-arg-bin": {
+        // `rustc-link-arg-bin=NAME=ARG`: for one binary target
+        const eq2 = value.indexOf("=");
+        if (eq2 < 0) {
+          out.warnings.push(`invalid rustc-link-arg-bin \`${line}\``);
+          break;
+        }
+        out.linkArgs.push([`bin=${value.slice(0, eq2)}`, value.slice(eq2 + 1)]);
+        break;
+      }
       case "rustc-link-arg-bins":
         out.linkArgs.push(["bins", value]);
         break;
@@ -432,7 +442,6 @@ function parseBuildScriptOutput(stdout: string): BuildScriptOutput {
         break;
       default:
         if (newSyntax && key === "error") out.errors.push(value);
-        else if (key.startsWith("rustc-link-arg-bin=")) out.linkArgs.push([key.slice("rustc-link-arg-".length), value]);
         else if (!newSyntax) out.metadata.push([key, value]);
         else out.warnings.push(`unknown directive \`${line}\``);
     }

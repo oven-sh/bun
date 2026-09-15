@@ -1,7 +1,7 @@
 /**
- * Questions about other processes by pid, for the places that coordinate through pid files (the build
- * directory lock in build.ts, the pipelined-rustc state in rust/run.ts). A recorded pid says nothing by
- * itself — the process may be gone and the number reused — so identity is checked through the command line.
+ * Questions about another process by pid, for the build directory lock in build.ts, which is a pid file.
+ * A recorded pid says nothing by itself — the process may be gone and the number reused — so identity is
+ * checked through the command line.
  */
 
 import { spawnSync } from "node:child_process";

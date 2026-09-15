@@ -197,7 +197,8 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         Bun::V::validateInt32(scope, lexicalGlobalObject, nameOrNid, "nameOrNid"_s, jsUndefined(), jsUndefined(), &nid);
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!nameOrNid.isString()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "nameOrNid"_s, "string or number"_s, nameOrNid);
+        static constexpr ASCIILiteral nameOrNidTypes[] = { "string"_s, "number"_s };
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "nameOrNid"_s, nameOrNidTypes, nameOrNid);
     }
 
     JSValue options = callFrame->argument(1);

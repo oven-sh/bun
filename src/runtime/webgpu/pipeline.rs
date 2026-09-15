@@ -47,8 +47,8 @@ fn parse_stage(d: &Dict<'_>) -> JsResult<pl::ProgrammableStageDescriptor<'static
             let Some(value) = record.get(d.global, name.as_bytes())? else {
                 continue;
             };
-            // `double`, unrestricted: NaN and the infinities get to naga, which rejects them.
-            constants.insert(name, value.to_number(d.global)?);
+            let value = args::to_f64(d.global, value, "GPUProgrammableStage.constants")?;
+            constants.insert(name, value);
         }
     }
     Ok(pl::ProgrammableStageDescriptor {
@@ -292,6 +292,7 @@ impl GPURenderPipeline {
             },
         };
 
+        let mut bad_write_mask: Option<u32> = None;
         let fragment = match d.dict("fragment", "GPUFragmentState")? {
             None => None,
             Some(f) => {
@@ -316,12 +317,14 @@ impl GPURenderPipeline {
                     let format =
                         t.require_enum("format", "GPUTextureFormat", names::parse_texture_format)?;
                     device.check_format(global, format, "createRenderPipeline: targets")?;
+                    let write_mask = t.u32_or("writeMask", 0xF)?;
+                    if write_mask > 0xF {
+                        bad_write_mask = bad_write_mask.or(Some(write_mask));
+                    }
                     targets.push(Some(wgt::ColorTargetState {
                         format,
                         blend,
-                        write_mask: wgt::ColorWrites::from_bits_truncate(
-                            t.u32_or("writeMask", 0xF)?,
-                        ),
+                        write_mask: wgt::ColorWrites::from_bits_truncate(write_mask),
                     }));
                     Ok(())
                 })?;
@@ -332,7 +335,7 @@ impl GPURenderPipeline {
             }
         };
 
-        let desc = pl::RenderPipelineDescriptor {
+        let mut desc = pl::RenderPipelineDescriptor {
             label: super::wgpu_label(&label),
             layout,
             vertex,
@@ -343,6 +346,10 @@ impl GPURenderPipeline {
             multiview_mask: None,
             cache: None,
         };
+        if bad_write_mask.is_some() {
+            // wgpu-core hands out an invalid pipeline only from a failed creation: ask for no samples at all.
+            desc.multisample.count = 0;
+        }
         let (id, err) = instance().device_create_render_pipeline(device.id(), &desc, None);
         let value = GPURenderPipeline {
             device: Rc::clone(device),
@@ -350,7 +357,13 @@ impl GPURenderPipeline {
             label: JsCell::new(label),
         }
         .to_js(global);
-        Ok((value, err.map(|e| GpuError::from_wgpu(&e))))
+        let err = match bad_write_mask {
+            Some(mask) => Some(GpuError::validation(format!(
+                "createRenderPipeline: writeMask 0x{mask:x} has bits that are not a GPUColorWrite"
+            ))),
+            None => err.map(|e| GpuError::from_wgpu(&e)),
+        };
+        Ok((value, err))
     }
 
     pub(crate) fn get_bind_group_layout(

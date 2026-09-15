@@ -224,7 +224,11 @@ describe.skipIf(!hasAdapter)("with a device", () => {
       name: "OperationError",
     });
 
-    const device = await adapter.requestDevice({ label: "first", requiredLimits: { maxBindGroups: 4 } });
+    const device = await adapter.requestDevice({
+      label: "first",
+      defaultQueue: { label: "main queue" },
+      requiredLimits: { maxBindGroups: 4 },
+    });
     expect(device).toBeInstanceOf(GPUDevice);
     expect(device).toBeInstanceOf(EventTarget);
     expect(device.label).toBe("first");
@@ -232,6 +236,7 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(device.label).toBe("renamed");
     expect(device.queue).toBeInstanceOf(GPUQueue);
     expect(device.queue).toBe(device.queue);
+    expect(device.queue.label).toBe("main queue");
     expect(device.limits.maxBindGroups).toBe(4);
     expect(device.features.has("core-features-and-limits")).toBe(true);
     expect(device.adapterInfo.description).toBe(adapter.info.description);
@@ -373,6 +378,12 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     await upload.mapAsync(GPUMapMode.WRITE);
     expect(Array.from(new Uint32Array(upload.getMappedRange()))).toEqual([5, 6, 7, 8]);
     upload.unmap();
+
+    // A buffer destroyed before the call fails validation: OperationError, not AbortError.
+    upload.destroy();
+    device.pushErrorScope("validation");
+    await expect(upload.mapAsync(GPUMapMode.WRITE)).rejects.toMatchObject({ name: "OperationError" });
+    expect(await device.popErrorScope()).toBeInstanceOf(GPUValidationError);
 
     // The wrong mode is a validation error on the device and a rejected promise.
     device.pushErrorScope("validation");
@@ -831,6 +842,28 @@ describe.skipIf(!hasAdapter)("with a device", () => {
       }),
     ).toBeInstanceOf(GPUValidationError);
 
+    // Flag bits outside GPUShaderStage and GPUColorWrite are validation errors.
+    expect(
+      await validationError(device, () => {
+        device.createBindGroupLayout({ entries: [{ binding: 0, visibility: 0xff, buffer: {} }] });
+      }),
+    ).toBeInstanceOf(GPUValidationError);
+    expect(
+      await validationError(device, () => {
+        const module = device.createShaderModule({
+          code: `
+            @vertex fn vs() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+            @fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }
+          `,
+        });
+        device.createRenderPipeline({
+          layout: "auto",
+          vertex: { module },
+          fragment: { module, targets: [{ format: "rgba8unorm", writeMask: 0x1f }] },
+        });
+      }),
+    ).toBeInstanceOf(GPUValidationError);
+
     // A layout entry has to pick exactly one kind of binding.
     expect(
       await validationError(device, () => {
@@ -878,6 +911,12 @@ describe.skipIf(!hasAdapter)("with a device", () => {
       TypeError,
     );
     expect({ pulled, closed }).toEqual({ pulled: 1, closed: true });
+
+    // A pipeline constant is a restricted double.
+    const module = device.createShaderModule({ code: doubleShader });
+    expect(() =>
+      device.createComputePipeline({ layout: "auto", compute: { module, constants: { scale: NaN } } }),
+    ).toThrow(TypeError);
 
     // maxAnisotropy is the one [Clamp] integer: out of range values clamp, they do not throw.
     const linear = { magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" };

@@ -43,10 +43,14 @@ impl Waiter for WorkDone {
 }
 
 impl GPUQueue {
-    pub(crate) fn create(global: &JSGlobalObject, device: &DeviceRef) -> JSValue {
+    pub(crate) fn create(
+        global: &JSGlobalObject,
+        device: &DeviceRef,
+        label: bun_core::String,
+    ) -> JSValue {
         GPUQueue {
             device: Rc::clone(device),
-            label: JsCell::new(bun_core::String::EMPTY),
+            label: JsCell::new(label),
         }
         .to_js(global)
     }

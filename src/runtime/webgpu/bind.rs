@@ -76,8 +76,9 @@ impl GPUBindGroupLayout {
         d.require_each("entries", |item| {
             let e = Dict::new(global, item, "GPUBindGroupLayoutEntry")?;
             let binding = e.require_u32("binding")?;
-            let visibility =
-                wgt::ShaderStages::from_bits_truncate(e.require_u32("visibility")? & 0x7);
+            let visibility = e.require_u32("visibility")?;
+            let unknown_stage = visibility & !0x7 != 0;
+            let visibility = wgt::ShaderStages::from_bits_truncate(visibility & 0x7);
             let mut ty = None;
             let mut members = 0u32;
             if let Some(b) = e.dict("buffer", "GPUBufferBindingLayout")? {
@@ -151,7 +152,7 @@ impl GPUBindGroupLayout {
                 ty = None;
             }
             match (members, ty) {
-                (1, Some(ty)) => entries.push(wgt::BindGroupLayoutEntry {
+                (1, Some(ty)) if !unknown_stage => entries.push(wgt::BindGroupLayoutEntry {
                     binding,
                     visibility,
                     ty,
@@ -166,7 +167,7 @@ impl GPUBindGroupLayout {
             device.report(
                 global,
                 GpuError::validation(format!(
-                    "createBindGroupLayout: entry {binding} has to set exactly one of buffer, sampler, texture, storageTexture (externalTexture is not supported)"
+                    "createBindGroupLayout: entry {binding} has to set exactly one of buffer, sampler, texture, storageTexture (externalTexture is not supported), and only GPUShaderStage bits in visibility"
                 )),
             )?;
             // wgpu-core hands out an invalid layout only from a failed creation: two entries on one binding.

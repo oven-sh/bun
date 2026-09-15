@@ -87,7 +87,7 @@ fn map_failure(err: &BufferAccessError) -> (bool, String) {
     let aborted = matches!(
         err,
         BufferAccessError::MapAborted
-            | BufferAccessError::DestroyedResource(_)
+            | BufferAccessError::InvalidResource(_)
             | BufferAccessError::Device(_)
     );
     (aborted, error_chain(err))
@@ -409,6 +409,10 @@ impl GPUBuffer {
                 self.map.set(MapState::Unmapped);
                 self.device.untrack_mapped(this_value);
                 self.settle_pending(global, this_value, Err((aborted, &message)))?;
+                // Per spec an invalid buffer fails like a lost device: the promise rejects, nothing is reported.
+                if matches!(err, BufferAccessError::InvalidResource(_)) {
+                    return Ok(());
+                }
                 return self.device.report(global, GpuError::from_wgpu(&err));
             }
         };

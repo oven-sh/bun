@@ -58,7 +58,7 @@ impl GPUAdapter {
             JSPromise::rejected_promise(global, err).as_value(global)
         };
 
-        let (desc, label) = match parse_device_descriptor(global, callframe.argument(0))? {
+        let (desc, labels) = match parse_device_descriptor(global, callframe.argument(0))? {
             Ok(parsed) => parsed,
             Err(DescriptorError::Type(message)) => {
                 let err = global.create_type_error_instance(format_args!("{message}"));
@@ -75,8 +75,11 @@ impl GPUAdapter {
         match instance().adapter_request_device(self.raw.id(), &desc, None, None) {
             Ok((device, queue)) => {
                 self.consumed.set(true);
-                let device =
-                    GPUDeviceHandle::create(global, bun_webgpu::Device::new(device, queue), label)?;
+                let device = GPUDeviceHandle::create(
+                    global,
+                    bun_webgpu::Device::new(device, queue),
+                    labels,
+                )?;
                 Ok(JSPromise::resolved_promise_value(global, device))
             }
             Err(err) => {

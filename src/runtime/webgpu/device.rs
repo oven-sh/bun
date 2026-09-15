@@ -191,6 +191,8 @@ fn lost_info_to_js(
 pub struct GPUDeviceHandle {
     state: DeviceRef,
     label: JsCell<bun_core::String>,
+    /// `GPUDeviceDescriptor.defaultQueue.label`.
+    queue_label: bun_core::String,
 }
 
 super::gpu_object!(GPUDeviceHandle, label);
@@ -200,7 +202,7 @@ impl GPUDeviceHandle {
     pub(crate) fn create(
         global: &JSGlobalObject,
         raw: bun_webgpu::Device,
-        label: bun_core::String,
+        labels: DeviceLabels,
     ) -> JsResult<JSValue> {
         let lost_signal = Arc::new(LostSignal::default());
         {
@@ -228,7 +230,8 @@ impl GPUDeviceHandle {
         let handle = bun_jsc::JsClass::to_js(
             GPUDeviceHandle {
                 state: Rc::clone(&state),
-                label: JsCell::new(label),
+                label: JsCell::new(labels.device),
+                queue_label: labels.queue,
             },
             global,
         );
@@ -267,7 +270,11 @@ impl GPUDeviceHandle {
     }
 
     pub(crate) fn get_queue(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(GPUQueue::create(global, &self.state))
+        Ok(GPUQueue::create(
+            global,
+            &self.state,
+            self.queue_label.clone(),
+        ))
     }
 
     /// Runs once: the generated getter caches the promise in the `lost` slot for `resolve_lost`.
@@ -314,6 +321,11 @@ impl GPUDeviceHandle {
             "GPUErrorFilter",
             bun_webgpu::parse_error_filter,
         )?;
+        self.state.deliver_loss(global)?;
+        // A lost device records nothing and `popErrorScope()` leaves its stack alone: do not grow it.
+        if self.state.lost.get() {
+            return Ok(JSValue::UNDEFINED);
+        }
         self.state.scopes.with_mut(|scopes| {
             scopes.push(ErrorScope {
                 filter,
@@ -521,6 +533,12 @@ pub(crate) enum DescriptorError {
     Operation(String),
 }
 
+/// The labels a `GPUDeviceDescriptor` carries: its own and `defaultQueue.label`.
+pub(crate) struct DeviceLabels {
+    pub device: bun_core::String,
+    pub queue: bun_core::String,
+}
+
 pub(crate) fn parse_device_descriptor(
     global: &JSGlobalObject,
     value: JSValue,
@@ -528,13 +546,17 @@ pub(crate) fn parse_device_descriptor(
     Result<
         (
             wgt::DeviceDescriptor<Option<std::borrow::Cow<'static, str>>>,
-            bun_core::String,
+            DeviceLabels,
         ),
         DescriptorError,
     >,
 > {
     let d = Dict::new(global, value, "GPUDeviceDescriptor")?;
     let label = d.label()?;
+    let queue_label = match d.dict("defaultQueue", "GPUQueueDescriptor")? {
+        Some(queue) => queue.label()?,
+        None => bun_core::String::EMPTY,
+    };
 
     let mut features = wgt::Features::empty();
     let mut bad_feature: Option<Vec<u8>> = None;
@@ -598,5 +620,9 @@ pub(crate) fn parse_device_descriptor(
         memory_hints: wgt::MemoryHints::default(),
         trace: wgt::Trace::Off,
     };
-    Ok(Ok((desc, label)))
+    let labels = DeviceLabels {
+        device: label,
+        queue: queue_label,
+    };
+    Ok(Ok((desc, labels)))
 }

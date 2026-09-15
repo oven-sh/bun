@@ -570,6 +570,26 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     expect(connections).toBe(2);
   });
 
+  test("a host function a graph calls works for that graph; through a snapshot taken in the host, for the host", async () => {
+    const dir = fixture({ "calls.mjs": `export const call = () => { viaSnapshot("kept"); direct("dropped"); };` });
+    const asHost = AsyncLocalStorage.snapshot();
+    const log: string[] = [];
+    const work = (entry: string) => {
+      log.push(entry + " started in the " + (Bun.ModuleGraph.current ? "graph" : "host"));
+      setImmediate(() => setTimeout(() => log.push(entry + " finished"), 1));
+    };
+    const graph = new Bun.ModuleGraph({
+      isolateIO: true,
+      globals: { viaSnapshot: (entry: string) => asHost(() => work(entry)), direct: work },
+    });
+    const app = await graph.import(join(dir, "calls.mjs"));
+    graph.run(() => app.call());
+    graph.dispose();
+    await until(() => log.includes("kept finished"));
+    await hostTimerTurns();
+    expect(log).toEqual(["kept started in the host", "dropped started in the graph", "kept finished"]);
+  });
+
   test("what a disposed graph's code opens is closed at once", async () => {
     const dir = fixture({
       "late.mjs": `
@@ -596,8 +616,11 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     (globalThis as any).__moduleGraphIoLatePort = listener.port;
     const graph = new Bun.ModuleGraph({ isolateIO: true });
     const app = await graph.import(join(dir, "late.mjs"));
+    // run() throws once the graph is disposed; its code is still entered by what it left behind.
+    const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
     graph.dispose();
-    const port = graph.run(() => app.open());
+    expect(() => graph.run(() => app.open())).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+    const port = inGraph(() => app.open());
     await until(async () => !(await accepts(port)));
     delete (globalThis as any).__moduleGraphIoLatePort;
     await hostTimerTurns();

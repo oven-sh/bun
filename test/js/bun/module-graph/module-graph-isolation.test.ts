@@ -133,6 +133,11 @@ const dir = String(
         const data = Buffer.alloc(4 << 20, "T");
         for (const handle of await opensForWriting(dir, count)) handle.write(data, 0, data.length, 0).catch(() => {});
       };
+      // import()s of modules nobody has loaded, and what they settle with.
+      export const heard = [];
+      export const imports = (specifier, count) => {
+        for (let i = 0; i < count; i++) import(specifier + "?tenant" + i).then(() => heard.push("fulfilled"), error => heard.push("rejected: " + error.code));
+      };
       // FileHandles nobody closes and nobody keeps.
       export const forgetsFileHandles = async (path, count) => { for (let i = 0; i < count; i++) await fs.promises.open(path, "r"); };
       // One the host is handed, with a stream over another.
@@ -261,6 +266,29 @@ const dir = String(
       for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
       const written = mine.filter(fd => fs.fstatSync(fd).size > 0).length;
       console.log(JSON.stringify({ hostFilesWrittenTo: written }));
+      process.exit(0);
+    `,
+    "not-loaded-yet.ts": Array.from(
+      { length: 40 },
+      (_, i) => `export function f${i}(a: number): number { return a + ${i}; }`,
+    ).join("\n"),
+    "not-loaded-yet-tla.mjs": `
+      await new Promise(resolve => setImmediate(resolve));
+      export const loaded = true;
+    `,
+    "imports-of-a-disposed-graph.mjs": `
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      const specifier = import.meta.dir + "/" + process.argv[2];
+      graph.run(() => app.imports(specifier, 8));
+      // The host's own, through the same graph. (All in the turn that disposes: no load is back before it.)
+      const mine = graph.import(specifier + "?host").then(() => "fulfilled", error => "rejected: " + error.code);
+      graph.dispose();
+      const host = await mine;
+      // The loads are back (for nobody) once the pool has come round to a job queued behind them.
+      await import(specifier + "?after");
+      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ graphHeard: app.heard, host }));
       process.exit(0);
     `,
     "open-files-of-a-disposed-graph.mjs": `
@@ -2435,6 +2463,7 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
     try {
       void start(first, old);
       await until(() => old.ticks >= allHops.length);
+      const inFirst = first.graph.run(() => AsyncLocalStorage.snapshot());
       first.graph.dispose();
       using second = await newGraph();
       const steps = allHops.length * 3;
@@ -2442,9 +2471,9 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
       expect({ ticks: fresh.ticks, wrong: fresh.wrong }).toEqual({ ticks: steps, wrong: [] });
       const stoppedAt = old.ticks;
       // The disposed graph's functions are still functions: called by the host they run as the host's
-      // code; entered through run() what they open is closed at once.
+      // code; entered through what the graph left behind, what they open is closed at once.
       first.app.open.interval(viaHost);
-      first.graph.run(() => first.app.open.interval(viaRun));
+      inFirst(() => first.app.open.interval(viaRun));
       expect([await ticks(viaHost), await ticks(viaRun)]).toEqual([true, false]);
       expect(old.ticks).toBe(stoppedAt);
     } finally {
@@ -2621,6 +2650,18 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
+  test.each([
+    ["not-loaded-yet.ts", "the same turn"],
+    ["not-loaded-yet-tla.mjs", "the same turn"],
+  ])(
+    "import()s it had under way (%s, disposed %s) stay pending; the host's import() through it rejects",
+    async (specifier, when) => {
+      expect(await runs("imports-of-a-disposed-graph.mjs", specifier, when)).toEqual({
+        stdout: `{"graphHeard":[],"host":"rejected: ERR_INVALID_STATE"}`,
+        exitCode: 0,
+      });
+    },
+  );
   test("the files it held open are closed: a writer, bun:sqlite and node:sqlite databases, a FileHandle, a stream", async () => {
     expect(await runs("open-files-of-a-disposed-graph.mjs")).toEqual({
       stdout: JSON.stringify({

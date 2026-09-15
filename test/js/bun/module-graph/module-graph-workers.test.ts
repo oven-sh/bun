@@ -138,6 +138,7 @@ const dir = String(
     `,
     "host.mjs": String.raw`
       // Runs on the thread that hosts the cell's graph: puts the graph in the cell's state, then issues the cell's events.
+      import { AsyncLocalStorage } from "node:async_hooks";
       import fs from "node:fs";
       import { parentPort } from "node:worker_threads";
       import { LEAF, S, turn, until } from "./shared.mjs";
@@ -247,9 +248,11 @@ const dir = String(
           await until(() => control.began);
         } else {
           app = await graph.import(import.meta.dir + "/work.mjs");
+          // (run() throws once the graph is disposed; a snapshot taken inside it still enters its context.)
+          const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
           if (cell.graphState === "disposed") control.dispose();
           for (const [kind, arg] of cell.work) {
-            const began = graph.run(() => app.begin(kind, arg));
+            const began = inGraph(() => app.begin(kind, arg));
             if (cell.graphState !== "disposed") await began;
           }
           out.import = Promise.resolve();

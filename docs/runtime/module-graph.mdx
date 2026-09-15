@@ -34,7 +34,7 @@ Native addons are shared, but their asynchronous work is the graph's too: a Node
 
 ## Disposing
 
-`graph.dispose()` drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and its errors still go to `onError`. From then on `graph.import()` and the graph's `require()` fail with `ERR_INVALID_STATE`, as does `import()` from a function of the graph that the host calls; `import()` by the disposed graph's own leftover code stays pending. Modules of the graph that had not run yet never will. An import that was still waiting for a file rejects. One whose module is suspended in a top-level `await` is left alone: it finishes if what the module awaits does.
+`graph.dispose()` drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and its errors still go to `onError`. From then on `graph.import()`, `graph.run()` and the graph's `require()` fail with `ERR_INVALID_STATE`, as does `import()` from a function of the graph that the host calls; `import()` by the disposed graph's own leftover code stays pending. Modules of the graph that had not run yet never will. A `graph.import()` of the host's that was still waiting for a file rejects; an `import()` the graph's own code had under way stays pending, like the rest of its work. One whose module is suspended in a top-level `await` is left alone: it finishes if what the module awaits does.
 
 ## Calling into a graph
 
@@ -47,6 +47,18 @@ graph.run(() => app.start()); // what this opens is the graph's
 
 `Bun.ModuleGraph.current` is the graph whose context the calling code is running in, or `undefined` in the host's. Host functions shared by several graphs (passed in `globals`) can use it to tell their callers apart.
 
+The context follows the caller. A host function a graph calls (one passed in `globals`, say) runs in that graph's context, so the asynchronous work it starts is the graph's and is dropped with it at `dispose()`. For work that must finish whatever happens to the caller (an audit log, billing), leave the graph's context with a snapshot taken in the host:
+
+```ts
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const asHost = AsyncLocalStorage.snapshot(); // taken by the host, outside any graph
+const graph = new Bun.ModuleGraph({
+  isolateIO: true,
+  globals: { record: (entry: string) => asHost(() => appendToAuditLog(entry)) },
+});
+```
+
 ## Errors
 
 Uncaught exceptions and unhandled rejections raised by a graph's module code go to that graph's `onError` instead of the process-wide handlers.
@@ -58,3 +70,5 @@ What the host caused takes the normal process-wide path: a specifier that does n
 ## What is shared
 
 The global object, `globalThis` properties, `process` (unless you replace it through `globals`), plugins and native addons are shared by every graph and the host. A graph's listeners on something the host owns (the shared `process`: signals, `process.stdin`, `'exit'`; an emitter the host passed in) are that object's, so they outlive `dispose()`. `ModuleGraph` separates instances of an app you trust from each other; it is not a security sandbox.
+
+`mock.module()` in `bun test` is one of the shared things: it applies to what a graph loads afterwards. A graph that already loaded the module keeps the instance it has.

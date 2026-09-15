@@ -762,6 +762,11 @@ JSC_DEFINE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_run, (JSGlobalObject * l
     JSValue function = callFrame->argument(0);
     V::validateFunction(scope, globalObject, function, "fn"_s);
     RETURN_IF_EXCEPTION(scope, {});
+    // Inside a disposed graph whatever `fn` starts would silently never complete: say so, as import() does.
+    if (graph->disposed()) {
+        throwException(globalObject, scope, createModuleGraphDisposedError(globalObject));
+        return {};
+    }
     ModuleGraphContextScope context(globalObject, graph);
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, function, getCallData(function), jsUndefined(), ArgList(callFrame, 1))));
 }

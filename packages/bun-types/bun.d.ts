@@ -5494,6 +5494,8 @@ declare module "bun" {
      * {@link ModuleGraphOptions.isolateIO}): what `fn` and everything it
      * starts open belongs to the graph.
      *
+     * Throws `ERR_INVALID_STATE` once the graph is disposed.
+     *
      * @returns what `fn` returns
      */
     run<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;

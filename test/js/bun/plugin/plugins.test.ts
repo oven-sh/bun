@@ -855,6 +855,54 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
   expect(exitCode).toBe(0);
 });
 
+it.concurrent("onResolve runs for a bare specifier without an extension", async () => {
+  using dir = tempDir("plugin-onresolve-bare-specifier", {
+    "external.ts": `
+      import { value } from "host-package/subpath";
+      console.log("static:" + value);
+    `,
+    "entry.ts": `
+      const resolved: string[] = [];
+      Bun.plugin({
+        name: "host-modules",
+        setup(build) {
+          build.onResolve({ filter: /^host-package(\\/.*)?$/ }, args => {
+            resolved.push(args.path);
+            return { path: args.path, namespace: "host" };
+          });
+          build.onLoad({ filter: /.*/, namespace: "host" }, args => ({
+            exports: { value: "from " + args.path },
+            loader: "object",
+          }));
+        },
+      });
+      const dynamic = await import("host-package/subpath");
+      console.log("dynamic:" + dynamic.value);
+      console.log("require:" + require("host-package/other").value);
+      await import("./external.ts");
+      console.log("resolved:" + resolved.join(","));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() || stderr).toBe(
+    [
+      "dynamic:from host-package/subpath",
+      "require:from host-package/other",
+      "static:from host-package/subpath",
+      "resolved:host-package/subpath,host-package/other,host-package/subpath",
+    ].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});
+
 it.concurrent("a no-op onResolve that returns args.path unchanged is transparent", async () => {
   using dir = tempDir("plugin-onresolve-no-op", {
     "preload.js": `

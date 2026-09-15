@@ -471,7 +471,7 @@ Bun automatically reuses connections to the same host. This is called **connecti
 
 #### Fetch sessions
 
-A `Bun.FetchSession` holds connection settings and owns a keep-alive pool. `session.fetch` is `fetch` with that session, and it is bound, so it works wherever a `fetch` function is accepted (`new SomeClient({ fetch: session.fetch })`). `fetch(url, { session })` does the same through the global `fetch`. `session.fetch.preconnect(url)` opens a connection in the session's pool. Bun never shares a connection between two sessions, or between a session and plain `fetch`.
+A `Bun.FetchSession` holds connection settings and owns a keep-alive pool. `session.fetch` is `fetch` with that session, and it is bound, so it works wherever a `fetch` function is accepted (`new SomeClient({ fetch: session.fetch })`). It has no `preconnect`. `fetch(url, { session })` does the same through the global `fetch`. Bun never shares a connection between two sessions, or between a session and plain `fetch`.
 
 ```ts
 const session = new Bun.FetchSession({

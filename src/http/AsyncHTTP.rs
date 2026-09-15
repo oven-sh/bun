@@ -331,25 +331,6 @@ struct Preconnect {
     async_http: Option<AsyncHTTP<'static>>,
     url: URL<'static>,
     is_url_owned: bool,
-    /// Dropped with the box, once the socket is parked or the attempt failed.
-    _in_flight: Option<InFlight>,
-}
-
-/// Counts something in flight on the HTTP thread for an owner on another
-/// thread to poll; the count goes down when this is dropped.
-pub struct InFlight(std::sync::Arc<core::sync::atomic::AtomicUsize>);
-
-impl InFlight {
-    pub fn new(count: &std::sync::Arc<core::sync::atomic::AtomicUsize>) -> InFlight {
-        count.fetch_add(1, core::sync::atomic::Ordering::AcqRel);
-        InFlight(std::sync::Arc::clone(count))
-    }
-}
-
-impl Drop for InFlight {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, core::sync::atomic::Ordering::AcqRel);
-    }
 }
 
 impl Preconnect {
@@ -375,17 +356,6 @@ impl Preconnect {
 }
 
 pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
-    preconnect_with(url, is_url_owned, Options::default(), None);
-}
-
-/// `options` choose the pool and the TLS configuration the connection is
-/// opened with and parked under. `in_flight` is held until it is parked.
-pub fn preconnect_with(
-    url: URL<'static>,
-    is_url_owned: bool,
-    options: Options<'static>,
-    in_flight: Option<InFlight>,
-) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
         if is_url_owned {
             // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
@@ -407,7 +377,6 @@ pub fn preconnect_with(
         async_http: None,
         url,
         is_url_owned,
-        _in_flight: in_flight,
     }));
 
     // SAFETY: `this` is a freshly Box-allocated, uniquely-owned pointer; we
@@ -423,7 +392,7 @@ pub fn preconnect_with(
             b"",
             HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
             FetchRedirect::Manual,
-            options,
+            Options::default(),
         ));
         async_http.client.flags.is_preconnect_only = true;
 

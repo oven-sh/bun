@@ -1237,9 +1237,17 @@ mod _async_tasks {
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
     /// buffers are pinned and rooted (`ThreadIsolated`) and read under the job's ticket.
-    pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
+    pub struct AsyncFSTask<R: FsReturn, A, const F: NodeFSFunctionEnum> {
         pub args: ThreadIsolated<A>,
         pub(crate) result: Maybe<R>,
+    }
+    impl<R: FsReturn, A, const F: NodeFSFunctionEnum> Drop for AsyncFSTask<R, A, F> {
+        /// A job whose context stopped is dropped with its result untaken.
+        fn drop(&mut self) {
+            if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::default())) {
+                result.discard();
+            }
+        }
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.

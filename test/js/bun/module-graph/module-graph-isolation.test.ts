@@ -79,9 +79,11 @@ const dir = String(
     `,
     // What a disposed graph left in something of the realm's. Each in a process of its own: they count objects.
     "left-behind-tenant.mjs": `
+      import fs from "node:fs";
       import { PerformanceObserver } from "node:perf_hooks";
       export const observeHttp = () => new PerformanceObserver(() => {}).observe({ entryTypes: ["http"] });
       // Each promise's reaction holds a FormData: alive for as long as the promise is kept.
+      export const opens = (path, count) => { for (let i = 0; i < count; i++) fs.promises.open(path, "r").then(handle => handle.close(), () => {}); };
       export const digests = count => {
         const data = new Uint8Array(8 << 20);
         for (let i = 0; i < count; i++) { const held = new FormData(); crypto.subtle.digest("SHA-256", data).then(() => held); }
@@ -105,6 +107,19 @@ const dir = String(
       for (let i = 0; i < requests; i++) await get();
       console.log(JSON.stringify({ requests, kept: objects() - before }));
       server.close();
+    `,
+    "files-of-a-disposed-graph.mjs": `
+      import fs from "node:fs";
+      const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      const before = descriptors();
+      graph.run(() => app.opens(import.meta.path, 64));
+      graph.dispose();
+      // The same work asked for afterwards has finished: the graph's had too.
+      await Promise.all(Array.from({ length: 64 }, () => fs.promises.open(import.meta.path, "r").then(handle => handle.close())));
+      await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ leftOpen: descriptors() - before }));
     `,
     "subtle-of-a-disposed-graph.mjs": `
       import { heapStats } from "bun:jsc";
@@ -1987,6 +2002,10 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       more: true,
       exitCodes: [0, 0],
     });
+  });
+  // (Counts the process's descriptors through /proc/self/fd or /dev/fd.)
+  test.skipIf(isWindows)("the files its fs.promises.open() calls in flight opened are closed", async () => {
+    expect(await runs("files-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"leftOpen":0}`, exitCode: 0 });
   });
   test("the promises of its crypto.subtle operations in flight are released, not kept unsettled", async () => {
     expect(await runs("subtle-of-a-disposed-graph.mjs")).toEqual({

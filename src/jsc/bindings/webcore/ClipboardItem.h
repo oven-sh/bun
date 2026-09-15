@@ -86,7 +86,7 @@ private:
     ClipboardItem(Vector<KeyValuePair<String, Ref<DOMPromise>>>&&, const Options&);
     explicit ClipboardItem(ClipboardItemData&&);
 
-    void didSettle(JSC::JSGlobalObject&, size_t index, bool isFulfilled, JSC::JSValue);
+    void didSettle(size_t index, bool isFulfilled, JSC::JSValue);
     void finishCollect(std::optional<ClipboardItemData>&&, JSC::JSValue failureReason = {});
 
     // Constructed items hold the caller's promises; read() items hold the platform's Blobs.

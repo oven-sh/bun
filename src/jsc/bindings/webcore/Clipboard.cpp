@@ -277,16 +277,6 @@ void Clipboard::ItemWriter::reject(ExceptionCode code, const String& message)
 void Clipboard::ItemWriter::rejectWithValue(JSC::JSValue failureReason)
 {
     if (RefPtr promise = std::exchange(m_promise, nullptr)) {
-        auto* globalObject = promise->globalObject();
-        auto* jsPromise = dynamicDowncast<JSC::JSPromise>(promise->promise());
-        if (globalObject && jsPromise) {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-            if (catchScope.exception()) {
-                rejectPromiseWithExceptionIfAny(*globalObject, *globalObject, *jsPromise, catchScope);
-                detach();
-                return;
-            }
-        }
         if (failureReason)
             promise->reject(failureReason);
         else

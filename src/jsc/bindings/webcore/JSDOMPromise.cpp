@@ -106,4 +106,23 @@ auto DOMPromise::whenSettledWithResult(Function<void(JSDOMGlobalObject*, bool, J
     return IsCallbackRegistered::Yes;
 }
 
+auto DOMPromise::whenFulfilled(JSC::JSPromise& derived, Function<JSC::JSValue(JSDOMGlobalObject&, JSC::JSValue)>&& reaction) -> IsCallbackRegistered
+{
+    auto* globalObject = this->globalObject();
+    if (!globalObject || isSuspended())
+        return IsCallbackRegistered::No;
+    auto& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* handler = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String {}, [reaction = WTF::move(reaction)](JSGlobalObject* globalObject, CallFrame* callFrame) mutable {
+        return JSC::JSValue::encode(std::exchange(reaction, {})(*uncheckedDowncast<JSDOMGlobalObject>(globalObject), callFrame->argument(0)));
+    });
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
+
+    // No rejection handler: the rejection reaches `derived` unchanged.
+    promise()->performPromiseThenExported(vm, globalObject, handler, JSC::jsUndefined(), &derived);
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
+    return IsCallbackRegistered::Yes;
+}
+
 }

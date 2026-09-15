@@ -101,32 +101,31 @@ void ClipboardItem::getType(const String& type, Ref<DeferredPromise>&& promise)
     }
 
     auto* promiseGlobalObject = m_promises[index].value->globalObject();
-    if (!promiseGlobalObject) {
+    auto* typePromise = dynamicDowncast<JSC::JSPromise>(promise->promise());
+    if (!promiseGlobalObject || !typePromise) {
         promise->reject(ExceptionCode::InvalidStateError);
         return;
     }
     auto scope = DECLARE_THROW_SCOPE(promiseGlobalObject->vm());
-    Ref unregisteredPromise = promise.copyRef();
-    auto registered = m_promises[index].value->whenSettledWithResult([promise = WTF::move(promise), type](JSDOMGlobalObject* globalObject, bool isFulfilled, JSC::JSValue result) {
-        if (!isFulfilled) {
-            promise->reject(result);
-            return;
+    // The coercion runs user JS, so it runs as a reaction of the representation
+    // with getType()'s promise as the derived one: JSC rejects that with what
+    // the coercion throws, or with the representation's own rejection.
+    auto registered = m_promises[index].value->whenFulfilled(*typePromise, [type](JSDOMGlobalObject& globalObject, JSC::JSValue value) -> JSC::JSValue {
+        auto throwScope = DECLARE_THROW_SCOPE(globalObject.vm());
+        RefPtr blob = blobFromSettledValue(&globalObject, value, type);
+        if (throwScope.exception()) [[unlikely]]
+            return {};
+        if (!blob) [[unlikely]] {
+            throwOutOfMemoryError(&globalObject, throwScope);
+            return {};
         }
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-        RefPtr blob = blobFromSettledValue(globalObject, result, type);
-        if (catchScope.exception()) [[unlikely]] {
-            if (auto* jsPromise = dynamicDowncast<JSC::JSPromise>(promise->promise()))
-                rejectPromiseWithExceptionIfAny(*globalObject, *globalObject, *jsPromise, catchScope);
-            return;
-        }
-        promise->resolveWithCallback([&](JSDOMGlobalObject& promiseGlobalObject) {
-            return clipboardBlobToJS(&promiseGlobalObject, *blob, type);
-        });
+        throwScope.release();
+        return clipboardBlobToJS(&globalObject, *blob, type);
     });
     RETURN_IF_EXCEPTION(scope, void());
     if (registered == DOMPromise::IsCallbackRegistered::No) {
         scope.release();
-        unregisteredPromise->reject(ExceptionCode::InvalidStateError);
+        promise->reject(ExceptionCode::InvalidStateError);
     }
 }
 
@@ -291,19 +290,42 @@ void ClipboardItem::collectDataForWriting(CollectCompletionHandler&& completion)
         finishCollect(std::nullopt);
         return;
     }
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     m_collected = Vector<RefPtr<Blob>>(m_promises.size());
     m_pendingCount = m_promises.size();
     auto generation = m_collectGeneration;
     for (size_t index = 0; index < m_promises.size(); ++index) {
+        // The coercion runs user JS, so it runs as a reaction of the
+        // representation: what it throws rejects `coerced`, as a throwing `then`
+        // callback would, and nothing here catches. A collect the coercion made
+        // stale (it can start another write of this item) drops the result.
         // WeakPtr: a strong back-edge would let a never-settling promise keep the item alive.
-        auto registered = m_promises[index].value->whenSettledWithResult([weakThis = WeakPtr { *this }, generation, index](JSDOMGlobalObject* globalObject, bool isFulfilled, JSC::JSValue result) {
+        auto* coerced = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+        auto registered = m_promises[index].value->whenFulfilled(*coerced, [weakThis = WeakPtr { *this }, generation, index, type = m_promises[index].key](JSDOMGlobalObject& globalObject, JSC::JSValue value) -> JSC::JSValue {
+            auto throwScope = DECLARE_THROW_SCOPE(globalObject.vm());
+            RefPtr blob = blobFromSettledValue(&globalObject, value, type);
+            if (throwScope.exception()) [[unlikely]]
+                return {};
+            if (!blob) [[unlikely]] {
+                throwOutOfMemoryError(&globalObject, throwScope);
+                return {};
+            }
             RefPtr protectedThis = weakThis.get();
             if (protectedThis && generation == protectedThis->m_collectGeneration)
-                protectedThis->didSettle(*globalObject, index, isFulfilled, result);
+                protectedThis->m_collected[index] = WTF::move(blob);
+            return JSC::jsUndefined();
         });
-        // With an exception pending the collect stays armed until the writer retires it.
         RETURN_IF_EXCEPTION(scope, void());
+        if (registered == DOMPromise::IsCallbackRegistered::Yes) {
+            registered = DOMPromise::create(*globalObject, *coerced)->whenSettledWithResult([weakThis = WeakPtr { *this }, generation, index](JSDOMGlobalObject*, bool isFulfilled, JSC::JSValue result) {
+                RefPtr protectedThis = weakThis.get();
+                if (protectedThis && generation == protectedThis->m_collectGeneration)
+                    protectedThis->didSettle(index, isFulfilled, result);
+            });
+            // With an exception pending the collect stays armed until the writer retires it.
+            RETURN_IF_EXCEPTION(scope, void());
+        }
         if (registered == DOMPromise::IsCallbackRegistered::No) {
             scope.release();
             finishCollect(std::nullopt);
@@ -318,26 +340,15 @@ void ClipboardItem::cancelDataCollection()
     finishCollect(std::nullopt);
 }
 
-void ClipboardItem::didSettle(JSC::JSGlobalObject& globalObject, size_t index, bool isFulfilled, JSC::JSValue result)
+// `result` is the representation's own rejection, or what its coercion threw.
+void ClipboardItem::didSettle(size_t index, bool isFulfilled, JSC::JSValue result)
 {
     if (!isFulfilled) {
         finishCollect(std::nullopt, result);
         return;
     }
 
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject.vm());
-    auto generation = m_collectGeneration;
-    RefPtr blob = blobFromSettledValue(&globalObject, result, m_promises[index].key);
-    // The coercion ran user JS, which may have started another write of this item.
-    if (generation != m_collectGeneration)
-        return;
-    // The writer rejects with the pending exception.
-    if (catchScope.exception()) [[unlikely]] {
-        finishCollect(std::nullopt);
-        return;
-    }
-
-    m_collected[index] = WTF::move(blob);
+    ASSERT_UNUSED(index, m_collected[index]);
     if (--m_pendingCount)
         return;
     ClipboardItemData data;

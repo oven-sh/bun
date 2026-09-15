@@ -467,6 +467,42 @@ describe("read / write", () => {
     await Promise.race([closed, failed]);
   });
 
+  // A coercion can start another write of its item and then throw. The write it
+  // was coercing for is aborted by then, so nothing observes the throw, as with
+  // a promise that is already settled. It must not become an uncaught error.
+  test("a coercion that re-enters write() and then throws is not an uncaught error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let inner = null, item;
+          // Never reaches the platform: it aborts \`inner\` while that still collects.
+          const never = new ClipboardItem({ "text/plain": new Promise(() => {}) });
+          const representation = {
+            toString() {
+              if (inner) return "unused";
+              inner = navigator.clipboard.write([item]).then(() => "resolved", e => e.name);
+              navigator.clipboard.write([never]);
+              throw new TypeError("thrown after re-entry");
+            },
+          };
+          item = new ClipboardItem({ "text/plain": representation });
+          const outer = await navigator.clipboard.write([item]).then(() => "resolved", e => e.name);
+          console.log(JSON.stringify({ outer, inner: await inner }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ outer: "AbortError", inner: "AbortError" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // The rejections a caller can act on say what was wrong. All of these are
   // decided before the OS clipboard is involved, so they are the same
   // everywhere except the per-item limit, which only the one-shot POSIX

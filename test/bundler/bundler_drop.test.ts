@@ -114,4 +114,80 @@ describe("bundler", () => {
     drop: ["ASSERT"],
     backend: "api",
   });
+  itBundled("drop/BindStaysCallable", {
+    files: {
+      "/a.js": `
+        const log = console.log.bind(console);
+        log("hello");
+        process.stdout.write("ALIVE\\n");
+      `,
+    },
+    drop: ["console"],
+    backend: "api",
+    run: { stdout: "ALIVE" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").toContain("() => {");
+      api.expectFile("out.js").not.toContain("= undefined");
+    },
+  });
+  itBundled("drop/BindImmediateCall", {
+    files: {
+      "/a.js": `
+        console.log.bind(console)("immediate");
+        process.stdout.write("ALIVE\\n");
+      `,
+    },
+    drop: ["console"],
+    backend: "api",
+    run: { stdout: "ALIVE" },
+  });
+  itBundled("drop/BindDotDefine", {
+    files: {
+      "/a.js": `
+        const f = my.logger.bind(null);
+        f("hello");
+        process.stdout.write("ALIVE\\n");
+      `,
+    },
+    drop: ["my.logger"],
+    backend: "api",
+    run: { stdout: "ALIVE" },
+  });
+  itBundled("drop/CallApplyStillDropped", {
+    files: {
+      "/a.js": `
+        globalThis.console.log(console.log.call(console, "x"));
+        globalThis.console.log(console.log.apply(console, ["y"]));
+      `,
+    },
+    drop: ["console"],
+    backend: "api",
+    run: { stdout: "undefined\nundefined" },
+  });
+  itBundled("drop/BindNotCallTargetStillDropped", {
+    files: {
+      "/a.js": `globalThis.console.log(console.log.bind.call(console.log, console));`,
+    },
+    drop: ["console"],
+    backend: "api",
+    run: { stdout: "undefined" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toContain("() => {");
+    },
+  });
+  itBundled("drop/DotDefineEndingInBindStillDropped", {
+    files: {
+      "/a.js": `
+        globalThis.handler = () => "SHOULD NOT RUN";
+        globalThis.console.log(typeof Mousetrap.bind('ctrl+s', handler));
+      `,
+    },
+    drop: ["Mousetrap.bind"],
+    backend: "api",
+    run: { stdout: "undefined" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toContain("() => {");
+      api.expectFile("out.js").not.toContain("handler)");
+    },
+  });
 });

@@ -126,6 +126,29 @@ devTest("importing a directory with a trailing slash before it is created", {
     await c.expectMessage("value: 789");
   },
 });
+devTest("importing a directory before it is created", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './second/';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./second/"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("second/index.ts", `export const abc = "456";`);
+    });
+
+    await c.expectMessage("value: 456");
+  },
+});
 devTest("default export same-scope handling", {
   files: {
     "index.html": emptyHtmlFile({

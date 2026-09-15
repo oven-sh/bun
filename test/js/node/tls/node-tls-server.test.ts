@@ -2472,12 +2472,19 @@ describe("deferred spill-close", () => {
   });
 });
 
-describe.each(["tls", "net"])("%s server socket whose peer resets the connection behind unread data", transport => {
-  // The peer sends data while the accepted socket is paused, then resets the
-  // connection (RST) instead of ending it. Node reports that as a read
-  // error and never emits 'end'. allowHalfOpen keeps the accepted socket open
-  // after an 'end', so a reset misreported as an orderly end strands it.
-  async function acceptPausedSocketAndFill() {
+describe.each(["tls", "net"])("%s server socket whose peer resets the connection", transport => {
+  // The peer resets the connection (RST) instead of ending it while the accepted
+  // socket is paused. Node reports that as a read error and never emits 'end'.
+  // allowHalfOpen keeps the accepted socket open after an 'end', so a reset
+  // misreported as an orderly end strands it.
+  //
+  // Whether macOS delivers a reset to a socket that holds unread bytes depends on
+  // timing: filling the buffers first (the original shape of these tests) lost it
+  // nearly every time, and even 296 unread bytes lost it in up to 17 of 40 attempts
+  // when the RST came a few milliseconds later. With an empty buffer it is never
+  // lost, so only the test that is about the unread bytes sends any, and it sends
+  // them right before the reset. Linux and Windows deliver it either way.
+  async function acceptPausedSocket() {
     const accepted = Promise.withResolvers<net.Socket>();
     const onConnection = (socket: net.Socket) => {
       socket.pause();
@@ -2490,6 +2497,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     await once(server.listen(0, "127.0.0.1"), "listening");
 
     const peerReady = Promise.withResolvers<void>();
+    const peerGotData = Promise.withResolvers<void>();
     const peer = await Bun.connect({
       hostname: "127.0.0.1",
       port: (server.address() as AddressInfo).port,
@@ -2502,7 +2510,9 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
           if (success) peerReady.resolve();
           else peerReady.reject(verifyError ?? new Error("handshake failed"));
         },
-        data() {},
+        data() {
+          peerGotData.resolve();
+        },
         close() {},
         error(_peer, error) {
           peerReady.reject(error);
@@ -2533,10 +2543,11 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     // Paused again: the 'data' listener above switched the stream to flowing.
     socket.pause();
 
-    const t = {
+    return {
       socket,
       peer,
       events,
+      peerGotData: peerGotData.promise,
       bytesRead: () => bytes,
       settled: settled.promise,
       [Symbol.dispose]() {
@@ -2544,20 +2555,15 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
         server.close();
       },
     };
-    // One chunk that fits: it is queued ahead of the reset and the receive window
-    // stays open. macOS drops an RST that arrives at a zero window, so filling
-    // the buffers would strand the socket there.
-    const chunk = Buffer.alloc(64 * 1024, "r");
-    const written = peer.write(chunk);
-    if (written !== chunk.length) {
-      t[Symbol.dispose]();
-      throw new Error(`short write: ${written} of ${chunk.length}`);
-    }
-    return t;
   }
 
   it("reports the reset that arrives while the socket is paused as ECONNRESET, not 'end'", async () => {
-    using t = await acceptPausedSocketAndFill();
+    using t = await acceptPausedSocket();
+    // A round trip to the peer after the pause: this process has polled since, so
+    // the reset has to reach the paused socket on its own and cannot ride on the
+    // writable event that a pause leaves behind. The peer sends nothing back.
+    t.socket.write("still here");
+    await t.peerGotData;
     t.peer.terminate();
     await t.settled;
     expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
@@ -2568,17 +2574,22 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
   });
 
   it("delivers the data queued ahead of the reset and then reports ECONNRESET, not 'end'", async () => {
-    using t = await acceptPausedSocketAndFill();
-    // Both happen before the event loop runs again, so the socket's next read
-    // event carries the queued data and the reset together: the read loop drains
-    // the data and then gets the error from recv().
+    using t = await acceptPausedSocket();
+    // One chunk that fits in the buffers, then all three happen before the event
+    // loop runs again: the socket's next read event carries the queued data and the
+    // reset together, the read loop drains the data and then gets the error from
+    // recv().
+    const chunk = Buffer.alloc(64 * 1024, "r");
+    expect(t.peer.write(chunk)).toBe(chunk.length);
     t.socket.resume();
     t.peer.terminate();
     await t.settled;
-    expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
     // Windows discards the receive queue on a reset. Linux and macOS keep it, and
     // like node, the data is delivered before the error.
-    if (!isWindows) expect(t.bytesRead()).toBeGreaterThan(0);
+    expect({ events: t.events, dataDelivered: t.bytesRead() > 0 }).toEqual({
+      events: ["error ECONNRESET", "close hadError=true"],
+      dataDelivered: !isWindows,
+    });
   });
 });
 

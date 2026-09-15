@@ -1177,7 +1177,7 @@ PredictorSub13_AVX2  [AVX, AVX2]
 # ----------------------------------------------------------------------------
 # libjpeg-turbo x86_64 AVX2 kernels (vendor/libjpeg-turbo/simd/x86_64/*-avx2.asm).
 # Gate: jpeg_simd_cpu_support() in simd/x86_64/jsimdcpu.asm checks CPUID leaf 7
-# AVX2 and XGETBV YMM state and sets JSIMD_AVX2; simd/x86_64/jsimd.c only
+# AVX2 and XGETBV YMM state and sets JSIMD_AVX2; simd/jsimd.c only
 # dispatches to a jsimd_*_avx2 kernel when init_simd() saw that bit. The SSE2
 # kernels are baseline and need no entries.
 # (38 symbols)

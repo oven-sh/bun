@@ -2138,6 +2138,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// See `Symbol::import_used_as_value`.
+    fn note_import_use(&mut self, ref_: Ref, opts: IdentifierOpts) {
+        if !opts.is_property_access_target() && !self.is_control_flow_dead {
+            self.symbols[ref_.inner_index() as usize].set_import_used_as_value(true);
+        }
+    }
+
     pub(crate) fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
@@ -2263,12 +2270,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                self.note_import_use(ref_, opts);
                 return self.new_expr(E::ImportIdentifier::new(ident.ref_, true), loc);
             }
         }
 
         // Substitute an EImportIdentifier now if this is an import item
         if self.is_import_item.contains_key(&ref_) {
+            self.note_import_use(ref_, opts);
             return self.new_expr(
                 E::ImportIdentifier::new(ref_, opts.was_originally_identifier()),
                 loc,
@@ -5492,7 +5501,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
                 .with_can_be_removed_if_unused(true),
             Some(parts[0]),
-            IdentifierOpts::new().with_was_originally_identifier(true),
+            IdentifierOpts::new()
+                .with_was_originally_identifier(true)
+                .with_is_property_access_target(parts.len() > 1),
         );
         if parts.len() > 1 {
             return Ok(self.member_expression(loc, value, &parts[1..]));
@@ -5529,14 +5540,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let mut value = initial_value;
 
-        for part in parts {
+        for (i, part) in parts.iter().enumerate() {
             if let Some(rewrote) = self.maybe_rewrite_property_access(
                 loc,
                 value,
                 part,
                 loc,
-                // All defaults on the packed-u8 IdentifierOpts.
-                IdentifierOpts::default(),
+                IdentifierOpts::default().with_is_property_access_target(i + 1 < parts.len()),
             ) {
                 value = rewrote;
             } else {
@@ -7916,6 +7926,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             M::MIdentifier(ref_) => {
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
+                    self.note_import_use(ref_, IdentifierOpts::new());
                     self.new_expr(
                         E::ImportIdentifier {
                             ref_,
@@ -8395,14 +8406,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let r#ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
 
-        self.temp_refs_to_declare.push(TempRef {
-            r#ref,
-            ..Default::default()
-        });
-
         VecExt::append(&mut scope.generated, r#ref);
 
         r#ref
+    }
+
+    /// A lowering's own `var`. `bun run` prints names as they are, so there it gets a per-file counter.
+    pub(crate) fn generate_temp_var(&mut self, name: &'a [u8]) -> Ref {
+        let name: &'a [u8] = if self.will_use_renamer() {
+            name
+        } else {
+            self.temp_ref_count += 1;
+            bun_alloc::arena_format!(in self.arena, "{}${}", bstr::BStr::new(name), self.temp_ref_count)
+                .into_bump_str()
+                .as_bytes()
+        };
+        let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, name);
+        self.declare_temp_var(ref_);
+        ref_
+    }
+
+    /// Nested scopes are renamed from `Scope::generated`, a file's top level from `Part::declared_symbols`.
+    pub(crate) fn declare_temp_var(&mut self, ref_: Ref) {
+        let mut scope = self.current_scope_ref();
+        // A parameter default has no statement list; its `var` goes outside the function.
+        while !scope.kind_stops_hoisting() || scope.kind == js_ast::scope::Kind::FunctionArgs {
+            scope = scope.parent.unwrap();
+        }
+        VecExt::append(&mut scope.generated, ref_);
+        self.declared_symbols
+            .append(DeclaredSymbol {
+                ref_,
+                is_top_level: scope == self.module_scope,
+            })
+            .expect("oom");
     }
 
     pub(crate) fn should_lower_using_declarations(&self, stmts: &[Stmt]) -> bool {
@@ -9992,10 +10029,43 @@ impl LowerUsingDeclarationsContext {
                     result.push(stmt);
                     continue;
                 }
-                js_ast::StmtData::SClass(c) => {
-                    if c.is_export {
-                        // can't go in try/catch; hoist out
+                js_ast::StmtData::SClass(mut c) => {
+                    // An exported class leaves the try block unless it has static blocks or computed keys.
+                    let runs_code = c.is_export
+                        && c.class.properties.slice().iter().any(|property| {
+                            property.kind == js_ast::g::PropertyKind::ClassStaticBlock
+                                || property.flags.contains(js_ast::flags::Property::IsComputed)
+                        });
+                    if c.is_export && !runs_code {
                         result.push(stmt);
+                        continue;
+                    }
+                    if c.is_export {
+                        let name = c.class.class_name.expect("an exported class has a name");
+                        exports.push(js_ast::ClauseItem {
+                            name: LocRef {
+                                loc: name.loc,
+                                ref_: name.ref_,
+                            },
+                            alias: p.symbols[name.ref_.inner_index() as usize].original_name,
+                            alias_loc: name.loc,
+                            ..Default::default()
+                        });
+                        let class = core::mem::take(&mut c.class);
+                        let value = p.new_expr(class, stmt.loc);
+                        let binding = p.b(B::Identifier { r#ref: name.ref_ }, name.loc);
+                        stmts[end as usize] = p.s(
+                            S::Local {
+                                kind: js_ast::s::Kind::KVar,
+                                decls: G::DeclList::init_one(G::Decl {
+                                    binding,
+                                    value: Some(value),
+                                }),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        );
+                        end += 1;
                         continue;
                     }
                 }
@@ -10065,40 +10135,9 @@ impl LowerUsingDeclarationsContext {
         let err_ref = p.generate_temp_ref(Some(b"_err"));
         let has_err_ref = p.generate_temp_ref(Some(b"_hasErr"));
 
-        // `StoreRef<Scope>` (Copy + safe `Deref`/`DerefMut`) lets the
-        // parent-chain walk and the `.generated` writes below run without
-        // raw-pointer `unsafe`, and does not borrow `p`.
-        let mut scope: js_ast::StoreRef<Scope> = p.current_scope_ref();
-        while !scope.kind_stops_hoisting() {
-            scope = scope.parent.unwrap();
+        for ref_ in [self.stack_ref, caught_ref, err_ref, has_err_ref] {
+            p.declare_temp_var(ref_);
         }
-
-        let is_top_level = scope == p.module_scope;
-        scope
-            .generated
-            .append_slice(&[self.stack_ref, caught_ref, err_ref, has_err_ref]);
-        p.declared_symbols
-            .ensure_unused_capacity(
-                // 5 to include the _promise decl later on:
-                if self.has_await_using { 5 } else { 4 },
-            )
-            .expect("oom");
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: self.stack_ref,
-        });
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: caught_ref,
-        });
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: err_ref,
-        });
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: has_err_ref,
-        });
 
         let loc = self.first_using_loc;
         let call_dispose = {
@@ -10133,11 +10172,7 @@ impl LowerUsingDeclarationsContext {
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
             let promise_ref = p.generate_temp_ref(Some(b"_promise"));
-            VecExt::append(&mut scope.generated, promise_ref);
-            p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-                is_top_level,
-                ref_: promise_ref,
-            });
+            p.declare_temp_var(promise_ref);
 
             let promise_ref_expr = p.new_expr(
                 E::Identifier {

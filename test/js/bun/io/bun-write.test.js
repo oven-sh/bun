@@ -13,6 +13,7 @@ import {
 } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import { finished } from "node:stream/promises";
 import path, { join } from "path";
 
 let i = 0;
@@ -1131,13 +1132,14 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           e => "rejected: " + e.message,
         ),
       ).toBe("rejected: boom");
-      // directStreamOnClose released the sink's lock, so the terminal state is observable through a reader.
+      // The stream stays locked to the sink that consumed it, so finished() is what observes its terminal state.
       expect(
-        await stream.getReader().closed.then(
+        await finished(stream).then(
           () => "closed",
           e => "errored: " + e.message,
         ),
       ).toBe("errored: boom");
+      expect(stream.locked).toBe(true);
     });
 
     it("a stream whose source fails rejects with that error", async () => {

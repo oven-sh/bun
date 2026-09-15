@@ -332,6 +332,13 @@ impl InterpreterFlags {
     pub(crate) fn set_quiet(&mut self, v: bool) {
         if v { self.0 |= 0b10 } else { self.0 &= !0b10 }
     }
+    /// Set by [`Interpreter::take_failure`].
+    pub(crate) const fn failed(self) -> bool {
+        self.0 & 0b100 != 0
+    }
+    pub(crate) fn set_failed(&mut self, v: bool) {
+        if v { self.0 |= 0b100 } else { self.0 &= !0b100 }
+    }
 }
 
 #[repr(u8)]
@@ -925,10 +932,9 @@ impl Interpreter {
         }
     }
 
-    /// For sequencing states' `child_done`: an interrupted pipeline member stops
-    /// where it is instead of running its next command.
+    /// A sequencing state stops early: Ctrl+C cut the member short, or the script failed.
     pub(crate) fn interrupted(&self, id: NodeId) -> bool {
-        self.node(id).base().is_some_and(|b| b.interrupted)
+        self.failed() || self.node(id).base().is_some_and(|b| b.interrupted)
     }
 
     /// Some ancestor is a member of a multi-command pipeline.
@@ -1022,11 +1028,11 @@ impl Interpreter {
                     Ok(id) => id,
                     Err(e) => {
                         self.throw(ShellErr::new_sys(&e));
-                        // Callers fall through as if the subshell exited 0.
+                        // No child exists, so `parent` is the node that failed.
                         // Return `None` so callers leave `currently_executing`
                         // unset (no `NodeId::NONE` sentinel needed in
                         // `deinit_node`/`free_node` for this path).
-                        return (None, Yield::failed());
+                        return (None, Yield::Failed(parent));
                     }
                 }
             }
@@ -1266,7 +1272,11 @@ impl Interpreter {
             self.exit_code.set(Some(exit_code));
             let this_jsvalue = self.this_jsvalue.get();
             if this_jsvalue != JSValue::ZERO {
-                if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
+                if self.failed() {
+                    // `fail` already rejected the promise.
+                    self.keep_alive.with_mut(|k| k.disable());
+                    self.deref_root_shell_and_io_if_needed(true);
+                } else if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
                     let loop_ = self.event_loop;
                     // `global_this` is `Some` on the `EventLoopHandle::Js` path
                     // (set by `create_shell_interpreter`); see `global_this_ref`.
@@ -1330,6 +1340,86 @@ impl Interpreter {
         }
 
         Yield::done()
+    }
+
+    /// A node threw a JS error (`fail`): the script winds down and `finish` settles nothing.
+    #[inline]
+    pub(crate) fn failed(&self) -> bool {
+        self.flags.get().failed()
+    }
+
+    /// Node `id` threw and holds nothing in flight: kill the subprocesses, wind the tree down, then reject (the rejection runs JS, so it comes last).
+    pub(crate) fn fail(&self, id: NodeId) -> Yield {
+        let rejection = self.take_failure();
+        if self.failed() {
+            let node_count = self.nodes.get().len();
+            for i in 0..node_count {
+                let cmd = NodeId(i as u32);
+                if matches!(self.node(cmd).kind(), StateKind::Cmd) {
+                    Cmd::kill_subprocess(self, cmd);
+                }
+            }
+        }
+        let parent = self
+            .node(id)
+            .base()
+            .map_or(NodeId::INTERPRETER, |b| b.parent);
+        let y = self.child_done(parent, id, 1);
+        if let Some((reject, error)) = rejection {
+            let global_this = self
+                .global_this_ref()
+                .expect("take_failure returned a rejection on the Js path");
+            let _entered = self.event_loop.entered();
+            global_this.bun_vm().event_loop_mut().run_callback(
+                reject,
+                global_this,
+                crate::jsc::JSValue::UNDEFINED,
+                &[error],
+            );
+        }
+        y
+    }
+
+    /// Take the pending exception and set `failed`; `Some` when the promise still has to be rejected.
+    fn take_failure(&self) -> Option<(crate::jsc::JSValue, crate::jsc::JSValue)> {
+        use crate::jsc::JSValue;
+        use crate::jsc::generated::JSShellInterpreter;
+
+        // Mini event loop: `Interpreter::throw` prints and exits instead.
+        let global_this = self.global_this_ref()?;
+        log!(
+            "Interpreter(0x{:x}) take failure",
+            std::ptr::from_ref(self) as usize
+        );
+
+        // A pending termination (`worker.terminate()`) keeps unwinding and settles nothing.
+        let error = if global_this.has_pending_termination_exception() {
+            None
+        } else {
+            let error = global_this.try_take_exception().and_then(JSValue::to_error);
+            debug_assert!(
+                error.is_some(),
+                "Yield::Failed without a pending JS exception"
+            );
+            // Nothing was thrown: the node finishes with exit code 1 and the script goes on.
+            Some(error?)
+        };
+
+        // A second pipeline member failed: the promise is already rejected.
+        if self.failed() {
+            return None;
+        }
+        self.update_flags(|f| f.set_failed(true));
+
+        let error = error?;
+        let this_jsvalue = self.this_jsvalue.get();
+        if this_jsvalue == JSValue::ZERO {
+            return None;
+        }
+        let reject = JSShellInterpreter::reject_get_cached(this_jsvalue);
+        JSShellInterpreter::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+        JSShellInterpreter::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+        Some((reject?, error))
     }
 
     /// JS-host entrypoint — sets up root IO
@@ -1441,7 +1531,7 @@ impl Interpreter {
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // The script is still in flight (e.g. `worker.terminate()`
+                // The script never reached `finish` (e.g. `worker.terminate()`
                 // mid-command) and `Node` has no `Drop` for its raw-pointer
                 // resources: deinit every live `Cmd` (kills the child, frees
                 // the `ShellSubprocess`, readers, redirection fd). Slots stay

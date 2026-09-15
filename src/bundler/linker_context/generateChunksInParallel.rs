@@ -61,6 +61,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         if c.graph.code_splitting && !c.options.minify_identifiers {
             crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
         }
+        if !c.options.minify_identifiers {
+            c.renamer_rows = crate::linker_context::rename_symbols_in_chunk::renamer_rows(
+                c.graph.symbols.symbols_for_source.len(),
+                chunks,
+            );
+        }
         let ctx = GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
@@ -92,6 +98,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             for chunk in chunks.iter_mut() {
                 chunk.nested_scopes_to_rename = Vec::new();
             }
+            crate::linker_context::rename_symbols_in_chunk::log_renamer_tables(chunks);
         }
         if c.graph.code_splitting {
             if c.options.minify_identifiers {

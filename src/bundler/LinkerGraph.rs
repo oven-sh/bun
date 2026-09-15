@@ -808,8 +808,6 @@ impl<'a> LinkerGraph<'a> {
                 stable_source_indices[source_index.get() as usize] = Index::source(i as u32);
             }
 
-            let distances: &mut [u32] = files_cols.distance_from_entry_point;
-            distances.fill(File::default().distance_from_entry_point);
             // `Index` is `#[repr(transparent)]` over `u32`; the field stores
             // raw `u32` so unwrap via `.get()` (no slice reinterpret needed).
             self.stable_source_indices = stable_source_indices.iter().map(|i| i.get()).collect();
@@ -999,10 +997,6 @@ pub struct File {
 
     pub(crate) input_file: Index,
 
-    /// The minimum number of links in the module graph to get from an entry point
-    /// to this file
-    pub(crate) distance_from_entry_point: u32,
-
     /// This file is an entry point if and only if this is not ".none".
     /// Note that dynamically-imported files are allowed to also be specified by
     /// the user as top-level entry points, so some dynamically-imported files
@@ -1027,7 +1021,6 @@ impl Default for File {
             // Note: empty static-arm bitset; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             input_file: Index::source(0u32),
-            distance_from_entry_point: u32::MAX,
             entry_point_kind: EntryPoint::Kind::None,
             entry_point_chunk_index: u32::MAX,
             line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
@@ -1042,7 +1035,6 @@ bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
         entry_bits: AutoBitSet,
         input_file: Index,
-        distance_from_entry_point: u32,
         entry_point_kind: EntryPoint::Kind,
         entry_point_chunk_index: u32,
         line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,

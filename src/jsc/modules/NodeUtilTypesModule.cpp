@@ -1077,7 +1077,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSharedArrayBuffer,
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsProxy, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-    return JSValue::encode(jsBoolean(cell->type() == GlobalProxyType || cell->type() == ProxyObjectType));
+    return JSValue::encode(jsBoolean(cell->type() == ProxyObjectType));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleNamespaceObject,
     (JSC::JSGlobalObject * globalObject,

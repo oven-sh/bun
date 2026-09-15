@@ -30,7 +30,8 @@ pub type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
 pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
 pub struct FrameworkRouter {
-    /// Absolute path to root directory of the router.
+    /// Absolute path to the project root. It only labels files in route
+    /// errors. A `Type::abs_root` may be outside it.
     pub(crate) root: Box<[u8]>,
     pub(crate) types: Box<[Type]>,
     pub(crate) routes: Vec<Route>,
@@ -186,7 +187,7 @@ impl FrameworkRouter {
 
         for (type_index, ty) in types.iter_mut().enumerate() {
             ty.abs_root = strings::paths::without_trailing_slash_windows_path(&ty.abs_root).into();
-            debug_assert!(strings::has_prefix(&ty.abs_root, root));
+            debug_assert!(paths::is_absolute(&ty.abs_root));
 
             routes.push(Route {
                 part: Part::Text(b""),
@@ -1581,32 +1582,38 @@ impl FrameworkRouter {
                             }
                         }
 
+                        let t = &self.types[t_index.get() as usize];
+                        let abs_path = fs_ref.abs(&[file.dir, file.base()]);
+
+                        // The route pattern is the path below this type's root,
+                        // which may be outside `self.root`.
                         let mut rel_path_buf = bun_paths::path_buffer_pool::get();
-                        let full_rel_path_len = {
-                            let full_rel_path = paths::resolve_path::relative_normalized_buf::<
-                                paths::platform::Auto,
-                                true,
-                            >(
-                                &mut rel_path_buf[1..],
-                                &self.root,
-                                fs_ref.abs(&[file.dir, file.base()]),
-                            );
-                            full_rel_path.len()
-                        };
+                        let rel_path_len = 1 + paths::resolve_path::relative_normalized_buf::<
+                            paths::platform::Auto,
+                            true,
+                        >(
+                            &mut rel_path_buf[1..], &t.abs_root, abs_path
+                        )
+                        .len();
                         rel_path_buf[0] = b'/';
                         paths::resolve_path::platform_to_posix_in_place(
-                            &mut rel_path_buf[0..full_rel_path_len],
+                            &mut rel_path_buf[0..rel_path_len],
                         );
+                        let rel_path: &[u8] = &rel_path_buf[0..rel_path_len];
 
-                        let t = &self.types[t_index.get() as usize];
-                        let abs_root_len = t.abs_root.len();
-                        let root_len = self.root.len();
-                        let full_rel_path = &rel_path_buf[1..1 + full_rel_path_len];
-                        let rel_path: &[u8] = if abs_root_len == root_len {
-                            &rel_path_buf[0..full_rel_path_len + 1]
-                        } else {
-                            &full_rel_path[abs_root_len - root_len - 1..]
-                        };
+                        // Errors label the file relative to the project root.
+                        let mut full_rel_path_buf = bun_paths::path_buffer_pool::get();
+                        let full_rel_path_len = paths::resolve_path::relative_normalized_buf::<
+                            paths::platform::Auto,
+                            true,
+                        >(
+                            &mut full_rel_path_buf[..], &self.root, abs_path
+                        )
+                        .len();
+                        paths::resolve_path::platform_to_posix_in_place(
+                            &mut full_rel_path_buf[0..full_rel_path_len],
+                        );
+                        let full_rel_path: &[u8] = &full_rel_path_buf[0..full_rel_path_len];
 
                         let mut log = TinyLog::empty();
                         // The arena is reset at the end of every arm via
@@ -1618,8 +1625,12 @@ impl FrameworkRouter {
                                 .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
                         let parsed = match parse_result {
                             Err(_) => {
-                                log.cursor_at +=
-                                    u32::try_from(abs_root_len - root_len).expect("int cast");
+                                // `cursor_at` indexes `rel_path`. Both paths end with the same bytes.
+                                log.cursor_at = u32::try_from(
+                                    (log.cursor_at as usize + full_rel_path.len())
+                                        .saturating_sub(rel_path.len()),
+                                )
+                                .expect("int cast");
                                 ctx.on_router_syntax_error(full_rel_path, log)?;
                                 arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;

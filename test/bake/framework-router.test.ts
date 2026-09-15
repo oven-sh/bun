@@ -1,9 +1,21 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
+
+async function run(dir: string, args: string[], env = bunEnv) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: dir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
 
 const testRoutePattern = (style: string) => {
   // The 'expected' is a one-off string serialization that is only used for testing.
@@ -131,5 +143,99 @@ test("discovers from filesystem paths", () => {
         children: [],
       },
     ],
+  });
+});
+
+// e.g. `../web/pages` from a sibling package in a monorepo: route patterns come from the path below that root.
+describe.concurrent("fileSystemRouterTypes[n].root outside the project root", () => {
+  // The project root is apps/api; prints "<pathname> <status> <body>" for each request.
+  const serveFixture = (root: string) => ({
+    "apps/api/server.ts": `
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta);
+      }
+    `,
+    "apps/api/start.ts": `
+      using server = Bun.serve({
+        port: 0,
+        development: true,
+        app: {
+          framework: {
+            fileSystemRouterTypes: [{ root: ${JSON.stringify(root)}, style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+          },
+        },
+        fetch: () => new Response("not routed", { status: 404 }),
+      });
+      for (const pathname of ["/", "/blog/hello-world"]) {
+        const res = await fetch(new URL(pathname, server.url));
+        console.log(pathname, res.status, await res.text());
+      }
+    `,
+  });
+  const pages = (prefix: string) => ({
+    [`${prefix}/index.ts`]: `export default () => new Response("index");`,
+    [`${prefix}/blog/[slug].ts`]: `export default (req, meta) => new Response("slug:" + meta.params.slug);`,
+  });
+
+  const start = (dir: string) => run(path.join(dir, "apps", "api"), ["start.ts"]);
+
+  test("a sibling directory", async () => {
+    using dir = tempDir("fsr-sibling-root", { ...serveFixture("../web/pages"), ...pages("apps/web/pages") });
+    const { stdout, stderr, exitCode } = await start(String(dir));
+    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an ancestor directory", async () => {
+    using dir = tempDir("fsr-ancestor-root", { ...serveFixture(".."), ...pages("apps") });
+    const { stdout, stderr, exitCode } = await start(String(dir));
+    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Both kinds of route error name the file relative to the project root and do not stop the server.
+  test("route errors name the file relative to the project root", async () => {
+    using dir = tempDir("fsr-sibling-root-errors", {
+      ...serveFixture("../web/pages"),
+      ...pages("apps/web/pages"),
+      "apps/web/pages/[oops.ts": `export default () => new Response("");`,
+      "apps/web/pages/about.ts": `export default () => new Response("");`,
+      "apps/web/pages/about/index.ts": `export default () => new Response("");`,
+    });
+    const { stdout, stderr, exitCode } = await start(String(dir));
+    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(stderr).toContain('"../web/pages/[oops.ts" is not a valid route');
+    expect(stderr).toContain('Missing "]" to match this route parameter');
+    expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+    expect(stderr).toContain("  - ../web/pages/about.ts");
+    expect(stderr).toContain("  - ../web/pages/about/index.ts");
+    expect(exitCode).toBe(0);
+  });
+
+  // `app.root` is deeper than the router root and does not contain it, like `./src/app` with the routes in `./routes`.
+  test("a directory next to an ancestor", async () => {
+    using dir = tempDir("fsr-ancestor-sibling-root", { ...serveFixture("../../routes"), ...pages("routes") });
+    const { stdout, stderr, exitCode } = await start(String(dir));
+    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The message of a route syntax error starts in the column of the character it is about.
+  test.each([
+    ["pages", "apps/api/pages"],
+    ["../web/pages", "apps/web/pages"],
+  ])("a route syntax error under %s points at the bad character", async (root, prefix) => {
+    using dir = tempDir("fsr-root-error-column", {
+      ...serveFixture(root),
+      ...pages(prefix),
+      [`${prefix}/blog/[oops.ts`]: `export default () => new Response("");`,
+    });
+    const { stdout, stderr, exitCode } = await start(String(dir));
+    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+    const label = `${root}/blog/[oops.ts`;
+    const indent = Buffer.alloc(`error: "`.length + label.indexOf("["), " ").toString();
+    expect(stderr).toContain(`error: "${label}" is not a valid route\n`);
+    expect(stderr).toContain(`\n${indent}Missing "]" to match this route parameter\n`);
+    expect(exitCode).toBe(0);
   });
 });

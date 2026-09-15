@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { bunEnv, bunExe, githubTarball, isWindows, readdirSorted, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
@@ -38,6 +38,39 @@ function pathWithout(name: string, PATH: string | undefined): string {
     .split(delimiter)
     .filter(dir => dir && !Bun.which(name, { PATH: dir }))
     .join(delimiter);
+}
+
+/** A bin script that prints `<label>` followed by the arguments it was invoked with. */
+function echoBin(label: string): string {
+  return `#!/usr/bin/env node\nconsole.log(${JSON.stringify(label)}, ...process.argv.slice(2));\n`;
+}
+
+/**
+ * Stands in for api.github.com (bun install honors `GITHUB_API_URL`): every
+ * `/repos/<owner>/<repo>/tarball/<ref>` request gets the one fixture repository.
+ * `requests` lets a case prove that a second run came from the bunx cache.
+ */
+async function localGithub(owner: string, repo: string, files: Record<string, string>) {
+  const bytes = await githubTarball(`${owner}-${repo}-0123abc`, files);
+  const requests: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const { pathname } = new URL(request.url);
+      requests.push(pathname);
+      return pathname.startsWith(`/repos/${owner}/${repo}/tarball/`)
+        ? new Response(bytes)
+        : new Response(`no fixture for ${pathname}`, { status: 404 });
+    },
+  });
+  return {
+    /** Every request path received so far, in order. */
+    requests,
+    url: server.url.origin,
+    [Symbol.dispose]() {
+      server.stop(true);
+    },
+  };
 }
 
 beforeAll(async () => {
@@ -235,89 +268,78 @@ console.log(
   expect(exitCode).toBe(0);
 });
 
+// `bunx github:<owner>/<repo>` guesses the bin from the repository name, so the
+// fixture repository is named after its bin, like piuccio/cowsay -> `cowsay`.
+const cowsayRepo = {
+  "package.json": JSON.stringify({ name: "cowsay", version: "1.0.0", bin: { cowsay: "cli.js" } }),
+  "cli.js": echoBin("cowsay from github"),
+};
+
 it.concurrent("should work for github repository", async () => {
   const { x_dir, env } = setup();
+  using github = await localGithub("bunx-fixture", "cowsay", cowsayRepo);
+  const run = () => {
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", "github:bunx-fixture/cowsay", "--help"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
+      env: { ...env, GITHUB_API_URL: github.url },
+    });
+    return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+  };
+
   // without cache
-  const withoutCache = spawn({
-    cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
-    cwd: x_dir,
-    stdout: "pipe",
-    stdin: "inherit",
-    stderr: "pipe",
-    env,
-  });
-
-  let [err, out, exited] = await Promise.all([
-    new Response(withoutCache.stderr).text(),
-    new Response(withoutCache.stdout).text(),
-    withoutCache.exited,
-  ]);
-
-  expect(err).not.toContain("error:");
-  expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
-  expect(exited).toBe(0);
+  {
+    const [err, out, exited] = await run();
+    expect(err).not.toContain("error:");
+    expect(out.trim()).toBe("cowsay from github --help");
+    expect(exited).toBe(0);
+  }
+  expect(github.requests).toEqual(["/repos/bunx-fixture/cowsay/tarball/"]);
 
   // cached
-  const cached = spawn({
-    cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
-    cwd: x_dir,
-    stdout: "pipe",
-    stdin: "inherit",
-    stderr: "pipe",
-    env,
-  });
-
-  [err, out, exited] = await Promise.all([
-    new Response(cached.stderr).text(),
-    new Response(cached.stdout).text(),
-    cached.exited,
-  ]);
-
-  expect(err).not.toContain("error:");
-  expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
-  expect(exited).toBe(0);
+  {
+    const [err, out, exited] = await run();
+    expect(err).toBe("");
+    expect(out.trim()).toBe("cowsay from github --help");
+    expect(exited).toBe(0);
+  }
+  expect(github.requests).toHaveLength(1);
 });
 
 it.concurrent("should work for github repository with committish", async () => {
   const { x_dir, env } = setup();
-  const withoutCache = spawn({
-    cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
-    cwd: x_dir,
-    stdout: "pipe",
-    stdin: "inherit",
-    stderr: "pipe",
-    env,
-  });
+  using github = await localGithub("bunx-fixture", "cowsay", cowsayRepo);
+  const run = (...flags: string[]) => {
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", ...flags, "github:bunx-fixture/cowsay#HEAD", "hello bun!"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
+      env: { ...env, GITHUB_API_URL: github.url },
+    });
+    return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+  };
 
-  let [err, out, exited] = await Promise.all([
-    new Response(withoutCache.stderr).text(),
-    new Response(withoutCache.stdout).text(),
-    withoutCache.exited,
-  ]);
-
-  expect(err).not.toContain("error:");
-  expect(out.trim()).toContain("hello bun!");
-  expect(exited).toBe(0);
+  {
+    const [err, out, exited] = await run();
+    expect(err).not.toContain("error:");
+    expect(out.trim()).toBe("cowsay from github hello bun!");
+    expect(exited).toBe(0);
+  }
+  expect(github.requests).toEqual(["/repos/bunx-fixture/cowsay/tarball/HEAD"]);
 
   // cached
-  const cached = spawn({
-    cmd: [bunExe(), "x", "--no-install", "github:piuccio/cowsay#HEAD", "hello bun!"],
-    cwd: x_dir,
-    stdout: "pipe",
-    stdin: "inherit",
-    stderr: "pipe",
-    env,
-  });
-
-  [err, out, exited] = await Promise.all([
-    new Response(cached.stderr).text(),
-    new Response(cached.stdout).text(),
-    cached.exited,
-  ]);
-
-  expect(err).not.toContain("error:");
-  expect(out.trim()).toContain("hello bun!");
-  expect(exited).toBe(0);
+  {
+    const [err, out, exited] = await run("--no-install");
+    expect(err).toBe("");
+    expect(out.trim()).toBe("cowsay from github hello bun!");
+    expect(exited).toBe(0);
+  }
+  expect(github.requests).toHaveLength(1);
 });
 
 it.concurrent.each(["--version", "-v"])("should print the version using %s and exit", async flag => {

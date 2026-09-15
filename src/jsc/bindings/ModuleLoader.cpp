@@ -464,8 +464,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedPromiseValue,
     ErrorableResolvedSource* res,
-    const BunString* specifier,
-    const BunString* referrer)
+    const BunString* specifier)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -1893,6 +1893,10 @@ impl VirtualMachine {
 
         self.is_shutting_down = true;
 
+        // Node's FreeEnvironment sets `is_stopping` before `RunCleanup`: the
+        // Node-API env teardown below refuses every `NAPI_PREAMBLE` call.
+        self.handle.stop();
+
         if self.exit_tears_down_napi_envs() {
             self.run_cleanup_hooks();
         }

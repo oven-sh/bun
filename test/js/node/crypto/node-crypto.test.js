@@ -1436,18 +1436,19 @@ describe("Certificate spkac argument validation", () => {
 // so is the address that X509Certificate#checkIP takes. The conversion refuses a string
 // whose UTF-8 form can pass 2**31 - 1 bytes (2**30 Latin-1 characters or more), and the
 // lookups asserted that it worked, so each call below aborted the process (exit code
-// 134), also inside try / catch. Such a name now gets the result of any other unknown
-// name.
+// 134), also inside try / catch. Each call now reports what it reports for the same
+// name one character shorter: an unknown name, or for checkIP an invalid address.
 //
 // The length is what is under test, so the child needs a string of 1 GiB and the test
 // skips on small machines. One child runs every case, so the string is allocated once.
 // The ERR_CRYPTO_INVALID_DIGEST message carries the name, so each of those errors is
 // another 1 GiB; the gc between cases keeps the peak near 3.4 GB in a debug ASAN build,
-// where the child takes about 4 seconds. `repeat` and not
+// where the child takes about 4 seconds. That is too close to the default 5 second
+// limit on a loaded machine, so this one test carries its own ceiling. `repeat` and not
 // `Buffer.alloc(n, fill).toString()`: for one character at this size it is twice as fast
 // in a debug build and it does not hold a second 1 GiB.
 it.skipIf(totalmem() < 10 * 1024 ** 3)(
-  "a digest, cipher, curve or address string too long to convert to UTF-8 is treated as unknown",
+  "a digest, cipher, curve or address string too long to convert to UTF-8 is rejected like a shorter one",
   async () => {
     const cert = readFileSync(path.join(import.meta.dir, "..", "test", "fixtures", "keys", "agent1-cert.pem"), "utf8");
     await using proc = Bun.spawn({
@@ -1503,7 +1504,7 @@ it.skipIf(totalmem() < 10 * 1024 ** 3)(
         "ECDH.convertKey: ERR_CRYPTO_INVALID_CURVE",
         "generateKeyPairSync: ERR_CRYPTO_INVALID_CURVE",
         "createPublicKey: ERR_CRYPTO_INVALID_CURVE",
-        "X509Certificate#checkIP: returned undefined",
+        "X509Certificate#checkIP: ERR_INVALID_ARG_VALUE",
       ],
       stderr: "",
       exitCode: 0,

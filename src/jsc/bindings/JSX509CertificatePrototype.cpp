@@ -306,16 +306,12 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIP, (JSGlobalObject * gl
     RETURN_IF_EXCEPTION(scope, {});
     auto view = ipString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // `utf8()` asserts that the conversion worked. A string too long to convert is not an address in the certificate.
-    auto ip = view->tryGetUTF8();
-    if (!ip) [[unlikely]]
-        return JSValue::encode(jsUndefined());
 
     // ignore flags
     // uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
     // RETURN_IF_EXCEPTION(scope, {});
 
-    auto check = thisObject->checkIP(globalObject, ip->characters());
+    auto check = thisObject->checkIP(globalObject, view);
     RETURN_IF_EXCEPTION(scope, {});
     if (!check) return JSValue::encode(jsUndefined());
     return JSValue::encode(ipString);

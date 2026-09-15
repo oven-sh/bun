@@ -5413,6 +5413,9 @@ declare module "bun" {
      * specifier that does not resolve, an `import()` into a disposed graph,
      * and what `onError` itself throws or rejects while it runs. `kind` is
      * `"uncaughtException"` or `"unhandledRejection"`.
+     *
+     * A graph made by another graph's code without an `onError` hands its
+     * errors to that graph's `onError`.
      */
     onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
     /**

@@ -288,6 +288,9 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* 
 
 static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue error, ASCIILiteral kind)
 {
+    // A graph that was given no onError is part of the program of the graph whose code made it.
+    while (graph && !graph->onError())
+        graph = graph->maker();
     if (!graph || !graph->onError() || graph->inOnError())
         return false;
     VM& vm = globalObject->vm();
@@ -591,6 +594,7 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_requireMap);
     visitor.append(thisObject->m_requireCache);
     visitor.append(thisObject->m_onError);
+    visitor.append(thisObject->m_maker);
     visitor.append(thisObject->m_mainPath);
     visitor.append(thisObject->m_mainImport);
     visitor.append(thisObject->m_pendingImports);
@@ -693,12 +697,16 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
     // child processes, workers.
     if (auto* context = this->context())
         context->stop();
+    if (auto* isolated = dynamicDowncast<JSIsolatedModuleGraph>(this)) {
+        isolated->disposeAdopted(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     // What the graph's script had under way is discarded, so an import() of this graph that has not
     // settled never would: whoever called and still hears is told. (After the stop: the graph's own
     // script, which called import() on itself, does not.) A graph without a context discards
     // nothing: its imports are left to finish.
     MarkedArgumentBuffer rejected;
-    if (this->context()) {
+    if (this->context() || m_runsInItsMakersContext) {
         auto* pending = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), m_pendingImports.get(), IterationKind::Entries);
         RETURN_IF_EXCEPTION(scope, );
         JSValue entry;
@@ -786,6 +794,26 @@ void JSIsolatedModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     moduleGraphState(zigGlobal).hasIsolatedGraphs = true;
     zigGlobal->setAsyncContextTrackingEnabled(true);
     loader()->setAsyncContext(vm, createModuleGraphFrame(zigGlobal, this, jsUndefined()));
+}
+
+void JSIsolatedModuleGraph::adopt(JSModuleGraph* graph)
+{
+    m_adopted.removeAllMatching([](auto& adopted) { return !adopted; });
+    m_adopted.append(JSC::Weak<JSModuleGraph>(graph));
+}
+
+void JSIsolatedModuleGraph::disposeAdopted(Zig::GlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    MarkedArgumentBuffer adopted;
+    for (auto& graph : std::exchange(m_adopted, {})) {
+        if (graph)
+            adopted.append(graph.get());
+    }
+    for (size_t i = 0; i < adopted.size(); ++i) {
+        uncheckedDowncast<JSModuleGraph>(adopted.at(i))->dispose(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 }
 
 void JSIsolatedModuleGraph::destroy(JSCell* cell)
@@ -1015,9 +1043,15 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
     // its modules runs in its maker's context (the loader's pipeline carries none, which would make what
     // that code opens the host's, out of the reach of the maker's dispose()).
     if (!isolateIO) {
-        if (auto* maker = currentIsolatedModuleGraph(globalObject))
+        if (auto* maker = currentIsolatedModuleGraph(globalObject)) {
             loader->setAsyncContext(vm, createModuleGraphFrame(globalObject, maker, jsUndefined()));
+            graph->setRunsInItsMakersContext();
+            maker->adopt(graph);
+        }
     }
+    // (Whose code this is, as for an error: by the stack, else by the context.)
+    auto makerByStack = moduleGraphOwningCurrentStack(globalObject);
+    graph->setMaker(vm, makerByStack ? *makerByStack : moduleGraphOfCurrentContext(globalObject));
     graph->setOverlayShape(overlayShape);
     return JSValue::encode(graph);
 }

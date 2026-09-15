@@ -48,6 +48,14 @@ public:
     void setOverlayShape(unsigned shape) { m_overlayShape = shape; }
     JSC::JSMap* requireMap() const { return m_requireMap.get(); }
     JSC::JSObject* onError() const { return m_onError.get(); } // null if the host gave none
+    // The graph whose code made this one (null: the host's did). Errors of a graph that was given
+    // no onError go to its maker's.
+    JSModuleGraph* maker() const { return m_maker.get(); }
+    void setMaker(JSC::VM& vm, JSModuleGraph* maker) { m_maker.setMayBeNull(vm, this, maker); }
+    // It has no context of its own and was made by the script of a graph that has one: its modules
+    // run in that context (so their work is discarded with it), and it is disposed with that graph.
+    bool runsInItsMakersContext() const { return m_runsInItsMakersContext; }
+    void setRunsInItsMakersContext() { m_runsInItsMakersContext = true; }
     // Key of the first module import()ed: import.meta.main / require.main. Undefined before.
     // The first module import()ed, unless that import failed.
     JSC::JSValue mainPath() const
@@ -83,12 +91,14 @@ private:
     JSC::WriteBarrier<JSC::JSMap> m_requireMap;
     JSC::WriteBarrier<JSC::Unknown> m_requireCache;
     JSC::WriteBarrier<JSC::JSObject> m_onError;
+    JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
     // The loader's promise for the import that made m_mainPath main.
     JSC::WriteBarrier<JSC::JSPromise> m_mainImport;
     // What import() returned and has not settled -> the identifier of the context of the script that called.
     JSC::WriteBarrier<JSC::JSMap> m_pendingImports;
     bool m_disposed { false };
+    bool m_runsInItsMakersContext { false };
     bool m_inOnError { false };
     unsigned m_overlayShape { 0 };
 };
@@ -106,12 +116,16 @@ public:
     DECLARE_EXPORT_INFO;
 
     WebCore::ScriptExecutionContext& context() const { return m_context.get(); }
+    // Graphs without a context that this graph's script made (JSModuleGraph::runsInItsMakersContext).
+    void adopt(JSModuleGraph*);
+    void disposeAdopted(Zig::GlobalObject*);
 
 private:
     JSIsolatedModuleGraph(JSC::VM&, JSC::Structure*, Ref<WebCore::ScriptExecutionContext>&&, JSC::JSModuleLoader*, JSC::JSObject* onError);
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     Ref<WebCore::ScriptExecutionContext> m_context;
+    WTF::Vector<JSC::Weak<JSModuleGraph>> m_adopted;
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph);

@@ -144,6 +144,7 @@ const dir = String(
       };
       // A module loaded through a graph of its own making that has no context of its own.
       export const loadsThroughAPlainGraph = specifier => new Bun.ModuleGraph().import(specifier);
+      export const makesAGraph = options => new Bun.ModuleGraph(options);
       // FileHandles nobody closes and nobody keeps.
       export const forgetsFileHandles = async (path, count) => { for (let i = 0; i < count; i++) await fs.promises.open(path, "r"); };
       // One the host is handed, with a stream over another.
@@ -380,6 +381,37 @@ const dir = String(
       for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve, 1));
       console.log(JSON.stringify({ evaluatedIn: globalThis.evaluatedIn, ticksAfterDispose: globalThis.ticks - ticks }));
       // (Exits by itself: the interval does not keep the process running either.)
+    `,
+    "plain-graph-handed-to-the-host.mjs": `
+      const parked = Promise.withResolvers();
+      const tenant = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
+      const inner = tenant.run(() => app.makesAGraph({ globals: { gate: new Promise(() => {}), parked: parked.resolve } }));
+      let inFlight = "pending";
+      inner.import(import.meta.dir + "/parks-in-tla.mjs").then(() => (inFlight = "fulfilled"), error => (inFlight = "rejected: " + error.code));
+      await parked.promise;
+      tenant.dispose();
+      const afterwards = await inner.import(import.meta.dir + "/not-loaded-yet.ts").then(() => "fulfilled", error => "rejected: " + error.code);
+      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ inFlight, afterwards }));
+      process.exit(0);
+    `,
+    "throws-later.mjs": `
+      setTimeout(() => { throw new Error("thrown from a timer"); }, 1);
+      setTimeout(() => { Promise.reject(new Error("rejected and unhandled")); }, 1);
+    `,
+    "errors-of-a-graph-made-by-a-graph.mjs": `
+      const hostSaw = [], tenantSaw = [];
+      process.on("uncaughtException", error => hostSaw.push(error.message));
+      process.on("unhandledRejection", error => hostSaw.push(error.message));
+      const tenant = new Bun.ModuleGraph({ isolateIO: true, onError: error => tenantSaw.push(error.message) });
+      const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
+      // A graph of the tenant's making that was given no onError of its own.
+      const inner = tenant.run(() => app.makesAGraph({ isolateIO: process.argv[2] === "isolateIO" }));
+      await inner.import(import.meta.dir + "/throws-later.mjs");
+      while (hostSaw.length + tenantSaw.length < 2) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ hostSaw, tenantSaw: tenantSaw.sort() }));
+      process.exit(0);
     `,
     "imports-of-a-disposed-graph.mjs": `
       const graph = new Bun.ModuleGraph({ isolateIO: true });
@@ -2803,6 +2835,21 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
+  test("a plain graph it made is disposed with it: the host's import() through one it was handed rejects, in flight or later", async () => {
+    expect(await runs("plain-graph-handed-to-the-host.mjs")).toEqual({
+      stdout: `{"inFlight":"rejected: ERR_INVALID_STATE","afterwards":"rejected: ERR_INVALID_STATE"}`,
+      exitCode: 0,
+    });
+  });
+  test.each(["plain", "isolateIO"])(
+    "errors of a %s graph its script made without an onError go to its own onError, not to the host",
+    async kind => {
+      expect(await runs("errors-of-a-graph-made-by-a-graph.mjs", kind)).toEqual({
+        stdout: `{"hostSaw":[],"tenantSaw":["rejected and unhandled","thrown from a timer"]}`,
+        exitCode: 0,
+      });
+    },
+  );
   test("the files it held open are closed: a writer, bun:sqlite and node:sqlite databases, a FileHandle, a stream", async () => {
     expect(await runs("open-files-of-a-disposed-graph.mjs")).toEqual({
       stdout: JSON.stringify({

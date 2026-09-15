@@ -19,10 +19,8 @@ use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::strings;
 use bun_http::lshpack;
-use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
-use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -170,7 +168,6 @@ impl Drop for NativeSocket {
 }
 
 unsafe extern "C" {
-    safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
     /// One-call materialization of a decoded header block: returns the
     /// [rawHeadersArray, headersObject, sensitiveArray|undefined] tuple, or a
     /// zero JSValue with a JS exception pending. See H2HeadersMaterializer.cpp.
@@ -1296,7 +1293,6 @@ pub enum FlushState {
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamState {
-    IDLE = 1,
     OPEN = 2,
     HALF_CLOSED_LOCAL = 5,
     HALF_CLOSED_REMOTE = 6,
@@ -1322,49 +1318,12 @@ pub struct Stream {
     remote_window_size: u64,
     // remote used window size for the stream
     remote_used_window_size: u64,
-    signal: Option<Box<SignalRef>>,
     // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
     // replenishing the stream's receive window until reading resumes, backpressuring the peer.
     reading_paused: bool,
 
     // when we have backpressure we queue the data e round robin the Streams
     data_frame_queue: PendingQueue,
-}
-
-pub(crate) struct SignalRef {
-    signal: bun_jsc::AbortSignalRef,
-    // TODO: We should not need this ref counting here, since Parser owns Stream
-    parser: RefPtr<H2FrameParser>,
-    stream_id: u32,
-}
-
-impl SignalRef {
-    pub(crate) fn is_aborted(&self) -> bool {
-        self.signal.aborted()
-    }
-
-    pub(crate) fn abort_listener(this: &mut SignalRef, reason: JSValue) {
-        bun_output::scoped_log!(H2FrameParser, "abortListener");
-        reason.ensure_still_alive();
-        let parser = &*this.parser;
-        let Some(stream) = parser.streams.get().get(&this.stream_id).copied() else {
-            return;
-        };
-        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        let stream = unsafe { &mut *stream };
-        if stream.state != StreamState::CLOSED {
-            let wrapped = Bun__wrapAbortError(&parser.global_this, reason);
-            parser.abort_stream(stream, wrapped);
-        }
-    }
-}
-
-impl Drop for SignalRef {
-    fn drop(&mut self) {
-        // Release our listener; dropping `signal` then unrefs it.
-        let this = std::ptr::from_mut(self).cast::<c_void>();
-        self.signal.clean_native_bindings(this);
-    }
 }
 
 #[derive(Default)]
@@ -1835,7 +1794,6 @@ impl Stream {
             used_window_size: 0,
             remote_window_size: remote_window_size as u64,
             remote_used_window_size: 0,
-            signal: None,
             reading_paused: false,
             data_frame_queue: PendingQueue::default(),
         }
@@ -1850,14 +1808,14 @@ impl Stream {
     pub fn can_receive_data(&self) -> bool {
         matches!(
             self.state,
-            StreamState::IDLE | StreamState::OPEN | StreamState::HALF_CLOSED_LOCAL
+            StreamState::OPEN | StreamState::HALF_CLOSED_LOCAL
         )
     }
 
     pub fn can_send_data(&self) -> bool {
         matches!(
             self.state,
-            StreamState::IDLE | StreamState::OPEN | StreamState::HALF_CLOSED_REMOTE
+            StreamState::OPEN | StreamState::HALF_CLOSED_REMOTE
         )
     }
 
@@ -1873,19 +1831,6 @@ impl Stream {
         self.js_context
             .get()
             .unwrap_or_else(|| JSValue::js_number(self.id as f64))
-    }
-
-    pub fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
-        // we need a stable pointer to know what signal points to what stream_id + parser
-        let mut signal_ref = Box::new(SignalRef {
-            signal: signal.ref_(),
-            parser: parser.ref_guard(),
-            stream_id: self.id,
-        });
-        // `signal_ref` is heap-allocated and outlives the listener registration
-        // (cleared via `detach` in `Drop for SignalRef`).
-        signal.listen(&raw mut *signal_ref);
-        self.signal = Some(signal_ref);
     }
 
     pub fn detach_context(&mut self) {
@@ -1946,17 +1891,6 @@ impl Stream {
         }
         self.detach_context();
         self.clean_queue::<FINALIZING>(client);
-        if let Some(signal) = self.signal.take() {
-            drop(signal);
-        }
-    }
-}
-
-// Route AbortSignal callbacks through the trait —
-// `bun_jsc::abort_signal::listen` expects `*mut C: AbortListener`.
-impl AbortListener for SignalRef {
-    fn on_abort(&mut self, reason: JSValue) {
-        SignalRef::abort_listener(self, reason);
     }
 }
 
@@ -2100,42 +2034,6 @@ impl H2FrameParser {
         });
         let _ = self.write(&buffer[..FrameHeader::BYTE_SIZE + payload_len]);
         true
-    }
-
-    pub(crate) fn abort_stream(&self, stream: &mut Stream, abort_reason: JSValue) {
-        bun_output::scoped_log!(
-            H2FrameParser,
-            "HTTP_FRAME_RST_STREAM id: {} code: CANCEL",
-            stream.id
-        );
-
-        abort_reason.ensure_still_alive();
-        let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 4];
-        let mut writer_stream = FixedBufferStream::new(&mut buffer);
-
-        let frame = FrameHeader {
-            type_: FrameType::HTTP_FRAME_RST_STREAM as u8,
-            flags: 0,
-            stream_identifier: stream.id,
-            length: 4,
-        };
-        let _ = frame.write(&mut writer_stream, &self.frames_sent_legacy);
-        let mut value: u32 = ErrorCode::CANCEL.0;
-        stream.rst_code = value;
-        value = value.swap_bytes();
-        let _ = writer_stream.write_all(&value.to_ne_bytes());
-        let old_state = stream.state;
-        stream.state = StreamState::CLOSED;
-        let identifier = stream.get_identifier();
-        identifier.ensure_still_alive();
-        stream.free_resources::<false>(self);
-        self.dispatch_with_2_extra(
-            JSH2FrameParser::Gc::onAborted,
-            identifier,
-            abort_reason,
-            JSValue::js_number(old_state as u8 as f64),
-        );
-        let _ = self.write(&buffer);
     }
 
     pub(crate) fn end_stream(&self, stream: &mut Stream, rst_code: ErrorCode) {
@@ -4966,9 +4864,6 @@ impl H2FrameParser {
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &*stream };
 
-        if let Some(signal_ref) = &stream.signal {
-            return Ok(JSValue::from(signal_ref.is_aborted()));
-        }
         // closed with cancel = aborted
         Ok(JSValue::from(
             stream.state == StreamState::CLOSED && stream.rst_code == ErrorCode::CANCEL.0,
@@ -7178,27 +7073,6 @@ impl H2FrameParser {
 
                 stream.weight = u16::try_from(weight).expect("int cast");
             }
-
-            if let Some(signal_arg) = options.get(global_object, "signal")? {
-                if let Some(signal_ptr) = AbortSignal::from_js(signal_arg) {
-                    // SAFETY: `from_js` returns a live *mut AbortSignal owned by JSC; rooted via `signal_arg` on the stack.
-                    let signal_ = unsafe { &mut *signal_ptr };
-                    if signal_.aborted() {
-                        stream.state = StreamState::IDLE;
-                        let wrapped =
-                            Bun__wrapAbortError(global_object, signal_.js_reason(global_object));
-                        this.abort_stream(&mut stream, wrapped);
-                        return Ok(JSValue::js_number(stream_id as f64));
-                    }
-                    stream.attach_signal(this, signal_);
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.signal",
-                        b"AbortSignal",
-                        signal_arg,
-                    ));
-                }
-            }
         }
 
         // too much memory being use
@@ -7911,19 +7785,7 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         self.strong_this.set(JsRef::empty());
         if VirtualMachine::get().is_shutting_down() {
-            // Free the streams first: `free_resources` releases the refs their signals hold.
-            // The map is emptied so a later `Drop` won't double-free.
-            let streams = self.streams.replace(BunHashMap::default());
-            for (_, item) in streams.iter() {
-                let stream = *item;
-                // SAFETY: map has been emptied; each entry is freed exactly once.
-                unsafe {
-                    (*stream).free_resources::<true>(self);
-                    drop(bun_core::heap::take(stream));
-                }
-            }
-            drop(streams);
-            // Then the refs of frames/tasks that will never run again, so the
+            // Release the refs of frames/tasks that will never run again, so the
             // wrapper's deref can actually reach zero and run `Drop`.
             self.release_refs_stranded_by_exit();
         }

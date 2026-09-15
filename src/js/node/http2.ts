@@ -6280,10 +6280,13 @@ class ClientHttp2Session extends Http2Session {
   // stream closes, then tries to submit queued requests.
   #trackActiveRequest(req: ClientHttp2Stream) {
     this.#activeRequestCount++;
-    req.once("close", () => {
-      this.#activeRequestCount--;
-      this.#flushPendingRequests();
-    });
+    // 'close' comes before the setImmediate from which _destroy() or close() sends RST_STREAM.
+    req.once("close", () => setImmediate(() => this.#releaseRequestSlot()));
+  }
+
+  #releaseRequestSlot() {
+    this.#activeRequestCount--;
+    this.#flushPendingRequests();
   }
 
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots

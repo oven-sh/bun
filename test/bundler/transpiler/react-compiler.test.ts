@@ -2629,6 +2629,167 @@ describe("bundler", () => {
       },
     });
   }
+
+  // The value of `i += 2` is the value it stores. When it is lowered to a
+  // store and then a new read of `i`, the store prints as a statement ahead of
+  // the expression it is part of, and an earlier operand of that expression
+  // that reads `i` prints after it. As a statement, `i += 2` leaves that read
+  // behind as a stray `i;`, which can land after the memo block that declares
+  // `i`: "ReferenceError: i is not defined".
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/CompoundAssignmentToALocalStaysInPlace-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              const children = Form({ n: 1, flag: true, items: [5, 6, 7, 8] }).props.children;
+              lines.push(name + "=" + (typeof children === "function" ? children() : children));
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          const list = (...values) => values;
+
+          export function ComputedKey(p) {
+            const o = {};
+            let i = p.n;
+            o["k" + i] = i += 2;
+            return <div>{JSON.stringify(o)}</div>;
+          }
+          export function TemplateKey(p) {
+            const o = {};
+            let i = p.n;
+            o[\`k\${i}\`] = i += 2;
+            return <div>{JSON.stringify(o)}</div>;
+          }
+          export function Arguments(p) {
+            let i = p.n;
+            const r = list(\`k\${i}\`, i++, "k" + i + "z", (i += 2), typeof i + i);
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function ArrayAndObjectLiterals(p) {
+            let i = p.n;
+            const r = [[i, -i], { a: "k" + i }, (i += 2)];
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function JsxAttribute(p) {
+            let i = p.n;
+            const el = <a title={"k" + i} id={(i += 2)} />;
+            return <div>{JSON.stringify(el.props)}</div>;
+          }
+          export function InLoop(p) {
+            let i = p.n;
+            const out = [];
+            for (const x of [1, 2]) {
+              out.push(list("k" + i, (i += x)));
+            }
+            return <div>{JSON.stringify(out)}</div>;
+          }
+          export function InTernaryBranch(p) {
+            let i = p.n;
+            const r = p.flag ? list("k" + i, (i += 2)) : null;
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function InCallback(p) {
+            const run = n => {
+              const o = {};
+              let i = n;
+              o["k" + i] = i += 2;
+              return list(o, "k" + i, (i *= 2));
+            };
+            return <div>{JSON.stringify(run(p.n))}</div>;
+          }
+          export function CapturedLocal(p) {
+            let i = p.n;
+            const read = () => i;
+            const r = list("k" + i, (i += 2), read());
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function CapturedBeforeItsDeclaration(p) {
+            const read = () => i;
+            let i = p.n;
+            i *= 3;
+            return <div>{read}</div>;
+          }
+          export function OperandIsATernary(p) {
+            let i = p.n;
+            const r = list(p.flag ? i : 0, (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsALogical(p) {
+            let i = p.n;
+            const r = list(p.flag && i, (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsAnOptionalChain(p) {
+            let i = p.n;
+            const r = list(p.items?.[i], (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsAComma(p) {
+            let i = p.n;
+            const r = list((0, "k" + i), (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          // An operand that updates \`i\` stays ahead of the operand that reads it.
+          export function UpdateInAnEarlierTernary(p) {
+            let i = p.n;
+            let j = p.n;
+            const r = list(p.flag ? i++ : 0, "k" + i, i, (j += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function Statements(p) {
+            let i = p.n;
+            i += 2;
+            for (let j = 0; j < 2; j += 1) i *= 2;
+            return <div>{i}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          Arguments=["k1",1,"k2z",4,"number4"]
+          ArrayAndObjectLiterals=[[1,-1],{"a":"k1"},3]
+          CapturedBeforeItsDeclaration=3
+          CapturedLocal=["k1",3,3]
+          ComputedKey={"k1":3}
+          InCallback=[{"k1":3},"k3",6]
+          InLoop=[["k1",2],["k2",4]]
+          InTernaryBranch=["k1",3]
+          JsxAttribute={"title":"k1","id":3}
+          OperandIsAComma=["k1",3]
+          OperandIsALogical=[1,3]
+          OperandIsATernary=[1,3]
+          OperandIsAnOptionalChain=[6,3]
+          Statements=12
+          TemplateKey={"k1":3}
+          UpdateInAnEarlierTernary=[1,"k2",2,3]
+        `,
+      },
+    });
+  }
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

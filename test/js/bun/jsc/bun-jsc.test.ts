@@ -117,20 +117,24 @@ describe("bun:jsc", () => {
 
     it("does not run a task that this thread has queued", async () => {
       const { port1, port2 } = new MessageChannel();
-      const { promise, resolve } = Promise.withResolvers<string>();
-      const log: string[] = [];
-      port2.onmessage = e => {
-        log.push("message");
-        resolve(e.data);
-      };
-      // A message to a port of the same thread is a task in the event loop's queue from here on.
-      port1.postMessage("from port1");
-      drainMicrotasks();
-      log.push("after drainMicrotasks");
+      try {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        const log: string[] = [];
+        port2.onmessage = e => {
+          log.push("message");
+          resolve(e.data);
+        };
+        // A message to a port of the same thread is a task in the event loop's queue from here on.
+        port1.postMessage("from port1");
+        drainMicrotasks();
+        log.push("after drainMicrotasks");
 
-      expect(await promise).toBe("from port1");
-      port1.close();
-      expect(log).toEqual(["after drainMicrotasks", "message"]);
+        expect(await promise).toBe("from port1");
+        expect(log).toEqual(["after drainMicrotasks", "message"]);
+      } finally {
+        port1.close();
+        port2.close();
+      }
     });
 
     it("does not run a task that another thread has posted", async () => {

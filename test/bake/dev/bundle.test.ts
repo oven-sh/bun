@@ -452,6 +452,157 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
     // AllocationScope's invalid-free panic.
   },
 });
+// Each page imports the other one, so the bundle for the route that is requested first covers every file of the
+// second route. The second request arrives while that bundle runs and waits for the next bundle, which then has
+// nothing to bundle.
+devTest("route queued behind a bundle that covers all of its files is answered", {
+  framework: minimalFramework,
+  files: {
+    "routes/a.ts": `
+      import { name as other } from './b';
+      export const name = "A";
+      export default function (req, meta) {
+        return new Response('a sees ' + other);
+      }
+    `,
+    "routes/b.ts": `
+      import { name as other } from './a';
+      export const name = "B";
+      export default function (req, meta) {
+        return new Response('b sees ' + other);
+      }
+    `,
+  },
+  async test(dev) {
+    const [a, b] = await Promise.all([dev.fetch("/a").text(), dev.fetch("/b").text()]);
+    expect({ a, b }).toEqual({ a: "a sees B", b: "b sees A" });
+    // Neither route stays in the bundling state.
+    await dev.fetch("/a").equals("a sees B");
+    await dev.fetch("/b").equals("b sees A");
+  },
+});
+// Same as above, but the first bundle records a failure that the second route reaches.
+devTest("route queued behind a bundle that covers all of its files reports a failure it reaches", {
+  framework: minimalFramework,
+  files: {
+    "routes/a.ts": `
+      import './b';
+      import { value } from '../shared/broken';
+      export default function (req, meta) {
+        return new Response('a: ' + value);
+      }
+    `,
+    "routes/b.ts": `
+      import './a';
+      import { value } from '../shared/broken';
+      export default function (req, meta) {
+        return new Response('b: ' + value);
+      }
+    `,
+    "shared/broken.ts": `
+      export const value = (((((;
+    `,
+  },
+  async test(dev) {
+    for (const res of await Promise.all([dev.fetch("/a"), dev.fetch("/b")])) {
+      expect(res.status).toBe(500);
+      expect(await res.text()).toInclude("<title>Bun - Build Failed</title>");
+    }
+    await dev.write("shared/broken.ts", `export const value = 1;`);
+    await dev.fetch("/a").equals("a: 1");
+    await dev.fetch("/b").equals("b: 1");
+  },
+});
+// What a formatter run or `git stash pop` does: one watcher batch carries the fix of a failing page and both framework
+// entry points, and the page is requested while that rebuild runs. The request marks every file of the route as stale
+// and waits for the next bundle. The rebuild clears those marks, so the next bundle has nothing to bundle.
+devTest("requests made while a rebuild fixes their route are answered", {
+  files: {
+    "bun.app.ts": `
+      // Holds the rebuild open so that the test can make requests while it runs.
+      const rebuild = { hold: false, started: Promise.withResolvers(), resume: Promise.withResolvers() };
+      export default {
+        app: {
+          framework: {
+            fileSystemRouterTypes: [
+              {
+                root: "routes",
+                style: "nextjs-pages",
+                serverEntryPoint: "./framework/server.ts",
+                clientEntryPoint: "./framework/client.ts",
+              },
+            ],
+            serverComponents: {
+              separateSSRGraph: false,
+              serverRuntimeImportSource: "./framework/server.ts",
+              serverRegisterClientReferenceExport: "registerClientReference",
+            },
+          },
+          plugins: [
+            {
+              name: "hold-rebuild",
+              setup(build) {
+                build.onLoad({ filter: /about\\.ts$/ }, async () => {
+                  if (!rebuild.hold) return;
+                  rebuild.started.resolve();
+                  await rebuild.resume.promise;
+                });
+              },
+            },
+          ],
+        },
+        routes: {
+          "/rebuild/hold": () => ((rebuild.hold = true), new Response("ok")),
+          "/rebuild/started": async () => (await rebuild.started.promise, new Response("ok")),
+          "/rebuild/resume": () => (rebuild.resume.resolve(), new Response("ok")),
+        },
+      };
+    `,
+    "framework/server.ts": `
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta);
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `,
+    "framework/client.ts": `
+      console.log("client");
+    `,
+    "routes/about.ts": `
+      export default function (req, meta) {
+        return new Response("about v0");
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/about").equals("about v0");
+    await dev.write("routes/about.ts", `export default (((((`, { errors: null });
+    expect((await dev.fetch("/about")).status).toBe(500);
+
+    await dev.fetch("/rebuild/hold").equals("ok");
+    const batch = (await dev.batchChanges({ errors: null }))!;
+    await dev.write(
+      "routes/about.ts",
+      `
+        export default function (req, meta) {
+          return new Response("about v1");
+        }
+      `,
+    );
+    await dev.write("framework/server.ts", dev.read("framework/server.ts") + "// saved\n", { dedent: false });
+    await dev.write("framework/client.ts", dev.read("framework/client.ts") + "// saved\n", { dedent: false });
+    const rebuilt = batch[Symbol.asyncDispose]();
+
+    await dev.fetch("/rebuild/started").equals("ok");
+    const during = [dev.fetch("/about").text(), dev.fetch("/about").text()];
+    await dev.fetch("/rebuild/resume").equals("ok");
+    await rebuilt;
+
+    expect(await Promise.all(during)).toEqual(["about v1", "about v1"]);
+    await dev.fetch("/about").equals("about v1");
+  },
+});
 devTest("importing html file", {
   files: {
     "index.html": emptyHtmlFile({

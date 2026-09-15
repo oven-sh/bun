@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 
 import ts from "typescript";
+import { NODEJS_VERSION } from "../../../scripts/build/deps/nodejs-headers.ts";
 
 // beforeAll packs bun-types and installs it from the registry, and each case below copies
 // a fixture and type-checks it for several seconds, so everything here outlives the 5s
@@ -324,6 +325,23 @@ describe("@types/bun integration test", () => {
     const claude = Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "CLAUDE.md"));
     expect(await claude.exists()).toBe(true);
     expect((await claude.text()).length).toBeGreaterThan(0);
+  });
+
+  // fixture/package.json pins @types/node to the release for the Node.js version
+  // Bun reports. A floating version lets an upstream publish fail every PR:
+  // `latest` moved to the 22.x backport line on 2026-09-09, whose module layout
+  // bun-types does not support.
+  test("the fixture pins @types/node to the Node.js version Bun reports", async () => {
+    const { resolutions } = await Bun.file(join(FIXTURE_SOURCE_DIR, "package.json")).json();
+    const pinned: string = resolutions["@types/node"];
+    const [major, minor] = NODEJS_VERSION.split(".");
+    // The patch number of @types/node is DefinitelyTyped's own revision counter.
+    expect(pinned, `Bun reports Node.js ${NODEJS_VERSION}: pin the @types/node release for it`).toStartWith(
+      `${major}.${minor}.`,
+    );
+
+    const installed = await Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "@types", "node", "package.json")).json();
+    expect(installed.version).toBe(pinned);
   });
 
   describe("basic type checks", () => {
@@ -860,13 +878,11 @@ describe("@types/bun integration test", () => {
         "WebGLVertexArrayObjectOES",
       ]),
       diagnostics: [
-        // lib.dom's Blob has no textStream(); node:buffer's Blob declares it
-        // since @types/node 26.5.0 (added to Node.js in v24.19.0 / v26.5.0).
         {
-          code: 2741,
+          code: 2322,
           line: "24154.ts:11:3",
           message:
-            "Property 'textStream' is missing in type 'Blob' but required in type 'import(\"node:buffer\").Blob'.",
+            "Type 'Blob' is not assignable to type 'import(\"node:buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<NonSharedUint8Array>': blob, text, bytes, json",
         },
         {
           code: 2769,

@@ -13,7 +13,7 @@ describe("react-compiler InferTypes", () => {
   // `locals` variables rotated in a `while (true)` inside another loop: every
   // phi of the inner loop reaches every other one through two back edges.
   const rotation = (locals: number) => {
-    const names = Array.from({ length: locals }, (_, i) => String.fromCharCode(97 + i));
+    const names = Array.from({ length: locals }, (_, i) => `v${i}`);
     return `
       function cond(x) { return x.value > 5; }
       export function Comp(props) {
@@ -21,12 +21,12 @@ describe("react-compiler InferTypes", () => {
         ${names.map(name => `let ${name} = {};`).join(" ")}
         for (let i = 0; i < props.n; i++) {
           while (true) {
-            let z = a;
+            let z = v0;
             ${names.map((name, i) => `${name} = ${names[i + 1] ?? "z"};`).join(" ")}
-            if (cond(a)) break;
+            if (cond(v0)) break;
           }
         }
-        return a;
+        return v0;
       }
     `;
   };

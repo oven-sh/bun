@@ -648,9 +648,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     auto scope = DECLARE_THROW_SCOPE(vm);
     vm.drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
-    // The process.nextTick queue of the global the event loop drains, then the microtasks it queued.
-    // Never the event loop's task queue: its tasks (I/O completions, messages) would run beneath the
-    // callback that called this.
+    // Not EventLoop::tick(): it runs queued tasks beneath the caller.
     defaultGlobalObject()->drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());

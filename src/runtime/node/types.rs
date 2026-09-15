@@ -290,6 +290,33 @@ impl Default for StringOrBuffer<'_> {
     }
 }
 
+/// Type-tag classification (no user JS); decode later via `from_js_with_kind`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum StringOrBufferKind {
+    String,
+    StringObject,
+    ArrayBuffer,
+}
+
+impl StringOrBufferKind {
+    #[inline]
+    pub fn of(value: JSValue) -> Option<Self> {
+        if !value.is_cell() {
+            return None;
+        }
+        let ty = value.js_type();
+        if ty.is_string() {
+            Some(Self::String)
+        } else if ty.is_string_object_like() {
+            Some(Self::StringObject)
+        } else if ty.is_array_buffer_like() {
+            Some(Self::ArrayBuffer)
+        } else {
+            None
+        }
+    }
+}
+
 impl<'a> StringOrBuffer<'a> {
     pub(crate) const EMPTY: Self = StringOrBuffer::Utf8(Utf8Bytes::EMPTY);
 
@@ -393,12 +420,38 @@ impl StringOrBuffer<'static> {
         flavor: Flavor,
         string_objects: StringObjects,
     ) -> JsResult<bool> {
-        use jsc::JSType;
-        match value.js_type() {
-            str_type @ (JSType::String | JSType::StringObject | JSType::DerivedStringObject) => {
-                if string_objects == StringObjects::Reject && str_type != JSType::String {
-                    return Ok(false);
-                }
+        let Some(kind) = StringOrBufferKind::of(value) else {
+            return Ok(false);
+        };
+        if string_objects == StringObjects::Reject && kind == StringOrBufferKind::StringObject {
+            return Ok(false);
+        }
+        Self::from_js_with_kind_into(out, global, value, kind, flavor)?;
+        Ok(true)
+    }
+
+    /// Decode a value already classified by [`StringOrBufferKind::of`].
+    #[inline]
+    pub fn from_js_with_kind(
+        global: &JSGlobalObject,
+        value: JSValue,
+        kind: StringOrBufferKind,
+    ) -> JsResult<Self> {
+        let mut out = Self::EMPTY;
+        Self::from_js_with_kind_into(&mut out, global, value, kind, Flavor::Sync)?;
+        Ok(out)
+    }
+
+    #[inline]
+    fn from_js_with_kind_into(
+        out: &mut Self,
+        global: &JSGlobalObject,
+        value: JSValue,
+        kind: StringOrBufferKind,
+        flavor: Flavor,
+    ) -> JsResult<()> {
+        match kind {
+            StringOrBufferKind::String | StringOrBufferKind::StringObject => {
                 let str = bun_core::String::from_js(value, global)?;
                 *out = if flavor == Flavor::Async {
                     shared_or_utf8(
@@ -410,28 +463,12 @@ impl StringOrBuffer<'static> {
                 } else {
                     Self::String(str.into_utf8_with_string())
                 };
-                Ok(true)
             }
-
-            JSType::ArrayBuffer
-            | JSType::Int8Array
-            | JSType::Uint8Array
-            | JSType::Uint8ClampedArray
-            | JSType::Int16Array
-            | JSType::Uint16Array
-            | JSType::Int32Array
-            | JSType::Uint32Array
-            | JSType::Float32Array
-            | JSType::Float16Array
-            | JSType::Float64Array
-            | JSType::BigInt64Array
-            | JSType::BigUint64Array
-            | JSType::DataView => {
+            StringOrBufferKind::ArrayBuffer => {
                 *out = Self::buffer_from_js(global, value, flavor)?;
-                Ok(true)
             }
-            _ => Ok(false),
         }
+        Ok(())
     }
 
     #[inline]

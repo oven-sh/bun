@@ -4878,10 +4878,9 @@ describe("requests pipelined in one read", () => {
   it("sends the completed responses before a later handler blocks", async () => {
     // The "/wait" handler blocks the server's thread until the client has the
     // responses before it, so the server runs in a worker.
-    const released = new Int32Array(new SharedArrayBuffer(4));
-    const worker = new Worker(
-      `
-        const { workerData: released, parentPort } = require("node:worker_threads");
+    using dir = tempDir("serve-pipelined-blocked-handler", {
+      "server.mjs": `
+        import { parentPort, workerData as released } from "node:worker_threads";
         const server = Bun.serve({
           port: 0,
           hostname: "127.0.0.1",
@@ -4893,8 +4892,9 @@ describe("requests pipelined in one read", () => {
         });
         parentPort.postMessage(server.port);
       `,
-      { eval: true, workerData: released },
-    );
+    });
+    const released = new Int32Array(new SharedArrayBuffer(4));
+    const worker = new Worker(join(String(dir), "server.mjs"), { workerData: released });
     try {
       const [port] = await once(worker, "message");
       const reply = await exchange(

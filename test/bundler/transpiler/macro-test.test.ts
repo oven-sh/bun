@@ -512,6 +512,51 @@ test("Bun.build() passes define and loader to the macro VM", async () => {
   expect(exitCode).toBe(0);
 });
 
+// The macro entry module writes the macro's path and export name into generated JS source.
+// Each one has to be a proper string literal, whatever characters the path or the name holds.
+describe.concurrent("macro entry module escapes the path and the export name", () => {
+  async function run(cwd: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A debug build logs each macro call to stdout. Keep only the program's own output.
+    return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+  }
+
+  test("a directory name with an apostrophe, a double quote, and a newline", async () => {
+    const sub = process.platform === "win32" ? "it's a dir" : 'it\'s a "dir"\n';
+    using dir = tempDir("macro-path-escape", {
+      [`${sub}/macro.ts`]: `export function answer() { return 42; }\n`,
+      [`${sub}/main.ts`]: `import { answer } from "./macro.ts" with { type: "macro" };\nconsole.log(answer());\n`,
+    });
+    expect(await run(path.join(String(dir), sub))).toEqual({ lastLine: "42", stderr: "", exitCode: 0 });
+  });
+
+  test("an export name that is a string literal with quotes", async () => {
+    using dir = tempDir("macro-name-escape", {
+      "macro.ts": `export function f() { return 7; }\nexport { f as "a'b\\"c" };\n`,
+      "main.ts": `import { "a'b\\"c" as x } from "./macro.ts" with { type: "macro" };\nconsole.log(x());\n`,
+    });
+    expect(await run(String(dir))).toEqual({ lastLine: "7", stderr: "", exitCode: 0 });
+  });
+
+  test("a missing export is reported with the escaped name and path", async () => {
+    using dir = tempDir("macro-missing-escape", {
+      "it's/macro.ts": `export function f() { return 7; }\n`,
+      "it's/main.ts": `import { "a'b" as x } from "./macro.ts" with { type: "macro" };\nconsole.log(x());\n`,
+    });
+    const result = await run(path.join(String(dir), "it's"));
+    expect(result.stderr).toContain("Macro 'a'b' not found in '");
+    expect(result.stderr).toContain(path.join("it's", "macro.ts"));
+    expect(result.exitCode).not.toBe(0);
+  });
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

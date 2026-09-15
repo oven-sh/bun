@@ -1058,6 +1058,8 @@ enum StdinFdType {
     File = 0,
     Pipe = 1,
     Socket = 2,
+    /// libuv's `UV_UNKNOWN_HANDLE`: a directory, a block device, or a failed `fstat`.
+    Unknown = 3,
 }
 
 #[unsafe(no_mangle)]
@@ -1086,7 +1088,8 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
     match bun_sys::kind_from_mode(mode) {
         bun_sys::FileKind::NamedPipe => StdinFdType::Pipe,
         bun_sys::FileKind::UnixDomainSocket => StdinFdType::Socket,
-        _ => StdinFdType::File,
+        bun_sys::FileKind::File | bun_sys::FileKind::CharacterDevice => StdinFdType::File,
+        _ => StdinFdType::Unknown,
     }
 }
 

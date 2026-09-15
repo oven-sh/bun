@@ -160,6 +160,8 @@ new!(pub JENKINS_URL: string, "JENKINS_URL", {});
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
+// "advanced" (structured clone) or "json" for the channel named by NODE_CHANNEL_FD.
+new!(pub NODE_CHANNEL_SERIALIZATION_MODE: string, "NODE_CHANNEL_SERIALIZATION_MODE", {});
 // A string, not a boolean: node suppresses warnings only when the value is
 // exactly "1" (lib/internal/process/pre_execution.js).
 new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});

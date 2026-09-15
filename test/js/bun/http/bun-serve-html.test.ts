@@ -1097,6 +1097,146 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
   });
 });
 
+// A bundle in flight changes the dev server's module graph before it ends: it
+// frees the code of a file the moment that file fails (an import that does not
+// resolve, a parse error). The route keeps its state and its script generation
+// until the bundle ends. Two kinds of request went wrong in between.
+//
+// The script of a page was generated from that graph: a module table without
+// the failed file, or, when no module was left, an empty one (`assertion
+// failed: self.current_chunk_len > 0` in a debug build). The request now waits
+// until the bundle has ended.
+//
+// A request for the page of a route that failed earlier collected the failures
+// of that route in the list that holds the new failures of the bundle, and
+// cleared the list afterwards. The bundle then ended as a success, and the
+// route it broke stayed loaded with a script that lacks the failed file.
+//
+// The plugin parks the bundle inside onResolve. The bundler resolves the
+// imports of a file in order, so the import before "./parked.ts" has been
+// resolved, or has failed, by then.
+describe("requests while a dev server bundle is in flight", () => {
+  const htmlPage = (...scripts: string[]) =>
+    `<!DOCTYPE html><html><head><title>t</title></head><body>${scripts
+      .map(src => `<script type="module" src="${src}"></script>`)
+      .join("")}</body></html>`;
+  const fixture = {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": htmlPage("./app.ts"),
+    "app.ts": `console.log("app");`,
+    "bare.html": htmlPage(),
+    "other.html": htmlPage("./other.ts"),
+    "other.ts": `import "./parked.ts";`,
+    "broken.html": htmlPage("./broken.ts"),
+    "broken.ts": `const = ;`,
+    "bad.ts": `let = ;`,
+    "parked.ts": `export {};`,
+    "plugin.ts": /*ts*/ `
+      import { join } from "node:path";
+      export default {
+        name: "park-bundle",
+        setup(build) {
+          build.onResolve({ filter: /parked\\.ts$/ }, async () => {
+            globalThis.bundleParked.resolve();
+            await globalThis.releaseBundle.promise;
+            return { path: join(import.meta.dir, "parked.ts") };
+          });
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import { writeFileSync } from "node:fs";
+      import index from "./index.html";
+      import bare from "./bare.html";
+      import other from "./other.html";
+      import broken from "./broken.html";
+
+      globalThis.bundleParked = Promise.withResolvers();
+      globalThis.releaseBundle = Promise.withResolvers();
+
+      using server = Bun.serve({
+        port: 0,
+        development: true,
+        routes: { "/": index, "/bare": bare, "/other": other, "/broken": broken },
+        fetch: () => new Response("barrier"),
+      });
+      const get = path => fetch(new URL(path, server.url));
+      const status = path => get(path).then(response => response.status);
+
+      // "route" is the page the tab has. "start" puts a bundle in flight.
+      const scenarios = {
+        "rebuild that fails the script": {
+          route: "/",
+          start: () => writeFileSync("app.ts", 'import "./missing.ts";\\nimport "./parked.ts";\\n'),
+        },
+        "rebuild that fails the only module": {
+          route: "/bare",
+          start: () => writeFileSync("bare.html", ${JSON.stringify(htmlPage("./missing.ts", "./parked.ts"))}),
+        },
+        "first bundle of another route": {
+          route: "/",
+          start: () => status("/other"),
+        },
+        // "/broken" has failed before. A request for it while the bundle is
+        // parked collects the failures that route reaches. That must leave
+        // the parse failure of bad.ts, which the bundle has found by then,
+        // with the bundle: it is what fails "/" when the bundle ends.
+        "rebuild that fails to parse an import, and a request for a failed route": {
+          route: "/",
+          before: () => status("/broken"),
+          start: () => writeFileSync("app.ts", 'import "./bad.ts";\\nimport "./parked.ts";\\n'),
+          whileParked: () => status("/broken"),
+        },
+      };
+      const { route, before, start, whileParked } = scenarios[process.env.BUNDLE_IN_FLIGHT];
+
+      await before?.();
+      // The tab has the page. It has not asked for the script yet.
+      const page = await (await get(route)).text();
+      const scriptUrl = new URL(page.match(/src="(\\/_bun\\/client\\/[^"]+)"/)[1], server.url);
+
+      const started = start();
+      await globalThis.bundleParked.promise;
+      // A file the bundle found on the way here is parsed on another thread:
+      // its result has reached the server by the time the server answers this.
+      await get("/barrier");
+      const otherPage = whileParked?.();
+
+      const script = fetch(scriptUrl).then(response => response.text());
+      // The server has read both requests by the time it answers this one.
+      await get("/barrier");
+      globalThis.releaseBundle.resolve();
+
+      const text = await script;
+      console.log(
+        JSON.stringify({
+          script: text.startsWith("try{location.reload()}")
+            ? "reloads the page"
+            : Array.from(text.matchAll(/^  "([^"]+)": \\[/gm), match => match[1]),
+          pageAfterwards: await status(route),
+          otherPage: (await started) ?? (await otherPage),
+        }),
+      );
+    `,
+  };
+
+  test.concurrent.each([
+    // The page is outdated once the rebuild has failed: its script reloads it, and it gets the error page.
+    ["rebuild that fails the script", { script: "reloads the page", pageAfterwards: 500 }],
+    ["rebuild that fails the only module", { script: "reloads the page", pageAfterwards: 500 }],
+    // The bundle does not touch the route: the script is still the one the page asked for.
+    ["first bundle of another route", { script: ["index.html", "app.ts"], pageAfterwards: 200, otherPage: 200 }],
+    [
+      "rebuild that fails to parse an import, and a request for a failed route",
+      { script: "reloads the page", pageAfterwards: 500, otherPage: 500 },
+    ],
+  ])("%s", async (scenario, expected) => {
+    using dir = tempDir("bun-serve-html-script-during-bundle", fixture);
+    const { stdout, stderr, exitCode } = await runServeFixture(dir, { BUNDLE_IN_FLIGHT: scenario });
+    expect({ stdout, exitCode }, stderr).toEqual({ stdout: JSON.stringify(expected), exitCode: 0 });
+  });
+});
+
 // process.chdir() leaves the cached top-level directory with a trailing slash,
 // which the dev server then used as its root. Reporting a bundle failure
 // relativizes the failing file against that root and hit a debug assertion

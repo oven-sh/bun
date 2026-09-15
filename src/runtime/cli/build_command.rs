@@ -2,6 +2,7 @@ use std::io::Write as _;
 
 use crate::cli::command::{Context, HotReload};
 use bun_bundler::bundle_v2::{self, BundleV2};
+use bun_bundler::input_path_set::{InputPathSet, resolve_output_root};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
 use bun_bundler::options;
 use bun_bundler::transpiler;
@@ -620,7 +621,7 @@ impl BuildCommand {
         let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
-        let mut output_files: Vec<options::OutputFile> = 'brk: {
+        let (mut output_files, input_paths): (Vec<options::OutputFile>, InputPathSet) = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
                 this_transpiler.options.allow_runtime = false;
@@ -640,7 +641,10 @@ impl BuildCommand {
                     }
                 }
 
-                break 'brk result.output_files.into_vec();
+                let output_files = result.output_files.into_vec();
+                let input_paths =
+                    InputPathSet::from_paths(output_files.iter().map(|f| f.src_path.text));
+                break 'brk (output_files, input_paths);
             }
 
             if ctx.bundler_options.outdir.is_empty()
@@ -694,6 +698,18 @@ impl BuildCommand {
 
             // Write metafile if requested
             if let Some(metafile_json) = build_result.metafile.as_deref() {
+                refuse_to_overwrite_inputs(
+                    &build_result.input_paths,
+                    b"",
+                    [
+                        &ctx.bundler_options.metafile,
+                        &ctx.bundler_options.metafile_md,
+                    ]
+                    .into_iter()
+                    .filter(|path| !path.is_empty())
+                    .map(|path| &**path),
+                    ctx.debug.hot_reload == HotReload::Watch,
+                );
                 if !ctx.bundler_options.metafile.is_empty() {
                     // Use makeOpen which auto-creates parent directories on failure
                     let file = match bun_sys::File::make_open(
@@ -769,7 +785,7 @@ impl BuildCommand {
                 }
             }
 
-            break 'brk build_result.output_files;
+            break 'brk (build_result.output_files, build_result.input_paths);
         };
 
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
@@ -864,6 +880,15 @@ impl BuildCommand {
                 )));
             }
 
+            if !ctx.bundler_options.compile {
+                refuse_to_overwrite_inputs(
+                    &input_paths,
+                    root_path,
+                    output_files.iter().map(|f| &*f.dest_path),
+                    ctx.debug.hot_reload == HotReload::Watch,
+                );
+            }
+
             if ctx.bundler_options.compile {
                 print_summary(
                     bundled_end,
@@ -899,6 +924,28 @@ impl BuildCommand {
                     if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
                         outfile = b"index";
                     }
+                }
+
+                {
+                    let exe_basename = bun_paths::basename(outfile);
+                    let mut dest_paths: Vec<Box<[u8]>> = vec![Box::from(exe_basename)];
+                    if opt_source_map == options::SourceMapOption::External {
+                        for f in output_files.iter() {
+                            if f.output_kind == options::OutputKind::Sourcemap {
+                                dest_paths.push(if f.dest_path.is_empty() {
+                                    strings::concat(&[exe_basename, b".map"])
+                                } else {
+                                    Box::from(bun_paths::basename(&f.dest_path))
+                                });
+                            }
+                        }
+                    }
+                    refuse_to_overwrite_inputs(
+                        &input_paths,
+                        root_path,
+                        dest_paths.iter().map(|d| &**d),
+                        ctx.debug.hot_reload == HotReload::Watch,
+                    );
                 }
 
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
@@ -1195,6 +1242,29 @@ fn compile_outfile(outfile: &[u8]) -> &[u8] {
         b"index"
     } else {
         outfile
+    }
+}
+
+/// Frees what it allocates before the exit: `exit_or_watch` never returns.
+fn refuse_to_overwrite_inputs<'a>(
+    input_paths: &InputPathSet,
+    root_path: &[u8],
+    dest_paths: impl Iterator<Item = &'a [u8]>,
+    watch: bool,
+) {
+    let overwritten = {
+        let root = resolve_output_root(root_path);
+        let mut dest_paths = dest_paths;
+        dest_paths.find_map(|dest_path| input_paths.overwritten_by(&root, dest_path))
+    };
+    if let Some(input) = overwritten {
+        Output::err_generic(
+            "Refusing to overwrite input file {}",
+            (bun_fmt::quote(&input),),
+        );
+        drop(input);
+        Output::flush();
+        exit_or_watch(1, watch);
     }
 }
 

@@ -620,10 +620,7 @@ describe("read / write", () => {
           throw new Error("the constructor getter ran again");
         },
       });
-      const items = [
-        new ClipboardItem({ "text/plain": ownThen }),
-        new ClipboardItem({ "text/plain": ownConstructor }),
-      ];
+      const items = [new ClipboardItem({ "text/plain": ownThen }), new ClipboardItem({ "text/plain": ownConstructor })];
       const texts: string[] = [];
       for (const item of items) texts.push(await (await item.getType("text/plain")).text());
       expect(texts).toEqual(["own then", "own constructor"]);

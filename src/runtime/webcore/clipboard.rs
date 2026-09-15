@@ -237,7 +237,10 @@ impl JobContext for ClipboardJob {
 
 fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
     // A job that never runs reports the clipboard as unavailable.
-    let off = ClipboardOp { op, outcome: Err(Unavailable::Platform) };
+    let off = ClipboardOp {
+        op,
+        outcome: Err(Unavailable::Platform),
+    };
     Job::<ClipboardJob>::schedule(&global.js_thread(), off, request);
 }
 

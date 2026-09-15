@@ -2967,8 +2967,11 @@ const functionsThatReturnThemselves = {
   }`,
 };
 
-for (const [name, outer] of Object.entries(functionsThatReturnThemselves)) {
-  test(`react-compiler compile time is not exponential for a function that returns itself ${name}`, async () => {
+// Not concurrent: when a test times out, `bun test` kills the process that the
+// test spawned only if the tests run one at a time.
+test.each(Object.entries(functionsThatReturnThemselves))(
+  "react-compiler compile time is not exponential for a function that returns itself %s",
+  async (_name, outer) => {
     using dir = tempDir("react-compiler-returns-itself", {
       "entry.jsx": `
         export default function App(p) {
@@ -2997,5 +3000,5 @@ for (const [name, outer] of Object.entries(functionsThatReturnThemselves)) {
     expect(stdout).toContain("const f = () =>");
     expect(stdout).not.toContain("react/compiler-runtime");
     expect(exitCode).toBe(0);
-  });
-}
+  },
+);

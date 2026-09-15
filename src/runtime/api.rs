@@ -237,22 +237,23 @@ fn with_text_format_source_encoded<R>(
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
     // A private mi_heap costs microseconds to create, more than parsing a
-    // small document: keep one per thread and recycle it between calls.
-    // `#[thread_local]` rather than `thread_local!` so there is no
-    // destructor racing mimalloc's own thread teardown (as in
-    // `ast_memory_allocator.rs`); a parked heap is reclaimed with the thread.
-    #[thread_local]
-    static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
+    // small document: keep one per VM thread (`RuntimeState::text_format_arena`)
+    // and recycle it between calls. The slot is empty while a call is in
+    // flight, so a re-entrant call gets its own arena.
     struct Recycle(Option<bun_alloc::Arena>);
     impl Drop for Recycle {
         fn drop(&mut self) {
-            if let Some(mut arena) = self.0.take() {
+            let Some(mut arena) = self.0.take() else {
+                return;
+            };
+            if let Some(slot) = crate::jsc_hooks::text_format_arena_slot() {
                 arena.reset_retain_with_limit(2 * 1024 * 1024);
-                ARENA.set(Some(arena));
+                slot.set(Some(arena));
             }
         }
     }
-    let recycle = Recycle(Some(ARENA.take().unwrap_or_default()));
+    let parked = crate::jsc_hooks::text_format_arena_slot().and_then(core::cell::Cell::take);
+    let recycle = Recycle(Some(parked.unwrap_or_default()));
     let arena = recycle.0.as_ref().expect("set above");
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();

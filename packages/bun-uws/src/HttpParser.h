@@ -1163,19 +1163,6 @@ struct HttpResponseData;
                     return HttpParserResult::success(consumedTotal, user);
                 }
             }
-            /* RFC 9112 9.6: a prior request forbade keep-alive, so everything
-             * after it is never parsed. Bun.serve discards it so onData's tail
-             * closes after the final response; node:http raises
-             * HPE_CLOSED_CONNECTION ('clientError') like Node's own parser.
-             * Runs after the tunnel check above: a switched-protocol connection
-             * is no longer HTTP, so 9.6 does not apply to it. Runs after the
-             * park above: parked bytes reach this gate when reads resume. */
-            if (sawConnectionClose) {
-                if constexpr (IsNodeHttp) {
-                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
-                }
-                return HttpParserResult::success(consumedTotal + length, user);
-            }
             /* RFC 9112 2.2: ignore empty lines (CRLF) received prior to the
              * request-line, like Node/llhttp - e.g. a stray "\r\n" sent on an
              * idle keep-alive connection must not be treated as a bad request.
@@ -1196,6 +1183,21 @@ struct HttpResponseData;
                         break;
                     }
                 }
+            }
+            /* RFC 9112 9.6: a prior request forbade keep-alive, so everything
+             * after it is never parsed. Bun.serve discards it so onData's tail
+             * closes after the final response; node:http raises
+             * HPE_CLOSED_CONNECTION ('clientError') like Node's own parser.
+             * Runs after the tunnel check above: a switched-protocol connection
+             * is no longer HTTP, so 9.6 does not apply to it. Runs after the
+             * park above: parked bytes reach this gate when reads resume. Runs
+             * after the CR/LF skip above: llhttp's closed state skips those too
+             * and only other bytes are an error. */
+            if (sawConnectionClose) {
+                if constexpr (IsNodeHttp) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
+                }
+                return HttpParserResult::success(consumedTotal + length, user);
             }
             auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
             if(result.isError()) {

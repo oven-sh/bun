@@ -28,6 +28,7 @@ import {
   type TestContext,
 } from "./dummy.registry.js";
 import { constructStdCollision } from "./wyhash-std-collision.js";
+import { wyhash11 } from "./wyhash11.js";
 
 expect.extend({
   toBeWorkspaceLink,
@@ -11217,6 +11218,52 @@ it.skipIf(isWindows)("file: deps with colliding abs-path hashes resolve to disti
   const alpha = await file(join(victimDir, "node_modules", "alphadep", "package.json")).json();
   const beta = await file(join(victimDir, "node_modules", "betadep", "package.json")).json();
   expect({ alpha: alpha.name, beta: beta.name }).toEqual({ alpha: "pkg-alpha", beta: "pkg-beta" });
+});
+
+// Two local tarball paths that collide under Wyhash11(0), the hash that used
+// to name the `@T@<hash>` extraction folder in the shared install cache. Each
+// project depends on one of them. The second install must not overwrite the
+// first project's cache entry, and a reinstall of the first project must get
+// its own tarball's bytes back.
+it("local tarballs with colliding path hashes get separate cache folders", async () => {
+  const pathA = "./t/m3daaaaaaaaaaaaaaaaaaaaaaaaa.7aQs_ePaaaaaaaaw9Aaaaaaaaaaaaaa.tgz";
+  const pathB = "./t/m3daaaaaaaaaaaaaaaaaaaaaaaaa.7aQs_ePbaaaaaaaw9Aaaaaaaaaaaaaa.tgz";
+  expect(pathA).not.toBe(pathB);
+  const enc = new TextEncoder();
+  expect(wyhash11(0, enc.encode(pathA))).toBe(wyhash11(0, enc.encode(pathB)));
+
+  using root = tempDir("tarball-cache-collision", {
+    "p1/package.json": JSON.stringify({ name: "p1", dependencies: { bar: `file:${pathA}` } }),
+    [`p1/${pathA.slice(2)}`]: readFileSync(join(import.meta.dir, "bar-0.0.2.tgz")),
+    "p2/package.json": JSON.stringify({ name: "p2", dependencies: { baz: `file:${pathB}` } }),
+    [`p2/${pathB.slice(2)}`]: readFileSync(join(import.meta.dir, "baz-0.0.3.tgz")),
+  });
+  const cacheDir = join(String(root), "cache");
+  const testEnv = { ...env, BUN_INSTALL_CACHE_DIR: cacheDir };
+
+  async function install(project: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(String(root), project),
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+  }
+
+  await install("p1");
+  await install("p2");
+  await rm(join(String(root), "p1", "node_modules"), { recursive: true, force: true });
+  await install("p1");
+
+  const bar = await file(join(String(root), "p1", "node_modules", "bar", "package.json")).json();
+  const baz = await file(join(String(root), "p2", "node_modules", "baz", "package.json")).json();
+  expect({ bar: bar.name, baz: baz.name }).toEqual({ bar: "bar", baz: "baz" });
+  expect((await readdirSorted(cacheDir)).filter(name => name.startsWith("@T@"))).toHaveLength(2);
 });
 
 it("reports an invalid URL for a manifest tarball URL containing a newline", async () => {

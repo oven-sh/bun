@@ -328,6 +328,7 @@ pub(crate) fn apply_static_route<const SSL: bool, T: StaticRouteLike>(
     path_has_user_head_route: bool,
 ) {
     entry.set_server(server);
+    entry.set_registered_for_any_method(method == http_method::Optional::Any);
 
     // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
@@ -401,6 +402,7 @@ pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
     path_has_user_head_route: bool,
 ) {
     entry.set_server(server);
+    entry.set_registered_for_any_method(method == http_method::Optional::Any);
 
     if !path_has_user_head_route && serves_head(&method) {
         app.method_this(Method::HEAD, path, T::on_head_request, entry);
@@ -422,6 +424,8 @@ pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
 /// it is registered.
 pub(crate) trait StaticRouteLike: Sized + 'static {
     fn set_server(&self, server: AnyServer);
+    /// Whether the route registers via `any_this` or an explicit method set.
+    fn set_registered_for_any_method(&self, _any: bool) {}
     fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
     fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
 }
@@ -453,6 +457,9 @@ impl StaticRouteLike for super::FileRoute {
 impl StaticRouteLike for super::DirectoryRoute {
     fn set_server(&self, server: AnyServer) {
         self.set_server(Some(server));
+    }
+    fn set_registered_for_any_method(&self, any: bool) {
+        super::DirectoryRoute::set_registered_for_any_method(self, any);
     }
     fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_request(this, req, resp)

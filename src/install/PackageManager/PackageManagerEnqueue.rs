@@ -1190,15 +1190,18 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 if let Some(min_age_ms) =
                                                     this.options.minimum_release_age_ms
                                                 {
-                                                    if !loaded_manifest
-                                                        .as_ref()
-                                                        .unwrap()
-                                                        .should_exclude_from_age_filter(
-                                                            this.options.minimum_release_age_excludes,
-                                                        )
-                                                        && Npm::PackageManifest::is_package_version_too_recent(
-                                                            find_result.package, min_age_ms,
-                                                        )
+                                                    let manifest =
+                                                        loaded_manifest.as_ref().unwrap();
+                                                    let excludes =
+                                                        this.options.minimum_release_age_excludes;
+                                                    if !manifest
+                                                        .should_exclude_from_age_filter(excludes)
+                                                        && manifest
+                                                            .is_version_blocked_by_age_filter(
+                                                                find_result,
+                                                                min_age_ms,
+                                                                excludes,
+                                                            )
                                                     {
                                                         let package_name = this.lockfile.str(&name);
                                                         let min_age_seconds = min_age_ms / MS_PER_S;

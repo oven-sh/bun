@@ -7,48 +7,64 @@
 // frozen at the dead pid — breaking the common orphan-detection
 // pattern `if (process.ppid === 1) exit()`.
 //
-// The fix swaps the lazy PropertyCallback for a CustomAccessor
-// getter that calls getppid()/uv_os_getppid() on every read, so
-// it reflects the current kernel state. This test pins the
-// underlying contract: process.ppid must be exposed as an
-// accessor, not a cached data property, because only an
-// accessor gets re-evaluated on each read.
-//
-// Structural (descriptor-based) check rather than a reparenting
-// experiment: reparenting tests have to spawn a parent shell,
-// kill it, and race the kernel — that shape was flaky on some
-// CI lanes even when the underlying fix was correct. The
-// descriptor check is synchronous and deterministic and tests
-// exactly the property the fix establishes: `process.ppid` is
-// a live accessor.
+// The fix calls getppid()/uv_os_getppid() on every read. To JS the
+// property is a plain data property, as in Node, so a descriptor
+// cannot tell a live value from a cached one. The first test below
+// reparents a process and watches the value change.
 import { expect, test } from "bun:test";
-import { isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import { readFileSync } from "node:fs";
 
-test("process.ppid is a live accessor (#29169)", () => {
-  // JSC's CustomAccessor appears in Object.getOwnPropertyDescriptor
-  // with `get`/`set` functions. A lazy PropertyCallback, which
-  // caches on first read, appears as `{value}`. Only an
-  // accessor descriptor is re-evaluated on every access.
-  const before = Object.getOwnPropertyDescriptor(process, "ppid");
-  expect(before).toBeDefined();
-  expect(typeof before!.get).toBe("function");
+test("process.ppid is a data property to JS (#29169)", () => {
+  expect(Object.getOwnPropertyDescriptor(process, "ppid")).toEqual({
+    value: process.ppid,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+});
 
-  // Read the value to make sure the accessor doesn't
-  // self-demote (e.g. by caching on first access via a
-  // PropertyCallback-style storage).
-  const firstRead = process.ppid;
-  expect(firstRead).toBeGreaterThan(0);
-
-  const after = Object.getOwnPropertyDescriptor(process, "ppid");
-  expect(after).toBeDefined();
-  expect(typeof after!.get).toBe("function");
-
-  // A second read should still go through the same accessor.
-  // (If the getter had side-effected and installed a data
-  // property as a side effect, the descriptor would change.)
-  const secondRead = process.ppid;
-  expect(secondRead).toBe(firstRead);
+// Windows keeps the pid of a dead parent, so there is nothing to observe there.
+test.skipIf(isWindows)("process.ppid follows a reparent (#29169)", async () => {
+  // The first process spawns the second one, waits until that one has read process.ppid, and exits.
+  // The OS then gives the second process a new parent, and it polls process.ppid until the value
+  // changes. Its stdout is the pipe of this test, so the read below ends when it exits.
+  const second = `
+    const before = process.ppid;
+    process.send("read");
+    const deadline = performance.now() + 30_000;
+    (function poll() {
+      const now = process.ppid;
+      if (now !== before || performance.now() > deadline) {
+        console.log(JSON.stringify({ beforeWasTheFirstProcess: before === Number(process.env.FIRST_PID), changed: now !== before }));
+        process.exit(0);
+      }
+      setImmediate(poll);
+    })();
+  `;
+  const first = `
+    Bun.spawn({
+      cmd: [process.execPath, "-e", process.env.SECOND_SOURCE],
+      env: { ...process.env, FIRST_PID: String(process.pid) },
+      stdio: ["ignore", "inherit", "inherit"],
+      ipc() {
+        process.exit(0);
+      },
+    });
+  `;
+  // With this flag (the CI runner sets it on some lanes) a process kills its descendants when it
+  // exits, and exits when its parent does.
+  const { BUN_FEATURE_FLAG_NO_ORPHANS: _, ...env } = bunEnv;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", first],
+    env: { ...env, SECOND_SOURCE: second },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ beforeWasTheFirstProcess: true, changed: true });
+  expect(exitCode).toBe(0);
 });
 
 // Sanity check on Linux: the getter's return value agrees with

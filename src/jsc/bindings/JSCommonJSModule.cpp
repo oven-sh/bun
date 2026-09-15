@@ -356,43 +356,20 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObje
     return JSValue::encode(thisObject->lazyRequireCacheObject());
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
-    if (!thisObject)
-        return false;
-
-    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
-    return true;
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsRequireExtensionsGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     return JSValue::encode(thisObject->lazyRequireExtensionsObject());
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsRequireExtensionsSetter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
-    if (!thisObject)
-        return false;
-
-    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
-    return true;
-}
-
 static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
     { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, requireResolvePathsFunction, 1 } },
 };
 
+// CustomValue with no setter: a writable data property to JS, and an assignment defines the value on the receiver.
 static const HashTableValue RequireFunctionPrototypeValues[] = {
-    { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, jsRequireCacheSetter } },
-    { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireExtensionsGetter, jsRequireExtensionsSetter } },
+    { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomValue), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, 0 } },
+    { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomValue), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireExtensionsGetter, 0 } },
 };
 
 Structure* RequireFunctionPrototype::createStructure(

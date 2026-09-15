@@ -9,6 +9,7 @@ const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
+  normalizePemKeyOption,
   processPfxOptions,
   validateSecureProtocol,
 } = require("internal/tls");
@@ -306,7 +307,6 @@ const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeReduce = Array.prototype.reduce;
 const ArrayPrototypeFilter = Array.prototype.filter;
-const ArrayPrototypeMap = Array.prototype.map;
 
 const ObjectFreeze = Object.freeze;
 
@@ -510,31 +510,6 @@ const NativeSecureContext = $rust("SecureContext.rs", "js.getConstructor");
 // accepts null|string|ArrayBuffer|Blob|array, so coerce falsy → null before
 // crossing into native so `{ key: false }` etc. doesn't throw
 // ERR_INVALID_ARG_TYPE from the bindgen layer.
-
-function hasPemObject(key) {
-  if (!key) return false;
-  if ($isArray(key)) return ArrayPrototypeSome.$call(key, isPemKeyEntry);
-  return isPemKeyEntry(key);
-}
-
-function isPemKeyEntry(k) {
-  return k && typeof k === "object" && !isArrayBufferView(k) && "pem" in k;
-}
-
-function normalizePemKeyOption(key, ctxPassphrase) {
-  if (!key || !hasPemObject(key)) return key;
-  const entries = $isArray(key) ? key : [key];
-  return ArrayPrototypeMap.$call(entries, k => {
-    if (!isPemKeyEntry(k)) return k;
-    // Node: val?.passphrase !== undefined ? val.passphrase : passphrase - an
-    // explicit per-key null means "no passphrase for this key" and does NOT
-    // fall back to the context-level one.
-    const passphrase = k.passphrase !== undefined ? k.passphrase : ctxPassphrase;
-    if (passphrase == null) return k.pem;
-    const { createPrivateKey } = require("node:crypto");
-    return createPrivateKey({ key: k.pem, passphrase }).export({ type: "pkcs8", format: "pem" });
-  });
-}
 
 const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 

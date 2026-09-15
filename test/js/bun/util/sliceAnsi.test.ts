@@ -1267,10 +1267,12 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("abcX\u0600Y", 0, 4, { ellipsis: E })).toBe("abc" + E);
       expect(Bun.sliceAnsi("abcX\u0600YZ", 0, 4, { ellipsis: E })).toBe("abc" + E);
       expect(Bun.sliceAnsi("ЖЗИК\u0600\u0661", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
-      expect(Bun.sliceAnsi("ЖЗИК\u200b\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
-      expect(Bun.sliceAnsi("ЖЗИК\n\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
-      expect(Bun.sliceAnsi("ЖЗИК\u200b\u0903", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\u200b\u102B", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
       expect(Bun.sliceAnsi("abcX\u0600", 0, 4, { ellipsis: E })).toBe("abcX");
+      // A lone keycap mark or Indic vowel sign after a control is zero-width.
+      expect(Bun.sliceAnsi("ЖЗИК\u200b\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИК");
+      expect(Bun.sliceAnsi("ЖЗИК\n\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИК");
+      expect(Bun.sliceAnsi("ЖЗИК\u200b\u0903", 0, 4, { ellipsis: E })).toBe("ЖЗИК");
       // start > 0 (start ellipsis budgeted) with a zero-width tail: spec
       // zone kept, no end ellipsis.
       expect(Bun.sliceAnsi("ЖЗИКЛ\n", 1, 5, { ellipsis: E })).toBe(E + "ИКЛ");

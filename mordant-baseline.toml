@@ -6,7 +6,6 @@
 "narrowed_two_ways:src/bundler/bundle_v2.rs" = 1
 
 [bun_core]
-"defaulted_failure:src/bun_core/string/immutable.rs" = 1
 "generic_body_not_generic:src/bun_core/fmt.rs" = 1
 "generic_body_not_generic:src/bun_core/string/mod.rs" = 1
 

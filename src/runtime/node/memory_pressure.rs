@@ -208,9 +208,11 @@ mod posix {
     }
 
     /// Open a PSI memory file and write a trigger. Tries the system-wide
-    /// `/proc/pressure/memory` first, then the current cgroup's file.
+    /// `/proc/pressure/memory` first, then the current cgroup's file. Also
+    /// returns `some total=` as read before the write, so that a stall
+    /// between the write and the read cannot hide behind the baseline.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn open_psi_fd() -> Option<Fd> {
+    fn open_psi_fd() -> Option<(Fd, u64)> {
         use bun_sys::O;
 
         let mut cgroup_buf = [0u8; 320];
@@ -222,19 +224,25 @@ mod posix {
             let Ok(fd) = bun_sys::open(path, O::RDWR | O::NONBLOCK | O::CLOEXEC, 0) else {
                 continue;
             };
+            let mut buf = [0u8; 256];
+            let some_total = read_psi_file(fd, &mut buf)
+                .and_then(parse_psi_some_total)
+                .unwrap_or(0);
             if bun_sys::write(fd, PSI_TRIGGER).is_ok() {
-                return Some(fd);
+                return Some((fd, some_total));
             }
             let _ = bun_sys::close(fd);
         }
         None
     }
 
-    fn register_os_watch(global: &JSGlobalObject) -> Option<NonNull<FilePoll>> {
+    /// Registers the OS source. The `u64` is the PSI `some total=` at arm
+    /// time on Linux and 0 elsewhere.
+    fn register_os_watch(global: &JSGlobalObject) -> Option<(NonNull<FilePoll>, u64)> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let fd = open_psi_fd()?;
+        let (fd, psi_some_total) = open_psi_fd()?;
         #[cfg(target_os = "macos")]
-        let fd = Fd::from_native(0);
+        let (fd, psi_some_total) = (Fd::from_native(0), 0);
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             let _ = global;
@@ -261,7 +269,7 @@ mod posix {
                 deinit_poll(unsafe { &mut *poll });
                 return None;
             }
-            NonNull::new(poll)
+            Some((NonNull::new(poll)?, psi_some_total))
         }
     }
 
@@ -270,20 +278,13 @@ mod posix {
         if slot(vm).is_some() {
             return;
         }
-        let poll = register_os_watch(global);
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let psi_some_total = poll
-            .and_then(|poll| {
-                // SAFETY: fresh hive slot, not yet handed out.
-                let fd = unsafe { poll.as_ref() }.fd;
-                let mut buf = [0u8; 256];
-                parse_psi_some_total(read_psi_file(fd, &mut buf)?)
-            })
-            .unwrap_or(0);
+        let (poll, psi_some_total) = register_os_watch(global).unzip();
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let _ = psi_some_total;
         let watcher = Box::new(MemoryPressureWatcher {
             poll,
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            psi_some_total,
+            psi_some_total: psi_some_total.unwrap_or(0),
         });
         *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
     }

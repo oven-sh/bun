@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 const preloadModule = `
@@ -209,5 +209,28 @@ plugin({
       expect(stdout.toString()).toBe("");
       expect(exitCode).toBe(1);
     }
+  });
+
+  // A bare preload name is a package specifier, as with `node --import`. When
+  // a file of that name exists in the project root, the error says how to
+  // preload the file instead.
+  test("a bare name that matches a file says to use ./", async () => {
+    using dir = tempDir("bun-preload-bare-name", {
+      "setup.ts": `console.log("setup");`,
+      "main.ts": `console.log("main");`,
+    });
+    await using proc = Bun.spawn({
+      // --no-install: a bare name would otherwise be looked up in the registry.
+      cmd: [bunExe(), "--no-install", "--preload", "setup.ts", "./main.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`preload not found "setup.ts"`);
+    expect(stderr).toContain(`To preload the file, use "./setup.ts"`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
   });
 });

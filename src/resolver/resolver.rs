@@ -1817,11 +1817,20 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         }
 
-        // Check both relative and package paths for CSS URL tokens, with relative
-        // paths taking precedence over package paths to match Webpack behavior.
+        // A bare import path is a package path, so normally only the package
+        // lookup runs. Two kinds look on disk first:
+        //
+        // - A CSS `url()` or `@import` token, to match Webpack.
+        // - An entry point, because the user wrote it as a path.
+        //   `bun build src/index.ts` must build `./src/index.ts`, not a package
+        //   named "src" with the subpath "index.ts". Package-first lets a
+        //   `node_modules/src` in any parent directory of the cwd replace the
+        //   file. esbuild also prefers the file for an entry point.
+        //   `ImportKind::EntryPointRun` never looks at packages at all.
         let is_package_path_ =
             kind != ast::ImportKind::EntryPointRun && is_package_path_not_absolute(import_path);
-        let check_relative = !is_package_path_ || kind.is_from_css();
+        let check_relative =
+            !is_package_path_ || kind.is_from_css() || kind == ast::ImportKind::EntryPointBuild;
         let check_package = is_package_path_;
 
         if check_relative {

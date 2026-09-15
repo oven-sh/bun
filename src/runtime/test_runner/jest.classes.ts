@@ -124,44 +124,8 @@ export default [
         getter: "getExpand",
       },
       equals: {
-        fn: "equals",
-        length: 3,
-      },
-    },
-  }),
-  define({
-    name: "ExpectMatcherUtils",
-    construct: false,
-    noConstructor: true,
-    call: false,
-    finalize: true,
-    JSType: "0b11101110",
-    configurable: false,
-    klass: {},
-    proto: {
-      stringify: {
-        fn: "stringify",
-        length: 1,
-      },
-      printExpected: {
-        fn: "printExpected",
-        length: 1,
-      },
-      printReceived: {
-        fn: "printReceived",
-        length: 1,
-      },
-      EXPECTED_COLOR: {
-        fn: "printExpected",
-        length: 1,
-      },
-      RECEIVED_COLOR: {
-        fn: "printReceived",
-        length: 1,
-      },
-      matcherHint: {
-        fn: "matcherHint",
-        length: 1,
+        getter: "getEquals",
+        cache: true,
       },
     },
   }),

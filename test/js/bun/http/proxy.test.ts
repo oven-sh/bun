@@ -2207,16 +2207,17 @@ describe.concurrent("a CONNECT tunnel", () => {
     expect(proxy.connections.map(c => [c.method, c.target])).toEqual([["CONNECT", `localhost:${origin.port}`]]);
     expect(stats).toEqual({
       // The tunneled request's head: no body, and not the CONNECT request.
-      bytesWritten: expect.any(Number),
+      bytesSent: expect.any(Number),
       requestBodyBytesSent: 0,
       responseStarted: true,
-      socketReused: false,
+      connectionReused: false,
+      nextHopProtocol: "http/1.1",
       remoteAddress: "127.0.0.1",
       remotePort: proxy.port,
       remoteFamily: "IPv4",
     });
-    expect(stats!.bytesWritten).toBeGreaterThan(0);
-    expect(stats!.bytesWritten).toBeLessThan(400);
+    expect(stats!.bytesSent).toBeGreaterThan(0);
+    expect(stats!.bytesSent).toBeLessThan(400);
   });
 });
 

@@ -68,6 +68,7 @@
     macro(httpUNLOCK, "UNLOCK") \
     macro(httpUNSUBSCRIBE, "UNSUBSCRIBE") \
     macro(alpnH2, "h2") \
+    macro(alpnH3, "h3") \
     macro(alpnHttp11, "http/1.1") \
     macro(ascii, "ascii") \
     macro(base64, "base64") \

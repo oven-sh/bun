@@ -1830,7 +1830,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
            const post = session =>
              fetch(url, { protocol: "http2", session, method: "POST", body: Buffer.alloc(5000, "x"), onStats: s => stats.push(s) }).then(r => r.text());
            console.log(JSON.stringify([await post(one), await post(one), await post(other)]));
-           console.log(JSON.stringify(stats.map(s => [s.requestBodyBytesSent, s.bytesWritten > 5000, s.responseStarted, s.socketReused])));`,
+           console.log(JSON.stringify(stats.map(s => [s.requestBodyBytesSent, s.bytesSent > 5000, s.responseStarted, s.connectionReused, s.nextHopProtocol])));`,
         ],
         env: bunEnv,
         stdout: "pipe",
@@ -1846,9 +1846,9 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       ).toEqual([
         ["5000", "5000", "5000"],
         [
-          [5000, true, true, false],
-          [5000, true, true, true],
-          [5000, true, true, false],
+          [5000, true, true, false, "h2"],
+          [5000, true, true, true, "h2"],
+          [5000, true, true, false, "h2"],
         ],
       ]);
       expect(sessions).toBe(2);

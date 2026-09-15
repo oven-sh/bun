@@ -1668,9 +1668,7 @@ impl FrameworkRouter {
                             }
                         };
 
-                        // The pattern comes from the path below the router root. The
-                        // file id comes from the path the resolver reports, which has
-                        // symlinks resolved: the bundler stores the module under it.
+                        // Same key as the bundler: the resolver's path, with symlinks resolved.
                         // SAFETY: as for the `kind` call above, which did the stat.
                         let symlink = unsafe { (*file_ptr).symlink(&raw mut *fs_impl, false) };
                         let abs_path: &[u8] = if !symlink.is_empty() {

@@ -309,11 +309,10 @@ pub struct DevServer {
     pub(crate) barrel_needed_exports: bun_collections::StringArrayHashMap<StringHashMap<()>>,
     /// State populated during bundling and hot updates. Often cleared
     pub(crate) incremental_result: IncrementalResult,
-    /// Quickly retrieve the framework routes of an entry point file. These are
-    /// populated as the routes are discovered. A file has more than one route when
-    /// a symlink gives it a second path in a routes directory, or when router types
-    /// share a server entry point. The route may not be bundled OR navigatable,
-    /// such as the case where a layout's index is looked up.
+    /// Quickly retrieve a framework route's index from its entry point file. These
+    /// are populated as the routes are discovered. The route may not be bundled OR
+    /// navigatable, such as the case where a layout's index is looked up.
+    /// A file has more than one route when symlinks or router types share it.
     pub(crate) route_lookup: ArrayHashMap<incremental_graph::ServerFileIndex, RoutesOfFile>,
     /// This acts as a duplicate of the lookup table in uws, but only for HTML routes
     /// Used to identify what route a connected WebSocket is on, so that only

@@ -234,10 +234,7 @@ impl Entry {
         self.cache().kind
     }
 
-    /// The cached real path of this entry, or empty when none is known. The
-    /// stat fills it in when the entry itself is a symlink. An entry that is
-    /// only below a symlinked directory stays empty until the resolver caches
-    /// `DirInfo::abs_real_path` + base here, so callers check that too.
+    /// Real path if this entry is a symlink. Else usually empty: check `DirInfo::abs_real_path`.
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global

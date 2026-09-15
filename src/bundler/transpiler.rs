@@ -1935,7 +1935,12 @@ fn parse_data_loader<'a>(
             bun_ast::ExprData::EObjectJSON(_) | bun_ast::ExprData::EArrayJSON(_)
         )
     {
-        expr = match bun_parsers::json::materialize(&expr, source, log, arena) {
+        // Only the JSON and XML parsers write tape rows.
+        let what = match loader {
+            options::Loader::Xml => "XML document",
+            _ => "JSON document",
+        };
+        expr = match bun_parsers::json::materialize(&expr, source, log, arena, what) {
             Ok(e) => e,
             Err(_) => return None,
         };

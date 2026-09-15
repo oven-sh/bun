@@ -953,7 +953,13 @@ pub mod parse_worker {
                             encoding: bun_parsers::xml::InputEncoding::File,
                         },
                     )?;
-                    let root = bun_parsers::json::materialize(&rows, source, &mut temp_log, bump)?;
+                    let root = bun_parsers::json::materialize(
+                        &rows,
+                        source,
+                        &mut temp_log,
+                        bump,
+                        "XML document",
+                    )?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,

@@ -534,17 +534,17 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             }
         }
 
-        // A chunk imports the chunks its files import their way to that load wherever it does, so the loader is inside it while they run.
+        // A chunk imports the chunks its files get to directly that load wherever it does, so the loader is inside it while they run.
         for at in 0..chunks[chunk_index]
             .content
             .javascript()
-            .reached_chunks_in_order
+            .directly_reached_chunks
             .len()
         {
             let other = chunks[chunk_index]
                 .content
                 .javascript()
-                .reached_chunks_in_order[at];
+                .directly_reached_chunks[at];
             if chunks[chunk_index]
                 .entry_bits
                 .subset_of(&chunks[other as usize].entry_bits)

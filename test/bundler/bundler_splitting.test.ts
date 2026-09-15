@@ -1491,6 +1491,49 @@ describe("bundler", () => {
     run: { file: "/out/e1.js", stdout: 'e1 ab ["b","a"]' },
   });
 
+  // mid.js is folded into the chunk of x.js, whose key b.js's chunk does not cover, so that chunk has no import of
+  // b.js's chunk. main.js must still import b.js's chunk ahead of it: a chunk only goes ahead of what its files import
+  // when it brings them in itself.
+  itBundled("splitting/FoldedChunkStaysBehindWhatItCannotImport", {
+    files: {
+      "/main.js": /* js */ `
+        import './mid.js'
+        import { x } from './x.js'
+        export const pages = [() => import('./page.js'), () => import('./tab.js')]
+        export const keep = x.length
+        console.log('main')
+      `,
+      "/ext.js": /* js */ `
+        import './b.js'
+        console.log('ext')
+      `,
+      "/page.js": /* js */ `
+        import './mid.js'
+        console.log('page')
+      `,
+      "/tab.js": /* js */ `
+        import { x } from './x.js'
+        console.log('tab', x.length)
+      `,
+      "/mid.js": /* js */ `
+        import './b.js'
+        console.log('mid')
+      `,
+      "/b.js": `console.log('b')`,
+      "/x.js": `export const x = "${Buffer.alloc(4000, "x").toString()}"`,
+    },
+    entryPoints: ["/main.js", "/ext.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // main, ext, page, tab, the chunk of b.js, and the chunk mid.js and x.js share.
+      expect(jsFilesIn(api)).toHaveLength(6);
+      expect(chunkContaining(api, '"mid"')).toBe(chunkContaining(api, "xxxxxxxx"));
+    },
+    run: { file: "/out/main.js", stdout: "b\nmid\nmain" },
+  });
+
   // import() of another chunk is printed as import(); it does not pull the
   // runtime's __require into the bundle.
   itBundled("splitting/DynamicImportDoesNotNeedRequireShim", {

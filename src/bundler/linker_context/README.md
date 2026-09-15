@@ -752,7 +752,7 @@ The renamed symbols are then used during final code generation to produce output
 
 - Analyzes imports between chunks
 - Sets up cross-chunk binding code
-- Gives every chunk an `import` of the chunks its files import their way to (`reached_chunks_in_order`) when they load wherever it does, so the chunk graph follows the file graph
+- Gives every chunk an `import` of the chunks its files get to directly, without passing through a file with side effects of a third chunk (`directly_reached_chunks`), when they load wherever it does, so the chunk graph follows the file graph and each chunk brings in its own dependencies
 - Handles dynamic imports across chunks
 - Manages chunk metadata for dependency resolution
 

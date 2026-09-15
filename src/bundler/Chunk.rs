@@ -1374,6 +1374,8 @@ pub struct JavaScriptChunk {
     /// `compute_cross_chunk_dependencies` sorts this chunk's `import`
     /// statements by it.
     pub(crate) reached_chunks_in_order: Box<[u32]>,
+    /// Those of `reached_chunks_in_order` the walk got to without passing through a file with side effects of a third chunk.
+    pub(crate) directly_reached_chunks: Box<[u32]>,
     /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
     pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,

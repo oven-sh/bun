@@ -406,6 +406,7 @@ pub(crate) fn write_output_files_to_disk(
                         &code_result.buffer,
                         &source_provider_url,
                         c.options.bytecode_depth,
+                        c.options.optimize_bytecode,
                         None,
                     ) {
                         let source_provider_url_str = source_provider_url.to_utf8();
@@ -534,6 +535,7 @@ pub(crate) fn write_output_files_to_disk(
 
         let output_kind = c.chunk_output_kind(chunk);
 
+        chunk.final_output_size = code_result.buffer.len();
         let chunk_index = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
             output_path: chunk.final_rel_path.clone(),
             input_path,

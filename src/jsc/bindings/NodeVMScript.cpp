@@ -180,7 +180,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         ASSERT(executable);
 
         JSC::UnlinkedProgramCodeBlock* unlinkedBlock = nullptr;
-        if (RefPtr<JSC::CachedBytecode> cachedBytecode = unwrapCachedData(script->source(), std::span(cachedData))) {
+        if (RefPtr<JSC::CachedBytecode> cachedBytecode = unwrapCachedData(script->source(), cachedData.span())) {
             JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
             JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
             unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull());

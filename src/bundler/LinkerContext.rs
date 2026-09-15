@@ -129,7 +129,9 @@ pub struct LinkerContext<'a> {
     /// One name per binding that crosses a chunk boundary, shared by the
     /// chunk that exports it and every chunk that imports it
     /// (`assign_cross_chunk_names`). Values live in the linker arena.
-    pub(crate) cross_chunk_names: bun_collections::HashMap<bun_ast::Ref, &'static [u8]>,
+    pub(crate) cross_chunk_names: bun_js_printer::renamer::CrossChunkNames,
+    /// `renamer_rows`, for every chunk's `NumberRenamer`. `None`: a file is in several chunks.
+    pub(crate) renamer_rows: Option<Box<[u32]>>,
 
     /// User entry points (by source index) that reach a split browser `import()`: their chunk registers the chunk graph.
     pub(crate) preload_entries: AutoBitSet,
@@ -175,6 +177,7 @@ impl<'a> Default for LinkerContext<'a> {
             framework: None,
             mangled_props: Default::default(),
             cross_chunk_names: Default::default(),
+            renamer_rows: None,
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             entry_point_part_indices: Vec::new(),
@@ -399,6 +402,47 @@ impl<'a> LinkerContext<'a> {
             return None;
         }
         Some(other)
+    }
+
+    /// Calls `each` with every other file that loading `source_index` loads first:
+    /// what the import records of its live parts load
+    /// (`file_loaded_by_import`) and the files declaring the bindings those
+    /// parts use. A CSS or HTML file has no parts; every record counts.
+    pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, mut each: impl FnMut(u32)) {
+        let records = &self.graph.ast.items_import_records()[source_index as usize];
+        if self.graph.ast.items_css()[source_index as usize].is_some()
+            || self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
+        {
+            for record in records.iter() {
+                if record.source_index.is_valid() && record.source_index.get() != source_index {
+                    each(record.source_index.get());
+                }
+            }
+            return;
+        }
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        for (part_index, part) in self.graph.ast.items_parts()[source_index as usize]
+            .as_slice()
+            .iter()
+            .enumerate()
+        {
+            if !parts_live.is_set(part_index) {
+                continue;
+            }
+            for &record_index in part.import_record_indices.iter() {
+                if let Some(other) =
+                    self.file_loaded_by_import(&records[record_index as usize], source_index)
+                    && other != source_index
+                {
+                    each(other);
+                }
+            }
+            for dependency in part.dependencies.iter() {
+                if dependency.source_index.get() != source_index {
+                    each(dependency.source_index.get());
+                }
+            }
+        }
     }
 
     /// `"sideEffects": false` (or the resolver's equivalent), unless
@@ -962,7 +1006,6 @@ impl<'a> LinkerContext<'a> {
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
         let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
         let file_entry_bits: *mut [AutoBitSet] = self.graph.files.items_entry_bits_mut();
-        let loaders: *const [Loader] = self.parse_graph().input_files.items_loader();
 
         // SAFETY: see block comment above — disjoint SoA columns, stable slabs
         // (no reallocation during tree-shaking). All column derefs share that
@@ -978,7 +1021,6 @@ impl<'a> LinkerContext<'a> {
             parts_live,
             distances,
             file_entry_bits,
-            loaders,
         ) = unsafe {
             (
                 &*entry_points,
@@ -989,7 +1031,6 @@ impl<'a> LinkerContext<'a> {
                 &mut *parts_live,
                 &mut *distances,
                 &mut *file_entry_bits,
-                &*loaders,
             )
         };
         let entry_points_len = entry_points.len();
@@ -1040,11 +1081,7 @@ impl<'a> LinkerContext<'a> {
 
             let mut ctx = CodeSplitCtx {
                 distances,
-                parts,
-                import_records,
                 file_entry_bits,
-                css_reprs,
-                loaders,
                 queue: std::collections::VecDeque::new(),
             };
 
@@ -1381,6 +1418,7 @@ pub struct LinkerOptions {
     /// See `CompileTargetBuiltins::Target`.
     pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
     pub(crate) bytecode_depth: u32,
+    pub(crate) optimize_bytecode: bool,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1396,6 +1434,7 @@ pub struct LinkerOptions {
     /// below this also fold into a chunk more entry points load (0 = off).
     /// See `merge_small_chunks`.
     pub(crate) min_chunk_size: u64,
+    pub(crate) fold_chunks: bool,
     pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
@@ -1429,6 +1468,7 @@ impl Default for LinkerOptions {
             generate_internal_module_bytecode: false,
             target_builtins: None,
             bytecode_depth: u32::MAX,
+            optimize_bytecode: true,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,
@@ -1441,6 +1481,7 @@ impl Default for LinkerOptions {
             footer: b"",
             css_chunking: false,
             min_chunk_size: 0,
+            fold_chunks: true,
             module_preload: true,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
@@ -2814,20 +2855,16 @@ pub enum TreeShakeWork {
     },
 }
 
-pub(crate) struct CodeSplitCtx<'a, 'r> {
+pub(crate) struct CodeSplitCtx<'r> {
     pub(crate) distances: &'r mut [u32],
-    pub(crate) parts: &'r [bun_ast::PartList<'a>],
-    pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) file_entry_bits: &'r mut [AutoBitSet],
-    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
-    pub(crate) loaders: &'r [Loader],
     pub(crate) queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
 }
 
 impl<'a> LinkerContext<'a> {
     pub(crate) fn mark_file_reachable_for_code_splitting(
         &mut self,
-        ctx: &mut CodeSplitCtx<'a, '_>,
+        ctx: &mut CodeSplitCtx<'_>,
         source_index: crate::IndexInt,
         entry_points_count: usize,
         distance: u32,
@@ -2862,55 +2899,12 @@ impl<'a> LinkerContext<'a> {
                 ctx.distances[source_index as usize] = distance;
             }
             let out_dist = distance + 1;
-
-            let records = &ctx.import_records[source_index as usize];
-
-            // CSS and HTML files have no parts: follow every import record.
-            if ctx.css_reprs[source_index as usize].is_some()
-                || ctx.loaders[source_index as usize] == Loader::Html
-            {
-                for record in records.iter() {
-                    if record.source_index.is_valid()
-                        && !ctx.file_entry_bits[record.source_index.get() as usize]
-                            .is_set(entry_points_count)
-                    {
-                        ctx.queue.push_back((record.source_index.get(), out_dist));
-                    }
+            let (file_entry_bits, queue) = (&ctx.file_entry_bits, &mut ctx.queue);
+            self.for_each_file_loaded_by(source_index, |other| {
+                if !file_entry_bits[other as usize].is_set(entry_points_count) {
+                    queue.push_back((other, out_dist));
                 }
-                continue;
-            }
-
-            // A dead part prints nothing, so only live parts reach other files.
-            let parts_live = &self.graph.parts_live[source_index as usize];
-            for (part_index, part) in ctx.parts[source_index as usize]
-                .as_slice()
-                .iter()
-                .enumerate()
-            {
-                if !parts_live.is_set(part_index) {
-                    continue;
-                }
-
-                for &import_index in part.import_record_indices.iter() {
-                    let Some(other) =
-                        self.file_loaded_by_import(&records[import_index as usize], source_index)
-                    else {
-                        continue;
-                    };
-                    if !ctx.file_entry_bits[other as usize].is_set(entry_points_count) {
-                        ctx.queue.push_back((other, out_dist));
-                    }
-                }
-
-                for dependency in part.dependencies.iter() {
-                    let dep = dependency.source_index.get();
-                    if dep != source_index
-                        && !ctx.file_entry_bits[dep as usize].is_set(entry_points_count)
-                    {
-                        ctx.queue.push_back((dep, out_dist));
-                    }
-                }
-            }
+            });
         }
     }
 

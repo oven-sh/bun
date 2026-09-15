@@ -36,6 +36,7 @@ enum CommonStringsForRust {
     QuicDatagramAcknowledged = 21,
     QuicDatagramLost = 22,
     Base64 = 23,
+    Write = 24,
 }
 
 unsafe extern "C" {
@@ -175,5 +176,10 @@ impl<'a> CommonStrings<'a> {
     #[inline]
     pub fn base64(self) -> JSValue {
         CommonStringsForRust::Base64.to_js(self.global_object)
+    }
+    /// `"write"`
+    #[inline]
+    pub fn write(self) -> JSValue {
+        CommonStringsForRust::Write.to_js(self.global_object)
     }
 }

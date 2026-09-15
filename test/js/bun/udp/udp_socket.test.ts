@@ -1,7 +1,8 @@
 import { udpSocket } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, disableAggressiveGCScope, expectRssDeltaBelow, isWindows, randomPort } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, expectRssDeltaBelow, isWindows, randomPort, tempDir } from "harness";
+import { closeSync, openSync } from "node:fs";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
@@ -41,6 +42,48 @@ describe("udpSocket()", () => {
       expect(stderr).toBe("");
       expect(stdout.trim()).toBe("OK");
       expect(exitCode).toBe(0);
+    },
+  );
+
+  // Converting the interface address runs user toString(), which can close
+  // the socket. The native side used to grab the socket before converting
+  // that argument, so the setsockopt went to the closed descriptor number,
+  // which the canary files opened from toString() have taken over by then
+  // (ENOTSOCK; a socket that reused it would have its membership changed).
+  test.each([
+    ["addMembership", (s: Bun.udp.Socket<"buffer">, iface: string) => s.addMembership("239.1.2.3", iface)],
+    ["dropMembership", (s: Bun.udp.Socket<"buffer">, iface: string) => s.dropMembership("239.1.2.3", iface)],
+    [
+      "addSourceSpecificMembership",
+      (s: Bun.udp.Socket<"buffer">, iface: string) => s.addSourceSpecificMembership("10.0.0.1", "232.1.1.1", iface),
+    ],
+    [
+      "dropSourceSpecificMembership",
+      (s: Bun.udp.Socket<"buffer">, iface: string) => s.dropSourceSpecificMembership("10.0.0.1", "232.1.1.1", iface),
+    ],
+  ] as const)(
+    "%s does not touch the descriptor when the socket is closed during interface coercion",
+    async (_, call) => {
+      using dir = tempDir("udp-membership-close", {});
+      const socket = await udpSocket({});
+      const canaries: number[] = [];
+      const iface = {
+        toString() {
+          socket.close();
+          for (let i = 0; i < 4; i++) canaries.push(openSync(path.join(String(dir), `canary-${i}`), "w"));
+          return "0.0.0.0";
+        },
+      };
+      let result;
+      try {
+        result = { returned: call(socket, iface as unknown as string) };
+      } catch (e: any) {
+        result = { message: e.message, code: e.code, syscall: e.syscall };
+      } finally {
+        for (const fd of canaries) closeSync(fd);
+      }
+      expect(canaries).toHaveLength(4);
+      expect(result).toEqual({ message: "Socket is closed", code: undefined, syscall: undefined });
     },
   );
 

@@ -430,8 +430,9 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
     mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss,
         &peak_rss, &current_commit, &peak_commit, &page_faults);
 
-    // mi_process_info produces incorrect rss size on linux.
+    // Match process.memoryUsage().rss and resourceUsage().maxRSS: mi_process_info reads resident_size on macOS.
     Bun::getRSS(&current_rss);
+    Bun::getPeakRSS(&peak_rss);
 
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSC::constructEmptyObject(

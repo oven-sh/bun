@@ -131,6 +131,15 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
+static Ref<JSC::CachedBytecode> createOwnedCachedBytecode(std::span<const uint8_t> bytes)
+{
+    // UnlinkedFunctionExecutable's Decoder constructor (CachedTypes.cpp) keeps the Decoder and a
+    // payload offset, and decodes the body on the function's first call, borrowed payload or not.
+    auto payload = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(bytes.size());
+    WTF::memcpySpan(payload.mutableSpan(), bytes);
+    return JSC::CachedBytecode::create(WTF::move(payload), {});
+}
+
 // Integrity header verified by unwrapCachedData before decodeCodeBlock sees the payload; same role as V8's SerializedCodeData header.
 struct CachedDataHeader {
     uint32_t magic;
@@ -196,10 +205,7 @@ RefPtr<JSC::CachedBytecode> unwrapCachedData(const JSC::SourceCode& source, std:
         return nullptr;
     }
 
-    // Copy: decoded functions retain the Decoder for lazy code block decoding, so a borrowed span would dangle.
-    auto payloadCopy = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(payload.size());
-    memcpySpan(payloadCopy.mutableSpan(), payload);
-    return JSC::CachedBytecode::create(WTF::move(payloadCopy), {});
+    return createOwnedCachedBytecode(payload);
 }
 
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope)
@@ -295,7 +301,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
     // Node treats a provided-but-empty cachedData buffer as rejected, not absent.
     if (options.cachedDataProvided) {
-        cachedBytecode = unwrapCachedData(sourceCode, std::span(options.cachedData));
+        cachedBytecode = unwrapCachedData(sourceCode, options.cachedData.span());
         if (cachedBytecode) {
             SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
             unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
@@ -1035,6 +1041,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
         nullptr, // shouldInterruptScriptBeforeTimeout,
+        nullptr, // moduleTypeIsAllowed
         &moduleLoaderImportModule,
         nullptr, // moduleLoaderResolve
         nullptr, // moduleLoaderFetch
@@ -1453,7 +1460,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     // observe the [[DefineOwnProperty]] exactly once, like V8's contextify
     // PropertyDefinerCallback.
     if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
     }
 
     // The lookup above may have filled `slot` as cacheable (e.g. a lazy global
@@ -1466,10 +1473,10 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
+    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
     if (!did) return false;
 
@@ -1798,29 +1805,14 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isModuleNamespaceObject"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "isModuleNamespaceObject"_s, vmIsModuleNamespaceObject, ImplementationVisibility::Public), 1);
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kUnlinked"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Unlinked)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kLinking"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Linking)), 0);
-    obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kLinked"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Linked)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kEvaluating"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Evaluating)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kEvaluated"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Evaluated)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kErrored"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Errored)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kSourceText"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMModule::Type::SourceText)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kSynthetic"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMModule::Type::Synthetic)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "DONT_CONTEXTIFY"_s)),
         globalObject->m_nodeVMDontContextify.get(globalObject), 0);

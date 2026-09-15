@@ -125,9 +125,9 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
-    // Decoding checks the format, the checksum and the source key. Linking would need
+    // Decoding checks the format and the source key. Linking would need
     // the module's JSModuleEnvironment, which does not exist yet.
-    if (RefPtr<CachedBytecode> cachedBytecode = unwrapCachedData(ptr->sourceCode(), std::span(cachedData))) {
+    if (RefPtr<CachedBytecode> cachedBytecode = unwrapCachedData(ptr->sourceCode(), cachedData.span())) {
         LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
         SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
         if (decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull()))
@@ -167,7 +167,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         return {};
     }
 
-    ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
+    JSModuleLoader* loader = moduleLoader(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    ModuleAnalyzer analyzer(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
 
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(node != nullptr);
@@ -418,6 +420,10 @@ static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpeci
 
         const auto& loaded = record->loadedModules();
         for (const auto& request : record->requestedModules()) {
+            if (AbstractModuleRecord* dependency = record->prelinkedRequestedModule(request)) {
+                worklist.append(dependency);
+                continue;
+            }
             auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
             if (iter == loaded.end()) {
                 missingSpecifier = request.m_specifier.string();

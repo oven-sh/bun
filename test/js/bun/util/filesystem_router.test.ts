@@ -862,6 +862,11 @@ it("match() returns null when the path string does not start with '/'", () => {
 it("reload() while Bun.build() resolves the same directory", async () => {
   // The router's route-load loop and Bun.build's entry-point resolution (which
   // runs on the bundler thread) share the process-global directory-entry cache.
+  // Both lazily fill the cached entry's absolute path: the router in
+  // Route::parse, the resolver in load_as_file (the entrypoints), load_extension
+  // (the extensionless imports), the index lookup (the directory import) and
+  // the .js to .tsx rewrite. Every page imports through each of those so the
+  // bundler's threads fill the same entries reload() fills on the main thread.
   // Run in a subprocess so a crash is observable as a signal instead of taking
   // down the test runner.
   const files: Record<string, string> = {
@@ -900,9 +905,15 @@ it("reload() while Bun.build() resolves the same directory", async () => {
       console.log("matches", matches, "builds-ok", buildsOk);
     `,
   };
+  files["pages/sub/index.tsx"] = "export default 0;\n";
   for (let i = 1; i <= 40; i++) {
-    files[`pages/p${i}.tsx`] = `export default ${i};\n`;
+    files[`pages/p${i}.tsx`] =
+      `import s from "./sub/s${i}";\n` +
+      `import sub from "./sub";\n` +
+      `import t from "./sub/t${i}.js";\n` +
+      `export default ${i} + s + sub + t;\n`;
     files[`pages/sub/s${i}.tsx`] = `export default ${i};\n`;
+    files[`pages/sub/t${i}.tsx`] = `export default ${i};\n`;
   }
   using dir = tempDir("fsr-reload-build-race", files);
 

@@ -178,7 +178,7 @@ test("the development error page of a handler that runs the event loop names its
 
   // A subprocess, because the development error log goes to stderr.
   const script = `
-    const { connect } = require("node:net");
+    import { connect } from "node:net";
     const head = token =>
       "GET /u-" + token + " HTTP/1.1\\r\\nHost: h-" + token + ".example\\r\\nConnection: close\\r\\n\\r\\n";
     let resolveSetup, second, requests = 0;

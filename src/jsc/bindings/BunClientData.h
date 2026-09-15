@@ -58,7 +58,6 @@ class DOMWrapperWorld;
 #include "ExtendedDOMIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "BunBuiltinNames.h"
-#include "FetchOptionNames.h"
 // #include "WebCoreJSBuiltins.h"
 // #include "WorkerThreadType.h"
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
@@ -258,9 +257,6 @@ public:
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
-
-    // See FetchOptionNames.h.
-    std::array<JSC::Identifier, static_cast<size_t>(Bun::FetchOptionName::Count)> fetchOptionIdentifiers;
 
     // One slot per string of the executable's module-info string table,
     // filled on first use so each name is atomized once however many chunks

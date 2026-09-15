@@ -97,34 +97,33 @@ static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowSco
     return string;
 }
 
-// Proxy env vars written back to the native env map, which is what fetch()'s
-// proxy resolution reads; shared by the process.env write/delete paths,
-// applySharedEnvSideEffects and createEnvironmentVariablesMap.
-static constexpr ASCIILiteral kProxyEnvVarNames[] = {
-    "HTTP_PROXY"_s,
-    "http_proxy"_s,
-    "HTTPS_PROXY"_s,
-    "https_proxy"_s,
-    "ALL_PROXY"_s,
-    "all_proxy"_s,
-    "NO_PROXY"_s,
-    "no_proxy"_s,
-};
-
-static bool isProxyEnvVarName(const StringView& name)
+// The proxy env vars are written back to the native env map, which is what
+// fetch()'s proxy resolution reads.
+// `name` is an atom (a property key's uid), and so is what a common string
+// holds: matching one is a pointer comparison.
+static bool isProxyEnvVarName(VM& vm, const StringImpl* name)
 {
     // "NO_PROXY" .. "HTTPS_PROXY"
+    if (!name || name->length() < 8 || name->length() > 11)
+        return false;
+    auto& strings = Bun::commonStrings(vm);
+    auto is = [name](JSC::JSString* candidate) { return candidate->tryGetValueImpl() == name; };
+    return is(strings.envALL_PROXYString()) ||
+        is(strings.envAllProxyString()) ||
+        is(strings.envHTTPS_PROXYString()) ||
+        is(strings.envHttpsProxyString()) ||
+        is(strings.envHTTP_PROXYString()) ||
+        is(strings.envHttpProxyString()) ||
+        is(strings.envNO_PROXYString()) ||
+        is(strings.envNoProxyString());
+}
+
+// For a name that is not a property key in hand: Windows upper-cases the key on the way here.
+static bool isProxyEnvVarName(VM& vm, const String& name)
+{
     if (name.length() < 8 || name.length() > 11)
         return false;
-    for (auto proxyName : kProxyEnvVarNames) {
-#if OS(WINDOWS)
-        if (equalIgnoringASCIICase(name, proxyName))
-#else
-        if (name == proxyName)
-#endif
-            return true;
-    }
-    return false;
+    return isProxyEnvVarName(vm, JSC::Identifier::fromString(vm, name).impl());
 }
 
 // Drop `name` from the native env map.
@@ -218,7 +217,7 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         return true;
     }
     // fetch() reads the proxy variables from the native env map.
-    if (uid && isProxyEnvVarName(StringView(uid))) [[unlikely]] {
+    if (isProxyEnvVarName(vm, uid)) [[unlikely]] {
         setNativeEnvValue(globalObject, String(uid), string);
         RETURN_IF_EXCEPTION(scope, false);
         static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
@@ -351,7 +350,7 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
         RETURN_IF_EXCEPTION(scope, false);
     } else if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
         applyTLSRejectFromString(globalObject, String());
-    } else if (uid && isProxyEnvVarName(StringView(uid))) {
+    } else if (isProxyEnvVarName(vm, uid)) {
         removeNativeEnvValue(globalObject, String(uid));
     }
 
@@ -542,13 +541,13 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
         BunString v = Bun::toString(string2);
         Bun__Process__editWindowsEnvVar(&k, &v);
         // fetch() reads the proxy variables from the native env map.
-        if (isProxyEnvVarName(string1))
+        if (isProxyEnvVarName(global->vm(), string1))
             Bun__setEnvValue(global, &k, &v);
     } else {
         BunString k = Bun::toString(string1);
         BunString v = { .tag = BunStringTag::Dead };
         Bun__Process__editWindowsEnvVar(&k, &v);
-        if (isProxyEnvVarName(string1))
+        if (isProxyEnvVarName(global->vm(), string1))
             Bun__setEnvValue(global, &k, &v);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
@@ -739,14 +738,10 @@ static void applySharedEnvSideEffects(JSGlobalObject* globalObject, const String
         return;
     }
     // Proxy vars: fetch()'s getHttpProxyFor() reads the Zig env map, so sync.
-    const auto& proxyVarNames = kProxyEnvVarNames;
-    for (auto proxyName : proxyVarNames) {
-        if (key == proxyName) {
-            BunString name = Bun::toString(key);
-            BunString val = Bun::toString(stringValue);
-            Bun__setEnvValue(globalObject, &name, &val);
-            return;
-        }
+    if (isProxyEnvVarName(JSC::getVM(globalObject), key)) {
+        BunString name = Bun::toString(key);
+        BunString val = Bun::toString(stringValue);
+        Bun__setEnvValue(globalObject, &name, &val);
     }
 }
 
@@ -806,7 +801,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
     } else if (normalizedKey == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
         applyTLSRejectFromString(globalObject, String());
-    } else if (isProxyEnvVarName(normalizedKey)) {
+    } else if (isProxyEnvVarName(JSC::getVM(globalObject), normalizedKey)) {
         removeNativeEnvValue(globalObject, normalizedKey);
     }
 

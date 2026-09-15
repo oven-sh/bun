@@ -2072,8 +2072,28 @@ where
         &mut self,
         new_config: &mut ServerConfig,
         global: &JSGlobalObject,
-    ) {
+    ) -> JsResult<()> {
         httplog!("onReload");
+
+        // `init()` only creates the DevServer when the first config holds an
+        // html route. Create it here for a server that gets its first one from
+        // a reload, before anything is swapped so that a failure leaves the
+        // server as it was. `development` is fixed at start. The DevServer is
+        // HTTP/1-only: once it exists an html route answers HTTP/2 and HTTP/3
+        // with a 503, so a server with those apps keeps the bundler path.
+        if self.dev_server.is_none()
+            && new_config.bake.is_some()
+            && self.config.development.is_hmr_enabled()
+            && self.h2_app.is_none()
+            && self.h3_app.is_none()
+            && self.has_listener()
+        {
+            self.config.bake = new_config.bake.take();
+            if let Err(err) = self.init_dev_server() {
+                self.config.bake = None;
+                return Err(err);
+            }
+        }
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
@@ -2175,6 +2195,7 @@ where
                 ));
             }
         }
+        Ok(())
     }
 
     pub(crate) fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {
@@ -2226,7 +2247,7 @@ where
         // ws shadows, and each `wrap_handler_slot` call allocates via
         // `with_async_context_if_needed`. Same window as `serve()`; same fix.
         let _handler_pins = super::protect_handler_shadows(&new_config);
-        self.on_reload_from_zig(&mut new_config, global);
+        self.on_reload_from_zig(&mut new_config, global)?;
 
         Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
     }

@@ -1403,7 +1403,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                     ($T:ty) => {{
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
                         let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
-                        server.on_reload_from_zig(&mut config, global_object);
+                        server.on_reload_from_zig(&mut config, global_object)?;
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
                 }

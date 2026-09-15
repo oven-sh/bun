@@ -1097,6 +1097,84 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
   });
 });
 
+// The dev server was only created by Bun.serve(), and only when its config
+// held an html route. A server that got its first html route from
+// server.reload() served it through the bundler path instead: no HMR runtime,
+// no /_bun/hmr socket, no error overlay.
+test.concurrent("server.reload() that adds the first html route starts the dev server", async () => {
+  using dir = tempDir("bun-serve-html-reload-first-html-route", {
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    "serve.ts": /*ts*/ `
+      import { once } from "node:events";
+      import http2 from "node:http2";
+      import html from "./index.html";
+
+      const api = { "/api": () => new Response("api") };
+
+      async function probe(server) {
+        const page = await (await fetch(server.url)).text();
+        const script = page.match(/src="([^"]+\\.js)"/)?.[1] ?? "";
+        const url = new URL("/_bun/hmr", server.url);
+        url.protocol = "ws:";
+        const ws = new WebSocket(url);
+        const { promise: hmrSocket, resolve } = Promise.withResolvers();
+        ws.onopen = () => resolve(true);
+        ws.onerror = ws.onclose = () => resolve(false);
+        const result = {
+          script: script.replace(/[0-9a-z]{8,}/, "HASH"),
+          hmrSocket: await hmrSocket,
+          api: await (await fetch(new URL("/api", server.url))).text(),
+        };
+        ws.onclose = null;
+        ws.close();
+        return result;
+      }
+
+      const result = {};
+      {
+        using server = Bun.serve({ port: 0, development: true, routes: api });
+        server.reload({ development: true, routes: { ...api, "/": html } });
+        result.reloaded = await probe(server);
+        server.reload({ development: true, routes: { ...api, "/": html } });
+        result.reloadedAgain = await probe(server);
+      }
+      {
+        // reload() does not change the mode the server was started in.
+        using server = Bun.serve({ port: 0, development: { hmr: false }, routes: api });
+        server.reload({ development: true, routes: { ...api, "/": html } });
+        result.startedWithoutHmr = await probe(server);
+      }
+      {
+        // The dev server is HTTP/1.1 only: with it, an html route answers
+        // HTTP/2 with a 503. A server that speaks HTTP/2 keeps the page.
+        using server = Bun.serve({ port: 0, development: true, http2: true, routes: api });
+        server.reload({ development: true, routes: { ...api, "/": html } });
+        const session = http2.connect(server.url.href);
+        const stream = session.request({ ":path": "/" }).end();
+        const [headers] = await once(stream, "response");
+        stream.resume();
+        await once(stream, "end");
+        session.close();
+        result.http2 = { ...(await probe(server)), http2Status: headers[":status"] };
+      }
+      console.log(JSON.stringify(result));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  const devServer = { script: "/_bun/client/index-HASH.js", hmrSocket: true, api: "api" };
+  const bundled = { script: "/chunk-HASH.js", hmrSocket: false, api: "api" };
+  expect({ result: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+    result: {
+      reloaded: devServer,
+      reloadedAgain: devServer,
+      startedWithoutHmr: bundled,
+      http2: { ...bundled, http2Status: 200 },
+    },
+    exitCode: 0,
+  });
+});
+
 // process.chdir() leaves the cached top-level directory with a trailing slash,
 // which the dev server then used as its root. Reporting a bundle failure
 // relativizes the failing file against that root and hit a debug assertion

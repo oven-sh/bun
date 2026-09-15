@@ -133,6 +133,9 @@ pub struct Watcher {
     pub(crate) on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
     pub(crate) on_error: fn(*mut (), sys::Error),
 
+    /// Set once the first add-watch failure has been reported.
+    pub(crate) warned_add_failure: core::sync::atomic::AtomicBool,
+
     pub thread_lock: ThreadLock,
 }
 
@@ -205,6 +208,7 @@ impl Watcher {
             evict_list_i: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
+            warned_add_failure: core::sync::atomic::AtomicBool::new(false),
             thread_lock: ThreadLock::init_unlocked(),
         });
 
@@ -793,6 +797,32 @@ impl Watcher {
             .ensure_unused_capacity(1)
             .unwrap_or_else(|_| bun_core::out_of_memory());
         self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
+            .inspect_err(|err| self.report_add_failure(err))
+    }
+
+    /// Warns once that a watch could not be added. Callers discard the error.
+    fn report_add_failure(&self, err: &sys::Error) {
+        // A path that vanished between the parse and the watch is routine.
+        if matches!(err.get_errno(), sys::E::ENOENT | sys::E::ENOTDIR) {
+            return;
+        }
+        if self
+            .warned_add_failure
+            .swap(true, core::sync::atomic::Ordering::AcqRel)
+        {
+            return;
+        }
+        bun_core::warn!(
+            "{}\nBun cannot watch this path. Changes to paths that Bun cannot watch do not trigger a reload.",
+            err
+        );
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if err.get_errno() == sys::E::ENOSPC {
+            bun_core::note!(
+                "The inotify watch limit is reached. Raise it with \"sysctl fs.inotify.max_user_watches=524288\""
+            );
+        }
+        Output::flush();
     }
 
     /// Lazily watch a file by path (slow path).
@@ -899,7 +929,7 @@ impl Watcher {
             package_json,
         );
         self.mutex.unlock();
-        r
+        r.inspect_err(|err| self.report_add_failure(err))
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {

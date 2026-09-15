@@ -1000,7 +1000,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut body = 'extract_body: {
         if let Some(options) = options_object {
             if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
-                if !body__.is_undefined() {
+                // A null `init.body` falls through to the Request's body, as in
+                // `new Request(input, init)` (fetch spec: inputOrInitBody).
+                if !body__.is_undefined_or_null() {
                     break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
                 }
             }

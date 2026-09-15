@@ -456,6 +456,8 @@ function pushDataToSocket(self, socket, buffer) {
     self.destroy();
     return;
   }
+  // `readable: false` never reads (node never reaches readStart(): https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L779-L792), but a reset drains unread bytes through the pause.
+  if (self.readableEnded) return;
   let full;
   try {
     full = self.push(buffer) === false;

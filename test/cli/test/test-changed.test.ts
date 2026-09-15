@@ -1,12 +1,12 @@
-import { spawnSync } from "bun";
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
-// Each case spawns a full `bun test` process; give the concurrent group
-// headroom on slow ASAN/CI machines.
-setDefaultTimeout(isASAN ? 120_000 : 30_000);
+// Each case spawns a full `bun test` process. The slowest case takes about a
+// second under a debug ASAN build; leave room for loaded CI machines.
+const TEST_TIMEOUT = isASAN || isDebug ? 30_000 : 10_000;
+setDefaultTimeout(TEST_TIMEOUT);
 
 // Keep git from reading the developer's global config and make commits
 // deterministic across machines. Used both for the `git` helper below and
@@ -17,41 +17,67 @@ setDefaultTimeout(isASAN ? 120_000 : 30_000);
 // GIT_CONFIG_GLOBAL must point at a real (empty) file: pointing at the
 // null device works on most platforms, but git on some Windows builds
 // rejects "NUL" with "unable to access 'NUL': Invalid argument".
+//
+// LC_ALL=C keeps git's messages in English: the error case below pins the
+// git stderr that `bun test --changed` relays.
 const emptyGitConfig = join(tmpdirSync(), "empty.gitconfig");
 writeFileSync(emptyGitConfig, "");
 const gitEnv = {
   ...bunEnv,
+  LC_ALL: "C",
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_GLOBAL: emptyGitConfig,
   GIT_AUTHOR_NAME: "Test",
   GIT_AUTHOR_EMAIL: "test@example.com",
   GIT_COMMITTER_NAME: "Test",
   GIT_COMMITTER_EMAIL: "test@example.com",
+  // Same effect as `git config` in every repo, without a process per key.
+  // commit.gpgsign: no signing. core.excludesFile: the global ignore file
+  // defaults to ~/.config/git/ignore, which GIT_CONFIG_GLOBAL does not
+  // redirect, and a `node_modules/` rule there would hide the fixture under
+  // node_modules from `git add -A`. maintenance.auto: every `git commit`
+  // otherwise spawns a `git maintenance run --auto` child, which on Windows
+  // runs in the foreground.
+  GIT_CONFIG_COUNT: "3",
+  GIT_CONFIG_KEY_0: "commit.gpgsign",
+  GIT_CONFIG_VALUE_0: "false",
+  GIT_CONFIG_KEY_1: "core.excludesFile",
+  GIT_CONFIG_VALUE_1: emptyGitConfig,
+  GIT_CONFIG_KEY_2: "maintenance.auto",
+  GIT_CONFIG_VALUE_2: "false",
 };
 
-function git(cwd: string, ...args: string[]) {
-  const res = spawnSync({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
-  if (!res.success) {
-    throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stderr.toString()}`);
+async function git(cwd: string, ...args: string[]): Promise<string> {
+  await using proc = Bun.spawn({
+    cmd: ["git", ...args],
+    cwd,
+    env: gitEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${stderr}`);
   }
-  return res.stdout.toString();
+  return stdout;
 }
 
-function initRepo(cwd: string) {
-  git(cwd, "init", "-q");
-  git(cwd, "config", "user.name", "Test");
-  git(cwd, "config", "user.email", "test@example.com");
-  git(cwd, "config", "commit.gpgsign", "false");
-  git(cwd, "add", "-A");
-  git(cwd, "commit", "-q", "-m", "initial");
+/** Make `cwd` a git repo whose single commit holds every file in it. */
+async function initRepo(cwd: string) {
+  // `--template=` skips the sample hooks: they are never run and would be
+  // copied along with every repo below.
+  await git(cwd, "init", "-q", "--template=");
+  await git(cwd, "add", "-A");
+  await git(cwd, "commit", "-q", "-m", "initial");
 }
 
 async function runTestChanged(
   cwd: string,
-  extra: string[] = [],
+  args: string[] = ["--changed"],
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--changed", ...extra],
+    cmd: [bunExe(), "test", ...args],
     cwd,
     env: gitEnv,
     stdout: "pipe",
@@ -62,14 +88,26 @@ async function runTestChanged(
   return { stdout, stderr, exitCode };
 }
 
-/** Which of the given test-file basenames were executed (appear as a file
- *  header in bun test's stderr). */
-function ranFiles(stderr: string, names: string[]): string[] {
-  return names.filter(n => stderr.includes(n + ":")).sort();
+/** The parts of a `bun test --changed` run's stderr that the cases below pin:
+ *  the `--changed:` status line, the test files that ran (their `<path>:`
+ *  headers, sorted because the scanner's order depends on the filesystem),
+ *  and the final `Ran ...` line. */
+function summarize(stderr: string) {
+  const lines = normalizeBunSnapshot(stderr).split("\n");
+  return {
+    // Fall back to the whole stderr so a crash shows up in the failure diff.
+    status: lines.find(l => l.startsWith("--changed:")) ?? stderr,
+    files: lines
+      .filter(l => l.endsWith(".test.ts:"))
+      .map(l => l.slice(0, -1))
+      .sort(),
+    ran: lines.find(l => l.startsWith("Ran ")),
+  };
 }
 
-// The --watch test at the end is the slow one; everything else is independent
-// git repos so run them concurrently.
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
+// Every case uses its own git repo, so run them concurrently.
 describe.concurrent("bun test --changed", () => {
   const fixture = {
     "package.json": JSON.stringify({ name: "changed-test", type: "module" }),
@@ -85,73 +123,72 @@ describe.concurrent("bun test --changed", () => {
     // non-source file that nothing imports
     "README.md": "hello\n",
   };
-  const names = ["a.test.ts", "b.test.ts", "c.test.ts"];
+
+  // The fixture is committed once. Each case copies the repo (a few dozen
+  // small files, .git included) instead of running init + add + commit,
+  // which on Windows costs more than the `bun test` run itself.
+  let base: ReturnType<typeof tempDir>;
+  beforeAll(async () => {
+    base = tempDir("test-changed-base", fixture);
+    await initRepo(String(base));
+  });
+  afterAll(() => base[Symbol.dispose]());
+  const repo = (name: string) => tempDir(name, String(base));
 
   test("no changes -> runs nothing and exits 0", async () => {
-    using dir = tempDir("test-changed-none", fixture);
-    initRepo(String(dir));
+    using dir = repo("test-changed-none");
 
-    const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, names)).toEqual([]);
-    expect(stderr).toContain("no changed files");
+    const { stdout, stderr, exitCode } = await runTestChanged(String(dir));
+    expect(normalizeBunSnapshot(stdout)).toBe("bun test <version> (<revision>)");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "--changed: no changed files, nothing to run
+
+       0 pass
+       0 fail
+      Ran 0 tests across 0 files."
+    `);
     expect(exitCode).toBe(0);
   });
 
-  test("direct change to a test file runs only that test", async () => {
-    using dir = tempDir("test-changed-direct", fixture);
-    initRepo(String(dir));
-
-    appendFileSync(join(String(dir), "c.test.ts"), "// touched\n");
-
-    const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, names)).toEqual(["c.test.ts"]);
-    expect(exitCode).toBe(0);
-  });
-
-  test("change to a direct dependency selects the importing test", async () => {
-    using dir = tempDir("test-changed-dep", fixture);
-    initRepo(String(dir));
-
-    appendFileSync(join(String(dir), "src", "other.ts"), "// touched\n");
-
-    const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, names)).toEqual(["b.test.ts"]);
-    expect(exitCode).toBe(0);
-  });
-
-  test("change to a transitive dependency selects the importing test", async () => {
-    using dir = tempDir("test-changed-transitive", fixture);
-    initRepo(String(dir));
-
+  const edits: [name: string, touched: string[], selected: string[]][] = [
+    ["direct change to a test file runs only that test", ["c.test.ts"], ["c.test.ts"]],
+    ["change to a direct dependency selects the importing test", ["src/other.ts"], ["b.test.ts"]],
     // a.test.ts -> util.ts -> helper.ts: touching helper should select a.
-    appendFileSync(join(String(dir), "src", "helper.ts"), "// touched\n");
+    ["change to a transitive dependency selects the importing test", ["src/helper.ts"], ["a.test.ts"]],
+    [
+      "multiple changes select the union of affected tests",
+      ["src/helper.ts", "src/other.ts"],
+      ["a.test.ts", "b.test.ts"],
+    ],
+  ];
+  test.each(edits)("%s", async (_name, touched, selected) => {
+    using dir = repo("test-changed-edit");
+    for (const file of touched) {
+      appendFileSync(join(String(dir), file), "// touched\n");
+    }
 
-    const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, names)).toEqual(["a.test.ts"]);
+    const { stdout, stderr, exitCode } = await runTestChanged(String(dir));
+    expect(normalizeBunSnapshot(stdout)).toBe("bun test <version> (<revision>)");
+    expect(summarize(stderr)).toEqual({
+      status: `--changed: ${plural(touched.length, "changed file")}, running ${selected.length}/3 test files`,
+      files: selected,
+      ran: `Ran ${plural(selected.length, "test")} across ${plural(selected.length, "file")}.`,
+    });
     expect(exitCode).toBe(0);
   });
 
   test("change to a file no test imports runs nothing", async () => {
-    using dir = tempDir("test-changed-unrelated", fixture);
-    initRepo(String(dir));
-
+    using dir = repo("test-changed-unrelated");
     appendFileSync(join(String(dir), "README.md"), "more\n");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, names)).toEqual([]);
-    expect(stderr).toContain("no test files are affected");
-    expect(exitCode).toBe(0);
-  });
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "--changed: 1 changed file, but no test files are affected
 
-  test("multiple changes select the union of affected tests", async () => {
-    using dir = tempDir("test-changed-multi", fixture);
-    initRepo(String(dir));
-
-    appendFileSync(join(String(dir), "src", "helper.ts"), "// touched\n");
-    appendFileSync(join(String(dir), "src", "other.ts"), "// touched\n");
-
-    const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, names)).toEqual(["a.test.ts", "b.test.ts"]);
+       0 pass
+       0 fail
+      Ran 0 tests across 0 files."
+    `);
     expect(exitCode).toBe(0);
   });
 
@@ -163,79 +200,82 @@ describe.concurrent("bun test --changed", () => {
       "two.test.ts": `import { test, expect } from "bun:test";\nimport { v } from "./shared";\ntest("two", () => expect(v).toBe(1));\n`,
       "three.test.ts": `import { test, expect } from "bun:test";\ntest("three", () => expect(1).toBe(1));\n`,
     });
-    initRepo(String(dir));
+    await initRepo(String(dir));
     appendFileSync(join(String(dir), "shared.ts"), "// touched\n");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, ["one.test.ts", "two.test.ts", "three.test.ts"])).toEqual(["one.test.ts", "two.test.ts"]);
+    expect(summarize(stderr)).toEqual({
+      status: "--changed: 1 changed file, running 2/3 test files",
+      files: ["one.test.ts", "two.test.ts"],
+      ran: "Ran 2 tests across 2 files.",
+    });
     expect(exitCode).toBe(0);
   });
 
   test("staged changes are picked up", async () => {
-    using dir = tempDir("test-changed-staged", fixture);
-    initRepo(String(dir));
-
+    using dir = repo("test-changed-staged");
     appendFileSync(join(String(dir), "src", "other.ts"), "// touched\n");
-    git(String(dir), "add", "-A");
+    await git(String(dir), "add", "-A");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, names)).toEqual(["b.test.ts"]);
+    expect(summarize(stderr)).toEqual({
+      status: "--changed: 1 changed file, running 1/3 test files",
+      files: ["b.test.ts"],
+      ran: "Ran 1 test across 1 file.",
+    });
     expect(exitCode).toBe(0);
   });
 
   test("untracked test file is picked up", async () => {
-    using dir = tempDir("test-changed-untracked", fixture);
-    initRepo(String(dir));
-
+    using dir = repo("test-changed-untracked");
     writeFileSync(
       join(String(dir), "new.test.ts"),
       `import { test, expect } from "bun:test";\ntest("new", () => expect(1).toBe(1));\n`,
     );
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, [...names, "new.test.ts"])).toEqual(["new.test.ts"]);
+    expect(summarize(stderr)).toEqual({
+      status: "--changed: 1 changed file, running 1/4 test files",
+      files: ["new.test.ts"],
+      ran: "Ran 1 test across 1 file.",
+    });
     expect(exitCode).toBe(0);
   });
 
   test("--changed=<ref> compares against a commit", async () => {
-    using dir = tempDir("test-changed-ref", fixture);
-    initRepo(String(dir));
+    using dir = repo("test-changed-ref");
 
     // Make a second commit that touches helper.ts.
     appendFileSync(join(String(dir), "src", "helper.ts"), "// v2\n");
-    git(String(dir), "add", "-A");
-    git(String(dir), "commit", "-q", "-m", "v2");
+    await git(String(dir), "commit", "-q", "-a", "-m", "v2");
 
     // Working tree is clean, so bare --changed should run nothing.
     {
       const { stderr, exitCode } = await runTestChanged(String(dir));
-      expect(ranFiles(stderr, names)).toEqual([]);
+      expect(summarize(stderr)).toEqual({
+        status: "--changed: no changed files, nothing to run",
+        files: [],
+        ran: "Ran 0 tests across 0 files.",
+      });
       expect(exitCode).toBe(0);
     }
 
     // Against HEAD~1, helper.ts changed -> a.test.ts is selected.
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--changed=HEAD~1"],
-      cwd: String(dir),
-      env: gitEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
+    const { stderr, exitCode } = await runTestChanged(String(dir), ["--changed=HEAD~1"]);
+    expect(summarize(stderr)).toEqual({
+      status: "--changed: 1 changed file, running 1/3 test files",
+      files: ["a.test.ts"],
+      ran: "Ran 1 test across 1 file.",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("a.test.ts:");
-    expect(ranFiles(stderr, names)).toEqual(["a.test.ts"]);
     expect(exitCode).toBe(0);
   });
 
   test("--changed=<ref> includes untracked files", async () => {
-    using dir = tempDir("test-changed-ref-untracked", fixture);
-    initRepo(String(dir));
+    using dir = repo("test-changed-ref-untracked");
 
     // Two commits so HEAD~1 is valid; working tree is clean.
     appendFileSync(join(String(dir), "src", "helper.ts"), "// v2\n");
-    git(String(dir), "add", "-A");
-    git(String(dir), "commit", "-q", "-m", "v2");
+    await git(String(dir), "commit", "-q", "-a", "-m", "v2");
 
     // Create a brand-new untracked test file. It did not exist at
     // HEAD~1, so it is "changed since HEAD~1" even though
@@ -245,18 +285,14 @@ describe.concurrent("bun test --changed", () => {
       `import { test, expect } from "bun:test";\ntest("new", () => expect(1).toBe(1));\n`,
     );
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--changed=HEAD~1"],
-      cwd: String(dir),
-      env: gitEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await runTestChanged(String(dir), ["--changed=HEAD~1"]);
     // a.test.ts (helper.ts changed between HEAD~1 and HEAD) and the
     // brand-new untracked file should both run.
-    expect(ranFiles(stderr, [...names, "new.test.ts"])).toEqual(["a.test.ts", "new.test.ts"]);
+    expect(summarize(stderr)).toEqual({
+      status: "--changed: 2 changed files, running 2/4 test files",
+      files: ["a.test.ts", "new.test.ts"],
+      ran: "Ran 2 tests across 2 files.",
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -271,14 +307,19 @@ describe.concurrent("bun test --changed", () => {
       "node_modules/fake-pkg/index.js": `module.exports = { value: 1 };\n`,
       "pkg.test.ts": `import { test, expect } from "bun:test";\nimport pkg from "fake-pkg";\ntest("pkg", () => expect(pkg.value).toBe(1));\n`,
     });
-    initRepo(String(dir));
-
+    await initRepo(String(dir));
     appendFileSync(join(String(dir), "node_modules", "fake-pkg", "index.js"), "// touched\n");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
     // node_modules are not entered by the module graph scan, so changing
     // a file there should not select pkg.test.ts.
-    expect(ranFiles(stderr, ["pkg.test.ts"])).toEqual([]);
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "--changed: 1 changed file, but no test files are affected
+
+       0 pass
+       0 fail
+      Ran 0 tests across 0 files."
+    `);
     expect(exitCode).toBe(0);
   });
 
@@ -290,19 +331,15 @@ describe.concurrent("bun test --changed", () => {
       "app/sub.test.ts": `import { test, expect } from "bun:test";\nimport { x } from "./dep";\ntest("sub", () => expect(x).toBe(1));\n`,
       "app/untouched.test.ts": `import { test, expect } from "bun:test";\ntest("untouched", () => expect(1).toBe(1));\n`,
     });
-    initRepo(String(dir));
+    await initRepo(String(dir));
     appendFileSync(join(String(dir), "app", "dep.ts"), "// touched\n");
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--changed"],
-      cwd: join(String(dir), "app"),
-      env: gitEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
+    const { stderr, exitCode } = await runTestChanged(join(String(dir), "app"));
+    expect(summarize(stderr)).toEqual({
+      status: "--changed: 1 changed file, running 1/2 test files",
+      files: ["sub.test.ts"],
+      ran: "Ran 1 test across 1 file.",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(ranFiles(stderr, ["sub.test.ts", "untouched.test.ts"])).toEqual(["sub.test.ts"]);
     expect(exitCode).toBe(0);
   });
 
@@ -314,22 +351,18 @@ describe.concurrent("bun test --changed", () => {
       "app/package.json": JSON.stringify({ name: "app", type: "module" }),
       "app/base.test.ts": `import { test, expect } from "bun:test";\ntest("base", () => expect(1).toBe(1));\n`,
     });
-    initRepo(String(dir));
+    await initRepo(String(dir));
     writeFileSync(
       join(String(dir), "app", "brand-new.test.ts"),
       `import { test, expect } from "bun:test";\ntest("brand-new", () => expect(1).toBe(1));\n`,
     );
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--changed"],
-      cwd: join(String(dir), "app"),
-      env: gitEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
+    const { stderr, exitCode } = await runTestChanged(join(String(dir), "app"));
+    expect(summarize(stderr)).toEqual({
+      status: "--changed: 1 changed file, running 1/2 test files",
+      files: ["brand-new.test.ts"],
+      ran: "Ran 1 test across 1 file.",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(ranFiles(stderr, ["base.test.ts", "brand-new.test.ts"])).toEqual(["brand-new.test.ts"]);
     expect(exitCode).toBe(0);
   });
 
@@ -349,9 +382,12 @@ describe.concurrent("bun test --changed", () => {
       stderr: "pipe",
       stdin: "ignore",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr.toLowerCase()).toContain("git");
-    expect(exitCode).not.toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout)).toBe("bun test <version> (<revision>)");
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(
+      `"error: --changed: fatal: not a git repository: '<dir>/no-such-git-dir'"`,
+    );
+    expect(exitCode).toBe(1);
   });
 
   test("test with a syntax-error dependency still filters by changed path", async () => {
@@ -363,12 +399,15 @@ describe.concurrent("bun test --changed", () => {
       "good.test.ts": `import { test, expect } from "bun:test";\nimport { g } from "./good";\ntest("good", () => expect(g).toBe(1));\n`,
       "bad.test.ts": `import { test } from "bun:test";\nimport { nope } from "./does-not-exist";\ntest("bad", () => {});\n`,
     });
-    initRepo(String(dir));
+    await initRepo(String(dir));
     appendFileSync(join(String(dir), "good.ts"), "// touched\n");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(stderr).toContain("good.test.ts:");
-    expect(stderr).not.toContain("bad.test.ts:");
+    expect(summarize(stderr)).toEqual({
+      status: "--changed: 1 changed file, running 1/2 test files",
+      files: ["good.test.ts"],
+      ran: "Ran 1 test across 1 file.",
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -385,22 +424,77 @@ describe.concurrent("bun test --changed", () => {
       "tests/relative.test.ts": `import { test, expect } from "bun:test";\nimport { add } from "../src/adder";\ntest("relative", () => expect(add(1, 2)).toBe(3));\n`,
       "tests/unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
     });
-    initRepo(String(dir));
+    await initRepo(String(dir));
     appendFileSync(join(String(dir), "src", "adder.ts"), "// touched\n");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    const testNames = ["alias.test.ts", "relative.test.ts", "unrelated.test.ts"];
-    expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
+    expect(summarize(stderr)).toEqual({
+      status: "--changed: 1 changed file, running 2/3 test files",
+      files: ["tests/alias.test.ts", "tests/relative.test.ts"],
+      ran: "Ran 2 tests across 2 files.",
+    });
     expect(exitCode).toBe(0);
   });
 });
+
+/** Reads a watcher's stderr incrementally and splits it into runs, so a test
+ *  awaits the end of a run instead of polling. */
+function watchRuns(proc: Bun.Subprocess<"ignore", "ignore", "pipe">) {
+  const reader = proc.stderr.getReader();
+  const decoder = new TextDecoder();
+  const summary = /^Ran \d+ tests? across \d+ files?\. \[[\d.]+m?s\]\n/m;
+  // Give up before bun's own test timeout would. In a concurrent group bun
+  // does not kill a timed-out test's children, so a hung watcher would
+  // outlive the test and the failure would show none of its output. A
+  // rejection here runs the `await using` disposer that kills the child.
+  const deadline = Date.now() + TEST_TIMEOUT * 0.8;
+  let buf = "";
+  let cursor = 0;
+  return {
+    /** Everything the next run prints, through its complete `Ran ...` line.
+     *  Resolving on that line means the child is quiescent again (tests
+     *  done, watcher seeded) before the caller touches the next file. */
+    async next(): Promise<string> {
+      const { promise: expired, reject: expire } = Promise.withResolvers<never>();
+      const timer = setTimeout(
+        () => expire(new Error(`the watcher printed no complete run before the deadline\n${buf}`)),
+        deadline - Date.now(),
+      );
+      try {
+        let match: RegExpExecArray | null;
+        while (!(match = summary.exec(buf.slice(cursor)))) {
+          const { value, done } = await Promise.race([reader.read(), expired]);
+          if (done) throw new Error(`stream closed before the run finished\n${buf}`);
+          buf += decoder.decode(value, { stream: true });
+        }
+        const end = cursor + match.index + match[0].length;
+        const run = buf.slice(cursor, end);
+        cursor = end;
+        return run;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
+
+function spawnWatch(cwd: string) {
+  return Bun.spawn({
+    cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+    cwd,
+    env: gitEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+}
 
 // On Windows, `bun test --watch` runs as a parent watcher-manager that
 // respawns a child process on change (rather than exec()-in-place), which
 // makes this test's stderr-stream sync points racy there. The 15 cases
 // above fully cover the --changed filtering logic on Windows; this case
 // only verifies composition with --watch.
-describe.skipIf(isWindows)("bun test --changed --watch", () => {
+describe.concurrent.skipIf(isWindows)("bun test --changed --watch", () => {
   test("restarts and reruns only affected tests when a dependency changes", async () => {
     using dir = tempDir("test-changed-watch", {
       "package.json": JSON.stringify({ name: "watch", type: "module" }),
@@ -409,57 +503,50 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
       "wa.test.ts": `import { test, expect } from "bun:test";\nimport { A } from "./dep-a";\ntest("wa", () => expect(A).toBe(1));\n`,
       "wb.test.ts": `import { test, expect } from "bun:test";\nimport { B } from "./dep-b";\ntest("wb", () => expect(B).toBe(2));\n`,
     });
-    initRepo(String(dir));
+    await initRepo(String(dir));
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
-      cwd: String(dir),
-      env: gitEnv,
-      stdout: "ignore",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
+    await using proc = spawnWatch(String(dir));
+    const runs = watchRuns(proc);
 
-    const reader = proc.stderr.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
+    // Initial run: nothing changed.
+    expect(normalizeBunSnapshot(await runs.next())).toMatchInlineSnapshot(`
+      "--changed: no changed files, nothing to run
 
-    async function waitFor(needle: string, from = 0): Promise<void> {
-      while (!buf.slice(from).includes(needle)) {
-        const { value, done } = await reader.read();
-        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
-        buf += decoder.decode(value, { stream: true });
-      }
-    }
-
-    // Initial run: nothing changed. Wait for the summary so the watcher is
-    // fully seeded before we touch anything.
-    await waitFor("no changed files");
-    await waitFor("Ran 0 tests");
-    expect(buf).not.toContain("wa.test.ts:");
-    expect(buf).not.toContain("wb.test.ts:");
+       0 pass
+       0 fail
+      Ran 0 tests across 0 files."
+    `);
 
     // Touch dep-a.ts: watcher restarts, --changed now sees an uncommitted
-    // change to dep-a.ts and should run only wa.test.ts. Sync on the
-    // end-of-run summary rather than the file header so the child is
-    // quiescent (watcher seeded, tests done) before the next touch.
-    const before = buf.length;
+    // change to dep-a.ts and should run only wa.test.ts.
     appendFileSync(join(String(dir), "dep-a.ts"), "// touched\n");
-    await waitFor("Ran 1 test across 1 file", before);
-    const afterA = buf.slice(before);
-    expect(ranFiles(afterA, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts"]);
+    expect(normalizeBunSnapshot(await runs.next())).toMatchInlineSnapshot(`
+      "--changed: 1 changed file, running 1/2 test files
+
+      wa.test.ts:
+      (pass) wa
+
+       1 pass
+       0 fail
+       1 expect() calls
+      Ran 1 test across 1 file."
+    `);
 
     // Touch dep-b.ts: dep-a is still uncommitted in git, but the watcher
     // only saw dep-b change this restart, so only wb.test.ts should run.
-    const before2 = buf.length;
     appendFileSync(join(String(dir), "dep-b.ts"), "// touched\n");
-    await waitFor("Ran 1 test across 1 file", before2);
-    const afterB = buf.slice(before2);
-    expect(ranFiles(afterB, ["wa.test.ts", "wb.test.ts"])).toEqual(["wb.test.ts"]);
+    expect(normalizeBunSnapshot(await runs.next())).toMatchInlineSnapshot(`
+      "--changed: 1 changed file, running 1/2 test files
 
-    proc.kill();
-    reader.releaseLock();
-  }, 60_000);
+      wb.test.ts:
+      (pass) wb
+
+       1 pass
+       0 fail
+       1 expect() calls
+      Ran 1 test across 1 file."
+    `);
+  });
 
   // Regression for: with two uncommitted test files, editing one of them
   // during --changed --watch should only re-run that one, not both.
@@ -469,48 +556,37 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
       "wa.test.ts": `import { test, expect } from "bun:test";\ntest("wa", () => expect(1).toBe(1));\n`,
       "wb.test.ts": `import { test, expect } from "bun:test";\ntest("wb", () => expect(2).toBe(2));\n`,
     });
-    initRepo(String(dir));
+    await initRepo(String(dir));
     // Make both test files dirty (uncommitted) before starting the watcher.
     appendFileSync(join(String(dir), "wa.test.ts"), "// dirty\n");
     appendFileSync(join(String(dir), "wb.test.ts"), "// dirty\n");
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
-      cwd: String(dir),
-      env: gitEnv,
-      stdout: "ignore",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
-
-    const reader = proc.stderr.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-
-    async function waitFor(needle: string, from = 0): Promise<void> {
-      while (!buf.slice(from).includes(needle)) {
-        const { value, done } = await reader.read();
-        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
-        buf += decoder.decode(value, { stream: true });
-      }
-    }
+    await using proc = spawnWatch(String(dir));
+    const runs = watchRuns(proc);
 
     // Initial run: git reports both test files changed, so both run.
-    await waitFor("Ran 2 tests across 2 files");
-    expect(ranFiles(buf, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts", "wb.test.ts"]);
+    expect(summarize(await runs.next())).toEqual({
+      status: "--changed: 2 changed files, running 2/2 test files",
+      files: ["wa.test.ts", "wb.test.ts"],
+      ran: "Ran 2 tests across 2 files.",
+    });
 
     // Now edit only wa.test.ts. The watcher passes exactly that path to
     // the restarted process; wb.test.ts (though still dirty in git) is
     // not in its DAG, so it must not re-run.
-    const before = buf.length;
     appendFileSync(join(String(dir), "wa.test.ts"), "// touched again\n");
-    await waitFor("Ran 1 test across 1 file", before);
-    const after = buf.slice(before);
-    expect(ranFiles(after, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts"]);
+    expect(normalizeBunSnapshot(await runs.next())).toMatchInlineSnapshot(`
+      "--changed: 1 changed file, running 1/2 test files
 
-    proc.kill();
-    reader.releaseLock();
-  }, 60_000);
+      wa.test.ts:
+      (pass) wa
+
+       1 pass
+       0 fail
+       1 expect() calls
+      Ran 1 test across 1 file."
+    `);
+  });
 
   test("trigger file path handed to restarted runs has a 128-bit random hex suffix", async () => {
     using dir = tempDir("test-changed-watch-trigger-name", {
@@ -518,43 +594,35 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
       "dep-a.ts": `export const A = 1;\n`,
       "wa.test.ts": `import { test, expect } from "bun:test";\nimport { A } from "./dep-a";\ntest("wa", () => { console.error("TRIGGER=" + JSON.stringify(process.env.BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE ?? null)); expect(A).toBe(1); });\n`,
     });
-    initRepo(String(dir));
+    await initRepo(String(dir));
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
-      cwd: String(dir),
-      env: gitEnv,
-      stdout: "ignore",
-      stderr: "pipe",
-      stdin: "ignore",
+    await using proc = spawnWatch(String(dir));
+    const runs = watchRuns(proc);
+
+    expect(summarize(await runs.next())).toEqual({
+      status: "--changed: no changed files, nothing to run",
+      files: [],
+      ran: "Ran 0 tests across 0 files.",
     });
 
-    const reader = proc.stderr.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-
-    async function waitFor(needle: string, from = 0): Promise<void> {
-      while (!buf.slice(from).includes(needle)) {
-        const { value, done } = await reader.read();
-        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
-        buf += decoder.decode(value, { stream: true });
-      }
-    }
-
-    await waitFor("no changed files");
-    await waitFor("Ran 0 tests");
-
-    const before = buf.length;
     appendFileSync(join(String(dir), "dep-a.ts"), "// touched\n");
-    await waitFor("Ran 1 test across 1 file", before);
-    const after = buf.slice(before);
-    const match = after.match(/TRIGGER=(.*)/);
+    const run = await runs.next();
+    const match = run.match(/^TRIGGER=(.*)$/m);
     expect(match).not.toBeNull();
     const triggerPath = JSON.parse(match![1]);
     expect(typeof triggerPath).toBe("string");
     expect(basename(triggerPath)).toMatch(/^\.bun-test-changed-[0-9a-f]{32}\.trigger$/);
+    expect(normalizeBunSnapshot(run.replace(match![0], "TRIGGER=<path>"))).toMatchInlineSnapshot(`
+      "--changed: 1 changed file, running 1/1 test file
 
-    proc.kill();
-    reader.releaseLock();
-  }, 60_000);
+      wa.test.ts:
+      TRIGGER=<path>
+      (pass) wa
+
+       1 pass
+       0 fail
+       1 expect() calls
+      Ran 1 test across 1 file."
+    `);
+  });
 });

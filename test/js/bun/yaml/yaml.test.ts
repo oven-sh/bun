@@ -2841,6 +2841,7 @@ config:
       expect(YAML.stringify(obj, null, 2)).toBe("database:\n  host: localhost\n  port: 5432");
     });
 
+    // https://github.com/oven-sh/bun/issues/23501
     // https://github.com/oven-sh/bun/issues/39958
     test("no trailing space after a key whose value starts on the next line", () => {
       const obj = { models: { openai: { name: "gpt" } } };
@@ -2850,9 +2851,19 @@ config:
       expect(YAML.parse(out)).toEqual(obj);
 
       const shared = { x: 1 };
-      const anchored = YAML.stringify({ p: shared, q: shared, arr: [] }, null, 2);
-      expect(anchored).toBe("p:\n  &p\n  x: 1\nq:\n  *p\narr:\n  []");
+      const anchored = YAML.stringify({ p: shared, q: shared, list: [1] }, null, 2);
+      expect(anchored).toBe("p:\n  &p\n  x: 1\nq:\n  *p\nlist:\n  - 1");
       expect(anchored.split("\n").some(line => line !== line.trimEnd())).toBe(false);
+    });
+
+    test("an empty collection stays on the key line", () => {
+      const obj = { arr: [], nested: { obj: "str" }, map: {} };
+      const out = YAML.stringify(obj, null, 2);
+      expect(out).toBe("arr: []\nnested:\n  obj: str\nmap: {}");
+      expect(YAML.parse(out)).toEqual(obj);
+
+      const sharedEmpty = {};
+      expect(YAML.stringify({ a: sharedEmpty, b: sharedEmpty }, null, 2)).toBe("a:\n  &a\n  {}\nb:\n  *a");
     });
 
     test("stringifies mixed structures", () => {
@@ -3725,7 +3736,7 @@ config:
 
         // In objects
         const obj = { created: date };
-        expect(YAML.stringify(obj, null, 2)).toBe("created:\n  {}");
+        expect(YAML.stringify(obj, null, 2)).toBe("created: {}");
       });
 
       test("handles RegExp objects", () => {
@@ -3734,7 +3745,7 @@ config:
         expect(YAML.stringify(regex)).toBe("{}");
 
         const obj = { pattern: regex };
-        expect(YAML.stringify(obj, null, 2)).toBe("pattern:\n  {}");
+        expect(YAML.stringify(obj, null, 2)).toBe("pattern: {}");
       });
 
       test("handles Error objects", () => {
@@ -4589,23 +4600,28 @@ refs:
 
         const yaml = YAML.stringify(nested, null, 2);
         expect(yaml).toMatchInlineSnapshot(`
-          "emptyObj:
-            {}
-          emptyArr:
-            []
+          "emptyObj: {}
+          emptyArr: []
           nested:
-            deepEmpty:
-              {}
-            deepArr:
-              []
+            deepEmpty: {}
+            deepArr: []
           mixed:
             - {}
             - []
-            - inner:
-                {}
-            - inner:
-                []"
+            - inner: {}
+            - inner: []"
         `);
+        expect(YAML.parse(yaml)).toEqual(nested);
+      });
+
+      test("a collection whose items are all skipped prints as empty", () => {
+        const obj = {
+          arr: [undefined, () => {}, Symbol("s")],
+          obj: { a: undefined, b: () => {} },
+        };
+        expect(YAML.stringify(obj, null, 2)).toBe("arr: []\nobj: {}");
+        expect(YAML.stringify(obj)).toBe("{arr: [],obj: {}}");
+        expect(YAML.stringify([undefined], null, 2)).toBe("[]");
       });
 
       test("handles sparse arrays in objects", () => {

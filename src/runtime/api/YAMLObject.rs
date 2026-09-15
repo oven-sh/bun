@@ -97,6 +97,9 @@ impl Space {
 pub(crate) struct AnchorAlias {
     anchored: bool,
     used: bool,
+    /// The collection has no item or property that the stringifier prints,
+    /// so it is written as `[]` or `{}`.
+    empty: bool,
     name: AnchorAliasName,
 }
 
@@ -108,6 +111,7 @@ impl Default for AnchorAlias {
         AnchorAlias {
             anchored: false,
             used: false,
+            empty: false,
             name: AnchorAliasName::Root,
         }
     }
@@ -118,6 +122,7 @@ impl AnchorAlias {
         AnchorAlias {
             anchored: false,
             used: false,
+            empty: false,
             name: match origin {
                 ValueOrigin::Root => AnchorAliasName::Root,
                 ValueOrigin::ArrayItem => AnchorAliasName::ArrayItem(0),
@@ -279,6 +284,8 @@ impl Stringifier {
 
         *object_entry.value_ptr = AnchorAlias::init(origin);
 
+        let mut empty = true;
+
         if unwrapped.is_array() {
             let mut iter = unwrapped.array_iterator(global)?;
             while let Some(item) = iter.next()? {
@@ -286,27 +293,34 @@ impl Stringifier {
                     continue;
                 }
 
+                empty = false;
                 self.find_anchors_and_aliases(global, item, ValueOrigin::ArrayItem)?;
             }
-            return Ok(());
+        } else {
+            // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
+            let iter = JSPropertyIterator::init(
+                global,
+                unwrapped.to_object(global)?,
+                JSPropertyIteratorOptions {
+                    skip_empty_name: false,
+                    include_value: true,
+                    ..Default::default()
+                },
+            )?;
+
+            while let Some((prop_name, value)) = iter.next()? {
+                if value.is_undefined() || value.is_symbol() || value.is_function() {
+                    continue;
+                }
+
+                empty = false;
+                self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
+            }
         }
 
-        // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let iter = JSPropertyIterator::init(
-            global,
-            unwrapped.to_object(global)?,
-            JSPropertyIteratorOptions {
-                skip_empty_name: false,
-                include_value: true,
-                ..Default::default()
-            },
-        )?;
-
-        while let Some((prop_name, value)) = iter.next()? {
-            if value.is_undefined() || value.is_symbol() || value.is_function() {
-                continue;
-            }
-            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
+        // The recursion above can insert into the map, so look the entry up again.
+        if let Some(entry) = self.known_collections.get_mut(&unwrapped) {
+            entry.empty = empty;
         }
 
         Ok(())
@@ -482,6 +496,9 @@ impl Stringifier {
                         self.stringify(global, item)?;
                         self.indent -= 1;
                     }
+                    if first {
+                        self.builder.append_latin1(b"[]");
+                    }
                 }
             }
 
@@ -544,7 +561,7 @@ impl Stringifier {
                     self.indent += 1;
 
                     let prop_value = value.unwrap_boxed_primitive(global)?;
-                    if prop_value_needs_newline(prop_value) {
+                    if self.prop_value_needs_newline(prop_value) {
                         self.builder.append_lchar(b':');
                         self.newline();
                     } else {
@@ -561,6 +578,20 @@ impl Stringifier {
         }
 
         Ok(())
+    }
+
+    /// Does this (unwrapped) object property value start on the line after its key?
+    /// Scalars and empty collections (`[]`, `{}`) stay on the key line.
+    /// A collection with an anchor or alias keeps the layout of `stringify_unwrapped`:
+    /// the `&name` or `*name` goes on its own line.
+    fn prop_value_needs_newline(&self, value: JSValue) -> bool {
+        if value.is_number() || value.is_boolean() || value.is_null() || value.is_string() {
+            return false;
+        }
+        match self.known_collections.get(&value) {
+            Some(entry) => !entry.empty || entry.used,
+            None => true,
+        }
     }
 
     fn newline(&mut self) {
@@ -658,11 +689,6 @@ impl Stringifier {
         }
         self.builder.append_string(str);
     }
-}
-
-/// Does this (unwrapped) object property value need a newline? True for arrays and objects.
-fn prop_value_needs_newline(value: JSValue) -> bool {
-    !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
 }
 
 /// Can this property name be emitted verbatim as an anchor/alias name?

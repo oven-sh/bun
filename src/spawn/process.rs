@@ -1656,6 +1656,8 @@ impl Default for WindowsSpawnOptions {
 pub struct WindowsOptions {
     pub verbatim_arguments: bool,
     pub hide_window: bool,
+    /// New console without a window, and no kill-on-parent-exit job object.
+    pub keep_alive: bool,
     pub loop_: EventLoopHandle,
 }
 
@@ -1665,6 +1667,7 @@ impl Default for WindowsOptions {
         Self {
             verbatim_arguments: false,
             hide_window: true,
+            keep_alive: false,
             // Every `bun.spawnSync` call site sets `loop_` explicitly. A
             // zeroed handle here keeps `..Default::default()` usable
             // for the other fields. `spawn_process_windows` (the sole consumer)
@@ -1949,6 +1952,11 @@ mod spawn_process_body {
 
         if options.windows.verbatim_arguments {
             uv_process_options.flags |= uv::UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS;
+        }
+
+        if options.windows.keep_alive {
+            uv_process_options.flags |=
+                uv::UV_PROCESS_WINDOWS_CREATE_NO_WINDOW | uv::UV_PROCESS_WINDOWS_NO_JOB_OBJECT;
         }
 
         if options.detached {

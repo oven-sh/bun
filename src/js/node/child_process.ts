@@ -245,6 +245,7 @@ function execFile(file, args, options, callback) {
     cgroup: options.cgroup,
     windowsHide: options.windowsHide,
     windowsVerbatimArguments: options.windowsVerbatimArguments,
+    windowsKeepAlive: options.windowsKeepAlive,
     shell: options.shell,
     signal: options.signal,
   });
@@ -577,6 +578,7 @@ function spawnSync(file, args, options) {
       cgroup: options.cgroup,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
+      windowsKeepAlive: options.windowsKeepAlive,
       argv0: options.args[0],
       timeout: options.timeout,
       killSignal: options.killSignal,
@@ -981,6 +983,11 @@ function normalizeSpawnArguments(file, args, options) {
     validateBoolean(windowsVerbatimArguments, "options.windowsVerbatimArguments");
   }
 
+  const windowsKeepAlive = options.windowsKeepAlive;
+  if (windowsKeepAlive != null) {
+    validateBoolean(windowsKeepAlive, "options.windowsKeepAlive");
+  }
+
   let windowsBatchFileError: Error | undefined;
   // Handle shell
   if (shell) {
@@ -1065,6 +1072,7 @@ function normalizeSpawnArguments(file, args, options) {
     file,
     windowsHide: !!options.windowsHide,
     windowsVerbatimArguments: !!windowsVerbatimArguments,
+    windowsKeepAlive: !!windowsKeepAlive,
     argv0: options.argv0,
     windowsBatchFileError,
   };
@@ -1444,6 +1452,7 @@ class ChildProcess extends EventEmitter {
         argv0: spawnargs[0],
         windowsHide: !!options.windowsHide,
         windowsVerbatimArguments: !!options.windowsVerbatimArguments,
+        windowsKeepAlive: !!options.windowsKeepAlive,
       });
       this.pid = this.#handle.pid;
 

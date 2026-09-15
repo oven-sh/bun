@@ -269,6 +269,15 @@ static JSModuleGraph* moduleGraphOfCurrentContext(Zig::GlobalObject* globalObjec
 // reason, carries the throw site: an error belongs to the graph whose code threw it, however
 // far the promises carried it before someone left it unhandled. That exception is good for the
 // turn it was thrown in (GlobalObject::drainMicrotasks clears it).
+// The graph whose onError is given the errors of `graph`'s code: a graph that was given no onError
+// is part of the program of the graph whose code made it. Null: the host's handlers.
+static JSModuleGraph* graphGivenErrorsOf(JSModuleGraph* graph)
+{
+    while (graph && !graph->onError())
+        graph = graph->maker();
+    return graph;
+}
+
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* promise)
 {
     if (!globalObject->hasModuleGraphs())
@@ -280,7 +289,7 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* 
         if (last && last->value() == promise->result())
             owner = moduleGraphOwningFrames(globalObject, last->stack());
     }
-    JSModuleGraph* graph = owner ? *owner : moduleGraphOfCurrentContext(globalObject);
+    JSModuleGraph* graph = graphGivenErrorsOf(owner ? *owner : moduleGraphOfCurrentContext(globalObject));
     return graph && !graph->inOnError() ? graph : nullptr;
 }
 
@@ -288,9 +297,7 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* 
 
 static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue error, ASCIILiteral kind)
 {
-    // A graph that was given no onError is part of the program of the graph whose code made it.
-    while (graph && !graph->onError())
-        graph = graph->maker();
+    graph = graphGivenErrorsOf(graph);
     if (!graph || !graph->onError() || graph->inOnError())
         return false;
     VM& vm = globalObject->vm();

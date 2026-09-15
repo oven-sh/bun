@@ -400,6 +400,25 @@ const dir = String(
       setTimeout(() => { throw new Error("thrown from a timer"); }, 1);
       setTimeout(() => { Promise.reject(new Error("rejected and unhandled")); }, 1);
     `,
+    "rejects-when-called.mjs": `
+      export const rejects = () => void Promise.reject(new Error("rejected by the inner graph's code"));
+      export const startsIt = () => void Promise.reject(new Error("the first one"));
+    `,
+    "on-error-that-causes-an-inner-rejection.mjs": `
+      const hostSaw = [];
+      process.on("unhandledRejection", error => hostSaw.push(error.message));
+      let calls = 0, inner;
+      // The tenant's onError causes a rejection in the code of a graph the tenant made without an
+      // onError: given back to the same onError it would go round for ever.
+      const tenant = new Bun.ModuleGraph({ isolateIO: true, onError: () => { if (++calls <= 50) inner.rejects(); } });
+      const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
+      inner = await tenant.run(() => app.makesAGraph().import(import.meta.dir + "/rejects-when-called.mjs"));
+      tenant.run(() => inner.startsIt());
+      while (hostSaw.length === 0 && calls <= 50) await new Promise(resolve => setImmediate(resolve));
+      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ callsOfTheTenantsOnError: calls, hostSaw }));
+      process.exit(0);
+    `,
     "errors-of-a-graph-made-by-a-graph.mjs": `
       const hostSaw = [], tenantSaw = [];
       process.on("uncaughtException", error => hostSaw.push(error.message));
@@ -2850,6 +2869,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       });
     },
   );
+  test("a rejection its onError causes in the code of a graph it made goes to the host, not back to that onError", async () => {
+    expect(await runs("on-error-that-causes-an-inner-rejection.mjs")).toEqual({
+      stdout: `{"callsOfTheTenantsOnError":1,"hostSaw":["rejected by the inner graph's code"]}`,
+      exitCode: 0,
+    });
+  });
   test("the files it held open are closed: a writer, bun:sqlite and node:sqlite databases, a FileHandle, a stream", async () => {
     expect(await runs("open-files-of-a-disposed-graph.mjs")).toEqual({
       stdout: JSON.stringify({

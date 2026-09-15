@@ -1,6 +1,8 @@
 import type { Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
+const ObjectDefineProperty = Object.defineProperty;
+const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const {
   Query,
   SQLQueryFlags,
@@ -2156,6 +2158,24 @@ function parseOptions(
     query,
     max: max || 10,
   };
+
+  // An inspect hook, not a non-enumerable `password`: `new SQL(sql.options)` spreads this object.
+  ObjectDefineProperty(ret, kInspectCustom, {
+    value: function inspect(this: typeof ret) {
+      const copy = { ...this };
+      if (copy.password) copy.password = "[REDACTED]";
+      if ($isObject(copy.tls)) {
+        const tls: Bun.TLSOptions = { ...copy.tls };
+        if (tls.key) tls.key = "[REDACTED]";
+        if (tls.passphrase) tls.passphrase = "[REDACTED]";
+        copy.tls = tls;
+      }
+      return copy;
+    },
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
 
   if (idleTimeout != null) {
     ret.idleTimeout = idleTimeout;

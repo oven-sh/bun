@@ -189,5 +189,5 @@ else if (cell === "destroy-before-handshake") {
   throw new Error(`unknown cell ${cell}`);
 }
 
-console.log(JSON.stringify(events));
-process.exit(0);
+// Exit once the log is flushed: node writes to a pipe asynchronously on POSIX, and a leftover handle must not keep the fixture alive.
+process.stdout.write(JSON.stringify(events) + "\n", () => process.exit(0));

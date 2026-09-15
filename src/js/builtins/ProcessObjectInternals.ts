@@ -799,6 +799,7 @@ export function buildAllowedNodeEnvironmentFlags() {
   // https://github.com/nodejs/node/blob/main/lib/internal/process/per_thread.js buildAllowedFlags:
   // a frozen Set whose has() normalizes _→-, missing dashes, and =value suffixes.
   const canonical = [
+    "--abort-on-uncaught-exception",
     "--conditions",
     "--diagnostic-dir",
     "--disable-warning",

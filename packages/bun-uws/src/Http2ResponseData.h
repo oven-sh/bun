@@ -34,7 +34,6 @@ struct Http2ResponseData {
     /* See Http3ResponseData: the body writer (sink) and the RequestContext arm
      * onWritable and onAborted/onData concurrently with different owners. */
     void *writableUserData = nullptr;
-    void *socketData = nullptr;
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;
     OnDataCallback inStream = nullptr;

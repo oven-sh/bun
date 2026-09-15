@@ -171,21 +171,23 @@ extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, 
         // Allocation failed or the message exceeds the maximum string length.
         return {};
     }
-    JSC::JSObject* result = nullptr;
+    JSC::ErrorType type = JSC::ErrorType::Error;
     switch (kind) {
     case BunErrorKind::Error:
-        result = JSC::createError(globalObject, message);
+        type = JSC::ErrorType::Error;
         break;
     case BunErrorKind::TypeError:
-        result = JSC::createTypeError(globalObject, message);
+        type = JSC::ErrorType::TypeError;
         break;
     case BunErrorKind::SyntaxError:
-        result = JSC::createSyntaxError(globalObject, message);
+        type = JSC::ErrorType::SyntaxError;
         break;
     case BunErrorKind::RangeError:
-        result = JSC::createRangeError(globalObject, message);
+        type = JSC::ErrorType::RangeError;
         break;
     }
+    // Not JSC::createError(): it asserts the message is not empty, and `new Error("")` is valid.
+    JSC::JSObject* result = JSC::ErrorInstance::create(globalObject->vm(), globalObject->errorStructure(type), message, JSValue(), nullptr, JSC::TypeNothing, type, true);
     JSC::EnsureStillAliveScope ensureAlive(result);
     return JSValue::encode(result);
 }

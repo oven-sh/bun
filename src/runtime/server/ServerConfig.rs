@@ -522,21 +522,32 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     // Already validated by the caller
     debug_assert!(!path.is_empty() && path[0] == b'/');
 
-    // For now, we don't support params that start with a number.
-    // Mostly because it makes the params object more complicated to implement and it's easier to cut scope this way for now.
-    let mut remaining = path;
+    // Same grammar as uWS::HttpRouter::add() and ServerRouteList.cpp: the path
+    // splits on '/', and a segment is a parameter only when it starts with ':'.
+    // A ':' anywhere else in a segment is literal text.
     let mut duped_route_names: StringHashMap<()> = StringHashMap::new();
-    while let Some(index) = strings::index_of_char(remaining, b':') {
-        remaining = &remaining[(index + 1) as usize..];
-        let end = strings::index_of_char(remaining, b'/')
-            .map(|i| i as usize)
-            .unwrap_or(remaining.len());
-        let route_name = &remaining[..end];
+    for segment in strings::split(&path[1..], b"/") {
+        let Some(route_name) = segment.strip_prefix(b":") else {
+            continue;
+        };
+
+        // For now, we don't support params that start with a number.
+        // Mostly because it makes the params object more complicated to implement and it's easier to cut scope this way for now.
         if !route_name.is_empty() && route_name[0].is_ascii_digit() {
             return Err(global.throw_todo(
                 b"Route parameter names cannot start with a number.\n\n\
                   If you run into this, please file an issue and we will add support for it.",
             ));
+        }
+
+        // The router captures the whole segment as the parameter's value, so
+        // ":id:verb" or ":from-:to" can neither be matched nor named.
+        if strings::contains_char(route_name, b':') {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Invalid route {}. A route parameter must span the whole path segment, so {} cannot contain another ':'",
+                bun_fmt::quote(path),
+                bun_fmt::quote(segment),
+            )));
         }
 
         let entry = bun_core::handle_oom(duped_route_names.get_or_put(route_name));
@@ -546,8 +557,6 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
                   If you run into this, please file an issue and we will add support for it.",
             ));
         }
-
-        remaining = &remaining[end..];
     }
     Ok(())
 }

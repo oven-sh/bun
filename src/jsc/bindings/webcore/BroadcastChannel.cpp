@@ -54,12 +54,12 @@ BroadcastChannel::~BroadcastChannel()
 
 ExceptionOr<void> BroadcastChannel::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue)
 {
-    if (isClosed()) {
-        // Closed by the stop of a disposed Bun.ModuleGraph, not by its script: like a MessagePort of one, it says nothing.
-        if (auto* context = scriptExecutionContext(); context && context->isForModuleGraph() && context->isStopped())
-            return {};
+    // Made or kept by the script of a disposed Bun.ModuleGraph: like a MessagePort of one it says nothing,
+    // to the script (the stop closes it a turn later) or to anyone listening on the name.
+    if (auto* context = scriptExecutionContext(); context && context->isForModuleGraph() && context->isStopped())
+        return {};
+    if (isClosed())
         return Exception { InvalidStateError, "This BroadcastChannel is closed"_s };
-    }
 
     Vector<RefPtr<MessagePort>> dummyPorts;
     auto serialized = SerializedScriptValue::create(globalObject, messageValue, {}, dummyPorts, SerializationForStorage::No, SerializationContext::WorkerPostMessage);

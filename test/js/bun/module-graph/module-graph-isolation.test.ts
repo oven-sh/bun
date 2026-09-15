@@ -321,19 +321,28 @@ const dir = String(
       process.exit(0);
     `,
     "broadcast-channel-of-a-disposed-graph.mjs": `
+      import { AsyncLocalStorage } from "node:async_hooks";
+      const heardByTheHost = [];
+      const listener = new BroadcastChannel("of-a-disposed-graph");
+      const marker = Promise.withResolvers();
+      listener.onmessage = event => (event.data === "the host's own" ? marker.resolve() : heardByTheHost.push(event.data));
       const graph = new Bun.ModuleGraph({ isolateIO: true });
-      const hostEvent = Promise.withResolvers();
-      let outcome = "did not run";
-      // What is left of a disposed graph's script: a reaction to a promise of the host's.
-      graph.run(() => void hostEvent.promise.then(() => {
-        try { const channel = new BroadcastChannel("of-a-disposed-graph"); channel.postMessage(1); channel.close(); outcome = "said nothing"; }
-        catch (error) { outcome = "threw " + error.name; }
-      }));
+      const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
+      const outcomes = [];
+      const posts = when => {
+        try { const channel = new BroadcastChannel("of-a-disposed-graph"); channel.postMessage(when); channel.close(); outcomes.push("said nothing"); }
+        catch (error) { outcomes.push("threw " + error.name); }
+      };
       graph.dispose();
+      // In the turn that disposed (the stop has not closed what is made now), and once it has.
+      inGraph(() => posts("in the same turn"));
       for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-      hostEvent.resolve();
-      await hostEvent.promise;
-      console.log(JSON.stringify({ outcome }));
+      inGraph(() => posts("later"));
+      // Messages arrive in the order they were posted: the host's own comes after anything the graph got out.
+      const mine = new BroadcastChannel("of-a-disposed-graph");
+      mine.postMessage("the host's own");
+      await marker.promise;
+      console.log(JSON.stringify({ outcomes, heardByTheHost }));
       process.exit(0);
     `,
     "imports-of-a-disposed-graph.mjs": `
@@ -2740,9 +2749,9 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("a BroadcastChannel its leftover script makes and posts to says nothing", async () => {
+  test("a BroadcastChannel its leftover script makes and posts to says nothing, to it or to the host's listener", async () => {
     expect(await runs("broadcast-channel-of-a-disposed-graph.mjs")).toEqual({
-      stdout: `{"outcome":"said nothing"}`,
+      stdout: `{"outcomes":["said nothing","said nothing"],"heardByTheHost":[]}`,
       exitCode: 0,
     });
   });

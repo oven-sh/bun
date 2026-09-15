@@ -230,6 +230,16 @@ describe.concurrent("Bun.pprof.heap", () => {
     },
   );
 
+  test.skipIf(!quantitative)("a second profile starts every thread over", async () => {
+    const { stdout, stderr, exitCode } = await runFixture("heap-fixture-restart.ts");
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const result = JSON.parse(stdout);
+    expect(result.threadId).toBeGreaterThan(0);
+    // A Worker that was 32 MiB into a distance of about 256 MiB when the first profile stopped would
+    // not be sampled again for the rest of it: nothing of the 32 MiB that it allocates in the second.
+    expect(Math.abs(result.workerAllocSpace - 32 * MiB)).toBeLessThan(2 * MiB);
+  });
+
   test.skipIf(!quantitative)("a free of what an earlier session sampled does not count in the next one", async () => {
     const { stdout, stderr, exitCode } = await runFixture("heap-fixture-sessions.ts");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });

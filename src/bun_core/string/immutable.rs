@@ -2243,6 +2243,13 @@ pub const fn is_unicode_space_separator(cp: u32) -> bool {
     )
 }
 
+/// The set `String.prototype.trim` removes: ECMAScript `WhiteSpace`
+/// (TAB VT FF SP ZWNBSP + Zs) plus `LineTerminator` (LF CR LS PS).
+#[inline]
+pub const fn is_js_whitespace(cp: u32) -> bool {
+    matches!(cp, 0x0009..=0x000D | 0x2028 | 0x2029 | 0xFEFF) || is_unicode_space_separator(cp)
+}
+
 /// SIMD-accelerated iterator that yields slices of text between ANSI escape sequences.
 /// The C++ side uses ANSI::findEscapeCharacter (SIMD) and ANSI::consumeANSI.
 #[repr(C)]

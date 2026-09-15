@@ -39,11 +39,6 @@ public:
     void serverStarted(int serverId, const String& url, double startTime, AnyServerPtr serverInstance);
     void serverStopped(int serverId, double timestamp);
     void serverRoutesUpdated(int serverId, int hotReloadId, Ref<JSON::ArrayOf<Protocol::HTTPServer::Route>>&& routes);
-    void requestWillBeSent(Ref<Protocol::HTTPServer::Request>&& request);
-    void responseReceived(Ref<Protocol::HTTPServer::Response>&& response);
-    void bodyChunkReceived(Ref<Protocol::HTTPServer::BodyChunk>&& chunk);
-    void requestFinished(int requestId, int serverId, double timestamp, std::optional<double>&& opt_duration);
-    void requestHandlerException(Ref<Protocol::HTTPServer::RequestHandlerError>&& error);
 
 private:
     WTF::HashMap<int, AnyServerPtr> m_serverIdToServerInstance;

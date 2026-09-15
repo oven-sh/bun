@@ -76,7 +76,6 @@ pub mod task_tag {
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
         FSWatchTask,
-        GetAddrInfoLibuvComplete,
         HotReloadTask,
         WatchReloadTask,
         JSBundleCompletionTask,

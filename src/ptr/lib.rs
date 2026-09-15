@@ -235,6 +235,13 @@ impl<T> From<ThisPtr<T>> for BackRef<T, Root> {
     }
 }
 
+impl<T> From<ThisPtr<T>> for core::ptr::NonNull<T> {
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        p.0
+    }
+}
+
 impl<T: ?Sized, P> Copy for BackRef<T, P> {}
 impl<T: ?Sized, P> Clone for BackRef<T, P> {
     #[inline]
@@ -641,6 +648,67 @@ impl<T> core::ops::Deref for ThisPtr<T> {
         self.get()
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OwnedThis<T> — single-owner heap allocation that hands out `ThisPtr`s.
+//
+// `Box<T>` asserts unique access on every touch, which is wrong for a callback
+// hub whose address is also held by C / JS / a task queue and re-entered while
+// a method on it is running. `OwnedThis` keeps the ownership (drop frees) but
+// only ever lends the pointee as `ThisPtr<T>` / `&T`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The unique owner of a heap-allocated `T` that is otherwise reached through
+/// [`ThisPtr`] copies. Dropping it drops and frees the `T`; every `ThisPtr`
+/// lent from it must be dead by then (the usual back-reference obligation).
+pub struct OwnedThis<T>(core::ptr::NonNull<T>);
+
+impl<T> OwnedThis<T> {
+    #[inline]
+    pub fn new(value: T) -> Self {
+        OwnedThis(core::ptr::NonNull::from(Box::leak(Box::new(value))))
+    }
+
+    /// A dispatch handle to the pointee (root provenance). Like every
+    /// [`ThisPtr`], it and its copies are valid only while this `OwnedThis`
+    /// lives: whoever it is handed to takes on that holder obligation (the
+    /// [`BackRef`] contract), which is what makes this safe to call.
+    #[inline]
+    pub fn this_ptr(&self) -> ThisPtr<T> {
+        ThisPtr(self.0)
+    }
+
+    /// Take the value back out (every lent `ThisPtr` must be dead).
+    #[inline]
+    pub fn into_inner(self) -> T {
+        let this = core::mem::ManuallyDrop::new(self);
+        // SAFETY: `new` leaked exactly this `Box`; `self` is forgotten so
+        // `Drop` does not free it again.
+        *unsafe { Box::from_raw(this.0.as_ptr()) }
+    }
+}
+
+impl<T> core::ops::Deref for OwnedThis<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        // SAFETY: we own the live allocation.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> Drop for OwnedThis<T> {
+    fn drop(&mut self) {
+        // SAFETY: `new` leaked exactly this `Box`; we are its unique owner.
+        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
+    }
+}
+
+// SAFETY: `OwnedThis<T>` is the unique owner of a heap `T` (a `Box<T>` that
+// lends `ThisPtr`s); the auto-trait bounds are `Box<T>`'s.
+unsafe impl<T: Send> Send for OwnedThis<T> {}
+// SAFETY: as above — `&OwnedThis<T>` only yields `&T`.
+unsafe impl<T: Sync> Sync for OwnedThis<T> {}
 
 // SAFETY: `BackRef<T, P>` is morally `&T` (Deref/get) with, for `P = Mut`, an
 // unsafe `get_mut` escape hatch whose exclusivity is the caller's per-site

@@ -136,7 +136,22 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2>
         .inputs
         .first()
         .is_some_and(|a| matches!(a, FnArg::Receiver(r) if r.mutability.is_none()));
-    let this_reborrow = if receiver_is_shared {
+    // A typed `this: ThisPtr<Self>` first parameter gets the root pointer
+    // wrapped instead of reborrowed.
+    let first_is_this_ptr = func.sig.inputs.first().is_some_and(|a| match a {
+        FnArg::Typed(pt) => match &*pt.ty {
+            syn::Type::Path(tp) => tp
+                .path
+                .segments
+                .last()
+                .is_some_and(|seg| seg.ident == "ThisPtr"),
+            _ => false,
+        },
+        _ => false,
+    });
+    let this_reborrow = if first_is_this_ptr {
+        quote! { let __t = unsafe { ::bun_ptr::ThisPtr::new(__this) }; }
+    } else if receiver_is_shared {
         quote! { let __t = unsafe { &*__this }; }
     } else {
         quote! { let __t = unsafe { &mut *__this }; }

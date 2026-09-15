@@ -301,6 +301,55 @@ pub struct FilePoll {
     pub(crate) allocator_type: AllocatorType,
 }
 
+/// The single owner of a [`FilePoll`] slot in its loop's [`Store`]: derefs to
+/// the poll, and returns the slot (`deinit`) on drop.
+#[cfg(not(windows))]
+pub struct OwnedFilePoll(core::ptr::NonNull<FilePoll>);
+
+#[cfg(not(windows))]
+impl OwnedFilePoll {
+    #[inline]
+    pub fn new(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> Self {
+        Self(
+            core::ptr::NonNull::new(FilePoll::init(vm, fd, flags, owner))
+                .expect("FilePoll::init returns a live hive slot"),
+        )
+    }
+
+    /// The poll's address (what the loop dispatches on), for identity checks.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut FilePoll {
+        self.0.as_ptr()
+    }
+}
+
+#[cfg(not(windows))]
+impl core::ops::Deref for OwnedFilePoll {
+    type Target = FilePoll;
+    #[inline]
+    fn deref(&self) -> &FilePoll {
+        // SAFETY: the live slot `FilePoll::init` returned; only `drop` releases it.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+#[cfg(not(windows))]
+impl core::ops::DerefMut for OwnedFilePoll {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut FilePoll {
+        // SAFETY: as `deref`; this is the slot's only owner.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+#[cfg(not(windows))]
+impl Drop for OwnedFilePoll {
+    fn drop(&mut self) {
+        // SAFETY: as `deref_mut`; `deinit` unregisters and returns the slot.
+        unsafe { self.0.as_mut() }.deinit();
+    }
+}
+
 #[cfg(not(windows))]
 impl FilePoll {
     fn update_flags(&mut self, updated: FlagsSet) {
@@ -538,6 +587,33 @@ impl FilePoll {
             fd
         );
         poll
+    }
+
+    /// [`register`](Self::register) on `ctx`'s loop; the `&mut Loop` is
+    /// scoped to the call.
+    pub fn register_on(
+        &mut self,
+        ctx: EventLoopCtx,
+        flag: Flags,
+        one_shot: bool,
+    ) -> sys::Result<()> {
+        self.register(ctx.loop_mut(), flag, one_shot)
+    }
+
+    /// [`register_with_fd`](Self::register_with_fd) on `ctx`'s loop.
+    pub fn register_with_fd_on(
+        &mut self,
+        ctx: EventLoopCtx,
+        flag: Flags,
+        one_shot: OneShotFlag,
+        fd: Fd,
+    ) -> sys::Result<()> {
+        self.register_with_fd(ctx.loop_mut(), flag, one_shot, fd)
+    }
+
+    /// [`unregister`](Self::unregister) on `ctx`'s loop.
+    pub fn unregister_on(&mut self, ctx: EventLoopCtx, force_unregister: bool) -> sys::Result<()> {
+        self.unregister(ctx.loop_mut(), force_unregister)
     }
 
     pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {

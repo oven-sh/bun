@@ -5826,10 +5826,19 @@ impl DevServer {
                     }
                     #[cfg(not(any(target_os = "linux", target_os = "android")))]
                     {
-                        let _ = changed_files;
                         // SAFETY: see `ev_ptr` above; call-scoped borrow.
                         unsafe { &mut *ev_ptr }.append_dir(file_path, None);
                     }
+
+                    // A directory below this one was replaced: evict, rebundle, bust caches.
+                    self.bun_watcher.remove_entries_under_replaced_dirs(
+                        *event,
+                        changed_files,
+                        // SAFETY: see `ev_ptr` above; call-scoped borrow.
+                        &mut |dir| unsafe { &mut *ev_ptr }.append_dir(dir, None),
+                        // SAFETY: see `ev_ptr` above; call-scoped borrow.
+                        &mut |path, _| unsafe { &mut *ev_ptr }.append_file(path),
+                    );
                 }
             }
         }

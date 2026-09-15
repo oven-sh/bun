@@ -125,7 +125,7 @@ public:
      * no later uncork or gate: true. */
     bool uncorkCompletedResponse() {
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
-        if (httpContext->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
+        if (!httpContext->getSocketContextData()->isParsingSocket((us_socket_t *) this)) {
             this->uncork();
             return true;
         }
@@ -409,6 +409,13 @@ public:
             }
         }
 
+        /* Reads HttpContext::onData parked for this connection (the handler ran
+         * the event loop before it upgraded) end with the HTTP parser, like
+         * bytes that follow the upgrade request in its own read. The pause the
+         * park took must end too, and the WebSocket does not know about it: it
+         * is lifted below, once the WebSocket can take a close. */
+        const bool resumeParkedPause = responseData->parkedReadsPausedSocket;
+
         /* Destroy HttpResponseData (the IsNodeHttp=true type on node:http
          * compat contexts; upgrade() is not on a templated handler path, so it
          * selects at runtime like socketExtSize()). */
@@ -422,6 +429,10 @@ public:
          * we occupy so we can transfer it to the new WebSocket. */
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
+
+        /* Same reason: the parse that has to learn about the new socket is the
+         * one parsing THIS socket, and the adopt below makes `this` stale. */
+        const bool parsedSocket = httpContextData->isParsingSocket((us_socket_t *) this);
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         /* The old ext size is only used as an upper bound to keep the block in
@@ -447,7 +458,7 @@ public:
         }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (httpContextData->flags.isParsingHttp) {
+        if (parsedSocket) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
         }
@@ -464,6 +475,13 @@ public:
         /* Emit open event and start the timeout */
         if (webSocketContextData->openHandler) {
             webSocketContextData->openHandler(webSocket);
+        }
+
+        /* A resume that cannot re-arm the poll closes the socket, so it waits
+         * for a WebSocket that is open and can report that close. A socket the
+         * open handler closed stays allocated until the tick ends. */
+        if (resumeParkedPause) {
+            us_socket_resume(usSocket);
         }
 
         return usSocket;

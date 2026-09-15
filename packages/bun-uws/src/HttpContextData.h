@@ -29,7 +29,6 @@ struct HttpRequest;
 struct Http2Context;
 
 struct HttpFlags {
-    bool isParsingHttp: 1 = false;
     bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
@@ -69,13 +68,31 @@ private:
     /* This is the currently browsed-to router when using SNI */
     HttpRouter<RouterData> *currentRouter = &router;
 
-    /* The socket onData is currently parsing, nullptr outside a parse. The
-     * close gates in internalEnd need the per-socket identity: a DIFFERENT
-     * socket's response can complete inside this window (a microtask drained
-     * during a request dispatch), and the context-wide isParsingHttp bit
-     * alone would wrongly defer its close to a post-parse gate that only
-     * checks the parsed socket. */
-    struct us_socket_t *parsingSocket = nullptr;
+    /* One entry per HttpContext::onData parse on the stack, innermost first,
+     * each living in its parse's own frame. A request handler can run the
+     * event loop, so a read for another socket - or for the same one - can be
+     * dispatched inside a parse. The close gates in internalEnd need the
+     * per-socket identity: a DIFFERENT socket's response can complete inside
+     * this window (a microtask drained during a request dispatch), and a
+     * context-wide "parsing" bit alone would wrongly defer its close to a
+     * post-parse gate that only runs for the parsed socket. */
+    struct ParseFrame {
+        struct us_socket_t *socket;
+        ParseFrame *next;
+    };
+    ParseFrame *parseFrames = nullptr;
+
+    /* Whether a parse of this socket's bytes is on the stack. That parse holds
+     * the request's header views and the parser's fallback buffer, and it runs
+     * the uncork and the close gate for the socket when it unwinds. */
+    bool isParsingSocket(const struct us_socket_t *s) const {
+        for (const ParseFrame *frame = parseFrames; frame; frame = frame->next) {
+            if (frame->socket == s) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /* This is the default router for default SNI or non-SSL */
     HttpRouter<RouterData> router;

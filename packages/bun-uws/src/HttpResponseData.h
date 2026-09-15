@@ -88,6 +88,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_WRITE_CALLED = 2, // used
         HTTP_END_CALLED = 4, // used
         HTTP_RESPONSE_PENDING = 8, // used
+        /* Close once the response in flight has completed and flushed (HTTP/1.0
+         * or Connection: close request, or a response ended with closeConnection).
+         * Connection-scoped: a request pipelined behind the one that set it must
+         * not make the connection persistent again. */
         HTTP_CONNECTION_CLOSE = 16, // used
         HTTP_WROTE_CONTENT_LENGTH_HEADER = 32, // used
         HTTP_WROTE_DATE_HEADER = 64, // used
@@ -155,7 +159,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
-        HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
+        HTTP_CONNECTION_SCOPED = HTTP_CONNECTION_CLOSE | HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE,
     };
 

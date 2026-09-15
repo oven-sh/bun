@@ -537,9 +537,6 @@ pub(crate) fn writable_stream(
     // SAFETY: freshly heap-allocated and refcounted; only shared access from here on.
     let task = unsafe { &*task_ptr };
 
-    task.poll_ref
-        .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
-
     // Heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink =
@@ -945,9 +942,6 @@ pub(crate) fn upload_stream(
     unsafe { (*task_ptr).root.set(core::ptr::NonNull::new(task_ptr)) };
     // SAFETY: freshly heap-allocated and refcounted; only shared access from here on.
     let task = unsafe { &*task_ptr };
-
-    task.poll_ref
-        .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
 
     let ctx_ptr: *mut S3UploadStreamWrapper =
         bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {

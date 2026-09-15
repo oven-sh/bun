@@ -1025,6 +1025,13 @@ impl MultiPartUpload {
         self.options.get().part_size as usize
     }
 
+    /// Holds the event loop from EOF until `Drop`.
+    fn mark_ended(&self) {
+        self.ended.set(true);
+        self.poll_ref
+            .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    }
+
     pub(crate) fn continue_stream(&self) {
         if self.state.get() == State::WaitStreamCheck {
             self.state.set(State::NotStarted);
@@ -1080,7 +1087,7 @@ impl MultiPartUpload {
 
         if self.state.get() == State::WaitStreamCheck && chunk.is_empty() && is_last {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case
-            self.ended.set(true);
+            self.mark_ended();
             if self.buffered.get().size() > 0 {
                 self.process_buffered(self.part_size_in_bytes());
             }
@@ -1091,7 +1098,7 @@ impl MultiPartUpload {
             });
         }
         if is_last {
-            self.ended.set(true);
+            self.mark_ended();
             if !chunk.is_empty() {
                 self.append_chunk(encoding, chunk)?;
             }

@@ -787,6 +787,10 @@ impl Cmd {
                     let req = unsafe { &*req };
                     req.get_body_value().to_blob_if_possible();
                     if flags.stdin() {
+                        crate::shell::util::throw_if_body_not_in_memory(
+                            global,
+                            req.get_body_value(),
+                        )?;
                         let b = req.get_body_value().use_as_any_blob();
                         stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
                     }

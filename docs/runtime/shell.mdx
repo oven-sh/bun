@@ -178,6 +178,16 @@ You can redirect from these JavaScript objects:
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
 - `Response` (reads from the body)
 
+Bun reads the whole `Response` body when the command starts, so the body must be in memory by then. A `Response` whose body is a `ReadableStream` throws an error. So does a `fetch()` response that is still downloading. Buffer the body first:
+
+```js
+import { $ } from "bun";
+
+const response = await fetch("https://example.com");
+
+await $`cat < ${await response.blob()} | wc -c`;
+```
+
 ### Example: Redirect stdin -> file
 
 ```js

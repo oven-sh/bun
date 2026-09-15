@@ -1645,19 +1645,6 @@ impl<A: Allocator + Default> From<Box<[u8], A>> for StringHashMapKey<A> {
     }
 }
 
-impl<A: Allocator + Default> From<&'static [u8]> for StringHashMapKey<A> {
-    /// Zero-copy: the slice is stored by reference. This is the conversion
-    /// `hashbrown::VacantEntryRef::insert` calls on miss in the
-    /// [`StringHashMap::put_borrowed`] / [`StringHashMap::get_or_put_borrowed`]
-    /// fast paths, so it must NOT allocate (the `'static` here is the
-    /// caller-asserted lifetime erasure, not a literal program-lifetime
-    /// requirement — see those methods' safety docs).
-    #[inline]
-    fn from(s: &'static [u8]) -> Self {
-        Self::borrowed(s)
-    }
-}
-
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Default for StringHashMap<V, A> {
     fn default() -> Self {
         Self {
@@ -1822,9 +1809,7 @@ pub use crate::hash_map::GetOrPutResult as StringHashMapGetOrPut;
 
 impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
     /// Single hash + single probe via `raw_entry_mut`; the key `Box` is only
-    /// allocated on miss. Callers whose key bytes already outlive the map
-    /// should prefer [`get_or_put_borrowed`] which also skips the miss-path
-    /// box.
+    /// allocated on miss.
     pub fn get_or_put(&mut self, key: &[u8]) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
         use hashbrown::hash_map::RawEntryMut;
         let hash = self.hash_key(key);

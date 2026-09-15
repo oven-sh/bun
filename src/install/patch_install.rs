@@ -596,6 +596,8 @@ impl PatchTask {
             );
             return Ok(());
         }
+        // After an exchange the temporary name holds the cache entry that was replaced.
+        let _ = sys::Dir::borrow(&system_tmpdir).delete_tree(path_in_tmpdir.as_bytes());
         Ok(())
     }
 

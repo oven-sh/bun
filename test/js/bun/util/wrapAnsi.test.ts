@@ -942,6 +942,100 @@ describe("Bun.wrapAnsi", () => {
     });
   });
 
+  // The input sizes each row (a Vector of characters) and the list of rows of a line (a Vector
+  // of rows). WTF::Vector::append() calls CRASH() when the buffer cannot grow, so both aborted
+  // the process: the row list at 57,934,259 rows (128 MB of one-letter words at columns 1), one
+  // UTF-16 row at about 860 million characters. Now wrapAnsi() throws a catchable out-of-memory
+  // error. The child runs with a 64 KiB synthetic allocation limit, which brings the bounds down
+  // to 2048 rows, and to 65,536 Latin-1 or 32,768 UTF-16 characters in a row.
+  describe("a row or a row list that cannot grow", () => {
+    const outOfMemory = "RangeError: Out of memory";
+
+    // `cases` is the source of an object { name: [input, columns, options?] }. The child wraps
+    // each input and reports the length of the result, or the error.
+    async function wrapWithSyntheticLimit(cases: string) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const cases = ${cases};
+          const results = {};
+          for (const [name, args] of Object.entries(cases)) {
+            try {
+              results[name] = Bun.wrapAnsi(...args).length;
+            } catch (e) {
+              results[name] = e.name + ": " + e.message;
+            }
+          }
+          console.log(JSON.stringify(results));`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
+    }
+
+    test.concurrent("the list of rows", async () => {
+      // At columns 1 every letter is a row of its own: 1000 rows fit, 3000 do not. Each option
+      // set starts its rows from a different place in the code.
+      const result = await wrapWithSyntheticLimit(`{
+        fits: ["a ".repeat(1000), 1],
+        words: ["a ".repeat(3000), 1],
+        wordsNoTrim: ["a ".repeat(3000), 1, { trim: false }],
+        hardWord: ["a".repeat(3000), 1, { hard: true }],
+        hardWordsAfterText: ["a bb ".repeat(1000), 1, { hard: true }],
+        wideHardWord: ["あ".repeat(3000), 1, { hard: true }],
+        wordNoWordWrap: ["a".repeat(3000), 1, { wordWrap: false }],
+      }`);
+      expect(result).toEqual({
+        stdout: {
+          fits: 1999,
+          words: outOfMemory,
+          wordsNoTrim: outOfMemory,
+          hardWord: outOfMemory,
+          hardWordsAfterText: outOfMemory,
+          wideHardWord: outOfMemory,
+          wordNoWordWrap: outOfMemory,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("one row", async () => {
+      // No text here is wider than columns until a row is over the bound, so one row takes all
+      // of it. Each case grows the row from a different place in the code.
+      const result = await wrapWithSyntheticLimit(`{
+        fits: ["ab ".repeat(20000), 100000],
+        fitsWide: ["あ ".repeat(15000), 100000],
+        word: ["a".repeat(70000), 100000],
+        wideWord: ["あ".repeat(40000), 100000],
+        words: ["ab ".repeat(30000), 100000],
+        separatorSpace: ["aa" + " a".repeat(40000), 100000],
+        hardWord: ["a".repeat(70000), 69999, { hard: true }],
+        escapesInHardWord: ["\\x1b[31m".repeat(14000) + "a".repeat(11), 10, { hard: true }],
+        trailingEscapeFoldedBack: ["a".repeat(2 * 65534) + "\\x1b[39m", 65534, { hard: true }],
+      }`);
+      expect(result).toEqual({
+        stdout: {
+          fits: 59999,
+          fitsWide: 29999,
+          word: outOfMemory,
+          wideWord: outOfMemory,
+          words: outOfMemory,
+          separatorSpace: outOfMemory,
+          hardWord: outOfMemory,
+          escapesInHardWord: outOfMemory,
+          trailingEscapeFoldedBack: outOfMemory,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   describe("long inputs", () => {
     test("wraps a long run of color escape sequences on one line", async () => {
       await using proc = Bun.spawn({

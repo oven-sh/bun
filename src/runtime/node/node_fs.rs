@@ -480,6 +480,27 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
 // ──────────────────────────────────────────────────────────────────────────
+thread_local! {
+    static PENDING_ASYNC_REQUESTS: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+}
+
+/// `process._getActiveRequests()` / `getActiveResourcesInfo()`: in-flight
+/// async fs request count for this JS thread.
+pub(crate) fn pending_request_count() -> u32 {
+    PENDING_ASYNC_REQUESTS.get()
+}
+
+fn pending_request_begin() {
+    PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get() + 1));
+}
+
+fn pending_request_end() {
+    PENDING_ASYNC_REQUESTS.with(|c| {
+        debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
+        c.set(c.get().saturating_sub(1));
+    });
+}
+
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
 // `cp` builtin).
@@ -691,6 +712,7 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
+            super::pending_request_begin();
             let _ = vm;
             task.tracker.did_schedule(global_object);
 
@@ -984,6 +1006,7 @@ mod _async_tasks {
             let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
+            super::pending_request_end();
         }
     }
 
@@ -1221,11 +1244,27 @@ mod _async_tasks {
     {
     }
 
-    /// The JS-thread half of an async fs operation.
+    /// The JS-thread half of an async fs operation. One of these exists per
+    /// in-flight job, so its lifetime is the pending-request count: `new` is
+    /// the only constructor, and the job machinery drops it exactly once on the
+    /// JS thread, whether the job completed or was released unrun at teardown.
     #[derive(bun_jsc::JsAffine)]
     pub struct AsyncFSJs {
         pub(crate) promise: JSPromiseStrong,
         pub(crate) tracker: AsyncTaskTracker,
+    }
+
+    impl AsyncFSJs {
+        fn new(promise: JSPromiseStrong, tracker: AsyncTaskTracker) -> Self {
+            super::pending_request_begin();
+            Self { promise, tracker }
+        }
+    }
+
+    impl Drop for AsyncFSJs {
+        fn drop(&mut self) {
+            super::pending_request_end();
+        }
     }
 
     impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
@@ -1319,7 +1358,7 @@ mod _async_tasks {
                     // may be niche-optimised; never construct an all-zero `Result`.
                     result: Err(sys::Error::default()),
                 },
-                AsyncFSJs { promise, tracker },
+                AsyncFSJs::new(promise, tracker),
             );
             value
         }
@@ -1583,6 +1622,7 @@ mod _async_tasks {
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
+                super::pending_request_begin();
             }
 
             let raw = bun_core::heap::release(task);
@@ -1692,6 +1732,10 @@ mod _async_tasks {
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 return Ok(());
             }
+            // SAFETY: self was Box::leak'd in create*(); destroy() runs exactly once on
+            // scope exit, including the early-return reject arms below.
+            let _deinit =
+                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
             let go_ptr = self.evtloop.global_object();
             if go_ptr.is_null() {
                 panic!(
@@ -1702,9 +1746,8 @@ mod _async_tasks {
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
             let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
-            // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
-            // resolve/reject. The `JSPromise` itself lives on the JS heap
-            // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
+            // Raw pointer: the scope guard's `destroy(self)` drops the `Strong` wrapper at
+            // exit; the `JSPromise` cell is kept alive by `promise_value.ensure_still_alive()`.
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
             let result = match core::mem::replace(self.result.get_mut(), Ok(())) {
                 // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
@@ -1729,8 +1772,6 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             if success {
                 bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
@@ -1749,6 +1790,7 @@ mod _async_tasks {
             if !IS_SHELL {
                 let ctx = event_loop_handle_to_ctx(task.evtloop);
                 task.r#ref.unref(ctx);
+                super::pending_request_end();
             }
         }
 
@@ -2365,7 +2407,7 @@ mod _async_tasks {
                     pending_err: None,
                     pending_err_mutex: bun_threading::Mutex::default(),
                 },
-                AsyncFSJs { promise, tracker },
+                AsyncFSJs::new(promise, tracker),
             );
             value
         }

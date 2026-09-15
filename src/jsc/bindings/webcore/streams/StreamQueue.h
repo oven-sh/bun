@@ -69,6 +69,25 @@ struct ByteQueueEntry {
 struct SourceAlgorithmSlots {
     // Which arm runs pull/cancel.
     SourceKind kind { SourceKind::Nothing };
+    // Whether that arm is a native link: it pulls and cancels another stream, whose own source can be
+    // a link too (see streamLinkMustDefer).
+    bool linksAnotherStream() const
+    {
+        switch (kind) {
+        case SourceKind::TeeBranch:
+        case SourceKind::ByteTeeBranch:
+        case SourceKind::TextDecode:
+            return true;
+        case SourceKind::JavaScript:
+        case SourceKind::Nothing:
+        case SourceKind::Transform:
+        case SourceKind::FromIterable:
+        case SourceKind::CrossRealm:
+        case SourceKind::Native:
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
     // TeeBranch / ByteTeeBranch only: which branch this controller is (0 or 1).
     uint8_t teeBranchIndex { 0 };
     // TextDecode kind only: the inline streaming-UTF-8 decode state.

@@ -1013,14 +1013,14 @@ JSPromise* textDecodePullAlgorithm(JSGlobalObject* globalObject, JSReadableStrea
     }));
 }
 
-JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue reason)
+// The source side of textDecodeCancelAlgorithm: cancels the source through `reader`, then releases `reader`.
+static JSPromise* textDecodeCancelSource(JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, JSValue reason)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     // closeSteps may have already released the source reader while the output
     // still has a queued chunk (ClearAlgorithms didn't run); in that state the
     // source is already terminal, so cancel becomes a no-op.
-    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
     if (!reader || !reader->m_stream)
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     auto* result = readableStreamReaderGenericCancel(globalObject, reader, reason);
@@ -1028,6 +1028,33 @@ JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStr
     readableStreamDefaultReaderRelease(globalObject, reader);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result;
+}
+
+JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
+    if (reader && streamLinkMustDefer(vm)) [[unlikely]] {
+        // The caller clears algorithmContext once this returns, so the job carries the reader.
+        auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+        auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), reader, result);
+        queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onTextDecodeCancelDeferred(), reason, context);
+        return result;
+    }
+    RELEASE_AND_RETURN(scope, textDecodeCancelSource(globalObject, reader, reason));
+}
+
+// onTextDecodeCancelDeferred: context = InternalFieldTuple{the source reader, the promise textDecodeCancelAlgorithm returned}.
+static EncodedJSValue textDecodeCancelDeferred(JSGlobalObject* globalObject, JSValue reason, InternalFieldTuple* context)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* cancelResult = textDecodeCancelSource(globalObject, uncheckedDowncast<JSReadableStreamDefaultReader>(context->getInternalField(0)), reason);
+    RETURN_IF_EXCEPTION(scope, {});
+    resolvePromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), cancelResult);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
@@ -1118,6 +1145,15 @@ JSPromise* defaultTeePullAlgorithm(JSGlobalObject* globalObject, JSStreamTeeStat
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
+// "Resolve cancelPromise with ! ReadableStreamCancel(stream, reason)": both branches are canceled, or teeAbortWithError.
+static void teeCancelStream(JSC::VM& vm, JSGlobalObject* globalObject, JSStreamTeeState* teeState, JSValue reason)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* cancelResult = readableStreamCancel(globalObject, teeState->stream(), reason);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, resolvePromise(globalObject, teeState->cancelPromise(), cancelResult));
+}
+
 // ReadableStreamDefaultTee's cancel1Algorithm / cancel2Algorithm.
 JSPromise* defaultTeeCancelAlgorithm(JSGlobalObject* globalObject, JSStreamTeeState* teeState, uint8_t branch, JSValue reason)
 {
@@ -1133,10 +1169,12 @@ JSPromise* defaultTeeCancelAlgorithm(JSGlobalObject* globalObject, JSStreamTeeSt
     if ((!branch && teeState->m_canceled2) || (branch && teeState->m_canceled1)) {
         JSArray* compositeReason = constructArrayPair(globalObject, teeState->reason1(), teeState->reason2());
         RETURN_IF_EXCEPTION(scope, nullptr);
-        auto* cancelResult = readableStreamCancel(globalObject, teeState->stream(), compositeReason);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        resolvePromise(globalObject, teeState->cancelPromise(), cancelResult);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (streamLinkMustDefer(vm)) [[unlikely]]
+            queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onTeeCancelDeferred(), compositeReason, teeState);
+        else {
+            teeCancelStream(vm, globalObject, teeState, compositeReason);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
     }
     return teeState->cancelPromise();
 }
@@ -1155,9 +1193,7 @@ static EncodedJSValue teeAbortWithError(JSGlobalObject* globalObject, JSStreamTe
         errorController(globalObject, controller2, thrown);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    auto* cancelResult = readableStreamCancel(globalObject, teeState->stream(), thrown);
-    RETURN_IF_EXCEPTION(scope, {});
-    resolvePromise(globalObject, teeState->cancelPromise(), cancelResult);
+    teeCancelStream(vm, globalObject, teeState, thrown);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1570,6 +1606,20 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onByteTeeReadIntoChunkMicrotask, (J
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onByteTeeReaderClosedRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return Streams::byteTeeReaderClosedRejected(globalObject, callFrame->argument(0), uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTextDecodeCancelDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return Streams::textDecodeCancelDeferred(globalObject, callFrame->argument(0), uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTeeCancelDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Streams::teeCancelStream(vm, globalObject, uncheckedDowncast<JSStreamTeeState>(callFrame->argument(1)), callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 } // namespace WebCore

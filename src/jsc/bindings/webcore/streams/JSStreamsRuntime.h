@@ -76,6 +76,10 @@ namespace WebCore {
 //   Tee: context = the JSStreamTeeState, except onByteTeeReaderClosedRejected whose context
 //     is an InternalFieldTuple{teeState, thisReader}.
 //   The two *Microtask entries are the tee chunk-steps "queue a microtask" jobs.
+//   The two *CancelDeferred entries are the cancel of a link's source, continued from a
+//     microtask (see streamLinkMustDefer); value = the reason. onTeeCancelDeferred: context =
+//     the JSStreamTeeState. onTextDecodeCancelDeferred: context = an InternalFieldTuple{the
+//     source reader, the promise the cancel algorithm returned}.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V) \
     V(onFromIterablePullFulfilled)                             \
     V(onFromIterableCancelFulfilled)                           \
@@ -83,7 +87,17 @@ namespace WebCore {
     V(onDefaultTeeReaderClosedRejected)                        \
     V(onByteTeeReadChunkMicrotask)                             \
     V(onByteTeeReadIntoChunkMicrotask)                         \
-    V(onByteTeeReaderClosedRejected)
+    V(onByteTeeReaderClosedRejected)                           \
+    V(onTeeCancelDeferred)                                     \
+    V(onTextDecodeCancelDeferred)
+
+// owner: JSReadRequest.cpp. The close / error steps of a link's read request or read-into
+// request, continued from a microtask (see streamLinkMustDefer). context = the JSReadRequest /
+// JSReadIntoRequest. value = the error steps' error; the read-into close steps' chunk, or undefined.
+#define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_READ_REQUEST(V) \
+    V(onReadRequestCloseStepsDeferred)                        \
+    V(onReadRequestErrorStepsDeferred)                        \
+    V(onReadIntoRequestCloseStepsDeferred)
 
 // owner: BunAsyncIterableSource.cpp. context = the JSAsyncIteratorSourceOperation, EXCEPT
 // onAsyncIterableSourceErrorRethrow / onAsyncIterableSourceErrorSwallowed, whose context is
@@ -235,6 +249,7 @@ namespace WebCore {
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_DEFAULT_CONTROLLER(V) \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_BYTE_CONTROLLER(V)    \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V)         \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_READ_REQUEST(V)          \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERATOR(V)        \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERABLE_SOURCE(V) \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_PIPE(V)                  \

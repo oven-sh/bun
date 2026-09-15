@@ -1,11 +1,4 @@
-//! `bun test --watch`: run again when a test file is added.
-//!
-//! The watcher watches the files a run loaded. A file that did not exist then
-//! reaches the watcher only as a new entry of a watched directory. After each
-//! run this walks the tree that `Scanner::scan` walked and watches every
-//! directory in it. When the watcher reports a new entry in one of them, this
-//! reads that directory again. A test file that `scan` did not find reloads
-//! the process, and the new process scans again.
+//! `bun test --watch`: reload when a test file is added to a directory that `Scanner::scan` walks.
 
 use std::collections::VecDeque;
 
@@ -20,17 +13,14 @@ use bun_threading::Guarded;
 
 use super::scanner::TestFileRules;
 
-/// A watched directory costs an inotify watch on Linux and an open descriptor
-/// on kqueue. The walk is breadth first, so the directories past the limit are
-/// the deepest ones.
+/// A watched directory costs an inotify watch on Linux and an open descriptor on kqueue.
 const MAX_WATCHED_DIRS: usize = 4096;
 
 pub(crate) struct NewTestFileWatch {
     rules: TestFileRules,
     /// The directories `scan` was asked to walk.
     roots: Vec<Box<[u8]>>,
-    /// The test files `scan` found. A new one reloads the process, so this
-    /// set never grows.
+    /// The test files `scan` found.
     known_files: StringSet,
     /// The watched directories, without a trailing separator.
     watched_dirs: Guarded<StringSet>,
@@ -38,8 +28,6 @@ pub(crate) struct NewTestFileWatch {
 }
 
 impl NewTestFileWatch {
-    /// The result lives as long as the process: the listener it becomes is
-    /// never removed.
     pub(crate) fn init(
         rules: TestFileRules,
         roots: Vec<Box<[u8]>>,
@@ -58,15 +46,12 @@ impl NewTestFileWatch {
         })
     }
 
-    /// Call on the main thread when a run is done. Watches every directory
-    /// that `scan` walked. Reloads at once if a test file appeared between
-    /// `scan` and now.
+    /// Call on the main thread after a run. Reloads at once if a test file appeared since the scan.
     pub(crate) fn start(&'static self, vm: &mut VirtualMachine) {
         if !vm.is_watcher_enabled() {
             return;
         }
-        // Published before the first directory is watched, so that the
-        // watcher thread reports an entry that appears right after.
+        // Set before the first watch, so that no event arrives without a listener.
         let _ = hot_reloader::ADDED_FILE_LISTENER.set(self);
 
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
@@ -98,8 +83,7 @@ impl NewTestFileWatch {
         }
     }
 
-    /// Claims the watch for `dir`. Returns false if `dir` is watched already
-    /// or the limit is reached.
+    /// False if `dir` is watched already or the limit is reached.
     fn reserve_watch(&self, dir: &[u8]) -> bool {
         let mut watched = self.watched_dirs.lock();
         if watched.count() >= self.max_watched_dirs || watched.contains(dir) {
@@ -109,14 +93,7 @@ impl NewTestFileWatch {
         true
     }
 
-    /// Reads `dir`, and each directory below it that is not watched yet.
-    /// Starts to watch such a directory before it reads it, so that no entry
-    /// appears between the two. Returns the first test file `scan` did not
-    /// find.
-    ///
-    /// Holds no lock across `watch_directory`: the watcher thread calls this
-    /// with the watcher's mutex held, and `start` takes that mutex inside
-    /// `watch_directory`.
+    /// The first test file below `dir` that `scan` did not find. Watches a new directory before it reads it.
     fn find_new_test_file(
         &self,
         dir: &[u8],
@@ -135,8 +112,7 @@ impl NewTestFileWatch {
             let mut entries = bun_sys::iterate_dir(handle.fd);
             while let Ok(Some(entry)) = entries.next() {
                 let base = entry.name.slice_u8();
-                // The same kinds `DirEntry::add_entry_with_store` keeps, and a
-                // link or an unknown kind resolved the way `Entry::kind` does.
+                // As in `scan`: a stat resolves a link or an unknown kind, and other kinds are skipped.
                 let is_dir = match entry.kind {
                     FileKind::Directory => true,
                     FileKind::File => false,
@@ -167,6 +143,7 @@ impl NewTestFileWatch {
                     if !self.reserve_watch(path) {
                         continue;
                     }
+                    // No lock is held here: `start` takes the watcher's mutex, which the watcher thread holds.
                     watch_directory(path);
                     queue.push_back(Box::from(path));
                 } else {
@@ -197,8 +174,7 @@ impl AddedFileListener for NewTestFileWatch {
         watch_directory: &mut dyn FnMut(&[u8]),
     ) -> Option<Box<[u8]>> {
         let dir = without_trailing_slash_windows_path(dir);
-        // The watcher also watches directories that `scan` did not walk: the
-        // directory of each loaded file.
+        // The watcher also watches the directory of each loaded file, which `scan` may not walk.
         if !self.watched_dirs.lock().contains(dir) {
             return None;
         }

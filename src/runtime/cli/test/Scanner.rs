@@ -14,6 +14,19 @@ use bun_sys::{Dir, Fd};
 
 declare_scope!(jest, hidden);
 
+/// Which directories `scan` walks and which files are tests. Owns its data, so any thread can use it.
+pub struct TestFileRules {
+    /// When this list is empty, no filters are applied.
+    /// "test" suffixes (e.g. .spec.*) are always applied when traversing directories.
+    pub(crate) filter_names: Vec<Box<[u8]>>,
+    /// Glob patterns for paths to ignore. Matched against the path relative to the
+    /// project root (top_level_dir). When a file matches any pattern, it is excluded.
+    pub(crate) path_ignore_patterns: Vec<Box<[u8]>>,
+    /// The extensions, with the dot, that load as JavaScript or TypeScript.
+    javascript_like_extensions: StringSet,
+    top_level_dir: &'static [u8],
+}
+
 pub struct Scanner {
     pub(crate) rules: TestFileRules,
     pub(crate) dirs_to_scan: Fifo,
@@ -26,21 +39,6 @@ pub struct Scanner {
     pub(crate) search_count: usize,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
     current_dir: Option<Rc<Dir>>,
-}
-
-/// Which directories `Scanner::scan` walks and which files in them are tests.
-/// Holds no VM state: `bun test --watch` applies the same rules on the
-/// watcher thread to a file that is added later.
-pub struct TestFileRules {
-    /// When this list is empty, no filters are applied.
-    /// "test" suffixes (e.g. .spec.*) are always applied when traversing directories.
-    pub(crate) filter_names: Vec<Box<[u8]>>,
-    /// Glob patterns for paths to ignore. Matched against the path relative to the
-    /// project root (top_level_dir). When a file matches any pattern, it is excluded.
-    pub(crate) path_ignore_patterns: Vec<Box<[u8]>>,
-    /// The extensions, with the dot, that load as JavaScript or TypeScript.
-    javascript_like_extensions: StringSet,
-    top_level_dir: &'static [u8],
 }
 
 // FIFO queue of scan entries (pop_front / push_back).
@@ -347,8 +345,7 @@ impl TestFileRules {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    /// Whether `scan` walks the directory `base` of `dir`. `name` is `base` in
-    /// lowercase.
+    /// `name` is `base` in lowercase.
     pub(crate) fn walks_directory(&self, dir: &[u8], base: &[u8], name: &[u8]) -> bool {
         if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
             return false;
@@ -381,9 +378,7 @@ impl TestFileRules {
         Scanner::abs_buf_projected(self.top_level_dir, &parts, &mut buf[..])
     }
 
-    /// The absolute path of the file `base` of `dir`, unless the filters or
-    /// the path ignore patterns exclude it. The caller checks the name with
-    /// `could_be_test_file` first.
+    /// None if the filters or the ignore patterns exclude the file. Does not check the name.
     pub(crate) fn filtered_test_file_path<'b>(
         &self,
         dir: &[u8],

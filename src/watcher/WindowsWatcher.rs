@@ -450,8 +450,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                             ParentEqual::Unrelated => "unrelated",
                         }
                     );
-                    // The event names an entry of this directory itself, not
-                    // of a directory below it.
+                    // The entry is directly in this directory, not in one below it.
                     let holds_entry = rel == ParentEqual::Parent && {
                         let dir_len = strings::trim_right(path.as_ref(), b"/\\").len();
                         strings::index_of_any(&eventpath[dir_len + 1..], b"/\\").is_none()
@@ -534,8 +533,7 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     Ok(())
 }
 
-/// `holds_entry`: the watch item is the directory that holds the entry the
-/// event names. Only that directory reports the entry as new, as inotify does.
+/// `holds_entry`: the watch item is the directory that directly holds the entry the event names.
 fn create_watch_event(event: &FileEvent, index: WatchItemIndex, holds_entry: bool) -> WatchEvent {
     let mut op = Op::empty();
     if event.action == Action::Removed {

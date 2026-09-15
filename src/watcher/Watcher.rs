@@ -797,15 +797,9 @@ impl Watcher {
         self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, true, file_path, hash)
     }
 
-    /// Watch the directory `dir_path` for a caller that has no descriptor for
-    /// it. The watchlist keeps a descriptor only where the platform watches
-    /// through one; `flush_evictions`/shutdown close it.
-    ///
-    /// `LOCK` is false inside `WatcherContext::on_file_update`, which runs
-    /// with `mutex` held.
+    /// `LOCK` is false inside `WatcherContext::on_file_update`, which runs with `mutex` held.
     pub fn add_directory_by_path<const LOCK: bool>(&mut self, dir_path: &[u8]) -> sys::Result<()> {
-        // The spelling `append_file_maybe_lock` gives the directory of a
-        // file, so that the two share one entry.
+        // `append_file_maybe_lock` spells a file's directory with a trailing separator. Share its entry.
         let mut buf = bun_paths::path_buffer_pool::get();
         let has_trailing_sep = dir_path
             .last()

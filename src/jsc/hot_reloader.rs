@@ -305,15 +305,9 @@ unsafe impl Sync for WatchChangedPaths {}
 pub static WATCH_CHANGED_TRIGGER_FILE: std::sync::OnceLock<&'static ZStr> =
     std::sync::OnceLock::new();
 
-/// How `bun test --watch` learns that a test file was added. The watchlist
-/// holds the files a run loaded, so a file that did not exist then reaches the
-/// watcher only as a new entry of a watched directory.
+/// Lets `bun test --watch` reload for a file that no run loaded: it has no watch of its own.
 pub trait AddedFileListener: Sync {
-    /// The watched directory `dir` has a new entry. Runs on the watcher
-    /// thread with the watcher's mutex held. `watch_directory` starts to watch
-    /// a directory; the listener calls it before it reads that directory, so
-    /// that no entry appears between the two. Returns the path of an added
-    /// file that must reload the process.
+    /// Runs on the watcher thread with the watcher's mutex held. Returns a file that must reload the process.
     fn on_directory_entry_added(
         &self,
         dir: &[u8],
@@ -325,8 +319,7 @@ pub trait AddedFileListener: Sync {
 pub static ADDED_FILE_LISTENER: std::sync::OnceLock<&'static dyn AddedFileListener> =
     std::sync::OnceLock::new();
 
-/// The ops a directory reports when it gets a new entry. kqueue has one op
-/// for every change to a directory's entries.
+/// kqueue reports every change to a directory's entries as `WRITE`.
 const DIRECTORY_ENTRY_ADDED: WatchOp = if IS_KQUEUE {
     WatchOp::WRITE
 } else {
@@ -881,8 +874,7 @@ where
         } else {
             None
         };
-        // Copies: the listener runs after the loop, where it can grow the
-        // watchlist that `file_paths` points into.
+        // Copies: the listener can grow the watchlist that `file_paths` points into.
         let mut directories_with_added_entry: Vec<Box<[u8]>> = Vec::new();
 
         for event in events.iter() {

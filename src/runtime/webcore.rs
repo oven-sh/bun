@@ -13,6 +13,8 @@ pub mod bake_response;
 pub mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
 pub mod byte_stream;
+#[path = "webcore/clipboard.rs"]
+pub mod clipboard;
 #[path = "webcore/CompressionStreamCoder.rs"]
 pub mod compression_stream_coder;
 #[path = "webcore/CookieMap.rs"]

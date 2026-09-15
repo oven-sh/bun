@@ -92,6 +92,8 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForCookieMap { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForCookieMapIterator { nullptr };
 
+    GCClient::IsoSubspace* m_clientSubspaceForClipboard { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForClipboardItem { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFetchHeaders { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFetchHeadersIterator { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForByteLengthQueuingStrategy { nullptr };
@@ -142,6 +144,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForCryptoKey { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForSubtleCrypto { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBroadcastChannel { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForClipboardEvent { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForCustomEvent { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForMessageChannel { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForMessageEvent { nullptr };

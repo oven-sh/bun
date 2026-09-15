@@ -2113,6 +2113,35 @@ describe("Performance & Edge Cases", () => {
     await sql.close();
   });
 
+  test(
+    "returns result sets with more rows than a call can take as arguments",
+    async () => {
+      await using sql = new SQL("sqlite://:memory:");
+
+      // JavaScriptCore refuses to spread more than 0x100000 arguments into one call, so a result
+      // set this size fails no matter how much stack is free if the rows are spread into the result.
+      const rowCount = 0x100000 + 1;
+      const rows = await sql`
+        WITH RECURSIVE counter(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM counter WHERE n < ${rowCount})
+        SELECT n FROM counter
+      `;
+
+      expect({
+        length: rows.length,
+        count: rows.count,
+        first: rows[0],
+        last: rows[rowCount - 1],
+      }).toEqual({
+        length: rowCount,
+        count: rowCount,
+        first: { n: 1 },
+        last: { n: rowCount },
+      });
+    },
+    // bun:sqlite needs several seconds to build a million row objects in a debug build.
+    isDebug ? 60_000 : 10_000,
+  );
+
   test("handles many columns", async () => {
     const sql = new SQL(":memory:");
 

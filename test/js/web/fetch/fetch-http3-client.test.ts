@@ -642,6 +642,7 @@ describe("aborted upload", () => {
   let origin: string;
   let firstChunkRead: PromiseWithResolvers<void>;
   let serverSaw: PromiseWithResolvers<{ body: string; received: number; contentLength: string | null }>;
+  let holdRelease: PromiseWithResolvers<void>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -651,6 +652,20 @@ describe("aborted upload", () => {
       http1: false,
       routes: {
         "/echo": async req => new Response(await req.bytes()),
+        // Sends "first;" at once, and "last;" after `holdRelease`.
+        "/hold": () => {
+          let pulls = 0;
+          return new Response(
+            new ReadableStream({
+              async pull(ctrl) {
+                if (pulls++ === 0) return ctrl.enqueue("first;");
+                await holdRelease.promise;
+                ctrl.enqueue("last;");
+                ctrl.close();
+              },
+            }),
+          );
+        },
         // Reports how the request body ended: "complete" after FIN, "aborted" after a reset.
         "/upload": async req => {
           let body = "complete";
@@ -700,17 +715,30 @@ describe("aborted upload", () => {
   });
 
   test("with a declared content-length, the pooled session stays usable", async () => {
-    await abortUpload({ "content-length": "50" });
-    // The next request has a stream body on purpose. The client re-sends any
-    // other body on a fresh session, and that would hide a dead pooled session.
-    const piece = Buffer.alloc(32 * 1024, "S");
-    const res = await fetch(`${origin}/echo`, {
-      ...h3,
-      method: "POST",
-      body: pullBody(Array.from({ length: 8 }, () => piece)),
-    });
-    expect((await res.bytes()).length).toBe(8 * piece.length);
-    expect(await serverSaw.promise).toEqual({ body: "aborted", received: 6, contentLength: "50" });
+    holdRelease = Promise.withResolvers();
+    try {
+      // This response stays open on the pooled session while the upload is
+      // aborted. Its headers are in, so the client cannot move it to another
+      // session: it completes only if the server keeps the connection.
+      const held = await fetch(`${origin}/hold`, h3);
+      await abortUpload({ "content-length": "50" });
+      // The next request has a stream body on purpose. The client re-sends any
+      // other body on a fresh session, and that would hide a dead pooled session.
+      const piece = Buffer.alloc(32 * 1024, "S");
+      const res = await fetch(`${origin}/echo`, {
+        ...h3,
+        method: "POST",
+        body: pullBody(Array.from({ length: 8 }, () => piece)),
+      });
+      expect((await res.bytes()).length).toBe(8 * piece.length);
+      // The held response is released only after the server has seen the upload
+      // end. Released sooner, it completes before the server closes anything.
+      expect(await serverSaw.promise).toEqual({ body: "aborted", received: 6, contentLength: "50" });
+      holdRelease.resolve();
+      expect(await held.text()).toBe("first;last;");
+    } finally {
+      holdRelease.resolve();
+    }
   });
 });
 

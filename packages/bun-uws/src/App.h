@@ -60,11 +60,7 @@ namespace uWS {
 
     /* This one matches us_socket_context_options_t but has default values */
     struct SocketContextOptions {
-        const char *key_file_name = nullptr;
-        const char *cert_file_name = nullptr;
         const char *passphrase = nullptr;
-        const char *dh_params_file_name = nullptr;
-        const char *ca_file_name = nullptr;
         const char *ssl_ciphers = nullptr;
         int ssl_prefer_low_memory_usage = 0;
 
@@ -87,6 +83,7 @@ namespace uWS {
         int allow_partial_trust_chain = 0;
         const char *sigalgs = nullptr;
         const char *ecdh_curve = nullptr;
+        const char *dh_params = nullptr;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {

@@ -8,8 +8,8 @@ import { once } from "node:events";
 import tls from "node:tls";
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
-import { tempDir, tls as tlsCerts } from "harness";
-import { readFileSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, expiredTls, tempDir, tls as tlsCerts } from "harness";
+import { readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 async function withServer(fn: (port: number) => Promise<void>) {
@@ -209,6 +209,81 @@ test("file-backed config: in-place rotation invalidates cache (mtime+size in dig
     expect(sslCtxLiveCount()).toBe(after1 + 1);
     pin.length = 0;
   });
+});
+
+test("file-backed config: a relative caFile is keyed on the cwd at connect() time", async () => {
+  // Two `ca.pem` files of equal size and mtime, so only the resolved path
+  // tells them apart in the digest. Only the first one signs the server.
+  let trusted = tlsCerts.cert;
+  let other = expiredTls.cert;
+  while (Buffer.byteLength(trusted) < Buffer.byteLength(other)) trusted += "\n";
+  while (Buffer.byteLength(other) < Buffer.byteLength(trusted)) other += "\n";
+  using dir = tempDir("ssl-ctx-cafile-cwd", {
+    "trusts-server/ca.pem": trusted,
+    "other-ca/ca.pem": other,
+  });
+  const mtime = 1_700_000_000;
+  utimesSync(join(String(dir), "trusts-server", "ca.pem"), mtime, mtime);
+  utimesSync(join(String(dir), "other-ca", "ca.pem"), mtime, mtime);
+
+  using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: tlsCerts, fetch: () => new Response("OK") });
+  const script = `
+    import tls from "node:tls";
+    const pinned = [];
+    function viaBunConnect() {
+      return new Promise(resolve => {
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: ${server.port},
+          tls: { caFile: "ca.pem" },
+          socket: {
+            open(s) { pinned.push(s); },
+            handshake(s, ok, err) { resolve(ok ? "OK" : err.code); },
+            error(s, err) { resolve(err.code); },
+            connectError(s, err) { resolve(err.code); },
+            data() {},
+            close() {},
+          },
+        }).catch(err => resolve(err.code));
+      });
+    }
+    function viaNodeTls() {
+      return new Promise(resolve => {
+        const s = tls.connect({ host: "127.0.0.1", port: ${server.port}, caFile: "ca.pem", servername: "localhost" });
+        pinned.push(s);
+        s.once("secureConnect", () => resolve("OK"));
+        s.once("error", err => resolve(err.code));
+      });
+    }
+    const out = {};
+    for (const [name, attempt] of [["connect", viaBunConnect], ["tls", viaNodeTls]]) {
+      out[name] = [];
+      for (const cwd of [process.env.DIR_TRUSTED, process.env.DIR_OTHER, process.env.DIR_TRUSTED]) {
+        process.chdir(cwd);
+        out[name].push(await attempt());
+      }
+    }
+    console.log(JSON.stringify(out));
+    for (const s of pinned) s.end?.();
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      DIR_TRUSTED: join(String(dir), "trusts-server"),
+      DIR_OTHER: join(String(dir), "other-ca"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout ? JSON.parse(stdout) : stderr).toEqual({
+    connect: ["OK", "DEPTH_ZERO_SELF_SIGNED_CERT", "OK"],
+    tls: ["OK", "DEPTH_ZERO_SELF_SIGNED_CERT", "OK"],
+  });
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test("addCACert on one user-facing context does not affect another with identical options", () => {

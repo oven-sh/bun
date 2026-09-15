@@ -192,6 +192,81 @@ it(
   timeout,
 );
 
+it(
+  "should keep reloading after a GC runs between reloads",
+  async () => {
+    // Once the entry point's load promise settles, the only reference left to
+    // it is the VM slot the --hot loop polls on every tick. After a reload,
+    // collect that promise from an fs callback and fill the heap with pending
+    // promises so its cell is reused. If the slot does not root the promise,
+    // it now reads "pending" and every later reload is deferred forever.
+    const root = join(cwd, "hot-entry-promise-gc.js");
+    const source = `
+      import { readFile } from "fs";
+      globalThis.counter ??= 0;
+      const n = ++globalThis.counter;
+      console.write(\`[#!root] Reloaded: \${n}\\n\`);
+      if (n > 1) {
+        readFile(import.meta.path, () => {
+          Bun.gc(true);
+          globalThis.pending = Array.from({ length: 20_000 }, () => new Promise(() => {}));
+          console.write(\`[#!root] gc done: \${n}\\n\`);
+        });
+      }
+      setTimeout(() => {}, 9_999_999);
+    `;
+    writeFileSync(root, source);
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    let stdout = "";
+    let stderr = "";
+    const drained = Promise.all([
+      (async () => {
+        for await (const chunk of runner.stdout) stdout += new TextDecoder().decode(chunk);
+      })(),
+      (async () => {
+        for await (const chunk of runner.stderr) stderr += new TextDecoder().decode(chunk);
+      })(),
+    ]);
+    const reloads = () => [...stdout.matchAll(/\[#!root\] Reloaded: (\d+)\n/g)].map(m => Number(m[1]));
+    const stepTimeout = isDebug ? 120_000 : 20_000;
+    async function waitForOutput(what: string, done: () => boolean) {
+      const deadline = Date.now() + stepTimeout;
+      while (!done()) {
+        const exit = runner.exitCode ?? runner.signalCode;
+        if (exit !== null) {
+          throw new Error(`child exited (${exit}) while waiting for ${what}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+        }
+        if (Date.now() > deadline) {
+          throw new Error(`timed out waiting for ${what}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+        }
+        await Bun.sleep(20);
+      }
+    }
+
+    await waitForOutput("the first load", () => reloads().length > 0);
+    writeFileSync(root, source);
+    // A save can fire more than one watcher event, so count reloads instead of
+    // expecting exactly one.
+    await waitForOutput("the GC after a reload", () => stdout.includes("[#!root] gc done: "));
+    const before = Math.max(...reloads());
+    writeFileSync(root, source);
+    await waitForOutput(`a reload after reload ${before}`, () => Math.max(...reloads()) > before);
+
+    runner.kill();
+    await drained;
+  },
+  longTimeout,
+);
+
 it.each(["hot-file-loader.file", "hot-file-loader.css"])(
   "should hot reload when `%s` is overwritten",
   async (targetFilename: string) => {

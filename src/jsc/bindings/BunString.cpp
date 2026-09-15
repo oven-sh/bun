@@ -409,6 +409,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1Unitialized(si
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
+// Reads `bytes` twice: copy a SharedArrayBuffer before calling.
 extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 {
     ASSERT(length > 0);

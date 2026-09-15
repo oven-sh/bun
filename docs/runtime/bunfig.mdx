@@ -600,7 +600,8 @@ Bun takes the credentials for the forced registry from the first of these that i
 
 1. The `forceRegistry` value itself: `token`, `username` and `password`, or `user:pass@` in the URL.
 2. `--token`, then `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN`.
-3. The token of the registry it replaces, if that registry is on the same host and the forced registry does not change `https` to `http`.
+3. An `.npmrc` entry for its host, for example `//npm.corp.example.com/:_authToken=...`.
+4. The credentials of a registry it replaces: the default registry, if it is on the same host and the forced registry does not change `https` to `http`, or a scoped registry with the same URL.
 
 Bun does not send a token that is configured for a different host to the forced registry.
 

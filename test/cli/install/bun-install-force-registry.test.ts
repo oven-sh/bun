@@ -148,6 +148,79 @@ describe.concurrent("install.forceRegistry", () => {
     expect(forced.auth).toEqual([null]);
   });
 
+  test.each(["bunfig", "env"] as const)(
+    "forced registry (%s) receives the ~/.npmrc token keyed to its host",
+    async form => {
+      const forced = makeRegistry();
+      const other = makeRegistry();
+      await using _f = forced.server;
+      await using _o = other.server;
+
+      using dir = tempDir(`force-registry-npmrc-hostkey-${form}`, {
+        ...(form === "bunfig" && { "home/.bunfig.toml": `[install]\nforceRegistry = "${forced.url}"\n` }),
+        // Only this line names the forced host. No `registry=` or `@scope:registry=` line does,
+        // and the default registry is on another host, so there is no replaced registry to take a token from.
+        "home/.npmrc": `//localhost:${forced.server.port}/:_authToken=corp-npmrc-token\n`,
+        "project/bunfig.toml": `[install]\ncache = false\nregistry = "${other.url}"\n`,
+        "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+      });
+
+      await runInstall(
+        String(dir),
+        makeEnv(String(dir), form === "env" ? { BUN_CONFIG_FORCE_REGISTRY: forced.url } : {}),
+      );
+
+      expect({ forced: forced.hits, other: other.hits }).toEqual({
+        forced: ["/no-deps"],
+        other: [],
+      });
+      expect(forced.auth).toEqual(["Bearer corp-npmrc-token"]);
+    },
+  );
+
+  test("BUN_CONFIG_TOKEN beats the ~/.npmrc token keyed to the forced host", async () => {
+    const forced = makeRegistry();
+    await using _f = forced.server;
+
+    using dir = tempDir("force-registry-npmrc-hostkey-env-token", {
+      "home/.bunfig.toml": `[install]\nforceRegistry = "${forced.url}"\n`,
+      "home/.npmrc": `//localhost:${forced.server.port}/:_authToken=corp-npmrc-token\n`,
+      "project/bunfig.toml": `[install]\ncache = false\n`,
+      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+    });
+
+    await runInstall(String(dir), makeEnv(String(dir), { BUN_CONFIG_TOKEN: "corp-env-token" }));
+
+    expect(forced.hits).toEqual(["/no-deps"]);
+    expect(forced.auth).toEqual(["Bearer corp-env-token"]);
+  });
+
+  test("a scoped registry at the forced URL hands its token to the forced registry", async () => {
+    const forced = makeRegistry();
+    const other = makeRegistry();
+    await using _f = forced.server;
+    await using _o = other.server;
+
+    using dir = tempDir("force-registry-scoped-donor", {
+      "home/.bunfig.toml": `[install]\nforceRegistry = "${forced.url}"\n`,
+      // The token is on a scoped registry, not in .npmrc. The forced registry clears the scoped
+      // registries, so it must keep the credentials of the one that is the same URL.
+      "project/bunfig.toml": `[install]\ncache = false\nregistry = "${other.url}"\n[install.scopes]\ncorp = { url = "${forced.url}", token = "scoped-token" }\n`,
+      "project/package.json": JSON.stringify({
+        name: "test",
+        dependencies: { "@corp/pkg": "1.0.0", "no-deps": "1.0.0" },
+      }),
+    });
+
+    await runInstall(String(dir), makeEnv(String(dir)));
+
+    expect({ forced: forced.hits.sort(), other: other.hits }).toEqual({
+      forced: ["/@corp%2fpkg", "/no-deps"],
+      other: [],
+    });
+    expect(forced.auth).toEqual(["Bearer scoped-token", "Bearer scoped-token"]);
+  });
+
   test("global bunfig forceRegistry cannot be changed by project bunfig forceRegistry", async () => {
     const forced = makeRegistry();
     const other = makeRegistry();

@@ -3522,12 +3522,10 @@ describe("stdin redirect from a Response whose body is not in memory yet", () =>
   test("a command name that expands to nothing does not wait for the body", async () => {
     const never = new Response(new ReadableStream({ start() {} }));
     const result = await $`$(true) < ${never}`.env(bunEnv).quiet().nothrow();
-    expect({ stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode }).toEqual({
-      stdout: "",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(result.stdout.toString()).toBe("");
+    expect(result.stderr.toString()).toBe("");
     expect(never.bodyUsed).toBe(false);
+    expect(result.exitCode).toBe(0);
   });
 
   test("a script that fails while the body is pending settles and lets the process exit", async () => {

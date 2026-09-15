@@ -22,6 +22,38 @@ extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
 extern "C" void Bun__setSamplingInterval(int intervalMicroseconds);
 
+#if !ENABLE(SAMPLING_PROFILER)
+
+// Builds without JSC's sampling profiler (CLoop targets such as riscv64) still
+// need these three symbols: the Rust side calls them unconditionally.
+
+namespace Bun {
+void setSamplingInterval(int) { }
+void startCPUProfiler(JSC::VM&) { }
+bool isCPUProfilerRunning() { return false; }
+void stopCPUProfiler(JSC::VM&, WTF::String* outJSON, WTF::String* outText)
+{
+    if (outJSON)
+        *outJSON = "{}"_s;
+    if (outText)
+        *outText = emptyString();
+}
+}
+
+void Bun__setSamplingInterval(int) { }
+
+extern "C" void Bun__startCPUProfiler(JSC::VM*) { }
+
+extern "C" void Bun__stopCPUProfiler(JSC::VM*, BunString* outJSON, BunString* outText)
+{
+    if (outJSON)
+        *outJSON = Bun::toStringRef("{}"_s);
+    if (outText)
+        *outText = Bun::toStringRef(emptyString());
+}
+
+#else
+
 void Bun__setSamplingInterval(int intervalMicroseconds)
 {
     Bun::setSamplingInterval(intervalMicroseconds);
@@ -945,3 +977,5 @@ extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString*
     if (outText)
         *outText = Bun::toStringRef(textResult);
 }
+
+#endif

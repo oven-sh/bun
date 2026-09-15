@@ -904,6 +904,7 @@ impl Architecture {
     pub(crate) const S390X: u16 = 1 << 9;
     pub(crate) const X32: u16 = 1 << 10;
     pub(crate) const X64: u16 = 1 << 11;
+    pub(crate) const RISCV64: u16 = 1 << 12;
 
     pub const ALL_VALUE: u16 = Self::ARM
         | Self::ARM64
@@ -915,12 +916,15 @@ impl Architecture {
         | Self::S390
         | Self::S390X
         | Self::X32
-        | Self::X64;
+        | Self::X64
+        | Self::RISCV64;
 
     #[cfg(target_arch = "aarch64")]
     pub const CURRENT: Self = Self(Self::ARM64);
     #[cfg(target_arch = "x86_64")]
     pub const CURRENT: Self = Self(Self::X64);
+    #[cfg(target_arch = "riscv64")]
+    pub const CURRENT: Self = Self(Self::RISCV64);
 
     #[inline]
     pub const fn none() -> Self {
@@ -948,6 +952,7 @@ negatable_names! { Architecture: u16, ARCHITECTURE_NAMES => [
     b"arm" => ARM, b"ppc" => PPC, b"x32" => X32, b"x64" => X64,
     b"ia32" => IA32, b"mips" => MIPS, b"s390" => S390,
     b"arm64" => ARM64, b"ppc64" => PPC64, b"s390x" => S390X, b"mipsel" => MIPSEL,
+    b"riscv64" => RISCV64,
 ] }
 
 // ─── Repository (data) ────────────────────────────────────────────────────

@@ -1681,6 +1681,10 @@ pub fn teb() -> *mut TEB {
         core::arch::asm!("mov {}, x18", out(reg) p, options(nostack, pure, readonly));
         p
     }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        core::ptr::null_mut()
+    }
 }
 
 /// Reads the PEB pointer — `gs:[0x60]` (x64) / `TEB+0x60` (ARM64).
@@ -1708,6 +1712,10 @@ pub fn peb() -> *const PEB {
             .add(0x60)
             .cast::<core::ffi::c_void>()
             .cast::<*const PEB>()
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        core::ptr::null()
     }
 }
 

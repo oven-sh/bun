@@ -555,10 +555,21 @@ impl Stdio {
                 return Ok(());
             }
 
-            if i == 1 || i == 2 {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "ArrayBufferView cannot be used for stdout/stderr yet"
-                )));
+            match i {
+                0 => {}
+                1 | 2 => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "ArrayBufferView cannot be used for stdout/stderr yet"
+                    )));
+                }
+                // Like Blob in `extract_blob`: only stdin has a writer for the
+                // bytes. `as_spawn_option` would map this to a bare pipe that
+                // nothing writes to, so a child reading the fd blocks forever.
+                _ => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "ArrayBufferView cannot be used for stdio[{i}] yet"
+                    )));
+                }
             }
 
             *out_stdio = Stdio::Blob(webcore::blob::Any::from_owned_slice(

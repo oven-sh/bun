@@ -421,17 +421,11 @@ function setDestTimestamps(src, dest) {
   return utimesSync(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
+// `errorOnExist` is per-file here: an existing destination directory is merged
+// into, and only a colliding entry raises ERR_FS_CP_EEXIST (see mayCopyFile).
+// node's async cp refuses the directory itself; its cpSync does not.
 function onDir(srcStat, destStat, src, dest, opts) {
   if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts);
-  if (opts.errorOnExist && !opts.force) {
-    throw fsCpEExistError({
-      message: `${dest} already exists`,
-      path: dest,
-      syscall: "cp",
-      errno: EEXIST,
-      code: "EEXIST",
-    });
-  }
   return copyDir(src, dest, opts);
 }
 

@@ -5426,6 +5426,12 @@ declare module "bun" {
      * On macOS, memory that system frameworks allocate is not included. On Windows x64, samples
      * have native frames only.
      *
+     * What the profiler itself keeps is bounded, about 16 MiB at the most (65,536 distinct
+     * stacks with a million frames between them). Past that, samples of stacks not seen before
+     * are counted together in one sample with the single frame `(other stacks)`, and a frame
+     * that cannot be recorded is `(truncated)`: the totals stay right. The profile's comments
+     * say how full it is.
+     *
      * The same profile can be written when the process exits, without a change to the code:
      * `bun --pprof-heap[=<path>] [--pprof-heap-interval=<bytes>]`.
      *

@@ -29,6 +29,46 @@ const MAX_STACK_WORDS: usize = MAX_CHAIN + MAX_JS_FRAMES;
 /// A stack word is a native return address or `JS_TAG | index into Session::js_locations`.
 pub(crate) const JS_TAG: usize = 1 << (usize::BITS - 1);
 
+/// What a session keeps is bounded by construction: 14.9 MiB when every limit is reached (3.5 MiB
+/// of buckets and 8 MiB of their stacks, 1 MiB of JavaScript locations, 1.5 MiB of strings, and
+/// 0.9 MiB for the three hash indexes, which are at most half full). A table that grows exists
+/// twice for a moment, and `profile()` copies what there is to encode it. The stacks of an
+/// application are 25 to 35 words deep, so the words are what runs out first there, at some
+/// 35,000 stacks. Past a limit nothing is dropped from the totals: a sample whose stack has no
+/// room goes to one bucket, [`OTHER_STACKS`], and a frame or a string that has no room is
+/// [`TRUNCATED`]. The profile's comments say how much that was.
+#[derive(Clone, Copy)]
+pub(crate) struct Limits {
+    /// Distinct (stack, thread) pairs. `BUN_PPROF_HEAP_MAX_STACKS`, `..._MAX_JS_LOCATIONS` and
+    /// `..._MAX_STRINGS` in the environment lower the three counts, for tests.
+    pub(crate) buckets: usize,
+    /// Words of all their stacks together.
+    pub(crate) stack_words: usize,
+    pub(crate) js_locations: usize,
+    pub(crate) strings: usize,
+    pub(crate) string_bytes: usize,
+}
+
+impl Limits {
+    const DEFAULT: Self = Self {
+        buckets: 64 * 1024,
+        stack_words: 1024 * 1024,
+        js_locations: 16 * 1024,
+        strings: 32 * 1024,
+        string_bytes: 1024 * 1024,
+    };
+}
+
+/// The one frame of the bucket for samples whose own stack has no room.
+const OTHER_STACKS: &[u8] = b"(other stacks)";
+/// The name of a frame, and any other string, that has no room.
+const TRUNCATED: &[u8] = b"(truncated)";
+/// Made when a session starts, so that reaching a limit allocates nothing.
+const OTHER_STACKS_BUCKET: u32 = 0;
+const OTHER_STACKS_LOCATION: usize = 0;
+const TRUNCATED_LOCATION: usize = 1;
+const TRUNCATED_STRING: u32 = 2;
+
 static META_HEAP: AtomicPtr<mimalloc::Heap> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Allocator on a process-lifetime mimalloc heap with sampling off (`mi_heap_profile_disable`).
@@ -85,17 +125,30 @@ unsafe impl Allocator for Meta {
 
 type MetaVec<T> = Vec<T, Meta>;
 
+/// Room for `additional` more without the capacity ever passing `limit`: doubling, up to it.
+fn try_reserve_within<T>(vec: &mut MetaVec<T>, additional: usize, limit: usize) -> bool {
+    let needed = vec.len() + additional;
+    if needed > limit {
+        return false;
+    }
+    if needed <= vec.capacity() {
+        return true;
+    }
+    let target = (vec.capacity() * 2).max(needed).max(64).min(limit);
+    vec.try_reserve_exact(target - vec.len()).is_ok()
+}
+
 /// `push` that reports allocation failure: a hook must not panic inside `malloc`.
-fn try_push<T>(vec: &mut MetaVec<T>, value: T) -> bool {
-    if vec.len() == vec.capacity() && vec.try_reserve(1).is_err() {
+fn try_push<T>(vec: &mut MetaVec<T>, value: T, limit: usize) -> bool {
+    if !try_reserve_within(vec, 1, limit) {
         return false;
     }
     vec.push(value);
     true
 }
 
-fn try_extend<T: Copy>(vec: &mut MetaVec<T>, values: &[T]) -> bool {
-    if vec.try_reserve(values.len()).is_err() {
+fn try_extend<T: Copy>(vec: &mut MetaVec<T>, values: &[T], limit: usize) -> bool {
+    if !try_reserve_within(vec, values.len(), limit) {
         return false;
     }
     vec.extend_from_slice(values);
@@ -118,14 +171,20 @@ impl Index {
         }
     }
 
-    /// `Ok(index)` of the match, `Err(slot)` to insert at, `Err(usize::MAX)` when out of memory.
+    /// `Ok(index)` of the match, `Err(slot)` to insert at, `Err(usize::MAX)` when there is no
+    /// room for one more: out of memory, or `may_insert` is false (what the index is of is full;
+    /// the table is at most half full then, and is not grown for an entry that cannot be added).
     fn find(
         &mut self,
         hash: u64,
+        may_insert: bool,
         hash_of: impl Fn(u32) -> u64,
         is_match: impl Fn(u32) -> bool,
     ) -> Result<u32, usize> {
-        if (self.len + 1) * 2 > self.slots.len() && !self.grow(hash_of) {
+        if self.slots.is_empty() && !may_insert {
+            return Err(usize::MAX);
+        }
+        if may_insert && (self.len + 1) * 2 > self.slots.len() && !self.grow(hash_of) {
             return Err(usize::MAX);
         }
         let mask = self.slots.len() - 1;
@@ -133,7 +192,7 @@ impl Index {
         loop {
             let index = self.slots[slot];
             if index == EMPTY_SLOT {
-                return Err(slot);
+                return Err(if may_insert { slot } else { usize::MAX });
             }
             if is_match(index) {
                 return Ok(index);
@@ -190,14 +249,21 @@ pub(crate) struct Strings {
     pub(crate) bytes: MetaVec<u8>,
     pub(crate) spans: MetaVec<Span>,
     index: Index,
+    max_spans: usize,
+    max_bytes: usize,
+    /// Strings that had no room: [`TRUNCATED_STRING`] stands for them.
+    pub(crate) truncated: u64,
 }
 
 impl Strings {
-    fn new() -> Self {
+    fn new(limits: &Limits) -> Self {
         Self {
             bytes: Vec::new_in(Meta),
             spans: Vec::new_in(Meta),
             index: Index::new(),
+            max_spans: limits.strings,
+            max_bytes: limits.string_bytes,
+            truncated: 0,
         }
     }
 
@@ -208,28 +274,33 @@ impl Strings {
         }
     }
 
-    /// 0 (the empty string) when there is no memory for it.
-    fn intern(&mut self, value: &[u8]) -> u32 {
+    /// The id of `value`; `None` when there is no memory or no room for it.
+    fn try_intern(&mut self, value: &[u8]) -> Option<u32> {
         if self.spans.is_empty() {
             let empty = Span {
                 start: 0,
                 len: 0,
                 hash: hash_bytes(b""),
             };
-            match self.index.find(empty.hash, |_| empty.hash, |_| false) {
-                Err(slot) if slot != usize::MAX && try_push(&mut self.spans, empty) => {
+            match self.index.find(empty.hash, true, |_| empty.hash, |_| false) {
+                Err(slot)
+                    if slot != usize::MAX && try_push(&mut self.spans, empty, self.max_spans) =>
+                {
                     self.index.insert(slot, 0);
                 }
-                _ => return 0,
+                _ => return None,
             }
         }
         if value.is_empty() {
-            return 0;
+            return Some(0);
         }
         let hash = hash_bytes(value);
+        let may_insert =
+            self.spans.len() < self.max_spans && self.bytes.len() + value.len() <= self.max_bytes;
         let (spans, bytes) = (&self.spans, &self.bytes);
         let found = self.index.find(
             hash,
+            may_insert,
             |i| spans[i as usize].hash,
             |i| {
                 let span = spans[i as usize];
@@ -237,24 +308,32 @@ impl Strings {
             },
         );
         match found {
-            Ok(id) => id,
-            Err(usize::MAX) => 0,
+            Ok(id) => Some(id),
+            Err(usize::MAX) => None,
             Err(slot) => {
-                let (Ok(start), Ok(len)) =
-                    (u32::try_from(self.bytes.len()), u32::try_from(value.len()))
-                else {
-                    return 0;
-                };
+                let start = u32::try_from(self.bytes.len()).ok()?;
+                let len = u32::try_from(value.len()).ok()?;
                 let id = self.spans.len() as u32;
-                if !try_extend(&mut self.bytes, value) {
-                    return 0;
+                if !try_extend(&mut self.bytes, value, self.max_bytes) {
+                    return None;
                 }
-                if !try_push(&mut self.spans, Span { start, len, hash }) {
+                if !try_push(&mut self.spans, Span { start, len, hash }, self.max_spans) {
                     self.bytes.truncate(start as usize);
-                    return 0;
+                    return None;
                 }
                 self.index.insert(slot, id);
-                id
+                Some(id)
+            }
+        }
+    }
+
+    /// [`TRUNCATED_STRING`] when there is no memory or no room for it.
+    fn intern(&mut self, value: &[u8]) -> u32 {
+        match self.try_intern(value) {
+            Some(id) => id,
+            None => {
+                self.truncated += 1;
+                TRUNCATED_STRING
             }
         }
     }
@@ -269,7 +348,7 @@ const _: () = assert!(
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct SampleData {
-    /// 0: not recorded (no session, no memory, re-entered).
+    /// 0: not recorded (no session, re-entered).
     generation: u32,
     bucket: u32,
     bytes: u64,
@@ -290,6 +369,13 @@ pub(crate) struct Bucket {
     pub(crate) free_objects: u64,
     pub(crate) free_bytes: u64,
 }
+
+// What the ceiling in `Limits` is worked out with.
+const _: () = assert!(
+    core::mem::size_of::<Bucket>() <= 64
+        && core::mem::size_of::<JsLocation>() <= 64
+        && core::mem::size_of::<Span>() <= 16
+);
 
 #[derive(Clone, Copy)]
 pub(crate) struct JsLocation {
@@ -336,43 +422,97 @@ pub(crate) struct Session {
     pub(crate) sample_interval: usize,
     pub(crate) started_at_ns: i64,
     rng: u64,
+    pub(crate) limits: Limits,
     pub(crate) stacks: MetaVec<usize>,
+    /// The first is [`OTHER_STACKS_BUCKET`].
     pub(crate) buckets: MetaVec<Bucket>,
     bucket_index: Index,
     pub(crate) strings: Strings,
+    /// The first two are [`OTHER_STACKS_LOCATION`] and [`TRUNCATED_LOCATION`].
     pub(crate) js_locations: MetaVec<JsLocation>,
     js_index: Index,
     pub(crate) samples: u64,
-    pub(crate) dropped: u64,
+    /// JavaScript frames that had no room: [`TRUNCATED_LOCATION`] stands for them.
+    pub(crate) truncated_frames: u64,
 }
 
 impl Session {
-    fn new(generation: u32, sample_interval: usize) -> Self {
+    /// `None` when there is no memory for the entries that the limits fall back on.
+    fn new(generation: u32, sample_interval: usize, limits: Limits) -> Option<Self> {
         let started_at_ns = now_ns();
-        Self {
+        let mut session = Self {
             generation,
             sample_interval,
             started_at_ns,
             rng: (started_at_ns as u64) | 1,
+            limits,
             stacks: Vec::new_in(Meta),
             buckets: Vec::new_in(Meta),
             bucket_index: Index::new(),
-            strings: Strings::new(),
+            strings: Strings::new(&limits),
             js_locations: Vec::new_in(Meta),
             js_index: Index::new(),
             samples: 0,
-            dropped: 0,
+            truncated_frames: 0,
+        };
+        let other = session.strings.try_intern(OTHER_STACKS)?;
+        if session.strings.try_intern(TRUNCATED)? != TRUNCATED_STRING {
+            return None;
         }
+        for name in [other, TRUNCATED_STRING] {
+            let nowhere = SourcePosition {
+                url: 0,
+                line: 0,
+                column: 0,
+                function_line: 0,
+            };
+            let location = JsLocation {
+                hash: 0,
+                name,
+                url: 0,
+                line: 0,
+                column: 0,
+                function_line: 0,
+                function_column: 0,
+                vm: 0,
+                source: Some(nowhere),
+            };
+            if !try_push(&mut session.js_locations, location, limits.js_locations + 2) {
+                return None;
+            }
+        }
+        let bucket = Bucket {
+            hash: 0,
+            stack_start: 0,
+            depth: 1,
+            thread: 0,
+            worker: 0,
+            alloc_objects: 0,
+            alloc_bytes: 0,
+            free_objects: 0,
+            free_bytes: 0,
+        };
+        (try_push(
+            &mut session.stacks,
+            JS_TAG | OTHER_STACKS_LOCATION,
+            limits.stack_words + 1,
+        ) && try_push(&mut session.buckets, bucket, limits.buckets + 1))
+        .then_some(session)
     }
 
-    fn bucket_for(&mut self, stack: &[usize], thread: u32, worker: u32) -> Option<u32> {
+    /// [`OTHER_STACKS_BUCKET`] when there is no room (or no memory) for a stack not seen before.
+    fn bucket_for(&mut self, stack: &[usize], thread: u32, worker: u32) -> u32 {
         let labels = u64::from(thread) << 32 | u64::from(worker);
         let hash = stack
             .iter()
             .fold(mix(HASH_SEED, labels), |hash, &word| mix(hash, word as u64));
+        // (the first bucket and its one word are the fallback's, not a stack's)
+        let may_insert = self.buckets.len() <= self.limits.buckets
+            && self.stacks.len() + stack.len() <= self.limits.stack_words + 1;
         let (buckets, stacks) = (&self.buckets, &self.stacks);
         let found = self.bucket_index.find(
             hash,
+            may_insert,
             |i| buckets[i as usize].hash,
             |i| {
                 let b = &buckets[i as usize];
@@ -384,13 +524,12 @@ impl Session {
             },
         );
         match found {
-            Ok(index) => Some(index),
-            Err(usize::MAX) => None,
+            Ok(index) => index,
+            Err(usize::MAX) => OTHER_STACKS_BUCKET,
             Err(slot) => {
-                let index = u32::try_from(self.buckets.len()).ok()?;
-                let stack_start = u32::try_from(self.stacks.len()).ok()?;
-                if !try_extend(&mut self.stacks, stack) {
-                    return None;
+                let (index, stack_start) = (self.buckets.len() as u32, self.stacks.len() as u32);
+                if !try_extend(&mut self.stacks, stack, self.limits.stack_words + 1) {
+                    return OTHER_STACKS_BUCKET;
                 }
                 let bucket = Bucket {
                     hash,
@@ -403,17 +542,18 @@ impl Session {
                     free_objects: 0,
                     free_bytes: 0,
                 };
-                if !try_push(&mut self.buckets, bucket) {
+                if !try_push(&mut self.buckets, bucket, self.limits.buckets + 1) {
                     self.stacks.truncate(stack_start as usize);
-                    return None;
+                    return OTHER_STACKS_BUCKET;
                 }
                 self.bucket_index.insert(slot, index);
-                Some(index)
+                index
             }
         }
     }
 
-    fn js_location_for(&mut self, frame: &RawJsFrame, vm: usize) -> Option<usize> {
+    /// [`TRUNCATED_LOCATION`] when there is no room (or no memory) for a position not seen before.
+    fn js_location_for(&mut self, frame: &RawJsFrame, vm: usize) -> usize {
         let mut scratch = [0u8; 4096];
         // SAFETY: the strings belong to cells that frames of this thread's stack keep alive.
         let name = self.strings.intern(unsafe { frame.name(&mut scratch) });
@@ -426,9 +566,11 @@ impl Session {
         ]
         .into_iter()
         .fold(HASH_SEED, mix);
+        let may_insert = self.js_locations.len() < self.limits.js_locations + 2;
         let locations = &self.js_locations;
         let found = self.js_index.find(
             hash,
+            may_insert,
             |i| locations[i as usize].hash,
             |i| {
                 let l = &locations[i as usize];
@@ -440,11 +582,11 @@ impl Session {
                     && l.vm == vm
             },
         );
-        match found {
-            Ok(index) => Some(index as usize),
+        let index = match found {
+            Ok(index) => return index as usize,
             Err(usize::MAX) => None,
             Err(slot) => {
-                let index = u32::try_from(self.js_locations.len()).ok()?;
+                let index = self.js_locations.len() as u32;
                 let location = JsLocation {
                     hash,
                     name,
@@ -456,13 +598,21 @@ impl Session {
                     vm,
                     source: None,
                 };
-                if !try_push(&mut self.js_locations, location) {
-                    return None;
-                }
-                self.js_index.insert(slot, index);
-                Some(index as usize)
+                try_push(
+                    &mut self.js_locations,
+                    location,
+                    self.limits.js_locations + 2,
+                )
+                .then(|| {
+                    self.js_index.insert(slot, index);
+                    index as usize
+                })
             }
-        }
+        };
+        index.unwrap_or_else(|| {
+            self.truncated_frames += 1;
+            TRUNCATED_LOCATION
+        })
     }
 
     /// Exponentially distributed, so a periodic pattern is not always sampled at the same point.
@@ -665,9 +815,12 @@ pub fn resolve_js_locations(
         return;
     };
     for item in &work {
-        let new_url = item.resolved[0]
-            .as_ref()
-            .map(|r| session.strings.intern(&r.url));
+        // A file name that has no room: the frame keeps its position in the code that ran.
+        let new_url = item.resolved[0].as_ref().and_then(|r| {
+            let url = session.strings.try_intern(&r.url);
+            session.strings.truncated += u64::from(url.is_none());
+            url
+        });
         let Some(l) = session.js_locations.get_mut(item.index as usize) else {
             continue;
         };
@@ -791,6 +944,27 @@ pub fn start(sample_interval: usize) -> Result<(), Error> {
         return Err(Error::OutOfMemory);
     }
     register_fork_handler();
+    // Internal: smaller limits, for the tests to reach.
+    let mut limits = Limits::DEFAULT;
+    let lowered = |limit: &mut usize, to: Option<u64>| {
+        if let Some(to) = to {
+            *limit = usize::try_from(to).unwrap_or(*limit).clamp(1, *limit);
+        }
+    };
+    use bun_core::env_var;
+    lowered(
+        &mut limits.buckets,
+        env_var::BUN_PPROF_HEAP_MAX_STACKS::get(),
+    );
+    lowered(
+        &mut limits.js_locations,
+        env_var::BUN_PPROF_HEAP_MAX_JS_LOCATIONS::get(),
+    );
+    lowered(
+        &mut limits.strings,
+        env_var::BUN_PPROF_HEAP_MAX_STRINGS::get(),
+    );
+    limits.strings = limits.strings.max(3); // "", `OTHER_STACKS`, `TRUNCATED`
     {
         let Some(mut guard) = SHARED.lock() else {
             return Err(Error::AlreadyRunning);
@@ -802,7 +976,10 @@ pub fn start(sample_interval: usize) -> Result<(), Error> {
             .fetch_add(1, Ordering::Relaxed)
             .wrapping_add(1)
             .max(1);
-        *guard.slot() = Some(Session::new(generation, sample_interval));
+        let Some(session) = Session::new(generation, sample_interval, limits) else {
+            return Err(Error::OutOfMemory);
+        };
+        *guard.slot() = Some(session);
     }
     // SAFETY: `PROFILER` is a static; mimalloc keeps the pointer for the life of the process.
     unsafe {
@@ -958,9 +1135,7 @@ fn record_allocation(
             && next_js < js_frames.len()
             && js_frames[next_js].chain_index as usize <= k
         {
-            if let Some(index) = session.js_location_for(&js_frames[next_js], js.vm) {
-                push(JS_TAG | index);
-            }
+            push(JS_TAG | session.js_location_for(&js_frames[next_js], js.vm));
             replaced |= js_frames[next_js].chain_index as usize == k;
             next_js += 1;
         }
@@ -969,27 +1144,22 @@ fn record_allocation(
         }
     }
     for frame in &js_frames[next_js..] {
-        if let Some(index) = session.js_location_for(frame, js.vm) {
-            push(JS_TAG | index);
-        }
+        push(JS_TAG | session.js_location_for(frame, js.vm));
     }
 
     let thread = session.strings.intern(thread_name);
     let objects = (bytes_since_last_sample / (requested_size.max(1) as u64)).max(1);
-    match session.bucket_for(&stack[..depth], thread, js.worker) {
-        Some(bucket) => {
-            let b = &mut session.buckets[bucket as usize];
-            b.alloc_bytes += bytes_since_last_sample;
-            b.alloc_objects += objects;
-            *recorded = SampleData {
-                generation: session.generation,
-                bucket,
-                bytes: bytes_since_last_sample,
-                objects,
-            };
-        }
-        None => session.dropped += 1,
-    }
+    // Always counted: in the bucket of all the stacks that had no room, if this one had none.
+    let bucket = session.bucket_for(&stack[..depth], thread, js.worker);
+    let b = &mut session.buckets[bucket as usize];
+    b.alloc_bytes += bytes_since_last_sample;
+    b.alloc_objects += objects;
+    *recorded = SampleData {
+        generation: session.generation,
+        bucket,
+        bytes: bytes_since_last_sample,
+        objects,
+    };
     Some(session.next_interval())
 }
 

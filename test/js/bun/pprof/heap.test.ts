@@ -14,11 +14,15 @@ const MiB = 1024 * 1024;
 
 // The fixtures import each other and the decoder: each run gets its own copy of this directory.
 async function runFixture(name: string, ...args: string[]) {
+  return runFixtureWith({}, name, ...args);
+}
+
+async function runFixtureWith(env: Record<string, string>, name: string, ...args: string[]) {
   using dir = tempDir("pprof-heap-fixture", import.meta.dir);
   await using proc = Bun.spawn({
     cmd: [bunExe(), name, ...args],
     cwd: String(dir),
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -367,5 +371,69 @@ describe.concurrent("Bun.pprof.heap", () => {
     // 200 sessions of about a fifth of a MiB of tables each: 40 MiB if they were kept. Not
     // under ASAN: the fixture's freed buffers sit in its quarantine, which moves RSS by more.
     if (!isASAN) expect(growthMiB).toBeLessThan(isDebug ? 32 : 16);
+  });
+
+  // What a session keeps is bounded (about 16 MiB with the limits that are built in). The three
+  // variables lower a limit so that 64 functions reach it; they are for this test.
+  describe("past a limit on what a session keeps", () => {
+    const run = async (env: Record<string, string>) => {
+      const { stdout, stderr, exitCode } = await runFixtureWith(env, "heap-fixture-limits.ts");
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    };
+
+    test.skipIf(!quantitative)("a stack that has no room is counted in one sample of its own", async () => {
+      const [limited, unlimited] = await Promise.all([run({ BUN_PPROF_HEAP_MAX_STACKS: "16" }), run({})]);
+      const { first, second, allocatedEachHalf } = limited;
+      // 32 functions allocate in the first half and 32 more in the second: 16 stacks have room, then none
+      expect([first.stacks, second.stacks]).toEqual([16, 16]);
+      expect(second.stackWords).toBe(first.stackWords);
+      expect(second.samples).toBeLessThanOrEqual(17);
+      expect(second.namedAllocators).toBeLessThanOrEqual(16);
+      // one sample with one frame and no labels, which the comments agree with
+      expect([first.otherSamples, second.otherSamples]).toEqual([1, 1]);
+      expect(second.otherLabels).toEqual([{}]);
+      expect(second.otherStacksBytes).toBe(second.otherAllocSpace);
+      expect(second.otherStacksObjects).toBeGreaterThan(0);
+      // all of the second half is in it
+      expect(second.otherAllocSpace - first.otherAllocSpace).toBeGreaterThan(allocatedEachHalf * 0.75);
+      // and nothing is missing from the totals (the runtime's own allocations are in them as well)
+      for (const total of [second.allocSpace, unlimited.second.allocSpace]) {
+        expect(total).toBeGreaterThan(2 * allocatedEachHalf * 0.8);
+        expect(total).toBeLessThan(2 * allocatedEachHalf * 2);
+      }
+
+      // no such sample where there is room
+      expect(unlimited.second.otherSamples).toBe(0);
+      expect(unlimited.second.otherStacksObjects).toBe(0);
+      expect(unlimited.second.truncatedFrames + unlimited.second.truncatedStrings).toBe(0);
+      expect(unlimited.second.framesNamedTruncated).toBe(0);
+      expect(unlimited.second.namedAllocators).toBeGreaterThan(48);
+    });
+
+    test.skipIf(!quantitative)('a JavaScript frame or a string that has no room is "(truncated)"', async () => {
+      const [locations, strings, unlimited] = await Promise.all([
+        run({ BUN_PPROF_HEAP_MAX_JS_LOCATIONS: "8" }),
+        run({ BUN_PPROF_HEAP_MAX_STRINGS: "12" }),
+        run({}),
+      ]);
+      expect(locations.second.jsLocations).toBe(8);
+      // (counted per frame as it is sampled; in the profile, stacks that differ in nothing else are one sample)
+      expect(locations.second.truncatedFrames).toBeGreaterThan(32);
+      expect(locations.second.framesNamedTruncated).toBeGreaterThan(0);
+      expect(locations.second.namedAllocators).toBeLessThanOrEqual(8);
+      expect(locations.second.otherSamples).toBe(0);
+
+      expect(strings.second.strings).toBe(12);
+      expect(strings.second.truncatedStrings).toBeGreaterThan(32);
+      expect(strings.second.framesNamedTruncated).toBeGreaterThan(0);
+      expect(strings.second.namedAllocators).toBeLessThanOrEqual(12);
+
+      // nothing is lost from the totals either way
+      for (const { second, allocatedEachHalf } of [locations, strings, unlimited]) {
+        expect(second.allocSpace).toBeGreaterThan(2 * allocatedEachHalf * 0.8);
+        expect(second.allocSpace).toBeLessThan(2 * allocatedEachHalf * 2);
+      }
+    });
   });
 });

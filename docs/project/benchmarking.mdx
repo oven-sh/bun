@@ -352,6 +352,7 @@ Notes:
 
 - The profile has four sample types: `alloc_objects`, `alloc_space`, `inuse_objects`, `inuse_space`. `inuse_*` is what was allocated since `start()` and not freed.
 - There is one profile per process. It includes Workers and Bun's own threads. Samples have a `thread` label, and a `worker` label on a Worker's JavaScript thread. Filter with `-tagfocus=thread=...`.
+- The profiler's own memory is bounded: about 16 MiB at the most (65,536 distinct stacks with a million frames between them). Past that, samples of new stacks are counted in one sample with the single frame `(other stacks)`, and a function that cannot be recorded is `(truncated)`, so totals stay right. `go tool pprof -comments` shows how full it is.
 - JavaScript objects are not sampled one by one. The garbage-collected heap shows up as the blocks it takes from the allocator. Use `--heap-prof` or `Bun.generateHeapSnapshot()` for objects.
 - Native frames are addresses in a release build of Bun. To see function names, download the `bun-profile` build of the same version and pass it first: `go tool pprof -http=: ./bun-profile heap.pb.gz`.
 - In an executable built with `bun build --compile`, and in code loaded from `--bytecode` output, a JavaScript frame has the line where its function starts, and a function that has not been named yet is `(anonymous)`.

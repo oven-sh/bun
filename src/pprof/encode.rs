@@ -5,7 +5,7 @@ use bun_collections::{ArrayHashMap, HashMap};
 
 use bun_sys::loaded_modules::{self, LoadedModule};
 
-use crate::heap::{Bucket, JS_TAG, JsLocation, Session, Span};
+use crate::heap::{Bucket, JS_TAG, JsLocation, Limits, Session, Span};
 use crate::proto::Writer;
 
 /// What `encode` reads of a session.
@@ -13,7 +13,9 @@ pub(crate) struct View<'a> {
     sample_interval: usize,
     started_at_ns: i64,
     samples: u64,
-    dropped: u64,
+    limits: Limits,
+    truncated_frames: u64,
+    truncated_strings: u64,
     buckets: &'a [Bucket],
     stacks: &'a [usize],
     js_locations: &'a [JsLocation],
@@ -27,7 +29,9 @@ impl<'a> View<'a> {
             sample_interval: session.sample_interval,
             started_at_ns: session.started_at_ns,
             samples: session.samples,
-            dropped: session.dropped,
+            limits: session.limits,
+            truncated_frames: session.truncated_frames,
+            truncated_strings: session.strings.truncated,
             buckets: &session.buckets,
             stacks: &session.stacks,
             js_locations: &session.js_locations,
@@ -50,7 +54,9 @@ pub(crate) struct Snapshot {
     sample_interval: usize,
     started_at_ns: i64,
     samples: u64,
-    dropped: u64,
+    limits: Limits,
+    truncated_frames: u64,
+    truncated_strings: u64,
     buckets: Vec<Bucket>,
     stacks: Vec<usize>,
     js_locations: Vec<JsLocation>,
@@ -71,7 +77,9 @@ impl Snapshot {
             sample_interval: 0,
             started_at_ns: 0,
             samples: 0,
-            dropped: 0,
+            limits: session.limits,
+            truncated_frames: 0,
+            truncated_strings: 0,
             buckets: Vec::new(),
             stacks: Vec::new(),
             js_locations: Vec::new(),
@@ -102,7 +110,8 @@ impl Snapshot {
         self.sample_interval = session.sample_interval;
         self.started_at_ns = session.started_at_ns;
         self.samples = session.samples;
-        self.dropped = session.dropped;
+        self.truncated_frames = session.truncated_frames;
+        self.truncated_strings = session.strings.truncated;
         self.buckets.extend_from_slice(&session.buckets);
         self.stacks.extend_from_slice(&session.stacks);
         self.js_locations.extend_from_slice(&session.js_locations);
@@ -116,7 +125,9 @@ impl Snapshot {
             sample_interval: self.sample_interval,
             started_at_ns: self.started_at_ns,
             samples: self.samples,
-            dropped: self.dropped,
+            limits: self.limits,
+            truncated_frames: self.truncated_frames,
+            truncated_strings: self.truncated_strings,
             buckets: &self.buckets,
             stacks: &self.stacks,
             js_locations: &self.js_locations,
@@ -288,6 +299,10 @@ pub(crate) fn encode(view: &View<'_>) -> Vec<u8> {
     let mut ids: Vec<u64> = Vec::new();
 
     for b in view.buckets {
+        // The bucket for stacks that had no room is always there, mostly with nothing in it.
+        if b.alloc_objects == 0 {
+            continue;
+        }
         ids.clear();
         let stack = &view.stacks[b.stack_start as usize..][..b.depth as usize];
         let js_location = |word: usize| {
@@ -446,13 +461,36 @@ pub(crate) fn encode(view: &View<'_>) -> Vec<u8> {
     let drop_frames = strings.id(b"_?mi_[a-z0-9_]+");
     let (space, bytes) = (strings.id(b"space"), strings.id(b"bytes"));
     let default_type = strings.id(b"inuse_space");
-    let comment = format!(
-        "bun {}: {} samples, {} not recorded",
-        bun_core::Global::package_json_version,
-        view.samples,
-        view.dropped
-    );
-    let comment = strings.id(comment.as_bytes());
+    // What the session holds of what it may hold (`Limits`), and what went past that.
+    let other = view.buckets.first().copied();
+    let comments = [
+        format!(
+            "bun {}: {} samples",
+            bun_core::Global::package_json_version,
+            view.samples
+        ),
+        format!(
+            "stacks={}/{} stack_words={}/{} js_locations={}/{} strings={}/{} string_bytes={}/{}",
+            view.buckets.len().saturating_sub(1),
+            view.limits.buckets,
+            view.stacks.len().saturating_sub(1),
+            view.limits.stack_words,
+            view.js_locations.len().saturating_sub(2),
+            view.limits.js_locations,
+            view.string_spans.len(),
+            view.limits.strings,
+            view.string_bytes.len(),
+            view.limits.string_bytes,
+        ),
+        format!(
+            "past the limits: other_stacks_objects={} other_stacks_bytes={} truncated_frames={} truncated_strings={}",
+            other.map_or(0, |b| b.alloc_objects),
+            other.map_or(0, |b| b.alloc_bytes),
+            view.truncated_frames,
+            view.truncated_strings,
+        ),
+    ];
+    let comments: Vec<u64> = comments.iter().map(|c| strings.id(c.as_bytes())).collect();
 
     for s in &strings.list {
         w.bytes(profile::STRING_TABLE, s);
@@ -468,7 +506,7 @@ pub(crate) fn encode(view: &View<'_>) -> Vec<u8> {
         m.uint64(field::value_type::UNIT, bytes);
     });
     w.int64(profile::PERIOD, view.sample_interval as i64);
-    w.packed(profile::COMMENT, &[comment]);
+    w.packed(profile::COMMENT, &comments);
     w.uint64(profile::DEFAULT_SAMPLE_TYPE, default_type);
     w.buf
 }

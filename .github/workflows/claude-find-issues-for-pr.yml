@@ -30,7 +30,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # The two Claude steps post advice. They do not judge the PR. On a pull
+      # request, a failure in them (no API credit, no secret on a Dependabot PR,
+      # an API error) must not mark the PR as failed. A manual dispatch still
+      # fails, so a maintainer can use it to verify a repair.
       - name: Find issues this PR may fix
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         uses: anthropics/claude-code-action/base-action@ef8bb1e43bf303cff727a1dd0b8837029fe982a2 # v1.0.215
         env:
           ANTHROPIC_MODEL: claude-opus-5
@@ -41,6 +46,7 @@ jobs:
 
       - name: Find duplicate PRs
         if: always()
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         uses: anthropics/claude-code-action/base-action@ef8bb1e43bf303cff727a1dd0b8837029fe982a2 # v1.0.215
         env:
           ANTHROPIC_MODEL: claude-opus-5

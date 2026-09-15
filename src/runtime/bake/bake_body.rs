@@ -907,6 +907,11 @@ impl Framework {
                     get_optional_string(fsr_opts, global, b"clientEntryPoint", refs)?;
                 let prefix =
                     get_optional_string(fsr_opts, global, b"prefix", refs)?.unwrap_or(b"/");
+                if let Err(reason) = framework_router::Type::validate_prefix(prefix) {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'fileSystemRouterTypes[{i}].prefix' {reason}"
+                    )));
+                }
                 let ignore_underscores = fsr_opts
                     .get_boolean_strict(global, "ignoreUnderscores")?
                     .unwrap_or(false);

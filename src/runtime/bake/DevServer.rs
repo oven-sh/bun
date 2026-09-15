@@ -938,6 +938,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
 
             types.push(framework_router::Type {
                 abs_root: strings::without_trailing_slash(entry.abs_path).into(),
+                prefix: fsr.prefix.as_ref().into(),
                 ignore_underscores: fsr.ignore_underscores,
                 ignore_dirs: fsr
                     .ignore_dirs

@@ -800,18 +800,19 @@ impl AnyRoute {
                     )));
                 }
 
+                if strings::index_of_char(path, b':').is_some() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Directory routes do not support :parameters; use a fixed prefix ending in `/*`"
+                    )));
+                }
+                if strings::contains(path, b"//") {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Directory route paths cannot contain empty segments"
+                    )));
+                }
+
                 let style_js = argument.get(global, b"style")?;
                 if style_js.is_none() {
-                    if strings::index_of_char(path, b':').is_some() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "Directory routes do not support :parameters; use a fixed prefix ending in `/*`"
-                        )));
-                    }
-                    if strings::contains(path, b"//") {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "Directory route paths cannot contain empty segments"
-                        )));
-                    }
                     // `{ dir }` without `style` serves the directory tree
                     // verbatim; `{ dir, style }` opts into framework routing.
                     let url_prefix: &[u8] = if path.len() == 2 {
@@ -848,6 +849,12 @@ impl AnyRoute {
                 } else {
                     Cow::Owned(path[..path.len() - 2].to_vec())
                 };
+                if let Err(reason) = FrameworkRouter::Type::validate_prefix(&prefix) {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Invalid route {}. The path before `/*` {reason}",
+                        bun_fmt::quote(path),
+                    )));
+                }
                 init_ctx
                     .framework_router_list
                     .push(bake::FileSystemRouterType {

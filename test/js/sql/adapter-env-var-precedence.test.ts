@@ -569,6 +569,31 @@ describe("SQL adapter environment variable precedence", () => {
     });
   });
 
+  describe("tls.serverName derived from an IPv6 literal host", () => {
+    // `URL.hostname` keeps the brackets of an IPv6 literal. The TLS name is the
+    // bare address: "[::1]" is not an IP address to the certificate check, so
+    // it would be matched against DNS names and never against IP SAN entries.
+    test.each([
+      ["postgres://u@[::1]:5432/db?sslmode=verify-full", "::1"],
+      ["mysql://u:p@[2001:db8::1]:3306/db?ssl-mode=VERIFY_IDENTITY", "2001:db8::1"],
+    ] as const)("%s verifies against %s", (url, serverName) => {
+      const options = new SQL(url);
+      expect(options.options.sslMode).toBe(4);
+      expect(options.options.tls).toEqual({ serverName });
+    });
+
+    test("a bracketed hostname option loses its brackets the same way", () => {
+      const options = new SQL({ adapter: "postgres", hostname: "[::1]", tls: { ca: "x" } });
+      expect(options.options.sslMode).toBe(4);
+      expect(options.options.tls).toEqual({ ca: "x", serverName: "::1" });
+    });
+
+    test("an explicit tls.serverName is left as given", () => {
+      const options = new SQL("postgres://u@[::1]:5432/db?sslmode=verify-full", { tls: { serverName: "db.internal" } });
+      expect(options.options.tls).toEqual({ serverName: "db.internal" });
+    });
+  });
+
   describe("Adapter-Protocol Validation", () => {
     test("should work with explicit adapter and URL without protocol", () => {
       const options = new SQL("user:pass@host:3306/db", { adapter: "mysql" });

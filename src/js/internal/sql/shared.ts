@@ -2121,7 +2121,9 @@ function parseOptions(
 
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
-      tls = { ...tls, serverName: hostname };
+      // `URL.hostname` keeps the brackets of an IPv6 literal. They are URL syntax, not part of the address.
+      const bracketed = hostname[0] === "[" && hostname[hostname.length - 1] === "]";
+      tls = { ...tls, serverName: bracketed ? hostname.slice(1, -1) : hostname };
     } else if (tls) {
       tls = true;
     }

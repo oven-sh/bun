@@ -486,6 +486,19 @@ pub mod api {
                 }
             }
 
+            /// The name to send as SNI: `server_name`, unless it is unset or an
+            /// IP literal (RFC 6066 section 3 permits only DNS host names).
+            pub(crate) fn sni(&self) -> Option<&core::ffi::CStr> {
+                let server_name = self.server_name();
+                if server_name.is_null() {
+                    return None;
+                }
+                // SAFETY: NUL-terminated C string owned by the boxed SSLConfig
+                // for `self`'s lifetime.
+                let name = unsafe { bun_core::ffi::cstr(server_name) };
+                (!bun_core::ip_address::is_ip_address(name.to_bytes())).then_some(name)
+            }
+
             /// `SSLConfig.fromJS(vm, global, value)` — VM is accepted but
             /// unused (the hook recovers it from `global`).
             pub(crate) fn from_js<V>(

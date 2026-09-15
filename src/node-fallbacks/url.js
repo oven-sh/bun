@@ -95,11 +95,15 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
     ftp: true,
     gopher: true,
     file: true,
+    ws: true,
+    wss: true,
     "http:": true,
     "https:": true,
     "ftp:": true,
     "gopher:": true,
     "file:": true,
+    "ws:": true,
+    "wss:": true,
   };
 
 // https://github.com/Cap32/tiny-querystring/blob/master/tiny-querystring.js

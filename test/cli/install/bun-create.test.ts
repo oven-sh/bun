@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { join } from "path";
@@ -16,11 +16,13 @@ beforeEach(async () => {
 });
 
 describe("should not crash", async () => {
+  // A missing template is a usage error and exits 1. Only --help exits 0.
   const args = [
     [bunExe(), "create"],
     [bunExe(), "create", ""],
     [bunExe(), "create", "--"],
     [bunExe(), "create", "--", ""],
+    [bunExe(), "create", "--x"],
     [bunExe(), "create", "--help"],
   ];
   for (let cmd of args) {
@@ -33,9 +35,45 @@ describe("should not crash", async () => {
         stderr: "inherit",
         env,
       });
-      expect(exitCode).toBe(cmd.length === 2 ? 1 : 0);
+      expect(exitCode).toBe(cmd.includes("--help") ? 0 : 1);
     });
   }
+});
+
+// cwd + "/" + positional must exceed the path buffer (4096 bytes on Linux,
+// 1024 on macOS). On Windows the buffer is larger than the longest argv
+// token the OS accepts, so these only prove the error message there.
+it("rejects a template name that does not fit the path buffer instead of crashing", async () => {
+  const template = Buffer.alloc(5000, "A").toString();
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "create", template, "dst"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).toContain(`error: unrecognised dependency format: create-${template}`);
+  expect(await exited).toBe(1);
+  expect(await exists(join(x_dir, "dst"))).toBe(false);
+});
+
+it.skipIf(isWindows)("rejects a destination that does not fit the path buffer instead of crashing", async () => {
+  const destination = Buffer.alloc(5000, "A").toString();
+  // elysia is one of the templates that bun create handles itself (not bunx),
+  // so the destination is joined before any network request.
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "create", "elysia", destination],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).toContain(`error: destination path too long: "${destination}"`);
+  expect(await exited).toBe(1);
 });
 
 it("should create selected template with @ prefix", async () => {

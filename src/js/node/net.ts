@@ -129,6 +129,7 @@ const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgra
 const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+const abortFileSink = $newRustFunction("runtime/webcore/FileSink.rs", "jsAbort", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -152,6 +153,7 @@ const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSyncWriteSink = Symbol("kSyncWriteSink");
+const kSyncWriteCallback = Symbol("kSyncWriteCallback");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -2203,6 +2205,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
   // other wrappers share them, matching SyncWriteStream's autoClose gate.
   const syncFd = this[kSyncWriteFd];
+  let canceledWrite;
   if (syncFd !== undefined) {
     this[kSyncWriteFd] = undefined;
     // Drop the instance overrides so a later connect() on this (reusable)
@@ -2212,9 +2215,12 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     const sink = this[kSyncWriteSink];
     if (sink !== undefined) {
       this[kSyncWriteSink] = undefined;
+      canceledWrite = this[kSyncWriteCallback];
+      this[kSyncWriteCallback] = undefined;
       try {
-        // A tail still in flight may drain, but must not hold the process open (node drops it on destroy).
-        if ($isPromise(sink.end())) sink.unref();
+        // libuv cancels a write request still queued when its handle closes: the tail is dropped.
+        if (canceledWrite !== undefined) abortFileSink(sink);
+        else sink.end();
       } catch (e) {
         err ||= e;
       }
@@ -2275,6 +2281,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     callback(err);
   } else {
     callback(err);
+    // Node's order: 'error', then the canceled write's callback, then 'close'.
+    if (canceledWrite !== undefined) process.nextTick(canceledWrite, new ErrnoException(uv().UV_ECANCELED, "write"));
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
@@ -2650,16 +2658,25 @@ function fdSinkWrite(self, sink, buf, callback) {
     callback(err);
     return;
   }
-  const { length } = buf;
-  if ($isPromise(result)) {
-    result.$then(() => {
-      self[kBytesWritten] = (self[kBytesWritten] || 0) + length;
-      callback();
-    }, callback);
-  } else {
-    self[kBytesWritten] = (self[kBytesWritten] || 0) + length;
+  // Node counts a write when it is dispatched to the handle, not when it completes.
+  self[kBytesWritten] = (self[kBytesWritten] || 0) + buf.length;
+  if (!$isPromise(result)) {
     callback();
+    return;
   }
+  self[kSyncWriteCallback] = callback;
+  result.$then(
+    () => settleSinkWrite(self),
+    err => settleSinkWrite(self, err),
+  );
+}
+
+function settleSinkWrite(self, err?) {
+  const callback = self[kSyncWriteCallback];
+  // destroy() already settled it with ECANCELED.
+  if (callback === undefined) return;
+  self[kSyncWriteCallback] = undefined;
+  callback(err);
 }
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {

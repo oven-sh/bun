@@ -271,6 +271,20 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
 }
 
+/// For `destroy()` on a `net.Socket` over an adopted fd: libuv drops a write still queued at close.
+pub(crate) fn js_abort(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if let Some(wrapper) = JSSink::from_js(frame.argument(0)) {
+        let this = wrapper.cast::<FileSink>();
+        // SAFETY: `from_js` returned the live wrapper's sink, and `JSSink<FileSink>` is
+        // `repr(transparent)` over the `FileSink` allocation that `to_js` handed to it.
+        unsafe {
+            (*this).writer.with_mut(|w| w.outgoing.reset());
+            FileSink::abort(this, sys::Errno::ECANCELED);
+        }
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 impl FileSink {
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
     ///
@@ -312,16 +326,26 @@ impl FileSink {
                 }
             }
 
+            FileSink::abort(this, sys::Errno::EPIPE);
+        }
+    }
+
+    /// Closes the writer without draining it and rejects a pending write with `errno`.
+    unsafe fn abort(this: *mut FileSink, errno: sys::Errno) {
+        // SAFETY: `this` is the canonical live `*mut FileSink`, as in `on_attached_process_exit`.
+        unsafe {
+            // `close()` and `run_pending` below re-enter and may drop refs; keep `this` valid to the end.
+            let _guard = RefPtr::init_ref(this);
+
+            (*this).done.set(true);
+
             // SAFETY(JsCell): `IOWriter::close` does not call into JS directly; the
             // `on_close` re-entry it triggers goes via the stored `*mut FileSink`
             // backref, not through this `JsCell` borrow.
             (*this).writer.with_mut(|w| w.close());
 
             (*this).pending.with_mut(|p| {
-                p.result = streams::Writable::Err(sys::Error::from_code(
-                    sys::Errno::EPIPE,
-                    sys::Tag::write,
-                ));
+                p.result = streams::Writable::Err(sys::Error::from_code(errno, sys::Tag::write));
             });
             FileSink::run_pending(this);
 

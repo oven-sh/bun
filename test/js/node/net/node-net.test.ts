@@ -10,6 +10,7 @@ import {
   isASAN,
   isDebug,
   isWindows,
+  nodeExe,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -1561,6 +1562,124 @@ describe("Socket fd adoption", () => {
     } finally {
       fs.closeSync(rfd);
     }
+  });
+
+  // destroy() while a write is still queued behind a full pipe. libuv cancels
+  // the queued request when the handle closes: its callback gets ECANCELED
+  // after 'error' and before 'close', the queued bytes are dropped and the fd
+  // is released. The same script runs under Node when it is installed, and
+  // both runtimes must print the same report.
+  describe.skipIf(isWindows)("destroy() cancels a write that is still queued", () => {
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+      const rfd = fs.openSync(process.env.FIFO, O_RDONLY | O_NONBLOCK);
+      const wfd = fs.openSync(process.env.FIFO, O_WRONLY | O_NONBLOCK);
+      // Larger than a pipe buffer, and nothing reads yet: the tail stays queued.
+      const payload = Buffer.alloc(512 * 1024, "x");
+      const events = [];
+      let writeError;
+      const socket = new net.Socket({ fd: wfd, readable: false, writable: true });
+      socket.on("error", err => events.push("error:" + err.message));
+      const returned = socket.write(payload, err => {
+        writeError = err;
+        events.push("cb1:" + (err ? err.message : "ok"));
+      });
+      events.push("write()=" + returned);
+      socket.write("queued behind it", err => events.push("cb2:" + (err ? err.message : "ok")));
+      socket.destroy(process.env.DESTROY_ERROR ? new Error(process.env.DESTROY_ERROR) : undefined);
+      events.push("destroy() returned");
+      socket.on("close", hadError => {
+        events.push("close:" + hadError);
+        // EOF proves that the socket released every write end. The byte count
+        // proves that the queued tail never reached the pipe.
+        const chunk = Buffer.alloc(64 * 1024);
+        let delivered = 0;
+        (function pump() {
+          try {
+            for (;;) {
+              const n = fs.readSync(rfd, chunk);
+              if (n === 0) {
+                console.log(JSON.stringify({
+                  events,
+                  writeError: { message: writeError.message, code: writeError.code, syscall: writeError.syscall },
+                  errored: socket.errored.message,
+                  bytesWritten: socket.bytesWritten,
+                  tailDropped: delivered > 0 && delivered < payload.length,
+                }));
+                return;
+              }
+              delivered += n;
+            }
+          } catch (e) {
+            if (e.code !== "EAGAIN") throw e;
+          }
+          setImmediate(pump);
+        })();
+      });
+    `;
+
+    const node = nodeExe();
+    const runtimes = [["bun", bunExe()], ...(node ? [["node", node]] : [])];
+    const canceled = { message: "write ECANCELED", code: "ECANCELED", syscall: "write" };
+
+    describe.each(runtimes)("%s", (_, exe) => {
+      async function run(destroyError: string) {
+        using dir = tempDir("net-fd-cancel", {});
+        const fifo = join(String(dir), "fifo");
+        execFileSync("mkfifo", [fifo]);
+        await using proc = Bun.spawn({
+          cmd: [exe, "-e", fixture],
+          env: { ...bunEnv, FIFO: fifo, DESTROY_ERROR: destroyError },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { report: stdout.trim() ? JSON.parse(stdout) : stdout, stderr, exitCode };
+      }
+
+      it.concurrent("destroy()", async () => {
+        expect(await run("")).toEqual({
+          report: {
+            events: [
+              "write()=false",
+              "destroy() returned",
+              "cb1:write ECANCELED",
+              "cb2:write ECANCELED",
+              "close:false",
+            ],
+            writeError: canceled,
+            errored: "write ECANCELED",
+            bytesWritten: 512 * 1024,
+            tailDropped: true,
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      it.concurrent("destroy(err)", async () => {
+        expect(await run("boom")).toEqual({
+          report: {
+            events: [
+              "write()=false",
+              "destroy() returned",
+              "error:boom",
+              "cb1:write ECANCELED",
+              "cb2:boom",
+              "close:true",
+            ],
+            writeError: canceled,
+            errored: "boom",
+            bytesWritten: 512 * 1024,
+            tailDropped: true,
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
   });
 
   it("throws ERR_INVALID_FD_TYPE for a writable fd that cannot be fstat'ed", () => {

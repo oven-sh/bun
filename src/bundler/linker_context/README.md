@@ -752,6 +752,7 @@ The renamed symbols are then used during final code generation to produce output
 
 - Analyzes imports between chunks
 - Sets up cross-chunk binding code
+- Gives every chunk an `import` of the chunks its files get to directly, without passing through a file with side effects of a third chunk (`directly_reached_chunks`), when they load wherever it does, so the chunk graph follows the file graph and each chunk brings in its own dependencies
 - Handles dynamic imports across chunks
 - Manages chunk metadata for dependency resolution
 
@@ -763,7 +764,7 @@ The renamed symbols are then used during final code generation to produce output
 
 - Orders files by distance from entry point
 - Handles part dependencies within chunks
-- Records the other chunks in the order the walk reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
+- Records the other chunks in the order the walk reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements. A chunk whose files with side effects are all being evaluated at once is recorded then, ahead of what they import, so the module loader is inside that chunk while those run (a split `require()` called in between sees it as being evaluated, as in the source)
 - Ensures proper evaluation order
 
 #### `findImportedCSSFilesInJSOrder.rs`

@@ -154,6 +154,12 @@ mod drain_result {
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
+    safe fn JSC__JSGlobalObject__hasPendingMicrotasks(global: &JSGlobalObject) -> bool;
+}
+
+/// No-op yield task: the tick that runs it ends in a checkpoint, which runs the deferred queue.
+fn deferred_task_checkpoint(_queue: *mut DeferredTaskQueue::DeferredTaskQueue) -> JsResult<()> {
+    Ok(())
 }
 
 impl JSGlobalObject {
@@ -430,6 +436,25 @@ impl EventLoop {
         vm.is_inside_deferred_task_queue.set(true);
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
+
+        // A deferred flush into a JS transport runs user code: drain what it queued.
+        if JSC__JSGlobalObject__hasPendingMicrotasks(global_object) {
+            match JSC__JSGlobalObject__drainMicrotasks(global_object) {
+                drain_result::SUCCESS => {}
+                drain_result::STOPPED => return Err(Stopped),
+                drain_result::PENDING_EXCEPTION => return Ok(()),
+                _ => unreachable!(),
+            }
+        }
+
+        // A deferred task posted too late for the pass: keep the loop alive for one more.
+        if self.deferred_tasks.take_unrun() {
+            let task = ManagedTask::ManagedTask::new(
+                core::ptr::from_mut(&mut self.deferred_tasks),
+                deferred_task_checkpoint,
+            );
+            self.enqueue_task_after_yield(task);
+        }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT

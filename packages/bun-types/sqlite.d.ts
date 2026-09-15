@@ -347,6 +347,9 @@ declare module "bun:sqlite" {
      * A different path is rejected after SQLite loads.
      *
      * @param path The path to the SQLite library
+     * @returns `true` if the library was loaded, `false` on platforms where
+     * SQLite is statically linked into Bun (Linux, Windows) and no custom
+     * library can be loaded.
      */
     static setCustomSQLite(path: string): boolean;
 

@@ -752,6 +752,39 @@ describe.concurrent("async compression of a resizable ArrayBuffer that shrinks a
   });
 });
 
+// The async functions borrow a fixed-length buffer until the promise settles (documented in
+// docs/runtime/utils.mdx). The documented way to reuse the buffer right away is to pass a copy.
+describe.concurrent("async compression of a copy of a buffer the caller reuses", () => {
+  it("zstdCompress of Buffer.from(data) is not affected by a later write to data", async () => {
+    const data = Buffer.alloc(64 * 1024, 0x61);
+    const promise = zstdCompress(Buffer.from(data));
+    data.fill(0x62);
+    const out = zstdDecompressSync(await promise);
+    expect(out.length).toBe(data.length);
+    expect(out.every(b => b === 0x61)).toBe(true);
+  });
+
+  it("zstdCompress of arrayBuffer.slice(0) is not affected by a later write to arrayBuffer", async () => {
+    const ab = new ArrayBuffer(64 * 1024);
+    new Uint8Array(ab).fill(0x61);
+    const promise = zstdCompress(ab.slice(0));
+    new Uint8Array(ab).fill(0x62);
+    const out = zstdDecompressSync(await promise);
+    expect(out.length).toBe(ab.byteLength);
+    expect(out.every(b => b === 0x61)).toBe(true);
+  });
+
+  it("zstdDecompress of new Uint8Array(data) is not affected by a later write to data", async () => {
+    const original = Buffer.alloc(64 * 1024, 0x61);
+    const compressed = zstdCompressSync(original);
+    const promise = zstdDecompress(new Uint8Array(compressed));
+    compressed.fill(0);
+    const out = await promise;
+    expect(out.length).toBe(original.length);
+    expect(out.every(b => b === 0x61)).toBe(true);
+  });
+});
+
 describe.concurrent("Zstandard HTTP compression", () => {
   // Sample data for HTTP tests
   const testData = {

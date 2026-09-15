@@ -213,8 +213,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSValue resolveFilenameOptions = callFrame->argument(6);
 
     // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
-    if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule); requirer && requirer->moduleGraph()) [[unlikely]] {
-        Bun::moduleLoaderOf(lexicalGlobalObject, scope, requirer->moduleGraph());
+    if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
+        Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
         RETURN_IF_EXCEPTION(scope, {});
     }
 

@@ -3679,7 +3679,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (auto* graph = Bun::moduleGraphOfLoader(globalObject, loader); graph && graph->disposed())
             return JSC::JSPromise::create(vm, globalObject->promiseStructure());
     }
-    if (Bun::throwIfModuleGraphDisposed(globalObject, scope, loader))
+    Bun::throwIfModuleGraphDisposed(globalObject, scope, Bun::moduleGraphOfLoader(globalObject, loader));
+    if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 
     JSC::Identifier resolvedIdentifier;
@@ -4338,8 +4339,8 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     // Nothing evaluates in a disposed Bun.ModuleGraph (a late top-level-await
     // completion, a deferred namespace touched later): its modules throw instead.
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
-    if (Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader)) [[unlikely]]
-        return {};
+    Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
+    RETURN_IF_EXCEPTION(scope, {});
     noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
     RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 }
@@ -4357,8 +4358,8 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // As in GlobalObject::moduleLoaderEvaluate: nothing evaluates in a disposed Bun.ModuleGraph.
-    if (Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader))
-        return {};
+    Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
+    RETURN_IF_EXCEPTION(scope, {});
     noteModuleEvaluation(globalObject, moduleLoader);
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);

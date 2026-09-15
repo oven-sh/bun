@@ -131,13 +131,13 @@ JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
 // ── What a graph's require() and import() use ────────────────────────────────────────
 // `graph` null: the global object's.
 JSC::JSMap* requireMapOf(Zig::GlobalObject*, JSModuleGraph*);
-// Throws ERR_INVALID_STATE (and returns null) once the graph is disposed.
+// Throws ERR_INVALID_STATE once the graph (null: none) is disposed.
+void throwIfModuleGraphDisposed(JSC::JSGlobalObject*, JSC::ThrowScope&, JSModuleGraph*);
+// As above (and returns null).
 JSC::JSModuleLoader* moduleLoaderOf(JSC::JSGlobalObject*, JSC::ThrowScope&, JSModuleGraph*);
-JSC::JSObject* createModuleGraphDisposedError(JSC::JSGlobalObject*);
 // dispose() of the graph `context` was made for (its context is stopped with it); just the stop
 // if the graph has been collected.
 void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
-bool throwIfModuleGraphDisposed(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSModuleLoader*);
 
 // ── The graph's context ──────────────────────────────────────────────────────────────
 // What runs while this is alive runs inside a graph's context: an async context frame naming

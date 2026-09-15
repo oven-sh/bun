@@ -146,29 +146,17 @@ JSMap* requireMapOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
     return graph ? graph->requireMap() : globalObject->requireMap();
 }
 
-JSObject* createModuleGraphDisposedError(JSGlobalObject* globalObject)
+void throwIfModuleGraphDisposed(JSGlobalObject* globalObject, ThrowScope& scope, JSModuleGraph* graph)
 {
-    return createError(globalObject, ErrorCode::ERR_INVALID_STATE, "ModuleGraph has been disposed"_s);
+    if (graph && graph->disposed())
+        throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_INVALID_STATE, "ModuleGraph has been disposed"_s));
 }
 
 JSModuleLoader* moduleLoaderOf(JSGlobalObject* globalObject, ThrowScope& scope, JSModuleGraph* graph)
 {
-    if (!graph)
-        return globalObject->moduleLoader();
-    if (graph->disposed()) {
-        throwException(globalObject, scope, createModuleGraphDisposedError(globalObject));
-        return nullptr;
-    }
-    return graph->loader();
-}
-
-bool throwIfModuleGraphDisposed(JSGlobalObject* globalObject, ThrowScope& scope, JSModuleLoader* loader)
-{
-    JSModuleGraph* graph = moduleGraphOfLoader(globalObject, loader);
-    if (!graph || !graph->disposed())
-        return false;
-    throwException(globalObject, scope, createModuleGraphDisposedError(globalObject));
-    return true;
+    throwIfModuleGraphDisposed(globalObject, scope, graph);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return graph ? graph->loader() : globalObject->moduleLoader();
 }
 
 // Which graph's code a function, an error or a rejection belongs to. std::optional: nullopt =
@@ -358,8 +346,7 @@ static JSModuleGraph* moduleGraphOfFrame(VM& vm, JSValue asyncContext)
 // observers): whether `frame`, the async context it was made in, is of a disposed graph.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto* graph = moduleGraphOfFrame(globalObject->vm(), callFrame->argument(0));
-    return JSValue::encode(jsBoolean(graph && graph->context().isStopped()));
+    return JSValue::encode(jsBoolean(shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), callFrame->argument(0))));
 }
 
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
@@ -719,10 +706,8 @@ JSC_DEFINE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_run, (JSGlobalObject * l
     V::validateFunction(scope, globalObject, function, "fn"_s);
     RETURN_IF_EXCEPTION(scope, {});
     // Inside a disposed graph whatever `fn` starts would silently never complete: say so, as import() does.
-    if (graph->disposed()) {
-        throwException(globalObject, scope, createModuleGraphDisposedError(globalObject));
-        return {};
-    }
+    throwIfModuleGraphDisposed(globalObject, scope, graph);
+    RETURN_IF_EXCEPTION(scope, {});
     ModuleGraphContextScope context(globalObject, graph);
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, function, getCallData(function), jsUndefined(), ArgList(callFrame, 1))));
 }

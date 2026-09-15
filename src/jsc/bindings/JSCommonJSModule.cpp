@@ -950,10 +950,6 @@ public:
             clientData(vm)->builtinNames().requireNativeModulePrivateName(),
             0,
             jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
-        // module.@requireMap, for CommonJS.ts: the require cache the module reads and writes.
-        // The global one here; a Bun.ModuleGraph's module has its graph's as an own property.
-        this->putDirect(vm, clientData(vm)->builtinNames().requireMapPrivateName(), uncheckedDowncast<Zig::GlobalObject>(globalObject)->requireMap(),
-            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
     }
 };
 
@@ -1688,10 +1684,8 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 JSValue keyValue = identifierToJSValue(vm, moduleKey);
                 // Nothing evaluates in a disposed Bun.ModuleGraph: a module that had not run yet never does.
                 // (The graph's loader, which is evaluating this, keeps the graph alive.)
-                if (graph && graph->disposed()) [[unlikely]] {
-                    throwException(globalObject, scope, Bun::createModuleGraphDisposedError(globalObject));
-                    return;
-                }
+                Bun::throwIfModuleGraphDisposed(globalObject, scope, graph.get());
+                RETURN_IF_EXCEPTION(scope, );
                 // The loader reaches this from its pipeline, which carries no async context:
                 // the module's code runs in its graph's (what it opens is the graph's).
                 ModuleGraphContextScope graphContext(globalObject, graph.get());

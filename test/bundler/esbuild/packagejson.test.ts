@@ -2436,6 +2436,58 @@ describe("bundler", () => {
       stdout: "disabled",
     },
   });
+  // A browser-map value that is a bare package name ("other-pkg", not
+  // "./other-pkg") is handled by the post-resolution browser check via
+  // `resolve_without_remapping`, not by path-joining it against the
+  // browser scope in `load_from_main_field`.
+  itBundled("packagejson/BrowserMapMainFieldToPackage", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./lib/index.js",
+          "browser": {
+            "./lib/index.js": "target-pkg"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/index.js": `module.exports = 'lib'`,
+      "/Users/user/project/node_modules/target-pkg/package.json": `{"main":"index.js"}`,
+      "/Users/user/project/node_modules/target-pkg/index.js": `module.exports = 'target-pkg'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "target-pkg",
+    },
+  });
+  itBundled("packagejson/BrowserMapSubpathDirIndexToPackage", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg/sub'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./sub/index.js": "target-pkg"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/sub/index.js": `module.exports = 'sub-index'`,
+      "/Users/user/project/node_modules/target-pkg/package.json": `{"main":"index.js"}`,
+      "/Users/user/project/node_modules/target-pkg/index.js": `module.exports = 'target-pkg'`,
+    },
+    target: "browser",
+    run: {
+      // esbuild resolves to target-pkg here via a pre-resolution check in
+      // `tryToResolvePackage` that Bun does not yet have; this test pins
+      // that the bare-specifier remap does not hard-error.
+      stdout: "sub-index",
+    },
+  });
   // When "main" points at a directory, the implicit "<dir>/index" is checked
   // against the browser map before extension resolution.
   itBundled("packagejson/BrowserMapMainFieldDirIndexNoExt", {

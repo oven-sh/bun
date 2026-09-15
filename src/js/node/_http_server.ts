@@ -1021,8 +1021,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
         }
 
-        socket.cork();
-
         if (isPipelined) {
           // Completion of a queued response is tracked through the pipeline
           // (advanceResponsePipeline) and its native handle, not this dispatch.
@@ -3233,6 +3231,13 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
   this._header = " ";
+  // Like Node's OutgoingMessage.prototype.end: fully uncork the connection.
+  const resSocket = this[fakeSocketSymbol];
+  const resSocketWritableState = resSocket?._writableState;
+  if (resSocketWritableState && resSocketWritableState.corked) {
+    resSocketWritableState.corked = 1;
+    resSocket.uncork();
+  }
   const req = this.req;
   if (!req._consuming && !req?._readableState?.resumeScheduled) {
     req._dump();

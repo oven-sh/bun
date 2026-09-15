@@ -462,14 +462,7 @@ impl PostgresSQLConnection {
                 .expect("secure SSL_CTX must be set before setupTLS")
                 .as_ptr()
         };
-        let server_name = self.tls_config.server_name();
-        let sni = if server_name.is_null() {
-            None
-        } else {
-            // SAFETY: `server_name` is a NUL-terminated C string owned by
-            // `tls_config` for the connection lifetime.
-            Some(unsafe { bun_core::ffi::cstr(server_name) })
-        };
+        let sni = self.tls_config.sni();
         // The ext slot is an 8-byte null-niche
         // optional pointer, `Option<NonNull<T>>`; using
         // `Option<*mut T>` here would request 16 bytes (separate discriminant)
@@ -878,25 +871,21 @@ impl PostgresSQLConnection {
                         }
 
                         if self.ssl_mode == SSLMode::VerifyFull {
-                            let servername = self.tls_config.server_name();
-                            let ok = if servername.is_null() {
-                                false
-                            } else {
+                            let ok = if let Some(hostname) = self.tls_config.verify_hostname() {
                                 // SAFETY: native handle of a connected TLS socket is `SSL*`.
                                 let ssl_ptr: *mut BoringSSL::c::SSL = self
                                     .socket
                                     .get()
                                     .get_native_handle()
                                     .map_or(core::ptr::null_mut(), |p| p.cast());
-                                // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
-                                let hostname =
-                                    unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
                                 // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
                                 !ssl_ptr.is_null()
                                     && BoringSSL::check_server_identity(
                                         unsafe { &mut *ssl_ptr },
                                         hostname,
                                     )
+                            } else {
+                                false
                             };
                             if !ok {
                                 let v = verify_error_to_js(&ssl_error, self.global());

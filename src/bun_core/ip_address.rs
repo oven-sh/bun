@@ -65,6 +65,17 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
     pton(AF_INET6, &buf[..=input.len()], &mut dst)
 }
 
+/// "[::1]" -> "::1"; non-IPv6 values like "[example.com]" pass through verbatim, as in Node.
+pub fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
+    if host.len() >= 2 && host[0] == b'[' && host[host.len() - 1] == b']' {
+        let inner = &host[1..host.len() - 1];
+        if is_ipv6_address(inner) {
+            return inner;
+        }
+    }
+    host
+}
+
 /// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`).
 pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     let mut buf = [0u8; 512];

@@ -464,16 +464,31 @@ pub mod api {
         }
 
         impl SSLConfig {
-            /// `SSLConfig.server_name` — the SNI hostname C string, or null
-            /// when unset / default.
+            /// `SSLConfig.server_name` as JS passed it: `tls.serverName`, else the URL host, which keeps the brackets of an IPv6 literal.
             #[inline]
-            pub(crate) fn server_name(&self) -> *const c_char {
-                match self.0 {
-                    None => core::ptr::null(),
-                    // SAFETY: live boxed SSLConfig; hook returns a borrow into
-                    // its `Option<CString>` field, valid for `self`'s lifetime.
-                    Some(p) => unsafe { (hooks().ssl_config_server_name)(p.as_ptr()) },
+            fn server_name(&self) -> Option<&core::ffi::CStr> {
+                // SAFETY: live boxed SSLConfig; hook returns a borrow into
+                // its `Option<CString>` field, valid for `self`'s lifetime.
+                let server_name = unsafe { (hooks().ssl_config_server_name)(self.0?.as_ptr()) };
+                if server_name.is_null() {
+                    return None;
                 }
+                // SAFETY: non-null, NUL-terminated, owned by the boxed
+                // SSLConfig for `self`'s lifetime.
+                Some(unsafe { bun_core::ffi::cstr(server_name) })
+            }
+
+            /// The name the peer certificate must match; an IPv6 literal is bare ("::1"), the form IP SAN entries match.
+            pub(crate) fn verify_hostname(&self) -> Option<&[u8]> {
+                let server_name = self.server_name()?.to_bytes();
+                Some(bun_core::ip_address::strip_ipv6_brackets(server_name))
+            }
+
+            /// The SNI for the ClientHello; none for an IP literal (RFC 6066 section 3).
+            pub(crate) fn sni(&self) -> Option<&core::ffi::CStr> {
+                let server_name = self.server_name()?;
+                let bare = bun_core::ip_address::strip_ipv6_brackets(server_name.to_bytes());
+                (!bun_core::ip_address::is_ip_address(bare)).then_some(server_name)
             }
 
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.

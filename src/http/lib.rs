@@ -1220,16 +1220,7 @@ pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: 
     strip_ipv6_brackets(client.url.hostname)
 }
 
-/// "[::1]" -> "::1"; non-IPv6 values like "[example.com]" pass through verbatim, as in Node.
-pub fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
-    if host.len() >= 2 && host[0] == b'[' && host[host.len() - 1] == b']' {
-        let inner = &host[1..host.len() - 1];
-        if bun_core::ip_address::is_ipv6_address(inner) {
-            return inner;
-        }
-    }
-    host
-}
+pub use bun_core::ip_address::strip_ipv6_brackets;
 
 // ── support types ───────────────────────────────────────────────────────
 #[derive(Clone, Copy)]

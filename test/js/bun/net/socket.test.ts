@@ -4477,34 +4477,12 @@ describe.concurrent("close() error after the peer resets the connection", () => 
   const readReset = { reported: true, code: "ECONNRESET", syscall: "read" };
 
   describe.each(["tcp", "tls"] as const)("%s", transport => {
-    // The peer lives in a child process that is killed while data it never read sits
-    // in its receive buffer: the kernel then closes its socket with an RST, and
-    // nothing (no FIN, and for TLS no close_notify) is queued ahead of the reset. An
-    // in-process terminate() is not usable for the TLS case: it writes a close_notify
-    // first, and on POSIX the reading side consumes that as a clean end.
-    const peerSource = `
-      await Bun.connect({
-        hostname: "127.0.0.1",
-        port: Number(process.argv[2]),
-        tls: ${transport === "tls" ? JSON.stringify({ ca: tls.cert }) : "undefined"},
-        socket: {
-          data(socket) {
-            // The greeting arrived, so both sides are fully open. Stop reading: what
-            // the server writes next stays unread in this process's receive buffer.
-            socket.pause();
-            socket.write("ready");
-          },
-          close() {},
-          error() {},
-        },
-      });
-      await Bun.stdin.text(); // keeps the process alive until the test kills it
-    `;
-
+    // The peer resets in-process with terminate(): it closes with SO_LINGER{1,0}, so the
+    // kernel sends a bare RST with nothing queued ahead of it (a TLS terminate() writes
+    // no close_notify, #39632). A peer process killed with unread data produces the same
+    // RST, but over macOS loopback that kill raced the delivery of the last write (#40108).
     it("the accepted socket reports the reset as read ECONNRESET", async () => {
-      const ready = Promise.withResolvers<Socket>();
       const closedWith = Promise.withResolvers<CloseError>();
-      let received = "";
       const greet = (socket: Socket) => socket.write("greeting");
       using listener = Bun.listen({
         hostname: "127.0.0.1",
@@ -4516,32 +4494,30 @@ describe.concurrent("close() error after the peer resets the connection", () => 
           },
           handshake(socket, success, authorizationError) {
             if (success) greet(socket);
-            else ready.reject(authorizationError ?? new Error("server handshake failed"));
+            else closedWith.reject(authorizationError ?? new Error("server handshake failed"));
           },
-          data(socket, chunk) {
-            received += chunk.toString();
-            if (received.includes("ready")) ready.resolve(socket);
-          },
+          data() {},
           close(_socket, error) {
-            ready.reject(new Error("the accepted socket closed before the peer was ready"));
             closedWith.resolve(error as CloseError);
           },
         },
       });
-      using dir = tempDir("socket-peer-reset", { "peer.ts": peerSource });
-      await using peer = Bun.spawn({
-        cmd: [bunExe(), "peer.ts", String(listener.port)],
-        cwd: String(dir),
-        env: bunEnv,
-        stdin: "pipe",
-      });
-      // A peer that dies before it connects would otherwise leave `ready` pending.
-      // Once `ready` is settled, the exit caused by the kill below is ignored.
-      peer.exited.then(code => ready.reject(new Error(`the peer exited before it was ready (exit code ${code})`)));
 
-      const accepted = await ready.promise;
-      accepted.write("left unread in the peer's receive buffer");
-      peer.kill("SIGKILL");
+      const greeted = Promise.withResolvers<Socket>();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: transport === "tls" ? { ca: tls.cert } : undefined,
+        socket: {
+          // The greeting arrived, so both sides are fully open (for tls, both handshakes are done).
+          data: socket => greeted.resolve(socket),
+          error: (_socket, error) => greeted.reject(error),
+          connectError: (_socket, error) => greeted.reject(error),
+          close: () => greeted.reject(new Error("the peer closed before the greeting arrived")),
+        },
+      });
+      const peer = await greeted.promise;
+      peer.terminate();
 
       expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
     });

@@ -301,8 +301,10 @@ impl TextDecoder {
 
             if let Some(ab) = arguments[0].as_array_buffer(global_this) {
                 array_buffer = ab;
-                if array_buffer.shared || array_buffer.resizable {
-                    owned_input = Box::<[u8]>::from(array_buffer.slice());
+                if array_buffer.can_change_under_borrow() {
+                    owned_input = array_buffer
+                        .try_copy_bytes()
+                        .ok_or_else(|| global_this.throw_out_of_memory())?;
                     break 'input_slice &owned_input;
                 }
                 break 'input_slice array_buffer.slice();

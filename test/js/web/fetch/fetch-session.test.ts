@@ -840,6 +840,35 @@ describe("onStats", () => {
     );
   });
 
+  test("runs for a request in flight whose session is no longer reachable", async () => {
+    // Holds its response until released, so the collector runs while the request is in flight.
+    const held = Promise.withResolvers<() => void>();
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      sockets.push(socket);
+      socket.on("error", () => {});
+      socket.once("data", () => held.resolve(() => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`;
+      const seen: number[] = [];
+      // Neither the session nor its callback is referenced after this returns.
+      const body = (() =>
+        new Bun.FetchSession({ onStats: s => void seen.push(s.bytesSent) }).fetch(url).then(r => r.text()))();
+      const release = await held.promise;
+      Bun.gc(true);
+      release();
+      expect(await body).toBe("ok");
+      expect(seen.length).toBe(1);
+      expect(seen[0]).toBeGreaterThan(0);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  });
+
   test("reports a connection that was never established", async () => {
     using dead = await deadPort();
     let stats: Bun.FetchConnectionStats | undefined;

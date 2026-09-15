@@ -1906,8 +1906,10 @@ class OutputLineStream extends EventEmitter {
 }
 
 export function indexHtmlScript(htmlFiles: string[]) {
+  // Routes are URL paths, so a nested file uses "/" on every platform.
+  htmlFiles = htmlFiles.map(file => file.replaceAll(path.sep, "/"));
   return [
-    ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, "/"))};`),
+    ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file)};`),
     "export default {",
     "  static: {",
     ...(htmlFiles.length === 1

@@ -709,7 +709,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp_ref = bun_opaque::opaque_deref_mut(resp);
 
-        // Completed responses of this pipelined read leave before user JavaScript runs.
+        // Responses to earlier requests of this read leave before this request's handler runs.
         resp_ref.send_corked();
 
         // We need to register the handler immediately since uSockets will not buffer.

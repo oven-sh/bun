@@ -4709,9 +4709,9 @@ it("serves a TLS connection whose handshake completes after a graceful stop()", 
   }
 });
 
-// Requests that arrive in one read are dispatched from one onData() call. The
-// socket is corked for the whole call. Completed responses share one send(),
-// and they leave before user JavaScript runs again.
+// HTTP/1.1 requests that arrive in one read are dispatched from one onData()
+// call. The socket is corked for the whole call. Completed responses share one
+// send(), and they leave before the handler of a later request runs JavaScript.
 describe("requests pipelined in one read", () => {
   const get = (path: string, extraHeaders = "") => `GET ${path} HTTP/1.1\r\nHost: x\r\n${extraHeaders}\r\n`;
 
@@ -4759,7 +4759,7 @@ describe("requests pipelined in one read", () => {
   // the segments with TCP_INFO. A handler that runs JavaScript first sends the
   // responses completed before it. Responses that need no JavaScript (static
   // routes) collect until then, or until the read is consumed.
-  it.skipIf(!isLinux && !isAndroid)("share one send() until JavaScript runs again", async () => {
+  it.skipIf(!isLinux && !isAndroid)("share one send() until a handler runs JavaScript", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -4849,6 +4849,7 @@ describe("requests pipelined in one read", () => {
           const server = Bun.serve({
             port: 0,
             hostname: "127.0.0.1",
+            routes: { "/static": new Response("/static") },
             fetch(req) {
               const { pathname } = new URL(req.url);
               if (pathname === "/exit") process.exit(0);
@@ -4867,10 +4868,11 @@ describe("requests pipelined in one read", () => {
       stdout += Buffer.from(chunk).toString();
       if (stdout.includes("\n")) break;
     }
-    const reply = await exchange(plain(Number(stdout)), get("/a") + get("/b") + get("/exit"));
+    // The static response needs no JavaScript. It is still in the cork buffer when "/exit" is dispatched.
+    const reply = await exchange(plain(Number(stdout)), get("/a") + get("/static") + get("/exit"));
     expect(parseResponses(reply)).toEqual([
       { status: "HTTP/1.1 200 OK", body: "/a" },
-      { status: "HTTP/1.1 200 OK", body: "/b" },
+      { status: "HTTP/1.1 200 OK", body: "/static" },
     ]);
     expect(await proc.exited).toBe(0);
   });
@@ -4884,6 +4886,7 @@ describe("requests pipelined in one read", () => {
         const server = Bun.serve({
           port: 0,
           hostname: "127.0.0.1",
+          routes: { "/static": new Response("/static") },
           fetch(req) {
             const { pathname } = new URL(req.url);
             if (pathname !== "/wait") return new Response(pathname);
@@ -4897,11 +4900,12 @@ describe("requests pipelined in one read", () => {
     const worker = new Worker(join(String(dir), "server.mjs"), { workerData: released });
     try {
       const [port] = await once(worker, "message");
+      // The static response needs no JavaScript. It is still in the cork buffer when "/wait" is dispatched.
       const reply = await exchange(
         plain(port),
-        get("/a") + get("/b") + get("/wait", "Connection: close\r\n"),
+        get("/a") + get("/static") + get("/wait", "Connection: close\r\n"),
         reply => {
-          if (parseResponses(reply).length >= 2 && reply.includes("/b")) {
+          if (parseResponses(reply).length >= 2 && reply.includes("\r\n\r\n/static")) {
             Atomics.store(released, 0, 1);
             Atomics.notify(released, 0);
           }
@@ -4910,7 +4914,7 @@ describe("requests pipelined in one read", () => {
       );
       expect(parseResponses(reply)).toEqual([
         { status: "HTTP/1.1 200 OK", body: "/a" },
-        { status: "HTTP/1.1 200 OK", body: "/b" },
+        { status: "HTTP/1.1 200 OK", body: "/static" },
         { status: "HTTP/1.1 200 OK", body: "released" },
       ]);
     } finally {

@@ -731,6 +731,10 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
             }
         }
 
+        if no_proxy_cidr_matches(entry, hostname) {
+            return true;
+        }
+
         // IPv6 literals contain multiple colons (e.g., "::1"); bracketed IPv6
         // with port is "[::1]:8080"; host:port has a single colon.
         let colon_count = strings::count_char(entry, b':');
@@ -764,6 +768,202 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
     }
 
     false
+}
+
+/// Returns true when `host` is inside the CIDR range `entry` describes:
+/// IPv4 like "127.0.0.0/8" or bracketed IPv6 like "[::1]/128".
+fn no_proxy_cidr_matches(entry: &[u8], hostname: &[u8]) -> bool {
+    let slash = match strings::index_of(entry, b"/") {
+        Some(slash) => slash,
+        None => return false,
+    };
+    let ip_part = &entry[..slash];
+    let prefix_part = &entry[slash + 1..];
+    let mut prefix: u16 = 0;
+    if prefix_part.is_empty() || prefix_part.len() > 3 {
+        return false;
+    }
+    for &c in prefix_part {
+        if !c.is_ascii_digit() {
+            return false;
+        }
+        prefix = prefix * 10 + u16::from(c - b'0');
+    }
+
+    let bracketed = strings::starts_with_char(ip_part, b'[')
+        && ip_part.len() > 2
+        && ip_part[ip_part.len() - 1] == b']';
+    if bracketed {
+        if prefix > 128 {
+            return false;
+        }
+        let net = match parse_ipv6(&ip_part[1..ip_part.len() - 1]) {
+            Some(net) => net,
+            None => return false,
+        };
+        let host = match parse_ipv6(hostname) {
+            Some(host) => host,
+            None => {
+                if strings::starts_with_char(hostname, b'[')
+                    && hostname.len() > 2
+                    && hostname[hostname.len() - 1] == b']'
+                {
+                    match parse_ipv6(&hostname[1..hostname.len() - 1]) {
+                        Some(host) => host,
+                        None => return false,
+                    }
+                } else {
+                    return false;
+                }
+            }
+        };
+        return ipv6_in_prefix(host, net, prefix);
+    }
+
+    if prefix > 32 {
+        return false;
+    }
+    match (parse_ipv4(hostname), parse_ipv4(ip_part)) {
+        (Some(host), Some(net)) => ipv4_in_prefix(host, net, prefix),
+        _ => false,
+    }
+}
+
+fn parse_ipv4(s: &[u8]) -> Option<u32> {
+    let mut parts = s.split(|&b| b == b'.');
+    let mut ip: u32 = 0;
+    for _ in 0..4 {
+        let part = parts.next()?;
+        if part.is_empty()
+            || part.len() > 3
+            || (part.len() > 1 && part[0] == b'0')
+            || !part.iter().all(|&c| c.is_ascii_digit())
+        {
+            return None;
+        }
+        let mut n: u16 = 0;
+        for &c in part {
+            n = n * 10 + u16::from(c - b'0');
+        }
+        if n > 255 {
+            return None;
+        }
+        ip = (ip << 8) | u32::from(n);
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(ip)
+}
+
+fn ipv4_in_prefix(host: u32, net: u32, prefix: u16) -> bool {
+    if prefix == 0 {
+        return true;
+    }
+    let mask = u32::MAX << (32 - prefix);
+    if net & mask != net {
+        return false;
+    }
+    host & mask == net & mask
+}
+
+fn parse_ipv6(s: &[u8]) -> Option<u128> {
+    if s.is_empty() {
+        return None;
+    }
+    let mut groups: [u16; 8] = [0; 8];
+    let mut count = 0usize;
+    let mut compression: Option<usize> = None;
+    let mut i = 0usize;
+    while i < s.len() {
+        if s[i] == b':' {
+            if i + 1 < s.len() && s[i + 1] == b':' {
+                if compression.is_some() {
+                    return None;
+                }
+                compression = Some(count);
+                i += 2;
+                continue;
+            }
+            i += 1;
+            if i >= s.len() {
+                return None;
+            }
+            continue;
+        }
+        let start = i;
+        while i < s.len() && s[i] != b':' {
+            i += 1;
+        }
+        let part = &s[start..i];
+        if strings::index_of(part, b".").is_some() {
+            let v4 = match parse_ipv4(part) {
+                Some(v4) => v4,
+                None => return None,
+            };
+            if count > 6 {
+                return None;
+            }
+            groups[count] = ((v4 >> 16) & 0xffff) as u16;
+            groups[count + 1] = (v4 & 0xffff) as u16;
+            count += 2;
+            continue;
+        }
+        if part.is_empty() || part.len() > 4 {
+            return None;
+        }
+        let mut v: u16 = 0;
+        for &c in part {
+            let d = match c {
+                b'0'..=b'9' => u16::from(c - b'0'),
+                b'a'..=b'f' => u16::from(c - b'a' + 10),
+                b'A'..=b'F' => u16::from(c - b'A' + 10),
+                _ => return None,
+            };
+            v = v * 16 + d;
+        }
+        if count == 8 {
+            return None;
+        }
+        groups[count] = v;
+        count += 1;
+    }
+    if let Some(c) = compression {
+        if count > 8 {
+            return None;
+        }
+        let mut result: u128 = 0;
+        let zeros = 8 - count;
+        for g in groups[..c]
+            .iter()
+            .chain(core::iter::repeat(&0u16).take(zeros))
+            .chain(groups[c..count].iter())
+        {
+            result = (result << 16) | u128::from(*g);
+        }
+        Some(result)
+    } else {
+        if count != 8 {
+            return None;
+        }
+        let mut result: u128 = 0;
+        for &g in &groups {
+            result = (result << 16) | u128::from(g);
+        }
+        Some(result)
+    }
+}
+
+fn ipv6_in_prefix(host: u128, net: u128, prefix: u16) -> bool {
+    if prefix == 0 {
+        return true;
+    }
+    let shift = 128 - prefix;
+    let mask = u128::MAX << shift;
+    if net & mask != net {
+        return false;
+    }
+    host & mask == net & mask
 }
 
 // TODO: reduce the size of this struct

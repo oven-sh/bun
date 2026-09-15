@@ -117,6 +117,11 @@ struct loop_ssl_data {
   char *ssl_spill;
   unsigned int ssl_spill_len;
   unsigned int ssl_spill_off;
+
+  /* Plaintext buffers a nested read scope is not using right now, linked
+   * through the first pointer-sized bytes of each block (see
+   * us_internal_ssl_enter_read_scope). */
+  char *ssl_read_output_spares;
 };
 
 enum {
@@ -905,9 +910,49 @@ void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
   }
 }
 
+/* The plaintext half of the read scope loop.c opens. SSL_read decrypts into
+ * loop_ssl_data->ssl_read_output and us_dispatch_data hands its callback a
+ * view of those bytes, exactly like the ciphertext buffer, so a nested tick
+ * that decrypts another socket would change the bytes the outer dispatch is
+ * still parsing. */
+char *us_internal_ssl_enter_read_scope(struct us_loop_t *loop) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  /* No TLS socket on this loop yet: the first one allocates its own buffer. */
+  if (!loop_ssl_data) return NULL;
+
+  char *spare = loop_ssl_data->ssl_read_output_spares;
+  if (spare) {
+    memcpy(&loop_ssl_data->ssl_read_output_spares, spare, sizeof(char *));
+  } else {
+    spare = ssl_alloc_read_output();
+    if (!spare) return NULL;
+  }
+  char *saved = loop_ssl_data->ssl_read_output;
+  loop_ssl_data->ssl_read_output = spare;
+  return saved;
+}
+
+void us_internal_ssl_exit_read_scope(struct us_loop_t *loop, char *saved) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  /* The loop cannot lose its SSL data while a scope is open: only
+   * us_internal_free_loop_ssl_data clears it, and that runs after the loop
+   * stopped. */
+  char *used = loop_ssl_data->ssl_read_output;
+  memcpy(used, &loop_ssl_data->ssl_read_output_spares, sizeof(char *));
+  loop_ssl_data->ssl_read_output_spares = used;
+  loop_ssl_data->ssl_read_output = saved;
+}
+
 void us_internal_free_loop_ssl_data(struct us_loop_t *loop) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
   if (loop_ssl_data) {
+    char *spare = loop_ssl_data->ssl_read_output_spares;
+    while (spare) {
+      char *next;
+      memcpy(&next, spare, sizeof(char *));
+      us_free(spare);
+      spare = next;
+    }
     us_free(loop_ssl_data->ssl_read_output);
     us_free(loop_ssl_data->ssl_write_batch);
     us_free(loop_ssl_data->ssl_spill);

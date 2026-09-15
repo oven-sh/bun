@@ -63,6 +63,8 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    pub(crate) read_scope_depth: c_int,
+    pub(crate) recv_buf_spares: *mut u8,
 }
 
 impl InternalLoopData {

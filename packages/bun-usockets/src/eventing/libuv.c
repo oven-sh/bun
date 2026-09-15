@@ -294,9 +294,12 @@ void us_loop_pump(struct us_loop_t *loop) {
    * timers are never processed. Bun's outer drive loops (wait_for_promise,
    * bun:test) supply their own keep-going predicate, so force exactly one
    * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
+  struct us_read_scope read_scope;
+  us_internal_loop_enter_read_scope(loop, &read_scope);
   loop->uv_loop->active_handles++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
   loop->uv_loop->active_handles--;
+  us_internal_loop_exit_read_scope(loop, &read_scope);
 }
 
 struct us_loop_t *us_create_loop(void *hint,
@@ -397,7 +400,10 @@ void us_loop_run(struct us_loop_t *loop) {
     }
   }
 
+  struct us_read_scope read_scope;
+  us_internal_loop_enter_read_scope(loop, &read_scope);
   uv_run(loop->uv_loop, UV_RUN_ONCE);
+  us_internal_loop_exit_read_scope(loop, &read_scope);
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

@@ -188,6 +188,21 @@ void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);
 
+/* The buffers a read scope replaced, restored when it closes. The caller keeps
+ * this on its stack: one per nesting level, which is what makes the scopes a
+ * stack without the loop holding one. */
+struct us_read_scope {
+    char *recv_buf;
+#ifndef LIBUS_NO_SSL
+    char *ssl_read_output;
+#endif
+};
+/* A nested tick reads into buffers of its own, so it cannot overwrite the
+ * bytes an outer dispatch is still reading. Every tick entry point of every
+ * backend opens one around its dispatch. See loop.c for why. */
+void us_internal_loop_enter_read_scope(struct us_loop_t *loop, struct us_read_scope *out);
+void us_internal_loop_exit_read_scope(struct us_loop_t *loop, const struct us_read_scope *saved);
+
 /* node:quic loop driver (node_quic_shim.c): per-turn engine pass. */
 struct us_nq_driver_s;
 void us_nq_loop_flush_if_pending(struct us_loop_t *loop);
@@ -212,6 +227,12 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
 /* SSL loop data */
 void us_internal_init_loop_ssl_data(us_loop_r loop);
 void us_internal_free_loop_ssl_data(us_loop_r loop);
+/* The plaintext half of a read scope: SSL_read decrypts into one buffer per
+ * loop and the dispatch hands its callback a view of that, so a nested tick
+ * needs its own. NULL when this loop has no TLS socket yet, and then the exit
+ * half is not called. */
+char *us_internal_ssl_enter_read_scope(us_loop_r loop);
+void us_internal_ssl_exit_read_scope(us_loop_r loop, char *saved);
 
 /* Socket context related */
 void us_internal_socket_group_link_socket(us_socket_group_r group, us_socket_r s);

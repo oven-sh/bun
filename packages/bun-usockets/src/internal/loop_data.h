@@ -93,6 +93,12 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* Reentrancy depth of the read scope (us_internal_loop_enter_read_scope),
+     * which every tick entry point on every backend opens. */
+    int read_scope_depth;
+    /* Receive buffers a nested read scope is not using right now, linked
+     * through the first pointer-sized bytes of each block. */
+    char *recv_buf_spares;
 };
 
 #endif // LOOP_DATA_H

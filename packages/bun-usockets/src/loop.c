@@ -156,11 +156,82 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
     return 0;
 }
 
+/* Every read on this loop lands in loop->data.recv_buf, and the dispatch hands
+ * its callback a view of those bytes. JS can run this loop again from inside
+ * such a callback (Bun.build with a plugin whose setup() is pending, an async
+ * macro at transpile time, the auto-install wait in the resolver), and the
+ * nested tick reads other sockets. Writing them into the same buffer changes
+ * the bytes the outer dispatch is still reading: uWS keeps parsing the request
+ * body and any pipelined request out of that buffer after the request handler
+ * returns, and the header views of an HttpRequest point into it.
+ *
+ * So every nesting level reads into a buffer of its own. The blocks come off a
+ * free list, so a server whose handler runs the loop on every request
+ * allocates one block per nesting level for the life of the loop. The
+ * outermost scope keeps the loop's own buffer, which leaves the common case
+ * with two stores and a branch per tick.
+ *
+ * Returns what us_internal_loop_exit_read_scope must restore. */
+void us_internal_loop_enter_read_scope(struct us_loop_t *loop, struct us_read_scope *out) {
+    out->recv_buf = loop->data.recv_buf;
+#ifndef LIBUS_NO_SSL
+    out->ssl_read_output = NULL;
+#endif
+    if (loop->data.read_scope_depth++ == 0) {
+        return;
+    }
+
+    char *spare = loop->data.recv_buf_spares;
+    if (spare) {
+        memcpy(&loop->data.recv_buf_spares, spare, sizeof(char *));
+    } else {
+        spare = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+        /* Out of memory: the nested tick shares the outer buffer, which is
+         * this scope's bug, but a read that fails with EFAULT for the rest of
+         * the process is worse. */
+        if (!spare) {
+            return;
+        }
+    }
+    loop->data.recv_buf = spare;
+#ifndef LIBUS_NO_SSL
+    out->ssl_read_output = us_internal_ssl_enter_read_scope(loop);
+#endif
+}
+
+void us_internal_loop_exit_read_scope(struct us_loop_t *loop, const struct us_read_scope *saved) {
+    loop->data.read_scope_depth--;
+#ifndef LIBUS_NO_SSL
+    if (saved->ssl_read_output) {
+        us_internal_ssl_exit_read_scope(loop, saved->ssl_read_output);
+    }
+#endif
+    char *used = loop->data.recv_buf;
+    if (used == saved->recv_buf) {
+        return;
+    }
+    memcpy(used, &loop->data.recv_buf_spares, sizeof(char *));
+    loop->data.recv_buf_spares = used;
+    loop->data.recv_buf = saved->recv_buf;
+}
+
+static void us_internal_free_recv_buf_spares(struct us_loop_t *loop) {
+    char *spare = loop->data.recv_buf_spares;
+    loop->data.recv_buf_spares = NULL;
+    while (spare) {
+        char *next;
+        memcpy(&next, spare, sizeof(char *));
+        us_free(spare);
+        spare = next;
+    }
+}
+
 void us_internal_loop_data_free(struct us_loop_t *loop) {
 #ifndef LIBUS_NO_SSL
     us_internal_free_loop_ssl_data(loop);
 #endif
 
+    us_internal_free_recv_buf_spares(loop);
     us_free(loop->data.recv_buf);
     us_free(loop->data.send_buf);
 

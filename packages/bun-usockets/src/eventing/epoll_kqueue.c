@@ -447,6 +447,8 @@ void us_loop_run(struct us_loop_t *loop) {
     /* While we have non-fallthrough polls we shouldn't fall through */
     while (loop->num_polls) {
         loop->data.tick_depth++;
+        struct us_read_scope read_scope;
+        us_internal_loop_enter_read_scope(loop, &read_scope);
         /* Emit pre callback */
         us_internal_loop_pre(loop);
 
@@ -466,6 +468,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
         /* Emit post callback */
         us_internal_loop_post(loop);
+        us_internal_loop_exit_read_scope(loop, &read_scope);
         loop->data.tick_depth--;
     }
 }
@@ -477,6 +480,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         return;
 
     loop->data.tick_depth++;
+    struct us_read_scope read_scope;
+    us_internal_loop_enter_read_scope(loop, &read_scope);
 
     /* Emit pre callback */
     us_internal_loop_pre(loop);
@@ -551,6 +556,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Emit post callback */
     us_internal_loop_post(loop);
+    us_internal_loop_exit_read_scope(loop, &read_scope);
     loop->data.tick_depth--;
 }
 

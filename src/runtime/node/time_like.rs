@@ -1,14 +1,9 @@
 use bun_jsc::{JSGlobalObject, JSType as JsType, JSValue, JsResult};
 
-/// On windows, this is what libuv expects
-/// On unix it is what the utimens api expects
-#[cfg(windows)]
-pub type TimeLike = f64;
-#[cfg(not(windows))]
-pub type TimeLike = libc::timespec;
+pub type TimeLike = bun_sys::TimeLike;
 
-const NS_PER_S: f64 = bun_core::time::NS_PER_S as f64;
 #[cfg(not(windows))]
+const NS_PER_S: f64 = bun_core::time::NS_PER_S as f64;
 const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 #[cfg(not(windows))]
 const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
@@ -49,9 +44,20 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Optio
     Ok(None)
 }
 
+/// Node on Windows stores the time libuv's `TIME_T_TO_FILETIME` computes: the
+/// FILETIME tick count is `seconds * 1e7 + <1601 offset>` evaluated as a double,
+/// which at today's dates rounds to 16 ticks. `utimes(p, 1713037251.36)` reads
+/// back as 1713037251360 ms only with that rounding.
 #[cfg(windows)]
 fn from_seconds(seconds: f64) -> TimeLike {
-    seconds
+    const TICKS_PER_S: i64 = 10_000_000;
+    const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
+    // `as` saturates on overflow/NaN.
+    let ticks = (seconds * TICKS_PER_S as f64 + UNIX_EPOCH_TICKS as f64) as i64 - UNIX_EPOCH_TICKS;
+    TimeLike {
+        sec: ticks.div_euclid(TICKS_PER_S),
+        nsec: ticks.rem_euclid(TICKS_PER_S) * 100,
+    }
 }
 
 #[cfg(not(windows))]
@@ -65,33 +71,26 @@ fn from_seconds(seconds: f64) -> TimeLike {
         nsec -= NS_PER_S;
         sec += 1.0;
     }
-    libc::timespec {
+    TimeLike {
         // `as` saturates on overflow/NaN.
-        tv_sec: sec as _,
-        tv_nsec: nsec as _,
+        sec: sec as i64,
+        nsec: nsec as i64,
     }
 }
 
 #[cfg(windows)]
 fn from_milliseconds(milliseconds: f64) -> TimeLike {
-    milliseconds / 1000.0
+    from_seconds(milliseconds / MS_PER_S)
 }
 
 #[cfg(not(windows))]
 fn from_milliseconds(milliseconds: f64) -> TimeLike {
-    libc::timespec {
-        tv_sec: milliseconds.div_euclid(MS_PER_S) as _,
-        tv_nsec: (milliseconds.rem_euclid(MS_PER_S) * NS_PER_MS) as _,
+    TimeLike {
+        sec: milliseconds.div_euclid(MS_PER_S) as i64,
+        nsec: (milliseconds.rem_euclid(MS_PER_S) * NS_PER_MS) as i64,
     }
 }
 
-#[cfg(windows)]
-fn from_now() -> TimeLike {
-    let nanos = bun_core::time::nano_timestamp();
-    (nanos as f64) / NS_PER_S
-}
-
-#[cfg(not(windows))]
 fn from_now() -> TimeLike {
     // Permissions requirements
     //        To set both file timestamps to the current time (i.e., times is
@@ -112,11 +111,8 @@ fn from_now() -> TimeLike {
     //        If both tv_nsec fields are specified as UTIME_OMIT, then no file
     //        ownership or permission checks are performed, and the file
     //        timestamps are not modified, but other error conditions may still
-    libc::timespec {
-        tv_sec: 0,
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        tv_nsec: libc::UTIME_NOW as _,
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        tv_nsec: bun_sys::c::UTIME_NOW as _,
+    TimeLike {
+        sec: 0,
+        nsec: bun_sys::UTIME_NOW,
     }
 }

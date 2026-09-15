@@ -1,8 +1,6 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-#[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
@@ -12,10 +10,6 @@ use crate::api::bun::process::Status as SpawnStatus;
 use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-#[cfg(windows)]
-use bun_sys::windows::libuv::UvHandle as _;
 
 bun_core::declare_scope!(FileSink, visible);
 
@@ -149,7 +143,6 @@ bun_io::impl_streaming_writer_parent! {
     on_close   = on_close,
     event_loop = |this| (*this).io_evtloop(),
     uws_loop   = |this| (*this).event_loop_handle.r#loop(),
-    uv_loop    = |this| (*this).event_loop_handle.uv_loop(),
     ref_       = |this| (&*this).ref_(),
     deref      = |this| FileSink::deref(this),
 }
@@ -217,57 +210,12 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     // wrapped `*FileSink`.
     let this: &FileSink = unsafe { &(*this_ptr).sink };
 
-    #[cfg(not(windows))]
-    {
-        this.force_sync.set(true);
-        // SAFETY(JsCell): single-field write; does not call into JS.
-        this.writer.with_mut(|w| w.force_sync = true);
-        if this.fd.get() != Fd::INVALID {
-            let _ = sys::update_nonblocking(this.fd.get(), false);
-        }
-    }
-    #[cfg(windows)]
-    {
-        // SAFETY(JsCell): closure does not call into JS — pure libuv FFI.
-        let did_set_blocking = this.writer.with_mut(|w| {
-            if let Some(source) = w.source.as_mut() {
-                match source {
-                    bun_io::Source::Pipe(pipe) => {
-                        // SAFETY: `pipe` is a live `Box<uv::Pipe>` owned by `writer.source`;
-                        // `uv_pipe_t` is `#[repr(C)]` with `uv_stream_t` as its first field
-                        // (libuv handle subtyping), so the pointer cast is valid.
-                        let rc = unsafe {
-                            uv::uv_stream_set_blocking(
-                                (&mut **pipe) as *mut uv::Pipe as *mut uv::uv_stream_t,
-                                1,
-                            )
-                        };
-                        if rc == uv::ReturnCode::ZERO {
-                            return true;
-                        }
-                    }
-                    bun_io::Source::Tty(tty) => {
-                        // SAFETY: `tty` is a live `BackRef<Tty>` (heap or static stdin tty);
-                        // `Tty` (via its first field, `uv::uv_tty_t`) embeds `uv_stream_t` as
-                        // its first member, so the cast is the libuv handle-subtype downcast.
-                        let rc = unsafe {
-                            uv::uv_stream_set_blocking(tty.as_ptr().cast::<uv::uv_stream_t>(), 1)
-                        };
-                        if rc == uv::ReturnCode::ZERO {
-                            return true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            false
-        });
-        if did_set_blocking {
-            return;
-        }
-
-        // Fallback to WriteFile() if it fails.
-        this.force_sync.set(true);
+    this.force_sync.set(true);
+    // SAFETY(JsCell): single-field write; does not call into JS.
+    this.writer.with_mut(|w| w.force_sync = true);
+    #[cfg(unix)]
+    if this.fd.get() != Fd::INVALID {
+        let _ = sys::update_nonblocking(this.fd.get(), false);
     }
 }
 
@@ -522,14 +470,8 @@ impl FileSink {
         }
     }
 
-    /// `writer.end()`; `on_close` follows and may free `self`, except (Windows) for an fd the writer
-    /// does not own, which is never closed: settle a piped stream here then.
+    /// `writer.end()`; `on_close` follows and may free `self`.
     fn end_writer(&self) {
-        #[cfg(windows)]
-        if !self.writer.get().owns_fd {
-            self.settle_stream_done();
-            self.release_pipe();
-        }
         self.writer.with_mut(|w| w.end());
     }
 
@@ -608,31 +550,6 @@ impl FileSink {
         }
     }
 
-    #[cfg(windows)]
-    pub(crate) fn create_with_pipe(
-        event_loop_: impl Into<EventLoopHandle>,
-        pipe: *mut uv::Pipe,
-    ) -> RefPtr<FileSink> {
-        let evtloop: EventLoopHandle = event_loop_.into();
-
-        // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
-        // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
-        // INVALID_HANDLE_VALUE maps to `Fd::INVALID`, anything else is
-        // tagged as a system handle.
-        let fd = match unsafe { (*pipe).fd() } {
-            h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
-            h => Fd::from_system(h),
-        };
-        let this = RefPtr::new(FileSink::new(evtloop, fd));
-        // SAFETY: `this` was just allocated above and is the sole reference.
-        unsafe {
-            (*this.as_ptr()).writer.get_mut().set_pipe(pipe);
-            (*this.as_ptr()).writer.get_mut().set_parent(this.as_ptr());
-        }
-        this
-    }
-
-    #[cfg(not(windows))]
     pub(crate) fn create(event_loop_: impl Into<EventLoopHandle>, fd: Fd) -> RefPtr<FileSink> {
         Self::init(fd, event_loop_)
     }
@@ -641,6 +558,19 @@ impl FileSink {
         if self.pipe.get().has_stream() {
             // Already started.
             return sys::Result::Ok(());
+        }
+
+        // Writes to the process's own stdout and stderr are synchronous on
+        // Windows whatever they are connected to (Node documents pipes and
+        // files that way; a console write is inline as well).
+        #[cfg(windows)]
+        if let PathOrFileDescriptor::Fd(fd) = &options.input_path
+            && matches!(
+                fd.stdio_tag(),
+                Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
+            )
+        {
+            self.force_sync.set(true);
         }
 
         // reshaped for borrowck — split into a local capture and apply after.
@@ -706,7 +636,6 @@ impl FileSink {
         self.pollable.set(pollable_out);
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);
-        #[cfg(unix)]
         if force_sync_out {
             self.force_sync.set(true);
             // SAFETY(JsCell): single-field write; does not call into JS.
@@ -719,27 +648,6 @@ impl FileSink {
             }
             sys::Result::Ok(fd) => fd,
         };
-
-        #[cfg(windows)]
-        {
-            if self.force_sync.get() {
-                // SAFETY(JsCell): `start_sync` is pure I/O setup; no JS.
-                match self
-                    .writer
-                    .with_mut(|w| w.start_sync(fd, self.pollable.get()))
-                {
-                    sys::Result::Err(err) => {
-                        fd.close();
-                        return sys::Result::Err(err);
-                    }
-                    sys::Result::Ok(()) => {
-                        self.writer
-                            .with_mut(|w| w.update_ref(self.io_evtloop(), false));
-                    }
-                }
-                return sys::Result::Ok(());
-            }
-        }
 
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
         match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
@@ -1369,9 +1277,7 @@ impl FileSink {
     }
 
     pub(crate) fn update_ref(&self, value: bool) {
-        // `with_mut`: the Windows `BaseWindowsPipeWriter` impls take `&mut self`
-        // (the posix `PosixStreamingWriter` impls are `&self`); `with_mut`
-        // covers both. No JS re-entry — pure libuv ref/unref.
+        // No JS re-entry — pure loop ref/unref.
         self.writer.with_mut(|w| {
             if value {
                 w.enable_keeping_process_alive(self.io_evtloop());
@@ -1454,7 +1360,7 @@ impl FileSink {
         {
             match self.fd.get().decode_windows() {
                 bun_sys::fd::DecodeWindows::Windows(_) => -1, // TODO:
-                bun_sys::fd::DecodeWindows::Uv(num) => num,
+                bun_sys::fd::DecodeWindows::Crt(num) => num,
             }
         }
         #[cfg(not(windows))]
@@ -1498,8 +1404,8 @@ impl FileSink {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
                 }
-                // A Windows uv_write is always async: Pending with an empty
-                // outgoing buffer is not backpressure, so keep the source flowing.
+                // A Windows write always completes through the loop: Pending with an
+                // empty outgoing buffer is not backpressure, so keep the source flowing.
                 if !self.writer.get().is_backed_up() {
                     return streams::Writable::Owned(accepted);
                 }

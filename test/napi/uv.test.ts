@@ -3,13 +3,12 @@ import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
-import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
+import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_stubs_constants";
 import source from "./uv-stub-stuff/uv_impl.c";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 
-// We use libuv on Windows
-describe.if(!isWindows)("uv stubs", () => {
+describe("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
@@ -62,7 +61,8 @@ describe.if(!isWindows)("uv stubs", () => {
 
     addonPath = path.join(tempdir, "./build/Release/uv_test.node");
     nativeModule = require(addonPath);
-  });
+    // Installs node-gyp and compiles an addon: far past the default 5s hook timeout.
+  }, 300_000);
 
   afterEach(() => {
     process.chdir(cwd);
@@ -134,7 +134,8 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("uv_tty_reset_mode after setRawMode", async () => {
+  // The termios snapshot and the pthread hammer are POSIX.
+  test.skipIf(isWindows)("uv_tty_reset_mode after setRawMode", async () => {
     // The child runs in a pty so that setRawMode() takes the termios snapshot
     // uv_tty_reset_mode() restores. Restoring it succeeds (0); two threads
     // restoring it at once see UV_EBUSY (thousands of times per run on a

@@ -27,7 +27,7 @@ impl<'a> Tmpfile<'a> {
             O::CREAT | O::EXCL | O::CLOEXEC | O::WRONLY,
             perm,
         )?
-        .make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
+        .make_crt_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
 
         Ok(Tmpfile {
             destination_dir,

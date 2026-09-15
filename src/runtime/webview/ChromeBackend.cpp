@@ -503,7 +503,7 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
 void Transport::writeRaw(const char* data, size_t len)
 {
 #if OS(WINDOWS)
-    // libuv queues the chunks in order; m_txQueue/onWritable are unused.
+    // The pipe writer queues the chunks in order; m_txQueue/onWritable are unused.
     if (!m_dead) Bun__Chrome__writePipe(data, len);
 #else
     if (m_dead || !m_readSock) return;

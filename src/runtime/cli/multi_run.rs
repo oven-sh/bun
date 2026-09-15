@@ -19,10 +19,9 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand};
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under crate::api::bun::process.
-#[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, Rusage, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
+    self as spawn, Rusage, SpawnOptions, SpawnResult, Status, event_loop_handle_to_ctx,
 };
 use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
@@ -98,7 +97,7 @@ bun_io::impl_buffered_reader_parent! {
         let state = &mut *(*handle).state.cast_mut();
         let _ = state.maybe_finish(&mut *handle);
     };
-    loop_           = |this| bun_io::uws_to_native((*(*this).event_loop_ptr()).loop_);
+    loop_           = |this| (*(*this).event_loop_ptr()).loop_ptr();
     event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
 }
 
@@ -156,7 +155,7 @@ impl<'a> ProcessHandle<'a> {
         let start_time = Instant::now();
         let envp;
         let env_ptr = state.env;
-        let spawned: SpawnProcessResult = {
+        let spawned: SpawnResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader.
             let env = unsafe { &mut *env_ptr };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
@@ -178,17 +177,8 @@ impl<'a> ProcessHandle<'a> {
             }?
             .map_err(Error::from)?
         };
-        // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`
-        // and the stdout/stderr pipes are `.take()`n below; on POSIX `to_process` consumes
-        // `self` by value.
-        #[cfg(windows)]
-        let mut spawned = spawned;
-        // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
-        // On Windows the readers are wired via `Source::Pipe` taken from
-        // `spawned.stdout/stderr` below, and `WindowsStdioResult` is not `Copy`.
-        #[cfg(unix)]
+        // Pipe FDs are read before `to_process` consumes `spawned`.
         let stdout_fd = spawned.stdout;
-        #[cfg(unix)]
         let stderr_fd = spawned.stderr;
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
@@ -201,55 +191,19 @@ impl<'a> ProcessHandle<'a> {
         let stderr_parent = (&raw mut self.stderr_reader).cast::<c_void>();
         self.stderr_reader.reader.set_parent(stderr_parent);
 
-        #[cfg(windows)]
-        {
-            // `spawn_process_windows` has *already* reclaimed
-            // sole ownership of that heap pipe into
-            // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` (see
-            // src/spawn/process.rs WindowsStdio::Buffer doc). Reconstructing a
-            // second Box from `self.options.stdout` here would alias the same
-            // allocation and double-free when `spawned` drops. Instead, move
-            // the Box out of the spawn *result* — `WindowsStdioResult::take()`
-            // leaves `Unavailable` behind so `spawned`'s drop is a no-op.
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
-                self.stdout_reader
-                    .reader
-                    .set_source(bun_io::Source::Pipe(pipe));
+        for (fd, reader) in [
+            (stdout_fd, &mut self.stdout_reader.reader),
+            (stderr_fd, &mut self.stderr_reader.reader),
+        ] {
+            let Some(fd) = fd else { continue };
+            #[cfg(unix)]
+            let _ = bun_sys::set_nonblocking(fd);
+            if let Err(err) = reader.start(fd, true) {
+                // A reader that fails to start (Windows only) has not taken the fd.
+                use bun_sys::FdExt as _;
+                fd.close();
+                return Err(Error::from(err));
             }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-                self.stderr_reader
-                    .reader
-                    .set_source(bun_io::Source::Pipe(pipe));
-            }
-        }
-
-        #[cfg(unix)]
-        {
-            if let Some(stdout_fd) = stdout_fd {
-                let _ = bun_sys::set_nonblocking(stdout_fd);
-                self.stdout_reader
-                    .reader
-                    .start(stdout_fd, true)
-                    .map_err(Error::from)?;
-            }
-            if let Some(stderr_fd) = stderr_fd {
-                let _ = bun_sys::set_nonblocking(stderr_fd);
-                self.stderr_reader
-                    .reader
-                    .start(stderr_fd, true)
-                    .map_err(Error::from)?;
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            self.stdout_reader
-                .reader
-                .start_with_current_pipe()
-                .map_err(Error::from)?;
-            self.stderr_reader
-                .reader
-                .start_with_current_pipe()
-                .map_err(Error::from)?;
         }
 
         self.process = Some(ProcessSlot {
@@ -898,7 +852,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         None,
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
-    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    // (which silently break away from the job every spawned child is put in)
+    // die with us. POSIX: no-op.
     bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
@@ -1167,24 +1122,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             next_dependents: Vec::new(),
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
-                #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
-                #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
                 cwd: config.cwd.clone(),
-                #[cfg(windows)]
-                windows: spawn::WindowsOptions {
-                    loop_: EventLoopHandle::init_mini(event_loop),
-                    ..Default::default()
-                },
                 stream: true,
                 ..Default::default()
             },

@@ -429,7 +429,6 @@ impl Builtin {
     /// impl the heap sweep already deleted; see
     /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
     /// only.
-    #[cfg(not(windows))]
     pub(crate) fn defuse_array_buf_pins(&mut self) {
         if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
             buf.defuse();
@@ -603,34 +602,7 @@ impl Builtin {
                                 ),
                             ));
                         }
-                        Ok(f) => {
-                            #[cfg(windows)]
-                            {
-                                use bun_sys::FdExt as _;
-                                match f.make_lib_uv_owned_for_syscall(
-                                    bun_sys::Tag::open,
-                                    bun_sys::ErrorCase::CloseOnFail,
-                                ) {
-                                    Err(e) => {
-                                        let sys = e.to_shell_system_error();
-                                        return Some(Self::cmd_write_failing_error(
-                                            interp,
-                                            cmd,
-                                            format_args!(
-                                                "bun: {}: {}",
-                                                bstr::BStr::new(sys.message.byte_slice()),
-                                                bstr::BStr::new(path.as_bytes()),
-                                            ),
-                                        ));
-                                    }
-                                    Ok(f2) => f2,
-                                }
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                f
-                            }
-                        }
+                        Ok(f) => f,
                     }
                 };
 
@@ -647,12 +619,15 @@ impl Builtin {
 
                 // Honor the `pollable` computed by `open_for_writing_impl` on
                 // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
-                // takes the pollable path; Windows keeps the async writer.
+                // takes the pollable path.
                 let redirect_writer = IOWriter::init(
                     redirfd,
                     io_writer::Flags {
-                        pollable: if cfg!(windows) { true } else { pollable },
+                        #[cfg(not(windows))]
+                        pollable,
+                        #[cfg(not(windows))]
                         nonblock: is_nonblocking,
+                        #[cfg(not(windows))]
                         is_socket,
                         ..Default::default()
                     },

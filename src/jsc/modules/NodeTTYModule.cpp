@@ -2,6 +2,11 @@
 
 #include "NodeTTYModule.h"
 
+#if OS(WINDOWS)
+#include <io.h>
+#include <windows.h>
+#endif
+
 using namespace JSC;
 
 namespace Zig {
@@ -20,13 +25,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, C
 #if !OS(WINDOWS)
     bool isTTY = isatty(fd);
 #else
+    // A character device that is not a console (NUL, a serial port) is not a tty.
     bool isTTY = false;
-    switch (uv_guess_handle(fd)) {
-    case UV_TTY:
-        isTTY = true;
-        break;
-    default:
-        break;
+    if (fd >= 0) {
+        HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+        DWORD mode;
+        isTTY = GetFileType(handle) == FILE_TYPE_CHAR && GetConsoleMode(handle, &mode);
     }
 #endif
 

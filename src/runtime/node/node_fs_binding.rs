@@ -53,10 +53,7 @@ where
 /// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
 /// `.readdir` (those have bespoke entry points below).
 ///
-/// `create_task` is `async_::<FunctionName>::create` — passed in because the
-/// Windows path picks `UVFSRequest` for a handful of fds-only ops while
-/// everything else uses `AsyncFSTask`, and that choice is encoded in the
-/// `async_::*` type aliases rather than derivable from `F` alone.
+/// `create_task` is `async_::<FunctionName>::create`.
 fn run_async<A: FsArgument>(
     this: &Binding,
     global: &JSGlobalObject,
@@ -383,7 +380,7 @@ pub(crate) fn string_to_flags_for_testing(
     // MSVCRT `_O_*` values at the open boundary; node's stringToFlags and
     // fs.constants both speak MSVCRT, so translate here too.
     #[cfg(windows)]
-    let bits = bun_sys::windows::libuv::O::from_bun_o(flags.as_int());
+    let bits = bun_sys::windows::O::from_bun_o(flags.as_int());
     #[cfg(not(windows))]
     let bits = flags.as_int();
     Ok(JSValue::js_number_from_int32(bits))

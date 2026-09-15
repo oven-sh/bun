@@ -143,7 +143,6 @@
 "unused_pub:src/jsc/lib.rs" = 1
 "unused_pub:src/jsc/webcore_types.rs" = 2
 "unused_pub:src/libarchive/lib.rs" = 1
-"unused_pub:src/libuv_sys/lib.rs" = 5
 "unused_pub:src/opaque/lib.rs" = 2
 "unused_pub:src/parsers/yaml.rs" = 2
 "unused_pub:src/paths/Path.rs" = 2

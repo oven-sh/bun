@@ -1368,7 +1368,7 @@ class ChildProcess extends EventEmitter {
     // double-closes it. Async path only: spawnSync never wraps extra fds in
     // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
     // them OwnedFd so finalize_streams still closes them. On Windows extra
-    // stdio is a libuv pipe handle with no raw-fd handoff, so leave as "pipe".
+    // stdio is a named pipe, not a socket usockets adopts, so leave as "pipe".
     if (process.platform !== "win32") {
       for (let i = 3; i < bunStdio.length; i++) {
         if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";

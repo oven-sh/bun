@@ -35,8 +35,9 @@ describe("spawnSync", () => {
   }
 
   // https://github.com/oven-sh/bun/issues/33932
-  // Windows-only: the timeout timer lives on a cached libuv loop whose clock
-  // freezes between calls; the POSIX path compares against the real clock.
+  // spawnSync reuses one isolated event loop across calls; the timeout is a
+  // deadline on the real clock, not on that loop's clock from the previous
+  // call. Windows-only because it spawns `cmd`.
   it.skipIf(!isWindows)("timeout is measured from the current call, not from the previous spawnSync", async () => {
     const echo = (s: string) => ["cmd", "/c", `echo ${s}`];
     // Populate the cached isolated event loop, then let its clock go stale

@@ -877,6 +877,49 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
+/// Win32 resolves a relative path against the current directory and then
+/// applies `MAX_PATH`, which only the `\\?\` form lifts. For a relative `path`
+/// that long once resolved, writes it resolved, normalized and prefixed into
+/// `buf`, NUL-terminated, and returns where it starts and its length.
+#[cfg(windows)]
+fn long_relative_path(path: &[u8], buf: &mut PathBuffer) -> Option<(usize, usize)> {
+    // `CreateDirectoryW`'s limit, the smallest of the `MAX_PATH`-derived ones.
+    const THRESHOLD: usize = 248;
+    // Rooted, UNC and device paths, and `C:` forms, are not resolved against the cwd alone.
+    if path.is_empty() || bun_paths::is_sep_any(path[0]) || (path.len() >= 2 && path[1] == b':') {
+        return None;
+    }
+    // SAFETY: a zero-length query writes nothing and returns the length of
+    // the current directory, NUL included.
+    let cwd_len =
+        unsafe { bun_sys::windows::kernel32::GetCurrentDirectoryW(0, core::ptr::null_mut()) }
+            as usize;
+    if path.len() + cwd_len < THRESHOLD || !strings::fits_in_wide_path_buffer(path) {
+        return None;
+    }
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let cwd = bun_sys::getcwd_z(&mut cwd_buf).ok()?.as_bytes();
+    // Room in front of the joined path for `\\?\UNC\`.
+    const RESERVE: usize = 8;
+    let joined_len = bun_paths::resolve_path::join_abs_string_buf_checked::<
+        bun_paths::platform::Windows,
+    >(cwd, &mut buf[RESERVE..MAX_PATH_BYTES - 1], &[path])?
+    .len();
+    let is_unc = bun_paths::is_sep_any(buf[RESERVE]) && bun_paths::is_sep_any(buf[RESERVE + 1]);
+    let (start, len) = if is_unc {
+        // `\\server\share\…` → `\\?\UNC\server\share\…`
+        let start = RESERVE + 1 - 7;
+        buf[start..start + 7].copy_from_slice(b"\\\\?\\UNC");
+        (start, joined_len - 1 + 7)
+    } else {
+        let start = RESERVE - 4;
+        buf[start..RESERVE].copy_from_slice(&bun_sys::windows::LONG_PATH_PREFIX_U8);
+        (start, joined_len + 4)
+    };
+    buf[start + len] = 0;
+    Some((start, len))
+}
+
 impl PathLikeExt for PathLike<'_> {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
@@ -934,6 +977,9 @@ impl PathLikeExt for PathLike<'_> {
                     // at `buf[len]`.
                     return ZStr::from_buf(&buf[..], len);
                 }
+            } else if let Some((start, len)) = long_relative_path(sliced, buf) {
+                // SAFETY: `long_relative_path` wrote the NUL at `buf[start + len]`.
+                return ZStr::from_buf(&buf[start..], len);
             }
         }
 
@@ -1062,6 +1108,11 @@ impl PathLikeExt for PathLike<'_> {
                 // SAFETY: same alignment note as above.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return Ok(strings::to_kernel32_path(buf_u16, normal));
+            }
+            if let Some((start, len)) = long_relative_path(s, &mut b) {
+                // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
+                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                return Ok(strings::to_kernel32_path(buf_u16, &b[start..start + len]));
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
@@ -1538,12 +1589,12 @@ impl FileSystemFlags {
             let number = validators::validate_int32(ctx, val, "flags", None, None)?;
             let flags = number.max(0);
             // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
-            // use the platform's native MSVC/libuv values which differ from the
+            // use the platform's native MSVC values which differ from the
             // internal bun.O representation. Convert them here so downstream
             // code that operates on bun.O flags works correctly.
             #[cfg(windows)]
             {
-                return Ok(Some(FileSystemFlags(bun_libuv_sys::O::to_bun_o(flags))));
+                return Ok(Some(FileSystemFlags(bun_sys::windows::O::to_bun_o(flags))));
             }
             #[cfg(not(windows))]
             {
@@ -1711,10 +1762,16 @@ impl Dirent {
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
-        use bun_libuv_sys::{
-            UV_DIRENT_BLOCK, UV_DIRENT_CHAR, UV_DIRENT_DIR, UV_DIRENT_FIFO, UV_DIRENT_FILE,
-            UV_DIRENT_LINK, UV_DIRENT_SOCKET, UV_DIRENT_UNKNOWN,
-        };
+        // `uv_dirent_type_t`, shared with `Bun__Dirent__toJS` and
+        // `process.binding('constants').fs.UV_DIRENT_*`.
+        const UV_DIRENT_UNKNOWN: i32 = 0;
+        const UV_DIRENT_FILE: i32 = 1;
+        const UV_DIRENT_DIR: i32 = 2;
+        const UV_DIRENT_LINK: i32 = 3;
+        const UV_DIRENT_FIFO: i32 = 4;
+        const UV_DIRENT_SOCKET: i32 = 5;
+        const UV_DIRENT_CHAR: i32 = 6;
+        const UV_DIRENT_BLOCK: i32 = 7;
         let kind_int: i32 = match self.kind {
             DirentKind::File => UV_DIRENT_FILE,
             DirentKind::BlockDevice => UV_DIRENT_BLOCK,

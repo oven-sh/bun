@@ -24,7 +24,7 @@ use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_which::which;
 
 use crate::cli;
@@ -404,17 +404,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             ipc: ipc_fd,
-            #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: `env` outlives the mini event loop.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                        None,
-                    ),
-                ),
-                ..Default::default()
-            },
             ..Default::default()
         }) {
             Err(err) => {
@@ -1578,7 +1567,7 @@ impl Run<'_> {
         }
 
         // These create undefined references to externally-defined C symbols
-        // (uv_* posix stubs, v8:: shims) so the linker pulls those archive
+        // (uv_* stubs, v8:: shims) so the linker pulls those archive
         // members from libbun.a in CI's split link-only mode and keeps them
         // through `--gc-sections`. Without them, dlopen'd NAPI modules see
         // `undefined symbol: uv_*` instead of the friendly crash message.
@@ -2102,17 +2091,6 @@ impl RunCommand {
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             use_execve_on_macos: silent,
-            #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: env loader is process-lifetime.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                        None,
-                    ),
-                ),
-                ..Default::default()
-            },
             ..Default::default()
         }) {
             Ok(r) => r,
@@ -2777,12 +2755,6 @@ impl RunCommand {
         let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
             return false;
         };
-        // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
-        // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
-        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        else {
-            return false;
-        };
 
         // fstat: directories cannot be run. if only there was a faster way to
         // check this
@@ -2954,8 +2926,8 @@ impl RunCommand {
         if ctx.positionals.is_empty() {
             // Node: bare `node` on a TTY starts the REPL. Only in emulation
             // mode; bun's own `bun` with no args stays the help text. Use
-            // Output's cached stdio flag (set at startup via libuv's handle
-            // probe), which is the same check `bun update --interactive` uses.
+            // Output's cached stdio flag (set at startup), which is the same
+            // check `bun update --interactive` uses.
             if Output::is_stdin_tty() {
                 return Self::exec_node_repl(ctx);
             }

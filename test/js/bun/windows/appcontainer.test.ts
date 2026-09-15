@@ -341,8 +341,8 @@ main().then(
       expect(r.spawnPiped).toBe(true);
       expect(r.realpath).toEqual({ sync: "EPERM", native: "EPERM" });
       // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED;
-      // stock uv_pipe_bind2 maps that to EADDRINUSE. Tighten to EACCES once
-      // the disambiguation probe lands on the libuv side.
+      // PipeServer::listen maps that to EADDRINUSE. Tighten to EACCES once
+      // it tells the two apart.
       expect(["EACCES", "EADDRINUSE"]).toContain(r.pipeNonLocal);
       expect(r.pipeLocal).toBe("LISTENED");
       expect(r.forkIpc).toBe("OK");

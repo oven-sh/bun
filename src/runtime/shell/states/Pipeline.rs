@@ -204,8 +204,10 @@ impl Pipeline {
                     let w = IOWriter::init(
                         pipes[cmd_idx][1],
                         io_writer::Flags {
+                            #[cfg(not(windows))]
                             pollable: true,
-                            is_socket: cfg!(unix),
+                            #[cfg(not(windows))]
+                            is_socket: true,
                             ..Default::default()
                         },
                         evtloop,

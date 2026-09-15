@@ -14,7 +14,7 @@ pub trait FdJsc: Sized {
     fn from_js(value: JSValue) -> Option<Self>;
     fn from_js_validated(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Self>>;
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
-    fn to_js_without_making_lib_uv_owned(self) -> JSValue;
+    fn to_js_without_making_crt_owned(self) -> JSValue;
 }
 
 impl FdJsc for Fd {
@@ -28,12 +28,10 @@ impl FdJsc for Fd {
             return None;
         }
         let fd: i32 = i32::try_from(fd64).expect("int cast");
-        // On Windows, JS-visible fds are libuv/CRT fds (see `to_js`). libuv fd
-        // 0/1/2 already map to stdio, so there is no need to substitute the
-        // cached `.system` HANDLE here — doing so forces every `sys_uv` call to
-        // round-trip through `Fd::uv()`'s stdio-handle comparison, which panics
-        // if the process std handle was swapped after startup.
-        Some(Fd::from_uv(fd))
+        // On Windows, JS-visible fds are CRT fds (see `to_js`). CRT fd 0/1/2
+        // already map to stdio, so there is no need to substitute the cached
+        // `.system` HANDLE here.
+        Some(Fd::from_crt(fd))
     }
 
     // If a non-number is given, returns null.
@@ -70,7 +68,7 @@ impl FdJsc for Fd {
         let fd: c_int = c_int::try_from(int).expect("int cast");
         // See `from_js` above for why stdio fds are not remapped to the cached
         // `.system` HANDLE on Windows.
-        Ok(Some(Fd::from_uv(fd)))
+        Ok(Some(Fd::from_crt(fd)))
     }
 
     /// After calling, the input file descriptor is no longer valid and must not be used.
@@ -79,7 +77,7 @@ impl FdJsc for Fd {
         if !self.is_valid() {
             return JSValue::js_number_from_int32(-1);
         }
-        let uv_owned_fd = match self.make_lib_uv_owned() {
+        let crt_owned_fd = match self.make_crt_owned() {
             Ok(fd) => fd,
             Err(_) => {
                 self.close();
@@ -93,15 +91,15 @@ impl FdJsc for Fd {
                 return JSValue::ZERO;
             }
         };
-        JSValue::js_number_from_int32(uv_owned_fd.uv())
+        JSValue::js_number_from_int32(crt_owned_fd.crt())
     }
 
-    /// Convert an FD to a JavaScript number without transferring ownership to libuv.
-    /// Unlike to_js(), this does not call make_lib_uv_owned() on Windows, so the caller
+    /// Convert an FD to a JavaScript number without transferring ownership to the C runtime.
+    /// Unlike to_js(), this does not call make_crt_owned() on Windows, so the caller
     /// retains ownership and must close the FD themselves.
     /// Returns -1 for invalid file descriptors.
-    /// On Windows: returns Uint64 for system handles, Int32 for uv file descriptors.
-    fn to_js_without_making_lib_uv_owned(self) -> JSValue {
+    /// On Windows: returns Uint64 for system handles, Int32 for CRT file descriptors.
+    fn to_js_without_making_crt_owned(self) -> JSValue {
         if !self.is_valid() {
             return JSValue::js_number_from_int32(-1);
         }
@@ -109,7 +107,7 @@ impl FdJsc for Fd {
         {
             return match self.kind() {
                 FdKind::System => JSValue::js_number_from_uint64(self.native() as u64),
-                FdKind::Uv => JSValue::js_number_from_int32(self.uv()),
+                FdKind::Crt => JSValue::js_number_from_int32(self.crt()),
             };
         }
         #[cfg(not(windows))]

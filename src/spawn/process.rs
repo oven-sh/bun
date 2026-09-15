@@ -1,28 +1,25 @@
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(target_os = "macos")]
 use core::ffi::c_void;
 use core::ffi::{c_char, c_int};
 #[cfg(unix)]
 use core::sync::atomic::AtomicU32;
+#[cfg(unix)]
 use core::sync::atomic::Ordering;
-// (std::sync::Arc removed — Process is intrusively ref-counted via
-// bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use bun_core::Global;
+#[cfg(unix)]
 use bun_core::Output;
 use bun_event_loop::EventLoopHandle;
 #[cfg(unix)]
-use bun_io::ParentDeathWatchdog;
+use bun_io::FilePoll;
+use bun_io::KeepAlive;
 #[cfg(unix)]
-use bun_io::{FilePoll, KeepAlive};
+use bun_io::ParentDeathWatchdog;
 use bun_ptr::RefPtr;
-#[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd, Maybe};
 #[cfg(windows)]
-use uv::{UvHandle as _, UvStream as _};
+use bun_uws_sys::iocp;
 
 // posix_spawn(2) wrappers — owned by the `bun_spawn_sys` leaf crate.
 #[cfg(unix)]
@@ -31,9 +28,6 @@ use bun_spawn_sys::posix_spawn::posix_spawn;
 /// is `u32` there; `Status::from` casts before matching.
 #[cfg(unix)]
 pub use posix_spawn::WaitPidResult;
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-pub struct WaitPidResult {}
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
@@ -53,15 +47,15 @@ pub mod spawn_sys {
 bun_core::declare_scope!(PROCESS, visible);
 
 // ─── Re-exports from `bun_spawn_sys` ─────────────────────────────────────────
-// The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
-// moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
-// Re-export here so existing `bun_spawn::process::*` paths keep resolving.
-pub use bun_spawn_sys::spawn_process::rusage_zeroed;
+// The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`,
+// `spawn_process_windows`) lives in the leaf `bun_spawn_sys` crate so it has no
+// event-loop dependency. Re-export here so `bun_spawn::process::*` paths resolve.
 #[cfg(windows)]
-pub use bun_spawn_sys::uv_getrusage;
+pub use bun_spawn_sys::WindowsOptions;
+pub use bun_spawn_sys::spawn_process::rusage_zeroed;
 pub use bun_spawn_sys::{
-    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult,
-    PosixStdio, Rusage, StdioKind,
+    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidFdType, PidT, Rusage, SpawnOptions, SpawnResult,
+    Stdio, StdioKind,
 };
 
 /// Whether the process-exit poll should be registered one-shot.
@@ -93,13 +87,6 @@ const PROCESS_POLL_ONE_SHOT: bool = !cfg!(any(target_os = "linux", target_os = "
 
 pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
 
-// `opaque_ffi!` emits an inherent `impl` that doesn't carry inner `#[cfg]`
-// attrs, so gate the whole macro invocation rather than the struct alone.
-#[cfg(not(windows))]
-bun_opaque::opaque_ffi! {
-    pub struct SyncProcessPosix;
-}
-
 #[inline]
 fn call_exit_handler(
     h: &ProcessExitHandler,
@@ -114,9 +101,9 @@ fn call_exit_handler(
     h.on_process_exit(process, status, rusage);
 }
 
-// bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
-// via `container_of` in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
-// keep the embedded count; the derive emits `ThreadSafeRefCounted` +
+// bun.ptr.ThreadSafeRefCount → intrusive (a raw `*mut Process` travels through
+// the event loop's poll/wait callbacks and the waiter thread). Per PORTING.md
+// §Pointers, keep the embedded count; the derive emits `ThreadSafeRefCounted` +
 // `AnyRefCounted`. Default `destructor` (`heap::take`) applies — `Drop` below
 // handles `poller.deinit()`.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
@@ -124,6 +111,13 @@ pub struct Process {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) pidfd: PidFdType,
+    /// Open until `close()`; while it is, the pid cannot be reused.
+    #[cfg(windows)]
+    pub(crate) process_handle: bun_sys::windows::HANDLE,
+    /// The signal `kill()` ended the process with. Windows has no notion of
+    /// one, so this is what makes the exit report as signaled.
+    #[cfg(windows)]
+    pub(crate) exit_signal: u8,
     pub status: Status,
     pub poller: Poller,
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
@@ -140,6 +134,8 @@ impl Drop for Process {
     /// above; this `Drop` body covers the `poller.deinit()` call.
     fn drop(&mut self) {
         self.poller.deinit();
+        #[cfg(windows)]
+        self.close_process_handle();
     }
 }
 
@@ -272,13 +268,10 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
     handle.as_event_loop_ctx()
 }
 
-// ─── posix_spawn / FilePoll / uv-backed Process methods ──────────────────────
+// ─── spawn-result / exit-watch Process methods ───────────────────────────────
 impl Process {
     #[cfg(unix)]
-    pub(crate) fn init_posix(
-        posix: &PosixSpawnResult,
-        event_loop: EventLoopHandle,
-    ) -> *mut Process {
+    pub(crate) fn init_posix(posix: &SpawnResult, event_loop: EventLoopHandle) -> *mut Process {
         let status = 'brk: {
             if posix.has_exited {
                 let mut rusage = rusage_zeroed();
@@ -299,6 +292,45 @@ impl Process {
             status,
             exit_handler: ProcessExitHandler::default(),
         }))
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn init_windows(spawned: &SpawnResult, event_loop: EventLoopHandle) -> *mut Process {
+        bun_core::heap::into_raw(Box::new(Process {
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            pid: spawned.pid,
+            process_handle: spawned.process_handle,
+            exit_signal: 0,
+            event_loop,
+            poller: Poller::Detached,
+            status: Status::Running,
+            exit_handler: ProcessExitHandler::default(),
+        }))
+    }
+
+    /// The process handle; invalid once the process has exited or `close()` ran.
+    #[cfg(windows)]
+    #[inline]
+    pub fn process_handle(&self) -> bun_sys::windows::HANDLE {
+        self.process_handle
+    }
+
+    /// Resource usage so far of a process that has not exited yet.
+    #[cfg(windows)]
+    pub fn rusage(&self) -> Option<Rusage> {
+        if self.process_handle == bun_sys::windows::INVALID_HANDLE_VALUE {
+            return None;
+        }
+        Some(bun_spawn_sys::process_rusage(self.process_handle))
+    }
+
+    #[cfg(windows)]
+    fn close_process_handle(&mut self) {
+        if self.process_handle != bun_sys::windows::INVALID_HANDLE_VALUE {
+            // SAFETY: the handle is ours and nothing waits on it any more.
+            unsafe { bun_spawn_sys::windows::win32::CloseHandle(self.process_handle) };
+            self.process_handle = bun_sys::windows::INVALID_HANDLE_VALUE;
+        }
     }
 
     // has_exited / has_killed / signal_code live in the always-on impl above.
@@ -324,11 +356,47 @@ impl Process {
         self.on_wait_pid(&waitpid_result, &rusage);
     }
 
+    /// The process handle is signalled: report how the process ended.
+    #[cfg(windows)]
+    fn on_process_signaled(&mut self) {
+        use bun_spawn_sys::windows::win32;
+        let rusage = bun_spawn_sys::process_rusage(self.process_handle);
+        let mut exit_code: win32::DWORD = 0;
+        // SAFETY: `exit_code` is a valid out-pointer.
+        let status = if unsafe { win32::GetExitCodeProcess(self.process_handle, &mut exit_code) }
+            == 0
+        {
+            Status::Err(win32::last_error(bun_sys::Tag::waitpid))
+        } else if self.exit_signal > 0 && self.exit_signal < bun_core::SignalCode::SIGSYS as u8 {
+            Status::Signaled(self.exit_signal)
+        } else {
+            Status::Exited(Exited {
+                code: exit_code as u8,
+                signal: 0,
+                raw: exit_code,
+            })
+        };
+        bun_core::scoped_log!(PROCESS, "Process.onExit({}) {}", self.pid, status);
+        self.on_exit(status, &rusage);
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn wait_windows(&mut self, sync_: bool) {
+        use bun_spawn_sys::windows::win32;
+        if self.has_exited() || self.process_handle == bun_sys::windows::INVALID_HANDLE_VALUE {
+            return;
+        }
+        let timeout = if sync_ { win32::INFINITE } else { 0 };
+        if win32::WaitForSingleObject(self.process_handle, timeout) == win32::WAIT_OBJECT_0 {
+            self.on_process_signaled();
+        }
+    }
+
     pub fn wait(&mut self, sync_: bool) {
         #[cfg(unix)]
         self.wait_posix(sync_);
         #[cfg(windows)]
-        let _ = sync_;
+        self.wait_windows(sync_);
     }
 
     /// # Safety
@@ -432,9 +500,57 @@ impl Process {
     pub fn watch(&mut self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
-            if let Poller::Uv(p) = &mut self.poller {
-                p.ref_();
+            let ctx = self.event_loop_ctx();
+            if let Poller::Wait(_, keep_alive) = &mut self.poller {
+                keep_alive.ref_(ctx);
+                return Ok(());
             }
+            if self.process_handle == bun_sys::windows::INVALID_HANDLE_VALUE {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ESRCH,
+                    bun_sys::Tag::waitpid,
+                ));
+            }
+
+            let loop_ = self.event_loop.loop_();
+            // SAFETY: `loop_` is the live loop of this thread.
+            let wait = unsafe { iocp::us_iocp_wait_create(loop_) };
+            let exit_wait = bun_core::heap::into_raw(Box::new(ExitWait {
+                op: iocp::Op::new(ExitWait::on_packet),
+                wait,
+                process: std::ptr::from_mut::<Process>(self),
+                loop_,
+                prev: core::ptr::null_mut(),
+                next: core::ptr::null_mut(),
+            }));
+            // SAFETY: `exit_wait` was just allocated and stays at this address
+            // until its packet is dequeued or the wait is stopped. An already
+            // signalled handle queues the packet all the same.
+            if unsafe {
+                iocp::us_iocp_wait_start(wait, self.process_handle, &raw mut (*exit_wait).op)
+            } != 0
+            {
+                // SAFETY: the wait never started; nothing else refers to either.
+                unsafe {
+                    iocp::us_iocp_wait_free(wait);
+                    drop(bun_core::heap::take(exit_wait));
+                }
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::EINVAL,
+                    bun_sys::Tag::waitpid,
+                ));
+            }
+
+            // SAFETY: `exit_wait` is live, at its final address and not listed.
+            unsafe { ExitWait::link(exit_wait) };
+            let mut keep_alive = KeepAlive::default();
+            keep_alive.ref_(ctx);
+            self.poller = Poller::Wait(
+                core::ptr::NonNull::new(exit_wait).expect("heap::into_raw is non-null"),
+                keep_alive,
+            );
+            // Owned by `exit_wait` for as long as its `process` is set.
+            self.ref_();
             return Ok(());
         }
 
@@ -537,93 +653,6 @@ impl Process {
         }
     }
 
-    #[cfg(windows)]
-    extern "C" fn on_exit_uv(process: *mut uv::uv_process_t, exit_status: i64, term_signal: c_int) {
-        // A Rust default-repr `enum` has no
-        // stable variant-payload offset, so the back-pointer is stored in
-        // `uv_process_t.data` (set in `spawn_process_windows` immediately
-        // after the handle is zeroed).
-        //
-        // Read everything needed from `*process` BEFORE creating
-        // `this: &mut Process`. The handle is the inline `Poller::Uv` field,
-        // so once `this` exclusively borrows the whole `Process`, any later
-        // `&mut *process` (or raw read via `process`) overlaps that borrow
-        // and pops `this`'s Unique tag under Stacked Borrows — the
-        // subsequent `this.close()` (which touches `self.poller`) would then
-        // use an invalidated tag.
-        // SAFETY: libuv passes the live handle; only reads its POD fields.
-        let rusage = uv_getrusage(unsafe { &mut *process });
-        // SAFETY: raw read of POD `pid` field on the live handle.
-        let _pid = unsafe { (*process).pid };
-        // SAFETY: `data` was set to the owning `*mut Process` before
-        // `uv_spawn`; libuv never overwrites it. `process` is not
-        // dereferenced again after this point.
-        let this: &mut Process = unsafe { bun_ptr::callback_ctx::<Process>((*process).data) };
-        let exit_code: u8 = if exit_status >= 0 {
-            (exit_status as u64) as u8
-        } else {
-            0
-        };
-        let signal_code: Option<u8> =
-            if term_signal > 0 && term_signal < bun_core::SignalCode::SIGSYS as c_int {
-                Some(term_signal as u8)
-            } else {
-                None
-            };
-
-        bun_sys::windows::libuv::log!(
-            "Process.onExit({}) code: {}, signal: {:?}",
-            _pid,
-            exit_code,
-            signal_code
-        );
-
-        if let Some(sig) = signal_code {
-            this.close();
-            this.on_exit(Status::Signaled(sig), &rusage);
-        } else if exit_status >= 0 {
-            // The check is on the signed libuv `exit_status`, so a negative
-            // `-UV_E*` reaches the Err arm.
-            this.close();
-            this.on_exit(
-                Status::Exited(Exited {
-                    code: exit_code,
-                    signal: 0,
-                    raw: exit_status as u32,
-                }),
-                &rusage,
-            );
-        } else {
-            this.on_exit(
-                Status::Err(bun_sys::Error::from_code(
-                    bun_sys::windows::translate_uv_error_to_e(exit_status as c_int),
-                    bun_sys::Tag::waitpid,
-                )),
-                &rusage,
-            );
-        }
-    }
-
-    #[cfg(windows)]
-    extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
-        // SAFETY: read POD `pid` first — `uv_handle` points at the inline
-        // `Poller::Uv` payload inside `*this` (see `on_exit_uv`).
-        let _pid = unsafe { (*uv_handle).pid };
-        // SAFETY: `*mut Process` back-pointer stashed in `data` at spawn. Stay
-        // raw — `RefPtr::drop` may free the allocation, so never bind a
-        // `&mut Process` whose tag would have to outlive that.
-        let this: *mut Process = unsafe { (*uv_handle).data.cast() };
-        // SAFETY: adopts the +1 ref taken at `uv_spawn`.
-        let _guard = unsafe { RefPtr::from_raw(this) };
-        bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
-        // SAFETY: `_guard` keeps `this` live for this block.
-        unsafe {
-            if matches!((*this).poller, Poller::Uv(_)) {
-                (*this).poller = Poller::Detached;
-            }
-        }
-    }
-
     pub fn close(&mut self) {
         #[cfg(unix)]
         {
@@ -644,21 +673,29 @@ impl Process {
         }
         #[cfg(windows)]
         {
-            // Hoist the libuv handle state into locals so the `&self.poller`
-            // borrow ends before we need `&mut self` for `ref_()` /
-            // `self.poller = …`. No raw-pointer round-trip needed.
-            let (closed, closing) = match &self.poller {
-                Poller::Uv(process) => (process.is_closed(), process.is_closing()),
-                _ => return,
-            };
-            if closed {
-                self.poller = Poller::Detached;
-            } else if !closing {
-                self.ref_();
-                if let Poller::Uv(process) = &mut self.poller {
-                    process.close(Self::on_close_uv);
+            if let Poller::Wait(exit_wait, mut keep_alive) =
+                core::mem::replace(&mut self.poller, Poller::Detached)
+            {
+                keep_alive.unref(event_loop_handle_to_ctx(self.event_loop));
+                let exit_wait = exit_wait.as_ptr();
+                // SAFETY: `exit_wait` is live while the poller holds it. Once the
+                // wait is stopped nothing refers to it; otherwise its packet is
+                // already on its way and it stays allocated for `on_packet`,
+                // which frees it.
+                unsafe {
+                    ExitWait::unlink(exit_wait);
+                    if iocp::us_iocp_wait_stop((*exit_wait).wait) != 0 {
+                        iocp::us_iocp_wait_free((*exit_wait).wait);
+                        drop(bun_core::heap::take(exit_wait));
+                    } else {
+                        (*exit_wait).process = core::ptr::null_mut();
+                    }
                 }
+                // SAFETY: the watch's ref; callers hold their own +1, so this
+                // never drops to zero.
+                unsafe { Self::deref(std::ptr::from_mut(self)) };
             }
+            self.close_process_handle();
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -724,20 +761,14 @@ impl Process {
         }
         #[cfg(windows)]
         {
-            match &mut self.poller {
-                Poller::Uv(handle) => {
-                    if let Some(err) = handle
-                        .kill(c_int::from(signal))
-                        .to_error(bun_sys::Tag::kill)
-                    {
-                        // if the process was already killed don't throw
-                        if err.errno != bun_sys::E::ESRCH as u16 {
-                            return Err(err);
-                        }
-                    }
-                    return Ok(());
-                }
-                _ => {}
+            if self.has_exited() || self.process_handle == bun_sys::windows::INVALID_HANDLE_VALUE {
+                return Ok(());
+            }
+            match bun_spawn_sys::windows::kill(self.process_handle, c_int::from(signal)) {
+                Ok(()) => self.exit_signal = signal,
+                // if the process was already killed don't throw
+                Err(err) if err.get_errno() == bun_sys::E::ESRCH => {}
+                Err(err) => return Err(err),
             }
         }
 
@@ -947,39 +978,150 @@ pub type Poller = PollerPosix;
 #[cfg(windows)]
 pub type Poller = PollerWindows;
 
+/// The op a process-exit wait completes with. Heap-allocated on its own: the
+/// loop owns it from `us_iocp_wait_start` until its packet is dequeued or
+/// `us_iocp_wait_stop` reports the wait removed, whatever happens to the
+/// `Process` meanwhile.
+#[cfg(windows)]
+#[repr(C)]
+pub struct ExitWait {
+    op: iocp::Op,
+    wait: *mut iocp::Wait,
+    /// Holds one ref while set; null once the `Process` closed the watch with
+    /// the packet already in flight.
+    process: *mut Process,
+    loop_: *mut bun_uws_sys::Loop,
+    /// [`EXIT_WAITS`] links; listed exactly while `process` is set.
+    prev: *mut ExitWait,
+    next: *mut ExitWait,
+}
+
+#[cfg(windows)]
+thread_local! {
+    /// The exit waits of this thread that still report to a `Process`, so a
+    /// loop that is about to be freed can end them ([`close_all_for_loop`]).
+    static EXIT_WAITS: core::cell::Cell<*mut ExitWait> =
+        const { core::cell::Cell::new(core::ptr::null_mut()) };
+}
+
+/// Stop watching every process whose exit wait is on `loop_`, which this
+/// thread is about to free (a Worker's): [`Process::close`] for each. Their
+/// exit handlers never run and the children are left running, as when a POSIX
+/// loop goes away with process polls still registered.
+#[cfg(windows)]
+pub fn close_all_for_loop(loop_: *mut bun_uws_sys::Loop) {
+    let mut cursor = EXIT_WAITS.get();
+    while !cursor.is_null() {
+        // SAFETY: listed waits are live and their `process` is set; `close`
+        // unlinks `cursor` and nothing else, so the next pointer is read
+        // first. The extra ref keeps the `Process` allocated across `close`
+        // releasing the watch's.
+        unsafe {
+            let next = (*cursor).next;
+            if (*cursor).loop_ == loop_ {
+                let process = (*cursor).process;
+                (*process).ref_();
+                (*process).close();
+                Process::deref(process);
+            }
+            cursor = next;
+        }
+    }
+}
+
+#[cfg(windows)]
+impl ExitWait {
+    /// # Safety
+    /// `this` is live, at its final address and not listed.
+    unsafe fn link(this: *mut ExitWait) {
+        let head = EXIT_WAITS.get();
+        // SAFETY: caller contract; `head` is a listed (live) wait or null.
+        unsafe {
+            (*this).next = head;
+            if !head.is_null() {
+                (*head).prev = this;
+            }
+        }
+        EXIT_WAITS.set(this);
+    }
+
+    /// # Safety
+    /// `this` is live and listed, on the thread that listed it.
+    unsafe fn unlink(this: *mut ExitWait) {
+        // SAFETY: caller contract; neighbours are listed (live) waits.
+        unsafe {
+            let (prev, next) = ((*this).prev, (*this).next);
+            if prev.is_null() {
+                EXIT_WAITS.set(next);
+            } else {
+                (*prev).next = next;
+            }
+            if !next.is_null() {
+                (*next).prev = prev;
+            }
+        }
+    }
+
+    unsafe extern "C" fn on_packet(
+        _loop: *mut bun_uws_sys::Loop,
+        op: *mut iocp::Op,
+        _entry: *mut iocp::OverlappedEntry,
+    ) {
+        // SAFETY: `op` is the first field of the `ExitWait` allocated in
+        // `Process::watch`; with its packet dequeued the loop is done with it.
+        let process = unsafe {
+            let this = op.cast::<ExitWait>();
+            let process = (*this).process;
+            if !process.is_null() {
+                ExitWait::unlink(this);
+            }
+            iocp::us_iocp_wait_free((*this).wait);
+            drop(bun_core::heap::take(this));
+            process
+        };
+        if process.is_null() {
+            return;
+        }
+        // SAFETY: adopts the ref `watch()` took. Stay raw — dropping the guard
+        // may free the allocation.
+        let _guard = unsafe { RefPtr::from_raw(process) };
+        // SAFETY: `_guard` keeps `process` live; `&mut` scoped to each statement
+        // (`on_process_signaled` can run the exit handler).
+        unsafe {
+            if let Poller::Wait(_, mut keep_alive) =
+                core::mem::replace(&mut (*process).poller, Poller::Detached)
+            {
+                keep_alive.unref(event_loop_handle_to_ctx((*process).event_loop));
+            }
+            (*process).on_process_signaled();
+        }
+    }
+}
+
 #[cfg(windows)]
 pub enum PollerWindows {
-    Uv(uv::uv_process_t),
+    /// Watching the process handle through the loop's completion port.
+    Wait(core::ptr::NonNull<ExitWait>, KeepAlive),
     Detached,
 }
 
 #[cfg(windows)]
 impl PollerWindows {
-    /// Not `Drop` — see `PollerPosix::deinit`.
+    /// Not `Drop` — see `PollerPosix::deinit`. A watch holds a ref on the
+    /// `Process`, so none is left by the time it is dropped.
     pub(crate) fn deinit(&mut self) {
-        if let PollerWindows::Uv(p) = self {
-            debug_assert!(p.is_closed());
+        debug_assert!(matches!(self, PollerWindows::Detached));
+    }
+
+    pub(crate) fn enable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
+        if let PollerWindows::Wait(_, keep_alive) = self {
+            keep_alive.ref_(ctx);
         }
     }
 
-    pub(crate) fn enable_keeping_event_loop_alive(&mut self, _event_loop: bun_io::EventLoopCtx) {
-        match self {
-            PollerWindows::Uv(process) => {
-                process.ref_();
-            }
-            _ => {}
-        }
-    }
-
-    pub(crate) fn disable_keeping_event_loop_alive(&mut self, _event_loop: bun_io::EventLoopCtx) {
-        // uv_unref() drops this handle from loop->active_handles. us_loop_pump
-        // forces a non-blocking uv_run iteration regardless, so the
-        // wait-thread's IOCP exit packet is still dequeued and on_exit_uv fires.
-        match self {
-            PollerWindows::Uv(p) => {
-                p.unref();
-            }
-            _ => {}
+    pub(crate) fn disable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
+        if let PollerWindows::Wait(_, keep_alive) = self {
+            keep_alive.unref(ctx);
         }
     }
 }
@@ -1487,265 +1629,7 @@ impl WaiterThread {
     pub fn set_should_use_waiter_thread() {}
 }
 
-// (PosixSpawnOptions / StdioKind / Dup2 / PosixStdio moved to bun_spawn_sys —
-// re-exported above. Windows option/result types stay here: they embed
-// `*mut Process` / `EventLoopHandle` and so cannot live in the leaf -sys crate.)
-
-#[cfg(windows)]
-pub struct WindowsSpawnResult {
-    // Raw intrusive pointer. `Process` is intrusively
-    // ref-counted via `bun_ptr::ThreadSafeRefCount` and recovered via
-    // `uv_process_t.data` in the libuv callbacks; allocation is `heap::alloc`
-    // and destruction is `heap::take` (see `ThreadSafeRefCounted::destructor`).
-    pub(crate) process: Option<*mut Process>,
-    pub stdin: WindowsStdioResult,
-    pub stdout: WindowsStdioResult,
-    pub stderr: WindowsStdioResult,
-    pub extra_pipes: Vec<WindowsStdioResult>,
-}
-
-#[cfg(windows)]
-impl Default for WindowsSpawnResult {
-    fn default() -> Self {
-        Self {
-            process: None,
-            stdin: WindowsStdioResult::Unavailable,
-            stdout: WindowsStdioResult::Unavailable,
-            stderr: WindowsStdioResult::Unavailable,
-            extra_pipes: Vec::new(),
-        }
-    }
-}
-
-#[cfg(windows)]
-pub enum WindowsStdioResult {
-    /// inherit, ignore, path, pipe
-    Unavailable,
-    Buffer(Box<uv::Pipe>),
-    BufferFd(Fd),
-    /// A stdio slot at index >= 3 whose value `Subprocess.stdio` has exposed:
-    /// a duplicate of the pipe's HANDLE that the caller owns and closes
-    /// (`net.connect({ fd })` adopts it). The `Buffer` it came from is closed
-    /// when the slot is downgraded, so nothing here closes this handle. The
-    /// counterpart of the POSIX `ExtraPipe::UnownedFd`.
-    UnownedFd(Fd),
-}
-
-#[cfg(windows)]
-impl Default for WindowsStdioResult {
-    fn default() -> Self {
-        Self::Unavailable
-    }
-}
-
-#[cfg(windows)]
-impl WindowsStdioResult {
-    /// Mirrors `Option::<Fd>::take()` on the POSIX `SpawnedStdio` so callers
-    /// (`shell::subproc`, `bun_spawn` JS bindings) can pull the handle out by
-    /// value without per-platform `mem::replace` at every call site.
-    #[inline]
-    pub fn take(&mut self) -> Self {
-        core::mem::take(self)
-    }
-}
-
-#[cfg(windows)]
-impl Drop for WindowsSpawnResult {
-    fn drop(&mut self) {
-        // Any `Buffer(Box<uv::Pipe>)` still held here was `uv_pipe_init`'d in
-        // `spawn_process_windows` and is linked into the loop's handle queue;
-        // auto-dropping the Box would deallocate a live handle and the next
-        // `uv_run` would walk freed memory. Route un-consumed pipes through
-        // `uv_close` (free in the close callback). Slots already consumed via
-        // `.take()` are `Unavailable` and skip this.
-        //
-        // `WindowsStdioResult` itself deliberately has no `Drop` so callers
-        // can keep destructuring `Buffer(pipe)` by value; the container is
-        // the ownership boundary.
-        for slot in [&mut self.stdin, &mut self.stdout, &mut self.stderr] {
-            if let WindowsStdioResult::Buffer(pipe) = core::mem::take(slot) {
-                // SAFETY: `pipe` is the Box-allocated `uv::Pipe` from
-                // `create_zeroed_pipe`; `close_and_destroy` reclaims it via
-                // `Box::from_raw` in the close callback (or immediately if
-                // never init'd / `loop_ == null`).
-                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
-            }
-        }
-        for slot in self.extra_pipes.drain(..) {
-            if let WindowsStdioResult::Buffer(pipe) = slot {
-                // SAFETY: see above.
-                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-impl WindowsSpawnResult {
-    pub fn to_process(&mut self, _event_loop: impl Sized) -> RefPtr<Process> {
-        // SAFETY: the live heap `Process` allocated by `spawn_process_windows`
-        // with its initial ref.
-        unsafe { RefPtr::from_raw(self.process.take().unwrap()) }
-    }
-
-    /// [`to_process`](Self::to_process) as the exit-handler owner's handle.
-    pub fn to_process_handle(&mut self, event_loop: impl Sized) -> ProcessHandle {
-        ProcessHandle(self.to_process(event_loop))
-    }
-}
-
-#[cfg(windows)]
-pub struct WindowsSpawnOptions {
-    pub stdin: WindowsStdio,
-    pub stdout: WindowsStdio,
-    pub stderr: WindowsStdio,
-    pub ipc: Option<Fd>,
-    pub extra_fds: Box<[WindowsStdio]>,
-    pub cwd: Box<[u8]>,
-    pub detached: bool,
-    /// `uv_process_options_t.uid` + `UV_PROCESS_SETUID`; libuv returns
-    /// `UV_ENOTSUP` on Windows, exactly like Node.
-    pub uid: Option<u32>,
-    /// `uv_process_options_t.gid` + `UV_PROCESS_SETGID`; libuv returns
-    /// `UV_ENOTSUP` on Windows, exactly like Node.
-    pub gid: Option<u32>,
-    pub windows: WindowsOptions,
-    pub argv0: Option<*const c_char>,
-    pub stream: bool,
-    pub use_execve_on_macos: bool,
-    pub can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool,
-    /// Linux-only; placeholder for struct compatibility.
-    pub linux_pdeathsig: Option<u8>,
-    /// POSIX-only; placeholder for struct compatibility.
-    pub new_process_group: bool,
-    /// POSIX-only PTY slave fd; void placeholder on Windows.
-    pub pty_slave_fd: (),
-    /// Windows ConPTY handle. When set, the child is attached to the
-    /// pseudoconsole and stdin/stdout/stderr are provided by ConPTY.
-    pub pseudoconsole: Option<bun_sys::windows::HPCON>,
-}
-
-#[cfg(windows)]
-impl Default for WindowsSpawnOptions {
-    fn default() -> Self {
-        Self {
-            stdin: WindowsStdio::Inherit,
-            stdout: WindowsStdio::Inherit,
-            stderr: WindowsStdio::Inherit,
-            ipc: None,
-            extra_fds: Box::new([]),
-            cwd: Box::new([]),
-            detached: false,
-            uid: None,
-            gid: None,
-            windows: WindowsOptions::default(),
-            argv0: None,
-            stream: true,
-            use_execve_on_macos: false,
-            can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: false,
-            linux_pdeathsig: None,
-            new_process_group: false,
-            pty_slave_fd: (),
-            pseudoconsole: None,
-        }
-    }
-}
-
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-pub struct WindowsOptions {
-    pub verbatim_arguments: bool,
-    pub hide_window: bool,
-    pub loop_: EventLoopHandle,
-}
-
-#[cfg(windows)]
-impl Default for WindowsOptions {
-    fn default() -> Self {
-        Self {
-            verbatim_arguments: false,
-            hide_window: true,
-            // Every `bun.spawnSync` call site sets `loop_` explicitly. A
-            // zeroed handle here keeps `..Default::default()` usable
-            // for the other fields. `spawn_process_windows` (the sole consumer)
-            // asserts non-null at the read site so a forgotten `loop_` panics
-            // with a pointed message instead of segfaulting at the `.uv_loop`
-            // field offset.
-            // SAFETY: `EventLoopHandle` is a `Copy` enum of raw pointers; the
-            // all-zero bit pattern is discriminant 0 with a null payload —
-            // valid representation, never dereferenced before assignment.
-            loop_: unsafe { bun_core::ffi::zeroed_unchecked() },
-        }
-    }
-}
-
-#[cfg(windows)]
-pub enum WindowsStdio {
-    Path(Box<[u8]>),
-    Inherit,
-    Ignore,
-    /// FFI-owned `uv::Pipe` (allocated via `heap::alloc` in
-    /// `create_zeroed_pipe`). Stored as a raw pointer so `spawn_process_windows`
-    /// can transfer sole ownership into `WindowsStdioResult::Buffer` via
-    /// `heap::take` without double-freeing when `WindowsSpawnOptions` drops.
-    Buffer(*mut uv::Pipe),
-    /// See `Buffer` — same FFI ownership model.
-    Ipc(*mut uv::Pipe),
-    Pipe(Fd),
-    Dup2(Dup2),
-}
-
-#[cfg(windows)]
-impl WindowsStdio {
-    /// Explicit destructor.
-    ///
-    /// **Not** `Drop`: `spawn_process_windows` takes `&WindowsSpawnOptions`
-    /// (immutable borrow) and transfers sole ownership of the `Buffer`/`Ipc`
-    /// pipe into `WindowsStdioResult::Buffer` via `heap::take`. An auto-Drop
-    /// here would then double-free the same `*mut uv::Pipe` when the borrowed
-    /// `WindowsSpawnOptions` (or the `to_spawn_options` temporary) goes out of
-    /// scope. Callers invoke
-    /// `deinit()` only on the *error* path where ownership was never taken.
-    pub fn deinit(&mut self) {
-        match self {
-            WindowsStdio::Buffer(pipe) | WindowsStdio::Ipc(pipe) => {
-                if !pipe.is_null() {
-                    // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    unsafe { uv::Pipe::close_and_destroy(*pipe) };
-                    *pipe = core::ptr::null_mut();
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-// WindowsSpawnOptions: no Drop. `WindowsStdio` holds FFI-owned `*mut uv::Pipe`
-// whose ownership is transferred to `WindowsStdioResult` on success; callers
-// must invoke `WindowsSpawnOptions::deinit` explicitly on the error path.
-#[cfg(windows)]
-impl WindowsSpawnOptions {
-    /// Explicit destructor. Closes and frees the heap-allocated `uv::Pipe`
-    /// handles for `Buffer`/`Ipc` stdio.
-    ///
-    /// **Not** `Drop`: on the *success* path `spawn_process_windows` transfers
-    /// sole ownership of each pipe into `WindowsStdioResult::Buffer` via
-    /// `heap::take`, leaving the raw pointers in `self` stale. An auto-Drop
-    /// would then double-free. Callers invoke this only on the *error* path
-    /// where ownership was never taken — failing to do so leaks `uv_pipe_t`
-    /// handles on the spawn-sync loop, which makes `uv_loop_close` return
-    /// `EBUSY` and trips `assert(err == 0)` in `uv_loop_delete` (uv-common.c).
-    pub fn deinit(&mut self) {
-        self.stdin.deinit();
-        self.stdout.deinit();
-        self.stderr.deinit();
-        for stdio in self.extra_fds.iter_mut() {
-            stdio.deinit();
-        }
-    }
-}
-
-/// Event-loop-aware extension on the raw [`PosixSpawnResult`] from
+/// Event-loop-aware extension on the raw [`SpawnResult`] from
 /// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no
 /// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
 /// trait method so callers keep the `.to_process(loop_, sync)` spelling.
@@ -1758,28 +1642,16 @@ pub trait SpawnResultExt: Sized {
     }
 }
 
-#[cfg(unix)]
-impl SpawnResultExt for PosixSpawnResult {
+impl SpawnResultExt for SpawnResult {
     fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process> {
-        // SAFETY: `init_posix` heap-allocates the `Process` with its initial ref.
-        unsafe { RefPtr::from_raw(Process::init_posix(&self, event_loop)) }
+        #[cfg(unix)]
+        let process = Process::init_posix(&self, event_loop);
+        #[cfg(windows)]
+        let process = Process::init_windows(&self, event_loop);
+        // SAFETY: both heap-allocate the `Process` with its initial ref.
+        unsafe { RefPtr::from_raw(process) }
     }
 }
-
-#[cfg(unix)]
-pub type SpawnOptions = PosixSpawnOptions;
-#[cfg(windows)]
-pub type SpawnOptions = WindowsSpawnOptions;
-
-#[cfg(unix)]
-pub type Stdio = PosixStdio;
-#[cfg(windows)]
-pub type Stdio = WindowsStdio;
-
-#[cfg(unix)]
-pub type SpawnProcessResult = PosixSpawnResult;
-#[cfg(windows)]
-pub type SpawnProcessResult = WindowsSpawnResult;
 
 // ─── spawn_process bodies + sync runner ──────────────────────────────────────
 
@@ -1789,6 +1661,8 @@ mod spawn_process_body {
 
     #[cfg(unix)]
     pub use bun_spawn_sys::spawn_process_posix;
+    #[cfg(windows)]
+    use bun_spawn_sys::spawn_process_windows;
 
     /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
     /// Used by `sync::spawn_posix` (no-orphans kqueue, ppid pidfd).
@@ -1824,21 +1698,22 @@ mod spawn_process_body {
     /// `argv` must point to a null-terminated array of NUL-terminated C
     /// strings with at least one non-null element; `envp` must point to a
     /// null-terminated array of NUL-terminated C strings, or be null on
-    /// Windows (libuv then inherits the parent environment). Both must remain
-    /// valid for the duration of the call.
+    /// Windows (the child then inherits this process's environment). Both must
+    /// remain valid for the duration of the call.
     pub unsafe fn spawn_process(
         options: &SpawnOptions,
         argv: Argv, // [*:null]?[*:0]const u8
         envp: Envp,
-    ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
+    ) -> Result<bun_sys::Result<SpawnResult>, crate::Error> {
         #[cfg(unix)]
         {
             // SAFETY: forwarded from this function's safety contract.
             unsafe { spawn_process_posix(options, argv, envp) }.map_err(Into::into)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            spawn_process_windows(options, argv, envp)
+            // SAFETY: forwarded from this function's safety contract.
+            unsafe { spawn_process_windows(options, argv, envp) }.map_err(Into::into)
         }
     }
 
@@ -1857,7 +1732,7 @@ mod spawn_process_body {
         options: &SpawnOptions,
         argv: &[&core::ffi::CStr],
         env: SpawnEnv<'_>,
-    ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
+    ) -> Result<bun_sys::Result<SpawnResult>, crate::Error> {
         assert!(!argv.is_empty(), "spawn_process_cstr: argv[0] is required");
         let argv: Vec<CStrPtr> = argv
             .iter()
@@ -1866,7 +1741,6 @@ mod spawn_process_body {
             .collect();
         let env_block: Vec<CStrPtr>;
         let envp: Envp = match env {
-            // libuv: a null `env` inherits the parent's environment.
             #[cfg(windows)]
             SpawnEnv::Inherit => core::ptr::null(),
             #[cfg(unix)]
@@ -1886,455 +1760,6 @@ mod spawn_process_body {
         unsafe { spawn_process(options, argv.as_ptr(), envp) }
     }
 
-    #[cfg(windows)]
-    pub(crate) fn spawn_process_windows(
-        options: &WindowsSpawnOptions,
-        argv: *const *const c_char,
-        envp: *const *const c_char,
-    ) -> Result<bun_sys::Result<WindowsSpawnResult>, crate::Error> {
-        bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
-
-        // SAFETY: all-zero is a valid uv_process_options_t
-        let mut uv_process_options: uv::uv_process_options_t =
-            unsafe { bun_core::ffi::zeroed_unchecked() };
-
-        uv_process_options.args = argv;
-        uv_process_options.env = envp;
-        // SAFETY: argv is null-terminated, argv[0] is non-null
-        uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
-        uv_process_options.exit_cb = Some(Process::on_exit_uv);
-        // `WindowsOptions::default()` leaves `loop_` zeroed (every
-        // `bun.spawnSync` call site sets it explicitly). A zeroed
-        // `EventLoopHandle` is discriminant 0 (`Js`) with a null inner pointer,
-        // so `platform_event_loop()` returns null and the deref below segfaults
-        // at the `.uv_loop` field offset. Catch that with a clear panic instead
-        // of an opaque exit-code-3. Release-build assert: this is the contract
-        // boundary, not a debug aid.
-        assert!(
-            !options.windows.loop_.platform_event_loop().is_null(),
-            "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
-         WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
-         every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
-         (`.loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(...))`)."
-        );
-        // Non-null verified above; `EventLoopHandle::uv_loop` is the centralized
-        // accessor for the set-once `.uv_loop` field of the `uws::WindowsLoop`.
-        let loop_ = options.windows.loop_.uv_loop();
-
-        let cwd = match bun_sys::to_posix_path(&options.cwd) {
-            Ok(p) => p,
-            Err(e) => return Err(crate::Error::Sys(e)),
-        };
-
-        // `git_diff_internal` reaches here
-        // with `Options::default()` → `cwd = ""`. libuv treats a
-        // non-NULL `cwd` as explicit and hands `L""` to `CreateProcessW`, which
-        // fails with `ERROR_DIRECTORY` → `UV_ENOENT`. Map empty to NULL so libuv
-        // inherits the parent cwd.
-        uv_process_options.cwd = if options.cwd.is_empty() {
-            core::ptr::null()
-        } else {
-            cwd.as_ptr().cast::<c_char>()
-        };
-
-        let mut uv_files_to_close: Vec<uv::uv_file> = Vec::new();
-
-        if let Some(hpcon) = options.pseudoconsole {
-            uv_process_options.pseudoconsole = hpcon;
-        }
-
-        if options.windows.hide_window {
-            uv_process_options.flags |= uv::UV_PROCESS_WINDOWS_HIDE;
-        }
-
-        if options.windows.verbatim_arguments {
-            uv_process_options.flags |= uv::UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS;
-        }
-
-        if options.detached {
-            uv_process_options.flags |= uv::UV_PROCESS_DETACHED;
-        }
-
-        // libuv's uv_spawn rejects UV_PROCESS_SETUID/SETGID with UV_ENOTSUP on
-        // Windows — the same error Node reports for uid/gid there.
-        if let Some(uid) = options.uid {
-            uv_process_options.uid = uid as uv::uv_uid_t;
-            uv_process_options.flags |= uv::UV_PROCESS_SETUID;
-        }
-        if let Some(gid) = options.gid {
-            uv_process_options.gid = gid as uv::uv_gid_t;
-            uv_process_options.flags |= uv::UV_PROCESS_SETGID;
-        }
-
-        let mut stdio_containers: Vec<uv::uv_stdio_container_t> =
-            Vec::with_capacity(3 + options.extra_fds.len());
-        // SAFETY: all-zero is valid uv_stdio_container_t
-        stdio_containers.resize_with(3 + options.extra_fds.len(), || unsafe {
-            bun_core::ffi::zeroed_unchecked()
-        });
-
-        let stdio_options: [&WindowsStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
-
-        // On Windows it seems don't have a dup2 equivalent with pipes
-        // So we need to use file descriptors.
-        // We can create a pipe with `uv_pipe(fds, 0, 0)` and get a read fd and write fd.
-        // We give the write fd to stdout/stderr
-        // And use the read fd to read from the output.
-        let mut dup_fds: [uv::uv_file; 2] = [-1, -1];
-        let mut dup_src: Option<u32> = None;
-        let mut dup_tgt: Option<u32> = None;
-
-        for fd_i in 0..3usize {
-            let pipe_flags = uv::UV_CREATE_PIPE | uv::UV_READABLE_PIPE | uv::UV_WRITABLE_PIPE;
-            let stdio: &mut uv::uv_stdio_container_t = &mut stdio_containers[fd_i];
-            let flag: c_int = if fd_i == 0 {
-                uv::O::RDONLY
-            } else {
-                uv::O::WRONLY
-            };
-
-            let mut treat_as_dup: bool = false;
-
-            if fd_i == 1 && matches!(stdio_options[2], WindowsStdio::Dup2(_)) {
-                treat_as_dup = true;
-                dup_tgt = Some(u32::try_from(fd_i).expect("int cast"));
-            } else if fd_i == 2 && matches!(stdio_options[1], WindowsStdio::Dup2(_)) {
-                treat_as_dup = true;
-                dup_tgt = Some(u32::try_from(fd_i).expect("int cast"));
-            } else {
-                match stdio_options[fd_i] {
-                    WindowsStdio::Dup2(_) => {
-                        treat_as_dup = true;
-                        dup_src = Some(u32::try_from(fd_i).expect("int cast"));
-                    }
-                    WindowsStdio::Inherit => {
-                        stdio.flags = uv::UV_INHERIT_FD;
-                        stdio.data.fd = uv::uv_file::try_from(fd_i).expect("int cast");
-                    }
-                    WindowsStdio::Ipc(_) => {
-                        // ipc option inside stdin, stderr or stdout is not supported.
-                        // Don't free the pipe here — the caller owns it and will
-                        // clean it up via WindowsSpawnOptions Drop.
-                        stdio.flags = uv::UV_IGNORE;
-                    }
-                    WindowsStdio::Ignore => {
-                        stdio.flags = uv::UV_IGNORE;
-                    }
-                    WindowsStdio::Path(path) => {
-                        let mut req = uv::fs_t::uninitialized();
-                        // Cleanup is via manual calls at each exit path, so `?` here
-                        // would leak any fds opened by earlier loop iterations.
-                        let path_z = match bun_sys::to_posix_path(path) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                cleanup_uv_files(&uv_files_to_close, loop_);
-                                return Err(crate::Error::Sys(e));
-                            }
-                        };
-                        // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv
-                        // loop, `path_z` is NUL-terminated and outlives the call
-                        // (sync — no callback).
-                        let rc = unsafe {
-                            uv::uv_fs_open(
-                                loop_,
-                                &mut req,
-                                path_z.as_ptr(),
-                                flag | uv::O::CREAT,
-                                0o644,
-                                None,
-                            )
-                        };
-                        req.deinit();
-                        if let Some(err) = rc.to_error(bun_sys::Tag::open) {
-                            cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Ok(Err(err));
-                        }
-                        stdio.flags = uv::UV_INHERIT_FD;
-                        let fd = rc.int();
-                        uv_files_to_close.push(fd);
-                        stdio.data.fd = fd;
-                    }
-                    WindowsStdio::Buffer(my_pipe) => {
-                        // SAFETY: `my_pipe` is a non-null heap allocation from
-                        // create_zeroed_pipe (heap::alloc).
-                        if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, false) }
-                            .to_error(bun_sys::Tag::uv_pipe)
-                        {
-                            cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Ok(Err(err));
-                        }
-                        stdio.flags = pipe_flags;
-                        stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
-                    }
-                    WindowsStdio::Pipe(fd) => {
-                        stdio.flags = uv::UV_INHERIT_FD;
-                        stdio.data.fd = fd.uv();
-                    }
-                }
-            }
-
-            if treat_as_dup {
-                if fd_i == 1 {
-                    // SAFETY: `dup_fds` is a 2-element out-array; libuv writes both.
-                    if let Some(err) =
-                        unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) }.to_error(bun_sys::Tag::pipe)
-                    {
-                        cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
-                    }
-                }
-                stdio.flags = uv::UV_INHERIT_FD;
-                stdio.data.fd = dup_fds[1];
-            }
-        }
-
-        for (i, ipc) in options.extra_fds.iter().enumerate() {
-            let stdio: &mut uv::uv_stdio_container_t = &mut stdio_containers[3 + i];
-            let flag: c_int = uv::O::RDWR;
-
-            match ipc {
-                WindowsStdio::Dup2(_) => panic!("TODO dup2 extra fd"),
-                WindowsStdio::Inherit => {
-                    stdio.flags = uv::UV_INHERIT_FD;
-                    stdio.data.fd = uv::uv_file::try_from(3 + i).expect("int cast");
-                }
-                WindowsStdio::Ignore => {
-                    stdio.flags = uv::UV_IGNORE;
-                }
-                WindowsStdio::Path(path) => {
-                    let mut req = uv::fs_t::uninitialized();
-                    // See stdio loop above: manual cleanup on every exit path.
-                    let path_z = match bun_sys::to_posix_path(path) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Err(crate::Error::Sys(e));
-                        }
-                    };
-                    // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
-                    // `path_z` is NUL-terminated and outlives the call (sync).
-                    let rc = unsafe {
-                        uv::uv_fs_open(
-                            loop_,
-                            &mut req,
-                            path_z.as_ptr(),
-                            flag | uv::O::CREAT,
-                            0o644,
-                            None,
-                        )
-                    };
-                    req.deinit();
-                    if let Some(err) = rc.to_error(bun_sys::Tag::open) {
-                        cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
-                    }
-                    stdio.flags = uv::UV_INHERIT_FD;
-                    let fd = rc.int();
-                    uv_files_to_close.push(fd);
-                    stdio.data.fd = fd;
-                }
-                WindowsStdio::Ipc(my_pipe) => {
-                    // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, true) }
-                        .to_error(bun_sys::Tag::uv_pipe)
-                    {
-                        cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
-                    }
-                    stdio.flags = uv::UV_CREATE_PIPE
-                        | uv::UV_WRITABLE_PIPE
-                        | uv::UV_READABLE_PIPE
-                        | uv::UV_OVERLAPPED_PIPE;
-                    stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
-                }
-                WindowsStdio::Buffer(my_pipe) => {
-                    // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, false) }
-                        .to_error(bun_sys::Tag::uv_pipe)
-                    {
-                        cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
-                    }
-                    stdio.flags = uv::UV_CREATE_PIPE
-                        | uv::UV_WRITABLE_PIPE
-                        | uv::UV_READABLE_PIPE
-                        | uv::UV_OVERLAPPED_PIPE;
-                    stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
-                }
-                WindowsStdio::Pipe(fd) => {
-                    stdio.flags = uv::UV_INHERIT_FD;
-                    stdio.data.fd = fd.uv();
-                }
-            }
-        }
-
-        uv_process_options.stdio = stdio_containers.as_mut_ptr();
-        uv_process_options.stdio_count = c_int::try_from(stdio_containers.len()).expect("int cast");
-        uv_process_options.exit_cb = Some(Process::on_exit_uv);
-
-        let process = bun_core::heap::into_raw(Box::new(Process {
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            event_loop: options.windows.loop_,
-            pid: 0,
-            status: Status::Running,
-            poller: Poller::Detached,
-            exit_handler: ProcessExitHandler::default(),
-        }));
-
-        // SAFETY: process is freshly allocated
-        unsafe {
-            // SAFETY: all-zero is valid uv::Process
-            (*process).poller = Poller::Uv(bun_core::ffi::zeroed_unchecked());
-            // Back-pointer for `on_exit_uv` / `on_close_uv`.
-            // Every libuv handle starts with `data: *mut c_void`.
-            let Poller::Uv(ref mut uv_proc) = (*process).poller else {
-                unreachable!()
-            };
-            uv_proc.data = process.cast::<c_void>();
-        }
-
-        let cleanup_dup = |failed: bool| {
-            if dup_src.is_some() {
-                debug_assert!(dup_src.is_some() && dup_tgt.is_some());
-            }
-            if failed && dup_fds[0] != -1 {
-                Fd::from_uv(dup_fds[0]).close();
-            }
-            if dup_fds[1] != -1 {
-                Fd::from_uv(dup_fds[1]).close();
-            }
-        };
-
-        // SAFETY: process.poller was just set to Uv variant
-        let spawn_err = unsafe {
-            let Poller::Uv(ref mut uv_proc) = (*process).poller else {
-                unreachable!()
-            };
-            uv_proc
-                .spawn(loop_, &mut uv_process_options)
-                .to_error(bun_sys::Tag::uv_spawn)
-        };
-        if let Some(err) = spawn_err {
-            cleanup_dup(true);
-            cleanup_uv_files(&uv_files_to_close, loop_);
-            // SAFETY: process is valid
-            unsafe {
-                (*process).close();
-                Process::deref(process);
-            }
-            return Ok(Err(err));
-        }
-        // The process handle is open on this thread's loop until `close()`; a
-        // thread teardown closes it through us (the child keeps running, as with
-        // Node's ProcessWrap), so no exit callback can fire after the VM is gone.
-        unsafe fn stop_for_vm_teardown(p: *mut c_void) {
-            // SAFETY: recorded for this live Process; the handle leaves the list
-            // when `close()` issues its uv_close.
-            unsafe { (*p.cast::<Process>()).close() };
-        }
-        // SAFETY: `process` is live; poller was just set to the spawned Uv handle.
-        unsafe {
-            let Poller::Uv(ref mut uv_proc) = (*process).poller else {
-                unreachable!()
-            };
-            uv::open_handles::set_owner(
-                core::ptr::from_mut(uv_proc).cast(),
-                process.cast(),
-                Some(stop_for_vm_teardown),
-            );
-        }
-
-        // SAFETY: process is valid, poller is Uv
-        unsafe {
-            let Poller::Uv(ref uv_proc) = (*process).poller else {
-                unreachable!()
-            };
-            (*process).pid = uv_proc.pid;
-            // Function pointers compared by address (`as usize`): direct
-            // `fn == fn` is unreliable across codegen units and triggers
-            // `unpredictable_function_pointer_comparisons`.
-            debug_assert_eq!(
-                uv_proc.exit_cb.map(|cb| cb as usize),
-                Some(
-                    Process::on_exit_uv as unsafe extern "C" fn(*mut uv::uv_process_t, i64, c_int)
-                        as usize,
-                ),
-            );
-        }
-
-        // No FRU `..Default::default()` here: `WindowsSpawnResult` impls `Drop`,
-        // so functional-record-update would have to move fields out of the
-        // temporary default — E0509. Spell the defaults out instead.
-        let mut result = WindowsSpawnResult {
-            // Intrusive raw pointer; refcount lives inside `Process` (see field comment).
-            process: Some(process),
-            stdin: WindowsStdioResult::Unavailable,
-            stdout: WindowsStdioResult::Unavailable,
-            stderr: WindowsStdioResult::Unavailable,
-            extra_pipes: Vec::with_capacity(options.extra_fds.len()),
-        };
-
-        for i in 0..3usize {
-            let stdio = &stdio_containers[i];
-            let result_stdio: &mut WindowsStdioResult = match i {
-                0 => &mut result.stdin,
-                1 => &mut result.stdout,
-                2 => &mut result.stderr,
-                _ => unreachable!(),
-            };
-
-            if dup_src == Some(u32::try_from(i).expect("int cast")) {
-                *result_stdio = WindowsStdioResult::Unavailable;
-            } else if dup_tgt == Some(u32::try_from(i).expect("int cast")) {
-                *result_stdio = WindowsStdioResult::BufferFd(Fd::from_uv(dup_fds[0]));
-            } else {
-                match stdio_options[i] {
-                    WindowsStdio::Buffer(_) => {
-                        // SAFETY: stdio.data.stream is the same `*mut uv::Pipe`
-                        // produced by `heap::alloc` in create_zeroed_pipe and
-                        // stored in `options.{stdin,stdout,stderr}`. `WindowsStdio`
-                        // has no `Drop` (deinit is explicit), so
-                        // reconstructing the Box here is the *sole* ownership
-                        // transfer — the borrowed `options` dropping later is a
-                        // no-op on the raw pointer.
-                        *result_stdio = WindowsStdioResult::Buffer(unsafe {
-                            bun_core::heap::take(stdio.data.stream.cast::<uv::Pipe>())
-                        });
-                    }
-                    _ => {
-                        *result_stdio = WindowsStdioResult::Unavailable;
-                    }
-                }
-            }
-        }
-
-        for (i, input) in options.extra_fds.iter().enumerate() {
-            match input {
-                WindowsStdio::Ipc(_) | WindowsStdio::Buffer(_) => {
-                    // SAFETY: sole ownership transfer of the heap-allocated
-                    // uv::Pipe; `WindowsStdio` has no Drop (explicit `deinit`).
-                    result.extra_pipes.push(WindowsStdioResult::Buffer(unsafe {
-                        bun_core::heap::take(stdio_containers[3 + i].data.stream.cast::<uv::Pipe>())
-                    }));
-                }
-                _ => {
-                    result.extra_pipes.push(WindowsStdioResult::Unavailable);
-                }
-            }
-        }
-
-        cleanup_dup(false);
-        cleanup_uv_files(&uv_files_to_close, loop_);
-        Ok(Ok(result))
-    }
-
-    #[cfg(windows)]
-    fn cleanup_uv_files(files: &[uv::uv_file], loop_: *mut uv::uv_loop_t) {
-        for &fd in files {
-            bun_io::Closer::close(Fd::from_uv(fd), loop_);
-        }
-    }
-
     pub mod sync {
         use super::*;
         // `Options.windows` is `WindowsOptions` on Windows; surface it under the
@@ -2343,7 +1768,7 @@ mod spawn_process_body {
         // bound the name privately and rustc treats the explicit re-export as
         // re-exporting that private binding; a type alias sidesteps the conflict.
         #[cfg(windows)]
-        pub type WindowsOptions = super::WindowsOptions;
+        pub type WindowsOptions = bun_spawn_sys::WindowsOptions;
 
         pub struct Options {
             pub stdin: SyncStdio,
@@ -2362,8 +1787,6 @@ mod spawn_process_body {
 
             #[cfg(windows)]
             pub windows: WindowsOptions,
-            #[cfg(not(windows))]
-            pub windows: (),
         }
 
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2374,43 +1797,12 @@ mod spawn_process_body {
         }
 
         impl SyncStdio {
-            pub(crate) fn to_stdio(self) -> SpawnOptionsStdio {
+            pub(crate) fn to_stdio(self) -> Stdio {
                 match self {
-                    SyncStdio::Inherit => SpawnOptionsStdio::inherit(),
-                    SyncStdio::Ignore => SpawnOptionsStdio::ignore(),
-                    SyncStdio::Buffer => {
-                        #[cfg(windows)]
-                        {
-                            SpawnOptionsStdio::buffer(bun_core::heap::into_raw(Box::new(
-                                bun_core::ffi::zeroed::<uv::Pipe>(),
-                            )))
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            SpawnOptionsStdio::buffer()
-                        }
-                    }
+                    SyncStdio::Inherit => Stdio::Inherit,
+                    SyncStdio::Ignore => Stdio::Ignore,
+                    SyncStdio::Buffer => Stdio::Buffer,
                 }
-            }
-        }
-
-        // Helper alias: SpawnOptions::Stdio differs by platform
-        #[cfg(unix)]
-        pub(crate) type SpawnOptionsStdio = PosixStdio;
-        #[cfg(windows)]
-        pub(crate) type SpawnOptionsStdio = WindowsStdio;
-
-        // PosixStdio constructor helpers live in `bun_spawn_sys` (inherent impl).
-        #[cfg(windows)]
-        impl WindowsStdio {
-            fn inherit() -> Self {
-                WindowsStdio::Inherit
-            }
-            fn ignore() -> Self {
-                WindowsStdio::Ignore
-            }
-            fn buffer(p: *mut uv::Pipe) -> Self {
-                WindowsStdio::Buffer(p)
             }
         }
 
@@ -2429,8 +1821,6 @@ mod spawn_process_body {
                     argv0: None,
                     #[cfg(windows)]
                     windows: Default::default(),
-                    #[cfg(not(windows))]
-                    windows: (),
                 }
             }
         }
@@ -2449,9 +1839,7 @@ mod spawn_process_body {
                     argv0: self.argv0,
                     new_process_group,
                     #[cfg(windows)]
-                    windows: self.windows.clone(),
-                    #[cfg(not(windows))]
-                    windows: (),
+                    windows: self.windows,
                     ..Default::default()
                 }
             }
@@ -2469,411 +1857,264 @@ mod spawn_process_body {
             }
         }
 
+        /// One output pipe of a synchronously spawned child, drained with
+        /// overlapped reads so both pipes and the process can be waited on from
+        /// one thread. The handle is never associated with a completion port;
+        /// completion is signalled through `event`.
         #[cfg(windows)]
-        pub(crate) struct SyncWindowsPipeReader {
-            pub(crate) chunks: Vec<Box<[u8]>>,
-            /// Buffer handed to libuv by `on_alloc`; reclaimed (truncated) by
-            /// `on_read`. Prevents the per-read leak that copying `data` into a
-            /// fresh Box would cause.
-            pending_alloc: Option<Box<[u8]>>,
-            pub(crate) pipe: Box<uv::Pipe>,
-            pub(crate) err: bun_sys::E,
-            pub(crate) context: *mut SyncWindowsProcess,
-            pub(crate) on_done_callback:
-                fn(&mut SyncWindowsProcess, OutFd, Vec<Box<[u8]>>, bun_sys::E),
-            pub(crate) tag: OutFd,
+        struct PipeDrain {
+            handle: bun_sys::windows::HANDLE,
+            event: bun_sys::windows::HANDLE,
+            /// Boxed: the kernel writes to it while a read is pending.
+            overlapped: Box<bun_spawn_sys::windows::win32::OVERLAPPED>,
+            /// The pending read targets this buffer's spare capacity, so it is
+            /// not touched until the read completes.
+            bytes: Vec<u8>,
+            pending: bool,
         }
 
         #[cfg(windows)]
-        impl SyncWindowsPipeReader {
-            pub(crate) fn new(v: SyncWindowsPipeReader) -> Box<Self> {
-                Box::new(v)
-            }
+        impl PipeDrain {
+            const CHUNK: usize = 64 * 1024;
 
-            fn on_alloc(this: &mut SyncWindowsPipeReader, suggested_size: usize) -> &mut [u8] {
-                // Stash the allocation so `on_read` can reclaim it without copying.
-                // If a previous alloc was never consumed (nread == 0 / EAGAIN),
-                // dropping the old Box here frees it — no leak.
-                let buf = this
-                    .pending_alloc
-                    .insert(vec![0u8; suggested_size].into_boxed_slice());
-                &mut buf[..]
-            }
-
-            fn on_read(this: &mut SyncWindowsPipeReader, data: &[u8]) {
-                // `data` *is* the buffer
-                // `on_alloc` returned, sliced to `nread`. Reclaim that allocation
-                // (debug-assert it's the same pointer), truncate to the read
-                // length, and push — no copy, no leak.
-                let buf = this
-                    .pending_alloc
-                    .take()
-                    .expect("on_read without preceding on_alloc");
-                debug_assert_eq!(buf.as_ptr(), data.as_ptr());
-                debug_assert!(data.len() <= buf.len());
-                let mut v = Vec::from(buf);
-                v.truncate(data.len());
-                this.chunks.push(v.into_boxed_slice());
-            }
-
-            fn on_error(this: &mut SyncWindowsPipeReader, err: bun_sys::E) {
-                this.err = err;
-                this.pipe.close(Self::on_close);
-            }
-
-            // ── libuv C trampolines ──────────────────────────────────────────
-            // There is exactly
-            // one call site, so we hand-write the wrapper pair against
-            // `SyncWindowsPipeReader` and call `on_alloc` / `on_read` / `on_error`
-            // *directly* — no runtime fn-ptr stash.
-            unsafe extern "C" fn uv_alloc_cb(
-                req: *mut uv::uv_handle_t,
-                suggested_size: usize,
-                buffer: *mut uv::uv_buf_t,
-            ) {
-                // SAFETY: `req.data` was set to `*mut Self` in `start()`.
-                let this: &mut SyncWindowsPipeReader =
-                    unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
-                let buf = Self::on_alloc(this, suggested_size);
-                // SAFETY: `buffer` is a libuv-owned out-parameter. Do NOT route
-                // through `uv_buf_t::init(&[u8])` — that reborrows the `&mut [u8]`
-                // as shared, so `as_ptr().cast_mut()` yields a SharedReadOnly tag
-                // and libuv's subsequent write into `base[..nread]` is
-                // Stacked-Borrows UB. Construct from `as_mut_ptr()` directly so the
-                // raw pointer carries write provenance.
-                unsafe {
-                    *buffer = uv::uv_buf_t {
-                        len: buf.len() as uv::ULONG,
-                        base: buf.as_mut_ptr(),
-                    };
-                }
-            }
-            unsafe extern "C" fn uv_read_cb(
-                req: *mut uv::uv_stream_t,
-                nreads: uv::ReturnCodeI64,
-                buffer: *const uv::uv_buf_t,
-            ) {
-                // SAFETY: `req.data` was set to `*mut Self` in `start()`.
-                let this: &mut SyncWindowsPipeReader =
-                    unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
-                let nreads = nreads.int();
-                if nreads == 0 {
-                    return;
-                } // EAGAIN / EWOULDBLOCK
-                if nreads < 0 {
-                    this.pipe.read_stop();
-                    let e = bun_sys::windows::translate_uv_error_to_e(nreads as core::ffi::c_int);
-                    Self::on_error(this, e);
-                } else {
-                    // SAFETY: libuv guarantees `base[..nreads]` is the slice we
-                    // returned from `uv_alloc_cb`, filled to `nreads` bytes.
-                    let data = unsafe {
-                        core::slice::from_raw_parts((*buffer).base.cast::<u8>(), nreads as usize)
-                    };
-                    Self::on_read(this, data);
-                }
-            }
-
-            extern "C" fn on_close(pipe: *mut uv::Pipe) {
-                // SAFETY: pipe.data was set to *mut Self in start()
-                let this: *mut SyncWindowsPipeReader =
-                    unsafe { (*pipe).get_data::<SyncWindowsPipeReader>() };
-                assert!(
-                    !this.is_null(),
-                    "Expected SyncWindowsPipeReader to have data"
-                );
-                // SAFETY: this was heap-allocated in start(); libuv is done
-                // with the handle once the close callback fires, so reclaim
-                // ownership here.
-                let mut this = unsafe { bun_core::heap::take(this) };
-                let context = this.context;
-                // Move ownership of the chunk allocations out *before* dropping
-                // `this`, otherwise the callback would observe freed buffers.
-                // The chunk allocations survive to be freed later by
-                // `flatten_owned_chunks`.
-                let chunks: Vec<Box<[u8]>> = core::mem::take(&mut this.chunks);
-                let err = if this.err == bun_sys::E::CANCELED {
-                    bun_sys::E::SUCCESS
-                } else {
-                    this.err
+            fn new(fd: Option<Fd>) -> Maybe<Self> {
+                use bun_spawn_sys::windows::win32;
+                let mut this = Self {
+                    handle: fd.map_or(win32::INVALID_HANDLE_VALUE, |fd| fd.native()),
+                    event: core::ptr::null_mut(),
+                    // SAFETY: all-zero is a valid OVERLAPPED.
+                    overlapped: Box::new(unsafe { bun_core::ffi::zeroed_unchecked() }),
+                    bytes: Vec::new(),
+                    pending: false,
                 };
-                let tag = this.tag;
-                let on_done_callback = this.on_done_callback;
-                drop(this);
-                // SAFETY: `context` is the live `SyncWindowsProcess` that owns
-                // this reader (set in `spawn_windows_with_pipes`); the callback
-                // is non-reentrant field writes only.
-                on_done_callback(unsafe { &mut *context }, tag, chunks, err);
+                if this.is_open() {
+                    // SAFETY: no attributes, no name; manual-reset, as overlapped I/O requires.
+                    this.event = unsafe {
+                        win32::CreateEventW(core::ptr::null_mut(), 1, 0, core::ptr::null())
+                    };
+                    if this.event.is_null() {
+                        return Err(win32::last_error(bun_sys::Tag::read));
+                    }
+                    this.overlapped.hEvent = this.event;
+                }
+                Ok(this)
             }
 
-            pub(crate) fn start(self: Box<Self>) -> Maybe<()> {
-                // Single-pointer ownership: `heap::alloc` is the *only* root for
-                // this allocation. Every subsequent access (including the libuv
-                // callbacks and the `heap::take` in `on_close`) goes through
-                // this pointer, so no Stacked Borrows tag is invalidated by an
-                // interleaved Box deref.
-                let this: *mut SyncWindowsPipeReader = bun_core::heap::into_raw(self);
-                // SAFETY: just allocated; sole owner.
-                unsafe {
-                    (*this).pipe.set_data(this.cast());
-                    (*this).pipe.ref_();
-                    if let Some(err) = (*this)
-                        .pipe
-                        .read_start(Some(Self::uv_alloc_cb), Some(Self::uv_read_cb))
-                        .to_error(bun_sys::Tag::listen)
-                    {
-                        // Intentionally leak `this`. The boxed `uv::Pipe` was already
-                        // `uv_pipe_init`'d by the spawn path and is linked into the
-                        // loop's handle queue; freeing it here without `uv_close()`
-                        // would leave a dangling `uv_handle_t`. The sole caller
-                        // `Output::panic`s on error, so the leak is bounded.
-                        return Err(err);
+            fn is_open(&self) -> bool {
+                self.handle != bun_sys::windows::INVALID_HANDLE_VALUE
+            }
+
+            fn close(&mut self) {
+                // SAFETY: the parent end of the pipe is ours.
+                unsafe { bun_spawn_sys::windows::win32::CloseHandle(self.handle) };
+                self.handle = bun_sys::windows::INVALID_HANDLE_VALUE;
+            }
+
+            /// `result` is what `ReadFile`/`GetOverlappedResult` answered for the
+            /// read into the spare capacity. Returns whether the pipe is still open.
+            fn finish_read(&mut self, ok: bool, bytes_read: u32) -> Maybe<bool> {
+                use bun_spawn_sys::windows::win32;
+                if ok {
+                    // SAFETY: the kernel wrote `bytes_read` bytes into the spare capacity.
+                    unsafe { bun_core::vec::commit_spare(&mut self.bytes, bytes_read as usize) };
+                    return Ok(true);
+                }
+                match win32::GetLastError() {
+                    // Every write end is closed: end of file.
+                    win32::ERROR_BROKEN_PIPE => {
+                        self.close();
+                        Ok(false)
                     }
+                    code => Err(win32::sys_error(code, bun_sys::Tag::read)),
+                }
+            }
+
+            /// Reads until a read is left pending or the pipe ends.
+            fn read(&mut self) -> Maybe<()> {
+                use bun_spawn_sys::windows::win32;
+                while self.is_open() {
+                    if self.bytes.try_reserve(Self::CHUNK).is_err() {
+                        return Err(bun_sys::Error::from_code(
+                            bun_sys::E::ENOMEM,
+                            bun_sys::Tag::read,
+                        ));
+                    }
+                    // SAFETY: only used as the destination of the read below.
+                    let spare = unsafe { bun_core::vec::spare_bytes_mut(&mut self.bytes) };
+                    let mut bytes_read: u32 = 0;
+                    // SAFETY: `spare` and `overlapped` stay valid and unmoved until
+                    // the read completes (see `Drop`).
+                    let ok = unsafe {
+                        win32::ReadFile(
+                            self.handle,
+                            spare.as_mut_ptr(),
+                            spare.len().min(u32::MAX as usize) as u32,
+                            &mut bytes_read,
+                            (&raw mut *self.overlapped).cast(),
+                        )
+                    } != 0;
+                    if !ok && win32::GetLastError() == win32::ERROR_IO_PENDING {
+                        self.pending = true;
+                        return Ok(());
+                    }
+                    self.finish_read(ok, bytes_read)?;
                 }
                 Ok(())
             }
-        }
 
-        #[cfg(windows)]
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        pub enum OutFd {
-            Stdout,
-            Stderr,
-        }
-
-        #[cfg(windows)]
-        impl OutFd {
-            #[inline]
-            pub(crate) fn as_str(self) -> &'static str {
-                match self {
-                    OutFd::Stdout => "stdout",
-                    OutFd::Stderr => "stderr",
-                }
+            /// `event` is signalled: take the pending read's result and read on.
+            fn on_event(&mut self) -> Maybe<()> {
+                use bun_spawn_sys::windows::win32;
+                let mut bytes_read: u32 = 0;
+                // SAFETY: `overlapped` is the pending read's; it has completed.
+                let ok = unsafe {
+                    win32::GetOverlappedResult(
+                        self.handle,
+                        &raw mut *self.overlapped,
+                        &mut bytes_read,
+                        0,
+                    )
+                } != 0;
+                self.pending = false;
+                self.finish_read(ok, bytes_read)?;
+                self.read()
             }
         }
 
         #[cfg(windows)]
-        pub struct SyncWindowsProcess {
-            pub(crate) stderr: Vec<Box<[u8]>>,
-            pub(crate) stdout: Vec<Box<[u8]>>,
-            pub(crate) err: bun_sys::E,
-            pub(crate) waiting_count: u8,
-            /// Intrusive-refcounted. Allocated via
-            /// `heap::alloc` in `to_process`; freed when the embedded
-            /// `ThreadSafeRefCount` hits zero. Stored raw — `Arc<Process>` would
-            /// give only `*const` provenance and make `&mut *` writes UB.
-            pub(crate) process: *mut Process,
-            pub(crate) status: Option<Status>,
-        }
-
-        #[cfg(windows)]
-        impl SyncWindowsProcess {
-            pub(crate) fn new(v: SyncWindowsProcess) -> Box<Self> {
-                Box::new(v)
-            }
-
-            /// `process` is the *same* `*mut Process` that was threaded through
-            /// `Process::on_exit_uv` → `Process::on_exit` → `ProcessExitHandler::call`
-            /// (which holds a protector-guarded `&mut Process` in its frame).
-            /// Re-deriving a `&mut Process` from the independent `self.process`
-            /// root would pop that protected tag under Stacked Borrows, so we
-            /// take the already-live pointer instead.
-            pub fn on_process_exit(
-                this: *mut SyncWindowsProcess,
-                process: *mut Process,
-                status: Status,
-                _: &Rusage,
-            ) {
-                // SAFETY: `this` is the heap::alloc root from spawn_windows_with_pipes;
-                // single-threaded uv loop, no overlapping borrow of SyncWindowsProcess.
+        impl Drop for PipeDrain {
+            fn drop(&mut self) {
+                use bun_spawn_sys::windows::win32;
+                // SAFETY: the handles are ours. A pending read owns `overlapped`
+                // and the buffer until it has completed, cancelled or not.
                 unsafe {
-                    (*this).status = Some(status);
-                    (*this).waiting_count -= 1;
+                    if self.pending {
+                        let mut bytes_read: u32 = 0;
+                        win32::CancelIoEx(self.handle, &raw mut *self.overlapped);
+                        win32::GetOverlappedResult(
+                            self.handle,
+                            &raw mut *self.overlapped,
+                            &mut bytes_read,
+                            1,
+                        );
+                    }
+                    if self.is_open() {
+                        win32::CloseHandle(self.handle);
+                    }
+                    if !self.event.is_null() {
+                        win32::CloseHandle(self.event);
+                    }
                 }
-                // SAFETY: `process` carries the provenance of the `&mut Process`
-                // already live in `ProcessExitHandler::call`; mutating through it
-                // re-uses that tag instead of conflicting with it.
-                unsafe {
-                    (*process).detach();
-                    Process::deref(process);
-                }
-            }
-
-            pub(crate) fn on_reader_done(
-                &mut self,
-                tag: OutFd,
-                chunks: Vec<Box<[u8]>>,
-                err: bun_sys::E,
-            ) {
-                match tag {
-                    OutFd::Stderr => self.stderr = chunks,
-                    OutFd::Stdout => self.stdout = chunks,
-                }
-                if err != bun_sys::E::SUCCESS {
-                    self.err = err;
-                }
-                self.waiting_count -= 1;
             }
         }
 
         #[cfg(windows)]
-        fn flatten_owned_chunks(chunks: Vec<Box<[u8]>>) -> Vec<u8> {
-            let mut total_size: usize = 0;
-            for chunk in &chunks {
-                total_size += chunk.len();
-            }
-            let mut result = Vec::with_capacity(total_size);
-            for chunk in chunks {
-                result.extend_from_slice(&chunk);
-            }
-            result
-        }
-
-        #[cfg(windows)]
-        fn spawn_windows_without_pipes(
+        fn spawn_windows(
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
-            let loop_ = options.windows.loop_.platform_event_loop();
-            // All stdio inherited: the child is the foreground program on our console.
-            let _child = crate::ctrl_c::Child::enter();
-            let mut spawned =
-                match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
-                    Err(err) => return Ok(Err(err)),
-                    Ok(proces) => proces,
-                };
+            use bun_spawn_sys::windows::win32;
 
-            // Sole owner during sync spawn; detached and released on return,
-            // by which time the loop has drained and no uv callback holds a
-            // competing `&mut Process`.
-            let process_handle = spawned.to_process_handle(());
-            let process: *mut Process = process_handle.as_ptr();
-            // SAFETY: just allocated; no other borrow live yet.
-            unsafe {
-                (*process).enable_keeping_event_loop_alive();
-            }
+            // With no stdio captured the child is the foreground program on our console.
+            let _foreground = (options.stdin != SyncStdio::Buffer
+                && options.stdout != SyncStdio::Buffer
+                && options.stderr != SyncStdio::Buffer)
+                .then(crate::ctrl_c::Child::enter);
 
-            // SAFETY: read-only field access between uv ticks; the uv exit
-            // callback's `&mut Process` does not overlap this `&Process`.
-            while !unsafe { (*process).has_exited() } {
-                // SAFETY: `loop_` is the live `uws::WindowsLoop*` from
-                // `EventLoopHandle::platform_event_loop`.
-                unsafe { (*loop_).run() };
-            }
+            // SAFETY: caller-built argv/envp; see `spawn_with_argv`.
+            let spawned = match unsafe {
+                spawn_process_windows(&options.to_spawn_options(false), argv, envp)
+            }? {
+                Err(err) => return Ok(Err(err)),
+                Ok(spawned) => spawned,
+            };
 
-            Ok(Ok(Result {
-                // SAFETY: process has exited; no further mutation.
-                status: unsafe { (*process).status.clone() },
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            }))
-        }
-
-        #[cfg(windows)]
-        fn spawn_windows_with_pipes(
-            options: &Options,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, crate::Error> {
-            let loop_: EventLoopHandle = options.windows.loop_;
-            let mut spawned =
-                match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
-                    Err(err) => return Ok(Err(err)),
-                    Ok(process) => process,
-                };
-            // Single-pointer ownership: the
-            // `heap::alloc` result is the *only* root for this allocation. Every
-            // field access below — including those inside uv callbacks fired from
-            // `tick()` — goes through `this_ptr`, so no Box auto-deref ever
-            // reasserts a Unique tag and pops the callbacks' tags under Stacked
-            // Borrows.
-            let this_ptr: *mut SyncWindowsProcess =
-                bun_core::heap::into_raw(SyncWindowsProcess::new(SyncWindowsProcess {
-                    process: spawned.to_process(()).into_raw(),
-                    stderr: Vec::new(),
-                    stdout: Vec::new(),
-                    err: bun_sys::E::SUCCESS,
-                    waiting_count: 1,
-                    status: None,
-                }));
-            // SAFETY: `(*this_ptr).process` was just produced by `to_process` (sole
-            // owner, mutable provenance from heap::alloc).
-            let _frame_ref = unsafe { RefPtr::init_ref((*this_ptr).process) };
-            unsafe {
-                let p = &mut *(*this_ptr).process;
-                // SAFETY: `this_ptr` is the live `SyncWindowsProcess` on the
-                // caller's stack; `p` is owned by it and dropped before return.
-                p.set_exit_handler(ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr));
-                p.enable_keeping_event_loop_alive();
-            }
-
-            for (tag, stdio) in [
-                (OutFd::Stdout, &mut spawned.stdout),
-                (OutFd::Stderr, &mut spawned.stderr),
-            ] {
-                // Move ownership of the `Box<uv::Pipe>` out of `spawned` by
-                // resetting the slot to `Unavailable`; otherwise `spawned`'s
-                // auto-Drop at scope end would double-free the pipe already freed
-                // via `SyncWindowsPipeReader::on_close`.
-                let taken = core::mem::replace(stdio, WindowsStdioResult::Unavailable);
-                if let WindowsStdioResult::Buffer(pipe) = taken {
-                    let reader = SyncWindowsPipeReader::new(SyncWindowsPipeReader {
-                        context: this_ptr,
-                        tag,
-                        pipe,
-                        chunks: Vec::new(),
-                        pending_alloc: None,
-                        err: bun_sys::E::SUCCESS,
-                        on_done_callback: SyncWindowsProcess::on_reader_done,
-                    });
-                    // SAFETY: sole owner via `this_ptr`; no uv callback has fired yet.
-                    unsafe {
-                        (*this_ptr).waiting_count += 1;
-                    }
-                    // `start` consumes the Box and transfers ownership to libuv
-                    // via pipe.data (heap::alloc inside).
-                    match reader.start() {
-                        Err(err) => {
-                            // SAFETY: sync spawn — `(*this_ptr).process` is the only
-                            // handle and no uv callback has fired yet.
-                            unsafe {
-                                let _ = (*(*this_ptr).process).kill(1);
-                            }
-                            Output::panic(format_args!(
-                                "Unexpected error starting {} pipe reader\n{}",
-                                tag.as_str(),
-                                err
-                            ));
-                        }
-                        Ok(()) => {}
-                    }
+            struct ProcessHandle(bun_sys::windows::HANDLE);
+            impl Drop for ProcessHandle {
+                fn drop(&mut self) {
+                    // SAFETY: the process handle of the result is ours.
+                    unsafe { win32::CloseHandle(self.0) };
                 }
             }
+            let process = ProcessHandle(spawned.process_handle);
 
-            // SAFETY: read-only field access between uv ticks; callbacks fired
-            // inside `tick()` write through the same `this_ptr` root.
-            while unsafe { (*this_ptr).waiting_count } > 0 {
-                // SAFETY: `loop_` wraps a live `uws::WindowsLoop*`.
-                unsafe { (*loop_.platform_event_loop()).tick() };
+            // Nothing is written to the child's stdin: end it.
+            if let Some(stdin) = spawned.stdin {
+                stdin.close();
             }
 
-            // SAFETY: loop drained (waiting_count == 0); no further uv callback
-            // will touch `this_ptr`.
-            let result = unsafe {
-                Result {
-                    status: (*this_ptr)
-                        .status
-                        .take()
-                        .expect("Expected Process to have exited when waiting_count == 0"),
-                    stdout: flatten_owned_chunks(core::mem::take(&mut (*this_ptr).stdout)),
-                    stderr: flatten_owned_chunks(core::mem::take(&mut (*this_ptr).stderr)),
+            let kill_child = || {
+                let _ =
+                    bun_spawn_sys::windows::kill(process.0, bun_spawn_sys::windows::kill::SIGKILL);
+            };
+            let mut drains = match (
+                PipeDrain::new(spawned.stdout),
+                PipeDrain::new(spawned.stderr),
+            ) {
+                (Ok(stdout), Ok(stderr)) => [stdout, stderr],
+                (Err(err), _) | (_, Err(err)) => {
+                    kill_child();
+                    return Ok(Err(err));
                 }
             };
-            // SAFETY: reclaim the SyncWindowsProcess allocation; `_frame_ref`
-            // releases the process after.
-            drop(unsafe { bun_core::heap::take(this_ptr) });
-            Ok(Ok(result))
+            let drained: Maybe<()> = (|| {
+                for drain in &mut drains {
+                    drain.read()?;
+                }
+                loop {
+                    let mut events = [core::ptr::null_mut(); 2];
+                    let mut owners = [0usize; 2];
+                    let mut count = 0usize;
+                    for (i, drain) in drains.iter().enumerate() {
+                        if drain.pending {
+                            events[count] = drain.event;
+                            owners[count] = i;
+                            count += 1;
+                        }
+                    }
+                    if count == 0 {
+                        return Ok(());
+                    }
+                    // SAFETY: `events[..count]` are live event handles.
+                    let signalled = unsafe {
+                        win32::WaitForMultipleObjects(
+                            count as u32,
+                            events.as_ptr(),
+                            0,
+                            win32::INFINITE,
+                        )
+                    } as usize;
+                    if signalled >= count {
+                        return Err(win32::last_error(bun_sys::Tag::poll));
+                    }
+                    drains[owners[signalled]].on_event()?;
+                }
+            })();
+            if let Err(err) = drained {
+                kill_child();
+                return Ok(Err(err));
+            }
+
+            if win32::WaitForSingleObject(process.0, win32::INFINITE) != win32::WAIT_OBJECT_0 {
+                return Ok(Err(win32::last_error(bun_sys::Tag::waitpid)));
+            }
+            let mut exit_code: u32 = 0;
+            // SAFETY: `exit_code` is a valid out-pointer.
+            if unsafe { win32::GetExitCodeProcess(process.0, &mut exit_code) } == 0 {
+                return Ok(Err(win32::last_error(bun_sys::Tag::waitpid)));
+            }
+
+            let [stdout, stderr] = &mut drains;
+            Ok(Ok(Result {
+                status: Status::Exited(Exited {
+                    code: exit_code as u8,
+                    signal: 0,
+                    raw: exit_code,
+                }),
+                stdout: core::mem::take(&mut stdout.bytes),
+                stderr: core::mem::take(&mut stderr.bytes),
+            }))
         }
 
         pub fn spawn_with_argv(
@@ -2882,15 +2123,7 @@ mod spawn_process_body {
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             #[cfg(windows)]
-            {
-                if options.stdin != SyncStdio::Buffer
-                    && options.stderr != SyncStdio::Buffer
-                    && options.stdout != SyncStdio::Buffer
-                {
-                    return spawn_windows_without_pipes(options, argv, envp);
-                }
-                return spawn_windows_with_pipes(options, argv, envp);
-            }
+            return spawn_windows(options, argv, envp);
 
             #[cfg(unix)]
             spawn_posix(options, argv, envp)
@@ -2899,7 +2132,11 @@ mod spawn_process_body {
         pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, crate::Error> {
             // SAFETY: `bun_sys::environ_ptr` returns the live, NULL-terminated C
             // `environ` array when no envp override is provided.
+            #[cfg(unix)]
             let envp: *const *const c_char = options.envp.unwrap_or_else(bun_sys::environ_ptr);
+            // A null block makes the child inherit this process's environment.
+            #[cfg(windows)]
+            let envp: *const *const c_char = options.envp.unwrap_or(core::ptr::null());
             let argv = &options.argv;
             let mut string_builder = bun_core::StringBuilder::default();
             for arg in argv {
@@ -3413,7 +2650,7 @@ mod spawn_process_body {
         fn cleanup_spawn_posix(
             out: &mut [Vec<u8>; 2],
             out_fds: [Fd; 2],
-            process: &PosixSpawnResult,
+            process: &SpawnResult,
             success: bool,
         ) {
             // If we're going to return an error,

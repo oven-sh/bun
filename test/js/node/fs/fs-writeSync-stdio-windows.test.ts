@@ -5,8 +5,8 @@
 // `SetStdHandle` (or `AllocConsole`/`AttachConsole`) made the round-trip fail
 // and `fs.writeSync(1, ...)` panicked with:
 //   "Cast bun.FD.uv(N[handle]) makes closing impossible!"
-// Now `fromJS`/`fromJSValidated` return `.fromUV(0|1|2)` directly, and
-// `FD.uv()` checks the cached stdio handles before `GetStdHandle`.
+// `from_js`/`from_js_validated` return `Fd::from_crt(0|1|2)`, and
+// `Fd::crt()` checks the cached stdio handles before `GetStdHandle`.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -60,7 +60,7 @@ describe.concurrent.skipIf(!isWindows)("fs.writeSync on Windows stdio/handles", 
       // the "makes closing impossible" panic.
       const n = fs.writeSync(1, "after-setstdhandle\\n");
 
-      // fs.writeSync(1, ...) maps to libuv fd 1, which is the C runtime's
+      // fs.writeSync(1, ...) maps to CRT fd 1, which is the C runtime's
       // original stdout — SetStdHandle does not rewire CRT fds — so the write
       // should land on the parent-observed stdout.
       k32.symbols.SetStdHandle(STD_OUTPUT_HANDLE, original);

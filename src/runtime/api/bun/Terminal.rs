@@ -30,8 +30,6 @@ use bun_jsc::{
 use bun_sys::{self as sys, Fd, FdExt};
 
 #[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-#[cfg(windows)]
 use bun_sys::windows;
 
 bun_output::declare_scope!(Terminal, hidden);
@@ -117,8 +115,8 @@ pub struct Terminal {
     /// The slave side of the PTY (used by child processes). Unused on Windows.
     slave_fd: Cell<Fd>,
 
-    /// Windows ConPTY handle. Used for resize and passed to uv_spawn via
-    /// uv_process_options_t.pseudoconsole.
+    /// Windows ConPTY handle. Used for resize and passed to spawn as
+    /// `SpawnOptions.pseudoconsole`.
     #[cfg(windows)]
     hpcon: Cell<Option<windows::HPCON>>,
 
@@ -640,8 +638,8 @@ impl Terminal {
         self.close_internal();
     }
 
-    /// Windows: get the ConPTY handle to pass to uv_spawn via
-    /// uv_process_options_t.pseudoconsole.
+    /// Windows: get the ConPTY handle to pass to spawn as
+    /// `SpawnOptions.pseudoconsole`.
     #[cfg(windows)]
     pub(crate) fn get_pseudoconsole(&self) -> Option<windows::HPCON> {
         self.hpcon.get()
@@ -766,11 +764,11 @@ impl Terminal {
             }
             Err(_) => {
                 // CreateThread failed — the process is in a bad state. Close the
-                // reader so onReaderDone fires next loop tick (releasing the reader
-                // ref) instead of hanging on an EOF that will never come. Leak hpcon;
-                // calling ClosePseudoConsole here would deadlock since reader.close()
-                // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
-                // broken-pipe once libuv's deferred close runs.
+                // reader so onReaderDone fires (releasing the reader ref) instead
+                // of hanging on an EOF that will never come. Leak hpcon: calling
+                // ClosePseudoConsole here would deadlock, because the pipe HANDLE
+                // stays open until the loop has collected the cancelled read.
+                // Conhost sees broken-pipe once it has.
                 let flags = self.flags.get();
                 if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
                     self.reader.with_mut(|r| r.close());
@@ -1079,8 +1077,8 @@ struct PseudoConsole {
 
 /// Create one end of a pipe pair as an overlapped named pipe (server) and the
 /// other as a synchronous client. Returns both raw HANDLEs. Caller closes
-/// both on error. The "server" end is suitable for libuv (uv_pipe_open) and
-/// the "client" end is suitable for ConPTY (which uses synchronous I/O).
+/// both on error. The "server" end is what the loop's completion port drives
+/// and the "client" end is suitable for ConPTY (which uses synchronous I/O).
 #[cfg(windows)]
 fn create_overlapped_pipe_pair(
     // PIPE_ACCESS_INBOUND: server reads, client writes.
@@ -1098,7 +1096,7 @@ fn create_overlapped_pipe_pair(
         let mut cursor = &mut name_utf8_buf[..];
         // An AppContainer may only create server pipes under `\\.\pipe\LOCAL\`;
         // insert the segment only then so the name is unchanged outside one
-        // (matches libuv's uv__unique_pipe_name).
+        // (as the pipes spawn creates for a child's stdio are).
         let local = if windows::is_app_container() {
             r"LOCAL\"
         } else {
@@ -1255,34 +1253,12 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         let _ = windows::CloseHandle(out_client.take().unwrap());
     }
 
-    // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
-    // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
-    // Do not .take() until after success — on Err the cleanup! must still see
-    // Some(h) so the HANDLE isn't leaked; clear `out_server` only after the
-    // fallible call succeeds.
-    let read_fd = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => {
-            out_server = None;
-            fd
-        }
-        Err(_) => {
-            cleanup!();
-            return Err(CreatePtyError::DupFailed);
-        }
-    };
-    // errdefer read_fd.close()
-    let read_fd_guard = scopeguard::guard(read_fd, |fd| fd.close());
-
-    let write_fd = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => fd,
-        Err(_) => {
-            cleanup!();
-            return Err(CreatePtyError::DupFailed);
-        }
-    };
+    // The server (overlapped) ends go to BufferedReader/StreamingWriter.start()
+    // as they are.
+    let read_fd = Fd::from_system(out_server.take().unwrap());
+    let write_fd = Fd::from_system(in_server.take().unwrap());
 
     let result_hpcon = hpcon.take().unwrap();
-    let read_fd = scopeguard::ScopeGuard::into_inner(read_fd_guard);
 
     Ok(PtyResult {
         master: Fd::INVALID,
@@ -1977,14 +1953,7 @@ impl Terminal {
     }
 
     fn loop_(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.event_loop_handle.uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop_handle.r#loop().cast()
-        }
+        self.event_loop_handle.r#loop().cast()
     }
 
     pub(crate) fn finalize(&self) {
@@ -2030,9 +1999,6 @@ impl BufferedReaderParent for Terminal {
         Self::from_parent_ptr(this).on_reader_error(&err);
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
-        // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
-        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper.
         Self::from_parent_ptr(this).loop_().cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
@@ -2072,9 +2038,9 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
-        unsafe { (*this).event_loop_handle.uv_loop() }
+        unsafe { (*this).event_loop_handle.r#loop() }
     }
     unsafe fn ref_(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount bump via raw pointer — do NOT

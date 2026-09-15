@@ -69,14 +69,12 @@ pub mod task_tag {
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
         BundleV2PluginLoad,       // bun.bundle_v2.Load (JS-thread hop)
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
-        Close,
         CppTask,
         DuplexUpgradeContext,
         FetchTasklet,
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
         FSWatchTask,
-        GetAddrInfoLibuvComplete,
         HotReloadTask,
         WatchReloadTask,
         JSBundleCompletionTask,
@@ -88,13 +86,10 @@ pub mod task_tag {
         NativeBrotli,
         NativeZlib,
         NativeZstd,
-        Open,
         PollPendingModulesTask,
         PosixSignalTask,
         MemoryPressureTask,
         ProcessWaiterThreadTask,
-        Read,
-        Readv,
         FlushPendingFileSinkTask,
         RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,
@@ -112,7 +107,6 @@ pub mod task_tag {
         ShellRmDirTask,
         ShellRmTask,
         ShellTouchTask,
-        StatFS,
         StatWatcherTimerUpdate,
         StatWatcherHop,
         AsyncCpTask,
@@ -121,8 +115,6 @@ pub mod task_tag {
         ThreadSafeFunction,
         ValkeyDeferredClose,
         WindowsNamedPipeContext,
-        Write,
-        Writev,
     }
 }
 

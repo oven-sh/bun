@@ -22,7 +22,7 @@ import { join } from "node:path";
 // grandchild exits and the pipe reaches EOF, on_reader_done releases the ref
 // and the wrapper becomes collectable (no leak).
 //
-// Windows uses libuv for pipe I/O; the from_pipe path under test is POSIX.
+// Windows pipe reads use no poll; the poll hand-off under test is POSIX.
 test.skipIf(isWindows)(
   "subprocess stdout FileReader is pinned while its pipe poll is live, then collectable after EOF",
   async () => {
@@ -178,7 +178,7 @@ test.skipIf(isWindows)(
 // of the function still reads `self` after that JS returns.
 // protectedBefore >= 1 proves the handler ran inside that window (the
 // across-read ref, released only at on_reader_done's tail, is still held);
-// protectedAfter / aliveAfter >= 1 is the invariant. POSIX-only (libuv).
+// protectedAfter / aliveAfter >= 1 is the invariant. POSIX-only (poll).
 test.skipIf(isWindows)(
   "resolving the pending read from FileReader::on_reader_done keeps the source pinned through its own tail",
   async () => {
@@ -273,7 +273,7 @@ test.skipIf(isWindows)(
 // scanning makes non-deterministic. Instead, the source wrapper must still be
 // Strong-protected right after a re-entrant reader.cancel(), because
 // on_read_chunk's own pin keeps it above the downgrade-at-one threshold.
-// Windows uses libuv for pipe I/O; the read_with_fn path under test is POSIX.
+// Windows pipe reads use no poll; the read_loop path under test is POSIX.
 test.skipIf(isWindows)(
   "re-entrant cancel inside a subprocess stdout read keeps the FileReader pinned for the rest of the dispatch",
   async () => {

@@ -37,20 +37,15 @@ struct us_quic_socket_context_s;
 struct us_nq_driver_s;
 
 struct us_internal_loop_data_t {
-#ifdef LIBUS_USE_LIBUV
-    struct us_timer_t *sweep_timer;
-#else
     /* Absolute monotonic ns of the next sweep, or -1. Folded into the poll
      * timeout — no timerfd, no EVFILT_TIMER. */
     long long sweep_next_tick_ns;
-#endif
     int sweep_timer_count;
     struct us_internal_async *wakeup_async;
     struct us_socket_group_t *head;
     /* QUIC engines on this loop. us_quic_loop_process walks the list from
-     * loop_post / drainMicrotasks; the lazy fallthrough timer only wakes the
-     * loop for lsquic's time-driven state (RTO, ACK delay) — its callback
-     * just calls us_quic_loop_process. */
+     * loop_post / drainMicrotasks; quic_next_tick_us bounds the loop's wait
+     * for lsquic's time-driven state (RTO, ACK delay). */
     struct us_quic_socket_context_s *quic_head;
     /* µs until lsquic next wants process_conns (min earliest_adv_tick
      * across engines), or -1 for "no deadline". Written by
@@ -64,12 +59,6 @@ struct us_internal_loop_data_t {
      * full process pass only when it flagged pending work -- one engine pass
      * per loop turn instead of one per native call. */
     struct us_nq_driver_s *nq_head;
-#ifdef LIBUS_USE_LIBUV
-    /* A fallthrough us_timer_t armed to quic_next_tick_us so the uv loop wakes
-     * for lsquic's time-driven state. POSIX folds the deadline into the
-     * epoll_pwait2 timeout via getTimeout() instead. */
-    struct us_timer_t *quic_timer;
-#endif
     struct us_socket_group_t *iterator;
     char *recv_buf;
     char *send_buf;

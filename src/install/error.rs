@@ -402,7 +402,7 @@ impl From<bun_libarchive::Error> for Error {
             bun_libarchive::Error::Fail => Self::Fail,
             bun_libarchive::Error::Sys(s) => Self::Sys(s),
             bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
-            bun_libarchive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
+            bun_libarchive::Error::MakeCrtOwned(_) => Self::SystemFdQuotaExceeded,
             bun_libarchive::Error::Paths(p) => Self::Paths(p),
         }
     }

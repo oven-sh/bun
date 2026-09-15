@@ -7,7 +7,7 @@ import { bunEnv, bunExe, isWindows } from "harness";
 //     `errdefer this.deinit()` and `errdefer handlers.deinit()` unprotected the
 //     same JSValues, tripping a debug assertion)
 //   - free the heap-allocated `WindowsNamedPipeListeningContext` and close the
-//     libuv pipe handle, so the event loop can drain and the process exits
+//     pipe handle, so the event loop can drain and the process exits
 describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
   test("failed listen on in-use pipe throws, cleans up, and does not hang", async () => {
     const src = /* js */ `
@@ -65,7 +65,7 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      // If the libuv pipe handle leaks, the event loop never drains and the
+      // If the pipe handle leaks, the event loop never drains and the
       // process hangs; bound it so we get a useful failure instead of a test
       // runner timeout.
       timeout: 15_000,

@@ -391,7 +391,7 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+    if (us_internal_poll_start_accepting(p, group->loop) != 0) {
         /* EPOLL_CTL_ADD failed (e.g. ENOSPC at fs.epoll.max_user_watches).
          * Report via both the out-param and thread-local errno: Bun.listen
          * reads *error, Bun.serve reads errno. */
@@ -430,7 +430,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+    if (us_internal_poll_start_accepting(p, group->loop) != 0) {
         int saved_errno = LIBUS_ERR;
         us_poll_free(p, group->loop);
         *error = saved_errno;
@@ -457,7 +457,7 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+    if (us_internal_poll_start_accepting(p, group->loop) != 0) {
         int saved_errno = errno;
         bsd_close_socket(listen_socket_fd);
         us_poll_free(p, group->loop);
@@ -652,11 +652,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     c->port = port;
     us_internal_socket_group_link_connecting_socket(group, c);
 
-#ifdef _WIN32
-    loop->uv_loop->active_handles++;
-#else
     loop->num_polls++;
-#endif
 
     Bun__addrinfo_set(ai_req, c);
 
@@ -732,7 +728,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     /* close_all() may have run between the DNS thread queuing this callback and
      * us reaching it; c->group is NULL'd at close so it can't be touched. The
-     * keep-alive (num_polls/active_handles) was already balanced by the close
+     * keep-alive (num_polls) was already balanced by the close
      * path's Bun__addrinfo_cancel branch. */
     c->pending_resolve_callback = 0;
     if (c->closed) {
@@ -745,11 +741,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     }
 
     struct us_socket_group_t *group = c->group;
-#ifdef _WIN32
-    group->loop->uv_loop->active_handles--;
-#else
     group->loop->num_polls--;
-#endif
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
         /* Preserve the getaddrinfo failure so the connect-error callback can
@@ -776,23 +768,6 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
 void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     struct us_connecting_socket_t *c = s->connect_state;
-    #if _WIN32
-    if (error == 0) {
-        if (recv(us_poll_fd((struct us_poll_t*)s), NULL, 0, MSG_PUSH_IMMEDIATE) == SOCKET_ERROR) {
-            error = WSAGetLastError();
-            switch (error) {
-                case WSAEWOULDBLOCK:
-                case WSAEINTR: {
-                    error = 0;
-                    break;
-                }
-                default: {
-                    break;
-                }
-            }
-        }
-    }
-    #endif
     if (error) {
         if (c) {
             for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {

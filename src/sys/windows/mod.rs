@@ -106,6 +106,7 @@ pub type PVOID = LPVOID;
 pub use bun_windows_sys::COORD;
 pub use bun_windows_sys::FALSE;
 pub use bun_windows_sys::FILE_BEGIN;
+pub use bun_windows_sys::FILE_CURRENT;
 pub use bun_windows_sys::FILE_END;
 pub use bun_windows_sys::FILE_OPEN;
 pub use bun_windows_sys::INVALID_HANDLE_VALUE;
@@ -192,24 +193,6 @@ pub const fn from_sys_time(nt_time: i64) -> i128 {
     (nt_time as i128 - EPOCH_DIFFERENCE_100NS as i128) * 100
 }
 
-/// Convert a 64-bit Windows `FILETIME` (100-ns ticks since 1601-01-01 UTC)
-/// into a libuv `uv_timespec_t` (seconds + nanoseconds since the Unix epoch).
-/// Matches libuv's `uv__filetime_to_timespec`.
-#[inline]
-pub(crate) fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_t {
-    let t = filetime - EPOCH_DIFFERENCE_100NS;
-    let mut sec = t / 10_000_000;
-    let mut nsec = (t - sec * 10_000_000) * 100;
-    if nsec < 0 {
-        sec -= 1;
-        nsec += 1_000_000_000;
-    }
-    bun_libuv_sys::uv_timespec_t {
-        sec: sec as _,
-        nsec: nsec as _,
-    }
-}
-
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 
 pub const NT_OBJECT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
@@ -219,9 +202,7 @@ pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
 pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
-#[cfg(windows)]
 pub use bun_paths::PathBuffer;
-#[cfg(windows)]
 pub use bun_paths::WPathBuffer;
 
 pub use bun_windows_sys::HANDLE;
@@ -416,7 +397,9 @@ pub fn last_system_errno() -> SystemErrno {
     Win32Error::get().to_system_errno()
 }
 
-pub use bun_libuv_sys as libuv;
+#[allow(non_snake_case)]
+pub mod O;
+pub mod fs;
 
 /// True when the process token is a Windows AppContainer (lowbox) token.
 /// Cached for the process lifetime; the token's AppContainer bit is immutable.
@@ -556,7 +539,7 @@ pub fn GetCurrentProcessId() -> DWORD {
 
 pub use bun_windows_sys::{PEB, RTL_USER_PROCESS_PARAMETERS, TEB, teb};
 
-pub use bun_windows_sys::externs::CreateJobObjectA;
+pub use bun_windows_sys::externs::CreateJobObjectW;
 
 pub use bun_windows_sys::externs::AssignProcessToJobObject;
 
@@ -599,8 +582,6 @@ pub use bun_windows_sys::{
     FOCUS_EVENT_RECORD, INPUT_RECORD, INPUT_RECORD_Event, KEY_EVENT_RECORD, KEY_EVENT_RECORD_uChar,
     MENU_EVENT_RECORD, MOUSE_EVENT_RECORD, WINDOW_BUFFER_SIZE_EVENT,
 };
-
-// Bun__UVSignalHandle__{init,close}: see src/runtime/node/uv_signal_handle_windows.rs
 
 /// Is not the actual UID of the user, but just a hash of username.
 pub fn user_unique_id() -> u32 {
@@ -1255,7 +1236,7 @@ pub(crate) const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x00001000;
 /// `LimitFlags` for a kill-on-close Job whose members are added by
 /// inheritance (`--no-orphans`, the parallel-test coordinator). Omits
 /// `SILENT_BREAKAWAY_OK` on purpose: that would make every child escape the
-/// Job. libuv's global job sets it because libuv assigns each child itself.
+/// Job.
 pub const JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE: DWORD = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
     | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
@@ -1318,8 +1299,6 @@ pub mod rescle {
         description: Option<&[u8]>,
         copyright: Option<&[u8]>,
     ) -> Result<(), RescleError> {
-        const _: () = assert!(cfg!(windows));
-
         // Validate version string format if provided
         if let Some(v) = version {
             // Empty version string is invalid
@@ -1532,7 +1511,7 @@ pub fn become_watcher_manager() -> ! {
     }
     windows_enable_stdio_inheritance();
     // SAFETY: null args allowed
-    let job = unsafe { externs::CreateJobObjectA(ptr::null_mut(), ptr::null()) };
+    let job = unsafe { externs::CreateJobObjectW(ptr::null_mut(), ptr::null()) };
     if job.is_null() {
         // Print the Win32 error name, not the raw DWORD.
         let err = Win32Error::get();
@@ -1753,11 +1732,6 @@ pub(crate) fn spawn_watcher_child(
 /// broke when I just used it. Not sure. ... but this works!
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_void {
-    #[cfg(not(windows))]
-    {
-        compile_error!("unreachable");
-    }
-
     let mut buf = bun_paths::w_path_buffer_pool::get();
     // The path is JS-supplied; over-length input must surface as the same
     // `null + GetLastError()` shape `LoadLibraryExW` itself would yield, not
@@ -2051,10 +2025,6 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
         buf.resize(n as usize + 1, 0);
     }
 }
-
-// `bun.windows.libuv` — re-exported as `pub use bun_libuv_sys as libuv` above.
-// The duplicate inline `pub mod libuv { ... }` that lived here caused E0260 and
-// has been removed; its items belong in `bun_libuv_sys`.
 
 bun_core::declare_scope!(windowsUserUniqueId, visible);
 

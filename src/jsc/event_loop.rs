@@ -82,9 +82,6 @@ pub struct EventLoop {
     pub virtual_machine: Option<NonNull<VirtualMachine>>,
     pub waker: Option<Waker>,
     // see `hold_forever_poll`
-    #[cfg(windows)]
-    pub forever_timer: Option<NonNull<uws::Timer>>,
-    #[cfg(not(windows))]
     pub holds_forever_poll: bool,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
     /// The uws loop this `EventLoop` runs on: the process loop for the VM's
@@ -102,15 +99,12 @@ pub struct EventLoop {
     /// (link-time `__bun_run_wtf_timer`) casts it back.
     pub imminent_gc_timer: AtomicPtr<()>,
 
-    #[cfg(unix)]
     /// Boxed `PosixSignalHandle` ring buffer, leaked once by
     /// `Bun__ensureSignalHandler` and live for the process lifetime. Stored as
     /// a [`bun_ptr::BackRef`] so the per-tick `drain()` / signal-context
     /// `enqueue()` reads go through the single audited `BackRef::deref`
     /// instead of an open-coded `NonNull::as_ref` `unsafe` at each site.
     pub signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
-    #[cfg(not(unix))]
-    pub signal_handler: (),
 }
 
 impl Default for EventLoop {
@@ -126,19 +120,13 @@ impl Default for EventLoop {
             global: None,
             virtual_machine: None,
             waker: None,
-            #[cfg(windows)]
-            forever_timer: None,
-            #[cfg(not(windows))]
             holds_forever_poll: false,
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
             uws_loop: None,
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
-            #[cfg(unix)]
             signal_handler: None,
-            #[cfg(not(unix))]
-            signal_handler: (),
         }
     }
 }
@@ -431,9 +419,6 @@ impl EventLoop {
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
 
-        // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
-        // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
-        // `event_loop_handle` (which is the libuv loop).
         if vm.event_loop_handle.is_some() {
             vm.uws_loop_mut().drain_quic_if_necessary();
         }
@@ -588,15 +573,12 @@ impl EventLoop {
     pub fn tick_concurrent_with_count(&mut self) -> usize {
         self.apply_concurrent_ref_delta();
 
-        #[cfg(unix)]
-        {
-            if let Some(signal_handler) = self.signal_handler {
-                // `signal_handler` is a `BackRef` to the leaked process-lifetime
-                // `PosixSignalHandle` (see field doc); the ring-buffer backing is
-                // disjoint from `*self`, so the `&PosixSignalHandle` materialised
-                // by `BackRef::deref` does not alias the `&mut self` passed here.
-                signal_handler.drain(self);
-            }
+        if let Some(signal_handler) = self.signal_handler {
+            // `signal_handler` is a `BackRef` to the leaked process-lifetime
+            // `PosixSignalHandle` (see field doc); the ring-buffer backing is
+            // disjoint from `*self`, so the `&PosixSignalHandle` materialised
+            // by `BackRef::deref` does not alias the `&mut self` passed here.
+            signal_handler.drain(self);
         }
 
         self.run_imminent_gc_timer();
@@ -676,34 +658,23 @@ impl EventLoop {
     /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
     /// torn down still believing something keeps it alive.
     ///
-    /// Targets `self.native_loop()`, never `vm.event_loop_handle`: `Bun.spawnSync`
+    /// Targets `self.usockets_loop()`, never `vm.event_loop_handle`: `Bun.spawnSync`
     /// points the latter at its private loop, and a GC inside it still refs
     /// this loop (FinalizationRegistry, MessagePort).
     pub(crate) fn apply_concurrent_ref_delta(&self) {
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
-        // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread only.
-        let loop_ = unsafe { &mut *self.native_loop() };
-        #[cfg(windows)]
-        {
-            if delta > 0 {
-                loop_.add_active(u32::try_from(delta).expect("int cast"));
-            } else {
-                loop_.sub_active(u32::try_from(-delta).expect("int cast"));
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            if delta > 0 {
-                loop_.num_polls += delta;
-                loop_.active = loop_
-                    .active
-                    .saturating_add(u32::try_from(delta).expect("int cast"));
-            } else {
-                loop_.num_polls -= -delta;
-                loop_.active = loop_
-                    .active
-                    .saturating_sub(u32::try_from(-delta).expect("int cast"));
-            }
+        // SAFETY: `usockets_loop()` is live for this loop's lifetime; JS thread only.
+        let loop_ = unsafe { &mut *self.usockets_loop() };
+        if delta > 0 {
+            loop_.num_polls += delta;
+            loop_.active = loop_
+                .active
+                .saturating_add(u32::try_from(delta).expect("int cast"));
+        } else {
+            loop_.num_polls -= -delta;
+            loop_.active = loop_
+                .active
+                .saturating_sub(u32::try_from(-delta).expect("int cast"));
         }
     }
 
@@ -712,19 +683,6 @@ impl EventLoop {
         self.uws_loop
             .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
             .as_ptr()
-    }
-
-    /// [`usockets_loop`](Self::usockets_loop) as the platform-native loop
-    /// (`us_loop_t*` on POSIX, its `uv_loop_t*` on Windows).
-    #[inline]
-    pub fn native_loop(&self) -> *mut crate::PlatformEventLoop {
-        Async::uws_to_native(self.usockets_loop())
-    }
-
-    #[cfg(windows)]
-    #[inline]
-    pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
-        self.native_loop()
     }
 
     #[inline]
@@ -1046,7 +1004,6 @@ impl EventLoop {
         if self.uws_loop.is_none() {
             // The VM's embedded loops run on the thread's loop, the one
             // `vm.event_loop_handle` names below.
-            debug_assert_eq!(Async::uws_to_native(uws::Loop::get()), Async::Loop::get());
             self.uws_loop = NonNull::new(uws::Loop::get());
         }
         if self.vm_ref().event_loop_handle.is_none() {
@@ -1210,8 +1167,8 @@ impl EventLoop {
     pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
         // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
         while !unsafe { done.read_volatile() } {
-            // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread.
-            unsafe { (*self.native_loop()).tick() };
+            // SAFETY: `usockets_loop()` is live for this loop's lifetime; JS thread.
+            unsafe { (*self.usockets_loop()).tick() };
         }
     }
 
@@ -1236,7 +1193,6 @@ impl EventLoop {
 
     /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks
     /// instead of returning immediately on `num_polls == 0`.
-    #[cfg(not(windows))]
     fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
         if !self.holds_forever_poll {
             loop_.inc();
@@ -1244,37 +1200,14 @@ impl EventLoop {
         }
     }
 
-    #[cfg(windows)]
-    fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
-        if self.forever_timer.is_none() {
-            let mut t = uws::Timer::create(
-                loop_,
-                std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
-            );
-            // SAFETY: t is a fresh non-null timer handle
-            unsafe {
-                t.as_mut().set(
-                    std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
-                    Some(noop_forever_timer),
-                    1000 * 60 * 4,
-                    1000 * 60 * 4,
-                )
-            };
-            self.forever_timer = Some(t);
-        }
-    }
-
     pub fn tick_possibly_forever(&mut self) {
         let loop_ptr = self.usockets_loop();
 
-        #[cfg(unix)]
-        {
-            let pending_unref = self.vm_ref().take_pending_unref();
-            if pending_unref > 0 {
-                // SAFETY: usockets_loop() returns a live uws loop for the VM
-                // lifetime; borrow scoped to this call.
-                unsafe { (*loop_ptr).unref_count(pending_unref) };
-            }
+        let pending_unref = self.vm_ref().take_pending_unref();
+        if pending_unref > 0 {
+            // SAFETY: usockets_loop() returns a live uws loop for the VM
+            // lifetime; borrow scoped to this call.
+            unsafe { (*loop_ptr).unref_count(pending_unref) };
         }
 
         // SAFETY: as above.
@@ -1286,7 +1219,7 @@ impl EventLoop {
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
-        // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
+        // timerfd used to.
         // SAFETY: as above — the tick runs loop callbacks that reach the loop
         // themselves, so the exclusive borrow is scoped to this call only.
         unsafe {
@@ -1379,12 +1312,6 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         b"concurrentRef",
         JSValue::js_number(event_loop.concurrent_ref.load(Ordering::SeqCst) as f64),
     );
-    #[cfg(windows)]
-    // SAFETY: `Loop::get()` returns the live process-global `uv_loop_t`.
-    let num_polls: i32 =
-        i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles })
-            .expect("int cast");
-    #[cfg(not(windows))]
     // SAFETY: uws::Loop::get() returns a live process-global loop.
     let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls };
     result.put(
@@ -1399,11 +1326,6 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         JSValue::js_number(unsafe { (*event_loop.usockets_loop()).iteration_number() } as f64),
     );
     Ok(result)
-}
-
-#[cfg(windows)]
-extern "C" fn noop_forever_timer(_: *mut uws::Timer) {
-    // do nothing
 }
 
 // HOST_EXPORT(Bun__EventLoop__runCallback2, c)

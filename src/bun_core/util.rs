@@ -810,7 +810,7 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
 
 // ─── Fd + fd module (from bun_sys::fd) ────────────────────────────────────
 // TYPE_ONLY: bun_core needs only the handle wrapper + stdin/out/err/cwd ctors.
-// Full method set (close, makeLibUVOwned, …) stays in bun_sys which re-exports
+// Full method set (close, make_crt_owned, …) stays in bun_sys which re-exports
 // `pub use bun_core::Fd as FD;` and adds inherent impls there.
 
 // Backing int: c_int on posix, u64 on Windows.
@@ -824,7 +824,7 @@ type FdBacking = u64;
 pub struct Fd(pub FdBacking);
 
 // Packed u64 { value: u63, kind: u1 } — fields are LSB-first, so
-// `value` is bits 0..63, `kind` is bit 63. (.system=0, .uv=1)
+// `value` is bits 0..63, `kind` is bit 63. (.system=0, .crt=1)
 #[cfg(windows)]
 const FD_KIND_BIT: u64 = 1u64 << 63;
 #[cfg(windows)]
@@ -848,11 +848,11 @@ impl Fd {
     pub const fn from_native(v: FdBacking) -> Fd {
         Fd(v)
     }
-    /// libuv fd (== posix fd on non-windows; uv-tagged on windows).
+    /// C runtime fd (the posix fd on non-windows; a UCRT fd, crt-tagged, on windows).
     #[inline]
-    pub const fn from_uv(v: i32) -> Fd {
+    pub const fn from_crt(v: i32) -> Fd {
         #[cfg(windows)]
-        // kind=.uv (bit 63 = 1); uv_file is i32, store sign-extended into low 63.
+        // kind=.crt (bit 63 = 1); the CRT fd is i32, store sign-extended into low 63.
         {
             Fd(FD_KIND_BIT | ((v as i64 as u64) & FD_VALUE_MASK))
         }
@@ -869,9 +869,9 @@ impl Fd {
         Fd((h as u64) & FD_VALUE_MASK)
     }
     /// Native OS file descriptor (`fd_t`). On POSIX this is just the backing
-    /// `c_int`. On Windows, when `kind == Uv`, calls `uv_get_osfhandle` to
-    /// obtain the underlying HANDLE — so the returned value may not be safely
-    /// closed via libc; use `FdExt::close()` instead.
+    /// `c_int`. On Windows, when `kind == Crt`, this is the HANDLE the CRT fd
+    /// owns (`INVALID_HANDLE_VALUE` for a bad fd) — close it through
+    /// `FdExt::close()`, never directly.
     #[cfg(not(windows))]
     #[inline]
     pub const fn native(self) -> FdNative {
@@ -882,7 +882,7 @@ impl Fd {
     pub fn native(self) -> FdNative {
         match self.decode_windows() {
             DecodeWindows::Windows(handle) => handle,
-            DecodeWindows::Uv(file_number) => fd::uv_get_osfhandle(file_number),
+            DecodeWindows::Crt(file_number) => fd::crt_get_osfhandle(file_number),
         }
     }
     /// Borrow this `Fd` as a [`std::os::fd::BorrowedFd`] for handing to APIs
@@ -910,21 +910,21 @@ impl Fd {
         // borrow cannot outlive `&self`.
         unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }
     }
-    /// libuv c_int file number. On POSIX this equals `native()`. On Windows,
-    /// when kind=uv this extracts the stored uv_file; when kind=system this
+    /// C runtime file number. On POSIX this equals `native()`. On Windows,
+    /// when kind=crt this extracts the stored CRT fd; when kind=system this
     /// maps stdio handles to 0/1/2 (checking both the cached statics and the
     /// live `GetStdHandle` result) and **panics** otherwise — converting an
-    /// arbitrary HANDLE to a uv fd makes closing impossible. The supplier
-    /// should call `make_lib_uv_owned()` near where `open()` was called.
+    /// arbitrary HANDLE to a CRT fd makes closing impossible. The supplier
+    /// should call `make_crt_owned()` near where `open()` was called.
     #[cfg(not(windows))]
     #[inline]
-    pub const fn uv(self) -> i32 {
+    pub const fn crt(self) -> i32 {
         self.0
     }
     #[cfg(windows)]
-    pub fn uv(self) -> i32 {
+    pub fn crt(self) -> i32 {
         match self.decode_windows() {
-            DecodeWindows::Uv(v) => v,
+            DecodeWindows::Crt(v) => v,
             DecodeWindows::Windows(handle) => {
                 // `.stdin()`/`.stdout()`/`.stderr()` hand out the cached
                 // `WINDOWS_CACHED_STD{IN,OUT,ERR}` (snapshotted at startup),
@@ -951,8 +951,8 @@ impl Fd {
                     return 2;
                 }
                 panic!(
-                    "Cast bun.FD.uv({}) makes closing impossible!\n\n\
-                     The supplier of fd FD should call 'FD.makeLibUVOwned',\n\
+                    "Fd::crt({}) on a HANDLE makes closing impossible!\n\n\
+                     The supplier of the fd should call `make_crt_owned()`,\n\
                      probably where open() was called.",
                     self,
                 );
@@ -1006,7 +1006,7 @@ impl Fd {
             .unwrap_or(Fd::INVALID)
     }
     /// The Windows `AT_FDCWD`; [`Fd::decode_windows`] maps it to the PEB's
-    /// current directory handle. Handles fit in 32 bits, bit 63 is the uv tag
+    /// current directory handle. Handles fit in 32 bits, bit 63 is the CRT tag
     /// and `INVALID_HANDLE_VALUE` masks to all of bits 0..63, so bit 62 alone
     /// is out of band.
     #[cfg(windows)]
@@ -1026,7 +1026,7 @@ impl Fd {
     }
     #[cfg(windows)]
     pub fn is_stdio(self) -> bool {
-        // Cache check first (matches `to_uv_index`): the cache reflects what the
+        // Cache check first: the cache reflects what the
         // process saw at startup, even after `SetStdHandle`/`AllocConsole`.
         if self == Self::stdin() || self == Self::stdout() || self == Self::stderr() {
             return true;
@@ -1038,7 +1038,7 @@ impl Fd {
             || fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle)
     }
 
-    // ── Kind tag (Windows: bit 63 = uv/system) ───────────────────────────
+    // ── Kind tag (Windows: bit 63 = crt/system) ───────────────────────────
     #[cfg(not(windows))]
     #[inline]
     pub const fn kind(self) -> FdKind {
@@ -1050,7 +1050,7 @@ impl Fd {
         if self.0 & FD_KIND_BIT == 0 {
             FdKind::System
         } else {
-            FdKind::Uv
+            FdKind::Crt
         }
     }
 
@@ -1074,37 +1074,8 @@ impl Fd {
                 };
                 DecodeWindows::Windows(h)
             }
-            // Direct extract — do NOT recurse into self.uv() (which calls decode_windows).
-            FdKind::Uv => DecodeWindows::Uv((self.0 & FD_VALUE_MASK) as u32 as i32),
-        }
-    }
-
-    /// On Windows, convert a system-kind
-    /// `Fd` (raw `HANDLE`) into a libuv-kind `Fd` (CRT `_open_osfhandle`-backed
-    /// `int`) so libuv `uv_fs_*` APIs can consume it. uv-kind passes through.
-    /// On POSIX this is the identity (libuv fd == posix fd).
-    ///
-    /// Returns `Err(())` when
-    /// `uv_open_osfhandle` returns `-1`; the caller decides whether to close
-    /// the original handle (see `make_libuv_owned_for_syscall`).
-    #[inline]
-    pub fn make_libuv_owned(self) -> Result<Fd, ()> {
-        debug_assert!(self.is_valid());
-        #[cfg(not(windows))]
-        {
-            Ok(self)
-        }
-        #[cfg(windows)]
-        match self.kind() {
-            FdKind::Uv => Ok(self),
-            FdKind::System => {
-                let crt_fd = fd::uv_open_osfhandle(self.native());
-                if crt_fd == -1 {
-                    Err(())
-                } else {
-                    Ok(Fd::from_uv(crt_fd))
-                }
-            }
+            // Direct extract — do NOT recurse into self.crt() (which calls decode_windows).
+            FdKind::Crt => DecodeWindows::Crt((self.0 & FD_VALUE_MASK) as u32 as i32),
         }
     }
 
@@ -1118,7 +1089,7 @@ impl Fd {
         {
             match self.kind() {
                 FdKind::System => self.value_as_system() != 0, // INVALID_VALUE = minInt(u63) = 0
-                FdKind::Uv => true,
+                FdKind::Crt => true,
             }
         }
     }
@@ -1159,7 +1130,7 @@ impl Fd {
                         None
                     }
                 }
-                DecodeWindows::Uv(n) => match n {
+                DecodeWindows::Crt(n) => match n {
                     0 => Some(Stdio::StdIn),
                     1 => Some(Stdio::StdOut),
                     2 => Some(Stdio::StdErr),
@@ -1188,13 +1159,13 @@ pub enum FdKind {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FdKind {
     System = 0,
-    Uv = 1,
+    Crt = 1,
 }
 
 #[cfg(windows)]
 pub enum DecodeWindows {
     Windows(*mut core::ffi::c_void),
-    Uv(i32),
+    Crt(i32),
 }
 
 #[repr(u8)]
@@ -1411,14 +1382,13 @@ impl core::fmt::Display for Fd {
             }
             match fd.decode_windows() {
                 DecodeWindows::Windows(_) => write!(w, "{}[handle]", fd.value_as_system()),
-                DecodeWindows::Uv(n) => write!(w, "{}[libuv]", n),
+                DecodeWindows::Crt(n) => write!(w, "{}[crt]", n),
             }
         }
     }
 }
 
-/// Fd module-level statics + Windows libuv/PEB FFI shims (T0 → no
-/// crate dep, just `extern` symbols; libuv is linked into the final binary).
+/// Fd module-level statics + Windows UCRT/PEB FFI shims.
 pub mod fd {
     #[cfg(windows)]
     use super::Fd;
@@ -1438,19 +1408,43 @@ pub mod fd {
     pub(crate) static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
+    // UCRT lowio. By-value ints only; a bad fd goes to the process's CRT
+    // invalid-parameter handler and is then reported as `-1`/`EBADF`.
     #[cfg(windows)]
     unsafe extern "C" {
-        /// libuv: convert C-runtime fd → OS HANDLE. By-value `c_int` in, opaque
-        /// HANDLE out — wraps `_get_osfhandle`, which validates the fd and
-        /// returns `INVALID_HANDLE_VALUE` on a bad index. No memory-safety
-        /// preconditions.
-        pub safe fn uv_get_osfhandle(fd: c_int) -> *mut c_void;
-        /// libuv: `_open_osfhandle(os_fd, 0)` — wraps a HANDLE in a CRT fd so
-        /// libuv `uv_fs_*` (which speak `uv_file == int`) can use it. Returns
-        /// `-1` on `EMFILE` (CRT fd table full) or invalid handle. The `*mut
-        /// c_void` is an opaque kernel HANDLE, never dereferenced; no
-        /// memory-safety preconditions.
-        pub safe fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
+        safe fn _get_osfhandle(fd: c_int) -> isize;
+        safe fn _open_osfhandle(osfhandle: isize, flags: c_int) -> c_int;
+        safe fn _close(fd: c_int) -> c_int;
+    }
+
+    /// The HANDLE a CRT fd owns; `INVALID_HANDLE_VALUE` for a bad fd, and for
+    /// a stdio fd with no stream attached (where the CRT reports `-2`).
+    #[cfg(windows)]
+    pub fn crt_get_osfhandle(fd: c_int) -> *mut c_void {
+        if fd < 0 {
+            return crate::windows_sys::INVALID_HANDLE_VALUE;
+        }
+        match _get_osfhandle(fd) {
+            -2 => crate::windows_sys::INVALID_HANDLE_VALUE,
+            h => h as *mut c_void,
+        }
+    }
+
+    /// Wrap `handle` in a new CRT fd, which owns it from then on. `-1` when
+    /// the CRT fd table is full (`EMFILE`) or the handle is invalid.
+    #[cfg(windows)]
+    pub fn crt_open_osfhandle(handle: *mut c_void) -> c_int {
+        _open_osfhandle(handle as isize, 0)
+    }
+
+    /// `_close`: closes the CRT fd and the HANDLE it owns. `-1` (`EBADF`)
+    /// when `fd` is not an open CRT fd.
+    #[cfg(windows)]
+    pub fn crt_close(fd: c_int) -> c_int {
+        if fd < 0 {
+            return -1;
+        }
+        _close(fd)
     }
     #[cfg(windows)]
     pub use crate::windows_sys::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
@@ -4431,8 +4425,7 @@ impl SpawnStatus {
 // This is the single source of truth for the request layout; `spawn_sys`
 // re-exports these types rather than re-declaring them. The #[repr(C)] data
 // mirrors are target-agnostic so the module compiles on all platforms; only
-// the extern decl is `cfg(unix)` (Windows spawns go through libuv and never
-// link this symbol).
+// the extern decl is `cfg(unix)` (Windows never links this symbol).
 pub mod spawn_ffi {
     use core::ffi::{c_char, c_int};
 
@@ -4979,8 +4972,8 @@ impl Timespec {
         }
         #[cfg(windows)]
         {
-            // QPC via the c-bindings.cpp shim: the same monotonic clock libuv
-            // (uv_hrtime), uSockets' sweep and WTF::MonotonicTime::now use.
+            // QPC via the c-bindings.cpp shim: the same monotonic clock
+            // uSockets' sweep and WTF::MonotonicTime::now use.
             let mut sec: i64 = 0;
             let mut nsec: i64 = 0;
             clock_gettime_monotonic(&mut sec, &mut nsec);

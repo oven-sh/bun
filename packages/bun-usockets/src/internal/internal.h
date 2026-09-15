@@ -41,9 +41,9 @@ typedef SSIZE_T ssize_t;
 #include <sys/types.h>
 #endif
 
-#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 #define LIBUS_MAX_READY_POLLS 1024
 
+#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
                                                  struct us_poll_t *old_poll,
                                                  struct us_poll_t *new_poll,
@@ -59,8 +59,8 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #include "internal/eventing/epoll_kqueue.h"
 #endif
 
-#ifdef LIBUS_USE_LIBUV
-#include "internal/eventing/libuv.h"
+#ifdef LIBUS_USE_IOCP
+#include "internal/eventing/iocp.h"
 #endif
 
 #ifndef LIKELY
@@ -162,13 +162,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
-#ifndef LIBUS_USE_LIBUV
-/* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
- * against, so anything comparing against one must read it and not another. */
+/* Monotonic clock in ns (CLOCK_MONOTONIC, QueryPerformanceCounter on Windows).
+ * The clock every deadline on the loop is measured against, so anything
+ * comparing against one must read it and not another. */
 uint64_t us_internal_monotonic_ns(void);
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
-#endif
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
@@ -206,6 +205,16 @@ void us_internal_async_wakeup(struct us_internal_async *a);
 
 /* Eventing related */
 size_t us_internal_accept_poll_event(struct us_poll_t *p);
+/* Start reporting the connections of the listening socket `p` as readable
+ * events; us_internal_accept takes them. Returns like us_poll_start_rc. */
+int us_internal_poll_start_accepting(struct us_poll_t *p, struct us_loop_t *loop);
+/* The next connection of the listening socket `p`, or LIBUS_SOCKET_ERROR when
+ * there is none right now. */
+LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_t *addr);
+#ifdef _WIN32
+/* Nonzero once the peer reset the connection, observed with a zero-byte send. */
+int us_internal_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd);
+#endif
 int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
 
@@ -427,8 +436,13 @@ struct us_internal_callback_t {
   int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
-#ifdef LIBUS_USE_LIBUV
-  unsigned has_added_timer_to_event_loop;
+#ifdef LIBUS_USE_IOCP
+  /* The wakeup packet posted to the completion port. `posted` keeps it to one
+   * in flight; a close while it is in flight frees from its completion. */
+  struct us_iocp_op op;
+  volatile long posted;
+  unsigned char closed;
+  unsigned char fallthrough;
 #endif
 };
 

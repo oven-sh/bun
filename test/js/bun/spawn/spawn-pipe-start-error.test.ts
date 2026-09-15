@@ -17,11 +17,11 @@ import { join } from "node:path";
 // MAGIC_VALID assert; release builds wrote through freed memory, which in
 // practice manifested as a process stuck idle with no error and no exit.
 //
-// The fix routes the start_with_current_pipe() error through on_reader_error
+// The fix routes the reader's start() error through on_reader_error
 // (matching what POSIX already does for register_poll failure), so the pipe is
 // torn down and detached from the Subprocess before the exit callback runs.
 //
-// Triggering a real uv_read_start failure on a freshly-spawned stdio pipe is
+// Triggering a real read-start failure on a freshly-spawned stdio pipe is
 // not possible from JS, so this uses a debug-only fault-injection env var.
 
 test.skipIf(!isWindows || !isDebug)(
@@ -48,8 +48,8 @@ try {
       cmd: [bunExe(), "-e", fixture],
       env: {
         ...bunEnv,
-        // The injection point sits in start_with_current_pipe(), which is the
-        // first call the non-lazy Windows start() path makes on the stdout pipe.
+        // The injection point sits in start_with_source(), which the Windows
+        // start() path reaches for the stdout pipe before the stderr pipe.
         BUN_INTERNAL_FAIL_PIPE_READER_START: "1",
       },
       stdout: "inherit",

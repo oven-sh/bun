@@ -365,6 +365,50 @@ describe("spawn()", () => {
     expect(result.trim()).toBe(tmpdir);
   });
 
+  describe.each([
+    ["does not exist", "missing"],
+    // CreateProcessW reports both cases with the same error and Node reports both as ENOENT;
+    // elsewhere this one is ENOTDIR, which spawn() throws instead of emitting.
+    ...(isWindows ? [["is a file", "file.txt"]] : []),
+  ])("a cwd that %s", (_, name) => {
+    it("fails spawn() with an 'error' event and no 'exit'", async () => {
+      using dir = tempDir("child-process-bad-cwd", { "file.txt": "x" });
+      const child = spawn(bunExe(), ["-e", "1"], { cwd: path.join(String(dir), name), env: bunEnv });
+      const events: string[] = [];
+      let error: any;
+      child.on("exit", () => events.push("exit"));
+      child.on("error", e => {
+        events.push("error");
+        error = e;
+      });
+      // Not once(): it rejects when the emitter emits 'error'.
+      await new Promise(resolve => child.on("close", resolve));
+      expect({ pid: child.pid, events, code: error?.code, syscall: error?.syscall }).toEqual({
+        pid: undefined,
+        events: ["error"],
+        code: "ENOENT",
+        syscall: "spawn " + bunExe(),
+      });
+    });
+
+    it("fails spawnSync() with result.error", () => {
+      using dir = tempDir("child-process-bad-cwd-sync", { "file.txt": "x" });
+      const result = spawnSync(bunExe(), ["-e", "1"], { cwd: path.join(String(dir), name), env: bunEnv });
+      const error: any = result.error;
+      expect({ code: error?.code, syscall: error?.syscall }).toEqual({
+        code: "ENOENT",
+        syscall: "spawnSync " + bunExe(),
+      });
+    });
+
+    it("makes Bun.spawn() and Bun.spawnSync() throw", () => {
+      using dir = tempDir("bun-spawn-bad-cwd", { "file.txt": "x" });
+      const options = { cmd: [bunExe(), "-e", "1"], cwd: path.join(String(dir), name), env: bunEnv };
+      expect(() => Bun.spawn(options)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+      expect(() => Bun.spawnSync(options)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    });
+  });
+
   it("should allow us to write to stdin", async () => {
     const result: string = await new Promise(resolve => {
       const child = spawn(bunExe(), ["-e", "process.stdin.pipe(process.stdout)"], { env: bunEnv });
@@ -763,7 +807,7 @@ describe("execFileSync()", () => {
 
   // chcp.com is a PE executable with a .com extension and no .exe sibling.
   // child_process always passes an env object, so the lookup runs in Bun's
-  // which, not libuv's, and it has to accept the extension as spelled. A PE
+  // which, not spawn's, and it has to accept the extension as spelled. A PE
   // named by path runs whatever its extension, as CreateProcessW only reads
   // the file header.
   it.if(isWindows)("runs a .com executable by absolute path or bare name", () => {

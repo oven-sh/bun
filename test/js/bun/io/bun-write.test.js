@@ -1391,6 +1391,52 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       });
     });
 
+    it.each([
+      // Arrives together with the headers.
+      ["a small", () => "hello"],
+      // Still arriving when the write starts, so it is streamed into the file.
+      ["an 8 MiB", () => Buffer.alloc(8 * 1024 * 1024, "x")],
+    ])("%s Request body written to a read-only file descriptor rejects with EBADF", async (_, body) => {
+      using dir = tempDir("bun-write-request-readonly-fd", { "keep.txt": "keep" });
+      const dest = join(String(dir), "keep.txt");
+      const fd = fs.openSync(dest, "r");
+      try {
+        await using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            return Response.json(
+              await Bun.write(Bun.file(fd), req).then(
+                written => ({ written }),
+                e => ({ code: e.code }),
+              ),
+            );
+          },
+        });
+        const res = await fetch(server.url, { method: "PUT", body: body() });
+        expect(await res.json()).toEqual({ code: "EBADF" });
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(fs.readFileSync(dest, "utf8")).toBe("keep");
+    });
+
+    it.each([
+      ["a string", () => "hello"],
+      ["an 8 MiB buffer", () => Buffer.alloc(8 * 1024 * 1024, "x")],
+      ["a Blob", () => new Blob(["hello"])],
+      ["a Response", () => new Response("hello")],
+    ])("%s written to a read-only file descriptor rejects with EBADF", async (_, data) => {
+      using dir = tempDir("bun-write-readonly-fd", { "keep.txt": "keep" });
+      const dest = join(String(dir), "keep.txt");
+      const fd = fs.openSync(dest, "r");
+      try {
+        await expect(Bun.write(Bun.file(fd), data())).rejects.toThrow(expect.objectContaining({ code: "EBADF" }));
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(fs.readFileSync(dest, "utf8")).toBe("keep");
+    });
+
     it("rejects with the network error when the body is cut short", async () => {
       using dir = tempDir("bun-write-response-truncated", {});
       using listener = Bun.listen({

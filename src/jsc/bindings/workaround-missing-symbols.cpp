@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <algorithm>
 #include <sys/stat.h>
-#include <uv.h>
 #include <fcntl.h>
 #include <windows.h>
 #include <string.h>
@@ -36,9 +35,11 @@ extern "C" int stat64(
     return _stat64(_FileName, _Stat);
 }
 
+extern "C" int Bun__Process__kill(int pid, int signum);
+
 extern "C" int kill(int pid, int sig)
 {
-    return uv_kill(pid, sig);
+    return Bun__Process__kill(pid, sig);
 }
 
 #endif

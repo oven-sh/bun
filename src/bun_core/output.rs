@@ -542,7 +542,7 @@ pub mod windows_stdio {
     }
 
     pub(crate) fn init() {
-        w::libuv::uv_disable_stdio_inheritance();
+        w::disable_stdio_inheritance();
 
         let stdin = w::GetStdHandle(w::STD_INPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stdout = w::GetStdHandle(w::STD_OUTPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
@@ -2569,7 +2569,6 @@ fn init_scoped_debug_writer_at_startup() {
                 let _ = output_sink().make_path(Fd::cwd(), dir);
             }
 
-            // do not use libuv through this code path, since it might not be initialized yet.
             use std::io::Write as _;
             let mut pid = Vec::new();
             write!(&mut pid, "{}", getpid()).expect("failed to allocate path");

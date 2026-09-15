@@ -519,14 +519,14 @@ describe("Bun.Terminal subprocess integration", () => {
 
   // Regression test for a Windows-only use-after-free: cancelling a stdin
   // stream while a cooked-mode console read was parked used to free the
-  // reader's buffer immediately (finish() shrink / Drop). libuv's line reads
-  // block a worker thread in ReadConsoleW and convert the result into the
-  // alloc_cb buffer from that thread; uv_read_stop cancels asynchronously by
-  // injecting a VK_RETURN, so the worker still wrote "\r\n" through the
+  // reader's buffer immediately (finish() shrink / Drop). A line read
+  // blocks a helper thread in ReadConsoleW and the console cannot abandon
+  // it; stopping types a wake key so it returns later. A read that fills
+  // the reader's buffer from that thread would still write through the
   // stale pointer, corrupting whatever mimalloc handed the freed 8 KiB
   // block to next (a plausible mechanism for production reports of full-GC
-  // crashes on clobbered ArrayBuffers). Fixed by serving tty reads from the
-  // handle-owned uv::Tty::read_scratch. The child adopts the
+  // crashes on clobbered ArrayBuffers). The helper thread reads into the
+  // line op's own buffer. The child adopts the
   // previously-freed size class with ArrayBuffer probes and reports any
   // mutation.
   test.skipIf(!isWindows)("cancelling a parked console stdin read does not corrupt the heap", async () => {
@@ -535,14 +535,14 @@ describe("Bun.Terminal subprocess integration", () => {
         const reader = Bun.stdin.stream().getReader();
         // Warm-up round-trip: arm a cooked-mode console line read and await
         // the line the parent writes once it sees CHILD-READY. Resolving
-        // proves the whole line-read machinery (libuv worker thread
+        // proves the whole line-read machinery (helper thread
         // included) works end to end before cancellation is tested.
         const warmup = reader.read();
         console.log("CHILD-READY");
         await warmup;
-        // Arm the read under test; no more input arrives, so the libuv
-        // worker parks in ReadConsoleW holding the read buffer (pre-fix:
-        // the reader's spare capacity; post-fix: the tty-owned scratch).
+        // Arm the read under test; no more input arrives, so the helper
+        // thread parks in ReadConsoleW holding the read buffer (pre-fix:
+        // the reader's spare capacity; post-fix: the line op's buffer).
         reader.read().catch(() => {});
         // The park itself is unobservable from JS; there is no condition to
         // await. With the machinery proven warm above, a short delay makes

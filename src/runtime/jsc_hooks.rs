@@ -62,7 +62,7 @@ use crate::webcore::blob::BlobExt as _;
 /// `VirtualMachine.rs`); until those slots widen to `*mut c_void`, the
 /// thread-local is the recovery path.
 pub(crate) struct RuntimeState {
-    /// setTimeout/setInterval heap + uv timers.
+    /// setTimeout/setInterval heap.
     pub(crate) timer: timer::All,
     /// `RareData.{mysql,postgresql}_context` — concrete SQL state. The
     /// `bun_jsc::rare_data::RareData` slots for these are opaque ZSTs (cycle
@@ -978,26 +978,18 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
-    #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
-        // SAFETY: `el` is the live per-thread event loop.
-        unsafe { (*el).wakeup() };
-    }
 
     // ── pending unref ───────────────────────────────────────────────────
-    #[cfg(unix)]
-    {
-        // SAFETY: per fn contract. `swap(0)` so a concurrent
-        // `increment_pending_unref_counter()` (cross-thread, see
-        // `KeepAlive::unref_on_next_tick`) can't be lost between
-        // the read and the reset.
-        let pending_unref = unsafe { &*vm }
-            .pending_unref_counter
-            .swap(0, core::sync::atomic::Ordering::Relaxed);
-        if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
-        }
+    // SAFETY: per fn contract. `swap(0)` so a concurrent
+    // `increment_pending_unref_counter()` (cross-thread, see
+    // `KeepAlive::unref_on_next_tick`) can't be lost between
+    // the read and the reset.
+    let pending_unref = unsafe { &*vm }
+        .pending_unref_counter
+        .swap(0, core::sync::atomic::Ordering::Relaxed);
+    if pending_unref > 0 {
+        // SAFETY: `loop_` is the live per-thread uws loop.
+        unsafe { (*loop_).unref_count(pending_unref) };
     }
 
     // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
@@ -1099,20 +1091,20 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             unsafe { (*loop_).tick_without_idle() };
         }
     }
-
-    #[cfg(unix)]
-    {
-        // Note (§Forbidden aliased-&mut): `drain_timers` fires user
-        // `setTimeout` callbacks which may re-enter `timer::All::insert`/
-        // `remove` via `runtime_state()`. Pass raw `*mut Self` so no
-        // long-lived `&mut (*state).timer` is held across `fire()`;
-        // `drain_timers` forms short-lived `&mut` only around heap pop/peek.
-        // SAFETY: `state` is the live per-thread `RuntimeState`; the `timer`
-        // field address is stable for the VM lifetime.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+    #[cfg(windows)]
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    if unsafe { (*vm).is_main_thread } {
+        crate::node::windows_signal::check_console_size_after_wake();
     }
-    #[cfg(not(unix))]
-    let _ = state;
+
+    // Note (§Forbidden aliased-&mut): `drain_timers` fires user
+    // `setTimeout` callbacks which may re-enter `timer::All::insert`/
+    // `remove` via `runtime_state()`. Pass raw `*mut Self` so no
+    // long-lived `&mut (*state).timer` is held across `fire()`;
+    // `drain_timers` forms short-lived `&mut` only around heap pop/peek.
+    // SAFETY: `state` is the live per-thread `RuntimeState`; the `timer`
+    // field address is stable for the VM lifetime.
+    unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1139,25 +1131,17 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
-    #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
-        // SAFETY: `el` is the live per-thread event loop.
-        unsafe { (*el).wakeup() };
-    }
 
-    #[cfg(unix)]
-    {
-        // SAFETY: per fn contract. `swap(0)` so a concurrent
-        // `increment_pending_unref_counter()` (cross-thread, see
-        // `KeepAlive::unref_on_next_tick`) can't be lost between
-        // the read and the reset.
-        let pending_unref = unsafe { &*vm }
-            .pending_unref_counter
-            .swap(0, core::sync::atomic::Ordering::Relaxed);
-        if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
-        }
+    // SAFETY: per fn contract. `swap(0)` so a concurrent
+    // `increment_pending_unref_counter()` (cross-thread, see
+    // `KeepAlive::unref_on_next_tick`) can't be lost between
+    // the read and the reset.
+    let pending_unref = unsafe { &*vm }
+        .pending_unref_counter
+        .swap(0, core::sync::atomic::Ordering::Relaxed);
+    if pending_unref > 0 {
+        // SAFETY: `loop_` is the live per-thread uws loop.
+        unsafe { (*loop_).unref_count(pending_unref) };
     }
 
     let state = runtime_state();
@@ -1226,15 +1210,15 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             unsafe { (*loop_).tick_without_idle() };
         }
     }
-
-    #[cfg(unix)]
-    {
-        // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
-        // on `auto_tick` re: aliased-&mut across `fire()`.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+    #[cfg(windows)]
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    if unsafe { (*vm).is_main_thread } {
+        crate::node::windows_signal::check_console_size_after_wake();
     }
-    #[cfg(not(unix))]
-    let _ = state;
+
+    // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
+    // on `auto_tick` re: aliased-&mut across `fire()`.
+    unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1545,7 +1529,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
-    close_timer_loop_handles_after_vm_destroyed,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1661,21 +1644,6 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     }
 }
 
-/// `RuntimeHooks::close_timer_loop_handles_after_vm_destroyed`: teardown-only companion of
-/// `cancel_all_timers` (which the `--isolate` swap also uses on a live VM).
-///
-/// # Safety
-/// `runtime_state()` is installed; JS thread; the JSC VM is already destroyed.
-unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) {
-    #[cfg(windows)]
-    {
-        let state = runtime_state();
-        debug_assert!(!state.is_null());
-        // SAFETY: live boxed per-thread RuntimeState (fn contract).
-        unsafe { (*state).timer.close_loop_handles_for_vm_teardown() };
-    }
-}
-
 /// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].
 ///
 /// # Safety
@@ -1713,8 +1681,6 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
         result = result.and(unsafe {
             crate::dns_jsc::Resolver::close_channel_for_terminate(gd.resolver.as_ctx_ptr())
         });
-        #[cfg(windows)]
-        gd.resolver.cancel_pending_uv_requests_for_teardown();
     }
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();

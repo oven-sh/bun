@@ -332,8 +332,9 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
- "bun_libuv_sys",
+ "bun_errno",
  "bun_opaque",
+ "bun_windows_sys",
  "libc",
  "strum",
 ]
@@ -531,7 +532,6 @@ name = "bun_errno"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_libuv_sys",
  "bun_windows_sys",
  "enum-map",
  "strum",
@@ -731,6 +731,7 @@ dependencies = [
  "bun_sha_hmac",
  "bun_simdutf_sys",
  "bun_spawn",
+ "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
  "bun_transpiler",
@@ -794,6 +795,7 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_uws_sys",
+ "bun_windows_sys",
  "enumset",
  "libc",
  "scopeguard",
@@ -960,17 +962,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_libuv_sys"
-version = "0.0.0"
-dependencies = [
- "bun_core",
- "bun_windows_sys",
- "bun_wyhash",
- "libc",
- "strum",
-]
-
-[[package]]
 name = "bun_lsquic_sys"
 version = "0.0.0"
 dependencies = [
@@ -1064,7 +1055,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_errno",
- "bun_event_loop",
  "bun_paths",
  "bun_spawn",
  "bun_sys",
@@ -1268,7 +1258,6 @@ dependencies = [
  "bun_jsc",
  "bun_libarchive",
  "bun_libdeflate_sys",
- "bun_libuv_sys",
  "bun_lsquic_sys",
  "bun_md",
  "bun_opaque",
@@ -1293,6 +1282,7 @@ dependencies = [
  "bun_sourcemap",
  "bun_sourcemap_jsc",
  "bun_spawn",
+ "bun_spawn_sys",
  "bun_sql_jsc",
  "bun_standalone_graph",
  "bun_sys",
@@ -1449,19 +1439,18 @@ name = "bun_spawn"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_analytics",
  "bun_core",
  "bun_crash_handler",
  "bun_dispatch",
  "bun_errno",
  "bun_event_loop",
  "bun_io",
- "bun_opaque",
  "bun_output",
  "bun_ptr",
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
+ "bun_uws_sys",
  "libc",
  "scopeguard",
  "thiserror",
@@ -1474,7 +1463,6 @@ dependencies = [
  "bstr",
  "bun_analytics",
  "bun_core",
- "bun_libuv_sys",
  "bun_sys",
  "bun_windows_sys",
  "enumset",
@@ -1571,7 +1559,6 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_errno",
- "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",
  "bun_windows_sys",
@@ -1667,7 +1654,6 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_http_types",
- "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",
  "bun_ptr",

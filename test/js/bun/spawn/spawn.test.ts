@@ -17,7 +17,10 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { spawn as nodeSpawn } from "node:child_process";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
+import type { Writable } from "node:stream";
 import path, { join } from "path";
 
 let tmp: string;
@@ -936,9 +939,9 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
 });
 
 describe("unref() + .exited with nothing else ref'd (Windows)", () => {
-  // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
-  // body and never dequeue the IOCP exit packet, so these children busy-spun
-  // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
+  // Windows: with only an unref'd process-exit wait in flight on the loop's
+  // completion port, a non-blocking tick must still dequeue the exit packet
+  // for `.exited` to settle (POSIX parity).
   for (const [name, body] of [
     ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
     [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
@@ -1380,6 +1383,49 @@ describe("close handling", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
     });
+
+    // The child reads fd 3 until EOF, which it only sees once every handle to the parent's end is
+    // closed: the one .stdio[3] handed out is the only one there may be.
+    describe.if(isWindows)("'pipe' at index >= 3: closing what .stdio exposes is EOF for the child", () => {
+      const readToEOF = /* js */ `
+        const fs = require("node:fs");
+        const chunk = Buffer.alloc(64);
+        let data = "";
+        for (let n; (n = fs.readSync(3, chunk)) > 0; ) data += chunk.toString("utf8", 0, n);
+        console.log("read " + JSON.stringify(data) + " until EOF");
+      `;
+
+      it("Bun.spawn, .stdio read twice", async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", readToEOF],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", "pipe"],
+        });
+        const handle = proc.stdio[3];
+        expect(handle).toBeNumber();
+        expect(proc.stdio[3]).toBe(handle);
+        // Adopts the handle and closes it with the socket.
+        connect({ fd: handle as number }).end("hi");
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: 'read "hi" until EOF\n', stderr: "", exitCode: 0 });
+      });
+
+      it("child_process.spawn", async () => {
+        const child = nodeSpawn(bunExe(), ["-e", readToEOF], {
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout!.on("data", chunk => (stdout += chunk));
+        child.stderr!.on("data", chunk => (stderr += chunk));
+        (child.stdio[3] as Writable).end("hi");
+        const { promise, resolve } = Promise.withResolvers<number | null>();
+        child.on("close", resolve);
+        const exitCode = await promise;
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: 'read "hi" until EOF\n', stderr: "", exitCode: 0 });
+      });
+    });
   });
 });
 
@@ -1518,8 +1564,8 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
 
 // Bun.file(fd).stream() (like the shell's stdio and cwd handles) works on a
 // dup() of the descriptor. On Windows that duplicate used to be created
-// inheritable, and libuv spawns with bInheritHandles=TRUE, so every child
-// started while one was open got a copy and kept the file open after the
+// inheritable, and bInheritHandles=TRUE with no handle list copies it, so a
+// child started while one was open kept the file open after the
 // parent closed it. POSIX dup() uses F_DUPFD_CLOEXEC; the Windows side must match.
 it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited by children", async () => {
   const N = 64;
@@ -1591,6 +1637,122 @@ it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited
   } finally {
     await Promise.all(readers.map(reader => reader.cancel()));
     for (const fd of fds) closeSync(fd);
+  }
+});
+
+// A child must get its own stdio and nothing that another thread is creating for its child at the
+// same moment. The fixture cannot finish if a short-lived child's stdout is also held by a
+// long-lived child of the other thread.
+describe("threads spawning at the same time do not share their children's pipes", () => {
+  for (const [name, mode] of [
+    ["two Workers", "workers"],
+    ["the main thread and a Worker", "main"],
+  ]) {
+    it(name, async () => {
+      const revision = spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.toString();
+      await using proc = spawn({
+        cmd: [bunExe(), join(import.meta.dir, "spawn-concurrent-workers-fixture.ts"), mode],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(Array(2).fill(Array(4).fill(revision)));
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
+describe("Bun.file(path) as stdout and stderr", () => {
+  const kinds = `
+    const fs = require("fs");
+    const kind = fd => (fs.fstatSync(fd).isFile() ? "a file" : "not a file");
+    fs.writeSync(1, "stdout is " + kind(1) + "\\n");
+    fs.writeSync(2, "stderr is " + kind(2) + "\\n");`;
+
+  for (const [name, run] of [
+    ["spawn", (options: any) => spawn(options).exited],
+    ["spawnSync", (options: any) => spawnSync(options).exitCode],
+  ] as const) {
+    it(`${name}: the child's output lands in the files`, async () => {
+      using dir = tempDir("spawn-file-stdio", {});
+      const [out, err] = [join(String(dir), "out.txt"), join(String(dir), "err.txt")];
+      const exitCode = await run({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("fs").writeSync(1, "to stdout\\n"); require("fs").writeSync(2, "to stderr\\n");`,
+        ],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: Bun.file(out),
+        stderr: Bun.file(err),
+      });
+      expect({ out: readFileSync(out, "utf8"), err: readFileSync(err, "utf8") }).toEqual({
+        out: "to stdout\n",
+        err: "to stderr\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it(`${name}: the child can fstat the files it was given`, async () => {
+      using dir = tempDir("spawn-file-stdio-fstat", {});
+      const [out, err] = [join(String(dir), "out.txt"), join(String(dir), "err.txt")];
+      const exitCode = await run({
+        cmd: [bunExe(), "-e", kinds],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: Bun.file(out),
+        stderr: Bun.file(err),
+      });
+      expect({ out: readFileSync(out, "utf8"), err: readFileSync(err, "utf8") }).toEqual({
+        out: "stdout is a file\n",
+        err: "stderr is a file\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it(`${name}: a command that is not on PATH throws ENOENT and creates no file`, () => {
+      using dir = tempDir("spawn-file-stdio-enoent", {});
+      const [out, err] = [join(String(dir), "out.txt"), join(String(dir), "err.txt")];
+      expect(() =>
+        run({ cmd: ["definitely-not-a-program-xyz"], env: bunEnv, stdout: Bun.file(out), stderr: Bun.file(err) }),
+      ).toThrow(expect.objectContaining({ code: "ENOENT" }));
+      expect({ out: existsSync(out), err: existsSync(err) }).toEqual({ out: false, err: false });
+    });
+
+    // A path to a program is not looked up on PATH first: it only turns out to be missing once
+    // the child is being created.
+    describe.if(isWindows)("a path to a program that does not exist throws ENOENT and creates no file", () => {
+      for (const [how, program] of [
+        ["absolute", (dir: string) => join(dir, "nope.exe")],
+        ["relative", () => "./nope.exe"],
+      ] as const) {
+        it(`${name}, ${how}, stdout`, () => {
+          using dir = tempDir("spawn-file-stdio-enoent", {});
+          const out = join(String(dir), "out.txt");
+          expect(() =>
+            run({ cmd: [program(String(dir))], cwd: String(dir), env: bunEnv, stdout: Bun.file(out) }),
+          ).toThrow(expect.objectContaining({ code: "ENOENT" }));
+          expect(existsSync(out)).toBe(false);
+        });
+
+        it(`${name}, ${how}, stdout and stderr`, () => {
+          using dir = tempDir("spawn-file-stdio-enoent", {});
+          const [out, err] = [join(String(dir), "out.txt"), join(String(dir), "err.txt")];
+          expect(() =>
+            run({
+              cmd: [program(String(dir))],
+              cwd: String(dir),
+              env: bunEnv,
+              stdout: Bun.file(out),
+              stderr: Bun.file(err),
+            }),
+          ).toThrow(expect.objectContaining({ code: "ENOENT" }));
+          expect({ out: existsSync(out), err: existsSync(err) }).toEqual({ out: false, err: false });
+        });
+      }
+    });
   }
 });
 

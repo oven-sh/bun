@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -472,11 +473,82 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
+// pause() happens two loop turns after a chunk was delivered, so the read for the next chunk
+// is already pending. Pausing has to take that read back: the next chunk belongs to whoever
+// reads fd 0 next, here a child that inherits it.
+describe("pause() with a read pending, then a child inherits stdin", () => {
+  const child = `
+    process.stdout.write("CHILD-READY\\n");
+    process.stdin.once("data", d => {
+      process.stdout.write("CHILD-GOT:" + JSON.stringify(d.toString()) + "\\n");
+      process.exit(0);
+    });`;
+  const parent = `
+    let spawned = false;
+    process.stdin.on("data", d => {
+      process.stdout.write("PARENT-GOT:" + JSON.stringify(d.toString()) + "\\n");
+      if (spawned) return;
+      spawned = true;
+      setImmediate(() => setImmediate(() => {
+        process.stdin.pause();
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        child.exited.then(code => process.exit(code));
+      }));
+    });
+    process.stdout.write("PARENT-READY\\n");`;
+
+  async function run(stdin: "pipe" | "overlapped") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      // @ts-expect-error "overlapped" is Windows-only and not in the types
+      stdin,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let output = "";
+    const decoder = new TextDecoder();
+    const reader = proc.stdout.getReader();
+    async function until(marker: string) {
+      while (!output.includes(marker)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("stdout ended before " + marker + ": " + JSON.stringify(output));
+        output += decoder.decode(value, { stream: true });
+      }
+    }
+    await until("PARENT-READY");
+    proc.stdin.write("first\n");
+    proc.stdin.flush();
+    await until("CHILD-READY");
+    proc.stdin.write("second\n");
+    proc.stdin.flush();
+    await until('-GOT:"second');
+    await proc.stdin.end();
+    expect(output.trim().split("\n")).toEqual([
+      "PARENT-READY",
+      'PARENT-GOT:"first\\n"',
+      "CHILD-READY",
+      'CHILD-GOT:"second\\n"',
+    ]);
+    expect(await proc.exited).toBe(0);
+  }
+
+  test.concurrent("stdin is a pipe", () => run("pipe"));
+  test.concurrent.skipIf(!isWindows)("stdin is an overlapped pipe", () => run("overlapped"));
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the
 // backpressure signal; these tests feed far more than that and check the
 // child's resident set does not grow to match.
+// Skipped on Windows: these pass there, but their 40 MB feeds run concurrently with the rest of
+// the file and split the two stdin writes of "should receive data when paused" into two chunks.
 describe.skipIf(isWindows)("pipe backpressure", () => {
   const feedMB = 40;
   // With no backpressure the child buffers the whole feed (Vec growth roughly
@@ -664,4 +736,121 @@ test("process.stdin over an anonymous pipe delivers each byte exactly once", asy
   const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
   expect(stdout).toBe(`${total} ${expected}`);
   expect(err).toBeNull();
+});
+
+// The second line reaches the pipe while the 'data' handler for the first is still running. pause() from
+// that handler has to leave it there for the child that inherits fd 0.
+describe("pause() inside a 'data' handler, then a child inherits stdin", () => {
+  async function run(stdin: "pipe" | "overlapped") {
+    using dir = tempDir("stdin-pause-in-handler", {
+      "child.js": `
+        process.stdin.once("data", d => {
+          process.stdout.write("CHILD-GOT:" + JSON.stringify(d.toString()) + "\\n");
+          process.exit(0);
+        });`,
+      "parent.js": `
+        const fs = require("fs");
+        process.stdin.on("data", d => {
+          fs.writeSync(1, "PARENT-GOT:" + JSON.stringify(d.toString()) + "\\n");
+          // Until the test has put the second line in the pipe.
+          while (!fs.existsSync("second-written")) {}
+          process.stdin.pause();
+          const child = Bun.spawn({ cmd: [process.execPath, "child.js"], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+          child.exited.then(code => process.exit(code));
+        });
+        fs.writeSync(1, "PARENT-READY\\n");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      // @ts-expect-error "overlapped" is Windows-only and not in the types
+      stdin,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let output = "";
+    const decoder = new TextDecoder();
+    const reader = proc.stdout.getReader();
+    async function until(marker: string) {
+      while (!output.includes(marker)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("stdout ended before " + marker + ": " + JSON.stringify(output));
+        output += decoder.decode(value, { stream: true });
+      }
+    }
+    await until("PARENT-READY");
+    proc.stdin.write("first\n");
+    await proc.stdin.flush();
+    await until("PARENT-GOT");
+    proc.stdin.write("second\n");
+    await proc.stdin.flush();
+    await Bun.write(join(String(dir), "second-written"), "");
+    await until("CHILD-GOT");
+    await proc.stdin.end();
+    expect(output.trim().split("\n")).toEqual(["PARENT-READY", 'PARENT-GOT:"first\\n"', 'CHILD-GOT:"second\\n"']);
+    expect(await proc.exited).toBe(0);
+  }
+
+  test.concurrent("stdin is a pipe", () => run("pipe"));
+  test.concurrent.skipIf(!isWindows)("stdin is an overlapped pipe", () => run("overlapped"));
+});
+
+// On Windows a chunk of a child's stdin pipe can be taken while the 'data' event for the one before it is
+// still running: it has to come out after resume(), in order.
+test.concurrent("pause() and resume() around chunks of a bulk transfer lose and reorder nothing", async () => {
+  const total = 4 * 1024 * 1024;
+  const payload = Buffer.alloc(total);
+  for (let i = 0; i < total; i++) payload[i] = (i * 31 + ((i >> 8) & 0xff)) % 251;
+  const child = `
+    const h = new Bun.CryptoHasher("sha1");
+    let n = 0, chunks = 0;
+    process.stdin.on("data", d => {
+      n += d.length;
+      h.update(d);
+      if (++chunks % 3 === 0) {
+        process.stdin.pause();
+        (chunks % 2 ? setImmediate : queueMicrotask)(() => process.stdin.resume());
+      }
+    });
+    process.stdin.on("end", () => process.stdout.write(n + " " + h.digest("hex")));`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", child],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  for (let sent = 0; sent < total; sent += 1 << 20) {
+    proc.stdin.write(payload.subarray(sent, sent + (1 << 20)));
+    await proc.stdin.flush();
+  }
+  await proc.stdin.end();
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(`${total} ${new Bun.CryptoHasher("sha1").update(payload).digest("hex")}`);
+  expect(exitCode).toBe(0);
+});
+
+// The bytes after the slice are in the pipe before the child reads, and belong to whoever reads fd 0 next.
+test.concurrent("a size-limited read of stdin takes nothing past its limit", async () => {
+  using dir = tempDir("stdin-slice-limit", {
+    "grandchild.js": `let data = ""; for await (const chunk of Bun.stdin.stream()) data += Buffer.from(chunk).toString(); console.log("GRANDCHILD:" + JSON.stringify(data));`,
+    "child.js": `
+      console.log("CHILD:" + JSON.stringify(await Bun.stdin.slice(0, 10).text()));
+      const proc = Bun.spawn({ cmd: [process.execPath, "grandchild.js"], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+      process.exit(await proc.exited);`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  proc.stdin.write("0123456789" + "abcdefghij".repeat(3) + "\n");
+  await proc.stdin.end();
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim().split("\n")).toEqual(['CHILD:"0123456789"', 'GRANDCHILD:"abcdefghijabcdefghijabcdefghij\\n"']);
+  expect(exitCode).toBe(0);
 });

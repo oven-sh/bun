@@ -805,8 +805,8 @@ describe("Should be compatible with node.js", () => {
 });
 
 // Windows: after FIN on a CONNECT-tunnel socket, AFD's level-triggered
-// UV_DISCONNECT used to re-derive EOF and bounce the poll between 0 and
-// WRITABLE forever (pins the poll_cb allow_half_open arm).
+// DISCONNECT used to re-derive EOF and bounce the poll between 0 and
+// WRITABLE forever (pins afd_poll_report's !reading arm).
 test("CONNECT: process exits after the tunnel socket is re-emitted as a connection and the server closes", async () => {
   await using proc = Bun.spawn({
     cmd: [

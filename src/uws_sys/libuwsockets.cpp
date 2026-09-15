@@ -1506,11 +1506,6 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
   {
     return (struct us_loop_t *)uWS::Loop::get();
   }
-  struct us_loop_t *uws_get_loop_with_native(void *existing_native_loop)
-  {
-      return (struct us_loop_t *)uWS::Loop::get(existing_native_loop);
-  }
-
   void uws_res_uncork(int ssl, uws_res_r res)
   {
     if (ssl)
@@ -1739,8 +1734,7 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  // A thread that ran a uws loop (a Worker) is exiting; free its loop. On Windows the loop sits on
-  // the thread's libuv loop, which the caller closes after this returns.
+  // A thread that ran a uws loop (a Worker) is exiting; free its loop.
   extern "C" void bun_free_loop_at_thread_exit() {
       uWS::Loop::freeLoopAtThreadExit();
   }

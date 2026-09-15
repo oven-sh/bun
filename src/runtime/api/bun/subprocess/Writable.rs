@@ -9,8 +9,6 @@ use crate::node::types::FdJsc;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink;
 use crate::webcore::streams::SourceHandle;
-#[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
@@ -124,7 +122,7 @@ impl<'a> Writable<'a> {
         result: StdioResult,
         promise_for_stream: &mut JSValue,
     ) -> crate::Result<Writable<'a>> {
-        super::assert_stdio_result!(result);
+        super::assert_stdio_result(result);
 
         let global = event_loop.global_ref();
 
@@ -139,93 +137,6 @@ impl<'a> Writable<'a> {
                 .cast::<()>(),
         );
 
-        #[cfg(windows)]
-        {
-            match stdio {
-                Stdio::Pipe | Stdio::ReadableStream(_) => {
-                    if let StdioResult::Buffer(buffer) = result {
-                        // Ownership of the `Box<uv::Pipe>` transfers to the
-                        // FileSink's writer (the sink takes over the heap
-                        // pointer).
-                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
-                        let pipe_ref = FileSink::create_with_pipe(evtloop, uv_pipe);
-                        let pipe = Self::pipe_sink_mut(&pipe_ref);
-
-                        match pipe.writer.with_mut(|w| w.start_with_current_pipe()) {
-                            bun_sys::Result::Ok(()) => {}
-                            bun_sys::Result::Err(_err) => {
-                                if let Stdio::ReadableStream(rs) = stdio {
-                                    rs.cancel(global)?;
-                                }
-                                return Err(crate::Error::UnexpectedCreatingStdin);
-                            }
-                        }
-                        pipe.writer.with_mut(|w| w.set_parent(pipe_ref.as_ptr()));
-                        subprocess
-                            .weak_file_sink_stdin_ptr
-                            .set(Some(pipe_ref.as_non_null()));
-                        subprocess.ref_();
-                        subprocess.update_flags(|f| {
-                            f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
-                            f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
-                        });
-
-                        if let Stdio::ReadableStream(rs) = stdio {
-                            let assign_result = pipe.assign_to_stream(rs, global);
-                            if let Some(err_val) = assign_result.to_error() {
-                                subprocess.weak_file_sink_stdin_ptr.set(None);
-                                subprocess.update_flags(|f| {
-                                    f.set(Flags::DEREF_ON_STDIN_DESTROYED, false)
-                                });
-                                subprocess.deref();
-                                let _ = global.throw_value(err_val);
-                                return Err(crate::Error::JSError);
-                            }
-                            *promise_for_stream = assign_result;
-                        }
-
-                        return Ok(Writable::Pipe(pipe_ref));
-                    }
-                    return Ok(Writable::Inherit);
-                }
-
-                Stdio::Blob(_) => {
-                    // See the unix arm below: Stdio has Drop, so move the
-                    // payload out via ManuallyDrop + ptr::read.
-                    let owned =
-                        core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                    let blob = match &*owned {
-                        // SAFETY: owned is ManuallyDrop; payload moved exactly once.
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                        _ => unreachable!(),
-                    };
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        evtloop,
-                        subprocess as *mut Subprocess<'a>,
-                        result,
-                        super::source_from_blob(blob),
-                    )));
-                }
-                Stdio::Fd(fd) => {
-                    return Ok(Writable::Fd(*fd));
-                }
-                Stdio::Dup2(dup2) => {
-                    return Ok(Writable::Fd(dup2.to.to_fd()));
-                }
-                Stdio::Inherit => {
-                    return Ok(Writable::Inherit);
-                }
-                Stdio::Memfd(_) | Stdio::Path(_) | Stdio::Ignore => {
-                    return Ok(Writable::Ignore);
-                }
-                Stdio::Ipc | Stdio::Capture(_) => {
-                    return Ok(Writable::Ignore);
-                }
-                // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
-                Stdio::SocketFd => unreachable!("SocketFd at stdin"),
-            }
-        }
-
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
@@ -233,7 +144,6 @@ impl<'a> Writable<'a> {
             }
         }
 
-        #[cfg(not(windows))]
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
@@ -255,6 +165,7 @@ impl<'a> Writable<'a> {
 
                 // `handle` is `PollOrFd` (enum); flag mutation goes
                 // through the FilePoll vtable shim.
+                #[cfg(unix)]
                 pipe.writer.with_mut(|w| {
                     if let Some(poll) = w.handle.get_poll() {
                         poll.set_flag(bun_io::FilePollFlag::Socket);
@@ -315,7 +226,7 @@ impl<'a> Writable<'a> {
                 debug_assert!(*fd != Fd::INVALID);
                 Ok(Writable::Memfd(*fd))
             }
-            Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
+            Stdio::Fd(fd) => Ok(Writable::Fd(*fd)),
             Stdio::Inherit => Ok(Writable::Inherit),
             Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
             Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),

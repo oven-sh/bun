@@ -128,8 +128,8 @@ pub fn stat_ctime(s: &Stat) -> Timespec {
 pub fn stat_birthtime(s: &Stat) -> Timespec {
     // Linux `struct stat` has no birthtime (only `statx` does), so it gets the
     // ctime arm like libuv's `uv__to_stat`; everything else reads the real
-    // birthtime. Windows `Stat` is `uv_stat_t` and libuv fills `birthtim` from
-    // NTFS CreationTime, so it must NOT fall into the ctime arm.
+    // birthtime. Windows `Stat` fills `birthtim` from NTFS CreationTime, so it
+    // must NOT fall into the ctime arm.
     #[cfg(windows)]
     {
         Timespec {
@@ -194,8 +194,7 @@ impl PosixStat {
         }
         #[cfg(windows)]
         {
-            // Windows `Stat` is libuv `uv_stat_t` — `st_*`-named u64 fields
-            // (matches uv.h; see libuv.rs `uv_stat_t`).
+            // Windows `Stat` fields are already `u64`.
             PosixStat {
                 dev: stat_.st_dev,
                 ino: stat_.st_ino,

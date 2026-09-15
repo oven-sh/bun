@@ -28,7 +28,8 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/Interpreter.h"
 #include "wtf/text/OrdinalNumber.h"
-#include <uv.h>
+#include "OsBinding.h"
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <psapi.h>
 #include <versionhelpers.h>
@@ -102,7 +103,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         JSObject* versions = constructEmptyObject(globalObject, globalObject->objectPrototype());
         Bun::putDirectNamed(vm, versions, "node"_s, jsString(vm, String(REPORTED_NODEJS_VERSION ""_s)));
         Bun::putDirectNamed(vm, versions, "v8"_s, jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_V8_VERSION))));
-        Bun::putDirectNamed(vm, versions, "uv"_s, jsString(vm, String::fromLatin1(uv_version_string())));
+        Bun::putDirectNamed(vm, versions, "uv"_s, jsString(vm, String(BUN_REPORTED_LIBUV_VERSION ""_s)));
         Bun::putDirectNamed(vm, versions, "modules"_s, jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(STRINGIFY(REPORTED_NODEJS_ABI_VERSION)))));
         Bun::putDirectNamed(vm, header, "componentVersions"_s, versions);
         RETURN_IF_EXCEPTION(scope, {});
@@ -156,11 +157,10 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
             }
         }
 
-        // CPU info using libuv
-        uv_cpu_info_t* cpu_infos;
+        BunCpuInfo* cpu_infos;
         int count;
-        if (uv_cpu_info(&cpu_infos, &count) == 0) {
-            auto freeCpuInfos = WTF::makeScopeExit([&] { uv_free_cpu_info(cpu_infos, count); });
+        if (Bun__Os__cpuInfo(&cpu_infos, &count) == 0) {
+            auto freeCpuInfos = WTF::makeScopeExit([&] { Bun__Os__freeCpuInfo(cpu_infos, count); });
             JSArray* cpuArray = constructEmptyArray(globalObject, nullptr, count);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -184,10 +184,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         }
         RETURN_IF_EXCEPTION(scope, {});
 
-        // Network interfaces using libuv
-        uv_interface_address_t* interfaces;
-        if (uv_interface_addresses(&interfaces, &count) == 0) {
-            auto freeInterfaces = WTF::makeScopeExit([&] { uv_free_interface_addresses(interfaces, count); });
+        BunInterfaceAddress* interfaces;
+        if (Bun__Os__interfaceAddresses(&interfaces, &count) == 0) {
+            auto freeInterfaces = WTF::makeScopeExit([&] { Bun__Os__freeInterfaceAddresses(interfaces, count); });
             JSArray* interfacesArray = constructEmptyArray(globalObject, nullptr, count);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -198,20 +197,20 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
                 char addr[INET6_ADDRSTRLEN];
                 if (interfaces[i].address.address4.sin_family == AF_INET) {
-                    uv_inet_ntop(AF_INET, &interfaces[i].address.address4.sin_addr, addr, sizeof(addr));
+                    inet_ntop(AF_INET, &interfaces[i].address.address4.sin_addr, addr, sizeof(addr));
                     Bun::putDirectNamed(vm, iface, "address"_s, jsString(vm, String::fromUTF8(addr)));
 
                     char netmask[INET_ADDRSTRLEN];
-                    uv_inet_ntop(AF_INET, &interfaces[i].netmask.netmask4.sin_addr, netmask, sizeof(netmask));
+                    inet_ntop(AF_INET, &interfaces[i].netmask.netmask4.sin_addr, netmask, sizeof(netmask));
                     Bun::putDirectNamed(vm, iface, "netmask"_s, jsString(vm, String::fromUTF8(netmask)));
 
                     Bun::putDirectNamed(vm, iface, "family"_s, jsString(vm, String::fromLatin1("IPv4")));
                 } else if (interfaces[i].address.address6.sin6_family == AF_INET6) {
-                    uv_inet_ntop(AF_INET6, &interfaces[i].address.address6.sin6_addr, addr, sizeof(addr));
+                    inet_ntop(AF_INET6, &interfaces[i].address.address6.sin6_addr, addr, sizeof(addr));
                     Bun::putDirectNamed(vm, iface, "address"_s, jsString(vm, String::fromUTF8(addr)));
 
                     char netmask[INET6_ADDRSTRLEN];
-                    uv_inet_ntop(AF_INET6, &interfaces[i].netmask.netmask6.sin6_addr, netmask, sizeof(netmask));
+                    inet_ntop(AF_INET6, &interfaces[i].netmask.netmask6.sin6_addr, netmask, sizeof(netmask));
                     Bun::putDirectNamed(vm, iface, "netmask"_s, jsString(vm, String::fromUTF8(netmask)));
 
                     Bun::putDirectNamed(vm, iface, "family"_s, jsString(vm, String::fromLatin1("IPv6")));

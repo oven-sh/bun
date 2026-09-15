@@ -1745,7 +1745,7 @@ impl Archiver {
                                 let guard = scopeguard::guard(file_handle_native, |fd| {
                                     fd.close();
                                 });
-                                let owned = (*guard).make_lib_uv_owned()?;
+                                let owned = (*guard).make_crt_owned()?;
                                 scopeguard::ScopeGuard::into_inner(guard);
                                 owned
                             };

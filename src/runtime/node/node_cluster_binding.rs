@@ -105,7 +105,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
             if raw_fd < 0 {
                 return Ok(JSValue::NULL);
             }
-            bun_sys::Fd::from_uv(raw_fd)
+            bun_sys::Fd::from_crt(raw_fd)
         };
         #[cfg(windows)]
         let native_fd = {
@@ -387,13 +387,9 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             }
         }
         if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
-            // SAFETY: pure translation function.
-            let uv_err = unsafe { bun_libuv_sys::uv_translate_sys_error(err) };
-            return Ok(JSValue::js_number_from_int32(if uv_err != 0 {
-                uv_err
-            } else {
-                -4094
-            }));
+            return Ok(JSValue::js_number_from_int32(
+                bun_errno::Bun__translateWin32ErrorToUV(err as u32),
+            ));
         }
 
         let obj = JSValue::create_empty_object(global, 2);

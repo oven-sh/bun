@@ -135,8 +135,8 @@ pub mod bun_spawn {
     pub use bun_core::spawn_ffi::{Action, FileActionType};
 
     // `Fd::native()` returns `*mut c_void` on Windows, which can't fill the
-    // `c_int` action slot. posix_spawn never runs on Windows (libuv handles
-    // spawn there), so trap instead of inventing a HANDLE→int cast.
+    // `c_int` action slot. posix_spawn never runs on Windows, so trap
+    // instead of inventing a HANDLE→int cast.
     #[cfg(unix)]
     #[inline(always)]
     fn fd_int(fd: Fd) -> fd_t {
@@ -473,7 +473,7 @@ pub mod posix_spawn {
     #[cfg(unix)]
     pub(crate) type Attr = bun_spawn::Attr;
     // No not(unix) Actions/Attr aliases: Windows goes through
-    // `process.rs::spawn_process_windows` (libuv) and never reaches these.
+    // `windows::spawn_process_windows` and never reaches these.
 
     // The #[repr(C)] request mirrors + extern decl live in `bun_core::spawn_ffi`
     // (single source of truth for bun-spawn.cpp's `bun_spawn_request_t`). The
@@ -805,7 +805,7 @@ pub mod posix_spawn {
     // Higher-tier re-exports (`Process`/`Status`/`spawn_process`/`sync`/
     // `Windows*`) live in `bun_spawn::posix_spawn::bun_spawn`, which augments
     // this module — they need event-loop types this `-sys` crate cannot name.
-    pub use crate::spawn_process::{PosixSpawnResult, Rusage};
+    pub use crate::spawn_process::{Rusage, SpawnResult};
 }
 
 #[cfg(unix)]

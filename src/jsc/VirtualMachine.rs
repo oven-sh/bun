@@ -178,9 +178,7 @@ pub struct VirtualMachine {
     pub runtime_state: *mut c_void,
     pub event_loop_handle: Option<*mut PlatformEventLoop>,
     /// Pending `unref` count drained by the event-loop thread. Atomic because
-    /// `KeepAlive::unref_on_next_tick` increments it from OTHER threads
-    /// (POSIX only; on Windows that path calls `loop_dec()` instead and the
-    /// counter stays at zero).
+    /// `KeepAlive::unref_on_next_tick` increments it from OTHER threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
@@ -935,8 +933,7 @@ impl VirtualMachine {
         VM.get()
     }
 
-    /// The signal handler path (unix only) reaches the main VM through this.
-    #[cfg(unix)]
+    /// The signal handler path reaches the main VM through this.
     pub(crate) fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
         let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
         if p.is_null() { None } else { Some(p) }
@@ -1220,19 +1217,18 @@ impl VirtualMachine {
     }
 
     /// Safe `&mut PlatformEventLoop` accessor for `event_loop_handle` (the
-    /// uws loop on POSIX, libuv loop on Windows). `None` only before
-    /// `ensure_waker()` runs. Consolidates the open-coded raw deref of
+    /// uws loop). `None` only before `ensure_waker()` runs. Consolidates the open-coded raw deref of
     /// `self.event_loop_handle.unwrap()` at the `EventLoop::tick*` /
     /// `update_counts` call sites into one SAFETY block.
     ///
     /// Same single-JS-thread soundness contract as [`Self::uws_loop_mut`] —
-    /// the `PlatformEventLoop` is a separate heap allocation (uws/uv-owned),
+    /// the `PlatformEventLoop` is a separate heap allocation (uws-owned),
     /// so the returned `&mut` cannot alias any field of `self`.
     #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn platform_loop_opt(&self) -> Option<&mut PlatformEventLoop> {
         // SAFETY: when `Some`, `event_loop_handle` was set in `init()` /
-        // `ensure_waker()` to the live per-VM uws/uv loop and remains valid
+        // `ensure_waker()` to the live per-VM uws loop and remains valid
         // for the VM lifetime. Single-JS-thread invariant per `unsafe impl
         // Sync` — only the owning JS thread reborrows mutably.
         self.event_loop_handle.map(|h| unsafe { &mut *h })
@@ -1242,7 +1238,6 @@ impl VirtualMachine {
     /// `increment_pending_unref_counter()` from another thread can't be lost
     /// between the read and the reset.
     #[inline]
-    #[cfg(not(windows))]
     pub(crate) fn take_pending_unref(&self) -> i32 {
         self.pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed)
@@ -1360,20 +1355,13 @@ impl VirtualMachine {
     /// `event_loop_handle.is_some()`.
     #[inline(always)]
     pub fn uws_loop(&self) -> *mut uws::Loop {
-        #[cfg(unix)]
-        {
-            debug_assert!(
-                self.event_loop_handle.is_some(),
-                "uws event_loop_handle is null"
-            );
-            // SAFETY: set in `init()` on the JS thread before any host_fn /
-            // event-loop tick runs; never cleared while the VM is live.
-            unsafe { self.event_loop_handle.unwrap_unchecked() }
-        }
-        #[cfg(not(unix))]
-        {
-            uws::Loop::get()
-        }
+        debug_assert!(
+            self.event_loop_handle.is_some(),
+            "uws event_loop_handle is null"
+        );
+        // SAFETY: set in `init()` on the JS thread before any host_fn /
+        // event-loop tick runs; never cleared while the VM is live.
+        unsafe { self.event_loop_handle.unwrap_unchecked() }
     }
 
     pub fn on_after_event_loop(&mut self) {
@@ -1974,9 +1962,8 @@ impl VirtualMachine {
     ///     requested), WebCore stop phase (child workers asked to terminate;
     ///     ports/channels/WebSockets closed without events; listeners stripped),
     ///     everything registered as stoppable closed natively (servers,
-    ///     listeners, sockets, watchers, subprocess/pipe/tty handles, in-flight
-    ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
-    ///     channel closed.
+    ///     listeners, sockets, watchers, in-flight fetch/S3/Bun.build aborted
+    ///     or cancelled), socket groups and the DNS channel closed.
     ///  B. release — cron, user timers and GC-controller timers cancelled; child
     ///     workers joined; this VM's sqlite connections closed; **the wait**:
     ///     every ticket held off-thread comes back while queued work is
@@ -1984,10 +1971,11 @@ impl VirtualMachine {
     ///     parked; RareData's JS handles released.
     ///  C. JSC VM destroyed (finalizers close what only they own; JSC's RunLoop
     ///     timers ride the timer heap until ~VM returns); sockets they closed
-    ///     drained; then the timer heap's loop handles closed.
-    ///  D. worker: keep-alive delta folded, uSockets loop freed and (Windows)
-    ///     the uv loop closed — every handle unlinks while its owner is still
-    ///     allocated. Main proceeds to process exit instead.
+    ///     drained.
+    ///  D. worker: keep-alive delta folded, (Windows) the pipes, consoles and
+    ///     process-exit waits still open on the loop closed, uSockets loop
+    ///     freed — while their owners are still allocated. Main proceeds to
+    ///     process exit instead.
     ///  E. `destroy()`: RareData, runtime state, event loop.
     ///
     /// # Safety
@@ -2012,42 +2000,23 @@ impl VirtualMachine {
         Zig__GlobalObject__prepareForDestruction(vm.global());
         // SAFETY: fn contract.
         let sweep = || unsafe {
-            let _ = Self::stop_phase_sweep(this, kind);
-            let second = Self::stop_phase_sweep(this, kind);
+            let _ = Self::stop_phase_sweep(this);
+            let second = Self::stop_phase_sweep(this);
             debug_assert!(
                 second == SweepResult::Idle,
                 "a native close path registered a stoppable resource during teardown"
             );
         };
         sweep();
-        // A worker closes its uv loop below (D), so requests still in flight
-        // complete here, against this live VM: their handles were just closed,
-        // so what remains finishes on its own (threadpool work), and a
-        // completion may start more — open a handle, schedule pool work (still
-        // accepted, and awaited in B) — hence sweep again after each drain.
-        // The exiting main thread neither closes its loop nor may nest uv_run
-        // here: process.exit() can be running inside a libuv completion callback.
-        #[cfg(windows)]
-        if matches!(kind, Teardown::Worker) {
-            while bun_sys::windows::libuv::Loop::drain_requests() {
-                sweep();
-            }
-        }
         teardown_log!("teardown: stopped");
 
         // ---- B. release ------------------------------------------------------
-        #[cfg(windows)]
-        if let Some(t) = vm.event_loop_mut().forever_timer.take() {
-            // SAFETY: live usockets timer from `hold_forever_poll`; closed like
-            // any us_timer (freed by its close callback when the loop turns).
-            unsafe { uws::Timer::close::<true>(t.as_ptr()) };
-        }
         if let Some(hooks) = hooks {
             // SAFETY: fn contract (statement-scoped exclusive access).
             (hooks.stop_cron_for_vm_teardown)(unsafe { &mut *this });
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
             // +1 while runtime state and the JSC heap are alive. The heap itself
-            // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
+            // stays up: JSC's own RunLoop timers
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.
             // SAFETY: fn contract.
@@ -2068,7 +2037,7 @@ impl VirtualMachine {
         // checkpoint and close, before finalizers could.
         vm.close_sqlite_databases_for_exit();
         // The one place the invariant is enforced: nothing below runs until
-        // everything that left this thread (pool jobs, fetches, uv work, C++
+        // everything that left this thread (pool jobs, fetches, C++
         // work-queue tasks, child threads) has come back. Whatever arrives
         // meanwhile — and whatever was already queued — is released here, on
         // this thread with the heap alive, never run.
@@ -2082,7 +2051,7 @@ impl VirtualMachine {
         // SAFETY: fn contract (statement-scoped exclusive access).
         vm.handle.close_and_wait(|| unsafe {
             (*this).release_queued_work();
-            let _ = Self::stop_phase_sweep(this, kind);
+            let _ = Self::stop_phase_sweep(this);
         });
         // The exiting main thread now parks the process-wide HTTP thread —
         // after the children it also served are joined and this VM's own
@@ -2108,19 +2077,11 @@ impl VirtualMachine {
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
         vm.uws_loop_mut().drain_closed_sockets();
-        // Nothing schedules a WTFTimer any more: the timer heap's loop handles
-        // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
-        if let Some(hooks) = hooks {
-            // SAFETY: fn contract; runtime state still installed.
-            unsafe { (hooks.close_timer_loop_handles_after_vm_destroyed)(this) };
-        }
         teardown_log!("teardown: JSC VM destroyed");
 
         // ---- D. loops (worker; main exits the process instead) ----------------
         if matches!(kind, Teardown::Worker) {
-            // Whatever B/C unref'd through the concurrent counter, folded now:
-            // on Windows it shares `active_handles` with libuv and a residue
-            // would keep the loop close below spinning.
+            // Whatever B/C unref'd through the concurrent counter, folded now.
             vm.event_loop_mut().apply_concurrent_ref_delta();
             // SAFETY: fn contract (statement-scoped exclusive access).
             if let Some(rare) = unsafe { (*this).rare_data.as_deref_mut() } {
@@ -2128,11 +2089,16 @@ impl VirtualMachine {
             }
             // SAFETY: this thread's loop; nothing ticks it any more.
             unsafe { (*vm.uws_loop()).internal_loop_data.jsc_vm = core::ptr::null_mut() };
+            // What is still open on the loop caches its pointer and completes
+            // through it; each is cancelled and detached here, and freeing the
+            // loop collects the cancelled operations.
+            #[cfg(windows)]
+            {
+                bun_io::windows::close_all_for_loop(vm.uws_loop());
+                bun_spawn::process::close_all_for_loop(vm.uws_loop());
+            }
             bun_uws::free_thread_loop();
             teardown_log!("teardown: uSockets loop freed");
-            #[cfg(windows)]
-            bun_sys::windows::libuv::Loop::close_thread_loop();
-            teardown_log!("teardown: loops closed");
         }
 
         // ---- E. free owners --------------------------------------------------
@@ -2143,13 +2109,12 @@ impl VirtualMachine {
 
 impl VirtualMachine {
     /// One stop-phase sweep: registered handles (servers, listeners, watchers,
-    /// duplex/named-pipe sockets, resolvers), a worker's uv stream/process
-    /// handles, every socket group, the VM-global dns channel. Reports whether
-    /// it found anything.
+    /// duplex/named-pipe sockets, resolvers), every socket group, the
+    /// VM-global dns channel. Reports whether it found anything.
     ///
     /// # Safety
     /// As [`teardown`](Self::teardown): sole owner on the owning thread, heap alive.
-    unsafe fn stop_phase_sweep(this: *mut Self, kind: Teardown) -> SweepResult {
+    unsafe fn stop_phase_sweep(this: *mut Self) -> SweepResult {
         let hooks = runtime_hooks();
         let mut result = SweepResult::Idle;
         // Pool jobs parked on something external (a pipe that never becomes
@@ -2160,18 +2125,6 @@ impl VirtualMachine {
             // SAFETY: fn contract.
             result = result.and(unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) });
         }
-        // A worker's uv loop is closed in D, so every pipe / tty / child-process
-        // handle open on it closes now — through whoever drives it (reader,
-        // writer, IPC channel, named pipe, Process), or directly if nothing
-        // adopted it — so pending writes complete (ECANCELED) against a live VM
-        // and no request on them can hold up the loop drain in B. The exiting
-        // main thread keeps its loop (the OS reclaims the handles); sweeping
-        // them there only re-enters stream owners under still-running script.
-        #[cfg(windows)]
-        if matches!(kind, Teardown::Worker) {
-            bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
-        }
-        let _ = kind;
         // `close_all_socket_groups` walks the loop's group list through the VM
         // and never touches `rare_data`, so the two accesses are disjoint.
         // SAFETY: fn contract.
@@ -2436,13 +2389,6 @@ pub struct RuntimeHooks {
     pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
     pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
-    /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
-    /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
-    /// so the loop close unlinks them before the runtime state is freed.
-    ///
-    /// # Safety
-    /// JS thread; `runtime_state` installed.
-    pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(vm: *mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -3682,20 +3628,6 @@ impl VirtualMachine {
             .unwrap_or(UnhandledRejections::Bun)
     }
 
-    /// Returns this VM's libuv event loop handle (must already be initialized).
-    pub fn uv_loop(&self) -> *mut Async::Loop {
-        #[cfg(debug_assertions)]
-        {
-            return self
-                .event_loop_handle
-                .expect("libuv event_loop_handle is null");
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            self.event_loop_handle.unwrap()
-        }
-    }
-
     /// Whether TLS certificate verification is enforced, from the cached override or the env loader.
     pub fn get_tls_reject_unauthorized(&self) -> bool {
         if let Some(v) = self.default_tls_reject_unauthorized {
@@ -3790,7 +3722,7 @@ impl VirtualMachine {
                 {
                     Some(fd) => {
                         self.pending_ipc = Some(PendingIpc {
-                            fd: bun_sys::Fd::from_uv(fd),
+                            fd: bun_sys::Fd::from_crt(fd),
                             advanced,
                         })
                     }

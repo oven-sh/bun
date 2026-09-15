@@ -2,12 +2,10 @@
 
 #include "root.h"
 
-#if OS(WINDOWS)
-#include <uv.h>
-#elif OS(DARWIN)
+#if OS(DARWIN)
 #include <mach/task.h>
 #include <mach/semaphore.h>
-#else
+#elif !OS(WINDOWS)
 #include <semaphore.h>
 #endif
 
@@ -23,7 +21,7 @@ public:
 
 private:
 #if OS(WINDOWS)
-    uv_sem_t m_semaphore;
+    void* m_semaphore; // HANDLE
 #elif OS(DARWIN)
     semaphore_t m_semaphore;
 #else

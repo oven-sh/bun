@@ -45,7 +45,7 @@ macro_rules! __decl_uv_e {
     ( $( $ident:ident = $value:expr => $display:literal ),+ $(,)? ) => {
         $( pub const $ident: i32 = $value; )+
 
-        /// Full (negated code, name) table: libuv-synthetic codes (vendor/libuv/include/uv/errno.h)
+        /// Full (negated code, name) table: libuv-synthetic codes (libuv's include/uv/errno.h)
         /// first, then per-OS rows. Consumed by `name()` and node:util `getSystemErrorMap()`.
         pub static ENTRIES: &[(i32, &'static str)] = &[
             (-4095, "EOF"),
@@ -87,14 +87,14 @@ macro_rules! __decl_uv_e {
 // The (IDENT, "E…") column pair is byte-for-byte identical across
 // linux/darwin/freebsd/windows; only the middle `i32` value differs by design
 // (native `SystemErrno::$e as i32` on POSIX vs libuv-synthetic
-// `-bun_libuv_sys::UV_E*` on Windows / for codes the host OS lacks). Rather
+// `-uv_codes::UV_E*` on Windows / for codes the host OS lacks). Rather
 // than re-list the rows 4×, the caller supplies a tiny *value-producer* macro
 // `$cb!($id, $e, $uv) -> i32-expr` and this forwards each row to the existing
 // `__decl_uv_e!` expander (consts + reverse `name()` fn).
 //
 // `$id`/`$e`/`$uv` are passed as **literal** tokens (never captured as
 // `:ident`), so the per-OS `$cb` can override individual rows by literal-token
-// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv }` — while
+// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -$crate::uv_codes::$uv }` — while
 // a final `($i:tt, $e:tt, $uv:tt)` arm handles the native default.
 // ──────────────────────────────────────────────────────────────────────────
 #[macro_export]
@@ -175,6 +175,8 @@ macro_rules! __uv_e_rows {
         }
     };
 }
+
+pub mod uv_codes;
 
 #[cfg(target_os = "macos")]
 pub mod darwin_errno;

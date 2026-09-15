@@ -99,6 +99,20 @@ extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
+/// `process.kill()` on Windows: 0, or the negative `UV_E*` number.
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Process__kill(
+    pid: core::ffi::c_int,
+    signum: core::ffi::c_int,
+) -> core::ffi::c_int {
+    match bun_spawn_sys::windows::kill_pid(pid, signum) {
+        Ok(()) => 0,
+        Err(err) => bun_errno::uv_codes::e_discriminant_to_uv(err.errno)
+            .unwrap_or_else(|| core::ffi::c_int::from(err.errno).wrapping_neg()),
+    }
+}
+
 /// `--redirect-warnings=<path>` value; `Dead` when unset.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Node__getRedirectWarnings() -> bun_core::String {
@@ -180,7 +194,7 @@ mod _impl {
 
     // Windows `process.title` getter support: the C++ getter needs to know
     // whether a title was explicitly set (CLI `--title` or assignment) so it
-    // can prefer the store over `uv_get_process_title` without comparing
+    // can prefer the store over the console title without comparing
     // against the "bun" default string.
     #[unsafe(export_name = "Bun__Process__hasTitle")]
     extern "C" fn has_title() -> bool {

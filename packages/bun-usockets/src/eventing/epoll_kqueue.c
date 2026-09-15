@@ -406,7 +406,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
  * Re-poll non-blocking and dispatch again before running pre/post callbacks, so a
  * single tick covers all pending I/O instead of one 1024-event slice per roundtrip.
  * Conditioned on saturation and capped at 48 iterations — matches libuv's uv__io_poll
- * (vendor/libuv/src/unix/linux.c:1387,1590 and kqueue.c:253,451). */
+ * (src/unix/linux.c:1387,1590 and kqueue.c:253,451). */
 static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     int drain_count = 48;
     while (UNLIKELY(loop->num_ready_polls == LIBUS_MAX_READY_POLLS) && --drain_count != 0 && loop->num_polls > 0) {
@@ -470,7 +470,7 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
+extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -501,11 +501,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
-    /* `now_ns` is the reading the JS side took to pick `timeout`
-     * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
-     * if it had none to share. Nothing measures a deadline against it. */
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        (void) Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
     /* The scavenger sweeps our heaps while we are in the kernel. Must come after
      * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
@@ -514,6 +511,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * really parks, and rate-limited, because doing it between ticks is what we are avoiding. */
     const int handed_off = mi_on_thread_idle_start();
     if (!handed_off && will_idle_inside_event_loop) {
+        /* `now_ns` is the reading the JS side took to pick `timeout`
+         * (timer::All::get_timeout); 0 if it had none to share. Nothing
+         * measures a deadline against it. */
         static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;
         const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
@@ -774,6 +774,14 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
 
     /* Disable any instance of us in the pending ready poll list */
     us_internal_loop_update_pending_ready_polls(loop, p, 0, old_events, new_events);
+}
+
+int us_internal_poll_start_accepting(struct us_poll_t *p, struct us_loop_t *loop) {
+    return us_poll_start_rc(p, loop, LIBUS_SOCKET_READABLE);
+}
+
+LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_t *addr) {
+    return bsd_accept_socket(us_poll_fd(p), addr);
 }
 
 size_t us_internal_accept_poll_event(struct us_poll_t *p) {

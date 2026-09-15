@@ -1636,6 +1636,60 @@ describe("mkdtemp empty prefix", () => {
   });
 });
 
+describe("mkdtemp prefix length", () => {
+  it("a prefix that is far too long and not valid UTF-8 fails with an ordinary error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const prefix = Buffer.concat([Buffer.alloc(40000, 0x80), Buffer.from("XXXXXX")]);
+          const codes = [];
+          try {
+            fs.mkdtempSync(prefix);
+            codes.push("no error");
+          } catch (e) {
+            codes.push(e.code);
+          }
+          fs.promises.mkdtemp(prefix).then(
+            () => codes.push("no error"),
+            e => codes.push(e.code),
+          ).then(() => console.log(JSON.stringify(codes)));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Which errno depends on the platform's path limits.
+    expect({ stdout: JSON.parse(stdout || "null"), stderr }).toEqual({
+      stdout: [expect.stringMatching(/^E[A-Z]+$/), expect.stringMatching(/^E[A-Z]+$/)],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("a prefix that makes the path longer than 260 characters", () => {
+    using dir = tempDir("mkdtemp-long-prefix", {});
+    const prefix = join(String(dir), Buffer.alloc(240, "p").toString());
+    const created = mkdtempSync(prefix);
+    expect(created).toStartWith(prefix);
+    expect({ suffix: created.length - prefix.length, isDirectory: statSync(created).isDirectory() }).toEqual({
+      suffix: 6,
+      isDirectory: true,
+    });
+  });
+
+  it("a prefix shorter than the six-character suffix", () => {
+    using dir = tempDir("mkdtemp-short-prefix", {});
+    const created = mkdtempSync(join(String(dir), "ab"));
+    expect(path.basename(created)).toMatch(/^ab[A-Za-z0-9]{6}$/);
+    expect(statSync(created).isDirectory()).toBe(true);
+  });
+});
+
 describe("mkdtemp encoding option", () => {
   const base = tmpdirSync();
   const prefix = join(base, "mkenc-dé-");
@@ -5174,8 +5228,7 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
-  // TODO: make this work on Windows
-  it.skipIf(isWindows)("works after 2038", () => {
+  it("works after 2038", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
     const prevStats = fs.statSync(tmp);
@@ -5207,8 +5260,7 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
-  // Windows wraps pre-epoch times through u32, matching Node (see Stat.rs)
-  it.skipIf(isWindows)("sets pre-epoch times from negative fractional string timestamps", () => {
+  it("sets pre-epoch times from negative fractional string timestamps", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
 
@@ -5628,9 +5680,7 @@ it("new Stats", () => {
   expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
 });
 
-// On Windows, Node.js deliberately reinterprets stat times via `unsigned long` (see
-// libuv Y2038 note), so pre-epoch semantics there are not "negative ns".
-it.skipIf(isWindows)("BigIntStats *Ns fields are negative for pre-epoch timestamps", () => {
+it("BigIntStats *Ns fields are negative for pre-epoch timestamps", () => {
   using dir = tempDir("bigintstats-pre-epoch", { "f.txt": "x" });
   const f = join(String(dir), "f.txt");
 
@@ -5665,7 +5715,7 @@ it.skipIf(isWindows)("BigIntStats *Ns fields are negative for pre-epoch timestam
   expect(st2.atimeNs / 1_000_000n).toBe(st2.atimeMs);
 });
 
-it.skipIf(isWindows)("BigIntStats *Ns does not clamp for post-2262 timestamps", () => {
+it("BigIntStats *Ns does not clamp for post-2262 timestamps", () => {
   using dir = tempDir("bigintstats-far-future", { "f.txt": "x" });
   const f = join(String(dir), "f.txt");
 
@@ -5685,6 +5735,74 @@ it.skipIf(isWindows)("BigIntStats *Ns does not clamp for post-2262 timestamps", 
       mtimeNs: 13_569_465_600_000_000_000n,
       atimeNs: 13_569_465_600_000_000_000n,
     });
+  }
+});
+
+it("stat, lstat and fstat round-trip times after 2038, after 2106 and before 1970", () => {
+  using dir = tempDir("stat-time-range", { "f.txt": "x" });
+  const f = join(String(dir), "f.txt");
+  const fd = openSync(f, "r+");
+  try {
+    for (const [atime, mtime] of [
+      [new Date("2040-01-02T03:04:05Z"), new Date("2099-12-31T23:59:59Z")],
+      // 2106-02-07T06:28:16Z is the first second that does not fit in 32 bits, signed or unsigned.
+      [new Date("2106-02-07T06:28:16Z"), new Date("2200-01-01T00:00:00Z")],
+      [new Date("1965-03-04T05:06:07Z"), new Date("1930-01-01T00:00:00Z")],
+    ]) {
+      const expected = { atime: atime.getTime(), mtime: mtime.getTime() };
+      const times = (st: Stats) => ({ atime: st.atime.getTime(), mtime: st.mtime.getTime() });
+      for (const set of [
+        () => fs.utimesSync(f, atime, mtime),
+        () => fs.lutimesSync(f, atime, mtime),
+        () => fs.futimesSync(fd, atime, mtime),
+      ]) {
+        fs.utimesSync(f, 0, 0);
+        set();
+        const big = statSync(f, { bigint: true });
+        expect({
+          stat: times(statSync(f)),
+          lstat: times(lstatSync(f)),
+          fstat: times(fstatSync(fd)),
+          atimeNs: big.atimeNs,
+          mtimeNs: big.mtimeNs,
+        }).toEqual({
+          stat: expected,
+          lstat: expected,
+          fstat: expected,
+          atimeNs: BigInt(expected.atime) * 1_000_000n,
+          mtimeNs: BigInt(expected.mtime) * 1_000_000n,
+        });
+      }
+    }
+  } finally {
+    closeSync(fd);
+  }
+});
+
+// 1713037251.36 has no exact double; the nearest one is 1713037251.3599998. Node on Windows stores
+// what libuv's double arithmetic makes of it, which is the intended millisecond
+// (test-fs-utimes-y2K38.js). POSIX Node truncates to 359 ms.
+it.skipIf(!isWindows)("utimes, lutimes and futimes round-trip a millisecond time given in seconds", () => {
+  using dir = tempDir("utimes-precision", { "f.txt": "x" });
+  const f = join(String(dir), "f.txt");
+  const fd = openSync(f, "r+");
+  try {
+    const ms = 1713037251360;
+    const seconds = ms / 1000;
+    for (const set of [
+      () => fs.utimesSync(f, seconds, seconds),
+      () => fs.utimesSync(f, String(seconds), String(seconds)),
+      () => fs.utimesSync(f, new Date(ms), new Date(ms)),
+      () => fs.lutimesSync(f, seconds, seconds),
+      () => fs.futimesSync(fd, seconds, seconds),
+    ]) {
+      fs.utimesSync(f, 0, 0);
+      set();
+      const st = statSync(f);
+      expect({ atime: st.atime.getTime(), mtime: st.mtime.getTime() }).toEqual({ atime: ms, mtime: ms });
+    }
+  } finally {
+    closeSync(fd);
   }
 });
 
@@ -6429,6 +6547,94 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
   }
 });
 
+// Without the LongPathsEnabled registry policy, Win32 only accepts a path this long in its
+// \\?\-prefixed absolute form, so a relative one has to be resolved against the cwd first.
+describe.skipIf(!isWindows)("relative paths past MAX_PATH", () => {
+  // [description, number of 20-character components]
+  const lengths: [string, number][] = [
+    // Shorter than MAX_PATH by itself, longer once joined with the cwd.
+    ["230 characters", 11],
+    ["293 characters", 14],
+  ];
+
+  // Runs `body` with `rel` defined and the temporary directory as the cwd; `rel` already exists
+  // unless `create` is false.
+  async function run(components: number, body: string, create = true) {
+    using dir = tempDir("fs-long-relative", {});
+    const rel = Array(components).fill(Buffer.alloc(20, "d").toString()).join(path.sep);
+    if (create) mkdirSync(join(String(dir), rel), { recursive: true });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs"), path = require("path"); const rel = ${JSON.stringify(rel)};` + body,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  it.concurrent.each(lengths)("write, read, stat, mkdir and readdir (%s)", async (_, components) => {
+    const { stdout, stderr, exitCode } = await run(
+      components,
+      `
+        const file = path.join(rel, "f.txt");
+        fs.writeFileSync(file, "x");
+        fs.mkdirSync(path.join(rel, "sub"));
+        console.log(JSON.stringify({
+          read: fs.readFileSync(file, "utf8"),
+          size: fs.statSync(file).size,
+          isDirectory: fs.statSync(rel).isDirectory(),
+          entries: fs.readdirSync(rel).sort(),
+        }));
+      `,
+    );
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ read: "x", size: 1, isDirectory: true, entries: ["f.txt", "sub"] }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.each(lengths)("exists, access, copyFile and rename (%s)", async (_, components) => {
+    const { stdout, stderr, exitCode } = await run(
+      components,
+      `
+        const file = path.join(rel, "f.txt");
+        fs.writeFileSync(file, "x");
+        const exists = fs.existsSync(file);
+        fs.accessSync(file);
+        fs.copyFileSync(file, path.join(rel, "copy.txt"));
+        fs.renameSync(path.join(rel, "copy.txt"), path.join(rel, "renamed.txt"));
+        console.log(JSON.stringify({ exists, entries: fs.readdirSync(rel).sort() }));
+      `,
+    );
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ exists: true, entries: ["f.txt", "renamed.txt"] }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.each(lengths)("mkdirSync(relative, { recursive: true }) (%s)", async (_, components) => {
+    const { stdout, stderr, exitCode } = await run(
+      components,
+      `
+        fs.mkdirSync(rel, { recursive: true });
+        fs.writeFileSync(path.join(rel, "f.txt"), "x");
+        console.log(fs.readFileSync(path.join(rel, "f.txt"), "utf8"));
+      `,
+      false,
+    );
+    expect({ stdout, stderr }).toEqual({ stdout: "x", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("overflowing mode doesn't crash", () => {
   // this is easiest to test on windows since mode_t is a u16 there
   expect(() => openSync("./a.txt", 65 * 1024)).toThrow(
@@ -7003,7 +7209,7 @@ describe("fs.close on stdio descriptors", () => {
     expect(exitCode).toBe(0);
   });
 
-  // On Windows, libuv's fs__close no-ops for fd <= 2 (as does Node), so the
+  // On Windows, closing a CRT fd <= 2 is a no-op (as in Node), so the
   // descriptor is never really closed and the second close cannot raise EBADF.
   it.skipIf(isWindows)("closeSync throws EBADF on a double close of fd 2", async () => {
     using dir = tempDir("fs-close-stdio-dbl", {

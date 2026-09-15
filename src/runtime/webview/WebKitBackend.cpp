@@ -115,10 +115,9 @@ static constexpr us_socket_vtable_t s_hostVTable = {
     .on_handshake = nullptr,
 };
 
-// us_socket_ref/unref are no-ops on kqueue, and us_poll_start_rc doesn't
-// touch loop.active. Track our own ref against view count. A view with
-// pending ops keeps itself alive via visitChildren → promise → reaction
-// → closure → view, so "any views" covers "any pending".
+// us_poll_start_rc doesn't touch loop.active. Track our own ref against
+// view count. A view with pending ops keeps itself alive via visitChildren
+// → promise → reaction → closure → view, so "any views" covers "any pending".
 void HostClient::updateKeepAlive()
 {
     bool want = !viewsById.empty();

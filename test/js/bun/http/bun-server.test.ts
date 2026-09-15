@@ -1935,7 +1935,7 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
         }
 
         // objectTypeCounts includes the (lazily created) prototype object(s)
-        // once the first server is constructed — and on libuv platforms both
+        // once the first server is constructed — and on some platforms both
         // Debug and non-Debug prototypes may end up materialized. Measure the
         // floor while a trivial server is the only live instance: whatever the
         // count is above that one instance is prototype(s). Assertions are
@@ -3145,7 +3145,7 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
         }
 
         // Materialize prototype(s) first so baseline = whatever floor this
-        // build settles at (libuv platforms may surface 2, not 1): while the
+        // build settles at (some platforms may surface 2, not 1): while the
         // trivial server is the only live instance, everything above one is
         // prototype(s). The final drain must collect it as well.
         const baseline = (() => {

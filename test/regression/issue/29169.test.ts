@@ -8,7 +8,7 @@
 // pattern `if (process.ppid === 1) exit()`.
 //
 // The fix swaps the lazy PropertyCallback for a CustomAccessor
-// getter that calls getppid()/uv_os_getppid() on every read, so
+// getter that asks the OS for the parent pid on every read, so
 // it reflects the current kernel state. This test pins the
 // underlying contract: process.ppid must be exposed as an
 // accessor, not a cached data property, because only an

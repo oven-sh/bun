@@ -190,13 +190,6 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,
 
-        #[cfg(windows)]
-        windows: bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
-            )),
-            ..Default::default()
-        },
         ..Default::default()
     }) {
         Ok(p) => p,
@@ -366,13 +359,6 @@ pub(crate) fn generate_files(
                     stdout: spawn_sync::SyncStdio::Inherit,
                     stdin: spawn_sync::SyncStdio::Inherit,
 
-                    #[cfg(windows)]
-                    windows: bun_process::WindowsOptions {
-                        loop_: bun_jsc::EventLoopHandle::init_mini(
-                            bun_event_loop::MiniEventLoop::init_global(None, None),
-                        ),
-                        ..Default::default()
-                    },
                     ..Default::default()
                 }) {
                     Ok(p) => p,
@@ -428,13 +414,6 @@ pub(crate) fn generate_files(
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,
 
-        #[cfg(windows)]
-        windows: bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
-            )),
-            ..Default::default()
-        },
         ..Default::default()
     }) {
         Ok(p) => p,

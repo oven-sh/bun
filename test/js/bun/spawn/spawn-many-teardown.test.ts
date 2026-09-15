@@ -4,8 +4,8 @@ import { bunEnv, bunExe } from "harness";
 // Regression coverage for a Windows-only panic: integer overflow in
 // uv.Loop.active_handles during process teardown when a large number of
 // child processes are cleaned up at exit. Historically intermittent with
-// ~300+ children. The Windows active_handles counter now saturates like
-// the POSIX `active` counter does, so the teardown path cannot underflow.
+// ~300+ children. The loop's `active` counter saturates on every
+// platform, so the teardown path cannot underflow.
 //
 // On POSIX this path was never affected (subActive already saturates), so
 // this test also passes there; it is kept enabled everywhere as a general

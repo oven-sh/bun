@@ -57,6 +57,7 @@ static void init_debug_logging() {
 #include <fcntl.h>
 #include <errno.h>
 #else /* _WIN32 */
+#include <mswsock.h>
 #include <mstcpip.h>
 #endif
 
@@ -65,10 +66,22 @@ extern int Bun__doesMacOSVersionSupportSendRecvMsgX();
 #endif
 
 #if defined(_WIN32)
-/* libuv initializes Winsock on first use; every entry point below that creates
+/* Winsock is initialized on first use (WSAStartup costs about a millisecond,
+ * and not every process opens a socket); every entry point below that creates
  * a socket or resolves an address makes sure that has happened first. */
-extern void uv__winsock_ensure(void);
-#define bsd_winsock_ensure() uv__winsock_ensure()
+static BOOL CALLBACK bsd_winsock_init(PINIT_ONCE once, PVOID param, PVOID *context) {
+    (void) once;
+    (void) param;
+    (void) context;
+    WSADATA wsa_data;
+    return WSAStartup(MAKEWORD(2, 2), &wsa_data) == 0;
+}
+
+void us_internal_winsock_ensure(void) {
+    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+    InitOnceExecuteOnce(&once, bsd_winsock_init, NULL, NULL);
+}
+#define bsd_winsock_ensure() us_internal_winsock_ensure()
 #else
 #define bsd_winsock_ensure() ((void)0)
 #endif
@@ -326,7 +339,7 @@ LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
 static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
 #if _WIN32
     if (fd != LIBUS_SOCKET_ERROR) {
-        // libuv will set non-blocking, but only on poll init!
+        // us_poll_start_rc sets non-blocking, but only on poll init!
         // we need it to be set on connect as well
         DWORD yes = 1;
         ioctlsocket(fd, FIONBIO, &yes);
@@ -338,7 +351,7 @@ static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd)
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
-/* Libuv will set windows sockets as non-blocking */
+/* us_poll_start_rc sets windows sockets as non-blocking */
 #ifndef _WIN32
     if (LIKELY(fd != LIBUS_SOCKET_ERROR)) {
         int flags = fcntl(fd, F_GETFL, 0);

@@ -37,7 +37,7 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 // ──────────────────────────────────────────────────────────────────────────
 // PEB access. `bun_core::output::windows_stdio`
 // reads `ProcessParameters.hStd{Input,Output,Error}` to snapshot the console
-// handles before libuv touches them. Canonical structs/asm live in the tier-0
+// handles. Canonical structs/asm live in the tier-0
 // `bun_windows_sys` leaf and are re-exported here for the
 // `crate::windows_sys::*` path used by callers.
 // ──────────────────────────────────────────────────────────────────────────
@@ -48,18 +48,60 @@ pub use bun_windows_sys::{
 // SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
 // for `GetConsoleScreenBufferInfo` out-params. Impl lives here (not in
 // `bun_windows_sys`) because the `Zeroable` trait is owned by `bun_core`.
-#[cfg(windows)]
 unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
 
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
 // so existing `crate::windows_sys::kernel32::*` callers resolve.
 pub use bun_windows_sys::kernel32;
 
-/// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from
-/// `bun_core`; declared directly to avoid a `bun_libuv_sys` dep at tier-0.
-pub mod libuv {
-    unsafe extern "C" {
-        /// No preconditions; walks the CRT fd table and clears HANDLE_FLAG_INHERIT.
-        pub(crate) safe fn uv_disable_stdio_inheritance();
+/// Make every handle this process inherited as stdio non-inheritable, so
+/// children only receive the handles a spawn passes explicitly: the three std
+/// handles, plus the handles of the CRT fd block a parent passes in
+/// `STARTUPINFOW.lpReserved2` (`int count; u8 crt_flags[count]; HANDLE
+/// os_handle[count]`, unaligned). Failures are ignored — a std handle may be
+/// invalid or already closed.
+pub(crate) fn disable_stdio_inheritance() {
+    use bun_windows_sys::{
+        GetStartupInfoW, HANDLE_FLAG_INHERIT, STARTUPINFOW, SetHandleInformation,
+    };
+
+    for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        if let Some(handle) = GetStdHandle(id) {
+            let _ = SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+        }
+    }
+
+    let mut si = core::mem::MaybeUninit::<STARTUPINFOW>::zeroed();
+    // SAFETY: `si` is a writable STARTUPINFOW, which GetStartupInfoW fills; it
+    // cannot fail, and all-zero is a valid STARTUPINFOW regardless.
+    let si = unsafe {
+        GetStartupInfoW(si.as_mut_ptr());
+        si.assume_init()
+    };
+    let buffer = si.lpReserved2.cast_const();
+    let size = usize::from(si.cbReserved2);
+    const COUNT_SIZE: usize = core::mem::size_of::<core::ffi::c_int>();
+    const HANDLE_SIZE: usize = core::mem::size_of::<HANDLE>();
+    if buffer.is_null() || size < COUNT_SIZE {
+        return;
+    }
+    // SAFETY: `buffer` is valid for `size >= COUNT_SIZE` bytes for the life of
+    // the process (it is part of the process parameters block).
+    let count = unsafe { buffer.cast::<core::ffi::c_uint>().read_unaligned() } as usize;
+    if count > 256 || size < COUNT_SIZE + count * (1 + HANDLE_SIZE) {
+        return;
+    }
+    for i in 0..count {
+        // SAFETY: in bounds per the size check above; the handle array is
+        // unaligned.
+        let handle = unsafe {
+            buffer
+                .add(COUNT_SIZE + count + i * HANDLE_SIZE)
+                .cast::<HANDLE>()
+                .read_unaligned()
+        };
+        if handle != INVALID_HANDLE_VALUE {
+            let _ = SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+        }
     }
 }

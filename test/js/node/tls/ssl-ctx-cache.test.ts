@@ -52,7 +52,7 @@ test("Bun.connect with servername-only tls reuses one SSL_CTX", async () => {
       tls: { servername: "localhost", rejectUnauthorized: false },
       socket: {
         // With a `handshake` handler present, `open` fires on TCP-connect
-        // (pre-handshake). Calling `s.end()` there leaves the libuv-backed
+        // (pre-handshake). Calling `s.end()` there leaves the
         // Windows socket in a state where `close` never fires. End after
         // the handshake completes instead.
         open() {},
@@ -150,7 +150,7 @@ test("Bun.connect with inline ca shares SSL_CTX across calls", async () => {
       tls: tlsOpts,
       socket: {
         // With a `handshake` handler present, `open` fires on TCP-connect
-        // (pre-handshake). Calling `s.end()` there leaves the libuv-backed
+        // (pre-handshake). Calling `s.end()` there leaves the
         // Windows socket in a state where `close` never fires. End after
         // the handshake completes instead.
         open() {},

@@ -17,8 +17,6 @@ use core::cell::UnsafeCell;
 #[cfg(not(windows))]
 use core::ffi::c_void;
 
-#[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_sys::{self as sys, E, Fd};
 
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
@@ -96,10 +94,15 @@ pub enum WriterTag {
 // Flags / Writer queue entry
 // ──────────────────────────────────────────────────────────────────────────
 
+// What kind of fd this is decides how POSIX writes to it; on Windows the
+// writer classifies the handle itself.
 #[derive(Clone, Copy, Default)]
 pub struct Flags {
+    #[cfg(not(windows))]
     pub(crate) pollable: bool,
+    #[cfg(not(windows))]
     pub(crate) nonblock: bool,
+    #[cfg(not(windows))]
     pub(crate) is_socket: bool,
     pub(crate) broken_pipe: bool,
 }
@@ -185,7 +188,9 @@ struct State {
     fd: Fd,
     writers: Writers,
     buf: Vec<u8>,
-    /// quick hack to get windows working; ideally this should be removed.
+    /// The chunk a Windows write has in flight; empty when none is. The kernel
+    /// borrows those bytes until the write's completion is dequeued, and `buf`
+    /// reallocates whenever a child enqueues meanwhile.
     #[cfg(windows)]
     winbuf: Vec<u8>,
     writer_idx: usize,
@@ -198,7 +203,6 @@ struct State {
     /// `SystemError`.
     err: Option<sys::Error>,
     evtloop: EventLoopHandle,
-    is_writing: bool,
     started: bool,
     flags: Flags,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
@@ -256,14 +260,7 @@ impl IOWriter {
     pub(crate) fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::sync::Arc<IOWriter> {
         let mut writer = WriterImpl::default();
         // Tell the PipeWriter impl to *not* close the file descriptor.
-        #[cfg(not(windows))]
-        {
-            writer.close_fd = false;
-        }
-        #[cfg(windows)]
-        {
-            writer.owns_fd = false;
-        }
+        writer.close_fd = false;
         let this = std::sync::Arc::new_cyclic(|w| IOWriter {
             state: UnsafeCell::new(State {
                 writer,
@@ -276,7 +273,6 @@ impl IOWriter {
                 total_bytes_written: 0,
                 err: None,
                 evtloop,
-                is_writing: false,
                 started: false,
                 flags,
                 self_weak: std::sync::Weak::clone(w),
@@ -317,12 +313,6 @@ impl IOWriter {
         self.state().fd
     }
 
-    #[inline]
-    #[cfg(windows)]
-    pub(crate) fn evtloop(&self) -> EventLoopHandle {
-        self.state().evtloop
-    }
-
     pub(crate) fn memory_cost(&self) -> usize {
         let s = self.state();
         let mut cost = core::mem::size_of::<IOWriter>();
@@ -340,7 +330,6 @@ impl IOWriter {
     /// `FilePollVTable` round-trips back to the runtime. We pass the address of
     /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
     /// vtable can recover it.
-    #[cfg(not(windows))]
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
@@ -353,7 +342,13 @@ impl IOWriter {
     fn __start(&self) -> sys::Result<()> {
         let s = self.state();
         crate::shell_log!("IOWriter(fd={}) __start()", s.fd);
-        if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
+        // On Windows `true` claims an overlapped pipe end made for a spawned
+        // child, which no fd of the shell's is; the writer finds out what it has.
+        #[cfg(windows)]
+        let pollable = false;
+        #[cfg(not(windows))]
+        let pollable = s.flags.pollable;
+        if let Err(e) = s.writer.start(s.fd, pollable) {
             #[cfg(not(windows))]
             {
                 // We get this if we pass in a file descriptor that is not
@@ -383,40 +378,7 @@ impl IOWriter {
                     }
                 }
             }
-            #[cfg(windows)]
-            {
-                // This might happen if the file descriptor points to NUL.
-                // On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so
-                // `this.writer.start()` will try to open it as a tty with
-                // uv_tty_init, but this returns EBADF. As a workaround,
-                // we'll try opening the file descriptor as a file.
-                if e.get_errno() == E::EBADF {
-                    s.flags.pollable = false;
-                    s.flags.nonblock = false;
-                    s.flags.is_socket = false;
-                    return s.writer.start_with_file(s.fd);
-                }
-            }
             return Err(e);
-        }
-        #[cfg(windows)]
-        {
-            // When `Source::open` produced a uv pipe/tty, libuv has TAKEN
-            // OWNERSHIP of the underlying HANDLE
-            // (`uv_pipe_open`/`uv_tty_init`) and `uv_close` (issued by
-            // `s.writer.close()` in Drop) will close it.
-            // `BaseWindowsPipeWriter::start` does not invalidate the stored
-            // fd (TODO at PipeWriter.rs:1277), so disarm the Drop close here
-            // instead. The `Source::File`/`SyncFile` case (incl. the
-            // EBADF→`start_with_file` fallback above, which `return`s early)
-            // keeps `s.fd` valid: with `owns_fd=false` PipeWriter does NOT
-            // close it there, so Drop must.
-            if matches!(
-                s.writer.source,
-                Some(bun_io::Source::Pipe(_) | bun_io::Source::Tty(_))
-            ) {
-                s.fd = Fd::INVALID;
-            }
         }
         #[cfg(not(windows))]
         {
@@ -481,14 +443,9 @@ impl IOWriter {
 
         #[cfg(windows)]
         {
-            crate::shell_log!("IOWriter(fd={}) write() is_writing={}", s.fd, s.is_writing);
-            if s.is_writing {
-                return WriteOutcome::Suspended;
-            }
-            s.is_writing = true;
-            if let Err(e) = s.writer.start_with_current_pipe() {
-                return WriteOutcome::Failed(e);
-            }
+            // Does nothing while a write is in flight; its completion
+            // continues with whatever was queued meanwhile.
+            s.writer.write();
             return WriteOutcome::Suspended;
         }
 
@@ -551,33 +508,26 @@ impl IOWriter {
         s.total_bytes_written >= s.buf.len()
     }
 
-    /// Only does things on windows.
-    #[inline]
-    fn set_writing(&self, writing: bool) {
-        #[cfg(windows)]
-        {
-            self.state().is_writing = writing;
-        }
-        let _ = writing;
-    }
-
     // ── buffer slicing ──────────────────────────────────────────────────
 
     /// Returns the buffer of data that needs to be written for the *current*
     /// writer.
     fn get_buffer(&self) -> &[u8] {
-        let result = self.get_buffer_impl();
         #[cfg(windows)]
         {
-            let s = self.state();
-            s.winbuf.clear();
-            s.winbuf.extend_from_slice(result);
-            // `state()` ties `s` to `&self`, so the slice borrow already has
-            // the `'self` lifetime the signature wants — no raw-parts needed.
-            return s.winbuf.as_slice();
+            // The writer also asks when a write completes, before `on_write`.
+            // Skipping dead writers then would move `writer_idx` off the one
+            // the completed bytes belong to.
+            if self.state().winbuf.is_empty() {
+                let result = self.get_buffer_impl();
+                self.state().winbuf.extend_from_slice(result);
+            }
+            // `state()` ties the borrow to `&self`, the lifetime the signature
+            // wants.
+            return self.state().winbuf.as_slice();
         }
         #[cfg(not(windows))]
-        result
+        self.get_buffer_impl()
     }
 
     fn get_buffer_impl(&self) -> &[u8] {
@@ -680,7 +630,6 @@ impl IOWriter {
             debug_assert!(s.writer_idx < s.writers.len());
         }
 
-        scopeguard::defer! { self.set_writing(false); }
         self.skip_dead();
 
         let idx = self.state().writer_idx;
@@ -689,10 +638,7 @@ impl IOWriter {
         let buf = self.get_buffer();
         debug_assert!(!buf.is_empty());
 
-        let result = drain_buffered_data(self, buf, u32::MAX as usize);
-        // NOTE: re-derive `state()` after `drain_buffered_data` instead of
-        // holding a stale `&mut`.
-        let amt = match result {
+        let amt = match write_to_file(self.state().fd, buf) {
             bun_io::WriteResult::Done(amt) | bun_io::WriteResult::Wrote(amt) => amt,
             bun_io::WriteResult::Pending(amt) => {
                 // EAGAIN from a target that was classified non-pollable (a
@@ -730,13 +676,11 @@ impl IOWriter {
     /// The `BufferedWriter.onWrite` hook. Runs on the event loop when the fd
     /// is writable.
     fn on_write_pollable(&self, amount: usize, status: bun_io::WriteStatus) {
-        // NOTE: `set_writing` re-derives `state()` on Windows, which would
-        // invalidate `s` under Stacked Borrows; do it before binding `s`
-        // (matches the ordering in `on_error`).
-        self.set_writing(false);
         let s = self.state();
         #[cfg(not(windows))]
         debug_assert!(s.flags.pollable);
+        #[cfg(windows)]
+        s.winbuf.clear();
 
         if s.writer_idx >= s.writers.len() {
             return;
@@ -779,11 +723,6 @@ impl IOWriter {
         if !wrote_everything && s.writer_idx < s.writers.len() {
             #[cfg(windows)]
             {
-                // NOTE: inline `set_writing(true)` instead of calling the
-                // helper — the helper re-derives `state()` while `s` is live,
-                // which is two simultaneous `&mut State` (UB under Stacked
-                // Borrows). Same discipline as the top of this fn.
-                s.is_writing = true;
                 s.writer.write();
             }
             #[cfg(not(windows))]
@@ -829,7 +768,6 @@ impl IOWriter {
     /// failed. The queue is reset *before* any of them runs so that a child
     /// re-enqueueing from its callback is not wiped afterwards.
     fn fail_pending_writers(&self, err: &sys::Error) -> Vec<ChildPtr> {
-        self.set_writing(false);
         let s = self.state();
         if err.get_errno() == E::EPIPE {
             s.flags.broken_pipe = true;
@@ -851,15 +789,16 @@ impl IOWriter {
         s.writer_idx = 0;
         s.buf.clear();
         s.writers.clear();
+        #[cfg(windows)]
+        s.winbuf.clear();
         pending
     }
 
     /// Write failure reported by the `bun_io` writer callbacks. Each pending
     /// child's error completion is driven through its own `Yield::run`; on
     /// POSIX these callbacks only fire from the event loop, with no trampoline
-    /// on the stack. On Windows uv can also deliver a synchronous submission
-    /// failure from under `write()` (`start_with_current_pipe` returns `Ok`
-    /// unconditionally), a re-entry `write()` cannot turn into a
+    /// on the stack. On Windows a write that cannot be submitted is also
+    /// reported from under `write()`, a re-entry `write()` cannot turn into a
     /// `WriteOutcome::Failed`.
     fn on_error(&self, err: &sys::Error) {
         let _keepalive = self.keepalive();
@@ -908,9 +847,7 @@ impl IOWriter {
         completion.unwrap_or_else(Yield::done)
     }
 
-    fn on_close(&self) {
-        self.set_writing(false);
-    }
+    fn on_close(&self) {}
 
     /// Drive a `Yield` from inside an async poll callback. Requires `interp`
     /// to have been set; if not, the chunk-complete is dropped (debug-asserts).
@@ -963,14 +900,9 @@ impl IOWriter {
 
     #[cfg(not(windows))]
     fn enqueue_file(&self, child: ChildPtr) -> Yield {
-        let s = self.state();
-        if s.is_writing {
-            return Yield::suspended();
-        }
         // The pollable path sets `started` in write(); the non-pollable file
         // path bypasses write() entirely, so set it here.
-        s.started = true;
-        self.set_writing(true);
+        self.state().started = true;
         self.do_file_write(child)
     }
 
@@ -1090,7 +1022,6 @@ bun_io::impl_buffered_writer_parent! {
     on_close   = on_close,
     get_buffer = |this| (*this).get_buffer(),
     event_loop = |this| (*this).io_evtloop(),
-    uv_loop    = |this| (*(*this).evtloop().loop_()).uv_loop,
     // INVARIANT: `this` is `Arc::as_ptr` stashed via `writer.set_parent` in
     // `IOWriter::init` (sole constructor); passing a non-Arc ptr is UB.
     ref_       = |this| std::sync::Arc::increment_strong_count(this as *const Self),
@@ -1098,23 +1029,21 @@ bun_io::impl_buffered_writer_parent! {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// drainBufferedData / tryWrite (POSIX file path)
+// POSIX file path
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Writes all of `buf` unless the fd stops taking bytes. A failure is an
+/// error even after a partial write: `do_file_write` fails the whole chunk
+/// either way.
 #[cfg(not(windows))]
-fn try_write_with_write_fn(
-    fd: Fd,
-    buf: &[u8],
-    write_fn: fn(Fd, &[u8]) -> sys::Maybe<usize>,
-) -> bun_io::WriteResult {
+fn write_to_file(fd: Fd, buf: &[u8]) -> bun_io::WriteResult {
     let mut offset: usize = 0;
     while offset < buf.len() {
-        match write_fn(fd, &buf[offset..]) {
+        match sys::write(fd, &buf[offset..]) {
             Err(err) => {
                 if err.is_retry() {
                     return bun_io::WriteResult::Pending(offset);
                 }
-                // Return EPIPE as an error so it propagates properly.
                 return bun_io::WriteResult::Err(err);
             }
             Ok(wrote) => {
@@ -1126,44 +1055,6 @@ fn try_write_with_write_fn(
         }
     }
     bun_io::WriteResult::Wrote(offset)
-}
-
-/// TODO: This function and `try_write_with_write_fn` are copy-pastes from
-/// PipeWriter; it would be nice to not have to do that.
-#[cfg(not(windows))]
-fn drain_buffered_data(
-    parent: &IOWriter,
-    buf: &[u8],
-    max_write_size: usize,
-) -> bun_io::WriteResult {
-    let trimmed = if max_write_size < buf.len() && max_write_size > 0 {
-        &buf[..max_write_size]
-    } else {
-        buf
-    };
-    let mut drained: usize = 0;
-    while drained < trimmed.len() {
-        match try_write_with_write_fn(parent.state().fd, buf, sys::write) {
-            bun_io::WriteResult::Pending(pending) => {
-                drained += pending;
-                return bun_io::WriteResult::Pending(drained);
-            }
-            bun_io::WriteResult::Wrote(amt) => {
-                drained += amt;
-            }
-            bun_io::WriteResult::Err(err) => {
-                // Reported as an error even after a partial write: the caller
-                // (`do_file_write`) fails the whole chunk either way, and it
-                // must not dispatch the failure from under the trampoline.
-                return bun_io::WriteResult::Err(err);
-            }
-            bun_io::WriteResult::Done(amt) => {
-                drained += amt;
-                return bun_io::WriteResult::Done(drained);
-            }
-        }
-    }
-    bun_io::WriteResult::Wrote(drained)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1188,10 +1079,9 @@ impl Drop for IOWriter {
                     .close_impl(None, None::<fn(*mut c_void)>, false);
             }
         }
+        // The source goes before the fd it was opened on.
         #[cfg(windows)]
-        {
-            s.writer.close();
-        }
+        s.writer.close_without_reporting();
         if s.fd != Fd::INVALID {
             let _ = sys::close(s.fd);
         }

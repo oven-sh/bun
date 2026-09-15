@@ -173,9 +173,11 @@ where
 
     #[cfg(windows)]
     {
-        *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
-            != 0
-            && !force_sync;
+        // `pollable` tells a Windows writer that the HANDLE is an overlapped
+        // pipe end Bun created, which one opened by path or taken from an fd
+        // never is: the writer classifies it on its own.
+        let _ = force_sync;
+        *pollable = false;
         return Ok(fd);
     }
 }

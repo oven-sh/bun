@@ -628,7 +628,7 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   await 1;
 });
 
-// On Windows the libuv write completion path re-enters JS (promise resolution)
+// On Windows the write completion path re-enters JS (promise resolution)
 // while a `&mut WindowsStreamingWriter` is live, so without raw-ptr laundering
 // LLVM `noalias` lets release builds cache stale `is_done`/`parent` and
 // over-deref the FileSink. Spawn a subprocess so a crash there is observable
@@ -757,8 +757,8 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
   });
 });
 
-// Skipped on Windows: the Windows FileSink writer hands bytes to uv_fs_write on
-// the libuv threadpool and never registers an AutoFlusher synchronously, so the
+// Skipped on Windows: the Windows FileSink writer hands bytes to a write on
+// the work pool and never registers an AutoFlusher synchronously, so the
 // on_exit drain this suite exercises is a no-op there and every process.exit()
 // variant is a threadpool-vs-ExitProcess race rather than the POSIX buffered
 // flush being tested here.
@@ -983,7 +983,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
     return { stdoutLength: stdout.length, stderr, exitCode };
   }
 
-  // On Windows uv_write takes the whole chunk at once and end() can return a
+  // On Windows a write takes the whole chunk at once and end() can return a
   // plain number, hence Promise.resolve().
   it.concurrent("end() without await", async () => {
     expect(

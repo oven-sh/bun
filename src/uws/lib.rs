@@ -17,8 +17,6 @@ use bun_core::ZStr;
 // `SocketAddress`) stay defined here; `bun_uws_sys::socket` has lifetime-
 // bearing variants of the same names that are not yet reconciled.
 
-#[cfg(windows)]
-pub use bun_uws_sys::Timer;
 pub use bun_uws_sys::{
     AnyWebSocket, BodyReaderMixin, ConnectingSocket, NewApp, RawWebSocket, Request,
     WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
@@ -1300,7 +1298,7 @@ pub mod ssl_wrapper {
 // Loop / InternalLoopData
 // ═══════════════════════════════════════════════════════════════════════════
 // Mirrors `struct us_internal_loop_data_t` (packages/bun-usockets/src/internal/
-// loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / libuv.h). Re-exported
+// loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / iocp.h). Re-exported
 // from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
 // type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};

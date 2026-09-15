@@ -148,7 +148,7 @@ beforeAll(async () => {
 });
 
 test("baseline: stopped server wrapper collects", () => {
-  // libuv platforms may materialize both Debug and non-Debug prototypes.
+  // Some platforms may materialize both Debug and non-Debug prototypes.
   expect(serverWrapperBaseline).toBeLessThanOrEqual(2);
 });
 

@@ -280,8 +280,7 @@ impl ShellTouchTask {
             )
         };
 
-        // Call the bun_sys layer directly (uv_fs_utime on Windows) to avoid
-        // the heavyweight NodeFS state.
+        // Call the bun_sys layer directly to avoid the heavyweight NodeFS state.
         let milliseconds = bun_core::time::milli_timestamp();
         let atime = bun_sys::TimeLike {
             sec: milliseconds.div_euclid(1_000),

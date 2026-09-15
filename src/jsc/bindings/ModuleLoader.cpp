@@ -395,6 +395,28 @@ static JSValue handleVirtualModuleResult(
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err)));
         }
 
+        if (res->result.value.isCommonJSModule) {
+            // skipIsolationCache: plugin output is not the on-disk file at this key.
+            if (commonJSModule) {
+                commonJSModule->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value, false, true);
+                if (scope.exception()) [[unlikely]] {
+                    RELEASE_AND_RETURN(scope, reject(scope.exception()));
+                }
+                return commonJSModule;
+            }
+
+            auto* specifierValue = Bun::toJS(globalObject, *specifier);
+            if (scope.exception()) [[unlikely]] {
+                RELEASE_AND_RETURN(scope, reject(scope.exception()));
+            }
+            auto created = Bun::createCommonJSModule(globalObject, specifierValue, res->result.value, false, true);
+            EXCEPTION_ASSERT(created.has_value() == !scope.exception());
+            if (created.has_value()) {
+                return resolve(JSSourceCode::create(vm, WTF::move(created.value())));
+            }
+            RELEASE_AND_RETURN(scope, reject(scope.exception()));
+        }
+
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         return resolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
     }
@@ -442,6 +464,7 @@ static JSValue handleVirtualModuleResult(
         auto specifierString = specifier->toWTFString(BunString::ZeroCopy);
         auto referrerString = referrer->toWTFString(BunString::ZeroCopy);
         PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString, wasModuleMock);
+        pendingModule->wasRequire = commonJSModule != nullptr;
         JSC::JSPromise* internalPromise = pendingModule->internalPromise();
         MarkedArgumentBuffer arguments;
         arguments.append(promise);
@@ -1274,6 +1297,19 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     BunString referrer = Bun::toString(referrerWtf);
 
     bool wasModuleMock = pendingModule->wasModuleMock;
+
+    // Orphaned: the originating require() already threw and removed its requireMap entry.
+    if (pendingModule->wasRequire) {
+        auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
+        bool stillInRequireMap = zigGlobal->requireMap()->has(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+        if (!stillInRequireMap) {
+            scope.release();
+            promise->resolve(globalObject, vm, jsUndefined());
+            pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
+            return JSValue::encode(jsUndefined());
+        }
+    }
 
     JSC::JSValue result = handleVirtualModuleResult<false>(static_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
     if (!scope.exception() && !res.success) [[unlikely]] {

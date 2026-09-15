@@ -808,6 +808,7 @@ impl<'a> JSXTag<'a> {
 
         // Parse a member expression chain
         // <Button.Red>
+        let mut name_len = name.len();
         while p.lexer().token == T::TDot {
             p.lexer().next_inside_jsx_element()?;
             let member_range = p.lexer().range();
@@ -828,13 +829,7 @@ impl<'a> JSXTag<'a> {
                 return Err(crate::Error::SyntaxError);
             }
 
-            let new_name: &'a mut [u8] = p
-                .bump()
-                .alloc_slice_fill_default::<u8>(name.len() + 1 + member.len());
-            new_name[..name.len()].copy_from_slice(name);
-            new_name[name.len()] = b'.';
-            new_name[name.len() + 1..].copy_from_slice(member);
-            name = new_name;
+            name_len += 1 + member.len();
             tag_range.len = member_range.loc.start + member_range.len - tag_range.loc.start;
             tag = p.new_expr(
                 E::Dot {
@@ -845,6 +840,24 @@ impl<'a> JSXTag<'a> {
                 },
                 loc,
             );
+        }
+
+        // Join "Button.Red" once, back to front off the `E::Dot` chain built above.
+        if name_len != name.len() {
+            let joined: &'a mut [u8] = p.bump().alloc_slice_fill_default::<u8>(name_len);
+            let mut end = name_len;
+            let mut target = tag;
+            while let js_ast::ExprData::EDot(dot) = target.data {
+                let member = dot.name.slice();
+                end -= member.len();
+                joined[end..end + member.len()].copy_from_slice(member);
+                end -= 1;
+                joined[end] = b'.';
+                target = dot.target;
+            }
+            debug_assert_eq!(end, name.len());
+            joined[..end].copy_from_slice(name);
+            name = joined;
         }
 
         Ok(JSXTag {

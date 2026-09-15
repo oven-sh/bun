@@ -5512,7 +5512,9 @@ declare module "bun" {
      * `net.Socket`, a child process's `onExit`) are still called, and an
      * operation in flight (a `fetch()`, a connecting socket) rejects or emits
      * `'error'`; its other callbacks are not called. Whatever it opens
-     * afterwards is closed at once and reports nothing.
+     * afterwards is closed at once and reports nothing. This is not a
+     * sandbox: a process it spawns is started and then killed, and
+     * synchronous calls run to completion.
      * Idempotent.
      */
     dispose(): void;

@@ -4,7 +4,7 @@
 // workspace version conflicts that force nested installs. Every tarball is served locally.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import fs from "fs";
-import { VerdaccioRegistry, bunEnv, bunExe, pack, tmpdirSync } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, pack, tmpdirSync } from "harness";
 import path from "path";
 
 const registry = new VerdaccioRegistry();
@@ -40,21 +40,18 @@ function mustNotExist(filePath: string) {
   });
 }
 
-// Verdaccio's checked-in packages have stable integrity hashes, so the generated package-lock.json
-// carries real SRI values without any network round-trip.
-const integrity = {
-  "a-dep@1.0.2": "sha512-786lp/Wqdz6jY9NOPFnU2OZAl/7wW/CWCHNn4I+0Or9NtA0F9I1TXtisuy8hMFw/6u6CYXwlzdwySiOdpJ94oQ==",
-  "a-dep@1.0.5": "sha512-eKtFd4hOTiMNvOOCpwRCkRvkUB6DU6HmDF/AFCUw28s6nhNLzX62xh/ETLWMhOmeEH8JnKx3/3IY/QMhdju1jw==",
-  "a-dep@1.0.10": "sha512-NeQ6Ql9jRW8V+VOiVb+PSQAYOvVoSimW+tXaR0CoJk4kM9RIk/XlAUGCsNtn5XqjlDO4hcH8NcyaL507InevEg==",
-  "no-deps@1.0.0": "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
-  "no-deps@1.0.1": "sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A==",
-  "no-deps@2.0.0": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
-  "is-number@1.0.0": "sha512-PWbU1PO3loy/91zx8zOoQ37b8UWuu64eJONVIObQSlUUrYag+zy562vmZuRwRcv2hDhgK1Dc9qkJVS954CB1Nw==",
-  "@types/is-number@2.0.0":
-    "sha512-GEeIxCB+NpM1NrDBqmkYPeU8bI//i+xPzdOY4E1YHet51IcFmz4js6k57m69fLl/cbn7sOR7wj9RNNw53X8AiA==",
-  "two-range-deps@1.0.0":
-    "sha512-N+6kPy/GxuMncNz/EKuIrwdoYbh1qmvHDnw1UbM3sQE184kBn+6qAQgtf1wgT9dJnt6X+tWcTzSmfDvtJikVBA==",
-};
+// The lockfile entry npm writes for a registry package: where the local registry serves it, and the
+// integrity that registry's checked-in manifest records for the tarball.
+function registryEntry(name: string, version: string) {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(import.meta.dir, "..", "registry", "packages", name, "package.json"), "utf8"),
+  );
+  return {
+    version,
+    resolved: `${registry.registryUrl()}${name}/-/${name.split("/").pop()}-${version}.tgz`,
+    integrity: manifest.versions[version].dist.integrity as string,
+  };
+}
 
 beforeAll(async () => {
   await registry.start();
@@ -67,9 +64,6 @@ beforeAll(async () => {
   });
   const barUrl = `http://localhost:${tarballServer.port}/bar-0.0.2.tgz`;
   const barIntegrity = "sha512-" + Buffer.from(await crypto.subtle.digest("SHA-512", barTgz)).toString("base64");
-
-  const registryUrl = registry.registryUrl().replace(/\/$/, "");
-  const reg = (name: string, version: string) => `${registryUrl}/${name}/-/${name.split("/").pop()}-${version}.tgz`;
 
   const write = (rel: string, content: string) => {
     const full = path.join(cwd!, rel);
@@ -104,7 +98,10 @@ beforeAll(async () => {
   write("bun-types/isfake.txt", "");
 
   write("packages/body-parser/package.json", JSON.stringify({ name: "body-parser", version: "200.0.0" }));
-  write("packages/lol-package/package.json", JSON.stringify({ name: "lol", dependencies: { "no-deps": "^2.0.0" } }));
+  // `lol` depended on esbuild in the original fixture. optional-native and what-bin keep what esbuild
+  // brought into the lockfile: optional platform packages with `os`/`cpu`, and a `bin`.
+  const lolDependencies = { "no-deps": "^2.0.0", "optional-native": "1.0.0", "what-bin": "1.0.0" };
+  write("packages/lol-package/package.json", JSON.stringify({ name: "lol", dependencies: lolDependencies }));
   write(
     "packages/second/package.json",
     JSON.stringify({
@@ -175,19 +172,13 @@ beforeAll(async () => {
           },
           "bun-types/node_modules/bun-types": {
             name: "no-deps",
-            version: "1.0.0",
-            resolved: reg("no-deps", "1.0.0"),
-            integrity: integrity["no-deps@1.0.0"],
+            ...registryEntry("no-deps", "1.0.0"),
           },
           "node_modules/@types/is-number": {
-            version: "2.0.0",
-            resolved: reg("@types/is-number", "2.0.0"),
-            integrity: integrity["@types/is-number@2.0.0"],
+            ...registryEntry("@types/is-number", "2.0.0"),
           },
           "node_modules/a-dep": {
-            version: "1.0.10",
-            resolved: reg("a-dep", "1.0.10"),
-            integrity: integrity["a-dep@1.0.10"],
+            ...registryEntry("a-dep", "1.0.10"),
           },
           "node_modules/bar": {
             version: "0.0.2",
@@ -198,9 +189,7 @@ beforeAll(async () => {
           "node_modules/bun-types": { resolved: "bun-types", link: true },
           "node_modules/express": {
             name: "a-dep",
-            version: "1.0.10",
-            resolved: reg("a-dep", "1.0.10"),
-            integrity: integrity["a-dep@1.0.10"],
+            ...registryEntry("a-dep", "1.0.10"),
           },
           "node_modules/hello": {
             version: "0.3.2",
@@ -209,20 +198,43 @@ beforeAll(async () => {
             dependencies: { "a-dep": "^1.0.0" },
           },
           "node_modules/is-number": {
-            version: "1.0.0",
-            resolved: reg("is-number", "1.0.0"),
-            integrity: integrity["is-number@1.0.0"],
+            ...registryEntry("is-number", "1.0.0"),
           },
           "node_modules/lol": { resolved: "packages/lol-package", link: true },
+          // No platform is named "foo" or "bar", so none of these three may be installed.
+          "node_modules/native-bar-x64": {
+            ...registryEntry("native-bar-x64", "1.0.0"),
+            cpu: ["x64"],
+            optional: true,
+            os: ["bar"],
+          },
+          "node_modules/native-foo-x64": {
+            ...registryEntry("native-foo-x64", "1.0.0"),
+            cpu: ["x64"],
+            optional: true,
+            os: ["foo"],
+          },
+          "node_modules/native-foo-x86": {
+            ...registryEntry("native-foo-x86", "1.0.0"),
+            cpu: ["x86"],
+            optional: true,
+            os: ["foo"],
+          },
           "node_modules/not-body-parser": { resolved: "packages/body-parser", link: true },
+          "node_modules/optional-native": {
+            ...registryEntry("optional-native", "1.0.0"),
+            optionalDependencies: { "native-bar-x64": "1.0.0", "native-foo-x64": "1.0.0", "native-foo-x86": "1.0.0" },
+          },
           "node_modules/second": { resolved: "packages/second", link: true },
+          "node_modules/what-bin": {
+            ...registryEntry("what-bin", "1.0.0"),
+            bin: { "what-bin": "what-bin.js" },
+          },
           "node_modules/with-postinstall": { resolved: "packages/with-postinstall", link: true },
           "packages/body-parser": { version: "200.0.0" },
-          "packages/lol-package": { name: "lol", dependencies: { "no-deps": "^2.0.0" } },
+          "packages/lol-package": { name: "lol", dependencies: lolDependencies },
           "packages/lol-package/node_modules/no-deps": {
-            version: "2.0.0",
-            resolved: reg("no-deps", "2.0.0"),
-            integrity: integrity["no-deps@2.0.0"],
+            ...registryEntry("no-deps", "2.0.0"),
           },
           "packages/second": {
             version: "3.0.0",
@@ -235,15 +247,11 @@ beforeAll(async () => {
             },
           },
           "packages/second/node_modules/a-dep": {
-            version: "1.0.5",
-            resolved: reg("a-dep", "1.0.5"),
-            integrity: integrity["a-dep@1.0.5"],
+            ...registryEntry("a-dep", "1.0.5"),
           },
           "packages/second/node_modules/body-parser": {
             name: "two-range-deps",
-            version: "1.0.0",
-            resolved: reg("two-range-deps", "1.0.0"),
-            integrity: integrity["two-range-deps@1.0.0"],
+            ...registryEntry("two-range-deps", "1.0.0"),
             // left-pad is listed only here, with no matching `packages` entry, so the migrator has
             // nothing to install for it. The `mustNotExist` checks below make that observable.
             dependencies: { "@types/is-number": ">=1.0.0", "no-deps": "^1.0.0", "left-pad": "1.0.0" },
@@ -251,9 +259,7 @@ beforeAll(async () => {
           // Workspace-rooted entry two node_modules segments deep: exercises the migrator's
           // nested-path walk past the first resolved level.
           "packages/second/node_modules/body-parser/node_modules/no-deps": {
-            version: "1.0.1",
-            resolved: reg("no-deps", "1.0.1"),
-            integrity: integrity["no-deps@1.0.1"],
+            ...registryEntry("no-deps", "1.0.1"),
           },
           "packages/with-postinstall": {
             version: "1.0.0",
@@ -261,9 +267,7 @@ beforeAll(async () => {
             dependencies: { "a-dep": "1.0.2" },
           },
           "packages/with-postinstall/node_modules/a-dep": {
-            version: "1.0.2",
-            resolved: reg("a-dep", "1.0.2"),
-            integrity: integrity["a-dep@1.0.2"],
+            ...registryEntry("a-dep", "1.0.2"),
           },
         },
       },
@@ -338,6 +342,16 @@ test("node_modules/lol links to packages/lol-package", () => {
 validate("node_modules/no-deps", "2.0.0");
 validate("packages/second/node_modules/body-parser/node_modules/no-deps", "1.0.1");
 mustNotExist("packages/lol-package/node_modules/no-deps");
+
+// optional-native: its optional dependencies are for platforms that do not exist
+validate("node_modules/optional-native", "1.0.0");
+mustNotExist("node_modules/native-bar-x64");
+mustNotExist("node_modules/native-foo-x64");
+mustNotExist("node_modules/native-foo-x86");
+
+// what-bin: `bin` from the lockfile entry is linked
+validate("node_modules/what-bin", "1.0.0");
+mustExist(`node_modules/.bin/what-bin${isWindows ? ".exe" : ""}`);
 
 // with-postinstall: lifecycle script ran
 mustExist("packages/with-postinstall/postinstall.txt");

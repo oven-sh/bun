@@ -447,7 +447,11 @@ impl Route {
         config.define.put(b"import.meta.env.SSR", b"false")?;
         config.define.put(b"import.meta.env.STATIC", b"false")?;
 
-        if let Some(define) = &cli.args.serve_define {
+        // `serve_define` is applied last so it wins on a conflicting key.
+        for define in [&cli.args.define, &cli.args.serve_define]
+            .into_iter()
+            .flatten()
+        {
             debug_assert_eq!(define.keys.len(), define.values.len());
             // `StringMap` exposes only put/insert (no bulk re-index);
             // profile if hot.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -117,8 +117,8 @@ it("userInfo", () => {
   const info = os.userInfo();
 
   if (process.platform !== "win32") {
-    expect(info.username).toBe(process.env.USER);
-    expect(info.shell).toBe(process.env.SHELL || "unknown");
+    expect(info.username).toBe(process.env.USER ?? "unknown");
+    expect(info.shell).toBe(process.env.SHELL ?? "unknown");
     expect(info.uid >= 0).toBe(true);
     expect(info.gid >= 0).toBe(true);
   } else {
@@ -307,5 +307,83 @@ it("setPriority throws ESRCH for a nonexistent pid", () => {
       syscall: "uv_os_setpriority",
       info: { errno: isWindows ? -4040 : -3, code: "ESRCH", message: "no such process", syscall: "uv_os_setpriority" },
     }),
+  );
+});
+
+const nativeOsFunctions = [
+  "freemem",
+  "getPriority",
+  "homedir",
+  "hostname",
+  "loadavg",
+  "networkInterfaces",
+  "release",
+  "setPriority",
+  "totalmem",
+  "uptime",
+  "userInfo",
+  "version",
+];
+
+// https://github.com/oven-sh/bun/issues/32103
+it("native os functions are inspected as functions, not classes", () => {
+  for (const name of nativeOsFunctions) {
+    expect(Bun.inspect(os[name])).toBe(`[Function: ${name}]`);
+  }
+});
+
+// These functions come from Zig::JSFFIFunction::create, which passed the call
+// function as the native constructor too. Constructing one then read its result
+// as an object: a JSString cell for hostname and homedir, a double for totalmem
+// and freemem. Array.of, Array.from and Symbol.species all construct the callee,
+// so a release build aborts on the string returns and segfaults at address 0x0
+// on the number returns.
+//
+// One child per function, because the first construct takes the whole process
+// down: a single child would prove nothing about the functions after it.
+it("native os functions are rejected as a construct target", async () => {
+  const results = await Promise.all(
+    nativeOsFunctions.map(async name => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import * as os from "os";
+            const f = os[${JSON.stringify(name)}];
+            const out = [];
+            const run = (label, fn) => {
+              try {
+                out.push(label + "=" + JSON.stringify(fn()));
+              } catch (e) {
+                out.push(label + "=" + e.constructor.name);
+              }
+            };
+            // Array.of and Array.from construct |this| only when it is a
+            // constructor, so they fall back to a plain array like Node does.
+            run("of", () => Array.of.call(f, 1, 2, 3));
+            run("from", () => Array.from.call(f, [1]));
+            // ArraySpeciesCreate needs a constructor, so it throws instead.
+            const a = [1, 2, 3];
+            a.constructor = { [Symbol.species]: f };
+            run("species", () => a.slice(1));
+            console.log(out.join(" "));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { name, stdout, stderr, exitCode };
+    }),
+  );
+  expect(results).toEqual(
+    nativeOsFunctions.map(name => ({
+      name,
+      stdout: "of=[1,2,3] from=[1] species=TypeError\n",
+      stderr: "",
+      exitCode: 0,
+    })),
   );
 });

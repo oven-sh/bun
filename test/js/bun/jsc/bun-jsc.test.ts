@@ -78,6 +78,12 @@ describe("bun:jsc", () => {
     expect(isRope("a" + y + "b")).toBe(true);
     expect(isRope("abcdefgh")).toBe(false);
   });
+  it("native exports are not constructors", () => {
+    for (const fn of [isRope, heapSize, callerSourceOrigin, getRandomSeed, totalCompileTime]) {
+      expect(() => Reflect.construct(fn, [""])).toThrow(TypeError);
+      expect(Bun.inspect(fn)).toStartWith("[Function:");
+    }
+  });
   it("callerSourceOrigin", () => {
     expect(callerSourceOrigin()).toBe(import.meta.url);
   });

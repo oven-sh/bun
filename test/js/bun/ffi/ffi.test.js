@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, compileFixture, isDebug, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
-import { platform } from "os";
+import { freemem, platform } from "os";
+import { join } from "path";
 
 import {
   cc,
@@ -1098,6 +1099,93 @@ it("JSCallback tolerates worker.terminate() arriving inside the callback", async
     exitCode: 0,
     signalCode: null,
   });
+});
+
+// Runs in a subprocess for the same reason as the JSCallback tests above: the
+// linked library's native handle is not finalized on `bun test`'s exit path,
+// which the ASan lane's leak checker reports against this file.
+it("linkSymbols() functions are not constructors", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { JSCallback, linkSymbols } from "bun:ffi";
+      const cb = new JSCallback(() => 42, { returns: "int32_t", args: [] });
+      const lib = linkSymbols({ fn: { returns: "int32_t", args: [], ptr: cb.ptr } });
+      console.log(lib.symbols.fn());
+      // a native construct handler must never return a primitive
+      for (const construct of [() => new lib.symbols.fn(), () => Reflect.construct(lib.symbols.fn, [])]) {
+        try {
+          construct();
+          console.log("constructed");
+        } catch (e) {
+          console.log(e.constructor.name);
+        }
+      }
+      // non-constructible functions inspect as functions, not classes (#32103)
+      console.log(Bun.inspect(lib.symbols.fn));
+      lib.close();
+      cb.close();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "42\nTypeError\nTypeError\n[Function: fn]\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// cc() is the only path into JSFFIFunction::createForFFI. Subprocess for the
+// same leak-checker reason as above. The source has no #includes: bundled
+// TinyCC cannot see libc headers in CI, and its compile-error longjmp is what
+// conflicts with ASan (see cc.test.ts).
+it("cc()-compiled functions are not constructors", async () => {
+  using dir = tempDir("ffi-cc-construct", {
+    "returns_true.c": "_Bool returns_true(void) { return 1; }\n",
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { cc } from "bun:ffi";
+      const lib = cc({ source: process.argv[1], symbols: { returns_true: { args: [], returns: "bool" } } });
+      const { returns_true } = lib.symbols;
+      console.log(returns_true());
+      for (const construct of [() => new returns_true(), () => Reflect.construct(returns_true, [])]) {
+        try {
+          construct();
+          console.log("constructed");
+        } catch (e) {
+          console.log(e.constructor.name);
+        }
+      }
+      console.log(Bun.inspect(returns_true));
+      lib.close();`,
+      join(String(dir), "returns_true.c"),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "true\nTypeError\nTypeError\n[Function: returns_true]\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// runtime functions like the node:os natives are created through
+// JSFFIFunction::create rather than createForFFI, and do not need TinyCC
+it("runtime native functions are not constructors", () => {
+  expect(freemem()).toBeGreaterThan(0);
+  expect(() => new freemem()).toThrow(TypeError);
+  expect(() => Reflect.construct(freemem, [])).toThrow(TypeError);
+  expect(Bun.inspect(freemem)).toBe("[Function: freemem]");
 });
 
 const libPath =
